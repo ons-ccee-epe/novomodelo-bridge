@@ -57,7 +57,7 @@ class TestCutInput:
             pi_gnl=np.array([]),
         )
         with pytest.raises(AttributeError):
-            cut.intercept = 2000.0  # type: ignore[misc]
+            cut.intercept = 2000.0  # type: ignore[misc]  # intentional mutation to test frozen
 
 
 class TestSerializeCut:
