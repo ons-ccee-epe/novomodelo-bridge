@@ -378,3 +378,94 @@ class TestExportDessemFcfCli:
         default_output = synthetic_case_dir / "dessem_fcf"
         assert default_output.exists()
         assert (default_output / "mapcut.rv0").exists()
+
+    def test_audit_csv_flag_emits_csvs(
+        self,
+        synthetic_case_dir: Path,
+        hydro_codes_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Test that --audit-csv emits eco/ and content/ directories."""
+        output_dir = tmp_path / "output"
+        mock_manifest = _make_manifest()
+        mock_pools = _make_pools_dict()
+
+        with (
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
+            ) as mock_read_manifest,
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
+            ) as mock_load,
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
+            ) as mock_nodes,
+        ):
+            mock_read_manifest.return_value = mock_manifest
+            mock_load.return_value = mock_pools
+            mock_nodes.return_value = {i: (i,) for i in range(4)}
+
+            result = runner.invoke(
+                app,
+                [
+                    "export",
+                    "dessem-fcf",
+                    str(synthetic_case_dir),
+                    "--revision",
+                    "rv0",
+                    "--hydro-codes",
+                    str(hydro_codes_file),
+                    "--output",
+                    str(output_dir),
+                    "--audit-csv",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert (output_dir / "eco").is_dir()
+        assert (output_dir / "content").is_dir()
+
+    def test_no_audit_csv_by_default(
+        self,
+        synthetic_case_dir: Path,
+        hydro_codes_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Test that eco/ and content/ are NOT emitted without --audit-csv."""
+        output_dir = tmp_path / "output"
+        mock_manifest = _make_manifest()
+        mock_pools = _make_pools_dict()
+
+        with (
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
+            ) as mock_read_manifest,
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
+            ) as mock_load,
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
+            ) as mock_nodes,
+        ):
+            mock_read_manifest.return_value = mock_manifest
+            mock_load.return_value = mock_pools
+            mock_nodes.return_value = {i: (i,) for i in range(4)}
+
+            result = runner.invoke(
+                app,
+                [
+                    "export",
+                    "dessem-fcf",
+                    str(synthetic_case_dir),
+                    "--revision",
+                    "rv0",
+                    "--hydro-codes",
+                    str(hydro_codes_file),
+                    "--output",
+                    str(output_dir),
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert not (output_dir / "eco").exists()
+        assert not (output_dir / "content").exists()

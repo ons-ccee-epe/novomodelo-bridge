@@ -39,7 +39,8 @@ conversion premises, and writes DECOMP-format binaries.
 | `--hydro-codes` | Path to JSON file mapping Novomodelo hydro positions to DECOMP plant codes. Default: bundled `decomp_hydro_codes.json`. |
 | `--output, -o` | Output directory. Default: `CASE_DIR/dessem_fcf/`. |
 | `--force` | Overwrite existing outputs without prompting. |
-| `--include-terminal` | Include terminal pool in ECO CSVs (default: false). |
+| `--audit-csv` | Emit audit CSVs (`eco/` and `content/` directories). Default: off. |
+| `--include-terminal` | Include terminal pool in ECO CSVs (requires `--audit-csv`). |
 | `--json` | Emit a single machine-readable JSON verdict to stdout. |
 | `-v, -vv` | Increase verbosity (INFO, DEBUG). |
 
@@ -70,8 +71,8 @@ The export produces these artifacts:
 |----------|-------------|
 | `mapcut.<rev>` | DECOMP cut-header binary (48,020 bytes/record). Contains iteration counts, hydro codes, node tree indices, discount factors, and cut-head pointers. |
 | `cortdeco.<rev>` | DECOMP cut binary (26,976 bytes/record). Contains intercepts, storage coefficients, and GNL coefficients per cut. |
-| `eco/*.csv` | Pre-transformation audit CSVs with raw Novomodelo policy data (one per pool). |
-| `content/*.csv` | Post-write verification CSVs with the exact bytes written. |
+| `eco/*.csv` | Pre-transformation audit CSVs with raw Novomodelo policy data (one per pool). Only with `--audit-csv`. |
+| `content/*.csv` | Post-write verification CSVs with the exact bytes written. Only with `--audit-csv`. |
 | `export_manifest.json` | Provenance record: premises, settings, output paths, status. |
 
 A successful export writes `export_manifest.json` with `"status": "ok"`. A

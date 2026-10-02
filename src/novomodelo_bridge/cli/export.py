@@ -135,6 +135,13 @@ def _export_dessem_fcf(
             help="Include terminal pool in ECO CSV output.",
         ),
     ] = False,
+    audit_csv: Annotated[
+        bool,
+        typer.Option(
+            "--audit-csv",
+            help="Emit audit CSVs (eco/ and content/ directories).",
+        ),
+    ] = False,
     json_output: _JsonOpt = False,
     verbose: _VerboseOpt = 0,
     log_file: _LogFileOpt = None,
@@ -207,6 +214,7 @@ def _export_dessem_fcf(
         content_subdirectory="content",
         hydro_codes_path=hydro_codes_str,
         include_terminal_pool=include_terminal,
+        emit_audit_csv=audit_csv,
     )
 
     # Minimum delay per phase (seconds) to keep progress readable in interactive use.

@@ -238,7 +238,7 @@ class TestPipelineIntegration:
         mock_pools: dict[int, StageCutPool],
         tmp_path: Path,
     ) -> None:
-        """Test that ECO CSVs are created."""
+        """Test that ECO CSVs are created when emit_audit_csv is True."""
         output_dir = tmp_path / "dessem_fcf"
 
         with (
@@ -261,6 +261,7 @@ class TestPipelineIntegration:
                 content_subdirectory="content",
                 hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
+                emit_audit_csv=True,
             )
 
             run_export(
@@ -284,7 +285,7 @@ class TestPipelineIntegration:
         mock_pools: dict[int, StageCutPool],
         tmp_path: Path,
     ) -> None:
-        """Test that content CSVs are created."""
+        """Test that content CSVs are created when emit_audit_csv is True."""
         output_dir = tmp_path / "dessem_fcf"
 
         with (
@@ -307,6 +308,7 @@ class TestPipelineIntegration:
                 content_subdirectory="content",
                 hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
+                emit_audit_csv=True,
             )
 
             run_export(

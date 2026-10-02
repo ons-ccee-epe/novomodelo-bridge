@@ -146,6 +146,7 @@ class ExportSettings:
     content_subdirectory: str = "content"
     hydro_codes_path: str = ""
     include_terminal_pool: bool = False
+    emit_audit_csv: bool = False
 
 
 @dataclass(frozen=True)
@@ -395,14 +396,15 @@ def run_export(
         current_step = "emit ECO CSVs"
         _step(EXPORT_PHASE_LABELS[4])
         with _log_step(current_step):
-            emit_eco_csvs(
-                pools,
-                pool_ids,
-                output_dir,
-                settings.eco_subdirectory,
-                terminal_pool_id,
-                settings.include_terminal_pool,
-            )
+            if settings.emit_audit_csv:
+                emit_eco_csvs(
+                    pools,
+                    pool_ids,
+                    output_dir,
+                    settings.eco_subdirectory,
+                    terminal_pool_id,
+                    settings.include_terminal_pool,
+                )
 
         current_step = "build mapping quantities"
         _step(EXPORT_PHASE_LABELS[5])
@@ -472,29 +474,32 @@ def run_export(
         current_step = "write content CSVs"
         _step(EXPORT_PHASE_LABELS[11])
         with _log_step(current_step):
-            write_mapcut_content_csv(mapcut_contents, paths.mapcut_content)
-            write_cortdeco_content_csv(
-                cortdeco_contents,
-                paths.cortdeco_content,
-                hydro_codes=header.codigos_uhes,
-                submarket_codes=header.codigos_submercados_gnl,
-                n_estagios=header.numero_estagios,
-                n_patamares=n_patamares,
-            )
+            if settings.emit_audit_csv:
+                write_mapcut_content_csv(mapcut_contents, paths.mapcut_content)
+                write_cortdeco_content_csv(
+                    cortdeco_contents,
+                    paths.cortdeco_content,
+                    hydro_codes=header.codigos_uhes,
+                    submarket_codes=header.codigos_submercados_gnl,
+                    n_estagios=header.numero_estagios,
+                    n_patamares=n_patamares,
+                )
 
         current_step = "write export manifest"
         _step(EXPORT_PHASE_LABELS[12])
         with _log_step(current_step):
+            outputs: dict[str, Path] = {
+                "mapcut": paths.mapcut,
+                "cortdeco": paths.cortdeco,
+            }
+            if settings.emit_audit_csv:
+                outputs["mapcut_content"] = paths.mapcut_content
+                outputs["cortdeco_content"] = paths.cortdeco_content
             manifest_obj = build_export_manifest(
                 case_path=case_dir,
                 revision=revision,
                 settings_snapshot=asdict(settings),
-                outputs={
-                    "mapcut": paths.mapcut,
-                    "cortdeco": paths.cortdeco,
-                    "mapcut_content": paths.mapcut_content,
-                    "cortdeco_content": paths.cortdeco_content,
-                },
+                outputs=outputs,
             )
             write_export_manifest(manifest_obj, paths.manifest)
 
