@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
+
 from Novomodelo.IO.Policy.CheckpointManifest import CheckpointManifest
 from Novomodelo.IO.Policy.StageCuts import StageCuts
-from numpy.typing import NDArray
 
 _LOG = logging.getLogger(__name__)
 
