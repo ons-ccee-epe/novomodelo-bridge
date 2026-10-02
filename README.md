@@ -75,14 +75,17 @@ adds one rule for running the case; see the
 | `check newave SRC` / `check decomp SRC`        | Validate the source inputs without writing anything; report missing inputs and what the conversion would leave out. |
 | `compare newave NEWAVE_DIR NOVOMODELO_OUTPUT_DIR`   | Compare NEWAVE's published results (`MEDIAS-*.CSV`, `pmo.dat`) against a Novomodelo simulation output directory.         |
 | `compare decomp DECOMP_DIR NOVOMODELO_OUTPUT_DIR`   | Compare a DECOMP run's operation tables (`dec_oper_*.csv`) against a Novomodelo simulation output directory.             |
+| `export dessem-fcf CASE_DIR --revision rv0`    | Export a Novomodelo case's FCF to DESSEM-compatible `mapcut`/`cortdeco` format.                                          |
 | `dashboard CASE_DIR`                           | Build an interactive HTML dashboard from a solved Novomodelo case (reads `CASE_DIR/output/`).                            |
 
 Every command accepts `--json`, `-v`/`-vv`, `--log-file PATH`, `--no-color`,
 and `--quiet`. `convert` adds `--validate`, `--force`, `--dry-run`, and
 `--diagnostics-json PATH`; `convert decomp` also has `--no-fcf`. `compare`
-adds `--tolerance`, `--format`, and `--out-dir`. `dashboard` adds `--output`
-and `--open`. The generated reference with every option's help text is
-[docs/cli.md](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/cli.md).
+adds `--tolerance`, `--format`, and `--out-dir`. `export dessem-fcf` adds
+`--hydro-codes`, `--output`, `--force`, and `--include-terminal` (hydro codes
+default to `CASE_DIR/mapping/decomp_hydro_codes.json`). `dashboard`
+adds `--output` and `--open`. The generated reference with every option's help
+text is [docs/cli.md](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/cli.md).
 Shell completion: `novomodelo-bridge --install-completion`.
 
 ### What `convert` writes
@@ -154,6 +157,7 @@ environment > file > built-in default.
 - [CLI reference](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/cli.md), generated from the command help.
 - [NEWAVE track](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/newave.md): inputs, what the converter changes, comparing results.
 - [DECOMP track](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/decomp.md): inputs, deferred features, the boundary cost-to-go import, running the case.
+- [DESSEM export](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/dessem.md): exporting Novomodelo FCF to DESSEM-compatible format.
 - [Mapa de dados NEWAVE](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/newave-data-map.md) and [Mapa de dados DECOMP](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/decomp-data-map.md), in Portuguese: which deck file, record, and column feeds each Novomodelo file and field, and what is not converted yet.
 - [Architecture](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/architecture.md): how the code is organised, for contributors.
 - [Contributing](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/CONTRIBUTING.md): development setup, tests, quality gates, releasing.
