@@ -1,9 +1,4 @@
-"""Pipeline orchestration: full export from Novomodelo policy to DECOMP binaries.
-
-The pipeline orchestrates the full export: read inputs, apply mappings, write
-binaries, cross-check, emit CSVs, and write manifest. It handles failure paths
-and ensures manifest is written even on errors.
-"""
+"""Pipeline orchestration: full export from Novomodelo policy to DECOMP binaries."""
 
 from __future__ import annotations
 

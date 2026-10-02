@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`export dessem` command** exports a Cobre policy checkpoint to
+  DESSEM-compatible `mapcut`/`cortdeco` binaries. The command applies 15
+  documented conversion premises, emits audit CSVs for traceability, and
+  writes a provenance manifest.
+
 ## [0.18.0] - 2026-10-07
 
 Pairs the bridge with the **cobre 0.18.0** release and pins `cobre-python` to
