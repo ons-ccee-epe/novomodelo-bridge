@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from novomodelo_bridge.dessem.exporters.fcf.inputs_reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     CaseInputs,
     InputReadError,
     anticipated_thermals,

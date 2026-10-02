@@ -3,11 +3,11 @@
 import json
 from pathlib import Path
 
+from novomodelo_bridge.dessem.exporters.fcf.core.premises import PREMISES
 from novomodelo_bridge.dessem.exporters.fcf.manifest import (
     build_export_manifest,
     write_export_manifest,
 )
-from novomodelo_bridge.dessem.exporters.fcf.premises import PREMISES
 
 
 class TestBuildExportManifest:

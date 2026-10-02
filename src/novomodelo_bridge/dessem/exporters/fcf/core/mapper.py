@@ -20,13 +20,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from novomodelo_bridge.dessem.exporters.fcf.inputs_reader import (
+    from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
         BlockInfo,
         BusInfo,
         StageInfo,
         ThermalInfo,
     )
-    from novomodelo_bridge.dessem.exporters.fcf.reader import (
+    from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
         EntitySlotRecord,
         PolicyManifest,
         StageCutPool,

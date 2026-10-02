@@ -15,11 +15,11 @@ import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-from novomodelo_bridge.dessem.exporters.fcf.cross_check import (
+from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
     CortdecoContents,
     MapcutContents,
 )
-from novomodelo_bridge.dessem.exporters.fcf.layout import (
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     PHYSICAL_RECORD_FIRST,
     PHYSICAL_RECORD_LAST,
 )

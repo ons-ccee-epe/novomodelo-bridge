@@ -10,11 +10,10 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from novomodelo_bridge.dessem.exporters.fcf.cross_check import (
+from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
     reject_pair,
 )
-from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
-from novomodelo_bridge.dessem.exporters.fcf.reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     AffinePieceRecord,
     EntitySlotRecord,
     ManifestEdgeRecord,
@@ -22,6 +21,7 @@ from novomodelo_bridge.dessem.exporters.fcf.reader import (
     PolicyManifest,
     StageCutPool,
 )
+from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
 
 
 def _make_pool(
@@ -391,7 +391,7 @@ class TestFailureManifest:
         tmp_path: Path,
     ) -> None:
         """Test that failure manifest is written on PolicyFormatError."""
-        from novomodelo_bridge.dessem.exporters.fcf.reader import PolicyFormatError
+        from novomodelo_bridge.dessem.exporters.fcf.core.reader import PolicyFormatError
 
         output_dir = tmp_path / "dessem_fcf"
 
@@ -429,7 +429,7 @@ class TestFailureManifest:
         tmp_path: Path,
     ) -> None:
         """Test that failure manifest is written on MappingError."""
-        from novomodelo_bridge.dessem.exporters.fcf.mapper import MappingError
+        from novomodelo_bridge.dessem.exporters.fcf.core.mapper import MappingError
 
         output_dir = tmp_path / "dessem_fcf"
         mock_manifest = _make_manifest()

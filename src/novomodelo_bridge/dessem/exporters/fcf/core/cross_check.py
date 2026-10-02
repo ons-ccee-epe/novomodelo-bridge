@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from novomodelo_bridge.dessem.exporters.fcf.layout import (
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     PHYSICAL_RECORD_FIRST,
     PHYSICAL_RECORD_LAST,
     RECORD_SIZE,

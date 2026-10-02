@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from novomodelo_bridge.dessem.exporters.fcf.inputs_reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     BlockInfo,
     BusInfo,
     CaseInputs,
@@ -20,8 +20,8 @@ from novomodelo_bridge.dessem.exporters.fcf.inputs_reader import (
     StageInfo,
     ThermalInfo,
 )
-from novomodelo_bridge.dessem.exporters.fcf.layout import CutBlockOffsets
-from novomodelo_bridge.dessem.exporters.fcf.reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import CutBlockOffsets
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     AffinePieceRecord,
     EntitySlotRecord,
     ManifestEdgeRecord,

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Protocol
 import numpy as np
 
 if TYPE_CHECKING:
-    from novomodelo_bridge.dessem.exporters.fcf.reader import EntitySlotRecord
+    from novomodelo_bridge.dessem.exporters.fcf.core.reader import EntitySlotRecord
 
 RECORD_SIZE = 48020
 TAMANHO_CORTE = 26976

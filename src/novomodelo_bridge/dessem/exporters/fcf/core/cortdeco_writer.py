@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from novomodelo_bridge.dessem.exporters.fcf.layout import (
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     TAMANHO_CORTE,
     CutBlockOffsets,
     LayoutError,
@@ -32,7 +32,7 @@ from novomodelo_bridge.dessem.exporters.fcf.layout import (
     sync_directory,
     write_durably,
 )
-from novomodelo_bridge.dessem.exporters.fcf.mapper import (
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     MappingError,
     hydro_code_for_position,
     index_slots,
@@ -42,7 +42,7 @@ from novomodelo_bridge.dessem.exporters.fcf.mapper import (
 )
 
 if TYPE_CHECKING:
-    from novomodelo_bridge.dessem.exporters.fcf.reader import (
+    from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
         AffinePieceRecord,
         EntitySlotRecord,
     )

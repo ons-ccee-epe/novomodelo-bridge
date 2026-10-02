@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 if TYPE_CHECKING:
-    from novomodelo_bridge.dessem.exporters.fcf.reader import (
+    from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
         EntitySlotRecord,
         StageCutPool,
     )

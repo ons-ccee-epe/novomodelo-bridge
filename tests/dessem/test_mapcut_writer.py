@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from novomodelo_bridge.dessem.exporters.fcf.layout import RECORD_SIZE, LayoutError
-from novomodelo_bridge.dessem.exporters.fcf.mapcut_writer import (
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import RECORD_SIZE, LayoutError
+from novomodelo_bridge.dessem.exporters.fcf.core.mapcut_writer import (
     MapcutHeader,
     write_mapcut,
 )

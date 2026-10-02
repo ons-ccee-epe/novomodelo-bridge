@@ -5,13 +5,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from novomodelo_bridge.dessem.exporters.fcf.cortdeco_writer import (
+from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
     CutInput,
     serialize_cut,
     write_cortdeco,
     zeroed_gnl_block,
 )
-from novomodelo_bridge.dessem.exporters.fcf.layout import (
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     TAMANHO_CORTE,
     CutBlockOffsets,
     LayoutError,

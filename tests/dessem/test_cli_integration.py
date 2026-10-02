@@ -11,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from novomodelo_bridge.cli.app import app
-from novomodelo_bridge.dessem.exporters.fcf.reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     AffinePieceRecord,
     EntitySlotRecord,
     ManifestEdgeRecord,

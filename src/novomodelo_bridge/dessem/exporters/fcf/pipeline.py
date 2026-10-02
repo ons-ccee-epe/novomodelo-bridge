@@ -16,42 +16,37 @@ from pathlib import Path
 from typing import Any
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
-from novomodelo_bridge.dessem.exporters.fcf.content_csv import (
+from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
     content_csv_path,
     write_cortdeco_content_csv,
     write_mapcut_content_csv,
 )
-from novomodelo_bridge.dessem.exporters.fcf.cortdeco_writer import (
+from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
     CutInput,
     write_cortdeco,
     zeroed_gnl_block,
 )
-from novomodelo_bridge.dessem.exporters.fcf.cross_check import (
+from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
     cross_check_pair,
     reject_pair,
 )
-from novomodelo_bridge.dessem.exporters.fcf.eco_csv import emit_eco_csvs
-from novomodelo_bridge.dessem.exporters.fcf.inputs_reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     CaseInputs,
     anticipated_thermals,
     read_case_inputs,
 )
-from novomodelo_bridge.dessem.exporters.fcf.layout import (
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     LayoutError,
     assert_no_travel_time,
     assert_uniform_blocks,
     cortdeco_block_offsets,
     cut_head_indices,
 )
-from novomodelo_bridge.dessem.exporters.fcf.manifest import (
-    build_export_manifest,
-    write_export_manifest,
-)
-from novomodelo_bridge.dessem.exporters.fcf.mapcut_writer import (
+from novomodelo_bridge.dessem.exporters.fcf.core.mapcut_writer import (
     MapcutHeader,
     write_mapcut,
 )
-from novomodelo_bridge.dessem.exporters.fcf.mapper import (
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     EVIDENCED_GNL_LAG_MESES,
     MappingError,
     assert_gnl_lead_time_is_evidenced,
@@ -64,12 +59,17 @@ from novomodelo_bridge.dessem.exporters.fcf.mapper import (
     submarket_for_bus,
     tree_indices,
 )
-from novomodelo_bridge.dessem.exporters.fcf.reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     POLICY_MANIFEST_RELATIVE,
     PolicyFormatError,
     load_pools,
     nodes_by_pool,
     read_policy_manifest,
+)
+from novomodelo_bridge.dessem.exporters.fcf.eco.audit_raw_cuts import emit_eco_csvs
+from novomodelo_bridge.dessem.exporters.fcf.manifest import (
+    build_export_manifest,
+    write_export_manifest,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -229,7 +229,7 @@ def _assemble_mapcut_header(
     n_patamares: int,
 ) -> MapcutHeader:
     """Assemble the mapcut header from all sources."""
-    from novomodelo_bridge.dessem.exporters.fcf.reader import PolicyManifest
+    from novomodelo_bridge.dessem.exporters.fcf.core.reader import PolicyManifest
 
     manifest: PolicyManifest = manifest_data
 
@@ -308,7 +308,7 @@ def _assemble_cuts(
     offsets: Any,
 ) -> list[list[CutInput]]:
     """Assemble cut inputs from pools."""
-    from novomodelo_bridge.dessem.exporters.fcf.cortdeco_writer import (
+    from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
         storage_coefficients,
     )
 

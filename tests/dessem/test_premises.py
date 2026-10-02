@@ -1,6 +1,6 @@
 """Tests for dessem/exporters/fcf/premises.py."""
 
-from novomodelo_bridge.dessem.exporters.fcf.premises import P1, P3, P14, PREMISES
+from novomodelo_bridge.dessem.exporters.fcf.core.premises import P1, P3, P14, PREMISES
 
 
 class TestPremises:

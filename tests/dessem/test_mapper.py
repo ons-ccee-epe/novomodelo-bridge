@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from novomodelo_bridge.dessem.exporters.fcf.inputs_reader import CaseInputs
-from novomodelo_bridge.dessem.exporters.fcf.mapper import (
+from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import CaseInputs
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     DAYS_PER_YEAR,
     DECOMP_COST_DIVISOR,
     EXCLUDED_BUS_ID,

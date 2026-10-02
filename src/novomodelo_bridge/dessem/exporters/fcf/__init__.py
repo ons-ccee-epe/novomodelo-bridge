@@ -1,8 +1,7 @@
 """DESSEM FCF export: Novomodelo policy checkpoint → mapcut/cortdeco binary."""
 
-from novomodelo_bridge.dessem.exporters.fcf.pipeline import EXPORT_PHASE_LABELS
-from novomodelo_bridge.dessem.exporters.fcf.premises import P3, P14, PREMISES
-from novomodelo_bridge.dessem.exporters.fcf.reader import (
+from novomodelo_bridge.dessem.exporters.fcf.core.premises import P3, P14, PREMISES
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     CUTS_SUBDIR,
     POLICY_MANIFEST_RELATIVE,
     SUPPORTED_FORMAT_VERSION,
@@ -19,6 +18,7 @@ from novomodelo_bridge.dessem.exporters.fcf.reader import (
     read_policy_manifest,
     read_stage_cuts,
 )
+from novomodelo_bridge.dessem.exporters.fcf.pipeline import EXPORT_PHASE_LABELS
 
 __all__ = [
     # Pipeline

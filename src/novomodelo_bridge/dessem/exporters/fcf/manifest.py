@@ -16,8 +16,11 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from novomodelo_bridge.dessem.exporters.fcf.layout import sync_directory, write_durably
-from novomodelo_bridge.dessem.exporters.fcf.premises import PREMISES
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    sync_directory,
+    write_durably,
+)
+from novomodelo_bridge.dessem.exporters.fcf.core.premises import PREMISES
 
 _LOG = logging.getLogger(__name__)
 
