@@ -1,6 +1,9 @@
 target-version = "py312"
 line-length = 88
 
+# Vendored FlatBuffers readers are generated code — never edited to satisfy linters.
+extend-exclude = ["src/Novomodelo"]
+
 [lint]
 # PGH bans blanket suppressions: every `# noqa` and `# type: ignore` must name
 # its code (pair each with a rationale — .claude/rules/comments.md D3).
