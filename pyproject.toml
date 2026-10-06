@@ -68,7 +68,7 @@ fail_under = 83
 # at the venv so the typed first-party deps (idecomp/inewave ship
 # py.typed) resolve instead of raising phantom missing-import errors.
 include = ["src", "tests"]
-exclude = ["src/Novomodelo"]
+exclude = ["src/novomodelo_bridge/novomodelo/flatbuffers"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"

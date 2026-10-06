@@ -299,9 +299,9 @@ $ novomodelo-bridge export [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `dessem-fcf`: Export Novomodelo FCF to DESSEM-compatible...
+* `dessem`: Export Novomodelo FCF to DESSEM-compatible...
 
-### `novomodelo-bridge export dessem-fcf`
+### `novomodelo-bridge export dessem`
 
 Export Novomodelo FCF to DESSEM-compatible mapcut/cortdeco format.
 
@@ -322,7 +322,7 @@ Warnings logged during export:
 **Usage**:
 
 ```console
-$ novomodelo-bridge export dessem-fcf [OPTIONS] {case_dir}
+$ novomodelo-bridge export dessem [OPTIONS] {case_dir}
 ```
 
 **Arguments**:

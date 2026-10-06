@@ -102,8 +102,8 @@ def _make_pools_dict() -> dict[int, StageCutPool]:
     return {i: _make_pool(i) for i in range(3)}
 
 
-class TestExportDessemFcfCli:
-    """Tests for the export dessem-fcf CLI command."""
+class TestExportDessemCli:
+    """Tests for the export dessem CLI command."""
 
     @pytest.fixture
     def hydro_codes_file(self, tmp_path: Path) -> Path:
@@ -114,14 +114,14 @@ class TestExportDessemFcfCli:
         return path
 
     def test_help_shows_command(self) -> None:
-        """Test that help shows the dessem-fcf command."""
+        """Test that help shows the dessem command."""
         result = runner.invoke(app, ["export", "--help"])
         assert result.exit_code == 0
-        assert "dessem-fcf" in result.stdout
+        assert "dessem" in result.stdout
 
-    def test_dessem_fcf_help(self) -> None:
-        """Test dessem-fcf command help."""
-        result = runner.invoke(app, ["export", "dessem-fcf", "--help"])
+    def test_dessem_help(self) -> None:
+        """Test dessem command help."""
+        result = runner.invoke(app, ["export", "dessem", "--help"])
         assert result.exit_code == 0
         assert "--revision" in result.stdout
         assert "--hydro-codes" in result.stdout
@@ -135,7 +135,7 @@ class TestExportDessemFcfCli:
             app,
             [
                 "export",
-                "dessem-fcf",
+                "dessem",
                 str(tmp_path / "nonexistent"),
                 "--revision",
                 "rv0",
@@ -156,7 +156,7 @@ class TestExportDessemFcfCli:
             app,
             [
                 "export",
-                "dessem-fcf",
+                "dessem",
                 str(synthetic_case_dir),
                 "--revision",
                 "rv0",
@@ -196,7 +196,7 @@ class TestExportDessemFcfCli:
                 app,
                 [
                     "export",
-                    "dessem-fcf",
+                    "dessem",
                     str(synthetic_case_dir),
                     "--revision",
                     "rv0",
@@ -227,7 +227,7 @@ class TestExportDessemFcfCli:
             app,
             [
                 "export",
-                "dessem-fcf",
+                "dessem",
                 str(synthetic_case_dir),
                 "--revision",
                 "rv0",
@@ -274,7 +274,7 @@ class TestExportDessemFcfCli:
                 app,
                 [
                     "export",
-                    "dessem-fcf",
+                    "dessem",
                     str(synthetic_case_dir),
                     "--revision",
                     "rv0",
@@ -324,7 +324,7 @@ class TestExportDessemFcfCli:
                 app,
                 [
                     "export",
-                    "dessem-fcf",
+                    "dessem",
                     str(synthetic_case_dir),
                     "--revision",
                     "rv0",
@@ -365,7 +365,7 @@ class TestExportDessemFcfCli:
                 app,
                 [
                     "export",
-                    "dessem-fcf",
+                    "dessem",
                     str(synthetic_case_dir),
                     "--revision",
                     "rv0",
@@ -409,7 +409,7 @@ class TestExportDessemFcfCli:
                 app,
                 [
                     "export",
-                    "dessem-fcf",
+                    "dessem",
                     str(synthetic_case_dir),
                     "--revision",
                     "rv0",
@@ -455,7 +455,7 @@ class TestExportDessemFcfCli:
                 app,
                 [
                     "export",
-                    "dessem-fcf",
+                    "dessem",
                     str(synthetic_case_dir),
                     "--revision",
                     "rv0",

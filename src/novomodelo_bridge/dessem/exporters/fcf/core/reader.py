@@ -20,8 +20,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from Novomodelo.IO.Policy.CheckpointManifest import CheckpointManifest
-from Novomodelo.IO.Policy.StageCuts import StageCuts
+from novomodelo_bridge.novomodelo.flatbuffers.IO.Policy.CheckpointManifest import (
+    CheckpointManifest,
+)
+from novomodelo_bridge.novomodelo.flatbuffers.IO.Policy.StageCuts import StageCuts
 
 _LOG = logging.getLogger(__name__)
 

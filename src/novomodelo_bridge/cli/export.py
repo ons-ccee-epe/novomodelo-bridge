@@ -35,8 +35,8 @@ _DEFAULT_HYDRO_CODES = resources.files(
 
 
 @dataclass(frozen=True)
-class ExportDessemFcfArgs(CommonArgs):
-    """Options for ``export dessem-fcf``."""
+class ExportDessemArgs(CommonArgs):
+    """Options for ``export dessem``."""
 
     case_dir: Path
     revision: str
@@ -92,8 +92,8 @@ def _outputs_exist(output_dir: Path, revision: str) -> bool:
     )
 
 
-@export_app.command("dessem-fcf")
-def _export_dessem_fcf(
+@export_app.command("dessem")
+def _export_dessem(
     case_dir: Annotated[
         Path, typer.Argument(help="Path to the solved Novomodelo case directory.")
     ],
@@ -166,7 +166,7 @@ def _export_dessem_fcf(
     """
     _configure_logging(verbose, log_file)
 
-    args = ExportDessemFcfArgs(
+    args = ExportDessemArgs(
         case_dir=case_dir,
         revision=revision,
         output=output,
