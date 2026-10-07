@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.productivity import equivalent_productivity_from_coeffs
+from novomodelo_bridge.core.productivity import equivalent_productivity_from_coeffs
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 
 def _equivalent_productivity_mw_per_m3s(
@@ -87,7 +87,7 @@ def convert_energy_productivity(
 
     *exclude_codes* omits those plants from the emitted table — used for the
     ``hydro_energy_productivity.parquet`` write to drop the FPHA plants, which
-    carry ``model: "fpha"`` and would be a double-supply (cobre rejects a plant
+    carry ``model: "fpha"`` and would be a double-supply (novomodelo rejects a plant
     that has both a computed FPHA and a parquet ρ_eq). Left ``None`` (every
     plant emitted) the full list still feeds :func:`convert_penalties`' system
     ρ_avg/ρ_max, so the penalty scale is unchanged by the FPHA split. The
@@ -132,15 +132,15 @@ def convert_production_models(
     """Per-plant production-model selection.
 
     A plant in *fpha_configs* (``{code: fpha_config}``, from the pipeline via
-    :func:`cobre_bridge.decomp.converters.fpha.fitting_window`) is emitted as ``model:
-    "fpha"`` — cobre fits the production function from the plant geometry
+    :func:`novomodelo_bridge.decomp.converters.fpha.fitting_window`) is emitted as ``model:
+    "fpha"`` — novomodelo fits the production function from the plant geometry
     (``hydro_geometry.parquet``) + tailrace families (``tailrace_curves.parquet``)
     over the config's ``fitting_window`` — with its ``reference_volume`` (from
     *reference_volumes*, the initial-volume anchor) setting the FPHA reference /
     backwater level. Every other operated plant keeps ``constant_productivity``,
     its ρ_eq riding in ``hydro_energy_productivity.parquet``. *fpha_configs* and
     *reference_volumes* are pre-built by the pipeline so this module needs no
-    import from :mod:`cobre_bridge.decomp.converters.fpha` (which imports it).
+    import from :mod:`novomodelo_bridge.decomp.converters.fpha` (which imports it).
     """
     fpha_configs = fpha_configs or {}
     reference_volumes = reference_volumes or {}
@@ -163,6 +163,8 @@ def convert_production_models(
             }
         )
     return {
-        "$schema": cobre_schemas.schema_url_for("system/hydro_production_models.json"),
+        "$schema": novomodelo_schemas.schema_url_for(
+            "system/hydro_production_models.json"
+        ),
         "production_models": models,
     }

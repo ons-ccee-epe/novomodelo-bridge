@@ -1,17 +1,17 @@
 """Assemble and write the source model's boundary-cut checkpoint.
 
 The mapper (``fcf/mapper.py``) produces a :class:`MappingResult`
-of :class:`~cobre_bridge.decomp.fcf.mapper.MappedCut`, each already aligned
+of :class:`~novomodelo_bridge.decomp.fcf.mapper.MappedCut`, each already aligned
 to the terminal manifest's state-vector layout (``fcf/bootstrap.py``).
 This module assembles that pair into the plain-dict payload and
-metadata shapes ``cobre.write_policy_checkpoint`` expects, then calls it to
+metadata shapes ``novomodelo.write_policy_checkpoint`` expects, then calls it to
 produce ``boundary/{manifest.bin, cuts/<pool>.bin, basis/}`` — a raw,
-one-pool checkpoint (cobre 0.14 keys the cut file by pool id, not the old
+one-pool checkpoint (novomodelo 0.14 keys the cut file by pool id, not the old
 ``stage_NNN.bin``) the target case's ``config.json -> policy.boundary``
 loads.
 
 ``cost_scale_factor`` is the single most dangerous field in ``metadata``: if
-absent (``None``), cobre treats the checkpoint as legacy and silently scales
+absent (``None``), novomodelo treats the checkpoint as legacy and silently scales
 every value by 10⁶. :func:`build_metadata` therefore refuses to
 build a metadata dict without it.
 """
@@ -20,14 +20,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from cobre_bridge.decomp.fcf.bootstrap import ensure_writer_binding
+from novomodelo_bridge.decomp.fcf.bootstrap import ensure_writer_binding
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from cobre_bridge.decomp.fcf.bootstrap import TerminalManifest
-    from cobre_bridge.decomp.fcf.mapper import MappingResult
+    from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
+    from novomodelo_bridge.decomp.fcf.mapper import MappingResult
 
 
 def build_stage_cuts_payload(
@@ -47,7 +47,7 @@ def build_stage_cuts_payload(
     ``is_active`` are never re-synthesized — with ``slot_index`` set to the
     cut's dense 0-based position in the pool (its `enumerate` index here, not
     the source ``cut_id``). ``entity_manifest`` is `manifest.entity_manifest`
-    copied verbatim (never re-derived) so a future cobre layout change breaks
+    copied verbatim (never re-derived) so a future novomodelo layout change breaks
     loudly at load, not silently, and so each slot's own date fields
     (``reference_date``/``interval_start``/``interval_end``) round-trip.
     ``active_cut_indices`` lists the pool positions whose `MappedCut.is_active`
@@ -64,15 +64,15 @@ def build_stage_cuts_payload(
         If `node_id == -1` (the shared-pool sentinel is not a real single
         node), or if any `MappedCut.coefficients` length disagrees with
         `manifest.state_dimension` — the sentinel check runs before the cut
-        loop, the length check inside it, both before any cobre call.
+        loop, the length check inside it, both before any novomodelo call.
     RuntimeError
-        If `cost_scale_factor` is `None` — an unset marker makes cobre treat
+        If `cost_scale_factor` is `None` — an unset marker makes novomodelo treat
         this pool as legacy and silently scale every value by 10⁶.
     """
     if cost_scale_factor is None:
         raise RuntimeError(
             "cost_scale_factor must not be None: an unset marker makes "
-            "cobre treat this pool as legacy and silently scale every "
+            "novomodelo treat this pool as legacy and silently scale every "
             "value by 10⁶"
         )
     if node_id == -1:
@@ -100,7 +100,7 @@ def build_stage_cuts_payload(
                 "coefficients": list(mapped.coefficients),
                 "is_active": mapped.is_active,
                 # Inflow-lag gradient terms keyed by hydro (depth 1..N), placed by
-                # cobre's write_policy_checkpoint into the canonical HydroInflowLag
+                # novomodelo's write_policy_checkpoint into the canonical HydroInflowLag
                 # slots it reserves. Empty (the common case: the manifest already
                 # carried the lag slots, or the boundary prices no lag) — an empty
                 # map leaves the written checkpoint byte-identical.
@@ -145,7 +145,7 @@ def build_metadata(
 
     Checkpoint metadata is a small core (`created_at`, `num_stages`) plus a
     namespaced `producer` block carrying the algorithm-specific provenance.
-    The software identity is not a caller field: cobre stamps the writing
+    The software identity is not a caller field: novomodelo stamps the writing
     build's own `software` and `software_version`, and only that build loads
     the checkpoint. `state_dimension`
     is no longer a metadata field — it is per-pool, on each `stage_cuts` payload
@@ -154,21 +154,21 @@ def build_metadata(
     the caller supplies an ISO 8601 timestamp.
 
     `season_manifest` (the study-global `cycle_code`/`n_seasons`/`hydro_orders`
-    descriptor) is copied in when given, so cobre's season-compatibility gate
+    descriptor) is copied in when given, so novomodelo's season-compatibility gate
     accepts the boundary. Omitted (`None`), the key is left off entirely and
-    cobre defaults it to the absent descriptor — correct only for a seasonless
+    novomodelo defaults it to the absent descriptor — correct only for a seasonless
     loading study; the boundary-FCF importer always supplies the study's own.
 
     Raises
     ------
     RuntimeError
-        If `cost_scale_factor` is `None` — an unset marker makes cobre treat
+        If `cost_scale_factor` is `None` — an unset marker makes novomodelo treat
         the checkpoint as legacy and silently scale every value by 10⁶.
     """
     if cost_scale_factor is None:
         raise RuntimeError(
             "cost_scale_factor must not be None: an unset marker makes "
-            "cobre treat this checkpoint as legacy and silently scale "
+            "novomodelo treat this checkpoint as legacy and silently scale "
             "every value by 10⁶"
         )
     metadata: dict[str, Any] = {
@@ -196,31 +196,31 @@ def write_boundary_checkpoint(
     *,
     inflow_lag_depth: int = 0,
 ) -> None:
-    """Write `stage_cuts_payload` + `metadata` to `boundary_dir` via cobre.
+    """Write `stage_cuts_payload` + `metadata` to `boundary_dir` via novomodelo.
 
     Calls :func:`ensure_writer_binding` first (the environment gate), then
-    `cobre.write_policy_checkpoint(boundary_dir, [stage_cuts_payload], metadata,
+    `novomodelo.write_policy_checkpoint(boundary_dir, [stage_cuts_payload], metadata,
     inflow_lag_depth=inflow_lag_depth)` with `stage_bases`/`stage_states` left at
     their defaults — a raw-authored checkpoint carries neither, so
     `boundary_dir/basis/` is written empty and no `states/` directory is created.
 
-    ``inflow_lag_depth`` (when ``>= 1``) has cobre reserve that many canonical
+    ``inflow_lag_depth`` (when ``>= 1``) has novomodelo reserve that many canonical
     ``HydroInflowLag`` slots and place the cuts' ``inflow_lag_coefficients`` — the
     boundary then self-describes its lag depth. ``0`` (the default, and the
     storage-only case) reserves no slots, leaving the checkpoint byte-identical to
-    a no-lag boundary. The reservation is a cobre-side feature the pin and
-    :data:`~cobre_bridge.cobre.compat.MIN_COBRE_VERSION` floor guarantee is present.
+    a no-lag boundary. The reservation is a novomodelo-side feature the pin and
+    :data:`~novomodelo_bridge.novomodelo.compat.MIN_NOVOMODELO_VERSION` floor guarantee is present.
 
     Raises
     ------
     RuntimeError
-        Via `ensure_writer_binding`, if the installed `cobre` wheel lacks
+        Via `ensure_writer_binding`, if the installed `novomodelo` wheel lacks
         `write_policy_checkpoint`.
     """
     ensure_writer_binding()
-    import cobre
+    import novomodelo
 
-    cobre.write_policy_checkpoint(
+    novomodelo.write_policy_checkpoint(
         boundary_dir,
         [stage_cuts_payload],
         metadata,

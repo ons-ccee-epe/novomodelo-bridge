@@ -9,22 +9,22 @@ from typing import TYPE_CHECKING, NoReturn
 
 import typer
 
-from cobre_bridge.cli.args import ConvertArgs
-from cobre_bridge.cli.conversion_manifest import _write_conversion_manifest
-from cobre_bridge.cli.failure import _emit_convert_json, _fail
-from cobre_bridge.cli.validate import _run_cobre_validation
-from cobre_bridge.cli.verdict import (
+from novomodelo_bridge.cli.args import ConvertArgs
+from novomodelo_bridge.cli.conversion_manifest import _write_conversion_manifest
+from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
+from novomodelo_bridge.cli.validate import _run_novomodelo_validation
+from novomodelo_bridge.cli.verdict import (
     _convert_status,
     _convert_verdict_summary,
     build_verdict,
 )
-from cobre_bridge.core.errors import (
+from novomodelo_bridge.core.errors import (
     BridgeError,
     SourceFileError,
     diagnostic_from_exception,
 )
-from cobre_bridge.decomp.files import discover_decomp_files
-from cobre_bridge.ui.console import (
+from novomodelo_bridge.decomp.files import discover_decomp_files
+from novomodelo_bridge.ui.console import (
     conversion_progress,
     get_console,
     make_table,
@@ -38,8 +38,8 @@ if TYPE_CHECKING:
 
     from rich.console import Console
 
-    from cobre_bridge.core.conversion import ConversionReport
-    from cobre_bridge.core.diagnostics import Diagnostic
+    from novomodelo_bridge.core.conversion import ConversionReport
+    from novomodelo_bridge.core.diagnostics import Diagnostic
 
 
 def _handle_conversion_pipeline_failure(
@@ -113,9 +113,9 @@ def _write_diagnostics_json(
 
 def _run_newave_conversion(args: ConvertArgs) -> None:
     """Execute the convert newave subcommand."""
-    from cobre_bridge.core.conversion import clear_dst_contents
-    from cobre_bridge.newave.files import NewaveFiles
-    from cobre_bridge.newave.pipeline import (
+    from novomodelo_bridge.core.conversion import clear_dst_contents
+    from novomodelo_bridge.newave.files import NewaveFiles
+    from novomodelo_bridge.newave.pipeline import (
         CONVERSION_PHASE_LABELS,
         NEWAVE_CLEARED_ARTIFACTS,
         convert_newave_case,
@@ -242,7 +242,7 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
     # ``validation`` sub-object it folds under ``summary`` is populated first.
     validation_failed = False
     if args.validate:
-        validation_failed = _run_cobre_validation(
+        validation_failed = _run_novomodelo_validation(
             dst,
             command="convert newave",
             summary=summary,
@@ -300,9 +300,9 @@ def _render_dry_run_summary(
 
 #: Warning substring that marks the lag-blind stage shape
 #: (``state_variables.inflow_lags = false`` on every stage, alongside the
-#: positive inflow-lag depth cobre infers from the imported boundary policy) as
+#: positive inflow-lag depth novomodelo infers from the imported boundary policy) as
 #: deliberate external-solver interoperability, not a misconfiguration. Only
-#: fires once a boundary FCF is imported. Matched against cobre's stable
+#: fires once a boundary FCF is imported. Matched against novomodelo's stable
 #: substring, never the volatile message prefix, which would drift.
 _DECOMP_VALIDATION_WHITELIST: tuple[str, ...] = ("external-solver interoperability",)
 
@@ -316,7 +316,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
     verdict.
 
     A broad ``except Exception`` (rather than a fixed exception tuple) also
-    covers an ERROR-severity post-emission self-check finding (cobre rules
+    covers an ERROR-severity post-emission self-check finding (novomodelo rules
     43/41/45/38/36 + the block_id-range rule) — ``convert_decomp_case`` raises a
     ``ValueError`` naming the failing rule(s) and entities, mapped to exit 1
     like every other conversion failure.
@@ -329,17 +329,17 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
     or importer failure exits 1 via the same ``diagnostic_from_exception``
     mapping as a conversion failure. A successful import confirms the boundary
     FCF and records a ``summary["boundary_fcf"]`` sub-object; the boundary
-    loads automatically on a plain ``cobre run <case>``.
+    loads automatically on a plain ``novomodelo run <case>``.
 
     ``--validate`` runs after a successful conversion (and boundary-FCF
-    import) via the shared ``_run_cobre_validation`` helper (mirroring
+    import) via the shared ``_run_novomodelo_validation`` helper (mirroring
     ``convert newave``), with the DECOMP external-solver-interop whitelist so
     the deliberate ``inflow_lags=false`` shape never surfaces as a scary
     warning; a failed validation exits 2, giving ``convert decomp`` the same
     0/1/2 exit-code set as ``convert newave``.
     """
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.pipeline import (
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.pipeline import (
         DECOMP_CONVERSION_PHASE_LABELS,
         FcfInputs,
         convert_decomp_case,
@@ -448,7 +448,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
     )
 
     # Runs after the manifest write and BEFORE ``--validate`` so validation
-    # sees the patched ``config.json`` (``policy.boundary``); cobre infers the
+    # sees the patched ``config.json`` (``policy.boundary``); novomodelo infers the
     # inflow-lag depth from the boundary, so no ``state_space`` is written.
     # Cut-files-absent, the capability probe, and the importer all funnel
     # through this one broad ``except`` mapped to exit 1 (a conversion-step
@@ -479,14 +479,14 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
         )
     if fcf_cut_files_present:
         assert case is not None  # narrowed by fcf_cut_files_present
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         fcf_diags: list[Diagnostic] = []
         try:
-            from cobre_bridge.decomp.fcf.capability import (
+            from novomodelo_bridge.decomp.fcf.capability import (
                 ensure_boundary_fcf_capability,
             )
-            from cobre_bridge.decomp.fcf.importer import import_boundary_fcf
+            from novomodelo_bridge.decomp.fcf.importer import import_boundary_fcf
 
             ensure_boundary_fcf_capability()
 
@@ -495,9 +495,9 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
                     args.dst,
                     case,
                     work_dir=Path(work_dir),
-                    # Never None: a None cost_scale_factor triggers cobre's
+                    # Never None: a None cost_scale_factor triggers novomodelo's
                     # legacy 1e6 scaling — the source cuts are authored in
-                    # cobre's native scale already.
+                    # novomodelo's native scale already.
                     cost_scale_factor=1.0,
                     config=fcf_inputs.config,
                     initial_conditions=fcf_inputs.initial_conditions,
@@ -536,7 +536,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
         else:
             boundary_diagnostics = list(fcf_diags)
             print_status(
-                f"Boundary FCF imported. Run this case with: cobre run {args.dst}",
+                f"Boundary FCF imported. Run this case with: novomodelo run {args.dst}",
                 console=err_console,
             )
             summary["boundary_fcf"] = {
@@ -575,7 +575,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
 
     validation_failed = False
     if args.validate:
-        validation_failed = _run_cobre_validation(
+        validation_failed = _run_novomodelo_validation(
             args.dst,
             command="convert decomp",
             summary=summary,

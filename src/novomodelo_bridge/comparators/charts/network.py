@@ -1,21 +1,21 @@
-"""Network (line-interchange) tab chart: source-model vs Cobre net flow, per line."""
+"""Network (line-interchange) tab chart: source-model vs Novomodelo net flow, per line."""
 
 from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators.charts._shared import (
+from novomodelo_bridge.comparators.charts._shared import (
     _BAND_FILL,
     _BAND_LINE,
 )
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.core.tolerances import is_effectively_infinite
-from cobre_bridge.ui.html.plotly import facet_grid
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.core.tolerances import is_effectively_infinite
+from novomodelo_bridge.ui.html.plotly import facet_grid
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
 def line_summary_chart(
@@ -25,9 +25,9 @@ def line_summary_chart(
     line_meta: list[dict],
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Per-line small-multiples comparing the source model vs Cobre net flow.
+    """Per-line small-multiples comparing the source model vs Novomodelo net flow.
 
-    One panel per aligned line. Each panel shows the Cobre P10–P90 band, Cobre median,
+    One panel per aligned line. Each panel shows the Novomodelo P10–P90 band, Novomodelo median,
     and the source model mean, plus dashed upper/lower capacity bounds (direct /
     −reverse).
     """
@@ -35,10 +35,10 @@ def line_summary_chart(
     if not line_data:
         return "<p>No line interchange data available.</p>"
 
-    # Group by cobre_id.
+    # Group by novomodelo_id.
     by_line: dict[int, list[ResultComparison]] = {}
     for r in line_data:
-        by_line.setdefault(r.cobre_id, []).append(r)
+        by_line.setdefault(r.novomodelo_id, []).append(r)
     ordered_ids = sorted(by_line.keys())
 
     # Build per-line p10/p90 lookups from percentile data.
@@ -104,7 +104,7 @@ def line_summary_chart(
 
         stages = [r.stage for r in rows_list]
         nw = [r.newave_value for r in rows_list]
-        cb = [r.cobre_value for r in rows_list]
+        cb = [r.novomodelo_value for r in rows_list]
 
         # P10-P90 band.
         line_pct_map = pct_by_lid.get(lid, {})
@@ -124,7 +124,7 @@ def line_summary_chart(
                     "fill": "toself",
                     "fillcolor": _BAND_FILL,
                     "line": {"color": _BAND_LINE},
-                    "name": "Cobre P10–P90",
+                    "name": "Novomodelo P10–P90",
                     "hoverinfo": "skip",
                     "type": "scatter",
                     "xaxis": xa,
@@ -178,7 +178,7 @@ def line_summary_chart(
                 }
             )
 
-        # The source model + Cobre mean.
+        # The source model + Novomodelo mean.
         traces.append(
             {
                 "x": stages,
@@ -197,10 +197,10 @@ def line_summary_chart(
             {
                 "x": stages,
                 "y": cb,
-                "name": "Cobre Mean",
+                "name": "Novomodelo Mean",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
                 "xaxis": xa,
                 "yaxis": ya,
                 "legendgroup": "cb",

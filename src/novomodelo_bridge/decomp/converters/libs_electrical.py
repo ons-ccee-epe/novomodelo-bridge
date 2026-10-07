@@ -40,7 +40,7 @@ caller never has to re-derive which side/sign a term ended up on;
 :func:`evaluate_se` resolves a structural ``se(cond, X, Y)`` term the same
 way, reusing the activation-rule engine for ``cond``.
 
-Bucket C (``disp_usih``, available power) has no cobre decision-variable
+Bucket C (``disp_usih``, available power) has no novomodelo decision-variable
 counterpart, so it never stays structural: :func:`build_available_power`
 builds the maintenance-aware per-(plant,stage) :class:`AvailablePower`
 lookup and :func:`resolve_disp_usih` reads one plant's value from it;
@@ -67,10 +67,10 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.generic_constraint_format import sense_to_interval
-from cobre_bridge.decomp.converters.hydro import _rated_envelope
-from cobre_bridge.decomp.load import _per_stage_block_loads
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
+from novomodelo_bridge.decomp.converters.hydro import _rated_envelope
+from novomodelo_bridge.decomp.load import _per_stage_block_loads
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -78,11 +78,11 @@ if TYPE_CHECKING:
     from idecomp.decomp import Dadger
     from idecomp.libs.restricoes import Restricoes
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.group_bounds import GroupBoundEntry
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 #: DECOMP's unbounded-side sentinel on two-sided limit columns is exactly
 #: ``-1E+31``/``+1E+31``; anything at or beyond this magnitude means "no bound
@@ -142,7 +142,7 @@ class PeriodPatamarOverride:
 class ViolationTreatment:
     """One ``RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO`` row.
 
-    Maps to cobre's generic-constraint ``slack{enabled, penalty}`` shape:
+    Maps to novomodelo's generic-constraint ``slack{enabled, penalty}`` shape:
     ``enabled`` is ``True`` whenever the restriction carries an explicit
     treatment row (``penalty`` is that row's ``custo_violacao``, or ``None``
     when the row leaves it blank). Resolving the classic BIG-M default for a
@@ -655,10 +655,10 @@ class ParsedTerm:
 class AssembledBound:
     """The result of folding one restriction's bucket-B/-C terms into a
     per-(stage,block) numeric bound (:func:`assemble_bound`), sign-canonical
-    for cobre.
+    for novomodelo.
 
     ``terms`` is the surviving bucket-A (decision) expression, already in
-    cobre's single-LHS form: ``lower <= Σ terms <= upper``. Each of
+    novomodelo's single-LHS form: ``lower <= Σ terms <= upper``. Each of
     :func:`assemble_bound`'s three folds gets there differently — a FORMULA
     restriction's LHS bucket-A terms verbatim, a plain INEQUACAO's LHS
     bucket-A terms plus its RHS bucket-A terms moved over and sign-flipped,
@@ -955,10 +955,10 @@ def parse_linear_expression(
     never here); a ``se(cond, X, Y)`` conditional is kept as a single
     structural term with its condition and both branches unevaluated.
 
-    This is the source model's linear-expression grammar, not cobre's: the
+    This is the source model's linear-expression grammar, not novomodelo's: the
     parser never normalizes the relation (no RHS→LHS move, no same-token
     merge) — it preserves the author's side and term multiplicity verbatim;
-    cobre owns relational normalization.
+    novomodelo owns relational normalization.
 
     Raises
     ------
@@ -980,10 +980,10 @@ class Bucket(Enum):
     """Which of the source model's spec-§0 A/B/C trichotomy a parsed term
     belongs to.
 
-    - **A** — a cobre decision term: stays a structural LP term.
+    - **A** — a novomodelo decision term: stays a structural LP term.
     - **B** — an input-data term: the bridge evaluates it to a number and
       folds it into the bound.
-    - **C** — ``disp_usih``: cobre has no available-power ``VariableRef``, so
+    - **C** — ``disp_usih``: novomodelo has no available-power ``VariableRef``, so
       the bridge resolves it to a per-stage constant that rewrites the
       constraint form instead of emitting it as a structural LP term.
     """
@@ -993,7 +993,7 @@ class Bucket(Enum):
     C = "C"
 
 
-#: Bucket A (spec §0) — cobre decision tokens that stay structural LP terms.
+#: Bucket A (spec §0) — novomodelo decision tokens that stay structural LP terms.
 #: ``re(X)`` is not listed here: the parser already inlines a restriction
 #: reference into its own terms (multiplying through the enclosing
 #: coefficient), so no :class:`ParsedTerm` ever carries a bare ``"re"`` token.
@@ -1105,7 +1105,7 @@ class Comparison:
     ``left``/``right`` are the two operand sides, each a flat list of
     :class:`ParsedTerm` from :func:`parse_linear_expression`; every term on
     either side classifies as :attr:`Bucket.B` (:func:`parse_activation_rule`
-    enforces this — an activation rule gates on input data, never a cobre
+    enforces this — an activation rule gates on input data, never a novomodelo
     decision term). ``op`` is one of the six recognized comparison operators
     (spec §4a), verbatim.
     """
@@ -1234,7 +1234,7 @@ def _split_comparison(conjunct: str) -> tuple[str, str, str]:
 def _require_bucket_b(terms: Sequence[ParsedTerm], conjunct: str) -> None:
     """Raise ``ValueError`` naming the offending token when any *terms* is
     not bucket B — an activation-rule operand is always input data (spec
-    §4a), never a cobre decision term (bucket A) or the available-power
+    §4a), never a novomodelo decision term (bucket A) or the available-power
     bucket-C term."""
     for term in terms:
         if classify_term(term) is not Bucket.B:
@@ -1256,7 +1256,7 @@ def parse_activation_rule(text: str, model: LibsElectricalModel) -> ActivationRu
     input-data linear expressions that function already parses. Every
     resulting operand term must classify as :attr:`Bucket.B`
     (:func:`classify_term`); an activation rule gates on input data, never a
-    cobre decision term.
+    novomodelo decision term.
 
     This is the closed six-operator + ``&`` grammar verified against every
     rule in the source model's decks (spec §4a) — it has no ``|``
@@ -1438,7 +1438,7 @@ def build_data_context(
     cell, so it returns a **factory**: call the returned closure with a cell
     to get back the :data:`DataContext` scoped to it, ready to hand to
     :func:`assemble_bound`/:func:`evaluate_rule`. The submarket-demand map
-    (:func:`~cobre_bridge.decomp.load._per_stage_block_loads`) and the
+    (:func:`~novomodelo_bridge.decomp.load._per_stage_block_loads`) and the
     ``carga_ande`` series (:func:`read_carga_ande`) are each read once and
     captured — along with *model* — in the returned closure, rather than
     re-read per cell.
@@ -1538,7 +1538,7 @@ def evaluate_se(
     classified (:func:`classify_terms`). A selected branch is only safe to
     fold to a single float when it is
     entirely bucket B (input data): folding a branch that carries a
-    bucket-A (cobre decision) or bucket-C (``disp_usih``) term would fold
+    bucket-A (novomodelo decision) or bucket-C (``disp_usih``) term would fold
     that term into a plain number and silently drop it from the LP. ``se``
     does not appear on the target deck (spec §2b: gating is via
     ``REGRA-ATIVACAO``, not inline ``se()``), so this guard is defensive
@@ -1590,7 +1590,7 @@ def _fold_formula_bound(
     """Fold a FORMULA restriction's LHS bucket-B sum into its per-(stage,
     patamar) two-sided limit, keeping its LHS bucket-A terms verbatim as the
     surviving structural expression — a FORMULA restriction is already in
-    cobre's single-LHS ``lower <= expr <= upper`` shape, so no sign flip is
+    novomodelo's single-LHS ``lower <= expr <= upper`` shape, so no sign flip is
     ever needed here (spec §1).
 
     ``restriction.limits`` is looked up at an exact ``(stage_index,
@@ -1677,14 +1677,14 @@ def _fold_inequacao_bound(
 ) -> AssembledBound:
     """Fold an INEQUACAO restriction's bucket-B terms — both sides,
     sign-aware — into its operator's F3 interval, and move any RHS bucket-A
-    term onto the LHS, sign-flipped, so the surviving expression is cobre's
+    term onto the LHS, sign-flipped, so the surviving expression is novomodelo's
     single-LHS form (spec §1 — the A1 sign hazard's plain-INEQUACAO half:
     ``lhs op rhs`` with a bucket-A term on the RHS must not be read as if it
     were already on the LHS).
 
     Sums each side's bucket-B contribution (:func:`_evaluate_side`) and
     combines them with bucket-A normalized onto the LHS:
-    ``bound = Σ_{B∩RHS} − Σ_{B∩LHS}``. :func:`~cobre_bridge.
+    ``bound = Σ_{B∩RHS} − Σ_{B∩LHS}``. :func:`~novomodelo_bridge.
     generic_constraint_format.sense_to_interval` then maps *restriction*'s
     operator onto the F3 ``(lower, upper)`` shape (``>=`` lower-only, ``<=``
     upper-only, ``==`` both endpoints equal to *bound*).
@@ -1721,7 +1721,7 @@ def assemble_bound(
     """Fold *restriction*'s bucket-B (input-data) and bucket-C (``disp_usih``,
     available power) terms into its per-(stage,block) numeric bound, leaving
     only its bucket-A (decision) terms structural — and sign-canonical for
-    cobre — in the returned :class:`AssembledBound` (spec §4c; the bucket-C
+    novomodelo — in the returned :class:`AssembledBound` (spec §4c; the bucket-C
     fold is the reserve->gen-cap rewrite — see this module's header).
 
     Classifies *restriction.lhs* (and, for a FORMULA restriction, only
@@ -1772,7 +1772,7 @@ def assemble_bound(
         bucket-C term but *a_h* is ``None``, when a restriction uses
         ``disp_usih`` outside the documented reserve sign structure
         (:func:`_fold_reserve_disp_usih`'s CRITICAL-pitfall guard), or
-        propagated from :func:`~cobre_bridge.core.generic_constraint_format.
+        propagated from :func:`~novomodelo_bridge.core.generic_constraint_format.
         sense_to_interval` on an unrecognized INEQUACAO operator — none of
         these is the resolver-unresolvable case this function otherwise
         catches.
@@ -1914,11 +1914,11 @@ def active_cells(
 
     When the rule evaluates ``False`` in **every** in-horizonte cell, the
     returned set is empty and this function itself emits one
-    ``Severity.INFO`` :class:`~cobre_bridge.core.diagnostics.Diagnostic` naming
+    ``Severity.INFO`` :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` naming
     *restriction* (mirroring ``constraint_registers``'s dropped-restriction
     skip logging, as a diagnostic here rather than a bare log record).
     Raising it here keeps *active_cells* self-contained and directly
-    testable (via :func:`~cobre_bridge.core.diagnostics.collect`) — the caller
+    testable (via :func:`~novomodelo_bridge.core.diagnostics.collect`) — the caller
     simply adds no bound rows for an empty set and does not need to emit
     this diagnostic itself.
 
@@ -2071,13 +2071,13 @@ def build_available_power(
     effective: EffectiveCadastro,
 ) -> AvailablePower:
     """Build the :class:`AvailablePower` lookup (Requirement 1) from
-    :func:`~cobre_bridge.decomp.converters.hydro.bounds.
+    :func:`~novomodelo_bridge.decomp.converters.hydro.bounds.
     convert_hydro_group_availability`'s raw per-(hydro_id,
     hydro_unit_group_id, stage_id) *overlay*.
 
     Sums each entry's ``max_generation_mw`` across a plant's unit-groups per
     stage, re-keying the ``hydro_id`` it is stored under onto the plant's own
-    deck code (:meth:`~cobre_bridge.decomp.id_map.DecompIdMap.hydro_id`'s
+    deck code (:meth:`~novomodelo_bridge.decomp.id_map.DecompIdMap.hydro_id`'s
     inverse) — :func:`resolve_disp_usih` resolves a parsed ``disp_usih(code)``
     term by that same deck code, never by ``hydro_id``. A group with no entry
     at a given stage contributes nothing to the sum: *overlay* is sparse by
@@ -2088,8 +2088,8 @@ def build_available_power(
     what the :meth:`AvailablePower.resolve` fallback then supplies.
 
     Precomputes the FALLBACK tier for every declared hydro plant
-    (:attr:`~cobre_bridge.decomp.id_map.DecompIdMap.hydro_codes`) via
-    :func:`~cobre_bridge.decomp.converters.hydro.bounds._rated_envelope`'s
+    (:attr:`~novomodelo_bridge.decomp.id_map.DecompIdMap.hydro_codes`) via
+    :func:`~novomodelo_bridge.decomp.converters.hydro.bounds._rated_envelope`'s
     ``max_generation`` — the un-derated rated envelope — so
     :meth:`AvailablePower.resolve` never needs *hidr*/*effective* itself at
     resolve time.
@@ -2144,7 +2144,7 @@ def _flip_operator(sense: str) -> str:
     ------
     ValueError
         When *sense* is not one of ``">="``, ``"<="``, ``"=="`` — mirroring
-        :func:`~cobre_bridge.core.generic_constraint_format.sense_to_interval`.
+        :func:`~novomodelo_bridge.core.generic_constraint_format.sense_to_interval`.
     """
     if sense == ">=":
         return "<="

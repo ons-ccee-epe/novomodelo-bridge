@@ -16,43 +16,43 @@ from collections.abc import Callable
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.hydro_units import rated_capacity
-from cobre_bridge.core.pandas_utils import is_na
-from cobre_bridge.core.productivity import (
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.hydro_units import rated_capacity
+from novomodelo_bridge.core.pandas_utils import is_na
+from novomodelo_bridge.core.productivity import (
     KTURB_BY_TIPO_TURBINA,
     apply_hydraulic_loss,
     evaluate_cota,
     mean_cota,
 )
-from cobre_bridge.core.tolerances import BIG_M
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.hydro.geometry import (
+from novomodelo_bridge.core.tolerances import BIG_M
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.hydro.geometry import (
     _expansion_configs,
     _read_volref_saz,
 )
-from cobre_bridge.newave.converters.hydro.overrides import (
+from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
     _extract_temporal_overrides,
     _read_ghmin_per_stage,
     percent_of_useful_volume,
     read_cadastro,
 )
-from cobre_bridge.newave.converters.hydro.productivity import (
+from novomodelo_bridge.newave.converters.hydro.productivity import (
     _compute_productivity,
     _per_stage_productivities,
     _total_study_stages,
 )
-from cobre_bridge.newave.filling import (
+from novomodelo_bridge.newave.filling import (
     exph_unit_rows,
     filling_schedule,
     hreg_with_machines,
     online_machines,
 )
-from cobre_bridge.newave.horizon import seasonal_step_function
-from cobre_bridge.newave.id_map import NewaveIdMap
-from cobre_bridge.newave.plants import fictitious_codes, filling_hydro_codes
-from cobre_bridge.newave.switches import DgerSwitches, switch_off_diagnostic
+from novomodelo_bridge.newave.horizon import seasonal_step_function
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.plants import fictitious_codes, filling_hydro_codes
+from novomodelo_bridge.newave.switches import DgerSwitches, switch_off_diagnostic
 
 _LOG = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ def _compute_max_turbined_head_corrected(
     n·q_nom`` = 117.0 overshoots it by 3.5%). ``convert_hydros`` emits the flow value
     ``[0]`` as ``max_turbined``; the ``[1]`` it returns is the availability-derated
     power and is no longer used for the emitted ``max_generation`` (that comes from
-    :func:`~cobre_bridge.core.hydro_units.rated_capacity`).
+    :func:`~novomodelo_bridge.core.hydro_units.rated_capacity`).
 
     For each machine set *c* with nominal head ``h_nom_c``, nominal flow
     ``q_nom_c`` and number of units ``n_c``, the effective rated flow at
@@ -428,7 +428,7 @@ def convert_turbined_bounds_head_corrected(
 def _per_stage_turbined_envelope(
     case: NewaveCase, id_map: NewaveIdMap
 ) -> dict[int, float]:
-    """Return ``{cobre_hydro_id: max per-stage max_turbined_m3s}`` from the
+    """Return ``{novomodelo_hydro_id: max per-stage max_turbined_m3s}`` from the
     head-corrected per-stage table.
 
     Delegates to :func:`convert_turbined_bounds_head_corrected` — the exact
@@ -436,7 +436,7 @@ def _per_stage_turbined_envelope(
     ``hydro_bounds`` rows — instead of re-deriving the per-stage head. This is
     what lets :func:`convert_hydros` raise its declared
     ``generation.max_turbined_m3s`` to cover every emitted per-stage row
-    (cobre rule 43) with zero risk of the two ever drifting apart: they are
+    (novomodelo rule 43) with zero risk of the two ever drifting apart: they are
     two views of the same table, not two formulas that happen to agree today.
 
     Returns an empty dict when no plant has a per-stage head (no CFUGA/CMONT
@@ -470,7 +470,7 @@ def convert_water_withdrawal(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table 
     (matching ``confhd``), not a posto. Each plant may contribute multiple rows per
     stage (one per consumptive-use or remaining-flow component) which are summed before
     the sign is negated to convert the source model's "withdrawal = negative valor"
-    convention into Cobre's positive ``water_withdrawal_m3s``.
+    convention into Novomodelo's positive ``water_withdrawal_m3s``.
 
     Parameters
     ----------
@@ -493,7 +493,7 @@ def convert_water_withdrawal(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table 
 
     # Read dger upfront so the ``outros_usos_da_agua`` switch can short-circuit before
     # any dsvagua I/O. The source model treats 0 as "ignore dsvagua.dat" — mirror that
-    # here so Cobre's hydro_bounds match The source model's actual run instead of the
+    # here so Novomodelo's hydro_bounds match The source model's actual run instead of the
     # file contents.
     dger = case.dger
     if int(getattr(dger, "outros_usos_da_agua", 1) or 0) == 0:
@@ -562,7 +562,7 @@ def convert_water_withdrawal(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table 
         if stage_id < 0 or stage_id >= num_study_stages:
             continue
 
-        # Negate: The source model negative valor = withdrawal; Cobre positive =
+        # Negate: The source model negative valor = withdrawal; Novomodelo positive =
         # withdrawal.
         withdrawal = -float(row["valor"])
         key = (hydro_id, stage_id)
@@ -732,7 +732,7 @@ def convert_storage_bounds(
         *,
         seasonalize: bool,
     ) -> dict[int, float]:
-        """Thin adapter over :func:`cobre_bridge.newave.horizon.seasonal_step_function`:
+        """Thin adapter over :func:`novomodelo_bridge.newave.horizon.seasonal_step_function`:
         dated records become ``(year, month, value)`` change-points and
         ``PRE``/``POS`` records ``(month, value)`` steps.
         """
@@ -875,14 +875,14 @@ def convert_storage_bounds(
     # clamps every unit's online stage up to ``entry_sid``, so ``[0, entry_sid)``
     # (PreFilling/Filling) gets ``(0, 0)`` caps and ``[entry_sid, full_online_sid)``
     # gets reduced caps; from ``full_online_sid`` the base ``hydros.json`` caps apply.
-    # These rows are inert to cobre's own PreFilling/Filling forcing: its
+    # These rows are inert to novomodelo's own PreFilling/Filling forcing: its
     # ``hydro_bounds`` reader is a sparse override table with NO stage-window
     # validation, so a ``max=0`` row there leaves the simulation result UNCHANGED —
     # only the exported data gains the explicit 0-cap stages.  A ramp-window stage may
     # also carry a MODIF/GHMIN row; those append SEPARATE rows tagged ``is_ramp=True``,
     # and the de-dup pass below resolves any ``(hydro_id, stage_id)`` collision in
     # favour of the ramp row (the explicit 0-cap wins over a colliding MODIF/GHMIN
-    # minimum), since cobre defers duplicate-pair handling.
+    # minimum), since novomodelo defers duplicate-pair handling.
     if filling_codes and case.exph is not None:
         exph_df = case.exph.expansoes
         for code in sorted(filling_codes):
@@ -970,7 +970,7 @@ def convert_storage_bounds(
     }
     # Gate the column on a filling or expanding plant: a case with neither keeps
     # the 8-column schema byte-identical (the regression guard depends on this);
-    # cobre's parse_hydro_bounds tolerates the absent column.
+    # novomodelo's parse_hydro_bounds tolerates the absent column.
     if filling_codes or expansion:
         columns["max_generation_mw"] = pa.array(max_generation_vals, type=pa.float64())
     return pa.table(columns).sort_by(

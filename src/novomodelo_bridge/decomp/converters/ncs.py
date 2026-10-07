@@ -28,8 +28,8 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,12 +37,12 @@ if TYPE_CHECKING:
     from idecomp.decomp import Dadger
     from idecomp.libs import Renovaveis
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _INVARIANT_RTOL = 1e-9
-# TRACKED COBRE-GAP WORKAROUND (C1, the cobre repository's
+# TRACKED NOVOMODELO-GAP WORKAROUND (C1, the novomodelo repository's
 # conversion-found-improvements registry): the schema requires factors > 0,
 # but a zero-generation block (solar at the light patamar) is real data.
 # Remove the clamp when factor >= 0 is accepted.
@@ -159,7 +159,9 @@ def convert_non_controllable_sources(
         for s in _all_series(case.dadger, id_map, calendar, case.renovaveis)
     ]
     return {
-        "$schema": cobre_schemas.schema_url_for("system/non_controllable_sources.json"),
+        "$schema": novomodelo_schemas.schema_url_for(
+            "system/non_controllable_sources.json"
+        ),
         "non_controllable_sources": entries,
     }
 
@@ -179,7 +181,7 @@ def convert_ncs_stats(
             mean_mw = _stage_mean_mw(s.per_stage_blocks[stage.index], stage)
             ncs_ids.append(s.ncs_id)
             stage_ids.append(stage.index)
-            # TRACKED COBRE-GAP WORKAROUND (C2): the [0, 1] bound rejects
+            # TRACKED NOVOMODELO-GAP WORKAROUND (C2): the [0, 1] bound rejects
             # 1 + ulp when the stage mean IS the maximum; clamp until the
             # load-side check tolerates it.
             means.append(0.0 if max_gen == 0.0 else min(mean_mw / max_gen, 1.0))
@@ -252,7 +254,7 @@ def convert_ncs_factors(
             _MIN_FACTOR,
         )
     return {
-        "$schema": cobre_schemas.schema_url_for(
+        "$schema": novomodelo_schemas.schema_url_for(
             "scenarios/non_controllable_factors.json"
         ),
         "non_controllable_factors": entries,

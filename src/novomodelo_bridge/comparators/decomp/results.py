@@ -1,7 +1,7 @@
-"""Side-by-side comparison of a DECOMP run against its converted Cobre run.
+"""Side-by-side comparison of a DECOMP run against its converted Novomodelo run.
 
 This is the minimal slice: it aligns the source model's shipped operation
-tables (``dec_oper_*.csv``, directly in the deck directory) onto Cobre's
+tables (``dec_oper_*.csv``, directly in the deck directory) onto Novomodelo's
 simulation output and reports
 per-variable divergence. No tolerance verdict and no HTML — the point is that
 both sides are read, aligned, and compared on the same quantities.
@@ -27,7 +27,7 @@ Three conventions, each chosen so neither side is silently privileged:
   identically that row's value, so only a genuine scenario fan's aggregate
   changes; a deck with no ``relato``/``relato2`` probability source at all
   degrades to :func:`_scenario_mean`'s original unweighted mean rather than
-  raising. cobre's per-stage statistics are already an expectation over its
+  raising. novomodelo's per-stage statistics are already an expectation over its
   own (equiprobable) simulation scenarios, so the two sides stay comparable.
   **The Overview operating cost** (:func:`_cost_frames`) predates this and
   keeps its own, independent path: it reads the same real ``probabilidade``
@@ -35,7 +35,7 @@ Three conventions, each chosen so neither side is silently privileged:
   :func:`_probability_weighted_stage_cost`, rather than joining in
   :func:`_scenario_probabilities`'s lookup.
 - **Storage is compared as useful volume.** The source model reports useful
-  volume; Cobre's ``storage_final_hm3`` is absolute, so the registry's
+  volume; Novomodelo's ``storage_final_hm3`` is absolute, so the registry's
   ``min_storage_hm3`` is subtracted before comparing.
 
 Entities the id map cannot resolve are counted and reported, never dropped in
@@ -53,10 +53,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from cobre_bridge.cobre import readers as cobre_readers
-from cobre_bridge.cobre.case_io import case_dir_for
-from cobre_bridge.comparators import fpha
-from cobre_bridge.comparators.decomp.readers import (
+from novomodelo_bridge.comparators import fpha
+from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_desvfpha,
     read_dec_estatfpha,
     read_dec_oper_evap,
@@ -73,31 +71,33 @@ from cobre_bridge.comparators.decomp.readers import (
     read_relato_costs,
     read_relato_membership,
 )
-from cobre_bridge.comparators.model import PercentileData, ResultComparison
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.novomodelo import readers as novomodelo_readers
+from novomodelo_bridge.novomodelo.case_io import case_dir_for
 
 if TYPE_CHECKING:
-    from cobre_bridge.comparators.dataset import ComparisonDataset
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.constraint_registers import (
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.constraint_registers import (
         ConstraintRecord,
         ConstraintTerm,
     )
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
 
 #: Minimum turbined flow (m³/s) for the derived gen/turbined productivity
 #: to be meaningful -- mirrors
-#: :data:`cobre_bridge.comparators.newave.results._PRODUCTIVITY_TURB_EPS`: near-zero
+#: :data:`novomodelo_bridge.comparators.newave.results._PRODUCTIVITY_TURB_EPS`: near-zero
 #: turbining makes generation/turbined an undefined 0/0 on both sides.
 _PRODUCTIVITY_TURBINED_EPS: float = 1.0e-6
 
-#: cobre's ``stored_energy_final_mwh`` is MWh; the source model's
+#: novomodelo's ``stored_energy_final_mwh`` is MWh; the source model's
 #: own REE ``earm_final_MWmes`` is MWmês (average MW sustained over a month).
 #: 730 h/month is the same implicit hours-per-month convention
 #: `report_builder`'s Energy Balance chart already applies to the SIN-total
-#: EARM overlay (``cobre_aggregate_chart(..., nw_factor=730.0, ...)``) --
+#: EARM overlay (``novomodelo_aggregate_chart(..., nw_factor=730.0, ...)``) --
 #: reused here rather than re-derived so the two EARM reconciliations never
 #: drift apart.
 _EARM_MWH_TO_MWMES: float = 730.0
@@ -110,7 +110,7 @@ class _Variable:
     level: str
     name: str
     source_column: str
-    cobre_column: str
+    novomodelo_column: str
     unit: str
 
 
@@ -326,22 +326,24 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
     )
 
 
-def _result_diff(nw_value: float, cobre_value: float) -> tuple[float, float | None]:
+def _result_diff(
+    nw_value: float, novomodelo_value: float
+) -> tuple[float, float | None]:
     """Absolute and relative difference for one ``ResultComparison`` row.
 
-    Mirrors :func:`cobre_bridge.comparators.newave.results._compute_diff` exactly, so
+    Mirrors :func:`novomodelo_bridge.comparators.newave.results._compute_diff` exactly, so
     the two per-variable stat kernels in play here (this module's own tidy
     rows and the shared ``ResultComparison`` one) agree on what "the
     difference" means.
     """
-    abs_diff = abs(nw_value - cobre_value)
+    abs_diff = abs(nw_value - novomodelo_value)
     rel_diff = abs_diff / abs(nw_value) if abs(nw_value) > 1e-10 else None
     return abs_diff, rel_diff
 
 
 def _result_comparisons(
     source: pl.DataFrame,
-    cobre: pl.DataFrame,
+    novomodelo: pl.DataFrame,
     variables: tuple[_Variable, ...],
     *,
     names: dict[int, str],
@@ -349,19 +351,20 @@ def _result_comparisons(
     """Join one level's two frames into ``ResultComparison`` rows.
 
     Emits the canonical
-    :class:`~cobre_bridge.comparators.model.ResultComparison` shape
+    :class:`~novomodelo_bridge.comparators.model.ResultComparison` shape
     :func:`build_decomp_dataset` hands to
-    :func:`cobre_bridge.comparators.analyze.build_results_dataset`, keyed by
+    :func:`novomodelo_bridge.comparators.analyze.build_results_dataset`, keyed by
     :data:`_CANONICAL_VARIABLE`.
     """
-    joined = source.join(cobre, on=["entity_id", "stage_id"], how="inner")
+    joined = source.join(novomodelo, on=["entity_id", "stage_id"], how="inner")
     if joined.is_empty():
         return []
 
     applicable = [
         var
         for var in variables
-        if var.source_column in joined.columns and var.cobre_column in joined.columns
+        if var.source_column in joined.columns
+        and var.novomodelo_column in joined.columns
     ]
     if not applicable:
         return []
@@ -374,22 +377,22 @@ def _result_comparisons(
         entity_name = names.get(entity_id, "")
         for var in applicable:
             nw_val = row[var.source_column]
-            cobre_val = row[var.cobre_column]
-            if nw_val is None or cobre_val is None:
+            novomodelo_val = row[var.novomodelo_column]
+            if nw_val is None or novomodelo_val is None:
                 continue
             nw_value = float(nw_val)
-            cobre_value = float(cobre_val)
-            abs_diff, rel_diff = _result_diff(nw_value, cobre_value)
+            novomodelo_value = float(novomodelo_val)
+            abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
             results.append(
                 ResultComparison(
                     entity_type=var.level,
                     entity_name=entity_name,
                     newave_code=newave_code,
-                    cobre_id=entity_id,
+                    novomodelo_id=entity_id,
                     stage=stage,
                     variable=_CANONICAL_VARIABLE[(var.level, var.name)],
                     newave_value=nw_value,
-                    cobre_value=cobre_value,
+                    novomodelo_value=novomodelo_value,
                     abs_diff=abs_diff,
                     rel_diff=rel_diff,
                 )
@@ -405,10 +408,10 @@ def _hydro_productivity_results(
     Consumes the ``generation_mw``/``turbined_m3s`` hydro
     ``ResultComparison`` rows :func:`_result_comparisons` already produced
     (the source values come from ``dec_oper_usih``'s stage-aggregate
-    rows, the Cobre values from the cobre hydro means, joined on the
+    rows, the Novomodelo values from the novomodelo hydro means, joined on the
     id-map-resolved ``(entity_id, stage_id)`` pair) -- so this reuses that
     exact alignment/restriction instead of a separate lookup or filter.
-    Mirrors :mod:`cobre_bridge.comparators.newave.results`'s own ``_compare_hydros``
+    Mirrors :mod:`novomodelo_bridge.comparators.newave.results`'s own ``_compare_hydros``
     productivity derivation. TRACKED zero-guard semantics: a plant/stage
     where either side's turbined flow is at/near zero -- or one side's row is
     simply absent -- is DROPPED, never null-kept, matching the NEWAVE-side
@@ -418,7 +421,7 @@ def _hydro_productivity_results(
     Returns a list meant to be appended onto the caller's main ``results``
     list, not held separately: there is no dedicated ``PercentileData``
     field for the per-stage productivity frame --
-    :func:`cobre_bridge.comparators.analyze.build_results_dataset` derives
+    :func:`novomodelo_bridge.comparators.analyze.build_results_dataset` derives
     ``dataset.metadata["productivity_per_stage"]`` by filtering the *same*
     ``results`` list it was handed for ``entity_type == "hydro"`` /
     ``variable == "productivity_mw_per_m3s"`` rows.
@@ -432,15 +435,15 @@ def _hydro_productivity_results(
         if r.variable == "generation_mw":
             generation[key] = (
                 r.newave_value,
-                r.cobre_value,
-                r.cobre_id,
+                r.novomodelo_value,
+                r.novomodelo_id,
                 r.entity_name,
             )
         elif r.variable == "turbined_m3s":
-            turbined[key] = (r.newave_value, r.cobre_value)
+            turbined[key] = (r.newave_value, r.novomodelo_value)
 
     productivity: list[ResultComparison] = []
-    for key, (nw_gen, cb_gen, cobre_id, name) in sorted(generation.items()):
+    for key, (nw_gen, cb_gen, novomodelo_id, name) in sorted(generation.items()):
         turb = turbined.get(key)
         if turb is None:
             continue
@@ -452,18 +455,18 @@ def _hydro_productivity_results(
             continue
         nw_code, stage = key
         nw_value = nw_gen / nw_turb
-        cobre_value = cb_gen / cb_turb
-        abs_diff, rel_diff = _result_diff(nw_value, cobre_value)
+        novomodelo_value = cb_gen / cb_turb
+        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
         productivity.append(
             ResultComparison(
                 entity_type="hydro",
                 entity_name=name,
                 newave_code=nw_code,
-                cobre_id=cobre_id,
+                novomodelo_id=novomodelo_id,
                 stage=stage,
                 variable="productivity_mw_per_m3s",
                 newave_value=nw_value,
-                cobre_value=cobre_value,
+                novomodelo_value=novomodelo_value,
                 abs_diff=abs_diff,
                 rel_diff=rel_diff,
             )
@@ -476,9 +479,9 @@ def reconcile_kdollars_to_reais(value: float) -> float:
 
     Every cost the source model reports — `read_relato_costs`,
     `read_relato_expected_cost`, `read_dec_oper_gnl`'s ``custo_geracao`` — is
-    in k$ (thousands of BRL), while cobre reports costs in R$. Silently
+    in k$ (thousands of BRL), while novomodelo reports costs in R$. Silently
     mixing the two is the same unit trap documented in
-    `project_decomp_fcf_unit_conversion_bug`: cobre's boundary FCF coefficients
+    `project_decomp_fcf_unit_conversion_bug`: novomodelo's boundary FCF coefficients
     were consumed verbatim in k$ against a R$-denominated model, undervaluing
     water by three orders of magnitude. This helper is the single conversion
     site — readers stay in native k$, and callers convert once, explicitly.
@@ -491,8 +494,8 @@ def reconcile_kdollars_to_reais(value: float) -> float:
 
 
 #: Canonical convergence-chart schema -- matches
-#: :func:`cobre_readers.read_cobre_convergence`'s own return schema exactly,
-#: so :func:`~cobre_bridge.comparators.charts.convergence_chart` can read
+#: :func:`novomodelo_readers.read_novomodelo_convergence`'s own return schema exactly,
+#: so :func:`~novomodelo_bridge.comparators.charts.convergence_chart` can read
 #: either side without a source-specific branch.
 _CONVERGENCE_SCHEMA: dict[str, type[pl.DataType]] = {
     "iteration": pl.Int64,
@@ -506,18 +509,18 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
 
     Renames ``relato.convergencia``'s ``iteracao``/``zinf``/
     ``zsup`` onto the ``iteration``/``lower_bound``/``upper_bound_mean``
-    columns :func:`cobre_readers.read_cobre_convergence` emits -- the shape
-    :func:`~cobre_bridge.comparators.charts.convergence_chart` reads on each
+    columns :func:`novomodelo_readers.read_novomodelo_convergence` emits -- the shape
+    :func:`~novomodelo_bridge.comparators.charts.convergence_chart` reads on each
     side separately (not a per-iteration join shape). The
     iteration axis stays 1-based as reported, no offset -- the chart plots
     it directly. ``zinf``/``zsup`` are native k$ and are reconciled to R$
     (:func:`reconcile_kdollars_to_reais`, x1e3) so the bounds are
-    unit-comparable to cobre's R$-denominated convergence.
+    unit-comparable to novomodelo's R$-denominated convergence.
 
     A missing/empty relato (``read_relato_convergence`` raising
     ``FileNotFoundError``/``ValueError``) degrades to an empty frame with
     this same canonical schema instead of aborting
-    :func:`build_decomp_dataset` -- the chart then renders Cobre-only.
+    :func:`build_decomp_dataset` -- the chart then renders Novomodelo-only.
     """
     try:
         source = read_relato_convergence(decomp_dir)
@@ -526,9 +529,9 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
         return pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
 
     columns = {c.lower(): c for c in source.columns}
-    # zinf/zsup are native k$ (like every DECOMP cost); cobre's bounds are R$.
+    # zinf/zsup are native k$ (like every DECOMP cost); novomodelo's bounds are R$.
     # Convert once via the shared factor (x1e3) so the two convergence lines are
-    # unit-comparable -- without it the DECOMP bounds sit ~1000x below cobre's.
+    # unit-comparable -- without it the DECOMP bounds sit ~1000x below novomodelo's.
     k_to_r = reconcile_kdollars_to_reais(1.0)
     return source.select(
         pl.col(columns["iteracao"]).cast(pl.Int64).alias("iteration"),
@@ -599,12 +602,12 @@ def _bus_side(
     return _map_entities(aggregated, "codigo_submercado", id_map_bus)
 
 
-# --- interchange corridor -> cobre line alignment ---
+# --- interchange corridor -> novomodelo line alignment ---
 #
 # DECOMP publishes exchange per submarket-pair corridor (``dec_oper_interc``);
-# the converted case publishes it per directed cobre line
+# the converted case publishes it per directed novomodelo line
 # (``system/lines.json``, read as ``net_flow_mw`` by
-# ``cobre_readers.read_cobre_line_means``). Usually one corridor -> one line,
+# ``novomodelo_readers.read_novomodelo_line_means``). Usually one corridor -> one line,
 # but the converter-created transhipment bus
 # (``DecompIdMap.transhipment_bus_id``) can realize a corridor as a pair of
 # legs; this block reconciles the two.
@@ -620,7 +623,9 @@ def _bus_side(
 #   ``intercambio_destino_MW``/``perdas_MW``.
 
 
-def _read_cobre_lines_index(cobre_output_dir: Path) -> dict[tuple[int, int], int]:
+def _read_novomodelo_lines_index(
+    novomodelo_output_dir: Path,
+) -> dict[tuple[int, int], int]:
     """``{(source_bus_id, target_bus_id): line_id}`` from ``system/lines.json``.
 
     A missing ``system/lines.json`` -- e.g. a case predating the ``IA``
@@ -628,7 +633,7 @@ def _read_cobre_lines_index(cobre_output_dir: Path) -> dict[tuple[int, int], int
     -- yields an empty index rather than raising: :func:`_corridor_line_alignment`
     then resolves nothing, and :func:`_interc_side` reports every corridor as
     unresolved instead of failing the comparison (the Network tab degrades to
-    empty). Built from :func:`cobre_readers.read_cobre_lines`'s raw ``"lines"``
+    empty). Built from :func:`novomodelo_readers.read_novomodelo_lines`'s raw ``"lines"``
     list -- this function owns only the bus-pair index transform.
 
     [ASSUMPTION] (star topology): more than one
@@ -639,7 +644,7 @@ def _read_cobre_lines_index(cobre_output_dir: Path) -> dict[tuple[int, int], int
     """
     index: dict[tuple[int, int], int] = {}
     ambiguous: set[tuple[int, int]] = set()
-    for line in cobre_readers.read_cobre_lines(cobre_output_dir):
+    for line in novomodelo_readers.read_novomodelo_lines(novomodelo_output_dir):
         key = (int(line["source_bus_id"]), int(line["target_bus_id"]))
         if key in index:
             ambiguous.add(key)
@@ -648,7 +653,7 @@ def _read_cobre_lines_index(cobre_output_dir: Path) -> dict[tuple[int, int], int
     for key in ambiguous:
         index.pop(key, None)
         _LOG.warning(
-            "Multiple cobre lines declared for bus pair %s; excluding it from "
+            "Multiple novomodelo lines declared for bus pair %s; excluding it from "
             "the corridor alignment instead of guessing which line applies",
             key,
         )
@@ -660,10 +665,10 @@ def _resolve_leg(
 ) -> tuple[int, int] | None:
     """Return the ``(line_id, sign)`` leg realizing flow ``bus_a -> bus_para``.
 
-    ``sign`` orients the cobre line's own ``source_bus_id -> target_bus_id``
+    ``sign`` orients the novomodelo line's own ``source_bus_id -> target_bus_id``
     convention onto the requested direction: ``+1`` when a line already runs
     ``bus_a -> bus_para``, ``-1`` when the matching line runs the reverse.
-    ``None`` when no cobre line connects the pair in either direction.
+    ``None`` when no novomodelo line connects the pair in either direction.
     """
     line_id = lines_index.get((bus_a, bus_para))
     if line_id is not None:
@@ -675,16 +680,16 @@ def _resolve_leg(
 
 
 def _corridor_line_alignment(
-    cobre_output_dir: Path, id_map: DecompIdMap
+    novomodelo_output_dir: Path, id_map: DecompIdMap
 ) -> dict[tuple[int, int], list[tuple[int, int]]]:
-    """Map every resolvable DECOMP corridor onto its cobre line leg(s).
+    """Map every resolvable DECOMP corridor onto its novomodelo line leg(s).
 
-    Keyed by cobre bus-id pair ``(bus_de, bus_para)`` -- built over every
+    Keyed by novomodelo bus-id pair ``(bus_de, bus_para)`` -- built over every
     ordered pair of *declared* subsystem buses (the transhipment bus is
     never a corridor endpoint in its own right, D-UNITS) -- to the ordered
-    list of cobre ``(line_id, sign)`` legs realizing it:
+    list of novomodelo ``(line_id, sign)`` legs realizing it:
 
-    - a single leg when a direct cobre line connects the pair, in either
+    - a single leg when a direct novomodelo line connects the pair, in either
       direction (requirement 3's "direct" branch);
     - else the two-leg ``bus_de -> transhipment_bus_id -> bus_para`` path,
       when both legs exist (requirement 3's transhipment branch);
@@ -701,7 +706,7 @@ def _corridor_line_alignment(
     reconciliation assumes the converted case's exchange topology is a star
     through the transhipment bus, with at most one ``de<->IV<->para`` path
     per corridor -- guaranteed structurally here since ``DecompIdMap`` has
-    exactly one transhipment bus and :func:`_read_cobre_lines_index` drops
+    exactly one transhipment bus and :func:`_read_novomodelo_lines_index` drops
     (rather than arbitrarily picks) any bus pair wired by more than one
     line. Alternatives considered: (a) direct submarket-pair match only --
     fails on the star topology, rejected; (b) transhipment-aware two-leg
@@ -714,7 +719,7 @@ def _corridor_line_alignment(
     known limitation of the star assumption, not something this function
     reconciles further.
     """
-    lines_index = _read_cobre_lines_index(cobre_output_dir)
+    lines_index = _read_novomodelo_lines_index(novomodelo_output_dir)
     if not lines_index:
         return {}
 
@@ -739,12 +744,12 @@ def _corridor_line_alignment(
 
 def _interc_side(
     decomp_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     id_map: DecompIdMap,
     *,
     probabilities: pl.DataFrame | None = None,
 ) -> tuple[pl.DataFrame, list[tuple[int, int]]]:
-    """Per-(cobre ``line_id``, 0-based stage) DECOMP interchange net-flow.
+    """Per-(novomodelo ``line_id``, 0-based stage) DECOMP interchange net-flow.
 
     Folds ``dec_oper_interc`` the way every other ``_*_side`` helper folds
     its table -- :func:`_stage_rows`'s patamar-null aggregate, then
@@ -753,7 +758,7 @@ def _interc_side(
     :func:`_hydro_side`), here keyed
     by the corridor's composite ``(codigo_submercado_de,
     codigo_submercado_para)`` pair rather than a single entity code -- aligns
-    each corridor onto its cobre line leg(s) via
+    each corridor onto its novomodelo line leg(s) via
     :func:`_corridor_line_alignment`, and orients the net-flow value to each
     leg's ``sign``. ``estagio - 1`` rebases the 1-based DECOMP stage the same
     way :func:`_map_entities` does for every other level.
@@ -761,7 +766,7 @@ def _interc_side(
     The net-flow value is ``intercambio_origem_MW`` -- the flow measured at
     the corridor's origin, already in its own ``de -> para`` direction.
     ``perdas_MW`` (transmission losses) is read as part of the same fold but
-    intentionally NOT subtracted from it: a cobre line has no loss model (its
+    intentionally NOT subtracted from it: a novomodelo line has no loss model (its
     ``net_flow_mw`` is a single, lossless figure -- see
     ``decomp/converters/network.py::convert_lines``), so the origin-side reading, not
     the post-loss ``intercambio_destino_MW``, is the one quantity comparable
@@ -777,11 +782,11 @@ def _interc_side(
 
     The source model reports every physical interface as two corridor rows,
     one per direction (e.g. both ``SE -> S`` and ``S -> SE``); both align
-    onto the very same cobre line leg with opposite ``sign``. The
+    onto the very same novomodelo line leg with opposite ``sign``. The
     per-``(entity_id, stage_id)`` rows built above are therefore grouped and
     summed before being returned, collapsing each pair down to one row equal
     to ``flow(de -> para) - flow(para -> de)`` -- exactly the net figure a
-    lossless cobre line's own ``net_flow_mw`` represents. The same grouping
+    lossless novomodelo line's own ``net_flow_mw`` represents. The same grouping
     also nets more than one corridor's contribution onto a shared two-leg
     transhipment leg (the star-topology "shared leg" case) instead of
     colliding as duplicate ``(entity_id, stage_id)`` keys.
@@ -804,7 +809,7 @@ def _interc_side(
     if aggregated.is_empty():
         return empty, []
 
-    alignment = _corridor_line_alignment(cobre_output_dir, id_map)
+    alignment = _corridor_line_alignment(novomodelo_output_dir, id_map)
 
     unresolved: set[tuple[int, int]] = set()
     rows: list[dict[str, float | int]] = []
@@ -870,7 +875,7 @@ def _interc_side(
 
 
 def _line_entity_names(line_meta: list[dict], id_map: DecompIdMap) -> dict[int, str]:
-    """Display name per cobre line id, straight from ``lines.json``'s own
+    """Display name per novomodelo line id, straight from ``lines.json``'s own
     ``name`` field (built by ``decomp/converters/network.py::convert_lines`` as
     ``f"{pair[0]}-{pair[1]}"``).
 
@@ -895,16 +900,16 @@ def _line_entity_names(line_meta: list[dict], id_map: DecompIdMap) -> dict[int, 
 
 def _line_result_comparisons(
     decomp_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     id_map: DecompIdMap | None,
     line_meta: list[dict],
     *,
     probabilities: pl.DataFrame | None = None,
 ) -> tuple[list[ResultComparison], list[list[int]]]:
-    """Join the aligned DECOMP line flow onto Cobre's per-line means.
+    """Join the aligned DECOMP line flow onto Novomodelo's per-line means.
 
-    Mirrors :func:`_result_comparisons`'s join shape, but keyed by cobre line
-    id rather than a source-model entity code: a single cobre line can be the
+    Mirrors :func:`_result_comparisons`'s join shape, but keyed by novomodelo line
+    id rather than a source-model entity code: a single novomodelo line can be the
     shared leg of more than one corridor under the star topology (the
     two-leg transhipment path), so ``newave_code`` -- unlike every other
     level's rows -- carries no single canonical source-model code; it stays
@@ -915,7 +920,7 @@ def _line_result_comparisons(
 
     Returns ``([], [])`` when the deck could not be read (*id_map* is
     ``None``) or the source-model interchange table is unavailable, and
-    ``([], unresolved)`` when corridors resolve but the join with Cobre's own
+    ``([], unresolved)`` when corridors resolve but the join with Novomodelo's own
     per-line means produces no row -- matching :func:`_interc_side`'s own
     never-silently-drop convention for unresolved corridors.
     """
@@ -923,21 +928,23 @@ def _line_result_comparisons(
         return [], []
     try:
         source_lines, unresolved = _interc_side(
-            decomp_dir, cobre_output_dir, id_map, probabilities=probabilities
+            decomp_dir, novomodelo_output_dir, id_map, probabilities=probabilities
         )
     except (FileNotFoundError, ValueError) as exc:
         _LOG.info("No source-model interchange table for line alignment: %s", exc)
         return [], []
 
     unresolved_lists = [list(pair) for pair in unresolved]
-    cobre_lines = cobre_readers.read_cobre_line_means(cobre_output_dir)
-    if source_lines.is_empty() or cobre_lines.is_empty():
+    novomodelo_lines = novomodelo_readers.read_novomodelo_line_means(
+        novomodelo_output_dir
+    )
+    if source_lines.is_empty() or novomodelo_lines.is_empty():
         return [], unresolved_lists
 
     names = _line_entity_names(line_meta, id_map)
     joined = (
         source_lines.rename({"net_flow_mw": "source_net_flow_mw"})
-        .join(cobre_lines, on=["entity_id", "stage_id"], how="inner")
+        .join(novomodelo_lines, on=["entity_id", "stage_id"], how="inner")
         .sort("entity_id", "stage_id")
     )
 
@@ -945,18 +952,18 @@ def _line_result_comparisons(
     for row in joined.iter_rows(named=True):
         line_id = int(row["entity_id"])
         nw_value = float(row["source_net_flow_mw"])
-        cobre_value = float(row["net_flow_mw"])
-        abs_diff, rel_diff = _result_diff(nw_value, cobre_value)
+        novomodelo_value = float(row["net_flow_mw"])
+        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
         results.append(
             ResultComparison(
                 entity_type="line",
                 entity_name=names.get(line_id, f"line_{line_id}"),
                 newave_code=0,
-                cobre_id=line_id,
+                novomodelo_id=line_id,
                 stage=int(row["stage_id"]),
                 variable="net_flow_mw",
                 newave_value=nw_value,
-                cobre_value=cobre_value,
+                novomodelo_value=novomodelo_value,
                 abs_diff=abs_diff,
                 rel_diff=rel_diff,
             )
@@ -964,21 +971,23 @@ def _line_result_comparisons(
     return results, unresolved_lists
 
 
-def _line_bounds_and_meta(cobre_output_dir: Path) -> tuple[pl.DataFrame, list[dict]]:
-    """Cobre-side line capacity bounds + metadata for the Network tab.
+def _line_bounds_and_meta(
+    novomodelo_output_dir: Path,
+) -> tuple[pl.DataFrame, list[dict]]:
+    """Novomodelo-side line capacity bounds + metadata for the Network tab.
 
-    Both are pure Cobre-case artifacts, not DECOMP-derived, so this reads
+    Both are pure Novomodelo-case artifacts, not DECOMP-derived, so this reads
     them exactly the way ``results.compare_results`` does for the source
-    model's own Network tab, via the shared ``cobre_readers`` readers:
+    model's own Network tab, via the shared ``novomodelo_readers`` readers:
 
-    - ``line_bounds``: :func:`cobre_readers.read_cobre_line_bounds` verbatim.
+    - ``line_bounds``: :func:`novomodelo_readers.read_novomodelo_line_bounds` verbatim.
       This is already per-stage: ``decomp/converters/network.py::convert_lines`` writes
       one base row (``block_id`` null) per ``(line, stage)`` carrying the
       resolved max-of-blocks ``IA`` capacity for that stage, so a case whose
       capacity genuinely never changes across stages naturally produces
       identical per-stage rows here -- no separate static-capacity broadcast
       needs implementing on top.
-    - ``line_meta``: :func:`cobre_readers.read_cobre_lines`'s ``"lines"``
+    - ``line_meta``: :func:`novomodelo_readers.read_novomodelo_lines`'s ``"lines"``
       list verbatim -- each entry's own nested ``capacity.direct_mw``/
       ``capacity.reverse_mw`` is exactly the shape ``line_summary_chart``
       reads.
@@ -989,11 +998,11 @@ def _line_bounds_and_meta(cobre_output_dir: Path) -> tuple[pl.DataFrame, list[di
     warning) rather than raising, unchanged from before this module routed
     through the shared readers.
     """
-    line_bounds = cobre_readers.read_cobre_line_bounds(cobre_output_dir)
+    line_bounds = novomodelo_readers.read_novomodelo_line_bounds(novomodelo_output_dir)
 
     try:
-        line_meta = cobre_readers.read_cobre_lines(cobre_output_dir)
-    except cobre_readers.CobreReadError as exc:
+        line_meta = novomodelo_readers.read_novomodelo_lines(novomodelo_output_dir)
+    except novomodelo_readers.NovomodeloReadError as exc:
         _LOG.warning("Failed to read lines.json for network tab: %s", exc)
         line_meta = []
 
@@ -1041,8 +1050,8 @@ def _energy_balance_frames(
 
     Returns ``(nw_market, nw_net_load, nw_sin)`` — the long
     ``newave_code``/``stage``/``variable``/``value`` frames
-    :func:`~cobre_bridge.comparators.report_builder.build_energy_balance_tab` and
-    :func:`~cobre_bridge.comparators.charts.cobre_aggregate_chart` read.
+    :func:`~novomodelo_bridge.comparators.report_builder.build_energy_balance_tab` and
+    :func:`~novomodelo_bridge.comparators.charts.novomodelo_aggregate_chart` read.
     *probabilities* is forwarded to the single :func:`_scenario_mean` fold
     below (see :func:`_hydro_side` for its scenario-weighting contract).
 
@@ -1053,21 +1062,21 @@ def _energy_balance_frames(
     (system energy excess), has no DECOMP source — neither ``dec_oper_sist``
     nor ``relato.balanco_energetico`` carries an excess/curtailment column —
     so it is intentionally omitted rather than fabricated; that panel still
-    renders (Cobre-only, no NEWAVE overlay line), matching the tab's existing
+    renders (Novomodelo-only, no NEWAVE overlay line), matching the tab's existing
     graceful-degradation path for a variable absent on one side.
 
-    ``newave_code`` here is the **Cobre bus id**, not the raw DECOMP
+    ``newave_code`` here is the **Novomodelo bus id**, not the raw DECOMP
     ``codigo_submercado`` — ``nw_bus_names`` (built by
-    ``build_decomp_dataset``) is populated from ``read_cobre_bus_metadata``
-    and is therefore keyed by Cobre bus id, and ``build_energy_balance_tab``
+    ``build_decomp_dataset``) is populated from ``read_novomodelo_bus_metadata``
+    and is therefore keyed by Novomodelo bus id, and ``build_energy_balance_tab``
     joins ``nw_market``/``nw_net_load`` against it by that same key.
-    ``bus_codes`` (``{codigo_submercado: cobre_bus_id}``, already built by
+    ``bus_codes`` (``{codigo_submercado: novomodelo_bus_id}``, already built by
     ``_read_aligned_frames``) performs that translation; ``nw_sin`` needs no
     such translation since it sums across every submarket rather than
     keying per-bus.
 
     D-STAGE-OFFSET: ``stage`` stays the raw 1-based ``estagio`` (unlike
-    :func:`_map_entities`, this does *not* rebase to Cobre's 0-based
+    :func:`_map_entities`, this does *not* rebase to Novomodelo's 0-based
     ``stage_id``), so the consuming charts' own stage-alignment (``nw_offset
     = 1``, set on ``PercentileData`` by ``build_decomp_dataset``) lines up.
     """
@@ -1093,8 +1102,8 @@ def _energy_balance_frames(
     ).filter(pl.col("newave_code").is_not_null())
 
     # --- nw_market: GHTOT (hydro gen) / GTERM (live + anticipated thermal
-    # gen) / DEFT (deficit), keyed by the mapped Cobre bus id. GTERM sums the
-    # two DECOMP thermal-generation columns because Cobre's own
+    # gen) / DEFT (deficit), keyed by the mapped Novomodelo bus id. GTERM sums the
+    # two DECOMP thermal-generation columns because Novomodelo's own
     # ``thermal_gen_mw`` (the counterpart this overlays) already includes
     # anticipated GNL generation — the same live+anticipated fold the cost
     # breakdown applies (see charts._COST_MAP's "Thermal Generation" entry).
@@ -1283,14 +1292,14 @@ def _cost_frames(decomp_dir: Path) -> tuple[dict[str, float], pl.DataFrame]:
       stage must use the true opening probabilities (which are not
       equiprobable), and both reports carry ``probabilidade`` per row. A
       deterministic week (single row, prob 1.0) is unaffected. No stage
-      discount is applied: unlike cobre's ``discount_factor`` column
-      (:func:`cobre_readers.read_cobre_cost_breakdown`),
+      discount is applied: unlike novomodelo's ``discount_factor`` column
+      (:func:`novomodelo_readers.read_novomodelo_cost_breakdown`),
       ``relatorio_operacao_custos`` exposes no per-row discount factor, so the
       per-stage values are DECOMP's own raw nominal $ costs at that node.
     - **``nw_costs``** (R$): the per-stage expected costs summed across every
       stage, then :func:`reconcile_kdollars_to_reais` (x1e3). Categories below
       0.01 R$ are excluded, mirroring ``newave_readers.read_pmo_cost_
-      breakdown`` and :func:`cobre_readers.read_cobre_cost_breakdown`'s own
+      breakdown`` and :func:`novomodelo_readers.read_novomodelo_cost_breakdown`'s own
       floor.
     - **``nw_sin`` rows** (10^6 R$): the same per-stage expected costs,
       unpivoted to ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows with the 1-based
@@ -1374,7 +1383,7 @@ def _union_cost_rows(nw_sin: pl.DataFrame, cost_rows: pl.DataFrame) -> pl.DataFr
 # DECOMP is nested Benders over an explicit tree, not sampled SDDP -- no
 # forward/backward pass structure, so ``nw_tim_iterations`` never carries
 # ``forward_seconds``/``backward_seconds`` and
-# ``performance_fwd_bwd_split_chart`` renders cobre-only (its ``has_nw`` guard
+# ``performance_fwd_bwd_split_chart`` renders novomodelo-only (its ``has_nw`` guard
 # checks for those columns, not just frame emptiness).
 
 #: ``decomp.tim``'s ``Etapa`` phase name -> the two keys
@@ -1393,7 +1402,7 @@ def _decomp_tim_stages(decomp_dir: Path) -> dict[str, float]:
 
     ``read_decomp_tim``'s ``Tempo`` column is a ``datetime.timedelta`` (one
     row per ``iter_rows``); :meth:`~datetime.timedelta.total_seconds` gives
-    the float seconds :func:`~cobre_bridge.comparators.charts.
+    the float seconds :func:`~novomodelo_bridge.comparators.charts.
     performance_metric_cards` expects. A missing/empty ``decomp.tim``
     (``read_decomp_tim`` raising ``FileNotFoundError``/``ValueError``)
     degrades to ``{}`` instead of failing :func:`build_decomp_dataset` --
@@ -1458,17 +1467,17 @@ def _decomp_tim_iterations(decomp_dir: Path) -> pl.DataFrame:
 
 
 def _decomp_max_stage(aligned: _AlignedDecompFrames) -> int | None:
-    """Max DECOMP stage (0-based, Cobre convention) seen in this run.
+    """Max DECOMP stage (0-based, Novomodelo convention) seen in this run.
 
     Neither of :func:`_decomp_tim_stages`'/:func:`_decomp_tim_iterations`'s
     two sources (``decomp.tim``, ``relato.convergencia``) carries a stage
     axis, so ``nw_max_stage`` is derived from the already-aligned per-level
     frames (:func:`_hydro_side`/:func:`_thermal_side`/:func:`_bus_side`, via
     :func:`_map_entities`) instead of an extra read -- their ``stage_id`` is
-    already 0-based, matching every other Cobre-convention stage-axis field
-    on :class:`~cobre_bridge.comparators.model.PercentileData`. ``None``
+    already 0-based, matching every other Novomodelo-convention stage-axis field
+    on :class:`~novomodelo_bridge.comparators.model.PercentileData`. ``None``
     when every level is empty, mirroring
-    :func:`~cobre_bridge.comparators.newave.results.compare_results`'s own
+    :func:`~novomodelo_bridge.comparators.newave.results.compare_results`'s own
     ``nw_max_stage_1based is None`` case.
     """
     candidates: list[int] = []
@@ -1484,7 +1493,7 @@ def _decomp_max_stage(aligned: _AlignedDecompFrames) -> int | None:
 def _map_entities(
     frame: pl.DataFrame, code_column: str, mapping: dict[int, int]
 ) -> tuple[pl.DataFrame, list[int]]:
-    """Translate source codes to Cobre ids; report the codes with no mapping.
+    """Translate source codes to Novomodelo ids; report the codes with no mapping.
 
     Keeps the original code alongside the mapped ``entity_id`` (renamed to
     the generic ``newave_code`` — D-SOURCE-TOKEN: the field name means "the
@@ -1500,7 +1509,7 @@ def _map_entities(
             .map_elements(lambda c: mapping.get(int(c)), return_dtype=pl.Int64)
             .alias("entity_id"),
             pl.col(code_column).cast(pl.Int64).alias("newave_code"),
-            # Stage ids are 0-based in Cobre and 1-based in the source deck.
+            # Stage ids are 0-based in Novomodelo and 1-based in the source deck.
             (pl.col("estagio").cast(pl.Int64) - 1).alias("stage_id"),
         )
         .filter(pl.col("entity_id").is_not_null())
@@ -1509,10 +1518,12 @@ def _map_entities(
     return mapped, unmapped
 
 
-def _cobre_hydro(cobre_output_dir: Path) -> tuple[pl.DataFrame, dict[int, str]]:
-    """Cobre hydro means with absolute storage converted to useful volume."""
-    means = cobre_readers.read_cobre_hydro_means(cobre_output_dir)
-    metadata = cobre_readers.read_cobre_hydro_metadata(cobre_output_dir)
+def _novomodelo_hydro(
+    novomodelo_output_dir: Path,
+) -> tuple[pl.DataFrame, dict[int, str]]:
+    """Novomodelo hydro means with absolute storage converted to useful volume."""
+    means = novomodelo_readers.read_novomodelo_hydro_means(novomodelo_output_dir)
+    metadata = novomodelo_readers.read_novomodelo_hydro_metadata(novomodelo_output_dir)
     names = {i: str(m.get("name", "")) for i, m in metadata.items()}
 
     if means.is_empty():
@@ -1541,20 +1552,20 @@ def _cobre_hydro(cobre_output_dir: Path) -> tuple[pl.DataFrame, dict[int, str]]:
 
 @dataclass(frozen=True)
 class _AlignedDecompFrames:
-    """One run's DECOMP-side + Cobre-side frames, aligned to Cobre ids/stages.
+    """One run's DECOMP-side + Novomodelo-side frames, aligned to Novomodelo ids/stages.
 
     The shared read/align result :func:`build_decomp_dataset` builds on, via
     :func:`_read_aligned_frames` — per-level scenario averaging and the
-    matching Cobre means, off the shared :class:`~cobre_bridge.decomp.case.DecompCase`
+    matching Novomodelo means, off the shared :class:`~novomodelo_bridge.decomp.case.DecompCase`
     parse, run exactly once.
     """
 
     source_hydro: pl.DataFrame
     source_thermal: pl.DataFrame
     source_bus: pl.DataFrame
-    cobre_hydro: pl.DataFrame
-    cobre_thermal: pl.DataFrame
-    cobre_bus: pl.DataFrame
+    novomodelo_hydro: pl.DataFrame
+    novomodelo_thermal: pl.DataFrame
+    novomodelo_bus: pl.DataFrame
     hydro_names: dict[int, str]
     thermal_names: dict[int, str]
     bus_names: dict[int, str]
@@ -1570,17 +1581,17 @@ class _AlignedDecompFrames:
 
 def _read_aligned_frames(
     case: DecompCase,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     *,
     probabilities: pl.DataFrame | None = None,
 ) -> _AlignedDecompFrames:
-    """Read and align both sides of one DECOMP-vs-Cobre comparison run.
+    """Read and align both sides of one DECOMP-vs-Novomodelo comparison run.
 
     *case* is the shared, once-parsed deck
-    (:class:`~cobre_bridge.decomp.case.DecompCase`, built once by
+    (:class:`~novomodelo_bridge.decomp.case.DecompCase`, built once by
     :func:`build_decomp_dataset`); its directory must also contain the
     ``dec_oper_*.csv`` result tables read directly below.
-    ``cobre_output_dir`` is Cobre's output directory, whose case directory
+    ``novomodelo_output_dir`` is Novomodelo's output directory, whose case directory
     supplies the entity registries. Entities the id map cannot resolve are
     reported via ``unmapped`` rather than dropped in silence. *probabilities*
     -- a :func:`_scenario_probabilities` lookup, built once by
@@ -1608,26 +1619,32 @@ def _read_aligned_frames(
         decomp_dir, bus_codes, probabilities=probabilities
     )
 
-    cobre_hydro, hydro_names = _cobre_hydro(cobre_output_dir)
-    cobre_thermal = cobre_readers.read_cobre_thermal_means(cobre_output_dir)
-    cobre_bus = cobre_readers.read_cobre_bus_means(cobre_output_dir)
+    novomodelo_hydro, hydro_names = _novomodelo_hydro(novomodelo_output_dir)
+    novomodelo_thermal = novomodelo_readers.read_novomodelo_thermal_means(
+        novomodelo_output_dir
+    )
+    novomodelo_bus = novomodelo_readers.read_novomodelo_bus_means(novomodelo_output_dir)
 
     thermal_names = {
         i: str(m.get("name", ""))
-        for i, m in cobre_readers.read_cobre_thermal_metadata(cobre_output_dir).items()
+        for i, m in novomodelo_readers.read_novomodelo_thermal_metadata(
+            novomodelo_output_dir
+        ).items()
     }
     bus_names = {
         i: str(m.get("name", ""))
-        for i, m in cobre_readers.read_cobre_bus_metadata(cobre_output_dir).items()
+        for i, m in novomodelo_readers.read_novomodelo_bus_metadata(
+            novomodelo_output_dir
+        ).items()
     }
 
     return _AlignedDecompFrames(
         source_hydro=source_hydro,
         source_thermal=source_thermal,
         source_bus=source_bus,
-        cobre_hydro=cobre_hydro,
-        cobre_thermal=cobre_thermal,
-        cobre_bus=cobre_bus,
+        novomodelo_hydro=novomodelo_hydro,
+        novomodelo_thermal=novomodelo_thermal,
+        novomodelo_bus=novomodelo_bus,
         hydro_names=hydro_names,
         thermal_names=thermal_names,
         bus_names=bus_names,
@@ -1653,12 +1670,12 @@ def _read_aligned_frames(
 def _merge_hydro_bus_ids(
     meta: dict[int, dict], labels: dict[int, frozenset[int]]
 ) -> dict[int, dict]:
-    """Copy each hydro's metadata dict and inject its cobre bus ids.
+    """Copy each hydro's metadata dict and inject its novomodelo bus ids.
 
-    ``cobre_readers.read_cobre_hydro_metadata`` carries plant physics only
+    ``novomodelo_readers.read_novomodelo_hydro_metadata`` carries plant physics only
     -- no bus information (see that reader's docstring); the
     plant -> bus *label* is re-sourced from
-    ``cobre_readers.read_cobre_hydro_bus_labels``'s
+    ``novomodelo_readers.read_novomodelo_hydro_bus_labels``'s
     ``hydro_bus_generation``-partition-derived map, exactly the way
     ``results.compare_results`` merges the two for the source model's own
     Hydro Operation/Details tabs.
@@ -1693,8 +1710,8 @@ def _merge_hydro_bus_ids(
 # fabricated; the ``if not fpha_metrics.is_empty()`` gate in `report_builder`
 # renders the empty-surface placeholder, so no exception follows).
 #
-# Within (b), `_fpha_metrics` evaluates Cobre's own fitted envelope
-# (`read_cobre_fpha_planes`) AT the source model's realized operating points
+# Within (b), `_fpha_metrics` evaluates Novomodelo's own fitted envelope
+# (`read_novomodelo_fpha_planes`) AT the source model's realized operating points
 # (`read_dec_desvfpha`) and compares it to the source's own realized
 # ``geracao_hidraulica_fpha`` -- a genuine cross-solver comparison sampled at
 # the trajectory, not a dense grid (so it never claims (a)'s full-surface
@@ -1728,20 +1745,20 @@ def _log_decomp_fpha_deck_summary(decomp_dir: Path) -> None:
     )
 
 
-def _cobre_fpha_plane_counts(cb_planes: pl.DataFrame) -> pl.DataFrame:
-    """One row per (cobre_id, stage) with Cobre's own fitted plane count."""
+def _novomodelo_fpha_plane_counts(cb_planes: pl.DataFrame) -> pl.DataFrame:
+    """One row per (novomodelo_id, stage) with Novomodelo's own fitted plane count."""
     return (
-        cb_planes.rename({"hydro_id": "cobre_id", "stage_id": "stage"})
-        .cast({"cobre_id": pl.Int64, "stage": pl.Int64})
-        .group_by(["cobre_id", "stage"])
-        .agg(pl.len().cast(pl.Int64).alias("n_planes_cobre"))
+        cb_planes.rename({"hydro_id": "novomodelo_id", "stage_id": "stage"})
+        .cast({"novomodelo_id": pl.Int64, "stage": pl.Int64})
+        .group_by(["novomodelo_id", "stage"])
+        .agg(pl.len().cast(pl.Int64).alias("n_planes_novomodelo"))
     )
 
 
 def _decomp_fpha_grid_nv(
-    decomp_dir: Path, code_to_cobre: dict[int, int]
+    decomp_dir: Path, code_to_novomodelo: dict[int, int]
 ) -> pl.DataFrame:
-    """One row per (cobre_id, stage) with the source model's own volume
+    """One row per (novomodelo_id, stage) with the source model's own volume
     fitting-grid node count (``numero_pontos_volume_armazenado``), from
     `read_eco_fpha`.
 
@@ -1751,7 +1768,7 @@ def _decomp_fpha_grid_nv(
     unavailable rather than fabricating one.
     """
     empty = pl.DataFrame(
-        schema={"cobre_id": pl.Int64, "stage": pl.Int64, "n_v": pl.Int64}
+        schema={"novomodelo_id": pl.Int64, "stage": pl.Int64, "n_v": pl.Int64}
     )
     try:
         grid = read_eco_fpha(decomp_dir)
@@ -1761,14 +1778,14 @@ def _decomp_fpha_grid_nv(
 
     mapped = grid.with_columns(
         pl.col("codigo_usina")
-        .map_elements(lambda c: code_to_cobre.get(int(c)), return_dtype=pl.Int64)
-        .alias("cobre_id"),
+        .map_elements(lambda c: code_to_novomodelo.get(int(c)), return_dtype=pl.Int64)
+        .alias("novomodelo_id"),
         (pl.col("estagio").cast(pl.Int64) - 1).alias("stage"),
-    ).filter(pl.col("cobre_id").is_not_null())
+    ).filter(pl.col("novomodelo_id").is_not_null())
     if mapped.is_empty():
         return empty
     return mapped.select(
-        "cobre_id",
+        "novomodelo_id",
         "stage",
         pl.col("numero_pontos_volume_armazenado").cast(pl.Int64).alias("n_v"),
     )
@@ -1776,7 +1793,7 @@ def _decomp_fpha_grid_nv(
 
 def _fpha_metrics(
     decomp_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     id_map: DecompIdMap | None,
     hydro_names: dict[int, str],
 ) -> pl.DataFrame | None:
@@ -1784,17 +1801,17 @@ def _fpha_metrics(
     [ASSUMPTION] comment above this section.
 
     ``None`` whenever either side has no fitted planes to compare at all:
-    Cobre fitted none (`cobre_readers.read_cobre_fpha_planes` returns
-    ``None``), the deck has no id map to resolve hydro codes onto Cobre ids
+    Novomodelo fitted none (`novomodelo_readers.read_novomodelo_fpha_planes` returns
+    ``None``), the deck has no id map to resolve hydro codes onto Novomodelo ids
     (`id_map` is ``None``), the source model's own deviation table is
-    absent/empty, or no realized point resolves onto a Cobre hydro with
+    absent/empty, or no realized point resolves onto a Novomodelo hydro with
     fitted planes. `build_decomp_dataset` passes ``None`` straight through
-    to `~cobre_bridge.comparators.model.PercentileData.fpha_metrics`; the
+    to `~novomodelo_bridge.comparators.model.PercentileData.fpha_metrics`; the
     report's FPHA section gate (`report_builder`) reads it as the empty
     `RenderInputs.fpha_metrics` default, so the section is omitted, never a
     crash.
     """
-    cb_planes = cobre_readers.read_cobre_fpha_planes(cobre_output_dir)
+    cb_planes = novomodelo_readers.read_novomodelo_fpha_planes(novomodelo_output_dir)
     if cb_planes is None or id_map is None:
         return None
 
@@ -1804,18 +1821,18 @@ def _fpha_metrics(
         _LOG.info("No source-model FPHA deviation table: %s", exc)
         return None
 
-    code_to_cobre = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
+    code_to_novomodelo = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
     points = deviations.with_columns(
         pl.col("codigo_usina")
-        .map_elements(lambda c: code_to_cobre.get(int(c)), return_dtype=pl.Int64)
-        .alias("cobre_id"),
+        .map_elements(lambda c: code_to_novomodelo.get(int(c)), return_dtype=pl.Int64)
+        .alias("novomodelo_id"),
         (pl.col("estagio").cast(pl.Int64) - 1).alias("stage"),
-    ).filter(pl.col("cobre_id").is_not_null())
+    ).filter(pl.col("novomodelo_id").is_not_null())
     if points.is_empty():
         return None
     points = (
         points.select(
-            "cobre_id",
+            "novomodelo_id",
             "stage",
             pl.col("volume_total_hm3").cast(pl.Float64).alias("v_hm3"),
             pl.col("vazao_turbinada_m3s").cast(pl.Float64).alias("q_m3s"),
@@ -1826,7 +1843,7 @@ def _fpha_metrics(
         .with_columns(pl.col("_point_id").cast(pl.Int64))
     )
 
-    # Cobre's own kappa/gamma_v already multiply absolute volume, and the
+    # Novomodelo's own kappa/gamma_v already multiply absolute volume, and the
     # source model's own volume_total_hm3 is likewise absolute (not useful)
     # volume -- fpha.point_cloud's default volume_offset=0.0 applies here.
     envelope = fpha.point_cloud(cb_planes, points)
@@ -1836,17 +1853,17 @@ def _fpha_metrics(
     _log_decomp_fpha_deck_summary(decomp_dir)
 
     joined = points.join(envelope, on="_point_id", how="inner").with_columns(
-        (pl.col("cobre_gh_mw") - pl.col("decomp_gh_mw")).alias("diff")
+        (pl.col("novomodelo_gh_mw") - pl.col("decomp_gh_mw")).alias("diff")
     )
 
     metrics = (
-        joined.group_by(["cobre_id", "stage"])
+        joined.group_by(["novomodelo_id", "stage"])
         .agg(
             pl.col("decomp_gh_mw").max().abs().alias("_denom"),
             pl.col("diff").abs().mean().alias("_mean_abs_diff"),
             pl.col("diff").mean().alias("_mean_diff"),
             pl.col("diff").abs().max().alias("max_abs_dev"),
-            pl.col("cobre_gh_mw").max().alias("_cobre_max"),
+            pl.col("novomodelo_gh_mw").max().alias("_novomodelo_max"),
             pl.col("decomp_gh_mw").max().alias("_decomp_max"),
         )
         .with_columns((pl.col("_denom") > 1e-9).alias("_scaled"))
@@ -1860,18 +1877,22 @@ def _fpha_metrics(
             .otherwise(None)
             .alias("bias"),
             pl.when(pl.col("_scaled"))
-            .then(pl.col("_cobre_max") / pl.col("_decomp_max"))
+            .then(pl.col("_novomodelo_max") / pl.col("_decomp_max"))
             .otherwise(None)
             .alias("gh_max_ratio"),
         )
-        .join(_cobre_fpha_plane_counts(cb_planes), on=["cobre_id", "stage"], how="left")
         .join(
-            _decomp_fpha_grid_nv(decomp_dir, code_to_cobre),
-            on=["cobre_id", "stage"],
+            _novomodelo_fpha_plane_counts(cb_planes),
+            on=["novomodelo_id", "stage"],
+            how="left",
+        )
+        .join(
+            _decomp_fpha_grid_nv(decomp_dir, code_to_novomodelo),
+            on=["novomodelo_id", "stage"],
             how="left",
         )
         .with_columns(
-            pl.col("cobre_id")
+            pl.col("novomodelo_id")
             .map_elements(
                 lambda c: hydro_names.get(int(c), f"hydro_{c}"), return_dtype=pl.Utf8
             )
@@ -1879,7 +1900,7 @@ def _fpha_metrics(
             pl.lit(None).cast(pl.Int64).alias("n_planes_newave"),
         )
         .select(list(fpha.FPHA_METRICS_SCHEMA))
-        .sort(["cobre_id", "stage"])
+        .sort(["novomodelo_id", "stage"])
     )
     return metrics if not metrics.is_empty() else None
 
@@ -1887,7 +1908,7 @@ def _fpha_metrics(
 # --- REE energy rollup via membership ---
 #
 # DECOMP reports energy at REE (reservoir-equivalent-energy) granularity
-# (`read_dec_oper_ree`); Cobre has no REE entity, so the counterpart is built
+# (`read_dec_oper_ree`); Novomodelo has no REE entity, so the counterpart is built
 # by rolling each REE's member plants' energy up through the
 # `relato.uhes_rees_submercados` membership table (`read_relato_membership`).
 
@@ -1895,9 +1916,9 @@ def _fpha_metrics(
 def _ree_membership_map(
     membership: pl.DataFrame, hydro_codes: dict[int, int]
 ) -> tuple[dict[int, int], list[int]]:
-    """``{cobre_hydro_id: codigo_ree}`` via membership, restricted to the
+    """``{novomodelo_hydro_id: codigo_ree}`` via membership, restricted to the
     operated hydro codes this module already resolves
-    (``{codigo_usina: cobre_id}``, from `DecompIdMap.hydro_id`).
+    (``{codigo_usina: novomodelo_id}``, from `DecompIdMap.hydro_id`).
 
     A hydro code with no row in *membership* cannot be attributed to any REE
     -- it is excluded from every REE sum and returned (sorted) as the second
@@ -1908,57 +1929,57 @@ def _ree_membership_map(
         for row in membership.iter_rows(named=True):
             code_to_ree[int(row["codigo_usina"])] = int(row["codigo_ree"])
 
-    ree_by_cobre_id: dict[int, int] = {}
+    ree_by_novomodelo_id: dict[int, int] = {}
     unmapped: list[int] = []
-    for code, cobre_id in hydro_codes.items():
+    for code, novomodelo_id in hydro_codes.items():
         ree_code = code_to_ree.get(code)
         if ree_code is None:
             unmapped.append(code)
             continue
-        ree_by_cobre_id[cobre_id] = ree_code
-    return ree_by_cobre_id, sorted(unmapped)
+        ree_by_novomodelo_id[novomodelo_id] = ree_code
+    return ree_by_novomodelo_id, sorted(unmapped)
 
 
-_EMPTY_COBRE_REE_SUMS_SCHEMA: dict[str, type[pl.DataType]] = {
+_EMPTY_NOVOMODELO_REE_SUMS_SCHEMA: dict[str, type[pl.DataType]] = {
     "entity_id": pl.Int64,
     "stage_id": pl.Int64,
     "ena_mw": pl.Float64,
     "earm_mwh": pl.Float64,
 }
 
-#: Columns :func:`_cobre_ree_sums` reads off *cobre_hydro* besides
+#: Columns :func:`_novomodelo_ree_sums` reads off *novomodelo_hydro* besides
 #: ``entity_id``/``stage_id``. A frame missing either -- e.g. a trimmed
 #: test fixture that only carries the base hydro-comparison columns --
 #: degrades to an empty sum instead of a Polars ``ColumnNotFoundError``.
-_REE_COBRE_ENERGY_COLUMNS: tuple[str, ...] = (
+_REE_NOVOMODELO_ENERGY_COLUMNS: tuple[str, ...] = (
     "incremental_inflow_energy_mw",
     "stored_energy_final_mwh",
 )
 
 
-def _cobre_ree_sums(
-    cobre_hydro: pl.DataFrame, ree_by_cobre_id: dict[int, int]
+def _novomodelo_ree_sums(
+    novomodelo_hydro: pl.DataFrame, ree_by_novomodelo_id: dict[int, int]
 ) -> pl.DataFrame:
-    """Membership-weighted sum of Cobre hydro ENA/EARM per (codigo_ree, stage).
+    """Membership-weighted sum of Novomodelo hydro ENA/EARM per (codigo_ree, stage).
 
-    *cobre_hydro* is `_AlignedDecompFrames.cobre_hydro` (the aligned
-    Cobre hydro means, reused rather than re-read); *ree_by_cobre_id* inverts
+    *novomodelo_hydro* is `_AlignedDecompFrames.novomodelo_hydro` (the aligned
+    Novomodelo hydro means, reused rather than re-read); *ree_by_novomodelo_id* inverts
     :func:`_ree_membership_map`'s own map, one entry per member plant. A
-    Cobre hydro id absent from it -- every plant this rollup could not
+    Novomodelo hydro id absent from it -- every plant this rollup could not
     attribute to a membership row -- contributes to no REE sum. Returned
     ``entity_id`` is the REE code (``codigo_ree``), matching the join key
     :func:`_decomp_ree_frame` emits; ``earm_mwh`` is still raw MWh here --
     the ÷730 MWmês reconciliation happens once, at the
-    :class:`~cobre_bridge.comparators.model.ResultComparison` emission site.
+    :class:`~novomodelo_bridge.comparators.model.ResultComparison` emission site.
     """
-    empty = pl.DataFrame(schema=_EMPTY_COBRE_REE_SUMS_SCHEMA)
-    if cobre_hydro.is_empty() or not ree_by_cobre_id:
+    empty = pl.DataFrame(schema=_EMPTY_NOVOMODELO_REE_SUMS_SCHEMA)
+    if novomodelo_hydro.is_empty() or not ree_by_novomodelo_id:
         return empty
-    if not set(_REE_COBRE_ENERGY_COLUMNS) <= set(cobre_hydro.columns):
+    if not set(_REE_NOVOMODELO_ENERGY_COLUMNS) <= set(novomodelo_hydro.columns):
         return empty
-    mapped = cobre_hydro.with_columns(
+    mapped = novomodelo_hydro.with_columns(
         pl.col("entity_id")
-        .map_elements(lambda i: ree_by_cobre_id.get(int(i)), return_dtype=pl.Int64)
+        .map_elements(lambda i: ree_by_novomodelo_id.get(int(i)), return_dtype=pl.Int64)
         .alias("codigo_ree")
     ).filter(pl.col("codigo_ree").is_not_null())
     if mapped.is_empty():
@@ -2018,7 +2039,7 @@ def _decomp_ree_frame(
 
 def _ree_result_comparisons(
     decomp_dir: Path,
-    cobre_hydro: pl.DataFrame,
+    novomodelo_hydro: pl.DataFrame,
     id_map: DecompIdMap | None,
     *,
     probabilities: pl.DataFrame | None = None,
@@ -2029,17 +2050,17 @@ def _ree_result_comparisons(
     The source-model side is `_decomp_ree_frame` (`read_dec_oper_ree`,
     scenario-averaged per REE/stage -- *probabilities* is forwarded to it
     unchanged, see :func:`_hydro_side` for its scenario-weighting contract);
-    the Cobre side is
-    :func:`_cobre_ree_sums`'s membership-weighted plant rollup, with EARM
+    the Novomodelo side is
+    :func:`_novomodelo_ree_sums`'s membership-weighted plant rollup, with EARM
     converted MWh -> MWmês (:data:`_EARM_MWH_TO_MWMES`) and ENA converted from
     a stage-mean MW (average power) to MWmês energy via the stage's own
     duration (*stage_hours* ÷ 730 months), both at emission -- so each is on
-    DECOMP's MW-month footing. ``newave_code``/``cobre_id`` are both the
-    REE's own ``codigo_ree`` -- Cobre has no independent REE id to diverge
+    DECOMP's MW-month footing. ``newave_code``/``novomodelo_id`` are both the
+    REE's own ``codigo_ree`` -- Novomodelo has no independent REE id to diverge
     from it.
 
     Returns ``([], [])`` when *id_map* is ``None`` (deck unreadable -- no
-    hydro code -> Cobre id mapping exists to build the membership map with).
+    hydro code -> Novomodelo id mapping exists to build the membership map with).
     A missing/empty membership table or `dec_oper_ree` table degrades to no
     REE rows (a genuinely unavailable section, logged at INFO) rather than
     raising -- matching every other optional field this module builds. A
@@ -2058,7 +2079,7 @@ def _ree_result_comparisons(
         _LOG.info("No source-model REE membership table (relato): %s", exc)
         return [], []
 
-    ree_by_cobre_id, unmapped = _ree_membership_map(membership, hydro_codes)
+    ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, hydro_codes)
     if unmapped:
         emit(
             Diagnostic(
@@ -2083,11 +2104,11 @@ def _ree_result_comparisons(
         _LOG.info("No source-model REE table (dec_oper_ree): %s", exc)
         return [], unmapped
 
-    cobre_sums = _cobre_ree_sums(cobre_hydro, ree_by_cobre_id)
-    if source_ree.is_empty() or cobre_sums.is_empty():
+    novomodelo_sums = _novomodelo_ree_sums(novomodelo_hydro, ree_by_novomodelo_id)
+    if source_ree.is_empty() or novomodelo_sums.is_empty():
         return [], unmapped
 
-    joined = source_ree.join(cobre_sums, on=["entity_id", "stage_id"], how="inner")
+    joined = source_ree.join(novomodelo_sums, on=["entity_id", "stage_id"], how="inner")
     if joined.is_empty():
         return [], unmapped
 
@@ -2096,39 +2117,39 @@ def _ree_result_comparisons(
         ree_code = int(row["entity_id"])
         stage = int(row["stage_id"])
         name = names.get(ree_code, "")
-        cobre_earm_mwmes = float(row["earm_mwh"]) / _EARM_MWH_TO_MWMES
-        # cobre's ``ena_mw`` is a stage-mean MW (average inflow power); DECOMP's
+        novomodelo_earm_mwmes = float(row["earm_mwh"]) / _EARM_MWH_TO_MWMES
+        # novomodelo's ``ena_mw`` is a stage-mean MW (average inflow power); DECOMP's
         # ``ena_MWmes`` is energy *over the stage* (MW-month), scaling with stage
         # duration. Multiply the rate by the stage's duration in months
         # (``stage_hours / 730``, mirroring EARM's ÷730) — else a weekly stage's
         # mean power is compared to a week's energy, a ~stage_hours/730 mismatch
         # that inflates the weekly ENA several-fold. Falls back to one month when
         # hours are unavailable. The residual per-REE offset is the
-        # productivity/FPHA difference vs cobre's per-plant model, not a unit error.
+        # productivity/FPHA difference vs novomodelo's per-plant model, not a unit error.
         stage_months = (
             stage_hours.get(stage, _EARM_MWH_TO_MWMES) / _EARM_MWH_TO_MWMES
             if stage_hours is not None
             else 1.0
         )
-        cobre_ena_mwmes = float(row["ena_mw"]) * stage_months
-        for variable, nw_raw, cobre_value in (
-            ("ena_mwmes", row["ena_MWmes"], cobre_ena_mwmes),
-            ("earm_final_mwmes", row["earm_final_MWmes"], cobre_earm_mwmes),
+        novomodelo_ena_mwmes = float(row["ena_mw"]) * stage_months
+        for variable, nw_raw, novomodelo_value in (
+            ("ena_mwmes", row["ena_MWmes"], novomodelo_ena_mwmes),
+            ("earm_final_mwmes", row["earm_final_MWmes"], novomodelo_earm_mwmes),
         ):
             if nw_raw is None:
                 continue
             nw_value = float(nw_raw)
-            abs_diff, rel_diff = _result_diff(nw_value, cobre_value)
+            abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
             results.append(
                 ResultComparison(
                     entity_type="ree",
                     entity_name=name,
                     newave_code=ree_code,
-                    cobre_id=ree_code,
+                    novomodelo_id=ree_code,
                     stage=stage,
                     variable=variable,
                     newave_value=nw_value,
-                    cobre_value=cobre_value,
+                    novomodelo_value=novomodelo_value,
                     abs_diff=abs_diff,
                     rel_diff=rel_diff,
                 )
@@ -2140,20 +2161,20 @@ def _ree_result_comparisons(
 #
 # Source model: evaporation as a per-stage *volume* in hm³
 # (`read_dec_oper_evap`'s `evaporacao_calculada_hm3` -- the run's own water
-# balance, not the fitted `evaporacao_modelo_hm3`). Cobre: a mean *flow* in
+# balance, not the fitted `evaporacao_modelo_hm3`). Novomodelo: a mean *flow* in
 # m³/s (`evaporation_m3s`). The divisor reconciling them must come from the
-# stage's actual hours (`_cobre_stage_hours`), not the fixed monthly 2.63 the
+# stage's actual hours (`_novomodelo_stage_hours`), not the fixed monthly 2.63 the
 # source's own MEDIAS report uses (`results.py`'s `_compare_hydros`) -- stages
 # here are not always full calendar months (sub-monthly patamares). Reuses
-# `cobre_readers._load_block_hours` so the two block-hours readings can't drift.
+# `novomodelo_readers._load_block_hours` so the two block-hours readings can't drift.
 
 
-def _cobre_stage_hours(cobre_output_dir: Path) -> dict[int, float]:
-    """``{stage_id: total_hours}`` from the Cobre case's own ``stages.json``.
+def _novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:
+    """``{stage_id: total_hours}`` from the Novomodelo case's own ``stages.json``.
 
-    Reuses `cobre_readers._load_block_hours` -- the project's one
+    Reuses `novomodelo_readers._load_block_hours` -- the project's one
     ``stages.json`` block-hours reader, already the source every
-    hours-weighted `cobre_readers` aggregation goes through -- rather than
+    hours-weighted `novomodelo_readers` aggregation goes through -- rather than
     re-parsing the file a second time; sums each stage's block hours into a
     flat per-stage lookup. Empty when ``stages.json`` cannot be found or
     parsed (`_load_block_hours` returns ``None``), which
@@ -2161,7 +2182,7 @@ def _cobre_stage_hours(cobre_output_dir: Path) -> dict[int, float]:
     available" and degrades to no evaporation rows, rather than fabricating
     one.
     """
-    block_hours = cobre_readers._load_block_hours(cobre_output_dir)  # noqa: SLF001
+    block_hours = novomodelo_readers._load_block_hours(novomodelo_output_dir)  # noqa: SLF001
     if block_hours is None or block_hours.is_empty():
         return {}
     totals = block_hours.group_by("stage_id").agg(pl.col("hours").sum().alias("hours"))
@@ -2219,8 +2240,8 @@ def _evap_side(
 
 def _evaporation_result_comparisons(
     decomp_dir: Path,
-    cobre_output_dir: Path,
-    cobre_hydro: pl.DataFrame,
+    novomodelo_output_dir: Path,
+    novomodelo_hydro: pl.DataFrame,
     id_map: DecompIdMap | None,
     names: dict[int, str],
     *,
@@ -2231,34 +2252,34 @@ def _evaporation_result_comparisons(
     The source-model side is :func:`_evap_side` (`read_dec_oper_evap`,
     scenario-averaged -- *probabilities* is forwarded to it unchanged, see
     :func:`_hydro_side` for its scenario-weighting contract -- mapped onto
-    Cobre ids via *id_map*); the Cobre side is
-    *cobre_hydro*'s own ``evaporation_m3s`` column (already carried by
+    Novomodelo ids via *id_map*); the Novomodelo side is
+    *novomodelo_hydro*'s own ``evaporation_m3s`` column (already carried by
     `_read_aligned_frames`, not re-read here). A plant carrying an
     evaporation series on only one side -- the source model's
-    ``dec_oper_evap`` but no Cobre ``evaporation_m3s`` for that plant, or the
+    ``dec_oper_evap`` but no Novomodelo ``evaporation_m3s`` for that plant, or the
     reverse -- is excluded from the paired join and returned (sorted, by
-    Cobre id) as the second element instead of being silently dropped, with
+    Novomodelo id) as the second element instead of being silently dropped, with
     a WARNING diagnostic recording the count.
 
-    TRACKED COBRE-GAP WORKAROUND (C11): Cobre's own evaporation model
+    TRACKED NOVOMODELO-GAP WORKAROUND (C11): Novomodelo's own evaporation model
     over-scales the volume it deposits on a sub-monthly stage -- it applies
     (pre-fix) a full calendar month's worth of evaporation regardless of the
     stage's actual duration (see
     `decomp.converters.hydro.entity._evaporation_coefficients_mm`'s
     docstring; its removal condition is
-    registered in the cobre repository's conversion-found-improvements
+    registered in the novomodelo repository's conversion-found-improvements
     registry). The reconciliation below ONLY rescales the source model's own
     hm³ volume into
-    a directly comparable m³/s flow via :func:`_hm3_to_m3s`; Cobre's
+    a directly comparable m³/s flow via :func:`_hm3_to_m3s`; Novomodelo's
     ``evaporation_m3s`` value is compared UNCHANGED. Any residual divergence
-    this surfaces on a sub-monthly stage is that known Cobre gap (C11), not a
-    conversion error -- it must not be "corrected away" by rescaling Cobre's
+    this surfaces on a sub-monthly stage is that known Novomodelo gap (C11), not a
+    conversion error -- it must not be "corrected away" by rescaling Novomodelo's
     side to match.
 
     Returns ``([], [])`` when *id_map* is ``None`` (deck unreadable). A
     missing/empty `dec_oper_evap` table, an absent ``evaporation_m3s`` column
-    on the Cobre side, or no resolvable stage-hours denominator
-    (:func:`_cobre_stage_hours`) each degrade to "no evaporation section"
+    on the Novomodelo side, or no resolvable stage-hours denominator
+    (:func:`_novomodelo_stage_hours`) each degrade to "no evaporation section"
     (logged at INFO) rather than raising, matching every other optional
     field this module builds.
     """
@@ -2277,14 +2298,14 @@ def _evaporation_result_comparisons(
     if source_evap.is_empty():
         return [], []
 
-    if cobre_hydro.is_empty() or "evaporation_m3s" not in cobre_hydro.columns:
-        _LOG.info("Cobre output has no evaporation_m3s column; skipping")
+    if novomodelo_hydro.is_empty() or "evaporation_m3s" not in novomodelo_hydro.columns:
+        _LOG.info("Novomodelo output has no evaporation_m3s column; skipping")
         return [], []
-    cobre_evap = cobre_hydro.select(
+    novomodelo_evap = novomodelo_hydro.select(
         "entity_id", "stage_id", "evaporation_m3s"
     ).drop_nulls("evaporation_m3s")
 
-    stage_hours = _cobre_stage_hours(cobre_output_dir)
+    stage_hours = _novomodelo_stage_hours(novomodelo_output_dir)
     if not stage_hours:
         _LOG.info(
             "No stages.json block-hours available; skipping the evaporation "
@@ -2293,8 +2314,8 @@ def _evaporation_result_comparisons(
         return [], []
 
     decomp_ids = set(source_evap["entity_id"].unique().to_list())
-    cobre_ids = set(cobre_evap["entity_id"].unique().to_list())
-    one_sided = sorted(int(i) for i in decomp_ids.symmetric_difference(cobre_ids))
+    novomodelo_ids = set(novomodelo_evap["entity_id"].unique().to_list())
+    one_sided = sorted(int(i) for i in decomp_ids.symmetric_difference(novomodelo_ids))
     if one_sided:
         emit(
             Diagnostic(
@@ -2305,16 +2326,18 @@ def _evaporation_result_comparisons(
                 summary=(
                     f"{len(one_sided)} hydro plant(s) carry an evaporation "
                     "series on only one side (the source model's "
-                    "dec_oper_evap or Cobre's evaporation_m3s, not both); "
+                    "dec_oper_evap or Novomodelo's evaporation_m3s, not both); "
                     "excluded from the paired evaporation comparison rather "
                     "than silently dropped."
                 ),
-                notes=[f"cobre_id: {one_sided}"],
+                notes=[f"novomodelo_id: {one_sided}"],
             ),
             logger=_LOG,
         )
 
-    joined = source_evap.join(cobre_evap, on=["entity_id", "stage_id"], how="inner")
+    joined = source_evap.join(
+        novomodelo_evap, on=["entity_id", "stage_id"], how="inner"
+    )
     if joined.is_empty():
         return [], one_sided
 
@@ -2326,18 +2349,18 @@ def _evaporation_result_comparisons(
         if hours is None or hours <= 0:
             continue
         nw_value = _hm3_to_m3s(float(row["evaporacao_calculada_hm3"]), hours)
-        cobre_value = float(row["evaporation_m3s"])
-        abs_diff, rel_diff = _result_diff(nw_value, cobre_value)
+        novomodelo_value = float(row["evaporation_m3s"])
+        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
         results.append(
             ResultComparison(
                 entity_type="hydro",
                 entity_name=names.get(entity_id, ""),
                 newave_code=int(row["newave_code"]),
-                cobre_id=entity_id,
+                novomodelo_id=entity_id,
                 stage=stage,
                 variable="evaporation_m3s",
                 newave_value=nw_value,
-                cobre_value=cobre_value,
+                novomodelo_value=novomodelo_value,
                 abs_diff=abs_diff,
                 rel_diff=rel_diff,
             )
@@ -2348,7 +2371,7 @@ def _evaporation_result_comparisons(
 # --- Constraints tab (gc_* metadata, DECOMP-side LHS) ---
 #
 # `constraints` supplies the source-agnostic pieces (the converted
-# case's own constraint/bounds tables, and `evaluate_lhs_cobre`). Only the
+# case's own constraint/bounds tables, and `evaluate_lhs_novomodelo`). Only the
 # DECOMP-side LHS is missing -- `evaluate_lhs_newave` is
 # MEDIAS/NewaveIdMap-coupled and cannot serve DECOMP -- so
 # `_generic_constraint_lhs_decomp` below evaluates each constraint against
@@ -2368,9 +2391,9 @@ def _dec_oper_hydro_stage_frame(
 
     Reuses `_stage_rows` (keep the duration-weighted ``patamar``-null
     aggregate row) + `_scenario_mean` exactly like `_hydro_side`, but stops
-    short of `_map_entities`'s translation to cobre ids -- the
+    short of `_map_entities`'s translation to novomodelo ids -- the
     special-constraint register terms this feeds carry the source model's
-    own plant codes, not cobre ids. *probabilities* is forwarded to
+    own plant codes, not novomodelo ids. *probabilities* is forwarded to
     `_scenario_mean` unchanged (see `_hydro_side` for its
     scenario-weighting contract). Degrades to an empty frame (never
     raises) when the deck ships no ``dec_oper_usih.csv`` -- every caller
@@ -2461,17 +2484,17 @@ def _stage_frame_to_lookup(
 def _storage_lookup(
     hydro_frame: pl.DataFrame,
     id_map: DecompIdMap,
-    min_storage_by_cobre_id: dict[int, float],
+    min_storage_by_novomodelo_id: dict[int, float],
 ) -> dict[tuple[int, int], float]:
     """``{(source code, stage_0based): absolute storage hm3}`` = useful + Vmin.
 
     The source model's own operation export (``volume_util_final_hm3``)
     reports *useful* volume (above the plant's minimum operative storage);
-    cobre's ``hydro_storage(id)`` -- what an ``HV``/``VARM`` generic
+    novomodelo's ``hydro_storage(id)`` -- what an ``HV``/``VARM`` generic
     constraint's expression is built from -- is absolute. This reuses the
     ``min_storage_hm3`` the converter already wrote to the case's own
-    ``system/hydros.json`` (via `cobre_readers.read_cobre_hydro_metadata`) --
-    the same floor `_cobre_hydro` subtracts in the other direction for the
+    ``system/hydros.json`` (via `novomodelo_readers.read_novomodelo_hydro_metadata`) --
+    the same floor `_novomodelo_hydro` subtracts in the other direction for the
     Hydro Operation tab's own storage row -- rather than rebuilding
     ``EffectiveCadastro`` from the deck a second time. A single static value
     per plant, not per-stage: the same simplification
@@ -2482,10 +2505,10 @@ def _storage_lookup(
     out: dict[tuple[int, int], float] = {}
     for (code, stage), value in useful.items():
         try:
-            cobre_id = id_map.hydro_id(code)
+            novomodelo_id = id_map.hydro_id(code)
         except KeyError:
             continue
-        vmin = min_storage_by_cobre_id.get(cobre_id)
+        vmin = min_storage_by_novomodelo_id.get(novomodelo_id)
         if vmin is None:
             continue
         out[(code, stage)] = value + vmin
@@ -2511,7 +2534,7 @@ class _DecompConstraintLookups:
 #: is skipped whole (skip-not-partial), never a partial sum.
 _UNSUPPORTED_TERM_VARIABLES = frozenset({"interchange", "QBOM"})
 
-#: Matches a cobre generic constraint's ``name`` field as authored by the
+#: Matches a novomodelo generic constraint's ``name`` field as authored by the
 #: conversion-time emitters (``decomp.converters.constraints.emit_re_generics`` ->
 #: ``"RE_<id>"``, ``emit_rhq_rhv_generics`` -> ``"HQ_<id>"``/``"HV_<id>"``,
 #: ``emit_rhe_generics`` -> ``"RHE_<id>"``), recovering the special-constraint
@@ -2541,7 +2564,7 @@ def _rhe_lhs_lookup(
 
     RHE constraints report their achieved LHS directly in
     ``DecOperRheSoft``: ``valor_MW`` is the achieved Σρ_acum·storage in the
-    operation -- the same raw physical quantity cobre's own (slack-free)
+    operation -- the same raw physical quantity novomodelo's own (slack-free)
     expression evaluation produces, so the two overlaid series compare on
     the same basis. Read it directly rather than re-deriving the
     ρ_acum-weighted cascade sum ``decomp.converters.constraints.emit_rhe_generics``
@@ -2586,7 +2609,7 @@ _GC_LHS_SCHEMA = {
 
 def _generic_constraint_lhs_decomp(
     case: DecompCase,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     gc_constraints: list[dict],
     *,
     probabilities: pl.DataFrame | None = None,
@@ -2595,9 +2618,9 @@ def _generic_constraint_lhs_decomp(
     operation output.
 
     *case* is the shared, once-parsed deck :func:`build_decomp_dataset`
-    builds: its ``id_map`` resolves a plant code to its Cobre hydro id (the
+    builds: its ``id_map`` resolves a plant code to its Novomodelo hydro id (the
     HV storage floor), and ``dadger`` feeds the special-constraint census
-    (:func:`~cobre_bridge.decomp.constraint_registers.read_constraints`) --
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`) --
     neither is re-parsed here. The ``dec_oper_*`` tables are read directly
     off *case*'s own directory. *probabilities* is forwarded unchanged to
     every underlying :func:`_scenario_mean` fold this derivation relies on
@@ -2620,11 +2643,11 @@ def _generic_constraint_lhs_decomp(
       resolve against the matching ``dec_oper_usih`` flow column.
     - **HV** (storage): ``VARM`` register terms resolve against
       ``dec_oper_usih``'s *useful* stage-final volume, floor-adjusted to
-      cobre's absolute basis (see `_storage_lookup`).
+      novomodelo's absolute basis (see `_storage_lookup`).
     - **RHE** (soft stored-energy): read directly from ``DecOperRheSoft``
       (see `_rhe_lhs_lookup`) -- no register/census lookup needed.
 
-    Deferred (cobre-only render, logged, never fabricated): RE
+    Deferred (novomodelo-only render, logged, never fabricated): RE
     ``interchange`` (FI) and HQ ``QBOM`` (pumping) terms -- see
     :data:`_UNSUPPORTED_TERM_VARIABLES`. A constraint whose name does not
     match a known family/id (:data:`_CONSTRAINT_NAME_RE`), or whose id has
@@ -2634,7 +2657,7 @@ def _generic_constraint_lhs_decomp(
     if not gc_constraints:
         return pl.DataFrame(schema=_GC_LHS_SCHEMA)
 
-    from cobre_bridge.decomp.constraint_registers import read_constraints
+    from novomodelo_bridge.decomp.constraint_registers import read_constraints
 
     decomp_dir = case.files.dadger.parent
     census = read_constraints(case.dadger)
@@ -2646,7 +2669,9 @@ def _generic_constraint_lhs_decomp(
     hydro_frame = _dec_oper_hydro_stage_frame(decomp_dir, probabilities=probabilities)
     min_storage = {
         i: float(m.get("min_storage_hm3") or 0.0)
-        for i, m in cobre_readers.read_cobre_hydro_metadata(cobre_output_dir).items()
+        for i, m in novomodelo_readers.read_novomodelo_hydro_metadata(
+            novomodelo_output_dir
+        ).items()
     }
     storage_lookup = _storage_lookup(hydro_frame, case.id_map, min_storage)
 
@@ -2672,13 +2697,13 @@ def _generic_constraint_lhs_decomp(
     n_skipped = 0
     for c in gc_constraints:
         name = str(c.get("name", ""))
-        cobre_cid = int(c["id"])
+        novomodelo_cid = int(c["id"])
         match = _CONSTRAINT_NAME_RE.match(name)
         if match is None:
             _LOG.info(
                 "Generic constraint %d (%r) has no recognized source-model "
-                "family/id in its name; rendering cobre-only.",
-                cobre_cid,
+                "family/id in its name; rendering novomodelo-only.",
+                novomodelo_cid,
                 name,
             )
             n_skipped += 1
@@ -2690,14 +2715,14 @@ def _generic_constraint_lhs_decomp(
             if not stage_values:
                 _LOG.info(
                     "RHE constraint %d (%s) has no dec_oper_rhesoft rows; "
-                    "rendering cobre-only.",
-                    cobre_cid,
+                    "rendering novomodelo-only.",
+                    novomodelo_cid,
                     name,
                 )
                 n_skipped += 1
                 continue
             rows.extend(
-                {"constraint_id": cobre_cid, "stage_id": stage, "lhs_value": value}
+                {"constraint_id": novomodelo_cid, "stage_id": stage, "lhs_value": value}
                 for stage, value in stage_values.items()
             )
             continue
@@ -2707,8 +2732,8 @@ def _generic_constraint_lhs_decomp(
             _LOG.info(
                 "Generic constraint %d (%s) has no matching source-model "
                 "register record (deck unavailable or record not found); "
-                "rendering cobre-only.",
-                cobre_cid,
+                "rendering novomodelo-only.",
+                novomodelo_cid,
                 name,
             )
             n_skipped += 1
@@ -2724,8 +2749,8 @@ def _generic_constraint_lhs_decomp(
             _LOG.info(
                 "Generic constraint %d (%s) carries a term type this "
                 "comparator cannot re-derive from dec_oper_* output (%s); "
-                "rendering cobre-only.",
-                cobre_cid,
+                "rendering novomodelo-only.",
+                novomodelo_cid,
                 name,
                 ", ".join(unsupported),
             )
@@ -2744,7 +2769,11 @@ def _generic_constraint_lhs_decomp(
                 lhs += term.coefficient * value
             if complete:
                 rows.append(
-                    {"constraint_id": cobre_cid, "stage_id": stage, "lhs_value": lhs}
+                    {
+                        "constraint_id": novomodelo_cid,
+                        "stage_id": stage,
+                        "lhs_value": lhs,
+                    }
                 )
                 constraint_rows += 1
         if constraint_rows == 0:
@@ -2753,7 +2782,7 @@ def _generic_constraint_lhs_decomp(
     if n_skipped:
         _LOG.info(
             "DECOMP-side generic-constraint LHS: %d of %d constraint(s) "
-            "rendered cobre-only (no source-model LHS derivable).",
+            "rendered novomodelo-only (no source-model LHS derivable).",
             n_skipped,
             len(gc_constraints),
         )
@@ -2767,47 +2796,47 @@ def _generic_constraint_lhs_decomp(
 
 
 def build_decomp_dataset(
-    decomp_dir: Path, cobre_output_dir: Path, *, tolerance: float = 1e-2
+    decomp_dir: Path, novomodelo_output_dir: Path, *, tolerance: float = 1e-2
 ) -> ComparisonDataset:
-    """Build the canonical results dataset for a DECOMP-vs-Cobre comparison.
+    """Build the canonical results dataset for a DECOMP-vs-Novomodelo comparison.
 
-    One :class:`~cobre_bridge.decomp.case.DecompCase` is built and shared
+    One :class:`~novomodelo_bridge.decomp.case.DecompCase` is built and shared
     across the read/align (:func:`_read_aligned_frames`), Network/
     Productivity/REE/evaporation, and Constraints sections below -- a single
     deck parse for the whole dataset build.
 
     Reads and aligns both sides via :func:`_read_aligned_frames`, then emits
-    the canonical :class:`~cobre_bridge.comparators.model.ResultComparison`
+    the canonical :class:`~novomodelo_bridge.comparators.model.ResultComparison`
     shape and assembles it through the shared, source-agnostic
-    :func:`~cobre_bridge.comparators.analyze.build_results_dataset` kernel.
+    :func:`~novomodelo_bridge.comparators.analyze.build_results_dataset` kernel.
 
     Per D-PERCENTILEDATA, the returned dataset's ``PercentileData`` carries:
 
     - Entity-name dicts (``nw_bus_names``/``nw_hydro_names``) and the
-      cobre-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, read
-      verbatim from the matching ``cobre_readers`` percentile functions.
+      novomodelo-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, read
+      verbatim from the matching ``novomodelo_readers`` percentile functions.
     - The Energy Balance tab's DECOMP-side frames ``nw_market``/
-      ``nw_net_load``/``nw_sin`` (`_energy_balance_frames`) plus the cobre-side
-      ``bus_aggregates``/``cobre_bus_meta``/``cobre_hydro_means``.
+      ``nw_net_load``/``nw_sin`` (`_energy_balance_frames`) plus the novomodelo-side
+      ``bus_aggregates``/``novomodelo_bus_meta``/``novomodelo_hydro_means``.
     - The Network tab's ``line_bounds``/``line_meta`` (`_line_bounds_and_meta`).
-    - The Overview tab's ``nw_costs`` (`_cost_frames`), ``cobre_costs``/
-      ``cobre_stage_costs``, and the Convergence overlay ``nw_convergence``/
-      ``cobre_convergence`` (`_decomp_convergence_frame`). The per-stage
+    - The Overview tab's ``nw_costs`` (`_cost_frames`), ``novomodelo_costs``/
+      ``novomodelo_stage_costs``, and the Convergence overlay ``nw_convergence``/
+      ``novomodelo_convergence`` (`_decomp_convergence_frame`). The per-stage
       ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows are unioned onto ``nw_sin``'s
       EARM/ENA rows via `_union_cost_rows`, never overwriting them.
     - The Performance tab's ``nw_tim_stages``/``nw_tim_iterations``/
       ``nw_max_stage`` (`_decomp_tim_stages`/`_decomp_tim_iterations`/
-      `_decomp_max_stage`) plus ``cobre_training_seconds``/
-      ``cobre_iteration_timing``. ``nw_tim_iterations`` never carries a
+      `_decomp_max_stage`) plus ``novomodelo_training_seconds``/
+      ``novomodelo_iteration_timing``. ``nw_tim_iterations`` never carries a
       ``forward_seconds``/``backward_seconds`` split -- DECOMP is nested
       Benders over an explicit tree, with no forward/backward pass to split.
-    - The Hydro/Thermal Operation + Plant Details tabs' ``cobre_hydro_meta``
+    - The Hydro/Thermal Operation + Plant Details tabs' ``novomodelo_hydro_meta``
       (`_merge_hydro_bus_ids`, so every entry carries a ``"bus_ids"`` key) and
-      ``cobre_hydro_per_stage_bounds``.
+      ``novomodelo_hydro_per_stage_bounds``.
     - The Productivity tab's ``fpha_metrics`` (`_fpha_metrics`; its preceding
       [ASSUMPTION] comment covers why this is fit-fidelity statistics at the
       source model's realized points, not a full grid-reconstructed surface).
-    - The Constraints tab's ``gc_constraints``/``gc_bounds``/``gc_lhs_cobre``
+    - The Constraints tab's ``gc_constraints``/``gc_bounds``/``gc_lhs_novomodelo``
       (verbatim from ``constraints``) and the DECOMP-side
       ``gc_lhs_newave`` (`_generic_constraint_lhs_decomp`).
 
@@ -2821,13 +2850,13 @@ def build_decomp_dataset(
     Unit reconciliations (D2): REE EARM MWh -> MWmês via
     :data:`_EARM_MWH_TO_MWMES`, REE ENA (a stage-mean MW) -> MWmês via the
     stage's own hours, and evaporation hm³ -> m³/s via the stage's actual
-    hours -- the last surfaces a TRACKED COBRE-GAP WORKAROUND (C11) rather
+    hours -- the last surfaces a TRACKED NOVOMODELO-GAP WORKAROUND (C11) rather
     than correcting it away (see `_evaporation_result_comparisons`).
     ``nw_offset=1`` (D-STAGE-OFFSET): DECOMP's ``estagio`` is 1-based from the
     deck's first stage, so the offset is fixed at 1, not derived from the data.
 
     Nothing is fabricated to fill a gap: ``bus``/``hydro``/``thermal``/
-    ``line`` stay empty whenever the Cobre run has no percentile output (e.g.
+    ``line`` stay empty whenever the Novomodelo run has no percentile output (e.g.
     the deterministic 2-node tree), and the ``nw_hydro_slacks``,
     ``productivity_detail``, ``fpha_surface``, and ``fpha_spill`` fields stay
     at their empty defaults, so those sections render their documented "No
@@ -2847,7 +2876,7 @@ def build_decomp_dataset(
     Args:
         decomp_dir: The deck directory (results resolved via the deck's
             union discovery).
-        cobre_output_dir: Cobre's output directory.
+        novomodelo_output_dir: Novomodelo's output directory.
         tolerance: Relative tolerance (default ``1e-2``) forwarded to the
             summary builder.
 
@@ -2858,13 +2887,15 @@ def build_decomp_dataset(
         resolve, so they survive into the dataset instead of being silently
         dropped.
     """
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.decomp.case import DecompCase
 
     case = DecompCase.from_directory(decomp_dir)
     probabilities = _scenario_probabilities(decomp_dir)
 
-    aligned = _read_aligned_frames(case, cobre_output_dir, probabilities=probabilities)
+    aligned = _read_aligned_frames(
+        case, novomodelo_output_dir, probabilities=probabilities
+    )
 
     results: list[ResultComparison] = []
     # Captured separately so the derived realized productivity
@@ -2872,7 +2903,7 @@ def build_decomp_dataset(
     # -- see _hydro_productivity_results.
     hydro_results = _result_comparisons(
         aligned.source_hydro,
-        aligned.cobre_hydro,
+        aligned.novomodelo_hydro,
         _HYDRO_VARIABLES,
         names=aligned.hydro_names,
     )
@@ -2881,7 +2912,7 @@ def build_decomp_dataset(
     results.extend(
         _result_comparisons(
             aligned.source_thermal,
-            aligned.cobre_thermal,
+            aligned.novomodelo_thermal,
             _THERMAL_VARIABLES,
             names=aligned.thermal_names,
         )
@@ -2889,31 +2920,35 @@ def build_decomp_dataset(
     results.extend(
         _result_comparisons(
             aligned.source_bus,
-            aligned.cobre_bus,
+            aligned.novomodelo_bus,
             _BUS_VARIABLES,
             names=aligned.bus_names,
         )
     )
 
     # --- Network tab (line rows + line/line_bounds/line_meta) ---
-    line_bounds, line_meta = _line_bounds_and_meta(cobre_output_dir)
+    line_bounds, line_meta = _line_bounds_and_meta(novomodelo_output_dir)
     # The Network/Productivity/REE/evaporation sections below all reuse the
     # shared case's id map rather than each re-parsing the deck.
     line_id_map = case.id_map
     line_results, unresolved_lines = _line_result_comparisons(
         decomp_dir,
-        cobre_output_dir,
+        novomodelo_output_dir,
         line_id_map,
         line_meta,
         probabilities=probabilities,
     )
     results.extend(line_results)
 
-    # --- Overview cost metadata (nw_costs / cobre_costs /
-    # nw_sin cost rows / cobre_stage_costs) ---
+    # --- Overview cost metadata (nw_costs / novomodelo_costs /
+    # nw_sin cost rows / novomodelo_stage_costs) ---
     nw_costs, nw_cost_rows = _cost_frames(decomp_dir)
-    cobre_costs = cobre_readers.read_cobre_cost_breakdown(cobre_output_dir)
-    cobre_stage_costs = cobre_readers.read_cobre_stage_costs(cobre_output_dir)
+    novomodelo_costs = novomodelo_readers.read_novomodelo_cost_breakdown(
+        novomodelo_output_dir
+    )
+    novomodelo_stage_costs = novomodelo_readers.read_novomodelo_stage_costs(
+        novomodelo_output_dir
+    )
     nw_sin = _union_cost_rows(aligned.nw_sin, nw_cost_rows)
 
     # --- Performance tab timing metadata (no fabricated DECOMP
@@ -2921,72 +2956,74 @@ def build_decomp_dataset(
     nw_tim_stages = _decomp_tim_stages(decomp_dir)
     nw_tim_iterations = _decomp_tim_iterations(decomp_dir)
     nw_max_stage = _decomp_max_stage(aligned)
-    cobre_training_seconds = cobre_readers.read_cobre_training_duration(
-        cobre_output_dir
+    novomodelo_training_seconds = novomodelo_readers.read_novomodelo_training_duration(
+        novomodelo_output_dir
     )
-    cobre_iteration_timing = cobre_readers.read_cobre_iteration_timing(cobre_output_dir)
+    novomodelo_iteration_timing = novomodelo_readers.read_novomodelo_iteration_timing(
+        novomodelo_output_dir
+    )
 
     # --- Hydro Operation + Plant Details tab metadata ---
-    cobre_hydro_meta = _merge_hydro_bus_ids(
-        cobre_readers.read_cobre_hydro_metadata(cobre_output_dir),
-        cobre_readers.read_cobre_hydro_bus_labels(cobre_output_dir),
+    novomodelo_hydro_meta = _merge_hydro_bus_ids(
+        novomodelo_readers.read_novomodelo_hydro_metadata(novomodelo_output_dir),
+        novomodelo_readers.read_novomodelo_hydro_bus_labels(novomodelo_output_dir),
     )
 
     # --- Productivity tab's "Fitted production functions (FPHA)" section.
     fpha_metrics = _fpha_metrics(
-        decomp_dir, cobre_output_dir, line_id_map, aligned.hydro_names
+        decomp_dir, novomodelo_output_dir, line_id_map, aligned.hydro_names
     )
 
     # --- REE energy rollup via membership. ---
     ree_results, unmapped_ree = _ree_result_comparisons(
         decomp_dir,
-        aligned.cobre_hydro,
+        aligned.novomodelo_hydro,
         line_id_map,
         probabilities=probabilities,
-        stage_hours=_cobre_stage_hours(cobre_output_dir) or None,
+        stage_hours=_novomodelo_stage_hours(novomodelo_output_dir) or None,
     )
     results.extend(ree_results)
 
     # --- evaporation comparison (hydro, "evaporation_m3s"). See
     # ``_evaporation_result_comparisons``'s docstring for the hm³ -> m³/s
-    # reconciliation and the TRACKED COBRE-GAP WORKAROUND (C11) it surfaces.
+    # reconciliation and the TRACKED NOVOMODELO-GAP WORKAROUND (C11) it surfaces.
     evaporation_results, unmapped_evaporation = _evaporation_result_comparisons(
         decomp_dir,
-        cobre_output_dir,
-        aligned.cobre_hydro,
+        novomodelo_output_dir,
+        aligned.novomodelo_hydro,
         line_id_map,
         aligned.hydro_names,
         probabilities=probabilities,
     )
     results.extend(evaporation_results)
 
-    # --- Constraints tab (gc_* metadata). The cobre-side pieces
+    # --- Constraints tab (gc_* metadata). The novomodelo-side pieces
     # (constraint/bounds tables, simulation LHS) are source-agnostic and
     # reused verbatim from `constraints`; only the DECOMP-side LHS
     # (`_generic_constraint_lhs_decomp`) is new -- see that function's
     # docstring for the per-family derivation.
-    from cobre_bridge.cobre.constraint_expr import load_rho_acum_overrides
-    from cobre_bridge.comparators.constraints import (
-        evaluate_lhs_cobre,
+    from novomodelo_bridge.comparators.constraints import (
+        evaluate_lhs_novomodelo,
         load_generic_constraint_bounds,
         load_generic_constraints,
     )
+    from novomodelo_bridge.novomodelo.constraint_expr import load_rho_acum_overrides
 
-    cobre_case_dir = case_dir_for(cobre_output_dir)
-    gc_constraints = load_generic_constraints(cobre_case_dir)
-    gc_bounds_df = load_generic_constraint_bounds(cobre_case_dir)
+    novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
+    gc_constraints = load_generic_constraints(novomodelo_case_dir)
+    gc_bounds_df = load_generic_constraint_bounds(novomodelo_case_dir)
     if gc_constraints:
         # RHE's ``@rho_acum_h{id}`` resolves against the LP's per-stage
         # override (same mechanism as VminOP), not the simulation's default
         # productivity column -- unlike the source-model VminOP path, RHE's
         # bound is never useful-energy-shifted (dead volume can exceed the
         # bound here), so only the LHS scaling is corrected.
-        rho_acum_overrides = load_rho_acum_overrides(cobre_case_dir)
-        gc_lhs_cb = evaluate_lhs_cobre(
-            gc_constraints, cobre_output_dir, rho_acum_overrides
+        rho_acum_overrides = load_rho_acum_overrides(novomodelo_case_dir)
+        gc_lhs_cb = evaluate_lhs_novomodelo(
+            gc_constraints, novomodelo_output_dir, rho_acum_overrides
         )
         gc_lhs_nw = _generic_constraint_lhs_decomp(
-            case, cobre_output_dir, gc_constraints, probabilities=probabilities
+            case, novomodelo_output_dir, gc_constraints, probabilities=probabilities
         )
     else:
         gc_lhs_cb = pl.DataFrame()
@@ -2995,7 +3032,7 @@ def build_decomp_dataset(
     pct = PercentileData(
         nw_bus_names=aligned.bus_names,
         nw_hydro_names=aligned.hydro_names,
-        bus=cobre_readers.read_cobre_bus_percentiles(cobre_output_dir),
+        bus=novomodelo_readers.read_novomodelo_bus_percentiles(novomodelo_output_dir),
         nw_market=aligned.nw_market,
         nw_net_load=aligned.nw_net_load,
         nw_sin=nw_sin,
@@ -3003,42 +3040,54 @@ def build_decomp_dataset(
         nw_offset=1,
         # Overview tab's Convergence overlay.
         nw_convergence=_decomp_convergence_frame(decomp_dir),
-        cobre_convergence=cobre_readers.read_cobre_convergence(cobre_output_dir),
+        novomodelo_convergence=novomodelo_readers.read_novomodelo_convergence(
+            novomodelo_output_dir
+        ),
         nw_costs=nw_costs,
-        cobre_costs=cobre_costs,
-        cobre_stage_costs=cobre_stage_costs,
-        bus_aggregates=cobre_readers.read_cobre_bus_aggregates(cobre_output_dir),
-        cobre_bus_meta=cobre_readers.read_cobre_bus_metadata(cobre_output_dir),
-        cobre_hydro_means=cobre_readers.read_cobre_hydro_means(cobre_output_dir),
-        line=cobre_readers.read_cobre_line_percentiles(cobre_output_dir),
+        novomodelo_costs=novomodelo_costs,
+        novomodelo_stage_costs=novomodelo_stage_costs,
+        bus_aggregates=novomodelo_readers.read_novomodelo_bus_aggregates(
+            novomodelo_output_dir
+        ),
+        novomodelo_bus_meta=novomodelo_readers.read_novomodelo_bus_metadata(
+            novomodelo_output_dir
+        ),
+        novomodelo_hydro_means=novomodelo_readers.read_novomodelo_hydro_means(
+            novomodelo_output_dir
+        ),
+        line=novomodelo_readers.read_novomodelo_line_percentiles(novomodelo_output_dir),
         line_bounds=line_bounds,
         line_meta=line_meta,
         # Performance tab timing metadata.
         nw_tim_stages=nw_tim_stages,
         nw_tim_iterations=nw_tim_iterations,
         nw_max_stage=nw_max_stage,
-        cobre_training_seconds=cobre_training_seconds,
-        cobre_iteration_timing=cobre_iteration_timing,
+        novomodelo_training_seconds=novomodelo_training_seconds,
+        novomodelo_iteration_timing=novomodelo_iteration_timing,
         # Hydro Operation + Plant Details tab metadata. Never
-        # fabricate a percentile spread when the Cobre run has no hydro
+        # fabricate a percentile spread when the Novomodelo run has no hydro
         # percentile output (e.g. the deterministic 2-node tree) --
-        # ``read_cobre_hydro_percentiles`` already degrades to an empty
+        # ``read_novomodelo_hydro_percentiles`` already degrades to an empty
         # frame in that case, passed through verbatim.
-        hydro=cobre_readers.read_cobre_hydro_percentiles(cobre_output_dir),
-        cobre_hydro_meta=cobre_hydro_meta,
-        cobre_hydro_per_stage_bounds=cobre_readers.read_cobre_hydro_per_stage_bounds(
-            cobre_output_dir
+        hydro=novomodelo_readers.read_novomodelo_hydro_percentiles(
+            novomodelo_output_dir
+        ),
+        novomodelo_hydro_meta=novomodelo_hydro_meta,
+        novomodelo_hydro_per_stage_bounds=novomodelo_readers.read_novomodelo_hydro_per_stage_bounds(
+            novomodelo_output_dir
         ),
         # DECOMP has no direct withdrawal/evaporation-slack analog --
         # stays at the dataclass empty-frame default (never set to a
-        # DECOMP-derived source) so the slack charts render the cobre
+        # DECOMP-derived source) so the slack charts render the novomodelo
         # Mean + p10/p90 band only (report_builder's has_newave=False path).
         nw_hydro_slacks=pl.DataFrame(),
         # Thermal Operation + Plant Details tab metadata. Never fabricate a
-        # percentile spread when the Cobre run has no thermal percentile output
-        # (e.g. the deterministic 2-node tree): ``read_cobre_thermal_percentiles``
+        # percentile spread when the Novomodelo run has no thermal percentile output
+        # (e.g. the deterministic 2-node tree): ``read_novomodelo_thermal_percentiles``
         # degrades to an empty frame, passed through verbatim.
-        thermal=cobre_readers.read_cobre_thermal_percentiles(cobre_output_dir),
+        thermal=novomodelo_readers.read_novomodelo_thermal_percentiles(
+            novomodelo_output_dir
+        ),
         # DECOMP ships no pmo.dat, so the static productivity scatter/
         # building-blocks table have no counterpart -- stays at the empty-frame
         # default (never fabricated), rendering the "No productivity data
@@ -3059,7 +3108,7 @@ def build_decomp_dataset(
         gc_constraints=gc_constraints,
         gc_bounds=gc_bounds_df,
         gc_lhs_newave=gc_lhs_nw,
-        gc_lhs_cobre=gc_lhs_cb,
+        gc_lhs_novomodelo=gc_lhs_cb,
     )
     dataset = build_results_dataset(results, pct, tolerance)
     dataset.metadata["unmapped"] = {

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cobre_bridge.core.pandas_utils import is_na
+from novomodelo_bridge.core.pandas_utils import is_na
 
 
 @pytest.mark.parametrize(

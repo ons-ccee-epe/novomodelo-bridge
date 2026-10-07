@@ -13,7 +13,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.decomp.results import (
     _CONSTRAINT_NAME_RE,
     _GC_LHS_SCHEMA,
     _UNSUPPORTED_TERM_VARIABLES,
@@ -25,13 +25,13 @@ from cobre_bridge.comparators.decomp.results import (
     _term_lookup_value,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.report_builder import build_comparison_report
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
@@ -102,7 +102,7 @@ class TestStageFrameToLookup:
 
 class TestStorageLookup:
     """`_storage_lookup`: absolute storage = useful volume + Vmin, Vmin
-    resolved via the id map onto the cobre-side `min_storage_hm3` registry."""
+    resolved via the id map onto the novomodelo-side `min_storage_hm3` registry."""
 
     def test_adds_min_storage_floor_via_id_map(self) -> None:
         hydro_frame = pl.DataFrame(
@@ -168,7 +168,7 @@ class TestUnsupportedTermVariables:
 
 
 class TestConstraintNameRe:
-    """`_CONSTRAINT_NAME_RE`: recovers a cobre generic constraint's source
+    """`_CONSTRAINT_NAME_RE`: recovers a novomodelo generic constraint's source
     family + register id from the emitter-authored ``name`` field."""
 
     @pytest.mark.parametrize(
@@ -258,11 +258,11 @@ class TestGenericConstraintLhsDecomp:
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(155, 157))
         case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
         monkeypatch.setattr(
-            "cobre_bridge.decomp.constraint_registers.read_constraints",
+            "novomodelo_bridge.decomp.constraint_registers.read_constraints",
             lambda *_a, **_k: census,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             lambda *_a, **_k: _usih_frame(
                 [
                     {"codigo_usina": 155, "estagio": 1, "geracao_MW": 3000.0},
@@ -271,11 +271,11 @@ class TestGenericConstraintLhsDecomp:
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(),
         )
 
@@ -302,26 +302,26 @@ class TestGenericConstraintLhsDecomp:
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
         case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
         monkeypatch.setattr(
-            "cobre_bridge.decomp.constraint_registers.read_constraints",
+            "novomodelo_bridge.decomp.constraint_registers.read_constraints",
             lambda *_a, **_k: census,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             lambda *_a, **_k: _usih_frame(
                 [{"codigo_usina": 10, "estagio": 1, "volume_util_final_hm3": 120.0}]
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_hydro_metadata",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_hydro_metadata",
             lambda *_a, **_k: {0: {"min_storage_hm3": 30.0}},
         )
 
@@ -347,15 +347,15 @@ class TestGenericConstraintLhsDecomp:
             id_map=DecompIdMap(bus_codes=(), bus_names=()),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(
                 {
                     "estagio": [4],
@@ -378,13 +378,13 @@ class TestGenericConstraintLhsDecomp:
         assert rows[0]["stage_id"] == 3
         assert rows[0]["lhs_value"] == pytest.approx(2951.58)
 
-    def test_interchange_term_skips_whole_constraint_cobre_only(
+    def test_interchange_term_skips_whole_constraint_novomodelo_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """An RE record mixing a resolvable ``generation`` term with an
         unresolvable ``interchange`` term must not fabricate a partial LHS
         from the resolvable term alone -- the whole constraint renders
-        cobre-only."""
+        novomodelo-only."""
         record = _re_record(
             405,
             (
@@ -404,21 +404,21 @@ class TestGenericConstraintLhsDecomp:
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(141,))
         case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
         monkeypatch.setattr(
-            "cobre_bridge.decomp.constraint_registers.read_constraints",
+            "novomodelo_bridge.decomp.constraint_registers.read_constraints",
             lambda *_a, **_k: census,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             lambda *_a, **_k: _usih_frame(
                 [{"codigo_usina": 141, "estagio": 1, "geracao_MW": 1000.0}]
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(),
         )
 
@@ -435,15 +435,15 @@ class TestGenericConstraintLhsDecomp:
             id_map=DecompIdMap(bus_codes=(), bus_names=()),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(),
         )
 
@@ -456,7 +456,7 @@ class TestGenericConstraintLhsDecomp:
     ) -> None:
         """A shared case whose census carries no matching RE/HQ/HV record
         (a bare, register-less fake ``dadger`` -> ``read_constraints``
-        degrades to an empty census) must degrade RE/HQ/HV to cobre-only,
+        degrades to an empty census) must degrade RE/HQ/HV to novomodelo-only,
         never raise, even when the matching ``dec_oper_usih`` generation
         value is otherwise available."""
         case = make_decomp_case(
@@ -465,17 +465,17 @@ class TestGenericConstraintLhsDecomp:
             id_map=DecompIdMap(bus_codes=(), bus_names=()),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             lambda *_a, **_k: _usih_frame(
                 [{"codigo_usina": 155, "estagio": 1, "geracao_MW": 3000.0}]
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(),
         )
 
@@ -486,7 +486,7 @@ class TestGenericConstraintLhsDecomp:
 
 class TestBuildDecompDatasetConstraints:
     """Fills ``gc_constraints``/``gc_bounds``/``gc_lhs_newave``/
-    ``gc_lhs_cobre`` -- the cobre-side pieces reused verbatim from
+    ``gc_lhs_novomodelo`` -- the novomodelo-side pieces reused verbatim from
     `constraints`, the DECOMP-side LHS newly derived."""
 
     def test_no_generic_constraints_case_renders_empty_no_error(
@@ -500,7 +500,7 @@ class TestBuildDecompDatasetConstraints:
 
         assert dataset.render.gc_constraints == []
         assert dataset.render.gc_lhs_newave.is_empty()
-        assert dataset.render.gc_lhs_cobre.is_empty()
+        assert dataset.render.gc_lhs_novomodelo.is_empty()
         html = build_comparison_report(dataset)  # must not raise
         constraints_tab = _extract_tab_content(html, "tab-constraints")
         assert "Generic Constraints — LHS vs Bound" in constraints_tab
@@ -530,15 +530,15 @@ class TestBuildDecompDatasetConstraints:
         ]
         output_dir = _write_generic_constraints_case(case_dir, constraints, bound_rows)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(
                 {
                     "estagio": [1],
@@ -551,7 +551,7 @@ class TestBuildDecompDatasetConstraints:
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.constraints.evaluate_lhs_cobre",
+            "novomodelo_bridge.comparators.constraints.evaluate_lhs_novomodelo",
             lambda *_a, **_k: pl.DataFrame(
                 {"constraint_id": [0], "stage_id": [0], "lhs_value": [3000.0]}
             ),
@@ -565,7 +565,7 @@ class TestBuildDecompDatasetConstraints:
         assert nw_row["constraint_id"] == 0
         assert nw_row["stage_id"] == 0
         assert nw_row["lhs_value"] == pytest.approx(2951.58)
-        cb_row = dataset.render.gc_lhs_cobre.row(0, named=True)
+        cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}
 
         html = build_comparison_report(dataset)
@@ -576,9 +576,9 @@ class TestBuildDecompDatasetConstraints:
     def test_rhe_lhs_forwards_overrides_and_bound_stays_raw_nonnegative(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Regression guard: the RHE cobre-side LHS now resolves
+        """Regression guard: the RHE novomodelo-side LHS now resolves
         ``@rho_acum_h{id}`` via the LP's per-stage override (same mechanism as
-        VminOP), forwarded through ``evaluate_lhs_cobre``'s third positional
+        VminOP), forwarded through ``evaluate_lhs_novomodelo``'s third positional
         arg -- and, unlike the source-model VminOP path, the RHE bound is
         NEVER useful-energy-shifted (dead volume can exceed the bound for
         DECOMP RHE), so it must reach the dataset unchanged and non-negative.
@@ -606,15 +606,15 @@ class TestBuildDecompDatasetConstraints:
         ]
         output_dir = _write_generic_constraints_case(case_dir, constraints, bound_rows)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(
                 {
                     "estagio": [1],
@@ -628,20 +628,22 @@ class TestBuildDecompDatasetConstraints:
         )
         calls: list[tuple[object, ...]] = []
 
-        def _capturing_evaluate_lhs_cobre(*args: object, **_kw: object) -> pl.DataFrame:
+        def _capturing_evaluate_lhs_novomodelo(
+            *args: object, **_kw: object
+        ) -> pl.DataFrame:
             calls.append(args)
             return pl.DataFrame(
                 {"constraint_id": [0], "stage_id": [0], "lhs_value": [3000.0]}
             )
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.constraints.evaluate_lhs_cobre",
-            _capturing_evaluate_lhs_cobre,
+            "novomodelo_bridge.comparators.constraints.evaluate_lhs_novomodelo",
+            _capturing_evaluate_lhs_novomodelo,
         )
 
         dataset = build_decomp_dataset(case_dir, output_dir)
 
-        # evaluate_lhs_cobre received a third positional arg -- the
+        # evaluate_lhs_novomodelo received a third positional arg -- the
         # rho_acum_overrides mapping ({} here, since no
         # generic_parameters.json was written by this fixture).
         assert len(calls) == 1

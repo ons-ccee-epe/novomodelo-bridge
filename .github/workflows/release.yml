@@ -46,7 +46,7 @@ jobs:
       id-token: write
     environment:
       name: pypi
-      url: https://pypi.org/p/cobre-bridge
+      url: https://pypi.org/p/novomodelo-bridge
     steps:
       - uses: actions/download-artifact@v4
         with:

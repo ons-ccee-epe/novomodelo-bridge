@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance

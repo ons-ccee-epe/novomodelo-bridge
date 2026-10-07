@@ -1,9 +1,9 @@
-"""Adapter for validating a converted case with the installed cobre-python.
+"""Adapter for validating a converted case with the installed novomodelo-python.
 
 Shared by every ``convert *`` command's ``--validate`` gate; calls the version
-policy through the :mod:`cobre_bridge.cobre.compat` module object (rather than
+policy through the :mod:`novomodelo_bridge.novomodelo.compat` module object (rather than
 importing its functions/constant by name) so a test's
-``patch("cobre_bridge.cobre.compat._installed_cobre_python_version", ...)``
+``patch("novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version", ...)``
 reaches the same object this module looks up at call time.
 """
 
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cobre_bridge.cobre import compat as cobre_compat
-from cobre_bridge.ui.console import print_status, render_error
+from novomodelo_bridge.novomodelo import compat as novomodelo_compat
+from novomodelo_bridge.ui.console import print_status, render_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def _validation_message(item: object) -> str:
-    """Extract the display text from a ``cobre.io.validate`` warning/error item.
+    """Extract the display text from a ``novomodelo.io.validate`` warning/error item.
 
     Each item is either a plain string or a ``{"message": ...}`` dict; both
     forms render and partition on the same text.
@@ -34,7 +34,7 @@ def _validation_message(item: object) -> str:
 def _partition_validation_warnings(
     warnings: Sequence[object], whitelist_substrings: Sequence[str] = ()
 ) -> tuple[list[object], list[object]]:
-    """Split ``cobre.io.validate`` ``warnings`` into ``(rendered, whitelisted)``.
+    """Split ``novomodelo.io.validate`` ``warnings`` into ``(rendered, whitelisted)``.
 
     A warning whose message (:func:`_validation_message`) contains any of
     *whitelist_substrings* is whitelisted — not rendered as a "Validation
@@ -58,7 +58,7 @@ def _partition_validation_warnings(
     return rendered, whitelisted
 
 
-def _run_cobre_validation(
+def _run_novomodelo_validation(
     dst: Path,
     *,
     command: str,
@@ -67,11 +67,11 @@ def _run_cobre_validation(
     err_console: Console,
     whitelist_substrings: Sequence[str] = (),
 ) -> bool:
-    """Validate *dst* with the installed cobre-python and render the outcome.
+    """Validate *dst* with the installed novomodelo-python and render the outcome.
 
     Shared by every ``convert *`` command's ``--validate`` gate: the
-    :data:`~cobre_bridge.cobre.compat.MIN_COBRE_VERSION` skip, the
-    ``cobre.io.validate`` call, warning/error rendering (warnings are first
+    :data:`~novomodelo_bridge.novomodelo.compat.MIN_NOVOMODELO_VERSION` skip, the
+    ``novomodelo.io.validate`` call, warning/error rendering (warnings are first
     partitioned through :func:`_partition_validation_warnings` against
     *whitelist_substrings* — ``convert newave`` passes an empty tuple, the
     identity case, so its rendering stays byte-identical), and the
@@ -80,19 +80,20 @@ def _run_cobre_validation(
     whitelisted-note message; *summary* is mutated in place.
 
     Returns whether validation FAILED (``valid`` came back ``False``, or
-    ``cobre.io.validate`` itself raised) so the caller can flip its exit code
-    to 2 — a skipped validation (old/absent cobre-python) is never a failure.
+    ``novomodelo.io.validate`` itself raised) so the caller can flip its exit code
+    to 2 — a skipped validation (old/absent novomodelo-python) is never a failure.
     Does not emit the enclosing ``--json`` verdict or raise ``typer.Exit``;
     that stays the caller's job, run immediately after this returns.
     """
-    installed = cobre_compat._installed_cobre_python_version()
-    if installed is not None and not cobre_compat._cobre_python_supports_output(
-        installed
+    installed = novomodelo_compat._installed_novomodelo_python_version()
+    if (
+        installed is not None
+        and not novomodelo_compat._novomodelo_python_supports_output(installed)
     ):
         print_status(
-            f"Note: converted output requires cobre-python >= "
-            f"{cobre_compat.MIN_COBRE_VERSION} (installed cobre-python {installed} is "
-            f"older); skipping cobre-python validation.",
+            f"Note: converted output requires novomodelo-python >= "
+            f"{novomodelo_compat.MIN_NOVOMODELO_VERSION} (installed novomodelo-python {installed} is "
+            f"older); skipping novomodelo-python validation.",
             console=err_console,
             style="#F5A623",
         )
@@ -102,15 +103,15 @@ def _run_cobre_validation(
                 "valid": None,
                 "warnings": 0,
                 "errors": 0,
-                "skipped_reason": "cobre-python-too-old",
+                "skipped_reason": "novomodelo-python-too-old",
             }
         return False
 
     try:
-        import cobre.io  # type: ignore[import-untyped]
+        import novomodelo.io  # type: ignore[import-untyped]
     except ImportError:
         print_status(
-            "Warning: cobre package not installed, skipping validation",
+            "Warning: novomodelo package not installed, skipping validation",
             console=err_console,
             style="#F5A623",
         )
@@ -126,9 +127,9 @@ def _run_cobre_validation(
         return False
 
     try:
-        # cobre v0.6.x: cobre.io.validate is a function returning a
+        # novomodelo v0.6.x: novomodelo.io.validate is a function returning a
         # report dict; it never raises (errors are surfaced as data).
-        result = cobre.io.validate(str(dst))
+        result = novomodelo.io.validate(str(dst))
     except Exception as exc:  # noqa: BLE001
         render_error(f"Validation error: {exc}", console=err_console)
         if json_output:

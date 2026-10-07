@@ -17,14 +17,14 @@ import pandas as pd
 import polars as pl
 import pyarrow.parquet as pq
 
-from cobre_bridge.cobre.case_io import resolve_hydro_productivities
-from cobre_bridge.cobre.readers import (
-    read_cobre_line_bounds,
-    read_cobre_lines,
-    read_cobre_training_metadata,
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.errors import NovomodeloOutputError
+from novomodelo_bridge.novomodelo.case_io import resolve_hydro_productivities
+from novomodelo_bridge.novomodelo.readers import (
+    read_novomodelo_line_bounds,
+    read_novomodelo_lines,
+    read_novomodelo_training_metadata,
 )
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.errors import CobreOutputError
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ def resolve_hydro_bus_id(hydro: dict, *, hydros_path: Path) -> int | None:
     disagree on a plant's bus.
 
     - Every plant either pipeline emits today carries exactly one distinct
-      ``bus_id`` across its groups (cobre rule 41's mirror invariant) -- that
+      ``bus_id`` across its groups (novomodelo rule 41's mirror invariant) -- that
       value is returned.
     - A plant recorded at more than one distinct bus is **not** collapsed
       onto an arbitrary group's bus (that would silently mislabel it) and is
@@ -149,7 +149,7 @@ def resolve_hydro_bus_id(hydro: dict, *, hydros_path: Path) -> int | None:
       compare layer resolved the same way in
       ``comparators.analyze._bus_name_lookups``. Implementation note (a
       deliberate degraded-rendering choice): a ``WARNING``
-      :class:`~cobre_bridge.core.diagnostics.Diagnostic` is emitted and ``None``
+      :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` is emitted and ``None``
       is returned. Callers must omit the plant from any single-bus-keyed
       view: ``load_hydro_bus_map``'s id->bus map has no room for more than
       one bus per plant, and ``load_hydro_metadata`` drops the ``"bus_id"``
@@ -157,15 +157,15 @@ def resolve_hydro_bus_id(hydro: dict, *, hydros_path: Path) -> int | None:
       in the dashboard tabs degrade to "unknown bus" for it. The plant's
       non-bus metadata (name, volumes, productivity, ...) is unaffected and
       keeps rendering in the per-plant tables that are not bus-keyed.
-    - Missing or empty ``unit_groups`` raises :class:`CobreOutputError`
-      naming the plant. This cannot happen on a real 0.13 case (cobre rejects
+    - Missing or empty ``unit_groups`` raises :class:`NovomodeloOutputError`
+      naming the plant. This cannot happen on a real 0.13 case (novomodelo rejects
       it at load), so it only guards a hand-edited or pre-0.13 file.
     """
     hid = hydro.get("id")
     name = hydro.get("name", str(hid))
     groups = hydro.get("unit_groups")
     if not groups:
-        raise CobreOutputError(
+        raise NovomodeloOutputError(
             f"hydro {hid} ({name}) has no unit_groups; cannot resolve its bus",
             path=str(hydros_path),
         )
@@ -260,7 +260,7 @@ def load_hydro_metadata(
     exactly as before.
 
     Productivity is read from ``hydro_energy_productivity.parquet`` (the
-    cobre productivity-resolution-rules contract). Falls back through
+    novomodelo productivity-resolution-rules contract). Falls back through
     ``hydro_production_models.json`` and then the deprecated
     ``hydros.json:generation.productivity_mw_per_m3s`` field so older
     converted cases still render.
@@ -379,7 +379,7 @@ def _compute_lp_load(
 def _aggregate_timing_by_iteration(timing_raw: pd.DataFrame) -> pd.DataFrame:
     """Collapse the multi-row-per-iteration timing shape.
 
-    Newer cobre (``training/timing/iterations.parquet``) emits one
+    Newer novomodelo (``training/timing/iterations.parquet``) emits one
     rank-aggregated row plus N per-worker rows per iteration — per-worker
     rows only carry fwd/bwd wall + setup, rank rows carry everything else.
     ``SUM(col) GROUP BY iteration`` reconstructs the single-row totals that
@@ -419,7 +419,7 @@ def _correct_wall_times_from_convergence(
     per-worker wall time into ``N × wall_clock`` for an N-thread run. The
     authoritative per-iteration wall-clock lives in ``convergence.parquet``
     as ``time_forward_ms`` / ``time_backward_ms`` (captured on rank 0 around
-    the forward / backward entry points in cobre ``training.rs``).
+    the forward / backward entry points in novomodelo ``training.rs``).
 
     No-op when ``conv`` is empty, lacks the required columns, or ``timing``
     is empty — the legacy single-row-per-iteration format reaches this path
@@ -561,7 +561,7 @@ def load_temporal_context(case_dir: Path) -> TemporalContext:
         }
     )
 
-    line_meta: list[dict] = read_cobre_lines(case_dir / "output")
+    line_meta: list[dict] = read_novomodelo_lines(case_dir / "output")
 
     return TemporalContext(
         config=config,
@@ -684,7 +684,7 @@ def load_simulation_data(case_dir: Path) -> SimulationData:
 
 @dataclasses.dataclass
 class ScenarioInputs:
-    """Optional Cobre scenario/constraint input artifacts (empty when absent)."""
+    """Optional Novomodelo scenario/constraint input artifacts (empty when absent)."""
 
     load_stats: pd.DataFrame
     load_factors_list: list[dict]
@@ -700,7 +700,7 @@ class ScenarioInputs:
 def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
     """Load the optional scenario inputs and input constraint bounds.
 
-    Both load files are optional Cobre inputs (see case-format.md); they fall
+    Both load files are optional Novomodelo inputs (see case-format.md); they fall
     back to empty structures so cases without an explicit load scenario still
     render — charts degrade to a zero-load series via ``_compute_lp_load``.
     """
@@ -728,7 +728,7 @@ def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
         pq.read_table(ih_path).to_pandas() if ih_path.exists() else pd.DataFrame()
     )
 
-    line_bounds = read_cobre_line_bounds(case_dir / "output").to_pandas()
+    line_bounds = read_novomodelo_line_bounds(case_dir / "output").to_pandas()
     # ``block_id`` is non-null only on the absolute-MW per-block override rows
     # (the exchange factor lives there now), never on the stage-level base row.
     # Do not reconstruct a factor by dividing back through the base — that
@@ -768,10 +768,10 @@ class SolverPerformance:
 
     # ``timing`` is aggregated to one row per iteration for backward
     # compatibility with older chart code. ``timing_raw`` retains the
-    # multi-row-per-iteration view from newer cobre outputs, where each
+    # multi-row-per-iteration view from newer novomodelo outputs, where each
     # iteration has one rank-aggregated row (``worker_id`` NULL) and N
     # per-worker rows (``worker_id`` populated) — see
-    # ``build_worker_timing_records`` in cobre-sddp training_output.rs.
+    # ``build_worker_timing_records`` in novomodelo-sddp training_output.rs.
     timing: pd.DataFrame
     timing_raw: pd.DataFrame
     solver_train: pd.DataFrame
@@ -782,10 +782,10 @@ class SolverPerformance:
     lp_bounds: pd.DataFrame
 
 
-#: Renames cobre 0.14's canonical diagnostic-output axes back to the pre-0.14
+#: Renames novomodelo 0.14's canonical diagnostic-output axes back to the pre-0.14
 #: spellings the dashboard's chart layer was written against, applied at this
 #: single load choke point (mirroring
-#: :func:`cobre_bridge.cobre.readers.read_cobre_convergence`).
+#: :func:`novomodelo_bridge.novomodelo.readers.read_novomodelo_convergence`).
 _OUTPUT_COLUMN_ALIASES: dict[str, str] = {
     "stage_id": "stage",
     "opening_index": "opening",
@@ -794,7 +794,7 @@ _OUTPUT_COLUMN_ALIASES: dict[str, str] = {
 
 
 def _normalize_output_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename cobre 0.14 canonical diagnostic columns to the dashboard's names.
+    """Rename novomodelo 0.14 canonical diagnostic columns to the dashboard's names.
 
     A 0.14 column is renamed only when its legacy target is absent, so a
     pre-0.14 frame (legacy names already present) is returned unchanged, and a
@@ -961,9 +961,9 @@ def load_stochastic_data(case_dir: Path) -> StochasticData:
 
 
 #: Every exception type an ``output/policy`` checkpoint read can fail with,
-#: mirroring ``decomp.fcf.capability``'s CBVF round-trip probe: cobre absent
+#: mirroring ``decomp.fcf.capability``'s CBVF round-trip probe: novomodelo absent
 #: or missing the ``results`` binding, a malformed reloaded pool/dict, or any
-#: ``cobre.errors.CobreError`` leaf (each subclasses one of ``ValueError``/
+#: ``novomodelo.errors.NovomodeloError`` leaf (each subclasses one of ``ValueError``/
 #: ``OSError``/``RuntimeError``). Never a bare ``except``.
 _POLICY_READ_FAILURE_TYPES: tuple[type[Exception], ...] = (
     ModuleNotFoundError,
@@ -977,12 +977,12 @@ _POLICY_READ_FAILURE_TYPES: tuple[type[Exception], ...] = (
 
 
 def _load_policy_metadata(case_dir: Path) -> dict:
-    """Load ``output/policy``'s terminal ``state_dimension`` via cobre.
+    """Load ``output/policy``'s terminal ``state_dimension`` via novomodelo.
 
     Returns ``{}`` immediately when ``case_dir/output/policy`` does not
-    exist, without importing cobre. Otherwise imports cobre lazily (kept out
-    of module scope so this module stays importable in a cobre-free
-    environment), reads the checkpoint via ``cobre.results.load_policy``,
+    exist, without importing novomodelo. Otherwise imports novomodelo lazily (kept out
+    of module scope so this module stays importable in a novomodelo-free
+    environment), reads the checkpoint via ``novomodelo.results.load_policy``,
     and selects the terminal pool (max ``stage_id``). Degrades to ``{}``
     with one ``logger.warning`` on any failure in
     :data:`_POLICY_READ_FAILURE_TYPES` — a training-only case with no (or an
@@ -991,9 +991,11 @@ def _load_policy_metadata(case_dir: Path) -> dict:
     if not (case_dir / "output" / "policy").exists():
         return {}
     try:
-        import cobre
+        import novomodelo
 
-        policy = cobre.results.load_policy(case_dir / "output", policy_subdir="policy")
+        policy = novomodelo.results.load_policy(
+            case_dir / "output", policy_subdir="policy"
+        )
         terminal = max(policy["stage_cuts"], key=lambda stage: stage["stage_id"])
         return {"state_dimension": int(terminal["state_dimension"])}
     except _POLICY_READ_FAILURE_TYPES as exc:
@@ -1033,7 +1035,7 @@ def load_output_metadata(case_dir: Path) -> OutputMetadata:
             return {}
 
     return OutputMetadata(
-        training=read_cobre_training_metadata(case_dir / "output"),
+        training=read_novomodelo_training_metadata(case_dir / "output"),
         simulation=_load_metadata("simulation"),
         policy=_load_policy_metadata(case_dir),
     )
@@ -1046,9 +1048,9 @@ class GenericConstraintData:
     F3 shape: ``constraints`` dicts carry no ``sense`` key, and ``bounds``
     has nullable ``bound_lower``/``bound_upper`` endpoint columns instead of
     a single ``bound`` column (see
-    :mod:`cobre_bridge.core.generic_constraint_format`). Readers derive the
+    :mod:`novomodelo_bridge.core.generic_constraint_format`). Readers derive the
     displayed direction from the endpoints via
-    :func:`cobre_bridge.dashboard.tabs.constraints_utils.derive_constraint_shape`.
+    :func:`novomodelo_bridge.dashboard.tabs.constraints_utils.derive_constraint_shape`.
     """
 
     constraints: list[dict]
@@ -1085,7 +1087,7 @@ def load_generic_constraints(case_dir: Path) -> GenericConstraintData:
 
 @dataclasses.dataclass
 class DashboardData:
-    """All data sources required to render the Cobre dashboard.
+    """All data sources required to render the Novomodelo dashboard.
 
     Holds the eight ``load_*``-produced sub-structs verbatim (``temporal``,
     ``entities``, ``simulation``, ``scenario``, ``performance``,
@@ -1124,7 +1126,7 @@ class DashboardData:
 
     @classmethod
     def load(cls, case_dir: Path) -> DashboardData:
-        """Load all dashboard data from a Cobre case directory.
+        """Load all dashboard data from a Novomodelo case directory.
 
         Thin orchestrator: each cohesive section is read by a dedicated
         ``load_*`` loader returning a sub-struct, which :class:`DashboardData`

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Analyze and summarize cobre simulation results.
+r"""Analyze and summarize novomodelo simulation results.
 
 Usage:
     python scripts/analyze_results.py example/convertido/
@@ -432,9 +432,11 @@ REPORTS = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Analyze cobre simulation results.",
+        description="Analyze novomodelo simulation results.",
     )
-    parser.add_argument("case_dir", type=Path, help="Path to the cobre case directory.")
+    parser.add_argument(
+        "case_dir", type=Path, help="Path to the novomodelo case directory."
+    )
     parser.add_argument(
         "--report",
         "-r",

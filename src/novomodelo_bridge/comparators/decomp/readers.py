@@ -3,20 +3,20 @@
 Reads the ``dec_oper_*.csv`` operation tables and the convergence report
 from a DECOMP case directory via ``idecomp``, returning Polars
 frames with the source's native column names (1-based ``estagio``,
-node/scenario indices as written). Alignment onto Cobre entity ids and
+node/scenario indices as written). Alignment onto Novomodelo entity ids and
 stage indices happens in the comparison layer, not here.
 
 Reader-failure contract: an absent OPTIONAL input yields a typed-empty
 frame plus a WARNING log; a present-but-unreadable file, or an absent
-REQUIRED input, raises a typed error (``CobreReadError``, ``ValueError``,
+REQUIRED input, raises a typed error (``NovomodeloReadError``, ``ValueError``,
 or ``FileNotFoundError``) — never a silent empty, since an empty frame
 from real-but-broken data fabricates a false zero-vs-zero match
 (``.claude/rules/comments.md`` §4; reads route through this layer per
-``.claude/rules/bridge.md`` §5). This module and ``cobre_readers`` raise on
+``.claude/rules/bridge.md`` §5). This module and ``novomodelo_readers`` raise on
 present-but-corrupt data; ``newave_readers`` is the genuine outlier — it
 best-effort degrades present-but-broken optional inputs to empty/None plus a
 WARNING (see its module docstring). DECOMP's operation tables are required,
-the source model's and Cobre's optional partitions are not. Every ``dec_oper_*``/
+the source model's and Novomodelo's optional partitions are not. Every ``dec_oper_*``/
 ``relato``-backed table here is a REQUIRED input: an absent file raises
 ``FileNotFoundError`` and a present file that parses empty raises
 ``ValueError`` — silent-empty DataFrames are idecomp's characteristic
@@ -50,7 +50,7 @@ from idecomp.decomp import (
     Relato,
 )
 
-from cobre_bridge.core.paths import find_case_insensitive
+from novomodelo_bridge.core.paths import find_case_insensitive
 
 _LOG = logging.getLogger(__name__)
 
@@ -139,7 +139,7 @@ def read_dec_oper_rhesoft(case_dir: Path) -> pl.DataFrame:
     ``violacao_percentual``. ``codigo_restricao`` is the same ``HE``/``CM``
     register id (``constraint_registers.ConstraintRecord.constraint_id``)
     the conversion-time RHE emitter (``decomp.converters.constraints.
-    emit_rhe_generics``) names its cobre constraint after (``"RHE_<id>"``).
+    emit_rhe_generics``) names its novomodelo constraint after (``"RHE_<id>"``).
 
     This is the RHE (soft minimum-stored-energy) constraints'
     own achieved LHS, straight from the source model -- the Constraints tab's
@@ -172,7 +172,7 @@ def read_dec_oper_evap(case_dir: Path) -> pl.DataFrame:
     plant), with no sub-stage block breakdown to fold. The
     source for the evaporation comparison (`results.
     _evaporation_result_comparisons`), which reconciles
-    ``evaporacao_calculada_hm3`` (hm³) against Cobre's ``evaporation_m3s``
+    ``evaporacao_calculada_hm3`` (hm³) against Novomodelo's ``evaporation_m3s``
     (m³/s) via the stage's own hours."""
     return _read_dec_oper(case_dir, "dec_oper_evap.csv", DecOperEvap)
 
@@ -182,7 +182,7 @@ def read_dec_oper_ree(case_dir: Path) -> pl.DataFrame:
     (``ena_MWmes``) and stored energy (``earm_inicial``/``earm_final``, both
     absolute ``_MWmes`` and ``_percentual``, plus ``earm_maximo_MWmes``), one
     row per (stage, node, scenario, REE). The DECOMP-side source
-    for the REE energy rollup -- Cobre has no REE entity, so its counterpart
+    for the REE energy rollup -- Novomodelo has no REE entity, so its counterpart
     is a membership-weighted sum of plant output (see
     `results._ree_result_comparisons`)."""
     return _read_dec_oper(case_dir, "dec_oper_ree.csv", DecOperRee)
@@ -330,7 +330,7 @@ def read_relato_membership(case_dir: Path) -> pl.DataFrame:
 
     The sole source that attributes a hydro plant to its REE --
     neither `DecompIdMap` nor any ``dec_oper_*`` table carries that
-    membership, so `results._ree_result_comparisons` rolls Cobre's
+    membership, so `results._ree_result_comparisons` rolls Novomodelo's
     per-plant energy up to the REE level through this table instead.
     """
     return _read_relato_table(case_dir, "uhes_rees_submercados")

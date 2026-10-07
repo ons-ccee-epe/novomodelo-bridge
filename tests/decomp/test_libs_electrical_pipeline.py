@@ -4,7 +4,7 @@ especial.csv`` file, the narrowed ``detect_libs_electrical`` warn, and the
 census INFO diagnostic.
 
 Synthetic stub decks only, mirroring the ``test_pipeline`` module's own
-``_run_cadastro_pipeline`` convention -- no ``import cobre`` at module scope.
+``_run_cadastro_pipeline`` convention -- no ``import novomodelo`` at module scope.
 """
 
 from __future__ import annotations
@@ -19,25 +19,28 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.decomp.bounds_accumulator import BoundContribution
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
     resolve_libs_electrical_path,
 )
-from cobre_bridge.decomp.converters.libs_electrical import (
+from novomodelo_bridge.decomp.converters.libs_electrical import (
     ElectricalRestriction,
     LibsElectricalModel,
 )
-from cobre_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
-from cobre_bridge.decomp.converters.thermal import _THERMAL_COST_SCHEMA, ThermalBounds
-from cobre_bridge.decomp.files import DecompFiles
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.pipeline import ConversionReport
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
+from novomodelo_bridge.decomp.converters.thermal import (
+    _THERMAL_COST_SCHEMA,
+    ThermalBounds,
+)
+from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.pipeline import ConversionReport
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 
 # ---------------------------------------------------------------------------
@@ -127,7 +130,7 @@ class TestDiscoverDecompFilesLibsElectrical:
     def test_libs_restricao_eletrica_resolved_via_indices_csv(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         self._minimal_deck(tmp_path)
         _write_indices_csv(
@@ -144,7 +147,7 @@ class TestDiscoverDecompFilesLibsElectrical:
         )
 
     def test_libs_restricao_eletrica_none_when_absent(self, tmp_path: Path) -> None:
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         self._minimal_deck(tmp_path)
 
@@ -396,7 +399,7 @@ def _run_libs_pipeline(
     of whether the model itself converted -- so a test can prove the
     pipeline suppresses it even when it WOULD have fired.
     """
-    from cobre_bridge.decomp import pipeline as decomp_pipeline
+    from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
     files = DecompFiles(
         revision="rv0",
@@ -464,50 +467,54 @@ def _run_libs_pipeline(
     ]
 
     patches: dict[str, object] = {
-        "cobre_bridge.decomp.pipeline.DecompCase.from_directory": case,
-        "cobre_bridge.decomp.pipeline.Vazoes.read": object(),
-        "cobre_bridge.decomp.pipeline.scenarios_conv.terminal_fan_probabilities": [1.0],
-        "cobre_bridge.decomp.pipeline.config_conv.convert_config": {},
-        "cobre_bridge.decomp.pipeline.network_conv._bus_deficit_costs": {},
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline.DecompCase.from_directory": case,
+        "novomodelo_bridge.decomp.pipeline.Vazoes.read": object(),
+        "novomodelo_bridge.decomp.pipeline.scenarios_conv.terminal_fan_probabilities": [
+            1.0
+        ],
+        "novomodelo_bridge.decomp.pipeline.config_conv.convert_config": {},
+        "novomodelo_bridge.decomp.pipeline.network_conv._bus_deficit_costs": {},
+        "novomodelo_bridge.decomp.pipeline"
         ".hydro_conv.convert_energy_productivity": productivity_table,
-        "cobre_bridge.decomp.pipeline.network_conv.convert_buses": {"buses": []},
-        "cobre_bridge.decomp.pipeline.network_conv.convert_lines": (
+        "novomodelo_bridge.decomp.pipeline.network_conv.convert_buses": {"buses": []},
+        "novomodelo_bridge.decomp.pipeline.network_conv.convert_lines": (
             {"lines": []},
             _LINE_BOUNDS_SCHEMA.empty_table(),
         ),
-        "cobre_bridge.decomp.pipeline.network_conv.convert_pumping_stations": {
+        "novomodelo_bridge.decomp.pipeline.network_conv.convert_pumping_stations": {
             "pumping_stations": []
         },
-        "cobre_bridge.decomp.pipeline.thermal_conv.convert_thermals": {"thermals": []},
-        "cobre_bridge.decomp.pipeline.ncs_conv.convert_non_controllable_sources": {
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.convert_thermals": {
+            "thermals": []
+        },
+        "novomodelo_bridge.decomp.pipeline.ncs_conv.convert_non_controllable_sources": {
             "non_controllable_sources": []
         },
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline"
         ".scenarios_conv.convert_external_inflows": external_inflow_table,
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline"
         ".scenarios_conv.convert_recent_observation_windows": [],
-        "cobre_bridge.decomp.pipeline.load_conv.convert_load_stats": load_stats_table,
-        "cobre_bridge.decomp.pipeline.load_conv.convert_load_factors": {},
-        "cobre_bridge.decomp.pipeline.ncs_conv.convert_ncs_stats": ncs_stats_table,
-        "cobre_bridge.decomp.pipeline.ncs_conv.convert_ncs_factors": {},
-        "cobre_bridge.decomp.pipeline.thermal_conv.convert_thermal_bounds": (
+        "novomodelo_bridge.decomp.pipeline.load_conv.convert_load_stats": load_stats_table,
+        "novomodelo_bridge.decomp.pipeline.load_conv.convert_load_factors": {},
+        "novomodelo_bridge.decomp.pipeline.ncs_conv.convert_ncs_stats": ncs_stats_table,
+        "novomodelo_bridge.decomp.pipeline.ncs_conv.convert_ncs_factors": {},
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.convert_thermal_bounds": (
             ThermalBounds(generation=[], cost=_THERMAL_COST_SCHEMA.empty_table())
         ),
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline"
         ".bounds_conv.convert_hydro_bounds": baseline_hydro_bounds,
-        "cobre_bridge.decomp.pipeline.hydro_conv.convert_hydro_group_availability": {},
-        "cobre_bridge.decomp.pipeline.contracts_conv.read_contracts": [],
-        "cobre_bridge.decomp.pipeline.constraint_registers.read_constraints": (
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.convert_hydro_group_availability": {},
+        "novomodelo_bridge.decomp.pipeline.contracts_conv.read_contracts": [],
+        "novomodelo_bridge.decomp.pipeline.constraint_registers.read_constraints": (
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
         ),
-        "cobre_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
+        "novomodelo_bridge.decomp.pipeline"
         ".constraint_registers.detect_unreadable_electrical": [],
-        "cobre_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
+        "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
             detect_libs_electrical_return
         ),
-        "cobre_bridge.decomp.pipeline.libs_electrical_conv.read_libs_electrical": (
+        "novomodelo_bridge.decomp.pipeline.libs_electrical_conv.read_libs_electrical": (
             libs_electrical_model
         ),
     }

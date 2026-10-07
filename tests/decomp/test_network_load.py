@@ -8,10 +8,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.converters.network import convert_buses, convert_lines
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.load import convert_load_factors, convert_load_stats
-from cobre_bridge.decomp.temporal import OperativeStage, build_operative_calendar
+from novomodelo_bridge.decomp.converters.network import convert_buses, convert_lines
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.load import convert_load_factors, convert_load_stats
+from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 from tests.conftest import make_decomp_case
 
 _ID_MAP = DecompIdMap(
@@ -319,7 +319,7 @@ def _ia_zero_block_frame() -> pd.DataFrame:
 
 
 class TestConvertLinesZeroCapability:
-    """cobre decision 10 makes ``direct_mw = 0.0`` an ordinary bound; the
+    """novomodelo decision 10 makes ``direct_mw = 0.0`` an ordinary bound; the
     ``raise`` this replaced only ever fired on a zero-limit round-trip that
     no longer exists (see the capability-gain comment at ``convert_lines``,
     ``decomp/network.py``). No current deck exercises a zero IA limit

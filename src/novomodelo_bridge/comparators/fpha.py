@@ -1,13 +1,13 @@
 """Shared min-over-planes production-surface (FPHA) envelope math.
 
-Both the source model and Cobre fit a piecewise-linear production surface
+Both the source model and Novomodelo fit a piecewise-linear production surface
 GH(V, Q, S) as a set of hyperplanes; the LP consumes the lower envelope --
 the minimum across planes -- of ``multiplier * (gamma_0 + gamma_v * (v -
 volume_offset) + gamma_q * q + gamma_s * s)``. :func:`dense_grid` evaluates
 that envelope with numpy over a whole meshgrid at once (the NEWAVE track,
 which has fitted planes on both sides and compares a dense (V, Q) surface).
 :func:`point_cloud` evaluates the identical contract with polars over a
-scattered set of operating points (the DECOMP track, which has only Cobre's
+scattered set of operating points (the DECOMP track, which has only Novomodelo's
 fitted planes plus the source model's realized trajectory -- no source-side
 plane coefficients and no fitting grid to build a dense surface from).
 
@@ -29,14 +29,14 @@ import numpy as np
 import polars as pl
 
 #: Output schema of the per-(plant, stage) FPHA fidelity metrics frame (the
-#: comparison conclusion: how close Cobre's fitted surface is to the source
+#: comparison conclusion: how close Novomodelo's fitted surface is to the source
 #: model's, normalized to the plant's max generation).
 FPHA_METRICS_SCHEMA: dict[str, type[pl.DataType]] = {
-    "cobre_id": pl.Int64,
+    "novomodelo_id": pl.Int64,
     "plant_name": pl.Utf8,
     "stage": pl.Int64,
     "n_planes_newave": pl.Int64,
-    "n_planes_cobre": pl.Int64,
+    "n_planes_novomodelo": pl.Int64,
     "n_v": pl.Int64,
     "nmae": pl.Float64,
     "bias": pl.Float64,
@@ -47,7 +47,7 @@ FPHA_METRICS_SCHEMA: dict[str, type[pl.DataType]] = {
 #: Output schema of the dense (V, Q) production-surface frame (the render
 #: substrate for the heatmaps; one row per grid point per source).
 FPHA_SURFACE_SCHEMA: dict[str, type[pl.DataType]] = {
-    "cobre_id": pl.Int64,
+    "novomodelo_id": pl.Int64,
     "plant_name": pl.Utf8,
     "stage": pl.Int64,
     "v_hm3": pl.Float64,
@@ -58,7 +58,7 @@ FPHA_SURFACE_SCHEMA: dict[str, type[pl.DataType]] = {
 
 #: Output schema of the spillage-slice frame (GH vs spill at the max V/Q corner).
 FPHA_SPILL_SCHEMA: dict[str, type[pl.DataType]] = {
-    "cobre_id": pl.Int64,
+    "novomodelo_id": pl.Int64,
     "plant_name": pl.Utf8,
     "stage": pl.Int64,
     "s_m3s": pl.Float64,
@@ -90,7 +90,7 @@ def dense_grid(
     ``volume_offset`` subtracts the plant minimum storage so a useful-volume
     coefficient is applied to absolute volume; pass ``0.0`` for a coefficient
     that already multiplies absolute volume. ``multiplier`` is the per-plane
-    correction (the source model's ``fator_correcao``, Cobre's ``kappa``).
+    correction (the source model's ``fator_correcao``, Novomodelo's ``kappa``).
 
     Args:
         gamma_0: Per-plane constant term, shape ``(P,)``.
@@ -127,8 +127,8 @@ def point_cloud(
     (hydro, stage, v, q, s) operating points.
 
     ``points`` carries one row per sample, with columns ``_point_id`` (a
-    stable row identity), ``cobre_id``, ``stage``, ``v_hm3``, ``q_m3s``,
-    ``s_m3s``. ``planes`` is a Cobre-shaped ``hydro_id``/``stage_id``/
+    stable row identity), ``novomodelo_id``, ``stage``, ``v_hm3``, ``q_m3s``,
+    ``s_m3s``. ``planes`` is a Novomodelo-shaped ``hydro_id``/``stage_id``/
     ``gamma_0``/``gamma_v``/``gamma_q``/``gamma_s``/``kappa`` frame (multiple
     plane rows per (hydro_id, stage_id)) — the polars counterpart of
     :func:`dense_grid`'s ``multiplier * (gamma_0 + gamma_v * (v -
@@ -141,15 +141,17 @@ def point_cloud(
     default) when ``gamma_v`` already multiplies absolute volume.
 
     Returns one row per ``_point_id`` with the envelope value in
-    ``cobre_gh_mw``; a point whose (hydro, stage) has no matching plane rows
+    ``novomodelo_gh_mw``; a point whose (hydro, stage) has no matching plane rows
     drops out of the join rather than null-keeping.
     """
-    keyed_planes = planes.rename({"hydro_id": "cobre_id", "stage_id": "stage"}).cast(
-        {"cobre_id": pl.Int64, "stage": pl.Int64}
-    )
-    joined = points.join(keyed_planes, on=["cobre_id", "stage"], how="inner")
+    keyed_planes = planes.rename(
+        {"hydro_id": "novomodelo_id", "stage_id": "stage"}
+    ).cast({"novomodelo_id": pl.Int64, "stage": pl.Int64})
+    joined = points.join(keyed_planes, on=["novomodelo_id", "stage"], how="inner")
     if joined.is_empty():
-        return pl.DataFrame(schema={"_point_id": pl.Int64, "cobre_gh_mw": pl.Float64})
+        return pl.DataFrame(
+            schema={"_point_id": pl.Int64, "novomodelo_gh_mw": pl.Float64}
+        )
     return (
         joined.with_columns(
             (
@@ -163,5 +165,5 @@ def point_cloud(
             ).alias("plane_value")
         )
         .group_by("_point_id")
-        .agg(pl.col("plane_value").min().alias("cobre_gh_mw"))
+        .agg(pl.col("plane_value").min().alias("novomodelo_gh_mw"))
     )

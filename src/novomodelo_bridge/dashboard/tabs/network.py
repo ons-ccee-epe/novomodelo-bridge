@@ -18,30 +18,30 @@ import pandas as pd
 import plotly.graph_objects as go
 import polars as pl
 
-from cobre_bridge.dashboard.chart_helpers import (
+from novomodelo_bridge.dashboard.chart_helpers import (
     make_chart_card,
     stage_hours_weighted_mean,
 )
-from cobre_bridge.dashboard.data import entity_name
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.dashboard.data import entity_name
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     json_for_script,
     section_title,
     wrap_chart,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     MARGIN_DEFAULTS as _MARGIN,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     apply_stage_date_axis,
     fig_to_html,
     stage_x_dates,
     stage_x_labels,
 )
-from cobre_bridge.ui.theme import BAND_FILL
+from novomodelo_bridge.ui.theme import BAND_FILL
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 # ---------------------------------------------------------------------------
 # Module constants

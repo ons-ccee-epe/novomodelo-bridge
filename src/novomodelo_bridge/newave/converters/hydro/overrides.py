@@ -16,9 +16,14 @@ import logging
 
 import pandas as pd
 
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity, emit
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.horizon import POST_STUDY_YEAR
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR
 
 _LOG = logging.getLogger(__name__)
 
@@ -439,7 +444,7 @@ def _read_ghmin_per_stage(
     case:
         Parsed the source model case.
     start_year, start_month:
-        Study start (Cobre stage 0 corresponds to this calendar month).
+        Study start (Novomodelo stage 0 corresponds to this calendar month).
     study_months:
         Number of in-study stages.
     total_stages:

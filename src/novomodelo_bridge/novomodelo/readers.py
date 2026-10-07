@@ -1,12 +1,12 @@
-"""Cobre simulation output readers for results comparison.
+"""Novomodelo simulation output readers for results comparison.
 
-Reads Cobre simulation parquets using Polars lazy scanning and streaming aggregation to
+Reads Novomodelo simulation parquets using Polars lazy scanning and streaming aggregation to
 compute scenario means matching the source model MEDIAS aggregation level.  Also reads
 convergence data and hydro metadata.
 
 Reader-failure contract: an absent OPTIONAL input yields a typed-empty
 frame plus a WARNING log; a present-but-unreadable file, or an absent
-REQUIRED input, raises a typed error (``CobreReadError``, ``ValueError``,
+REQUIRED input, raises a typed error (``NovomodeloReadError``, ``ValueError``,
 or ``FileNotFoundError``) — never a silent empty, since an empty frame
 from real-but-broken data fabricates a false zero-vs-zero match
 (``.claude/rules/comments.md`` §4; reads route through this module per
@@ -27,22 +27,24 @@ from pathlib import Path
 
 import polars as pl
 
-from cobre_bridge.cobre.case_io import (
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.novomodelo.case_io import (
     case_dir_for,
     resolve_hydro_productivities,
 )
-from cobre_bridge.cobre.cost_categories import COBRE_COST_COMPONENT_COLUMNS
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.errors import CobrePartitionMissingError
+from novomodelo_bridge.novomodelo.cost_categories import (
+    NOVOMODELO_COST_COMPONENT_COLUMNS,
+)
 
 _LOG = logging.getLogger(__name__)
 
 
-class CobreReadError(RuntimeError):
-    """A Cobre output file/dir existed but could not be read or parsed.
+class NovomodeloReadError(RuntimeError):
+    """A Novomodelo output file/dir existed but could not be read or parsed.
 
     Raised when a reader fails while reading an *already-confirmed-present*
-    Cobre output (parquet/dir/JSON) that feeds the bounds/results comparison.
+    Novomodelo output (parquet/dir/JSON) that feeds the bounds/results comparison.
     A genuinely **absent** optional output must still yield an empty frame
     (never this error) — only a real read/schema/dtype failure on existing
     data raises, so the comparison engine never silently treats unreadable
@@ -50,14 +52,14 @@ class CobreReadError(RuntimeError):
     """
 
 
-def _load_block_hours(cobre_output_dir: Path) -> pl.DataFrame | None:
+def _load_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame | None:
     """Load block hours from stages.json as a Polars DataFrame.
 
     Returns DataFrame with columns ``stage_id``, ``block_id``, ``hours``
     or None if stages.json cannot be found or parsed.
     """
-    case_dir = case_dir_for(cobre_output_dir)
-    for candidate in [case_dir, cobre_output_dir]:
+    case_dir = case_dir_for(novomodelo_output_dir)
+    for candidate in [case_dir, novomodelo_output_dir]:
         p = candidate / "stages.json"
         if p.exists():
             try:
@@ -130,7 +132,7 @@ def _weighted_stage_mean(
 
 
 def scan_simulation_entity(
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     entity: str,
 ) -> pl.LazyFrame | None:
     """Scan hive-partitioned simulation parquets for *entity*.
@@ -139,13 +141,13 @@ def scan_simulation_entity(
 
     Parameters
     ----------
-    cobre_output_dir:
-        Path to the Cobre ``output/`` directory.
+    novomodelo_output_dir:
+        Path to the Novomodelo ``output/`` directory.
     entity:
         Entity subdirectory name (e.g., ``"hydros"``, ``"thermals"``,
         ``"buses"``).
     """
-    sim_dir = cobre_output_dir / "simulation" / entity
+    sim_dir = novomodelo_output_dir / "simulation" / entity
     if not sim_dir.is_dir():
         _LOG.warning("Simulation directory not found: %s", sim_dir)
         return None
@@ -160,12 +162,12 @@ def scan_simulation_entity(
         # leaking a raw polars error past each reader's narrower try/except.
         lf.collect_schema()
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(f"Failed to scan parquets in {sim_dir}") from exc
+        raise NovomodeloReadError(f"Failed to scan parquets in {sim_dir}") from exc
 
     return lf
 
 
-# The seven physical columns cobre's writer puts in each
+# The seven physical columns novomodelo's writer puts in each
 # ``hydro_bus_generation`` data.parquet, plus ``scenario_id`` which
 # ``hive_partitioning=True`` derives from the ``scenario_id=NNNN`` partition
 # directory name rather than storing it in the file itself. Shared by the
@@ -182,21 +184,21 @@ _HYDRO_BUS_GENERATION_SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def read_cobre_hydro_bus_generation(cobre_output_dir: Path) -> pl.LazyFrame:
-    """Scan cobre 0.13's ``simulation/hydro_bus_generation/`` partition.
+def read_novomodelo_hydro_bus_generation(novomodelo_output_dir: Path) -> pl.LazyFrame:
+    """Scan novomodelo 0.13's ``simulation/hydro_bus_generation/`` partition.
 
     Partition layout: ``simulation/hydro_bus_generation/scenario_id=NNNN/data.parquet``.
-    Returns a LazyFrame with the seven physical columns cobre writes —
+    Returns a LazyFrame with the seven physical columns novomodelo writes —
     ``stage_id``, ``block_id`` (nullable: a stage-level row has no single
     representative block), ``hydro_id``, ``bus_id``, ``turbined_m3s``,
     ``generation_mw``, ``generation_mwh`` — plus ``scenario_id``, which
     ``hive_partitioning=True`` derives from the partition directory rather
     than the file contents. ``scenario_id`` is kept (unlike the aggregated
-    ``read_cobre_*_means`` readers in this module) because this reader does
+    ``read_novomodelo_*_means`` readers in this module) because this reader does
     no aggregation of its own: per-scenario grouping/weighting is left to the
     caller.
 
-    ``generation_mwh`` is **already hours-weighted energy** — cobre applies
+    ``generation_mwh`` is **already hours-weighted energy** — novomodelo applies
     the ``× blocks[].hours`` weighting on the writer side. Use it directly
     for energy aggregates (e.g. ``.sum()`` per bus/stage); do **not**
     multiply it by ``stages.json`` ``blocks[].hours`` again, or the weighting
@@ -214,24 +216,24 @@ def read_cobre_hydro_bus_generation(cobre_output_dir: Path) -> pl.LazyFrame:
 
     Raises
     ------
-    CobrePartitionMissingError
+    NovomodeloPartitionMissingError
         If ``simulation/hydro_bus_generation/`` does not exist under
-        *cobre_output_dir*. The message names the missing directory and
-        states that the partition is produced by cobre >= 0.13.0, telling
-        the caller to re-run cobre rather than trust an empty result.
+        *novomodelo_output_dir*. The message names the missing directory and
+        states that the partition is produced by novomodelo >= 0.13.0, telling
+        the caller to re-run novomodelo rather than trust an empty result.
 
     A directory that exists but holds no scenario parquet files is a
     different, legitimate state — real, if odd — and is propagated as an
     empty LazyFrame matching the schema above, with a ``Diagnostic``
     recorded, instead of being conflated with absence or raised as a
-    :class:`CobreReadError`.
+    :class:`NovomodeloReadError`.
     """
-    sim_dir = cobre_output_dir / "simulation" / "hydro_bus_generation"
+    sim_dir = novomodelo_output_dir / "simulation" / "hydro_bus_generation"
     if not sim_dir.is_dir():
-        raise CobrePartitionMissingError(
-            f"Cobre output partition not found: {sim_dir}. The "
-            "hydro_bus_generation partition is produced by cobre >= 0.13.0; "
-            "this output directory may predate that cobre version.",
+        raise NovomodeloPartitionMissingError(
+            f"Novomodelo output partition not found: {sim_dir}. The "
+            "hydro_bus_generation partition is produced by novomodelo >= 0.13.0; "
+            "this output directory may predate that novomodelo version.",
             path=str(sim_dir),
         )
 
@@ -253,7 +255,7 @@ def read_cobre_hydro_bus_generation(cobre_output_dir: Path) -> pl.LazyFrame:
         )
         return pl.LazyFrame(schema=_HYDRO_BUS_GENERATION_SCHEMA)
 
-    lf = scan_simulation_entity(cobre_output_dir, "hydro_bus_generation")
+    lf = scan_simulation_entity(novomodelo_output_dir, "hydro_bus_generation")
     if lf is None:
         # sim_dir.is_dir() was already confirmed above, so this is
         # unreachable in practice; kept only to stay type-safe against
@@ -272,8 +274,8 @@ def read_cobre_hydro_bus_generation(cobre_output_dir: Path) -> pl.LazyFrame:
     )
 
 
-def read_cobre_hydro_means(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre hydro simulation means per (entity_id, stage_id).
+def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo hydro simulation means per (entity_id, stage_id).
 
     Scans ``output/simulation/hydros/`` with Polars streaming and computes
     block-hours-weighted scenario means for flow variables (generation,
@@ -311,7 +313,7 @@ def read_cobre_hydro_means(cobre_output_dir: Path) -> pl.DataFrame:
         }
     )
 
-    lf = scan_simulation_entity(cobre_output_dir, "hydros")
+    lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
     if lf is None:
         return empty
 
@@ -347,7 +349,7 @@ def read_cobre_hydro_means(cobre_output_dir: Path) -> pl.DataFrame:
         _LOG.warning("No recognized value columns in hydros simulation")
         return empty
 
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
 
     try:
         if block_hours is not None and avail_flow:
@@ -367,9 +369,9 @@ def read_cobre_hydro_means(cobre_output_dir: Path) -> pl.DataFrame:
                 .collect(engine="streaming")
             )
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to aggregate hydro simulation data: "
-            f"{cobre_output_dir / 'simulation' / 'hydros'}"
+            f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
         ) from exc
 
     for col in flow_cols + stage_cols:
@@ -379,28 +381,28 @@ def read_cobre_hydro_means(cobre_output_dir: Path) -> pl.DataFrame:
     return result
 
 
-def read_cobre_hydro_total_flows(
-    cobre_output_dir: Path,
-    cobre_hydro_means: pl.DataFrame,
+def read_novomodelo_hydro_total_flows(
+    novomodelo_output_dir: Path,
+    novomodelo_hydro_means: pl.DataFrame,
 ) -> pl.DataFrame:
     """Compute per-(entity_id, stage_id) the source-model-equivalent total inflow.
 
     ``QAFLUH`` in the source model is the *total* inflow arriving at a hydro
     plant: the local incremental inflow plus the outflow (turbined +
-    spilled) of every immediate upstream plant. Cobre emits the
+    spilled) of every immediate upstream plant. Novomodelo emits the
     components separately; this helper sums them via the
     ``downstream_id`` topology from ``system/hydros.json``.
 
-    The total *outflow* is already in the Cobre simulation parquet
-    (``outflow_m3s``) and is exposed by :func:`read_cobre_hydro_means`,
+    The total *outflow* is already in the Novomodelo simulation parquet
+    (``outflow_m3s``) and is exposed by :func:`read_novomodelo_hydro_means`,
     so this function only computes the inflow side.
 
     Parameters
     ----------
-    cobre_output_dir:
+    novomodelo_output_dir:
         Path to ``<case_dir>/output``.
-    cobre_hydro_means:
-        Output of :func:`read_cobre_hydro_means` containing
+    novomodelo_hydro_means:
+        Output of :func:`read_novomodelo_hydro_means` containing
         ``entity_id``, ``stage_id``, ``incremental_inflow_m3s`` and
         ``outflow_m3s`` columns.
 
@@ -418,14 +420,14 @@ def read_cobre_hydro_total_flows(
             "total_inflow_m3s": pl.Float64,
         }
     )
-    if cobre_hydro_means.is_empty():
+    if novomodelo_hydro_means.is_empty():
         return empty
     required = {"entity_id", "stage_id", "incremental_inflow_m3s", "outflow_m3s"}
-    if not required.issubset(cobre_hydro_means.columns):
+    if not required.issubset(novomodelo_hydro_means.columns):
         return empty
 
-    case_dir = case_dir_for(cobre_output_dir)
-    hydros_path = _find_system_json(cobre_output_dir, "hydros.json")
+    case_dir = case_dir_for(novomodelo_output_dir)
+    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
     if hydros_path is None:
         hydros_path = case_dir / "system" / "hydros.json"
     if not hydros_path.exists():
@@ -434,7 +436,7 @@ def read_cobre_hydro_total_flows(
         with hydros_path.open() as f:
             hydros_data = json.load(f)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             f"Failed to parse hydros.json for total-inflow topology: {hydros_path}"
         ) from exc
 
@@ -447,7 +449,7 @@ def read_cobre_hydro_total_flows(
         parents.setdefault(int(ds), []).append(int(h["id"]))
 
     # Per-(entity_id, stage_id) outflow lookup for the upstream sum.
-    means = cobre_hydro_means.select(
+    means = novomodelo_hydro_means.select(
         pl.col("entity_id").cast(pl.Int64),
         pl.col("stage_id").cast(pl.Int64),
         pl.col("incremental_inflow_m3s").cast(pl.Float64),
@@ -485,14 +487,14 @@ def read_cobre_hydro_total_flows(
     )
 
 
-def _load_hydro_reservoir_flag(cobre_output_dir: Path) -> dict[int, bool]:
+def _load_hydro_reservoir_flag(novomodelo_output_dir: Path) -> dict[int, bool]:
     """Return ``{hydro_id: max_storage_hm3 > 0}`` from system/hydros.json.
 
     The discriminator mirrors the dashboard convention (reservoir = any
     plant with positive max storage; run-of-river otherwise).
     """
-    case_dir = case_dir_for(cobre_output_dir)
-    hydros_path = _find_system_json(cobre_output_dir, "hydros.json")
+    case_dir = case_dir_for(novomodelo_output_dir)
+    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
     if hydros_path is None:
         hydros_path = case_dir / "system" / "hydros.json"
     if not hydros_path.exists():
@@ -509,7 +511,7 @@ def _load_hydro_reservoir_flag(cobre_output_dir: Path) -> dict[int, bool]:
     return out
 
 
-def read_cobre_spillage_energy(cobre_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Compute system spillage in MWmes (stage-average MW).
 
     For each (scenario, stage, block) and each hydro the per-row energy
@@ -536,7 +538,7 @@ def read_cobre_spillage_energy(cobre_output_dir: Path) -> pl.DataFrame:
             "rorov_mw": pl.Float64,
         }
     )
-    lf = scan_simulation_entity(cobre_output_dir, "hydros")
+    lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
     if lf is None:
         return empty
 
@@ -555,11 +557,11 @@ def read_cobre_spillage_energy(cobre_output_dir: Path) -> pl.DataFrame:
     if id_col not in available:
         return empty
 
-    is_reservoir = _load_hydro_reservoir_flag(cobre_output_dir)
+    is_reservoir = _load_hydro_reservoir_flag(novomodelo_output_dir)
     if not is_reservoir:
         return empty
 
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
     if block_hours is None:
         return empty
 
@@ -593,9 +595,9 @@ def read_cobre_spillage_energy(cobre_output_dir: Path) -> pl.DataFrame:
             .collect(engine="streaming")
         )
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
-            "Failed to aggregate Cobre spillage-energy: "
-            f"{cobre_output_dir / 'simulation' / 'hydros'}"
+        raise NovomodeloReadError(
+            "Failed to aggregate Novomodelo spillage-energy: "
+            f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
         ) from exc
 
     if per_stage.is_empty():
@@ -621,13 +623,13 @@ def read_cobre_spillage_energy(cobre_output_dir: Path) -> pl.DataFrame:
     ).sort("stage_id")
 
 
-def read_cobre_iteration_timing(cobre_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_iteration_timing(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Return per-iteration wall-clock from ``training/convergence.parquet``.
 
     Columns: ``iteration`` (Int64), ``time_forward_ms``,
     ``time_backward_ms``, ``time_total_ms`` (Float64). Missing timing columns are filled
     with nulls; empty DataFrame when the parquet is absent. Separate from
-    :func:`read_cobre_convergence` which only surfaces the bound columns the source
+    :func:`read_novomodelo_convergence` which only surfaces the bound columns the source
     model pmo.dat can be compared against.
     """
     empty = pl.DataFrame(
@@ -638,7 +640,7 @@ def read_cobre_iteration_timing(cobre_output_dir: Path) -> pl.DataFrame:
             "time_total_ms": pl.Float64,
         }
     )
-    conv_path = cobre_output_dir / "training" / "convergence.parquet"
+    conv_path = novomodelo_output_dir / "training" / "convergence.parquet"
     if not conv_path.exists():
         return empty
     try:
@@ -664,13 +666,13 @@ def read_cobre_iteration_timing(cobre_output_dir: Path) -> pl.DataFrame:
     )
 
 
-def read_cobre_training_duration(cobre_output_dir: Path) -> float:
+def read_novomodelo_training_duration(novomodelo_output_dir: Path) -> float:
     """Return total training duration in seconds.
 
     Sourced from ``training/metadata.json:duration_seconds``. Returns
     ``0.0`` when the metadata file is missing or malformed.
     """
-    meta_path = cobre_output_dir / "training" / "metadata.json"
+    meta_path = novomodelo_output_dir / "training" / "metadata.json"
     if not meta_path.exists():
         return 0.0
     try:
@@ -682,22 +684,22 @@ def read_cobre_training_duration(cobre_output_dir: Path) -> float:
     return float(data.get("duration_seconds", 0.0) or 0.0)
 
 
-def read_cobre_training_metadata(cobre_output_dir: Path) -> dict:
+def read_novomodelo_training_metadata(novomodelo_output_dir: Path) -> dict:
     """Read ``output/training/metadata.json`` under one unified path rule.
 
-    Tries ``case_dir_for(cobre_output_dir) / "output" / "training"``,
-    falling back to ``cobre_output_dir`` then ``cobre_output_dir.parent``
+    Tries ``case_dir_for(novomodelo_output_dir) / "output" / "training"``,
+    falling back to ``novomodelo_output_dir`` then ``novomodelo_output_dir.parent``
     (each with a ``training/metadata.json`` suffix) -- the single candidate
     search every caller now shares, replacing the two divergent searches
-    ``export._read_cobre_version`` and ``dashboard.load_output_metadata``
+    ``export._read_novomodelo_version`` and ``dashboard.load_output_metadata``
     used to run separately, and which could resolve different files.
     Returns ``{}`` on an absent file, unparseable JSON, or a non-dict
     payload.
     """
-    case_dir = case_dir_for(cobre_output_dir)
+    case_dir = case_dir_for(novomodelo_output_dir)
     metadata_path = case_dir / "output" / "training" / "metadata.json"
     if not metadata_path.exists():
-        for candidate in (cobre_output_dir, cobre_output_dir.parent):
+        for candidate in (novomodelo_output_dir, novomodelo_output_dir.parent):
             p = candidate / "training" / "metadata.json"
             if p.exists():
                 metadata_path = p
@@ -715,11 +717,11 @@ def read_cobre_training_metadata(cobre_output_dir: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def cobre_software_version(training_metadata: dict) -> str | None:
-    """Return the Cobre version a ``training/metadata.json`` dict records.
+def novomodelo_software_version(training_metadata: dict) -> str | None:
+    """Return the Novomodelo version a ``training/metadata.json`` dict records.
 
-    Reads ``software_version``; outputs written by Cobre 0.17 and earlier carry
-    the version as ``cobre_version`` instead. Returns ``None`` when neither key
+    Reads ``software_version``; outputs written by Novomodelo 0.17 and earlier carry
+    the version as ``novomodelo_version`` instead. Returns ``None`` when neither key
     holds a string.
     """
     for key in ("software_version", "cobre_version"):
@@ -729,8 +731,8 @@ def cobre_software_version(training_metadata: dict) -> str | None:
     return None
 
 
-def read_cobre_line_means(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre line simulation means per (line_id, stage_id).
+def read_novomodelo_line_means(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo line simulation means per (line_id, stage_id).
 
     Computes block-hours-weighted scenario means for ``net_flow_mw``.
     Returns columns ``entity_id``, ``stage_id``, ``net_flow_mw``.
@@ -742,14 +744,14 @@ def read_cobre_line_means(cobre_output_dir: Path) -> pl.DataFrame:
             "net_flow_mw": pl.Float64,
         }
     )
-    lf = scan_simulation_entity(cobre_output_dir, "exchanges")
+    lf = scan_simulation_entity(novomodelo_output_dir, "exchanges")
     if lf is None:
         return empty
     available = set(lf.collect_schema().names())
     if "net_flow_mw" not in available:
         return empty
     id_col = "line_id" if "line_id" in available else "entity_id"
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
     try:
         if block_hours is not None:
             result = (
@@ -768,63 +770,65 @@ def read_cobre_line_means(cobre_output_dir: Path) -> pl.DataFrame:
                 .collect(engine="streaming")
             )
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to aggregate exchange simulation data: "
-            f"{cobre_output_dir / 'simulation' / 'exchanges'}"
+            f"{novomodelo_output_dir / 'simulation' / 'exchanges'}"
         ) from exc
     return result
 
 
-def read_cobre_line_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre line p10/p50/p90 per (entity_id, stage_id).
+def read_novomodelo_line_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo line p10/p50/p90 per (entity_id, stage_id).
 
     Returns columns ``entity_id``, ``stage_id``, ``net_flow_mw_p10``,
     ``net_flow_mw_p50``, ``net_flow_mw_p90``.
     """
-    lf = scan_simulation_entity(cobre_output_dir, "exchanges")
+    lf = scan_simulation_entity(novomodelo_output_dir, "exchanges")
     if lf is None:
         return pl.DataFrame()
     available = set(lf.collect_schema().names())
     if "net_flow_mw" not in available:
         return pl.DataFrame()
     id_col = "line_id" if "line_id" in available else "entity_id"
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(lf, id_col, ["net_flow_mw"], [], block_hours)
         return _compute_percentiles(per_sc, ["net_flow_mw"])
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to compute line percentiles: "
-            f"{cobre_output_dir / 'simulation' / 'exchanges'}"
+            f"{novomodelo_output_dir / 'simulation' / 'exchanges'}"
         ) from exc
 
 
-def read_cobre_lp_max_generation(cobre_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_lp_max_generation(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Return per-(entity_id, stage_id) hydro LP max-generation bound.
 
     Reads ``output/training/dictionaries/bounds.parquet`` and filters to
     hydro generation upper bounds (``entity_type_code == 0``,
     ``bound_type_code == 7``). Takes block 0 as the stage representative
-    — Cobre currently emits a stage-constant max in practice, so this
+    — Novomodelo currently emits a stage-constant max in practice, so this
     matches the dashboard's plant-explorer behaviour.
 
     Returns columns: ``entity_id``, ``stage_id``,
-    ``cobre_lp_gen_max_mw``. Empty when the parquet is missing.
+    ``novomodelo_lp_gen_max_mw``. Empty when the parquet is missing.
     """
     empty = pl.DataFrame(
         schema={
             "entity_id": pl.Int64,
             "stage_id": pl.Int64,
-            "cobre_lp_gen_max_mw": pl.Float64,
+            "novomodelo_lp_gen_max_mw": pl.Float64,
         }
     )
-    bounds_path = cobre_output_dir / "training" / "dictionaries" / "bounds.parquet"
+    bounds_path = novomodelo_output_dir / "training" / "dictionaries" / "bounds.parquet"
     if not bounds_path.exists():
         return empty
     try:
         df = pl.read_parquet(bounds_path)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(f"Failed to read bounds.parquet: {bounds_path}") from exc
+        raise NovomodeloReadError(
+            f"Failed to read bounds.parquet: {bounds_path}"
+        ) from exc
     required = {
         "entity_type_code",
         "entity_id",
@@ -842,14 +846,14 @@ def read_cobre_lp_max_generation(cobre_output_dir: Path) -> pl.DataFrame:
     return filt.select(
         pl.col("entity_id").cast(pl.Int64),
         pl.col("stage_id").cast(pl.Int64),
-        pl.col("bound_value").cast(pl.Float64).alias("cobre_lp_gen_max_mw"),
+        pl.col("bound_value").cast(pl.Float64).alias("novomodelo_lp_gen_max_mw"),
     ).sort("entity_id", "stage_id")
 
 
-def read_cobre_hydro_withdrawal(cobre_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_hydro_withdrawal(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Return per-(hydro_id, stage_id) input water-withdrawal target.
 
-    Cobre does not emit realized water withdrawal as a per-stage simulation result;
+    Novomodelo does not emit realized water withdrawal as a per-stage simulation result;
     instead the target lives in ``constraints/hydro_bounds.parquet`` as
     ``water_withdrawal_m3s`` (one value per hydro-stage). Comparison against the source
     model ``VRETIRUH`` therefore matches the *input* target — discrepancies beyond the
@@ -866,14 +870,14 @@ def read_cobre_hydro_withdrawal(cobre_output_dir: Path) -> pl.DataFrame:
             "withdrawal_m3s": pl.Float64,
         }
     )
-    case_dir = case_dir_for(cobre_output_dir)
+    case_dir = case_dir_for(novomodelo_output_dir)
     bounds_path = case_dir / "constraints" / "hydro_bounds.parquet"
     if not bounds_path.exists():
         return empty
     try:
         df = pl.read_parquet(bounds_path)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             f"Failed to read hydro_bounds.parquet: {bounds_path}"
         ) from exc
     if "water_withdrawal_m3s" not in df.columns:
@@ -885,7 +889,7 @@ def read_cobre_hydro_withdrawal(cobre_output_dir: Path) -> pl.DataFrame:
     ).sort("entity_id", "stage_id")
 
 
-def read_cobre_hydro_per_stage_bounds(cobre_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Per-(hydro_id, stage_id) operational bounds from
     ``constraints/hydro_bounds.parquet``.
 
@@ -902,7 +906,7 @@ def read_cobre_hydro_per_stage_bounds(cobre_output_dir: Path) -> pl.DataFrame:
     cast to ``Float64``.  Returns an empty frame when the parquet
     is missing.
     """
-    case_dir = case_dir_for(cobre_output_dir)
+    case_dir = case_dir_for(novomodelo_output_dir)
     bounds_path = case_dir / "constraints" / "hydro_bounds.parquet"
     bound_cols = [
         "min_storage_hm3",
@@ -923,7 +927,7 @@ def read_cobre_hydro_per_stage_bounds(cobre_output_dir: Path) -> pl.DataFrame:
     try:
         df = pl.read_parquet(bounds_path)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             f"Failed to read hydro_bounds.parquet for dashboard bounds: {bounds_path}"
         ) from exc
     available = [c for c in bound_cols if c in df.columns]
@@ -952,19 +956,19 @@ _LINE_BOUNDS_SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def read_cobre_line_bounds(cobre_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Read the raw ``constraints/line_bounds.parquet`` frame.
 
     Returns every row verbatim (including per-block override rows), with
     the converter's own columns: ``line_id``, ``stage_id``, ``block_id``
     (nullable -- ``None`` on the stage-level base row), ``direct_mw``,
     ``reverse_mw``. Absent parquet -> typed-empty frame + WARNING;
-    present-but-corrupt -> :class:`CobreReadError`. Callers own their own
+    present-but-corrupt -> :class:`NovomodeloReadError`. Callers own their own
     ``block_id``-null filtering and any dict/lookup construction (kept in
     the ANALYZE layer).
     """
     empty = pl.DataFrame(schema=_LINE_BOUNDS_SCHEMA)
-    case_dir = case_dir_for(cobre_output_dir)
+    case_dir = case_dir_for(novomodelo_output_dir)
     path = case_dir / "constraints" / "line_bounds.parquet"
     if not path.exists():
         _LOG.warning("line_bounds.parquet not found at %s", path)
@@ -972,11 +976,13 @@ def read_cobre_line_bounds(cobre_output_dir: Path) -> pl.DataFrame:
     try:
         return pl.read_parquet(path)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(f"Failed to read line_bounds.parquet: {path}") from exc
+        raise NovomodeloReadError(
+            f"Failed to read line_bounds.parquet: {path}"
+        ) from exc
 
 
-def read_cobre_thermal_means(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre thermal simulation means per (entity_id, stage_id).
+def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo thermal simulation means per (entity_id, stage_id).
 
     Computes block-hours-weighted scenario means for generation_mw.
 
@@ -991,7 +997,7 @@ def read_cobre_thermal_means(cobre_output_dir: Path) -> pl.DataFrame:
         }
     )
 
-    lf = scan_simulation_entity(cobre_output_dir, "thermals")
+    lf = scan_simulation_entity(novomodelo_output_dir, "thermals")
     if lf is None:
         return empty
 
@@ -1001,7 +1007,7 @@ def read_cobre_thermal_means(cobre_output_dir: Path) -> pl.DataFrame:
         return empty
 
     id_col = "thermal_id" if "thermal_id" in available else "entity_id"
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
 
     try:
         if block_hours is not None:
@@ -1021,16 +1027,16 @@ def read_cobre_thermal_means(cobre_output_dir: Path) -> pl.DataFrame:
                 .collect(engine="streaming")
             )
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to aggregate thermal simulation data: "
-            f"{cobre_output_dir / 'simulation' / 'thermals'}"
+            f"{novomodelo_output_dir / 'simulation' / 'thermals'}"
         ) from exc
 
     return result
 
 
-def read_cobre_bus_means(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre bus simulation means per (entity_id, stage_id).
+def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo bus simulation means per (entity_id, stage_id).
 
     Computes block-hours-weighted scenario means for spot_price and
     deficit_mw.
@@ -1047,7 +1053,7 @@ def read_cobre_bus_means(cobre_output_dir: Path) -> pl.DataFrame:
         }
     )
 
-    lf = scan_simulation_entity(cobre_output_dir, "buses")
+    lf = scan_simulation_entity(novomodelo_output_dir, "buses")
     if lf is None:
         return empty
 
@@ -1059,7 +1065,7 @@ def read_cobre_bus_means(cobre_output_dir: Path) -> pl.DataFrame:
         return empty
 
     id_col = "bus_id" if "bus_id" in available else "entity_id"
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
 
     try:
         if block_hours is not None:
@@ -1079,9 +1085,9 @@ def read_cobre_bus_means(cobre_output_dir: Path) -> pl.DataFrame:
                 .collect(engine="streaming")
             )
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to aggregate bus simulation data: "
-            f"{cobre_output_dir / 'simulation' / 'buses'}"
+            f"{novomodelo_output_dir / 'simulation' / 'buses'}"
         ) from exc
 
     for col in ("spot_price", "deficit_mw"):
@@ -1157,13 +1163,13 @@ def _compute_percentiles(
     )
 
 
-def read_cobre_hydro_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre hydro p10/p50/p90 per (entity_id, stage_id).
+def read_novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo hydro p10/p50/p90 per (entity_id, stage_id).
 
     Returns DataFrame with columns: entity_id, stage_id, and for each
     hydro variable: ``{var}_p10``, ``{var}_p50``, ``{var}_p90``.
     """
-    lf = scan_simulation_entity(cobre_output_dir, "hydros")
+    lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
     if lf is None:
         return pl.DataFrame()
 
@@ -1173,10 +1179,10 @@ def read_cobre_hydro_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
         "spillage_m3s",
         "evaporation_m3s",
         "outflow_m3s",
-        # Operational slacks — surfaced as cobre-only series on the
+        # Operational slacks — surfaced as novomodelo-only series on the
         # plant-detail tab.  Percentiles are needed so the band+P10/P90
         # tooltip works the same as for the rest of the flow variables;
-        # without them only the Cobre Mean line is plotted and the
+        # without them only the Novomodelo Mean line is plotted and the
         # unified-x hover has nothing to lock onto.
         "water_withdrawal_violation_pos_m3s",
         "water_withdrawal_violation_neg_m3s",
@@ -1199,22 +1205,22 @@ def read_cobre_hydro_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
     if not all_vars:
         return pl.DataFrame()
 
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(
             lf, id_col, avail_flow, avail_stage, block_hours
         )
         return _compute_percentiles(per_sc, all_vars)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to compute hydro percentiles: "
-            f"{cobre_output_dir / 'simulation' / 'hydros'}"
+            f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
         ) from exc
 
 
-def read_cobre_thermal_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre thermal p10/p50/p90 per (entity_id, stage_id)."""
-    lf = scan_simulation_entity(cobre_output_dir, "thermals")
+def read_novomodelo_thermal_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo thermal p10/p50/p90 per (entity_id, stage_id)."""
+    lf = scan_simulation_entity(novomodelo_output_dir, "thermals")
     if lf is None:
         return pl.DataFrame()
 
@@ -1223,22 +1229,22 @@ def read_cobre_thermal_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
         return pl.DataFrame()
 
     id_col = "thermal_id" if "thermal_id" in available else "entity_id"
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(
             lf, id_col, ["generation_mw"], [], block_hours
         )
         return _compute_percentiles(per_sc, ["generation_mw"])
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to compute thermal percentiles: "
-            f"{cobre_output_dir / 'simulation' / 'thermals'}"
+            f"{novomodelo_output_dir / 'simulation' / 'thermals'}"
         ) from exc
 
 
-def read_cobre_bus_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre bus p10/p50/p90 per (entity_id, stage_id)."""
-    lf = scan_simulation_entity(cobre_output_dir, "buses")
+def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo bus p10/p50/p90 per (entity_id, stage_id)."""
+    lf = scan_simulation_entity(novomodelo_output_dir, "buses")
     if lf is None:
         return pl.DataFrame()
 
@@ -1248,19 +1254,19 @@ def read_cobre_bus_percentiles(cobre_output_dir: Path) -> pl.DataFrame:
     if not flow_cols:
         return pl.DataFrame()
 
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(lf, id_col, flow_cols, [], block_hours)
         return _compute_percentiles(per_sc, flow_cols)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             "Failed to compute bus percentiles: "
-            f"{cobre_output_dir / 'simulation' / 'buses'}"
+            f"{novomodelo_output_dir / 'simulation' / 'buses'}"
         ) from exc
 
 
 def _load_entity_bus_map(
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     entity: str,
     id_field: str,
 ) -> dict[int, int]:
@@ -1269,11 +1275,11 @@ def _load_entity_bus_map(
     A missing system JSON is the deliberate "optional file" case and yields
     an empty map. A JSON that exists but cannot be parsed, or whose entries
     lack ``bus_id``, is a genuine read failure and raises
-    :class:`CobreReadError` rather than being silently converted to an empty
+    :class:`NovomodeloReadError` rather than being silently converted to an empty
     map — that silent conversion is the defect this reader is not allowed
     to reintroduce.
     """
-    path = _find_system_json(cobre_output_dir, f"{entity}.json")
+    path = _find_system_json(novomodelo_output_dir, f"{entity}.json")
     if path is None:
         return {}
     try:
@@ -1281,11 +1287,13 @@ def _load_entity_bus_map(
             data = json.load(f)
         return {int(e["id"]): int(e["bus_id"]) for e in data.get(entity, [])}
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(f"Failed to read {entity} bus map from {path}") from exc
+        raise NovomodeloReadError(
+            f"Failed to read {entity} bus map from {path}"
+        ) from exc
 
 
-def read_cobre_bus_aggregates(
-    cobre_output_dir: Path,
+def read_novomodelo_bus_aggregates(
+    novomodelo_output_dir: Path,
 ) -> pl.DataFrame:
     """Compute per-bus aggregated simulation percentiles.
 
@@ -1293,31 +1301,33 @@ def read_cobre_bus_aggregates(
     load, deficit, and excess by bus, then computes p10/p50/p90 across
     scenarios.
 
-    Hydro generation is read from cobre 0.13's
+    Hydro generation is read from novomodelo 0.13's
     ``simulation/hydro_bus_generation/`` partition (see
-    :func:`read_cobre_hydro_bus_generation`), which carries ``bus_id`` per
+    :func:`read_novomodelo_hydro_bus_generation`), which carries ``bus_id`` per
     row directly. Hydros no longer carry a plant-level ``bus_id`` in
     ``system/hydros.json``, so unlike thermal/NCS there is no plant→bus map
     for hydro; a missing partition is a real operational state (the output
-    predates cobre 0.13), not "no hydro generation", and propagates
-    :class:`~cobre_bridge.core.errors.CobrePartitionMissingError` to the caller
+    predates novomodelo 0.13), not "no hydro generation", and propagates
+    :class:`~novomodelo_bridge.core.errors.NovomodeloPartitionMissingError` to the caller
     rather than degrading to zero.
 
     Returns DataFrame with columns: bus_id, stage_id, and for each
     variable: ``{var}_p10``, ``{var}_p50``, ``{var}_p90``.
     """
-    block_hours = _load_block_hours(cobre_output_dir)
+    block_hours = _load_block_hours(novomodelo_output_dir)
 
-    bus_lf = scan_simulation_entity(cobre_output_dir, "buses")
+    bus_lf = scan_simulation_entity(novomodelo_output_dir, "buses")
     bus_vars = ["load_mw", "deficit_mw", "excess_mw"]
 
-    thermal_bus_map = _load_entity_bus_map(cobre_output_dir, "thermals", "thermal_id")
-    thermal_lf = scan_simulation_entity(cobre_output_dir, "thermals")
+    thermal_bus_map = _load_entity_bus_map(
+        novomodelo_output_dir, "thermals", "thermal_id"
+    )
+    thermal_lf = scan_simulation_entity(novomodelo_output_dir, "thermals")
 
     ncs_bus_map = _load_entity_bus_map(
-        cobre_output_dir, "non_controllable_sources", "non_controllable_id"
+        novomodelo_output_dir, "non_controllable_sources", "non_controllable_id"
     )
-    ncs_lf = scan_simulation_entity(cobre_output_dir, "non_controllables")
+    ncs_lf = scan_simulation_entity(novomodelo_output_dir, "non_controllables")
 
     def _agg_entity_by_bus(
         lf: pl.LazyFrame | None,
@@ -1370,7 +1380,7 @@ def read_cobre_bus_aggregates(
         thermal/NCS — no plant→bus map or join is needed here.
 
         When ``block_hours`` (``stages.json``) is available, ``generation_mwh``
-        is already hours-weighted energy per block (cobre applies that
+        is already hours-weighted energy per block (novomodelo applies that
         weighting on the writer side), so summing it across ``hydro_id`` and
         ``block_id`` — including any null-``block_id`` stage-level row —
         gives the bus/stage/scenario total energy with NO re-weighting.
@@ -1382,8 +1392,8 @@ def read_cobre_bus_aggregates(
         Without ``stages.json`` there is no stage-hours denominator to
         convert the energy total back to a power figure, so this branch
         mirrors every sibling aggregator in this module (``_agg_entity_by_bus``,
-        :func:`read_cobre_hydro_means`, :func:`read_cobre_thermal_means`,
-        :func:`read_cobre_bus_means`): take the ``block_id == 0`` row — cobre's
+        :func:`read_novomodelo_hydro_means`, :func:`read_novomodelo_thermal_means`,
+        :func:`read_novomodelo_bus_means`): take the ``block_id == 0`` row — novomodelo's
         per-block ``generation_mw`` is already a genuine MW figure, no
         weighting needed — and sum it across hydros per bus/stage/scenario.
         A null-``block_id`` stage-level row does not equal ``0`` and is
@@ -1394,11 +1404,11 @@ def read_cobre_bus_aggregates(
 
         Absence of the partition is deliberately NOT caught here — a
         missing ``simulation/hydro_bus_generation/`` directory must surface
-        :class:`CobrePartitionMissingError` to the caller of
-        :func:`read_cobre_bus_aggregates`, not degrade to zero hydro
+        :class:`NovomodeloPartitionMissingError` to the caller of
+        :func:`read_novomodelo_bus_aggregates`, not degrade to zero hydro
         generation per bus (the regression this function exists to fix).
         """
-        lf = read_cobre_hydro_bus_generation(cobre_output_dir)
+        lf = read_novomodelo_hydro_bus_generation(novomodelo_output_dir)
 
         if block_hours is not None:
             energy = lf.group_by(["scenario_id", "bus_id", "stage_id"]).agg(
@@ -1533,32 +1543,32 @@ def read_cobre_bus_aggregates(
     return merged.group_by("bus_id", "stage_id").agg(aggs).sort("bus_id", "stage_id")
 
 
-def read_cobre_cost_breakdown(
-    cobre_output_dir: Path,
+def read_novomodelo_cost_breakdown(
+    novomodelo_output_dir: Path,
     max_stage_id: int | None = None,
 ) -> dict[str, float]:
-    """Read cost breakdown from Cobre simulation costs entity.
+    """Read cost breakdown from Novomodelo simulation costs entity.
 
     Returns ``{category: mean_total_R$}`` averaged across scenarios,
     summed across all stages and blocks.  Zero-cost categories are excluded.
 
     Parameters
     ----------
-    cobre_output_dir:
-        Path to the Cobre ``output/`` directory.
+    novomodelo_output_dir:
+        Path to the Novomodelo ``output/`` directory.
     max_stage_id:
         If provided, only include stages with ``stage_id <= max_stage_id``. Used to make
         the cost breakdown comparable to the source model, which usually reports a
-        shorter horizon than Cobre.
+        shorter horizon than Novomodelo.
     """
-    lf = scan_simulation_entity(cobre_output_dir, "costs")
+    lf = scan_simulation_entity(novomodelo_output_dir, "costs")
     if lf is None:
         return {}
 
     # Sum every individual cost component (the canonical set, so no column is
     # silently dropped — contract_cost used to be missing here). The aggregate
     # roll-ups (hydro_violation_cost, total/immediate/future) are excluded.
-    cost_cols = list(COBRE_COST_COMPONENT_COLUMNS)
+    cost_cols = list(NOVOMODELO_COST_COMPONENT_COLUMNS)
 
     available = set(lf.collect_schema().names())
     cols = [c for c in cost_cols if c in available]
@@ -1582,9 +1592,9 @@ def read_cobre_cost_breakdown(
         per_sc = lf.group_by("scenario_id").agg(disc_exprs)
         means = per_sc.select([pl.col(c).mean() for c in cols]).collect()
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
-            "Failed to read Cobre cost breakdown: "
-            f"{cobre_output_dir / 'simulation' / 'costs'}"
+        raise NovomodeloReadError(
+            "Failed to read Novomodelo cost breakdown: "
+            f"{novomodelo_output_dir / 'simulation' / 'costs'}"
         ) from exc
 
     result: dict[str, float] = {}
@@ -1596,8 +1606,8 @@ def read_cobre_cost_breakdown(
     return result
 
 
-def read_cobre_stage_costs(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre per-stage immediate/future/thermal cost (mean across scenarios).
+def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo per-stage immediate/future/thermal cost (mean across scenarios).
 
     Returns a DataFrame with columns ``stage_id`` (Int64), ``immediate_cost`` (Float64,
     R$), ``future_cost`` (Float64, R$), ``thermal_cost`` (Float64, R$),
@@ -1607,14 +1617,14 @@ def read_cobre_stage_costs(cobre_output_dir: Path) -> pl.DataFrame:
     ``CUSTO_FUTURO`` / ``CTERM`` (after the 10⁶ R$ unit conversion on the source model
     side).
 
-    ``anticipated_thermal_cost`` is the GNL forward-committed thermal fuel that Cobre
+    ``anticipated_thermal_cost`` is the GNL forward-committed thermal fuel that Novomodelo
     books on the decision-stage commitment column (part of ``immediate_cost`` but
-    excluded from ``thermal_cost``); it was added to Cobre's costs schema after 0.8.0.
+    excluded from ``thermal_cost``); it was added to Novomodelo's costs schema after 0.8.0.
     ``thermal_cost_total`` is the the source-model-comparable thermal generation cost
     (CTERM books GNL at delivery). Pre-anticipation runs lack the column → it reads as 0
     and ``thermal_cost_total == thermal_cost``.
 
-    Cobre's costs table is one row per ``(scenario_id, stage_id, block_id)``;
+    Novomodelo's costs table is one row per ``(scenario_id, stage_id, block_id)``;
     we sum block-level immediate_cost / thermal_cost / anticipated_thermal_cost
     within each (scenario, stage) and keep the (scenario, stage) value of
     future_cost, then average across scenarios.  ``future_cost`` is identical
@@ -1633,7 +1643,7 @@ def read_cobre_stage_costs(cobre_output_dir: Path) -> pl.DataFrame:
         schema={"stage_id": pl.Int64, **{c: pl.Float64 for c in _OUT_COLS}}
     )
 
-    lf = scan_simulation_entity(cobre_output_dir, "costs")
+    lf = scan_simulation_entity(novomodelo_output_dir, "costs")
     if lf is None:
         return empty
 
@@ -1656,13 +1666,13 @@ def read_cobre_stage_costs(cobre_output_dir: Path) -> pl.DataFrame:
         mean_cols = [pl.col(c).mean() for c in _ALL_COLS if c in available]
         df = per_sc.group_by("stage_id").agg(mean_cols).sort("stage_id").collect()
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
-            "Failed to read Cobre per-stage costs: "
-            f"{cobre_output_dir / 'simulation' / 'costs'}"
+        raise NovomodeloReadError(
+            "Failed to read Novomodelo per-stage costs: "
+            f"{novomodelo_output_dir / 'simulation' / 'costs'}"
         ) from exc
 
     # Ensure all columns are present even if one was missing in the schema
-    # (e.g. anticipated_thermal_cost on pre-anticipation Cobre runs).
+    # (e.g. anticipated_thermal_cost on pre-anticipation Novomodelo runs).
     for c in _ALL_COLS:
         if c not in df.columns:
             df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias(c))
@@ -1679,17 +1689,17 @@ def read_cobre_stage_costs(cobre_output_dir: Path) -> pl.DataFrame:
     )
 
 
-def read_converted_penalties(cobre_output_dir: Path) -> dict:
-    """Load the converted ``penalties.json`` for the Cobre case.
+def read_converted_penalties(novomodelo_output_dir: Path) -> dict:
+    """Load the converted ``penalties.json`` for the Novomodelo case.
 
-    ``penalties.json`` lives at the Cobre *case* root (the parent of the
+    ``penalties.json`` lives at the Novomodelo *case* root (the parent of the
     ``output`` directory the comparator is pointed at), so we look there first,
     then in the output dir itself. Returns the parsed dict, or ``{}`` when not
     found — callers should treat an empty dict as "penalties unavailable".
     """
     for candidate in (
-        case_dir_for(cobre_output_dir) / "penalties.json",
-        cobre_output_dir / "penalties.json",
+        case_dir_for(novomodelo_output_dir) / "penalties.json",
+        novomodelo_output_dir / "penalties.json",
     ):
         if candidate.is_file():
             try:
@@ -1700,13 +1710,13 @@ def read_converted_penalties(cobre_output_dir: Path) -> dict:
     return {}
 
 
-def read_cobre_convergence(cobre_output_dir: Path) -> pl.DataFrame:
-    """Read Cobre convergence data from training output.
+def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read Novomodelo convergence data from training output.
 
     Returns DataFrame with columns: ``iteration`` (Int64),
     ``lower_bound`` (Float64), ``upper_bound_mean`` (Float64).
 
-    The upper-bound column is read from cobre's ``upper_bound`` (0.14) or the
+    The upper-bound column is read from novomodelo's ``upper_bound`` (0.14) or the
     legacy ``upper_bound_mean``; either maps to the canonical
     ``upper_bound_mean`` returned here.
     """
@@ -1718,7 +1728,7 @@ def read_cobre_convergence(cobre_output_dir: Path) -> pl.DataFrame:
         }
     )
 
-    conv_path = cobre_output_dir / "training" / "convergence.parquet"
+    conv_path = novomodelo_output_dir / "training" / "convergence.parquet"
     if not conv_path.exists():
         _LOG.warning("convergence.parquet not found at %s", conv_path)
         return empty
@@ -1726,7 +1736,7 @@ def read_cobre_convergence(cobre_output_dir: Path) -> pl.DataFrame:
     try:
         df = pl.read_parquet(conv_path)
     except Exception as exc:  # noqa: BLE001
-        raise CobreReadError(
+        raise NovomodeloReadError(
             f"Failed to read convergence.parquet: {conv_path}"
         ) from exc
 
@@ -1744,7 +1754,7 @@ def read_cobre_convergence(cobre_output_dir: Path) -> pl.DataFrame:
         elif lower == "upper_bound_mean":
             col_map[col] = "upper_bound_mean"
 
-    # cobre 0.14 renamed the statistical upper-bound column
+    # novomodelo 0.14 renamed the statistical upper-bound column
     # "upper_bound_mean" -> "upper_bound" (alongside a nullable
     # "upper_bound_std" and a new "upper_bound_kind" tag).  Accept the new
     # spelling as an exact match into our canonical "upper_bound_mean" slot,
@@ -1793,12 +1803,12 @@ def read_cobre_convergence(cobre_output_dir: Path) -> pl.DataFrame:
     )
 
 
-def read_cobre_hydro_metadata(cobre_output_dir: Path) -> dict[int, dict]:
-    """Read hydro metadata from Cobre system JSON files.
+def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
+    """Read hydro metadata from Novomodelo system JSON files.
 
     Reads ``hydros.json`` and ``hydro_production_models.json``.
     Productivity now lives per-(hydro, stage) in
-    ``hydro_production_models.json`` on cobre HEAD. We surface the
+    ``hydro_production_models.json`` on novomodelo HEAD. We surface the
     first ``stage_ranges`` entry's value as ``productivity_mw_per_m3s`` for
     backward compatibility with comparator/dashboard callers.
 
@@ -1808,16 +1818,16 @@ def read_cobre_hydro_metadata(cobre_output_dir: Path) -> dict[int, dict]:
     This reader's job is plant *physics* (productivity, storage, outflow/
     generation bounds) — it does **not** carry a plant-level bus id. Hydros
     no longer carry a plant-level ``bus_id`` in ``system/hydros.json`` under
-    cobre 0.13; the compare layer's plant->bus label is
+    novomodelo 0.13; the compare layer's plant->bus label is
     re-sourced from the ``simulation/hydro_bus_generation/`` partition via
-    :func:`read_cobre_hydro_bus_labels` instead. Removing the key here
+    :func:`read_novomodelo_hydro_bus_labels` instead. Removing the key here
     (rather than leaving it ``None``) makes a stale caller expecting it
     break visibly (``KeyError``) instead of silently degrading to an empty
     bus map.
     """
-    hydros_path = _find_system_json(cobre_output_dir, "hydros.json")
+    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
     if hydros_path is None:
-        _LOG.warning("hydros.json not found near %s", cobre_output_dir)
+        _LOG.warning("hydros.json not found near %s", novomodelo_output_dir)
         return {}
 
     try:
@@ -1829,7 +1839,7 @@ def read_cobre_hydro_metadata(cobre_output_dir: Path) -> dict[int, dict]:
 
     case_dir = hydros_path.parent.parent
     # Productivity resolution is shared with the dashboard via the single
-    # canonical cascade in cobre_io so the two products never report a
+    # canonical cascade in novomodelo_io so the two products never report a
     # different ρ for the same plant (see resolve_hydro_productivities).
     productivities = resolve_hydro_productivities(case_dir, data.get("hydros", []))
 
@@ -1850,7 +1860,7 @@ def read_cobre_hydro_metadata(cobre_output_dir: Path) -> dict[int, dict]:
             "min_storage_hm3": float(reservoir.get("min_storage_hm3", 0.0) or 0.0),
             "max_storage_hm3": float(reservoir.get("max_storage_hm3", 0.0) or 0.0),
             "min_outflow_m3s": float(outflow.get("min_outflow_m3s", 0.0) or 0.0),
-            # ``max_outflow_m3s`` is typically null in cobre cases — leave as
+            # ``max_outflow_m3s`` is typically null in novomodelo cases — leave as
             # None so the dashboard can skip the dashed line.
             "max_outflow_m3s": (
                 float(outflow["max_outflow_m3s"])
@@ -1867,12 +1877,14 @@ def read_cobre_hydro_metadata(cobre_output_dir: Path) -> dict[int, dict]:
     return result
 
 
-def read_cobre_hydro_bus_labels(cobre_output_dir: Path) -> dict[int, frozenset[int]]:
+def read_novomodelo_hydro_bus_labels(
+    novomodelo_output_dir: Path,
+) -> dict[int, frozenset[int]]:
     """Derive the plant -> bus *label* map from the 0.13 hydro_bus_generation partition.
 
-    ``read_cobre_hydro_metadata`` no longer carries a plant-level ``bus_id`` —
+    ``read_novomodelo_hydro_metadata`` no longer carries a plant-level ``bus_id`` —
     this is the correct re-source for the compare layer's
-    plant->bus label: it reads :func:`read_cobre_hydro_bus_generation` and
+    plant->bus label: it reads :func:`read_novomodelo_hydro_bus_generation` and
     collapses it to the distinct ``(hydro_id, bus_id)`` pairs.
 
     Returns ``{hydro_id: frozenset(bus_id, ...)}``. A plant with a single bus
@@ -1880,17 +1892,17 @@ def read_cobre_hydro_bus_labels(cobre_output_dir: Path) -> dict[int, frozenset[i
     genuinely present at more than one bus in the partition (only possible
     once multi-bus hydro support lands) keeps every one of its buses
     here — callers decide how to handle that ambiguity (see
-    ``cobre_bridge.comparators.analyze._bus_name_lookups``), this reader does
+    ``novomodelo_bridge.comparators.analyze._bus_name_lookups``), this reader does
     not silently pick one.
 
-    Absence vs. present-but-empty mirrors :func:`read_cobre_hydro_bus_generation`
+    Absence vs. present-but-empty mirrors :func:`read_novomodelo_hydro_bus_generation`
     exactly (this function adds no aggregation of its own, so it inherits that
     contract unchanged): a missing ``simulation/hydro_bus_generation/``
-    directory raises :class:`~cobre_bridge.core.errors.CobrePartitionMissingError`;
+    directory raises :class:`~novomodelo_bridge.core.errors.NovomodeloPartitionMissingError`;
     a present-but-empty partition (already diagnosed by the underlying
     reader) yields an empty dict here.
     """
-    lf = read_cobre_hydro_bus_generation(cobre_output_dir)
+    lf = read_novomodelo_hydro_bus_generation(novomodelo_output_dir)
     pairs = lf.select("hydro_id", "bus_id").unique().collect(engine="streaming")
 
     result: dict[int, set[int]] = {}
@@ -1900,10 +1912,10 @@ def read_cobre_hydro_bus_labels(cobre_output_dir: Path) -> dict[int, frozenset[i
     return {hid: frozenset(buses) for hid, buses in result.items()}
 
 
-def read_cobre_productivity_detail(cobre_output_dir: Path) -> dict[int, dict]:
+def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int, dict]:
     """Read the per-hydro converted building blocks for the Productivity tab.
 
-    Surfaces the productivity building blocks cobre-bridge wrote into
+    Surfaces the productivity building blocks novomodelo-bridge wrote into
     ``system/hydros.json`` so the Building-Blocks table can show them next to
     the source model HIDR cadastro values: ``specific_productivity``
     (``specific_productivity_mw_per_m3s_per_m``), ``tailwater_m`` (constant
@@ -1913,14 +1925,14 @@ def read_cobre_productivity_detail(cobre_output_dir: Path) -> dict[int, dict]:
     Returns ``{hydro_id: {"name", "specific_productivity", "tailwater_m", "losses_m",
     "vmin_hm3", "vmax_hm3"}}``; per-field values are ``None`` when absent.  Returns an
     empty dict when ``hydros.json`` cannot be located.  (The
-    point/equivalent/accumulated productivities are *not* read from Cobre here — the
-    Productivity-tab scatters validate the conversion against what cobre-bridge computes
+    point/equivalent/accumulated productivities are *not* read from Novomodelo here — the
+    Productivity-tab scatters validate the conversion against what novomodelo-bridge computes
     from the source model inputs, and the realized per-stage productivity comes from the
     simulation generation/turbined comparison rows.)
     """
-    hydros_path = _find_system_json(cobre_output_dir, "hydros.json")
+    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
     if hydros_path is None:
-        _LOG.warning("hydros.json not found near %s", cobre_output_dir)
+        _LOG.warning("hydros.json not found near %s", novomodelo_output_dir)
         return {}
     try:
         with hydros_path.open() as f:
@@ -1959,49 +1971,49 @@ def read_cobre_productivity_detail(cobre_output_dir: Path) -> dict[int, dict]:
     return result
 
 
-def _find_system_json(cobre_output_dir: Path, filename: str) -> Path | None:
-    """Locate a system JSON file near the Cobre output directory."""
-    case_dir = case_dir_for(cobre_output_dir)
-    for candidate in [case_dir, cobre_output_dir, case_dir.parent]:
+def _find_system_json(novomodelo_output_dir: Path, filename: str) -> Path | None:
+    """Locate a system JSON file near the Novomodelo output directory."""
+    case_dir = case_dir_for(novomodelo_output_dir)
+    for candidate in [case_dir, novomodelo_output_dir, case_dir.parent]:
         p = candidate / "system" / filename
         if p.exists():
             return p
     return None
 
 
-def read_cobre_lines(cobre_output_dir: Path) -> list[dict]:
+def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
     """Read ``system/lines.json`` and return its ``"lines"`` list.
 
     Resolves the file via :func:`_find_system_json`'s candidate search
-    (``case_dir_for(cobre_output_dir)`` -> ``cobre_output_dir`` -> its
+    (``case_dir_for(novomodelo_output_dir)`` -> ``novomodelo_output_dir`` -> its
     parent), so every caller -- the compare context, the dashboard, the
     DECOMP corridor-alignment index -- resolves the same file. Returns
     ``[]`` when the file, or its ``"lines"`` key, is absent -- the
     graceful-degrade half of this module's reader-failure contract. A
-    present-but-unparseable ``lines.json`` raises :class:`CobreReadError`
+    present-but-unparseable ``lines.json`` raises :class:`NovomodeloReadError`
     rather than silently degrading to an empty list, mirroring
     :func:`_load_entity_bus_map`.
     """
-    path = _find_system_json(cobre_output_dir, "lines.json")
+    path = _find_system_json(novomodelo_output_dir, "lines.json")
     if path is None:
-        _LOG.warning("lines.json not found near %s", cobre_output_dir)
+        _LOG.warning("lines.json not found near %s", novomodelo_output_dir)
         return []
     try:
         with path.open() as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        raise CobreReadError(f"Failed to parse lines.json: {path}") from exc
+        raise NovomodeloReadError(f"Failed to parse lines.json: {path}") from exc
     return data.get("lines", [])
 
 
-def read_cobre_thermal_metadata(cobre_output_dir: Path) -> dict[int, dict]:
-    """Read thermal metadata from Cobre thermals.json.
+def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
+    """Read thermal metadata from Novomodelo thermals.json.
 
     Returns ``{entity_id: {"name": str}}``.
     """
-    path = _find_system_json(cobre_output_dir, "thermals.json")
+    path = _find_system_json(novomodelo_output_dir, "thermals.json")
     if path is None:
-        _LOG.warning("thermals.json not found near %s", cobre_output_dir)
+        _LOG.warning("thermals.json not found near %s", novomodelo_output_dir)
         return {}
 
     try:
@@ -2017,14 +2029,14 @@ def read_cobre_thermal_metadata(cobre_output_dir: Path) -> dict[int, dict]:
     }
 
 
-def read_cobre_bus_metadata(cobre_output_dir: Path) -> dict[int, dict]:
-    """Read bus metadata from Cobre buses.json.
+def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
+    """Read bus metadata from Novomodelo buses.json.
 
     Returns ``{entity_id: {"name": str}}``.
     """
-    path = _find_system_json(cobre_output_dir, "buses.json")
+    path = _find_system_json(novomodelo_output_dir, "buses.json")
     if path is None:
-        _LOG.warning("buses.json not found near %s", cobre_output_dir)
+        _LOG.warning("buses.json not found near %s", novomodelo_output_dir)
         return {}
 
     try:
@@ -2040,24 +2052,24 @@ def read_cobre_bus_metadata(cobre_output_dir: Path) -> dict[int, dict]:
     }
 
 
-def read_cobre_fpha_planes(cobre_output_dir: Path) -> pl.DataFrame | None:
-    """Read Cobre's fitted production hyperplanes (``hydro_models``).
+def read_novomodelo_fpha_planes(novomodelo_output_dir: Path) -> pl.DataFrame | None:
+    """Read Novomodelo's fitted production hyperplanes (``hydro_models``).
 
-    Cobre fits, per hydro and per stage, the FPHA hyperplanes it consumes —
+    Novomodelo fits, per hydro and per stage, the FPHA hyperplanes it consumes —
     ``GH <= kappa * (gamma_0 + gamma_v * volume + gamma_q * turbined + gamma_s *
     spilled)`` — and exports them to ``hydro_models/fpha_hyperplanes.parquet``
     after training. The ``gamma_v`` coefficient multiplies *absolute* volume.
 
     Returns ``None`` when the parquet is absent (the case used constant
     productivity); that ``None`` gates the production-model comparison off. A
-    present-but-unreadable parquet raises :class:`CobreReadError`.
+    present-but-unreadable parquet raises :class:`NovomodeloReadError`.
     """
-    path = cobre_output_dir / "hydro_models" / "fpha_hyperplanes.parquet"
+    path = novomodelo_output_dir / "hydro_models" / "fpha_hyperplanes.parquet"
     if not path.exists():
         return None
     try:
         df = pl.read_parquet(path)
     except Exception as err:  # noqa: BLE001
         msg = f"Failed to read {path}"
-        raise CobreReadError(msg) from err
+        raise NovomodeloReadError(msg) from err
     return None if df.is_empty() else df

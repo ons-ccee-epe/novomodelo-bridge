@@ -3,7 +3,7 @@
 Provides timing breakdowns, solver diagnostics, LP dimensions, and scaling
 charts used by the main performance tab module.
 
-Timing column hierarchy (verified against cobre's SDDP forward, backward, and
+Timing column hierarchy (verified against novomodelo's SDDP forward, backward, and
 training_output timing modules):
 
 - **Top-level phases** (mutually exclusive, sum ≈ iteration total):
@@ -29,24 +29,24 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from cobre_bridge.dashboard.tabs.timing_phases import (
+from novomodelo_bridge.dashboard.tabs.timing_phases import (
     TOP_LEVEL_PHASE_COLUMNS as TOP_LEVEL_PHASE_COLUMNS,
 )
-from cobre_bridge.dashboard.tabs.timing_phases import (
+from novomodelo_bridge.dashboard.tabs.timing_phases import (
     active_top_level_phases,
     build_timing_stacked_figure,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS as _LEGEND,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     MARGIN_DEFAULTS as _MARGIN,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     fig_to_html,
     render_figure,
 )
-from cobre_bridge.ui.theme import COLORS, PERFORMANCE_PHASE_COLORS
+from novomodelo_bridge.ui.theme import COLORS, PERFORMANCE_PHASE_COLORS
 
 # ---------------------------------------------------------------------------
 # Timing column categorisation for the sub-component and aggregate-CPU

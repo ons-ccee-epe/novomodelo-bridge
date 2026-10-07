@@ -5,29 +5,29 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
-from cobre_bridge.cli.args import CompareArgs, _parse_formats
-from cobre_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, load_config
-from cobre_bridge.cli.failure import _emit_convert_json, _fail
-from cobre_bridge.cli.verdict import (
+from novomodelo_bridge.cli.args import CompareArgs, _parse_formats
+from novomodelo_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, load_config
+from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
+from novomodelo_bridge.cli.verdict import (
     build_verdict,
     compare_summary,
     decomp_dataset_summary,
 )
-from cobre_bridge.core.provenance import hash_input_files
-from cobre_bridge.ui.console import print_status, render_diagnostics, spinner
+from novomodelo_bridge.core.provenance import hash_input_files
+from novomodelo_bridge.ui.console import print_status, render_diagnostics, spinner
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from cobre_bridge.comparators.dataset import ComparisonDataset
-    from cobre_bridge.comparators.newave.alignment import EntityAlignment
-    from cobre_bridge.newave.case import NewaveCase
-    from cobre_bridge.newave.id_map import NewaveIdMap
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
+    from novomodelo_bridge.newave.case import NewaveCase
+    from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 
 def _load_compare_context(
     newave_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     *,
     command: str,
     args: CompareArgs,
@@ -42,9 +42,9 @@ def _load_compare_context(
     under ``--json`` a verdict envelope) if the source model case directory is
     missing (``FileNotFoundError`` from ``NewaveCase.from_directory``).
     """
-    from cobre_bridge.cobre.readers import read_cobre_lines
-    from cobre_bridge.comparators.newave.alignment import build_entity_alignment
-    from cobre_bridge.newave.case import NewaveCase
+    from novomodelo_bridge.comparators.newave.alignment import build_entity_alignment
+    from novomodelo_bridge.newave.case import NewaveCase
+    from novomodelo_bridge.novomodelo.readers import read_novomodelo_lines
 
     try:
         case = NewaveCase.from_directory(newave_dir)
@@ -52,7 +52,7 @@ def _load_compare_context(
         _fail(command, args, exc, 1)
 
     id_map = case.id_map
-    lines_json = read_cobre_lines(cobre_output_dir)
+    lines_json = read_novomodelo_lines(novomodelo_output_dir)
     alignment = build_entity_alignment(id_map, case, lines_json)
     return case, id_map, alignment, lines_json
 
@@ -64,7 +64,7 @@ def _export_compare_artifacts(
     args: CompareArgs,
     raw_formats: list[str] | None,
     source_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     tolerance: float,
     out_dir_arg: Path | None,
     input_files: list[dict[str, object]] | None = None,
@@ -87,14 +87,14 @@ def _export_compare_artifacts(
     stdout status line so stdout stays pure JSON; the file export still runs and
     the ``OSError`` write-failure warning still reaches stderr.
     """
-    from cobre_bridge.comparators.export import write_artifacts
+    from novomodelo_bridge.comparators.export import write_artifacts
 
     try:
         formats = _parse_formats(raw_formats)
     except ValueError as exc:
         _fail(command, args, exc, 2)
 
-    out_dir: Path = out_dir_arg or (cobre_output_dir / "comparison_artifacts")
+    out_dir: Path = out_dir_arg or (novomodelo_output_dir / "comparison_artifacts")
     export_formats = formats & {"csv", "parquet", "json"}
 
     try:
@@ -102,7 +102,7 @@ def _export_compare_artifacts(
             dataset,
             command=command,
             source_dir=source_dir,
-            cobre_output_dir=cobre_output_dir,
+            novomodelo_output_dir=novomodelo_output_dir,
             tolerance=tolerance,
             out_dir=out_dir,
             formats=sorted(export_formats),
@@ -134,7 +134,7 @@ def _write_html_compare_report(
     under ``--json`` (it is a ``--format`` artifact); only its stdout advisory
     is routed to stderr so stdout stays pure JSON.
     """
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     html = build_comparison_report(dataset, reference_label=reference_label)
     report_path = out_dir / "report.html"
@@ -179,7 +179,7 @@ def _resolve_compare_settings(args: CompareArgs) -> CompareArgs:
 
     # Out-dir: only consult config when neither flag nor env supplied it. The
     # config value may itself be ``None``, which keeps the derived
-    # ``<cobre_output_dir>/comparison_artifacts`` default downstream.
+    # ``<novomodelo_output_dir>/comparison_artifacts`` default downstream.
     resolved_out_dir = args.out_dir if args.out_dir is not None else cfg.out_dir
 
     # Surface any config-load warnings on stderr only (never stdout), matching
@@ -203,28 +203,31 @@ def _run_newave_comparison(args: CompareArgs) -> None:
     """Execute the compare newave subcommand.
 
     Intentionally always exits 0: ``compare newave`` is informational (a
-    descriptive NEWAVE-vs-Cobre divergence report), so it never signals a
+    descriptive NEWAVE-vs-Novomodelo divergence report), so it never signals a
     failure on divergence.
     """
     args = _resolve_compare_settings(args)
 
-    from cobre_bridge.cobre.readers import CobreReadError
-    from cobre_bridge.comparators.newave.results import compare_results
-    from cobre_bridge.comparators.verdict import build_compare_verdict, compare_status
-    from cobre_bridge.core import diagnostics as dx
-    from cobre_bridge.core.errors import CobrePartitionMissingError
-    from cobre_bridge.ui.compare_summary import print_results_summary_from_dataset
+    from novomodelo_bridge.comparators.newave.results import compare_results
+    from novomodelo_bridge.comparators.verdict import (
+        build_compare_verdict,
+        compare_status,
+    )
+    from novomodelo_bridge.core import diagnostics as dx
+    from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+    from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
+    from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
 
     newave_dir: Path = args.source_dir
-    cobre_output_dir: Path = args.cobre_output_dir
+    novomodelo_output_dir: Path = args.novomodelo_output_dir
     tolerance: float = args.tolerance
 
     case, id_map, alignment, _lines_json = _load_compare_context(
-        newave_dir, cobre_output_dir, command="compare newave", args=args
+        newave_dir, novomodelo_output_dir, command="compare newave", args=args
     )
 
-    # CobrePartitionMissingError (a BridgeError; output predates a partition
-    # this compare needs) and CobreReadError (a RuntimeError; a malformed
+    # NovomodeloPartitionMissingError (a BridgeError; output predates a partition
+    # this compare needs) and NovomodeloReadError (a RuntimeError; a malformed
     # output file) are disjoint hierarchies — both must stay in the ``except``,
     # or the dropped one crashes with a bare traceback instead of exit 2.
     with dx.collect() as compare_diagnostics:
@@ -239,10 +242,10 @@ def _run_newave_comparison(args: CompareArgs) -> None:
                     case=case,
                     id_map=id_map,
                     alignment=alignment,
-                    cobre_output_dir=cobre_output_dir,
+                    novomodelo_output_dir=novomodelo_output_dir,
                     tolerance=tolerance,
                 )
-        except (CobreReadError, CobrePartitionMissingError) as exc:
+        except (NovomodeloReadError, NovomodeloPartitionMissingError) as exc:
             _fail("compare newave", args, exc, 2)
 
     verdict = build_compare_verdict(dataset)
@@ -255,7 +258,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
             print_results_summary_from_dataset(
                 dataset,
                 newave_dir,
-                cobre_output_dir,
+                novomodelo_output_dir,
                 verdict=verdict,
                 console=args.out_console(),
             )
@@ -272,7 +275,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
         args=args,
         raw_formats=args.format,
         source_dir=newave_dir,
-        cobre_output_dir=cobre_output_dir,
+        novomodelo_output_dir=novomodelo_output_dir,
         tolerance=tolerance,
         out_dir_arg=args.out_dir,
         input_files=hash_input_files(case.files),
@@ -306,13 +309,19 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
     the one failure (exit 2) — reporting a zero-vs-zero match on data we could
     not read would be worse than stopping.
     """
-    from cobre_bridge.cobre.readers import CobreReadError
-    from cobre_bridge.comparators.decomp.results import build_decomp_dataset
-    from cobre_bridge.comparators.verdict import build_compare_verdict, compare_status
-    from cobre_bridge.core import diagnostics as dx
-    from cobre_bridge.core.errors import CobrePartitionMissingError, FieldParseError
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.ui.compare_summary import print_results_summary_from_dataset
+    from novomodelo_bridge.comparators.decomp.results import build_decomp_dataset
+    from novomodelo_bridge.comparators.verdict import (
+        build_compare_verdict,
+        compare_status,
+    )
+    from novomodelo_bridge.core import diagnostics as dx
+    from novomodelo_bridge.core.errors import (
+        FieldParseError,
+        NovomodeloPartitionMissingError,
+    )
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
+    from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
 
     # Resolved before the read (unlike the pre-dataset ordering) so
     # ``build_decomp_dataset`` below gets a concrete tolerance rather than the
@@ -328,11 +337,13 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
                 no_color=args.no_color,
             ):
                 dataset = build_decomp_dataset(
-                    args.source_dir, args.cobre_output_dir, tolerance=args.tolerance
+                    args.source_dir,
+                    args.novomodelo_output_dir,
+                    tolerance=args.tolerance,
                 )
         except (
-            CobreReadError,
-            CobrePartitionMissingError,
+            NovomodeloReadError,
+            NovomodeloPartitionMissingError,
             FieldParseError,
             FileNotFoundError,
             ValueError,
@@ -346,7 +357,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             print_results_summary_from_dataset(
                 dataset,
                 args.source_dir,
-                args.cobre_output_dir,
+                args.novomodelo_output_dir,
                 verdict=verdict,
                 reference_label="DECOMP",
                 console=args.out_console(),
@@ -366,7 +377,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
         args=args,
         raw_formats=args.format,
         source_dir=args.source_dir,
-        cobre_output_dir=args.cobre_output_dir,
+        novomodelo_output_dir=args.novomodelo_output_dir,
         tolerance=args.tolerance,
         out_dir_arg=args.out_dir,
         input_files=hash_input_files(decomp_case.files),

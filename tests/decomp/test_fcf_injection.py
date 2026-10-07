@@ -2,8 +2,8 @@
 (``fcf/importer.py::import_boundary_fcf``/``_patch_policy_boundary``).
 
 Every test below exercises the importer's orchestration (config-patch,
-empty-storage-manifest guard) with every cobre/deck seam monkeypatched — no
-binary, no deck, and no installed cobre wheel needed.
+empty-storage-manifest guard) with every novomodelo/deck seam monkeypatched — no
+binary, no deck, and no installed novomodelo wheel needed.
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cobre_bridge.cobre.case_writer import CaseWriter
-from cobre_bridge.decomp.fcf.importer import (
+from novomodelo_bridge.decomp.fcf.importer import (
     _patch_policy_boundary,
     _seed_recent_observations,
     import_boundary_fcf,
 )
-from cobre_bridge.decomp.fcf.mapper import MappingResult
+from novomodelo_bridge.decomp.fcf.mapper import MappingResult
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 from tests._fcf_fixtures import (
     make_boundary_cuts,
     make_cut_record,
@@ -37,8 +37,8 @@ from tests._fcf_fixtures import (
 from tests.conftest import make_decomp_case, make_decomp_files
 
 if TYPE_CHECKING:
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.fcf.cortes import BoundaryCuts
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
 
 
 def _mock_deck_and_cut_seams(
@@ -52,10 +52,10 @@ def _mock_deck_and_cut_seams(
     Stubs ``Cortesh``/``read_cortes`` to minimal stand-ins (their return
     values are opaque placeholders — only ``read_cortes`` needs a shape any
     downstream code inspects), so ``read_cortes`` returns ``fake_cuts``
-    verbatim, and stubs the ``sys.modules['cobre']`` entry so
-    ``import_boundary_fcf``'s own unconditional ``import cobre`` (needed for
-    ``cobre.__version__``) resolves without the cobre-python wheel
-    installed — the `"stub sys.modules['cobre']"` pattern
+    verbatim, and stubs the ``sys.modules['novomodelo']`` entry so
+    ``import_boundary_fcf``'s own unconditional ``import novomodelo`` (needed for
+    ``novomodelo.__version__``) resolves without the novomodelo-python wheel
+    installed — the `"stub sys.modules['novomodelo']"` pattern
     (``tests/decomp/test_fcf_bootstrap.py``), not a module attribute patch.
 
     Returns a ``DecompCase`` with ``dadger``/``id_map``/``hidr``/``calendar``
@@ -64,13 +64,15 @@ def _mock_deck_and_cut_seams(
     ``tmp_path``. No real deck and no ``mlt.dat``, so the inflow-lag mean
     fold and recent-observation seed both stay on their ``None`` no-op branch.
     """
-    monkeypatch.setitem(sys.modules, "cobre", SimpleNamespace(__version__="0.13.0"))
+    monkeypatch.setitem(
+        sys.modules, "novomodelo", SimpleNamespace(__version__="0.13.0")
+    )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.Cortesh",
+        "novomodelo_bridge.decomp.fcf.importer.Cortesh",
         SimpleNamespace(read=lambda _path: object()),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.read_cortes",
+        "novomodelo_bridge.decomp.fcf.importer.read_cortes",
         lambda *_args, **_kwargs: fake_cuts,
     )
     # The coupling-stage per-block-hours read (case_dir/stages.json) is a
@@ -82,11 +84,11 @@ def _mock_deck_and_cut_seams(
     # storage-only cases place no live GNL ring, so the per-block length is
     # never validated against `n_patamares`.
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer._final_stage_block_hours",
+        "novomodelo_bridge.decomp.fcf.importer._final_stage_block_hours",
         lambda _case_dir: [648.0],
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.ensure_writer_binding", lambda: None
+        "novomodelo_bridge.decomp.fcf.importer.ensure_writer_binding", lambda: None
     )
 
     files = make_decomp_files(
@@ -163,20 +165,20 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The orchestration's return value and config patch are correct, and the
-    boundary loads on a plain `cobre run <case>` — no run-with-`--output`
-    warning, because cobre now resolves `policy.boundary.path` against the case
+    boundary loads on a plain `novomodelo run <case>` — no run-with-`--output`
+    warning, because novomodelo now resolves `policy.boundary.path` against the case
     dir (the former C8 gap is closed).
 
-    Needs no cobre binary, no real deck, and no installed cobre wheel: every
+    Needs no novomodelo binary, no real deck, and no installed novomodelo wheel: every
     seam that would touch any of the three (`bootstrap_terminal_manifest`,
     the cut readers, the checkpoint writer, and `import_boundary_fcf`'s own
-    internal `import cobre`) is monkeypatched to a minimal stand-in — a
+    internal `import novomodelo`) is monkeypatched to a minimal stand-in — a
     "monkeypatched-shape unit path" — isolating the orchestration under
     test: that `import_boundary_fcf` returns `case_dir / "boundary"` and
     patches `config.json`'s `policy.boundary` to the date-driven
-    `{"path": "boundary"}` block (no stage/pool index — cobre selects the
+    `{"path": "boundary"}` block (no stage/pool index — novomodelo selects the
     source by calendar date). The regression guards below pin that neither the
-    retired `--output` WARNING nor the `TRACKED COBRE-GAP (C8)` code comment
+    retired `--output` WARNING nor the `TRACKED NOVOMODELO-GAP (C8)` code comment
     comes back.
     """
     case_dir = tmp_path / "case"
@@ -195,21 +197,21 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     )
     case = _mock_deck_and_cut_seams(monkeypatch, tmp_path, fake_cuts)
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
+        "novomodelo_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
         lambda *_args, **_kwargs: make_manifest([make_slot(0, 0, 0)]),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.map_boundary_cuts",
+        "novomodelo_bridge.decomp.fcf.importer.map_boundary_cuts",
         lambda *_args, **_kwargs: MappingResult(
             cuts=(make_mapped_cut(coefficients=(1.5,)),), dropped=()
         ),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.build_stage_cuts_payload",
+        "novomodelo_bridge.decomp.fcf.importer.build_stage_cuts_payload",
         lambda *_args, **_kwargs: {},
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.write_boundary_checkpoint",
+        "novomodelo_bridge.decomp.fcf.importer.write_boundary_checkpoint",
         lambda *_args, **_kwargs: None,
     )
 
@@ -241,7 +243,7 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     source_path = inspect.getsourcefile(import_boundary_fcf)
     assert source_path is not None
     source_text = Path(source_path).read_text(encoding="utf-8")
-    assert "TRACKED COBRE-GAP WORKAROUND (C8" not in source_text
+    assert "TRACKED NOVOMODELO-GAP WORKAROUND (C8" not in source_text
 
 
 def test_import_boundary_fcf_rejects_storageless_manifest(
@@ -269,7 +271,7 @@ def test_import_boundary_fcf_rejects_storageless_manifest(
     # (entity_type 0) slot at all — triggers `map_boundary_cuts`'s own
     # read-bug guard.
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
+        "novomodelo_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
         lambda *_args, **_kwargs: make_manifest([make_slot(1, 0, 0)]),
     )
 
@@ -337,21 +339,21 @@ def test_import_boundary_fcf_reuses_shared_case_no_reparse(
     )
     case = _mock_deck_and_cut_seams(monkeypatch, tmp_path, fake_cuts)
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
+        "novomodelo_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
         lambda *_args, **_kwargs: make_manifest([make_slot(0, 0, 0)]),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.map_boundary_cuts",
+        "novomodelo_bridge.decomp.fcf.importer.map_boundary_cuts",
         lambda *_args, **_kwargs: MappingResult(
             cuts=(make_mapped_cut(coefficients=(1.5,)),), dropped=()
         ),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.build_stage_cuts_payload",
+        "novomodelo_bridge.decomp.fcf.importer.build_stage_cuts_payload",
         lambda *_args, **_kwargs: {},
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.write_boundary_checkpoint",
+        "novomodelo_bridge.decomp.fcf.importer.write_boundary_checkpoint",
         lambda *_args, **_kwargs: None,
     )
     read_spy = MagicMock(name="Dadger.read")
@@ -383,11 +385,11 @@ def test_seed_recent_observations_mutates_passed_dict_no_reread(
     """
     windows = [{"hydro_id": 1, "values": [10.0, 20.0]}]
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.Vazoes",
+        "novomodelo_bridge.decomp.fcf.importer.Vazoes",
         SimpleNamespace(read=lambda _path: object()),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.convert_recent_observation_windows",
+        "novomodelo_bridge.decomp.fcf.importer.convert_recent_observation_windows",
         lambda *_args, **_kwargs: windows,
     )
 

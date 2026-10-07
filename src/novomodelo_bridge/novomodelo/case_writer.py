@@ -1,4 +1,4 @@
-"""Single write funnel for Cobre case-file output (JSON + Parquet)."""
+"""Single write funnel for Novomodelo case-file output (JSON + Parquet)."""
 
 from __future__ import annotations
 
@@ -43,6 +43,6 @@ class CaseWriter:
             _LOG.debug("would write %s", path)
             return
         path.parent.mkdir(parents=True, exist_ok=True)
-        # TRACKED COBRE-GAP WORKAROUND (C3): the solver's parquet reader is
+        # TRACKED NOVOMODELO-GAP WORKAROUND (C3): the solver's parquet reader is
         # built without snappy; zstd until the compression contract is settled.
         pq.write_table(table, path, compression="zstd")

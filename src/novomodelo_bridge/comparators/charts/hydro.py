@@ -6,24 +6,24 @@ from typing import cast
 
 import polars as pl
 
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.charts._shared import (
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.charts._shared import (
     _BAND_FILL,
     _BAND_LINE,
     _REAL_SUBMARKET_ORDER,
     _aggregate_percentile_traces,
 )
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.ui.html.plotly import facet_grid
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.ui.html.plotly import facet_grid
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
-def cobre_aggregate_chart(
-    cobre_hydro: pl.DataFrame,
+def novomodelo_aggregate_chart(
+    novomodelo_hydro: pl.DataFrame,
     variable: str,
     title: str,
     unit: str,
@@ -36,7 +36,7 @@ def cobre_aggregate_chart(
     matched_ids: set[int] | None = None,
     reference_label: str = "NEWAVE",
 ) -> str:
-    """System-aggregate chart for a Cobre per-hydro variable.
+    """System-aggregate chart for a Novomodelo per-hydro variable.
 
     Sums *variable* across all (or matched) hydros per stage to produce a system-total
     mean line.  Adds a p10-p90 band from ``pct_df`` and an optional the source model
@@ -44,15 +44,15 @@ def cobre_aggregate_chart(
 
     Parameters
     ----------
-    cobre_hydro:
-        Per-hydro Cobre means with ``entity_id``, ``stage_id``, and
+    novomodelo_hydro:
+        Per-hydro Novomodelo means with ``entity_id``, ``stage_id``, and
         ``variable`` columns.
     variable:
-        Column name in ``cobre_hydro`` and percentile prefix in ``pct_df``.
+        Column name in ``novomodelo_hydro`` and percentile prefix in ``pct_df``.
     title, unit:
         Chart title and y-axis unit label.
     pct_df:
-        Per-hydro Cobre percentiles for the same variable.
+        Per-hydro Novomodelo percentiles for the same variable.
     nw_sin:
         Long-format the source model SIN DataFrame (``newave_code``, ``stage``,
         ``variable``, ``value``) — typically read by ``read_medias_sin``.
@@ -62,18 +62,18 @@ def cobre_aggregate_chart(
         Multiplicative factor applied to the source model values for unit alignment
         (e.g. ``730`` to convert MWmes → MWh).
     nw_offset:
-        Subtracted from the source model ``stage`` to align with Cobre ``stage_id`` (the
+        Subtracted from the source model ``stage`` to align with Novomodelo ``stage_id`` (the
         source model columns are numbered from the study start month).
     matched_ids:
-        Optional subset of Cobre hydro IDs to include — keeps the
+        Optional subset of Novomodelo hydro IDs to include — keeps the
         aggregate consistent with comparisons that only cover matched
         plants.
     """
-    if cobre_hydro.is_empty() or variable not in cobre_hydro.columns:
+    if novomodelo_hydro.is_empty() or variable not in novomodelo_hydro.columns:
         return f"<p>No {variable} data available.</p>"
 
-    cobre_by_stage, nw_by_stage = analyze.cobre_sum_and_newave_sin(
-        cobre_hydro,
+    novomodelo_by_stage, nw_by_stage = analyze.novomodelo_sum_and_newave_sin(
+        novomodelo_hydro,
         variable,
         nw_sin,
         nw_variable,
@@ -82,7 +82,7 @@ def cobre_aggregate_chart(
         matched_ids,
     )
 
-    stages = sorted(set(cobre_by_stage) | set(nw_by_stage))
+    stages = sorted(set(novomodelo_by_stage) | set(nw_by_stage))
 
     traces = _aggregate_percentile_traces(pct_df, variable, stages, matched_ids)
     if nw_by_stage:
@@ -99,11 +99,11 @@ def cobre_aggregate_chart(
     traces.append(
         {
             "x": stages,
-            "y": [cobre_by_stage.get(s, 0) for s in stages],
-            "name": "Cobre Mean",
+            "y": [novomodelo_by_stage.get(s, 0) for s in stages],
+            "name": "Novomodelo Mean",
             "type": "scatter",
             "mode": "lines",
-            "line": {"color": COLOR_COBRE, "width": 2},
+            "line": {"color": COLOR_NOVOMODELO, "width": 2},
         }
     )
 
@@ -128,10 +128,10 @@ def hydro_per_bus_chart(
     """Per-bus faceted hydro comparison for *variable*.
 
     Aggregates hydro-plant ResultComparison rows by the plant's owning bus (taken from
-    ``hydro_meta[cobre_id]["bus_ids"]``, the hydro_bus_generation-partition-sourced
+    ``hydro_meta[novomodelo_id]["bus_ids"]``, the hydro_bus_generation-partition-sourced
     label -- see ``analyze._bus_name_lookups``), then renders a small-multiples grid
     (one panel per non-fictitious bus, same layout convention as ``line_summary_chart``)
-    with the source model + Cobre traces and an optional Cobre P10–P90 band summed
+    with the source model + Novomodelo traces and an optional Novomodelo P10–P90 band summed
     across each bus's plants.
 
     Returns a short ``<p>`` fallback when the variable is absent on
@@ -143,7 +143,7 @@ def hydro_per_bus_chart(
     if not hydro_data:
         return f"<p>No hydro {variable} data.</p>"
 
-    # Per-(bus, stage) the source model/Cobre sums (analyze owns the roll-up; the
+    # Per-(bus, stage) the source model/Novomodelo sums (analyze owns the roll-up; the
     # bus-name resolution and NOFICT skip live there).
     per_bus = analyze.per_bus_sums_from_results(results, variable, hydro_meta, bus_meta)
     per_bus_nw: dict[str, dict[int, float]] = {
@@ -212,7 +212,7 @@ def hydro_per_bus_chart(
                     "fill": "toself",
                     "fillcolor": _BAND_FILL,
                     "line": {"color": _BAND_LINE},
-                    "name": "Cobre P10–P90",
+                    "name": "Novomodelo P10–P90",
                     "hoverinfo": "skip",
                     "type": "scatter",
                     "xaxis": xa,
@@ -240,10 +240,10 @@ def hydro_per_bus_chart(
             {
                 "x": stages,
                 "y": cb,
-                "name": "Cobre Mean",
+                "name": "Novomodelo Mean",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
                 "xaxis": xa,
                 "yaxis": ya,
                 "legendgroup": "cb",
@@ -290,10 +290,10 @@ def hydro_aggregate_chart(
             {
                 "x": stages,
                 "y": [cb_by_stage.get(s, 0) for s in stages],
-                "name": "Cobre Mean",
+                "name": "Novomodelo Mean",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
             },
         ]
     )
@@ -322,7 +322,7 @@ def _hydro_per_stage_sum(
 
 
 def hydro_slack_aggregate_chart(
-    cobre_hydro: pl.DataFrame,
+    novomodelo_hydro: pl.DataFrame,
     nw_slacks: pl.DataFrame | None,
     variable: str,
     title: str,
@@ -335,17 +335,17 @@ def hydro_slack_aggregate_chart(
 
     Mirrors :func:`hydro_aggregate_chart` but reads both sides from per-hydro frames
     instead of ``ResultComparison`` rows — the four hydro slacks (water-withdrawal
-    pos/neg + evaporation pos/neg) plus the Cobre-only inflow non-negativity slack don't
-    go through the comparison pipeline, so the chart machinery has to consume Cobre's
-    ``cobre_hydro_means`` columns and the source model ``nw_hydro_slacks`` frame (or
+    pos/neg + evaporation pos/neg) plus the Novomodelo-only inflow non-negativity slack don't
+    go through the comparison pipeline, so the chart machinery has to consume Novomodelo's
+    ``novomodelo_hydro_means`` columns and the source model ``nw_hydro_slacks`` frame (or
     ``None`` for slacks without a source-model counterpart) directly.
     """
-    cobre_by_stage = _hydro_per_stage_sum(cobre_hydro, variable, matched_ids)
+    novomodelo_by_stage = _hydro_per_stage_sum(novomodelo_hydro, variable, matched_ids)
     nw_by_stage = _hydro_per_stage_sum(nw_slacks, variable, matched_ids)
-    if not cobre_by_stage and not nw_by_stage:
+    if not novomodelo_by_stage and not nw_by_stage:
         return f"<p>No {variable} data available.</p>"
 
-    stages = sorted(set(cobre_by_stage) | set(nw_by_stage))
+    stages = sorted(set(novomodelo_by_stage) | set(nw_by_stage))
     traces = _aggregate_percentile_traces(pct_df, variable, stages, matched_ids)
     if nw_by_stage:
         traces.append(
@@ -361,11 +361,11 @@ def hydro_slack_aggregate_chart(
     traces.append(
         {
             "x": stages,
-            "y": [cobre_by_stage.get(s, 0) for s in stages],
-            "name": "Cobre Mean",
+            "y": [novomodelo_by_stage.get(s, 0) for s in stages],
+            "name": "Novomodelo Mean",
             "type": "scatter",
             "mode": "lines",
-            "line": {"color": COLOR_COBRE, "width": 2},
+            "line": {"color": COLOR_NOVOMODELO, "width": 2},
         }
     )
 
@@ -378,7 +378,7 @@ def hydro_slack_aggregate_chart(
 
 
 def hydro_slack_per_bus_chart(
-    cobre_hydro: pl.DataFrame,
+    novomodelo_hydro: pl.DataFrame,
     nw_slacks: pl.DataFrame | None,
     variable: str,
     title: str,
@@ -391,21 +391,21 @@ def hydro_slack_per_bus_chart(
     """Per-bus faceted slack chart from per-(entity_id, stage_id) frames.
 
     Parallel to :func:`hydro_per_bus_chart` for the slack variables that aren't surfaced
-    through ``ResultComparison`` (no Cobre/the source model comparison row exists for
+    through ``ResultComparison`` (no Novomodelo/the source model comparison row exists for
     them).  Plants are bucketed by their owning bus via
-    ``hydro_meta[cobre_id]["bus_ids"]``; fictitious buses (``NOFICT*``) are excluded,
+    ``hydro_meta[novomodelo_id]["bus_ids"]``; fictitious buses (``NOFICT*``) are excluded,
     matching the existing per-bus charts.  When *nw_slacks* is ``None`` or lacks the
     column, the source model trace is omitted (used for
     ``inflow_nonnegativity_slack_m3s`` which has no source-model counterpart).
     """
-    if cobre_hydro.is_empty() or variable not in cobre_hydro.columns:
+    if novomodelo_hydro.is_empty() or variable not in novomodelo_hydro.columns:
         return f"<p>No {variable} data available.</p>"
 
     # Frame-sourced per-(bus, stage) sums (analyze owns the roll-up and the
     # bus-name resolution / NOFICT skip). The band's bus ids come from the
-    # Cobre frame, matching the legacy ``per_bus_cb, per_bus_ids`` pairing.
+    # Novomodelo frame, matching the legacy ``per_bus_cb, per_bus_ids`` pairing.
     cb_agg = analyze.per_bus_sums_from_frame(
-        cobre_hydro, variable, matched_ids, hydro_meta, bus_meta
+        novomodelo_hydro, variable, matched_ids, hydro_meta, bus_meta
     )
     nw_agg = analyze.per_bus_sums_from_frame(
         nw_slacks, variable, matched_ids, hydro_meta, bus_meta
@@ -471,7 +471,7 @@ def hydro_slack_per_bus_chart(
                     "fill": "toself",
                     "fillcolor": _BAND_FILL,
                     "line": {"color": _BAND_LINE},
-                    "name": "Cobre P10–P90",
+                    "name": "Novomodelo P10–P90",
                     "hoverinfo": "skip",
                     "type": "scatter",
                     "xaxis": xa,
@@ -500,10 +500,10 @@ def hydro_slack_per_bus_chart(
             {
                 "x": stages,
                 "y": [cb_map.get(s, 0.0) for s in stages],
-                "name": "Cobre Mean",
+                "name": "Novomodelo Mean",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
                 "xaxis": xa,
                 "yaxis": ya,
                 "legendgroup": "cb",

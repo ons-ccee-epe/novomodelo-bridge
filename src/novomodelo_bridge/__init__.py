@@ -1,3 +1,3 @@
 from importlib.metadata import version
 
-__version__ = version("cobre-bridge")
+__version__ = version("novomodelo-bridge")

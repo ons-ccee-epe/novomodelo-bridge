@@ -1,7 +1,7 @@
 """Tests for the boundary FCF importer orchestration
 (``fcf/importer.py::import_boundary_fcf``).
 
-Synthetic fixtures only: no deck, no cobre binary.
+Synthetic fixtures only: no deck, no novomodelo binary.
 """
 
 from __future__ import annotations
@@ -15,19 +15,22 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.units import MONTH_HOURS
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.converters.anticipated import GnlCommitmentModel, GnlThermal
-from cobre_bridge.decomp.fcf.cortes import BoundaryCuts, summarize_cut_families
-from cobre_bridge.decomp.fcf.importer import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.units import MONTH_HOURS
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.anticipated import (
+    GnlCommitmentModel,
+    GnlThermal,
+)
+from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts, summarize_cut_families
+from novomodelo_bridge.decomp.fcf.importer import (
     _coupling_stage_hours,
     _emit_import_diagnostics,
     _gnl_targets_from,
     _post_horizon_start,
     import_boundary_fcf,
 )
-from cobre_bridge.decomp.fcf.mapper import (
+from novomodelo_bridge.decomp.fcf.mapper import (
     DroppedTerm,
     GnlRingPlan,
     GnlThermalTarget,
@@ -47,7 +50,7 @@ from tests.conftest import make_decomp_case, make_decomp_files
 
 
 def test_emit_import_diagnostics_ac1_ac2_from_synthetic() -> None:
-    """Both diagnostics fire against fully synthetic inputs: no deck, no cobre
+    """Both diagnostics fire against fully synthetic inputs: no deck, no novomodelo
     binary. ``dropped`` uses codes 20/30 (not a real deck's plant codes), so
     this test carries no hidden dependency on ``example/``.
     """
@@ -86,7 +89,7 @@ def test_emit_import_diagnostics_ac1_ac2_from_synthetic() -> None:
 
 def test_emit_import_diagnostics_no_dropped_gates_dropped_diagnostic_off() -> None:
     """``mapping.dropped == ()`` gates off the dropped-plant diagnostic while
-    the cut-family-summary diagnostic still fires. No cobre binary or real deck
+    the cut-family-summary diagnostic still fires. No novomodelo binary or real deck
     needed: both payloads are hand-built from the shared
     ``tests/_fcf_fixtures.py`` builders.
     """
@@ -131,30 +134,32 @@ def test_import_boundary_fcf_no_cut_files_is_noop(
 # into `build_stage_cuts_payload`, while `config.json`'s `policy.boundary`
 # stays the date-driven `{"path": "boundary"}` block (the cut file's calendar
 # `boundary_stage` flows only into the payload's `stage_id`). Every
-# cut-reader/cobre-import seam is monkeypatched (mirrors
+# cut-reader/novomodelo-import seam is monkeypatched (mirrors
 # `test_fcf_injection.py`'s seam-stubbing convention, kept local per the
-# one-home-per-source-module test convention) — no real deck, cobre binary, or
-# installed cobre wheel needed.
+# one-home-per-source-module test convention) — no real deck, novomodelo binary, or
+# installed novomodelo wheel needed.
 # ---------------------------------------------------------------------------
 
 
 def _stub_import_seams(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake_cuts: BoundaryCuts
 ) -> DecompCase:
-    """Monkeypatch the deck/cut-reader/cobre-import seams shared by the
+    """Monkeypatch the deck/cut-reader/novomodelo-import seams shared by the
     node_id/graph_stage_id threading tests below, returning the
     ``DecompCase`` the importer reads instead of re-parsing a deck."""
-    monkeypatch.setitem(sys.modules, "cobre", SimpleNamespace(__version__="0.13.0"))
+    monkeypatch.setitem(
+        sys.modules, "novomodelo", SimpleNamespace(__version__="0.13.0")
+    )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.Cortesh",
+        "novomodelo_bridge.decomp.fcf.importer.Cortesh",
         SimpleNamespace(read=lambda _path: object()),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.read_cortes",
+        "novomodelo_bridge.decomp.fcf.importer.read_cortes",
         lambda *_args, **_kwargs: fake_cuts,
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.ensure_writer_binding", lambda: None
+        "novomodelo_bridge.decomp.fcf.importer.ensure_writer_binding", lambda: None
     )
 
     files = make_decomp_files(
@@ -188,11 +193,11 @@ def test_import_boundary_fcf_threads_node_and_graph_stage_ids(
     )
     case = _stub_import_seams(monkeypatch, tmp_path, fake_cuts)
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer._final_stage_block_hours",
+        "novomodelo_bridge.decomp.fcf.importer._final_stage_block_hours",
         lambda _case_dir: [648.0],
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
+        "novomodelo_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
         lambda *_args, **_kwargs: make_manifest(
             [make_slot(0, 0, 0)],
             node_id=0,
@@ -201,7 +206,7 @@ def test_import_boundary_fcf_threads_node_and_graph_stage_ids(
         ),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.map_boundary_cuts",
+        "novomodelo_bridge.decomp.fcf.importer.map_boundary_cuts",
         lambda *_args, **_kwargs: MappingResult(
             cuts=(make_mapped_cut(coefficients=(1.5,)),), dropped=()
         ),
@@ -215,11 +220,11 @@ def test_import_boundary_fcf_threads_node_and_graph_stage_ids(
         return {}
 
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.build_stage_cuts_payload",
+        "novomodelo_bridge.decomp.fcf.importer.build_stage_cuts_payload",
         _spy_build_stage_cuts_payload,
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.write_boundary_checkpoint",
+        "novomodelo_bridge.decomp.fcf.importer.write_boundary_checkpoint",
         lambda *_args, **_kwargs: None,
     )
 
@@ -247,7 +252,7 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
 ) -> None:
     """A bootstrap manifest's `graph_stage_id` disagreeing with the cut
     file's own `boundary_stage` is not an error (they are different axes —
-    cobre's own 0-based pool identity vs. the source model's 1-based
+    novomodelo's own 0-based pool identity vs. the source model's 1-based
     calendar month count — that only coincidentally share a value):
     `build_stage_cuts_payload` receives `graph_stage_id=3` (the manifest's)
     and `stage_id=4` (the cut file's `boundary_stage`), and `config.json`'s
@@ -263,17 +268,17 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
     )
     case = _stub_import_seams(monkeypatch, tmp_path, fake_cuts)
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer._final_stage_block_hours",
+        "novomodelo_bridge.decomp.fcf.importer._final_stage_block_hours",
         lambda _case_dir: [648.0],
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
+        "novomodelo_bridge.decomp.fcf.importer.bootstrap_terminal_manifest",
         lambda *_args, **_kwargs: make_manifest(
             [make_slot(0, 0, 0)], node_id=0, graph_stage_id=3
         ),
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.map_boundary_cuts",
+        "novomodelo_bridge.decomp.fcf.importer.map_boundary_cuts",
         lambda *_args, **_kwargs: MappingResult(
             cuts=(make_mapped_cut(coefficients=(1.5,)),), dropped=()
         ),
@@ -287,11 +292,11 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
         return {}
 
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.build_stage_cuts_payload",
+        "novomodelo_bridge.decomp.fcf.importer.build_stage_cuts_payload",
         _spy_build_stage_cuts_payload,
     )
     monkeypatch.setattr(
-        "cobre_bridge.decomp.fcf.importer.write_boundary_checkpoint",
+        "novomodelo_bridge.decomp.fcf.importer.write_boundary_checkpoint",
         lambda *_args, **_kwargs: None,
     )
 
@@ -313,7 +318,7 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
 
 # ---------------------------------------------------------------------------
 # GnlRingPlan build (`_gnl_targets_from`) + the per-cut GNL deviation
-# diagnostic. All tier-1: pure Python, no deck, no cobre binary. The
+# diagnostic. All tier-1: pure Python, no deck, no novomodelo binary. The
 # entity_type code is restated locally rather than importing the mapper
 # module's private constant — mirrors ``test_fcf_mapper.py``'s identical
 # convention.
@@ -498,7 +503,7 @@ def test_emit_import_diagnostics_gnl_deviation_gated_off_without_plan() -> None:
 
 # ---------------------------------------------------------------------------
 # Covered-lane filter. `_post_horizon_start` (tier-1, no deck, no
-# cobre binary) + the deviation diagnostic's dropped-coverage count reading
+# novomodelo binary) + the deviation diagnostic's dropped-coverage count reading
 # the new uncovered-lane drops from `mapping.gnl_dropped`.
 # ---------------------------------------------------------------------------
 
@@ -527,7 +532,7 @@ def test_post_horizon_start_returns_earliest_stage(tmp_path: Path) -> None:
 def test_post_horizon_start_month_anchors_a_mid_month_stage(tmp_path: Path) -> None:
     """AC 1 — an earliest stage starting mid-month (``2026-05-16``) still
     anchors to the 1st of that month (``20260501``), never the day it
-    actually starts on: cobre's excised ring dates every surviving slot at
+    actually starts on: novomodelo's excised ring dates every surviving slot at
     month-anchor granularity, so the filter must not rely on the reference
     deck's day-01 coincidence."""
     case_dir = tmp_path / "case"
@@ -849,7 +854,7 @@ def test_emit_import_diagnostics_c3_headline_excludes_near_zero_sum_group() -> N
 
 def test_emit_import_diagnostics_c4_no_remediation_footer() -> None:
     """Panel 3 no longer carries a `remediation` footer; the C12 ledger row
-    in cobre's conversion-found-improvements registry is the record now, not
+    in novomodelo's conversion-found-improvements registry is the record now, not
     a runtime paragraph.
     """
     id_map = make_id_map(())
@@ -887,7 +892,7 @@ def test_emit_import_diagnostics_c4_no_remediation_footer() -> None:
 # ---------------------------------------------------------------------------
 # The dropped-coverage filter reconciled with the excised ring (the in-study
 # committed-window reason string, never the retired post-study-horizon/K=0
-# framing). Tier-1: pure Python, no deck, no cobre binary.
+# framing). Tier-1: pure Python, no deck, no novomodelo binary.
 # ---------------------------------------------------------------------------
 
 
@@ -942,7 +947,7 @@ def test_emit_import_diagnostics_gnl_dropped_count_sums_source_and_instudy() -> 
 
 def test_emit_import_diagnostics_gnl_deviation_class4_absent_no_drop() -> None:
     """AC 3 -- a já-comandada (class-4) slot never reaches the terminal
-    manifest at all (cobre excises it from the ring entirely), so a target
+    manifest at all (novomodelo excises it from the ring entirely), so a target
     carrying only a covered (class-3 signaled) dated slot contributes zero
     drops; the per-``(submercado, lag)`` spread table still renders its row.
     """

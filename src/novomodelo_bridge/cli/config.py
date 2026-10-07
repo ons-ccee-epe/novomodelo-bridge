@@ -1,4 +1,4 @@
-"""Leaf config-resolution layer: discover and parse ``cobre-bridge.toml``.
+"""Leaf config-resolution layer: discover and parse ``novomodelo-bridge.toml``.
 
 This module supplies the *file-sourced* defaults for the compare commands —
 the absolute/relative tolerances, the output format set, and the artifact
@@ -27,11 +27,11 @@ from pathlib import Path
 
 RESULTS_TOLERANCE_DEFAULT: float = 1e-2
 FORMAT_DEFAULT: tuple[str, ...] = ("console", "parquet", "json")
-# out-dir has no fixed default (it derives from <cobre_output_dir>); the config
+# out-dir has no fixed default (it derives from <novomodelo_output_dir>); the config
 # value, when absent, is None and the CLI keeps its derived default.
 
-_LOCAL_CONFIG_NAME = "cobre-bridge.toml"
-_USER_CONFIG_RELPATH = ("cobre-bridge", "config.toml")
+_LOCAL_CONFIG_NAME = "novomodelo-bridge.toml"
+_USER_CONFIG_RELPATH = ("novomodelo-bridge", "config.toml")
 
 
 @dataclass(frozen=True)
@@ -65,11 +65,11 @@ def discover_config_path(start: Path | None = None) -> Path | None:
 
     First-found-wins, in this exact order:
 
-    1. ``start/cobre-bridge.toml`` then each ancestor of ``start`` up to and
+    1. ``start/novomodelo-bridge.toml`` then each ancestor of ``start`` up to and
        including the filesystem root (``start`` defaults to :func:`Path.cwd`).
-    2. ``$XDG_CONFIG_HOME/cobre-bridge/config.toml`` when ``XDG_CONFIG_HOME`` is
+    2. ``$XDG_CONFIG_HOME/novomodelo-bridge/config.toml`` when ``XDG_CONFIG_HOME`` is
        set and non-empty.
-    3. ``~/.config/cobre-bridge/config.toml`` (via :func:`Path.home`), the
+    3. ``~/.config/novomodelo-bridge/config.toml`` (via :func:`Path.home`), the
        ``XDG_CONFIG_HOME``-unset fallback and final lookup.
 
     Existence is tested with :meth:`Path.is_file`; no file is read here.
@@ -94,7 +94,7 @@ def discover_config_path(start: Path | None = None) -> Path | None:
 
 
 def load_config(path: Path | None = None, *, start: Path | None = None) -> BridgeConfig:
-    """Parse a single ``cobre-bridge.toml`` into a :class:`BridgeConfig`.
+    """Parse a single ``novomodelo-bridge.toml`` into a :class:`BridgeConfig`.
 
     When ``path`` is ``None`` the file is located via
     :func:`discover_config_path` (passing ``start``); if discovery also returns

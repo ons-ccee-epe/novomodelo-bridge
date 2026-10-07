@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import polars as pl
 
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
     escape_attr,
@@ -24,11 +24,11 @@ from cobre_bridge.ui.html.document import (
     sparkline_svg,
     wrap_chart,
 )
-from cobre_bridge.ui.html.js import PLANT_EXPLORER_JS, SUB_TAB_JS
-from cobre_bridge.ui.html.plotly import stage_x_dates
+from novomodelo_bridge.ui.html.js import PLANT_EXPLORER_JS, SUB_TAB_JS
+from novomodelo_bridge.ui.html.plotly import stage_x_dates
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 # ---------------------------------------------------------------------------
 # Module constants
@@ -49,7 +49,7 @@ _FLOW_VARS: list[str] = [
     "turbined_m3s",
     "spillage_m3s",
     "evaporation_m3s",
-    # Operational slack columns surfaced as cobre-only series so the user can see at a
+    # Operational slack columns surfaced as novomodelo-only series so the user can see at a
     # glance which constraints the LP had to relax.  These have no source-model
     # counterpart — they're plotted with the standard p10/p50/p90 band like any other
     # flow variable.
@@ -63,7 +63,7 @@ _STAGE_VARS: list[str] = [
     "storage_final_hm3",
     "inflow_m3s",
     "water_value_per_hm3",
-    # cobre HEAD energy columns: stage-level at block_id=0
+    # novomodelo HEAD energy columns: stage-level at block_id=0
     "stored_energy_final_mwh",
     "incremental_inflow_energy_mw",
     "equivalent_productivity_mw_per_m3s",
@@ -91,7 +91,7 @@ def _weighted_lp_generation_bounds(
 ) -> dict[int, dict[int, dict[int, float]]]:
     """``entity_id -> stage_id -> {bound_type_code -> block-hours-weighted bound}``.
 
-    cobre's LP-bounds dump (``output/training/dictionaries/bounds.parquet``)
+    novomodelo's LP-bounds dump (``output/training/dictionaries/bounds.parquet``)
     records a generation bound per ``(entity, stage, bound_type_code)`` either
     as a single stage-level row (``block_id`` NULL, in force for every block)
     **or** as per-block override rows (``block_id`` 0..n-1) that replace the
@@ -1064,7 +1064,7 @@ function renderHydroDetail(containerId, d) {
     plotlyLine(lbl, d.wv_p90, '#E91E63', 'P90', 1, 'dot'),
   ], plotlyLayout({title: 'Water Value (R$/hm\u00b3)', yaxis: {title: 'R$/hm\u00b3'}}), _HC);
 
-  // Stored Energy (MWh) \u2014 EARM, stage-level. cobre HEAD column.
+  // Stored Energy (MWh) \u2014 EARM, stage-level. novomodelo HEAD column.
   if (d.earm_p50 && d.earm_p50.length > 0) {
     var earmBand = plotlyBand(lbl, d.earm_p10, d.earm_p90, 'rgba(63,81,181,0.15)', 'P10\u2013P90');
     earmBand.visible = _peBandVisible;
@@ -1076,7 +1076,7 @@ function renderHydroDetail(containerId, d) {
     ], plotlyLayout({title: 'Stored Energy (MWh)', yaxis: {title: 'MWh'}}), _HC);
   }
 
-  // Inflow Energy (MW) \u2014 ENA, stage-level. cobre HEAD column.
+  // Inflow Energy (MW) \u2014 ENA, stage-level. novomodelo HEAD column.
   if (d.ena_p50 && d.ena_p50.length > 0) {
     var enaBand = plotlyBand(lbl, d.ena_p10, d.ena_p90, 'rgba(0,150,136,0.15)', 'P10\u2013P90');
     enaBand.visible = _peBandVisible;
@@ -1088,7 +1088,7 @@ function renderHydroDetail(containerId, d) {
     ], plotlyLayout({title: 'Inflow Energy (MW)', yaxis: {title: 'MW'}}), _HC);
   }
 
-  // Equivalent Productivity (MW/(m\u00b3/s)) \u2014 \u03c1_eq, stage-level. cobre HEAD column.
+  // Equivalent Productivity (MW/(m\u00b3/s)) \u2014 \u03c1_eq, stage-level. novomodelo HEAD column.
   if (d.rhoeq_p50 && d.rhoeq_p50.length > 0) {
     var rhoeqBand = plotlyBand(lbl, d.rhoeq_p10, d.rhoeq_p90, 'rgba(121,85,72,0.15)', 'P10\u2013P90');
     rhoeqBand.visible = _peBandVisible;

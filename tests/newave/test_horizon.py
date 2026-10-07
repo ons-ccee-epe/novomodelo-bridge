@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cobre_bridge.core.tolerances import BIG_M
-from cobre_bridge.newave.horizon import (
+from novomodelo_bridge.core.tolerances import BIG_M
+from novomodelo_bridge.newave.horizon import (
     POST_STUDY_YEAR,
     build_stage_dates,
     historical_start_date,

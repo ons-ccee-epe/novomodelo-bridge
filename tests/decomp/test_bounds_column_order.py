@@ -18,14 +18,14 @@ not a bound axis, so it never reaches the accumulator).
 
 from __future__ import annotations
 
-from cobre_bridge.decomp.bounds_accumulator import (
+from novomodelo_bridge.decomp.bounds_accumulator import (
     HYDRO_BOUNDS_SCHEMA,
     PUMPING_BOUNDS_SCHEMA,
     THERMAL_BOUNDS_SCHEMA,
 )
-from cobre_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
-from cobre_bridge.decomp.converters.thermal import _THERMAL_COST_SCHEMA
-from cobre_bridge.decomp.group_bounds import _HYDRO_UNIT_GROUP_BOUNDS_SCHEMA
+from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
+from novomodelo_bridge.decomp.converters.thermal import _THERMAL_COST_SCHEMA
+from novomodelo_bridge.decomp.group_bounds import _HYDRO_UNIT_GROUP_BOUNDS_SCHEMA
 
 
 def test_hydro_bounds_index_columns_precede_values() -> None:

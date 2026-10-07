@@ -4,8 +4,8 @@ conversion tracks.
 Builds the ``tailrace_curves`` Arrow table from a plant's downstream-level
 curve families (segments keyed by ``(codigo_usina, indice_familia,
 indice_polinomio)``) — the shared core the source-model track's
-``convert_tailrace_curves`` (:mod:`cobre_bridge.newave.converters.tailrace`) and the
-DECOMP track's ``convert_tailrace_curves`` (:mod:`cobre_bridge.decomp.converters.fpha`)
+``convert_tailrace_curves`` (:mod:`novomodelo_bridge.newave.converters.tailrace`) and the
+DECOMP track's ``convert_tailrace_curves`` (:mod:`novomodelo_bridge.decomp.converters.fpha`)
 both call, since ``idecomp.libs.UsinasHidreletricas`` exposes the identical
 column layout as the source model's ``polinjus``.
 """
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
-# Arrow schema required by cobre's `parse_tailrace_curves`: only
+# Arrow schema required by novomodelo's `parse_tailrace_curves`: only
 # `downstream_reference_level_m` is nullable; every other column is non-nullable
 # Int32/Float64.
 _TAILRACE_SCHEMA = pa.schema(
@@ -54,10 +54,10 @@ def build_tailrace_table(
     (which extracts the two frames from ``case.polinjus``) and the DECOMP
     pipeline (whose ``polinjus.csv`` reads to the identical column layout via
     ``idecomp.libs.UsinasHidreletricas``). *hydro_id_of* maps a source plant
-    code to its dense 0-based cobre id and raises ``KeyError`` for a code absent
+    code to its dense 0-based novomodelo id and raises ``KeyError`` for a code absent
     from the id map (filtered fictitious plants, etc.) — those segments are
     dropped. Returns ``None`` when there are no families/segments or none map to
-    a converted hydro (meaning "do not write the optional file"; cobre's FPHA
+    a converted hydro (meaning "do not write the optional file"; novomodelo's FPHA
     then falls back to the entity-level tailrace from ``hydros.json``).
     """
     if families is None or segments is None or families.empty or segments.empty:
@@ -91,13 +91,13 @@ def build_tailrace_table(
     if merged.empty:
         return None
 
-    # Deterministic output order; cobre re-sorts by the same integer keys.
+    # Deterministic output order; novomodelo re-sorts by the same integer keys.
     hydro_ids = [code_to_hydro[int(code)] for code in merged["codigo_usina"].tolist()]
     merged = merged.assign(hydro_id=hydro_ids).sort_values(
         ["hydro_id", "indice_familia", "indice_polinomio"], kind="stable"
     )
 
-    # The downstream reference level is nullable; coerce any NaN to None so cobre's
+    # The downstream reference level is nullable; coerce any NaN to None so novomodelo's
     # finite-check passes.
     downstream_level = [
         None if pd.isna(v) else float(v)

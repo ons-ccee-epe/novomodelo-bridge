@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.tabs.plants.
+"""Unit tests for novomodelo_bridge.dashboard.tabs.plants.
 
 Covers module constants, can_render, _compute_hydro_percentiles,
 _build_hydro_json, build_hydro_explorer, _compute_thermal_percentiles,
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import polars as pl
 
-from cobre_bridge.dashboard.tabs.plants import (
+from novomodelo_bridge.dashboard.tabs.plants import (
     TAB_ID,
     TAB_LABEL,
     TAB_ORDER,
@@ -753,7 +753,7 @@ def test_build_thermal_json_empty_lp_bounds() -> None:
 def _angra_like_lp_bounds() -> pd.DataFrame:
     """LP-bounds dump for a must-run thermal fixed per block at 568/544/516 MW.
 
-    Mirrors cobre's ``bounds.parquet``: a stage-level fallback row (block_id
+    Mirrors novomodelo's ``bounds.parquet``: a stage-level fallback row (block_id
     NULL, from the plant's thermals.json default) plus one override row per
     block, for both gen_min (6) and gen_max (7). All blocks are overridden, so
     the stage-level 460 is never in force.

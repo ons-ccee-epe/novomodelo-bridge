@@ -1,4 +1,4 @@
-"""Modular dashboard package for Cobre simulation results.
+"""Modular dashboard package for Novomodelo simulation results.
 
 Entry point: ``build_dashboard(case_dir, output_path)`` loads data,
 discovers renderable tabs, and writes the assembled HTML file (it loads
@@ -10,17 +10,17 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from cobre_bridge.dashboard.data import DashboardData
-from cobre_bridge.dashboard.tabs import collect_required_js, get_renderable_tabs
-from cobre_bridge.ui.html.css import dashboard_css
-from cobre_bridge.ui.html.document import build_html
-from cobre_bridge.ui.html.js import PLOTLY_TITLE_SHIM_JS, TAB_SWITCH_JS
+from novomodelo_bridge.dashboard.data import DashboardData
+from novomodelo_bridge.dashboard.tabs import collect_required_js, get_renderable_tabs
+from novomodelo_bridge.ui.html.css import dashboard_css
+from novomodelo_bridge.ui.html.document import build_html
+from novomodelo_bridge.ui.html.js import PLOTLY_TITLE_SHIM_JS, TAB_SWITCH_JS
 
 logger = logging.getLogger(__name__)
 
 
 def build_dashboard(case_dir: Path, output_path: Path) -> None:
-    """Build an interactive HTML dashboard from Cobre simulation results."""
+    """Build an interactive HTML dashboard from Novomodelo simulation results."""
     data = DashboardData.load(case_dir)
 
     renderable = get_renderable_tabs(data)
@@ -29,7 +29,7 @@ def build_dashboard(case_dir: Path, output_path: Path) -> None:
 
     case_name = case_dir.resolve().name
     html = build_html(
-        title=f"Cobre Simulation Dashboard \u2014 {case_name}",
+        title=f"Novomodelo Simulation Dashboard \u2014 {case_name}",
         tab_defs=tab_defs,
         tab_contents=tab_contents,
         css=dashboard_css(),

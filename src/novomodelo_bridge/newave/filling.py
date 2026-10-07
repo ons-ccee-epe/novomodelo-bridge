@@ -2,7 +2,7 @@
 
 This foundation module holds the calendar/horizon arithmetic shared by the
 filling converters and the fill-rate helpers: mapping a
-NEWAVE filling date to a Cobre 0-based stage index (:func:`stage_id`) and the
+NEWAVE filling date to a Novomodelo 0-based stage index (:func:`stage_id`) and the
 per-month hm³-per-m³/s weight (:func:`zeta`). It is also the one home for "how
 many machines are in service at stage *t*", for both kinds of ``exph`` plant:
 a not-yet-built one filling its dead volume (:func:`online_machines`) and one
@@ -11,7 +11,7 @@ the machine entries through :func:`exph_unit_rows`.
 
 All functions are pure (no logging, no I/O) so they can be reused and tested in
 isolation. The module deliberately depends on nothing under
-``cobre_bridge.newave.converters`` — the calendar-hours basis is re-implemented locally
+``novomodelo_bridge.newave.converters`` — the calendar-hours basis is re-implemented locally
 in :func:`month_hours` rather than imported, so a foundation module never pulls a
 converter into its import graph.
 """
@@ -31,7 +31,7 @@ def month_hours(year: int, month: int) -> float:
     """Total number of hours in the given calendar month.
 
     Uses the same calendar-hours basis as
-    ``cobre_bridge.newave.converters.temporal._month_hours`` (the basis of record):
+    ``novomodelo_bridge.newave.converters.temporal._month_hours`` (the basis of record):
     ``calendar.monthrange(year, month)[1] * 24``. Re-implemented here to keep
     this foundation module free of any converter dependency.
 
@@ -52,7 +52,7 @@ def zeta(year: int, month: int) -> float:
 
 
 def stage_id(year: int, month: int, start_year: int, start_month: int) -> int:
-    """Cobre 0-based stage index for a calendar month within the study horizon.
+    """Novomodelo 0-based stage index for a calendar month within the study horizon.
 
     Computes ``(year - start_year) * 12 + (month - start_month)`` so the study
     start (``start_year``/``start_month``) maps to stage ``0``. The result may be
@@ -74,7 +74,7 @@ def filling_schedule(
     Maps a plant's declared filling schedule — its start month
     (``start_year``/``start_month``, from ``data_inicio_enchimento``) and its
     duration in months (``duracao_months``, from ``duracao_enchimento``) — onto
-    the half-open Cobre stage window ``[start_stage_id, entry_stage_id)``, with
+    the half-open Novomodelo stage window ``[start_stage_id, entry_stage_id)``, with
     the edge clamps below applied.
 
     The raw start is :func:`stage_id` (unclamped, may be negative for a pre-study
@@ -263,7 +263,7 @@ class ExpansionConfig:
     def declared_hreg(self, hreg: pd.Series) -> pd.Series:
         """Cadastro row *hreg* at the configuration ``hydros.json`` declares.
 
-        The final one, never the study-start one: cobre forbids a per-stage
+        The final one, never the study-start one: novomodelo forbids a per-stage
         bound above the declaration and the stages past the ramp carry no
         bound, so a start-configuration declaration would cap the plant there
         for the rest of the horizon.

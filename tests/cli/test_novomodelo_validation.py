@@ -8,7 +8,7 @@ class TestPartitionValidationWarnings:
 
     def test_partition_whitelists_interop_warning(self) -> None:
         """The interop message is whitelisted; an unrelated one still renders."""
-        from cobre_bridge.cli.app import _partition_validation_warnings
+        from novomodelo_bridge.cli.app import _partition_validation_warnings
 
         interop = (
             "inflow lags are disabled on all study stages. This is a valid "
@@ -26,7 +26,7 @@ class TestPartitionValidationWarnings:
 
     def test_partition_empty_whitelist_is_identity(self) -> None:
         """An empty whitelist — what ``convert newave`` passes — changes nothing."""
-        from cobre_bridge.cli.app import _partition_validation_warnings
+        from novomodelo_bridge.cli.app import _partition_validation_warnings
 
         warnings: list[object] = ["w1", "w2", {"message": "w3"}]
 

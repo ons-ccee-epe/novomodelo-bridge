@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
-from cobre_bridge.decomp.converters.cadastro.stage_resolution import (
+from novomodelo_bridge.decomp.converters.cadastro.stage_resolution import (
     _parse_month,
     resolve_effective_stage,
 )
@@ -78,7 +78,7 @@ _SCALAR_AC_SPECS: tuple[_ScalarAcSpec, ...] = (
 
 #: Every AC register the resolver ingests AND applies to a live consumer —
 #: the single source of truth `check decomp` diffs the idecomp AC universe
-#: against (see `cobre_bridge.decomp.preflight._ac_coverage`). The scalar
+#: against (see `novomodelo_bridge.decomp.preflight._ac_coverage`). The scalar
 #: portion is derived from `_SCALAR_AC_SPECS`; any new NON-scalar reader
 #: wired into `build_effective_cadastro` must add its class to this
 #: frozenset too, or `check decomp` will misreport it as deferred.
@@ -100,8 +100,8 @@ APPLIED_AC_CLASSES: frozenset[type] = frozenset(
 #: AC registers idecomp models but exposes NO value accessor for, so the
 #: resolver cannot ingest them at all — reported distinctly from "deferred
 #: (has a value but no consumer)". `ALTEFE` is the sole member (idecomp
-#: 1.13.0); see the `TRACKED COBRE-GAP WORKAROUND` in
-#: `cobre_bridge.decomp.converters.hydro.entity.convert_hydros`.
+#: 1.13.0); see the `TRACKED NOVOMODELO-GAP WORKAROUND` in
+#: `novomodelo_bridge.decomp.converters.hydro.entity.convert_hydros`.
 UNINGESTABLE_AC_CLASSES: frozenset[type] = frozenset({ACALTEFE})
 
 

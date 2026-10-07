@@ -10,33 +10,40 @@ import math
 
 import pandas as pd
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity, emit
-from cobre_bridge.core.hydro_units import build_mirror_unit_group, rated_capacity
-from cobre_bridge.core.pandas_utils import is_na
-from cobre_bridge.core.productivity import fpha_efficiency
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.hydro.bounds import (
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+from novomodelo_bridge.core.hydro_units import build_mirror_unit_group, rated_capacity
+from novomodelo_bridge.core.pandas_utils import is_na
+from novomodelo_bridge.core.productivity import fpha_efficiency
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.hydro.bounds import (
     _compute_max_turbined_head_corrected,
     _per_stage_turbined_envelope,
 )
-from cobre_bridge.newave.converters.hydro.geometry import (
+from novomodelo_bridge.newave.converters.hydro.geometry import (
     _EVAP_MONTHS,
     _expansion_configs,
     _read_volref_saz,
     fpha_eligible_codes,
 )
-from cobre_bridge.newave.converters.hydro.overrides import _apply_permanent_overrides
-from cobre_bridge.newave.filling import (
+from novomodelo_bridge.newave.converters.hydro.overrides import (
+    _apply_permanent_overrides,
+)
+from novomodelo_bridge.newave.filling import (
     exph_unit_rows,
     filling_completion_date,
     filling_min_rate_m3s,
     filling_schedule,
 )
-from cobre_bridge.newave.horizon import build_stage_dates, historical_start_date
-from cobre_bridge.newave.id_map import NewaveIdMap
-from cobre_bridge.newave.plants import filling_hydro_codes
-from cobre_bridge.newave.switches import switch_off_diagnostic
+from novomodelo_bridge.newave.horizon import build_stage_dates, historical_start_date
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.plants import filling_hydro_codes
+from novomodelo_bridge.newave.switches import switch_off_diagnostic
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 _LOG = logging.getLogger(__name__)
 
@@ -69,11 +76,11 @@ def _unit_ramp_summary(
 
 
 def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
-    """Convert the source model hydro plant data to a Cobre ``hydros.json`` dict.
+    """Convert the source model hydro plant data to a Novomodelo ``hydros.json`` dict.
 
     Reads ``hidr.dat``, ``confhd.dat``, and ``ree.dat`` from *case*.
     Returns a dict with a ``"hydros"`` key containing a list of hydro
-    entries sorted by Cobre 0-based ID.
+    entries sorted by Novomodelo 0-based ID.
 
     Also reads ``MODIF.DAT`` (if present) to apply permanent parameter
     overrides and extract temporal override metadata.  Reads ``GHMIN.DAT``
@@ -109,7 +116,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         emit(switch_off_diagnostic(case.switches.min_outflow), logger=_LOG)
 
     # Seasonal reference volumes per plant — when present, fed back into the evaporation
-    # block as ``reference_volumes_hm3`` so cobre's evaporation linearization matches
+    # block as ``reference_volumes_hm3`` so novomodelo's evaporation linearization matches
     # the per-month reference the source model itself uses.
     seasonal_volref = _read_volref_saz(case)
 
@@ -126,14 +133,14 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # Resolve the FICT-cascade for every real plant.  Provides the effective
     # next-real-plant downstream and the sum of any FICT-chain ρ_eq that must
     # be folded back into the upstream real plant's effective ρ_eq.  See
-    # ``cobre_bridge.newave.converters.fict_cascade`` for the resolution rules.
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    # ``novomodelo_bridge.newave.converters.fict_cascade`` for the resolution rules.
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     fict_cascade = resolve_cascade(confhd_df, cadastro, filling_codes=filling_codes)
 
     # Per-hydro envelope over the head-corrected per-stage turbined caps that
     # convert_turbined_bounds_head_corrected emits into hydro_bounds.parquet.
-    # cobre rule 43 forbids any hydro_bounds row from raising max_turbined_m3s
+    # novomodelo rule 43 forbids any hydro_bounds row from raising max_turbined_m3s
     # above the plant's own declared value, so the reference-head value below
     # must be raised to cover every emitted per-stage row. Empty
     # for a hydro with no per-stage head variation, which keeps its declared
@@ -195,7 +202,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # The source model treats Daily-regulation ('D') and run-of-river / fio-d'água
         # ('S') plants as fio-d'água — they can't accumulate water across stages, so the
         # useful volume is NOT a usable reservoir buffer. Collapse the active range to a
-        # single point so Cobre's LP mirrors that; otherwise Cobre stores the inflow
+        # single point so Novomodelo's LP mirrors that; otherwise Novomodelo stores the inflow
         # excess in a phantom buffer and shifts it across stages, where the source
         # model simply spills it.
         #
@@ -264,7 +271,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                 # target is pinned to ``min_storage_hm3`` regardless of the rate,
                 # so the exact per-stage ζ anchor (ζ_t vs ζ_{t+1}) does not matter.
                 # TODO(multi-stage-anchor): verify the multi-stage anchor against
-                # cobre's LP layout builder before shipping a non-trivial
+                # novomodelo's LP layout builder before shipping a non-trivial
                 # (multi-stage) filling rate.
                 #
                 # Rate clamp: a plant whose filling completes past the
@@ -273,7 +280,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                 # emitted with its true ``entry_stage_id``. The rate is summed only
                 # over in-horizon stages, so clamp the entry passed to
                 # ``filling_min_rate_m3s`` to the horizon: post-study stages have no
-                # ``stage_dates`` entry (and thus no ζ to sum), and cobre handles the
+                # ``stage_dates`` entry (and thus no ζ to sum), and novomodelo handles the
                 # remaining out-of-horizon fill. The true (unclamped) ``entry_sid``
                 # stays on the hydro record below. If ``start_sid >= total_stages``
                 # too, ``rate_entry`` collapses to ``start_sid``, giving an empty
@@ -291,11 +298,11 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                     "filling_min_rate_m3s": rate,
                 }
             # entry_sid == start_sid (duracao 0): keep filling None but still set
-            # entry_stage_id — cobre rejects start_stage_id >= entry_stage_id, so
+            # entry_stage_id — novomodelo rejects start_stage_id >= entry_stage_id, so
             # no degenerate filling block is emitted.
 
         # Generation parameters. Productivity lives in
-        # ``hydro_production_models.json`` on cobre HEAD; callers that need
+        # ``hydro_production_models.json`` on novomodelo HEAD; callers that need
         # the per-hydro base value call ``compute_base_productivities``.
         is_fpha = newave_code in fpha_codes
         # Turbined and generation caps are independent of the production
@@ -310,17 +317,17 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # and every per-stage head-corrected cap this hydro emits into
         # hydro_bounds: a plant with per-stage head variation
         # (MODIF.DAT CFUGA/CMONT or seasonal VOLREF_SAZ) can turbine more at a
-        # higher-head stage than at the reference head, and cobre rule 43
+        # higher-head stage than at the reference head, and novomodelo rule 43
         # forbids a hydro_bounds row from exceeding the plant's own declared
         # value. A hydro with no per-stage variation is absent from
         # ``turbined_envelope`` and keeps its reference-head value unchanged.
-        cobre_hydro_id = id_map.hydro_id(newave_code)
+        novomodelo_hydro_id = id_map.hydro_id(newave_code)
         config = expansion_configs.get(newave_code)
         hreg_declared = hreg if config is None else config.declared_hreg(hreg)
         max_turbined_reference = _compute_max_turbined_head_corrected(
             hreg_declared, name
         )[0]
-        envelope_value = turbined_envelope.get(cobre_hydro_id)
+        envelope_value = turbined_envelope.get(novomodelo_hydro_id)
         max_turbined = (
             max_turbined_reference
             if envelope_value is None
@@ -403,7 +410,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # volref_saz.dat, emit one absolute hm³ value per calendar month (vmin +
         # useful_volume).  Missing months default to vmin (matching the source model's
         # "operate at vmin" semantics for zero entries). Clamped into [min_storage_hm3,
-        # max_storage_hm3] so cobre's dimensional validator accepts every value even if
+        # max_storage_hm3] so novomodelo's dimensional validator accepts every value even if
         # a permanent VOLMIN override raised vmin above what the file was written for.
         plant_seasonal_for_evap = seasonal_volref.get(newave_code)
         evap_reference_volumes: list[float] | None = None
@@ -437,7 +444,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # (set by convert_penalties) already carry the converted values.
         penalties: dict | None = None
 
-        # Specific productivity ρ_esp [MW / ((m³/s)·m)] — feeds cobre's energy
+        # Specific productivity ρ_esp [MW / ((m³/s)·m)] — feeds novomodelo's energy
         # conversion pipeline (derives ρ_eq from VHA geometry).
         rho_esp_raw = hreg.get("produtibilidade_especifica")
         rho_esp: float | None = None
@@ -446,7 +453,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             if not math.isnan(rho_esp_f) and rho_esp_f > 0.0:
                 rho_esp = rho_esp_f
 
-        # FPHA reservoirs: cobre fits the production function from geometry +
+        # FPHA reservoirs: novomodelo fits the production function from geometry +
         # tailrace, so hand it the dimensionless turbine efficiency
         # (eta = rho_esp / K) and select the "fpha" generation model. Eligibility
         # guarantees rho_esp is present. Non-eligible plants (run-of-river, or
@@ -459,7 +466,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                 "value": fpha_efficiency(rho_esp, name),
             }
 
-        # Tailrace as a zero-order polynomial = canal_fuga_medio (constant). Cobre
+        # Tailrace as a zero-order polynomial = canal_fuga_medio (constant). Novomodelo
         # subtracts the tailrace level from the upstream head when deriving ρ_eq;
         # without this source-model's productivity will not match.
         cf_raw = hreg.get("canal_fuga_medio")
@@ -476,7 +483,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                 evaporation["reference_volumes_hm3"] = evap_reference_volumes
 
         hydro_entry: dict = {
-            "id": cobre_hydro_id,
+            "id": novomodelo_hydro_id,
             "name": name,
             "operational_start_date": operational_start_date,
             "downstream_id": downstream_id,
@@ -590,6 +597,6 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         )
 
     return {
-        "$schema": cobre_schemas.schema_url_for("system/hydros.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),
         "hydros": hydros,
     }

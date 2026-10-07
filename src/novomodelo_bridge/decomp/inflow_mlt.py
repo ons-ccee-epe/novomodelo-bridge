@@ -4,7 +4,7 @@ The boundary FCF's inflow-lag term (``pi_qafl``) prices the inflow *deviation
 from the seasonal mean* — the source model's PAR(p) state is the increment
 ``Q - mu`` about the long-term mean ``mu`` (the MLT), not the absolute inflow
 (reference manual §5.1.9.2: the energies are computed on *incremental*
-inflows). cobre evaluates the loaded cut at its **raw** inflow-lag state, so the
+inflows). novomodelo evaluates the loaded cut at its **raw** inflow-lag state, so the
 mean must be folded into the cut RHS (``fcf/mapper.py::map_boundary_cuts``); this
 module supplies that ``mu`` per plant per calendar month.
 
@@ -14,7 +14,7 @@ each cascade (verified on the deck: every downstream station's MLT ≥ the sum o
 its upstream stations'). The lag state, like every other inflow quantity in a
 DECOMP deck, is **incremental** (each ``posto`` column of the inflow file already
 holds the plant's own local increment — see
-:func:`cobre_bridge.decomp.scenarios._incremental_values`). So the natural MLT
+:func:`novomodelo_bridge.decomp.scenarios._incremental_values`). So the natural MLT
 must be incrementalized to the same basis before it can be subtracted from the
 raw incremental lag state:
 
@@ -22,7 +22,7 @@ raw incremental lag state:
 
 The upstream set is built in **posto space** off the *effective* operated
 cascade (mirroring the source-model side's
-:func:`cobre_bridge.newave.converters.stochastic._build_upstream_postos`): every
+:func:`novomodelo_bridge.newave.converters.stochastic._build_upstream_postos`): every
 operated plant's ``posto -> downstream-operated posto`` edge, deduplicated (plants
 sharing a station collapse to one node) and self-loops skipped. DECOMP operates
 every plant (no fictitious/non-operated intermediates), so the operated cascade
@@ -43,13 +43,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cobre_bridge.decomp.scenarios import _incremental_context
+from novomodelo_bridge.decomp.scenarios import _incremental_context
 
 if TYPE_CHECKING:
     import pandas as pd
 
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 #: The twelve calendar months an MLT table carries, in ``mes`` order.
 _MONTHS: tuple[int, ...] = tuple(range(1, 13))
@@ -89,7 +89,7 @@ def _posto_upstream(
     direct operated-upstream sibling, add the edge ``upstream_posto ->
     downstream_posto`` (self-loops — a plant sharing its upstream's station —
     skipped, and duplicate edges collapsed by the ``set``). Mirrors the
-    source-model side's :func:`cobre_bridge.newave.converters.stochastic.
+    source-model side's :func:`novomodelo_bridge.newave.converters.stochastic.
     _build_upstream_postos`, minus its NE/NC walk-through step (DECOMP operates
     every plant, so no non-inflow intermediates sit between operated nodes).
     """
@@ -113,7 +113,7 @@ def build_incremental_mlt(
     """Per-plant incremental long-term-mean inflows, ``{hydro_id: {month: mu}}``.
 
     Returns the seasonal mean *incremental* inflow (m³/s) for every operated
-    plant (0-based cobre ``hydro_id``) and calendar month (1..12), the ``mu`` the
+    plant (0-based novomodelo ``hydro_id``) and calendar month (1..12), the ``mu`` the
     boundary FCF fold subtracts from the raw inflow-lag state. Computed as
     ``mu_nat[posto] - Σ_{upstream postos} mu_nat`` (see the module docstring),
     with a station whose natural MLT is zero across all twelve months pinned to
@@ -165,7 +165,7 @@ def coupling_lag_means(
     (verified empirically: at an April coupling, depth 1 aligns to March, …,
     depth 12 to the previous April). Returns ``{hydro_id: (mu_depth1, …,
     mu_depth12)}`` — one 12-vector per plant, indexed by lag depth minus one,
-    ready for :func:`cobre_bridge.decomp.fcf.mapper.map_boundary_cuts`'s
+    ready for :func:`novomodelo_bridge.decomp.fcf.mapper.map_boundary_cuts`'s
     ``inflow_lag_means`` argument.
     """
     aligned: dict[int, tuple[float, ...]] = {}

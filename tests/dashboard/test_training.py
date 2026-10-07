@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.tabs.training (the Training tab)."""
+"""Unit tests for novomodelo_bridge.dashboard.tabs.training (the Training tab)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from cobre_bridge.dashboard.tabs.training import (
+from novomodelo_bridge.dashboard.tabs.training import (
     TAB_ID,
     TAB_LABEL,
     TAB_ORDER,
@@ -64,7 +64,7 @@ def _make_cut_selection(n_stages: int = 5, n_iters: int = 10) -> pd.DataFrame:
 
 
 def _make_timing(n: int = 10) -> pd.DataFrame:
-    """Synthetic timing DataFrame matching cobre v0.5.0 schema."""
+    """Synthetic timing DataFrame matching novomodelo v0.5.0 schema."""
     iterations = list(range(1, n + 1))
     return pd.DataFrame(
         {
@@ -233,7 +233,7 @@ def test_chart_convergence_hero_button_labels() -> None:
 
 
 def test_chart_convergence_hero_null_upper_bound_std_collapses_band() -> None:
-    """cobre 0.14 leaves ``upper_bound_std`` NULL for an exact (enumerated)
+    """novomodelo 0.14 leaves ``upper_bound_std`` NULL for an exact (enumerated)
     upper bound; the ±std band must collapse to the mean line rather than
     render NaN y-values that break the trace."""  # noqa: E501
     import math

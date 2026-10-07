@@ -3,9 +3,9 @@
 ``constraint_registers.read_constraints`` splits every special constraint
 into ``to_bounds`` (single-term, ``|coefficient|==1``, bounded-variable) and
 ``to_generic``. This module turns each ``to_bounds`` record into
-:class:`~cobre_bridge.decomp.bounds_accumulator.BoundContribution`\\ s that
+:class:`~novomodelo_bridge.decomp.bounds_accumulator.BoundContribution`\\ s that
 ``bounds_accumulator.resolve``/``build_bound_tables`` can later fold into the
-cobre bound parquet rows. It produces contributions only — it does not write
+novomodelo bound parquet rows. It produces contributions only — it does not write
 parquet, call ``resolve``/``build_bound_tables``, or touch the pipeline.
 
 ``single_term_bound_contributions`` is the stable public seam: it dispatches
@@ -19,24 +19,24 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.decomp.bounds_accumulator import BoundContribution
-from cobre_bridge.decomp.converters.cadastro import effective_storage_range
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
+from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.constraint_registers import (
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.constraint_registers import (
         ConstraintCensus,
         ConstraintRecord,
     )
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
-#: RHQ ``CQ.tipo`` flow -> cobre hydro bound axis, mirroring the reader's
+#: RHQ ``CQ.tipo`` flow -> novomodelo hydro bound axis, mirroring the reader's
 #: ``constraint_registers._BOUNDS_AXIS`` QDEF/QTUR/QDES/QVER entries. Keep the
 #: two mappings consistent for a *hydro* flow axis; a future hydro flow
 #: ``tipo`` gaining a bound axis updates both. ``QBOM`` is the one asymmetry:
@@ -55,7 +55,7 @@ _HQ_AXIS_BY_VARIABLE: dict[str, str] = {
 class HydroCapacities:
     """One hydro's declared ``generation`` envelope from ``hydros.json``.
 
-    ``max_generation_mw``/``max_turbined_m3s`` are read the same way cobre
+    ``max_generation_mw``/``max_turbined_m3s`` are read the same way novomodelo
     rule 43 (``emission_checks.check_hydro_bounds_no_raising``) reads
     ``hydros.json``'s ``generation`` block — the exact scalars a single-term
     bound's upper-bound clamp compares against on each of the two rule-43-
@@ -68,7 +68,7 @@ class HydroCapacities:
 
 #: Relative tolerance below which a source ceiling sitting above the declared
 #: capacity is treated as float-representation noise (~8x float32 epsilon). The
-#: bound is still clamped so cobre rule 43 holds, but no diagnostic is emitted:
+#: bound is still clamped so novomodelo rule 43 holds, but no diagnostic is emitted:
 #: a float32 round-trip (e.g. an 11000 MW RE ceiling vs a 10999.998 MW declared
 #: capacity, ~1.4e-7 relative) is not a real cross-source inconsistency.
 _CLAMP_REPORT_REL_TOL = 1e-6
@@ -80,11 +80,11 @@ def _clamp_upper_to_capacity(
     """Clamp every contribution's ``upper`` to *cap*, ``lower`` untouched.
 
     Shared by the RE ``generation`` clamp and the HQ ``QTUR``/``turbined``
-    clamp — both guard a cobre rule-43 axis the same way: a contribution
+    clamp — both guard a novomodelo rule-43 axis the same way: a contribution
     whose upper is already at or below *cap* passes through unchanged;
     one above it is replaced (:func:`dataclasses.replace`) with *cap*.
 
-    A ceiling above *cap* is **always** clamped (cobre rule 43 rejects any
+    A ceiling above *cap* is **always** clamped (novomodelo rule 43 rejects any
     upper above the declared capacity, even by a float ULP), but it is only
     returned in the reported ``ceilings`` list — the caller's diagnostic
     trigger — when it exceeds *cap* by more than ``_CLAMP_REPORT_REL_TOL``
@@ -183,12 +183,12 @@ def _re_generation_contributions(
     """One RE single-hydro-generation constraint -> hydro ``generation`` bounds.
 
     The RE ceiling and the plant's own declared ``max_generation_mw`` (in
-    *hydro_capacities*, keyed the same way cobre rule 43 —
+    *hydro_capacities*, keyed the same way novomodelo rule 43 —
     ``emission_checks.check_hydro_bounds_no_raising`` — reads it from
     ``hydros.json``) are two independent sources that can disagree: on both
     real decks probed (a monthly and a weekly deck), BELO MONTE carries an
     RE ceiling of 11000 MW above its own declared, head-derated capacity.
-    cobre rule 43 rejects any bound-table upper above an entity's declared
+    novomodelo rule 43 rejects any bound-table upper above an entity's declared
     capacity, so every contribution's ``upper`` is clamped
     (:func:`_clamp_upper_to_capacity`) to ``min(ceiling, capacity)`` — the
     declared capacity is authoritative, and a looser RE ceiling becomes
@@ -287,7 +287,7 @@ def _hq_flow_contributions(
     source ceiling can exceed it just as an RE ceiling can exceed
     ``max_generation_mw`` (rv3's hydro 17 sits 0.1% below its own declared
     value — close enough that a slightly looser source ceiling would trip
-    cobre rule 43, which guards both columns). Only ``QTUR``/``turbined`` is
+    novomodelo rule 43, which guards both columns). Only ``QTUR``/``turbined`` is
     clamped: ``QDEF``/``QDES``/``QVER`` (outflow/diversion/spillage) are not
     rule-43 axes, so they pass through :func:`_per_block_contributions`
     unmodified. A ``decomp-qtur-turbined-clamped`` diagnostic is emitted
@@ -391,9 +391,9 @@ def _hv_storage_contributions(
     :func:`_per_block_contributions`.
 
     The source model's ``LV`` limits are relative to the plant's useful
-    volume; cobre's ``min/max_storage_hm3`` are absolute. The sign map
+    volume; novomodelo's ``min/max_storage_hm3`` are absolute. The sign map
     (:func:`_sided_bounds`) runs first, then each surviving side is added to
-    the per-stage effective floor (:func:`~cobre_bridge.decomp.converters.
+    the per-stage effective floor (:func:`~novomodelo_bridge.decomp.converters.
     cadastro.effective.effective_storage_range`'s floor element, which
     honours per-stage ``AC VOLMIN``/``VOLMAX`` overrides and the
     run-of-river ``D`` collapse) to reach the absolute bound.
@@ -480,7 +480,7 @@ def single_term_bound_contributions(
     ``generation`` RE path's ``max_generation_mw`` clamp (see
     :func:`_re_generation_contributions`) and the ``HQ``/``QTUR``/
     ``turbined`` path's ``max_turbined_m3s`` clamp (see
-    :func:`_hq_flow_contributions`) — both cobre rule-43-guarded axes, both
+    :func:`_hq_flow_contributions`) — both novomodelo rule-43-guarded axes, both
     required-not-defaulted for the same fail-loud reason: a hydro id the map
     does not cover is a wiring bug, not a data gap, so it raises ``KeyError``
     rather than skipping the clamp. Neither the ``QDEF``/``QDES``/``QVER``

@@ -1,10 +1,10 @@
-"""Regression guard: every boundary-FCF test module collects without cobre.
+"""Regression guard: every boundary-FCF test module collects without novomodelo.
 
-Every ``tests/decomp/test_fcf_*.py`` module must collect in a cobre-free
-environment: a module-top ``import cobre`` breaks collection everywhere
+Every ``tests/decomp/test_fcf_*.py`` module must collect in a novomodelo-free
+environment: a module-top ``import novomodelo`` breaks collection everywhere
 regardless of skip markers. Nothing in the test runner enforces that, so this
 module scans each FCF test module's own source text for one. It is itself a
-plain ``pathlib`` + ``re`` scan with no ``cobre`` import.
+plain ``pathlib`` + ``re`` scan with no ``novomodelo`` import.
 """
 
 from __future__ import annotations
@@ -13,13 +13,15 @@ import re
 from pathlib import Path
 
 _TESTS_DIR = Path(__file__).resolve().parent
-# Matches any column-0 import of the `cobre` package itself — `import
-# cobre`, `import cobre as ...`, `import cobre.submodule`, or `from cobre
-# import ...` — including a trailing comment. The `\b` after `cobre`
+# Matches any column-0 import of the `novomodelo` package itself — `import
+# novomodelo`, `import novomodelo as ...`, `import novomodelo.submodule`, or `from novomodelo
+# import ...` — including a trailing comment. The `\b` after `novomodelo`
 # excludes an unrelated package sharing the prefix (e.g. this project's own
-# `cobre_bridge`), and the `^` anchor (MULTILINE) excludes an indented
+# `novomodelo_bridge`), and the `^` anchor (MULTILINE) excludes an indented
 # call-site import.
-_TOP_LEVEL_COBRE_IMPORT = re.compile(r"^(?:import cobre\b|from cobre\b)", re.MULTILINE)
+_TOP_LEVEL_NOVOMODELO_IMPORT = re.compile(
+    r"^(?:import novomodelo\b|from novomodelo\b)", re.MULTILINE
+)
 
 
 def _fcf_test_modules() -> list[Path]:
@@ -27,13 +29,13 @@ def _fcf_test_modules() -> list[Path]:
     return sorted(_TESTS_DIR.glob("test_fcf_*.py"))
 
 
-def test_fcf_test_modules_have_no_top_level_cobre_import() -> None:
-    """No FCF test module blocks cobre-free collection with a module-top import.
+def test_fcf_test_modules_have_no_top_level_novomodelo_import() -> None:
+    """No FCF test module blocks novomodelo-free collection with a module-top import.
 
-    A call-site import of ``cobre`` (inside a function/test body, always
+    A call-site import of ``novomodelo`` (inside a function/test body, always
     indented) is fine — every tier-2/3 test defers it there. Only a
-    column-0 import of the ``cobre`` package itself — ``import cobre``,
-    ``import cobre as ...``, ``import cobre.submodule``, or ``from cobre
+    column-0 import of the ``novomodelo`` package itself — ``import novomodelo``,
+    ``import novomodelo as ...``, ``import novomodelo.submodule``, or ``from novomodelo
     import ...`` — which pytest would execute at collection time regardless
     of markers, is disallowed.
     """
@@ -43,10 +45,10 @@ def test_fcf_test_modules_have_no_top_level_cobre_import() -> None:
     offenders = [
         module.name
         for module in modules
-        if _TOP_LEVEL_COBRE_IMPORT.search(module.read_text(encoding="utf-8"))
+        if _TOP_LEVEL_NOVOMODELO_IMPORT.search(module.read_text(encoding="utf-8"))
     ]
     assert not offenders, (
-        "module-top `import cobre`/`from cobre import ...` blocks cobre-free "
+        "module-top `import novomodelo`/`from novomodelo import ...` blocks novomodelo-free "
         f"collection in: {offenders}; move the import into a call site or "
         "test body"
     )

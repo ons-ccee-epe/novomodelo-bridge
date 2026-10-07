@@ -32,19 +32,19 @@ from pathlib import Path
 
 import polars as pl
 
-from cobre_bridge.comparators.analyze import build_results_dataset
-from cobre_bridge.comparators.model import (
+from novomodelo_bridge.comparators.analyze import build_results_dataset
+from novomodelo_bridge.comparators.model import (
     PercentileData,
     ResultComparison,
 )
-from cobre_bridge.comparators.verdict import build_compare_verdict
-from cobre_bridge.ui.compare_summary import (
+from novomodelo_bridge.comparators.verdict import build_compare_verdict
+from novomodelo_bridge.ui.compare_summary import (
     _fmt_metric,
     print_results_summary_from_dataset,
 )
 
 _NW = Path("/fake/nw")
-_COBRE = Path("/fake/cobre")
+_NOVOMODELO = Path("/fake/novomodelo")
 _RESULTS_TOL = 1e-2
 
 # Number of value columns in the per-variable results table, after the variable
@@ -71,11 +71,11 @@ def _make_single_point_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="lonely_var",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),
@@ -89,11 +89,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),
@@ -101,11 +101,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="TUCURUI",
             newave_code=20,
-            cobre_id=1,
+            novomodelo_id=1,
             stage=1,
             variable="generation_mw",
             newave_value=50.0,
-            cobre_value=40.0,
+            novomodelo_value=40.0,
             abs_diff=10.0,
             rel_diff=0.2,
         ),
@@ -113,11 +113,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="thermal",
             entity_name="ANGRA",
             newave_code=30,
-            cobre_id=2,
+            novomodelo_id=2,
             stage=0,
             variable="generation_mw",
             newave_value=0.0,
-            cobre_value=5.0,
+            novomodelo_value=5.0,
             abs_diff=5.0,
             rel_diff=None,
         ),
@@ -137,7 +137,7 @@ def _one_hydro_pct() -> PercentileData:
             }
         ),
         nw_costs={"deficit": 1.0},
-        cobre_costs={"deficit": 2.0},
+        novomodelo_costs={"deficit": 2.0},
         nw_bus_names={0: "SUDESTE"},
         nw_hydro_names={0: "ITAIPU", 1: "TUCURUI"},
     )
@@ -172,7 +172,7 @@ def _parse_results_table(text: str) -> dict[str, list[str]]:
             continue
         if line.startswith(("✓ ", "⚠ ")):  # leading compare verdict line
             continue
-        if line.startswith(("Cobre vs", "NEWAVE case:", "Cobre output:")):
+        if line.startswith(("Novomodelo vs", "NEWAVE case:", "Novomodelo output:")):
             continue
         if line.startswith("Summary:"):
             continue
@@ -242,7 +242,7 @@ def test_results_table_cells_equal_dataset_summary() -> None:
         print_results_summary_from_dataset,
         dataset,
         _NW,
-        _COBRE,
+        _NOVOMODELO,
         verdict=build_compare_verdict(dataset),
     )
 
@@ -265,7 +265,7 @@ def test_results_footer_equals_dataset_footer_counts() -> None:
         print_results_summary_from_dataset,
         dataset,
         _NW,
-        _COBRE,
+        _NOVOMODELO,
         verdict=build_compare_verdict(dataset),
     )
 
@@ -295,7 +295,7 @@ def test_results_correlation_none_renders_na_from_dataset() -> None:
         print_results_summary_from_dataset,
         dataset,
         _NW,
-        _COBRE,
+        _NOVOMODELO,
         verdict=build_compare_verdict(dataset),
     )
     parsed = _parse_results_table(text)

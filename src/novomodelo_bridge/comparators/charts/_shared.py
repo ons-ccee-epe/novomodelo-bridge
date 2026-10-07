@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.ui.html.document import escape_text, json_for_script
-from cobre_bridge.ui.html.plotly import LEGEND_DEFAULTS as _LEGEND
-from cobre_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
-from cobre_bridge.ui.theme import BAND_FILL, BAND_LINE
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.ui.html.document import escape_text, json_for_script
+from novomodelo_bridge.ui.html.plotly import LEGEND_DEFAULTS as _LEGEND
+from novomodelo_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
+from novomodelo_bridge.ui.theme import BAND_FILL, BAND_LINE
 
 _BAND_FILL = BAND_FILL
 _BAND_LINE = BAND_LINE
@@ -57,7 +57,7 @@ def _aggregate_percentile_traces(
     Sums percentiles across matched entities per stage (aggregate view). When
     *entity_ids* is provided, only those entities are included — this keeps the band
     consistent with the mean line which only covers entities matched between the source
-    model and Cobre.
+    model and Novomodelo.
     """
     # Guard mirrors the legacy early-return: no band when the percentile frame
     # is missing/empty or lacks the variable's p10/p90 columns. ``stages`` being
@@ -80,7 +80,7 @@ def _aggregate_percentile_traces(
             "fill": "toself",
             "fillcolor": _BAND_FILL,
             "line": {"color": _BAND_LINE},
-            "name": "Cobre P10–P90",
+            "name": "Novomodelo P10–P90",
             "type": "scatter",
             "legendgroup": "band",
             "showlegend": True,
@@ -92,20 +92,20 @@ def _aggregate_percentile_traces(
         {
             "x": stages,
             "y": p10,
-            "name": "Cobre P10",
+            "name": "Novomodelo P10",
             "type": "scatter",
             "mode": "lines",
-            "line": {"color": COLOR_COBRE, "width": 1, "dash": "dot"},
+            "line": {"color": COLOR_NOVOMODELO, "width": 1, "dash": "dot"},
             "legendgroup": "band",
             "showlegend": False,
         },
         {
             "x": stages,
             "y": p90,
-            "name": "Cobre P90",
+            "name": "Novomodelo P90",
             "type": "scatter",
             "mode": "lines",
-            "line": {"color": COLOR_COBRE, "width": 1, "dash": "dot"},
+            "line": {"color": COLOR_NOVOMODELO, "width": 1, "dash": "dot"},
             "legendgroup": "band",
             "showlegend": False,
         },
@@ -116,7 +116,7 @@ def _enrich_with_percentiles(
     js_plants: dict[str, dict],
     variables: list[tuple[str, str]],
     pct_df: pl.DataFrame | None,
-    cobre_id_key: str = "cobre_id",
+    novomodelo_id_key: str = "novomodelo_id",
 ) -> None:
     """Add p10/p90 arrays to each plant entry from percentile data.
 
@@ -130,7 +130,7 @@ def _enrich_with_percentiles(
         return
 
     for _pid, entry in js_plants.items():
-        cid = entry.get(cobre_id_key)
+        cid = entry.get(novomodelo_id_key)
         if cid is None:
             continue
         var_stages = [
@@ -152,7 +152,7 @@ def _plant_max_reldiff_table(
     variables, worst first). Columns: one per variable in *variables*
     (skipping variables for which no source-model row exists).
 
-    Cell value = ``max_stages |cobre − newave| / |newave| × 100`` (the
+    Cell value = ``max_stages |novomodelo − newave| / |newave| × 100`` (the
     source-model-relative, per the report convention). Stages with ``|newave| ≈ 0`` are
     excluded — for any plant/variable that has no eligible stage the cell shows "—".
 
@@ -200,7 +200,7 @@ def _plant_max_reldiff_table(
     return (
         '<table class="cost-breakdown-table">'
         f"<caption>{caption_label} per-plant max relative difference "
-        f"(|Cobre − {reference_label}| / |{reference_label}|, over stages)"
+        f"(|Novomodelo − {reference_label}| / |{reference_label}|, over stages)"
         "</caption>"
         f"<thead><tr>{header_cells}</tr></thead>"
         "<tbody>" + "".join(body_rows) + "</tbody>"
@@ -258,7 +258,7 @@ def _build_interactive_detail_html(
                     fill: 'toself',
                     fillcolor: '{_BAND_FILL}',
                     line: {{color: '{_BAND_LINE}'}},
-                    name: 'Cobre P10\u2013P90',
+                    name: 'Novomodelo P10\u2013P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -270,14 +270,14 @@ def _build_interactive_detail_html(
                 }});
                 traces.push({{
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
-                    line: {{color: '{COLOR_COBRE}', width: 1, dash: 'dot'}},
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {{color: '{COLOR_NOVOMODELO}', width: 1, dash: 'dot'}},
                     legendgroup: 'band', showlegend: false
                 }});
                 traces.push({{
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
-                    line: {{color: '{COLOR_COBRE}', width: 1, dash: 'dot'}},
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {{color: '{COLOR_NOVOMODELO}', width: 1, dash: 'dot'}},
                     legendgroup: 'band', showlegend: false
                 }});
             }}
@@ -285,13 +285,13 @@ def _build_interactive_detail_html(
                 traces.push({{x: s, y: nw, name: '{reference_label}', type: 'scatter',
                     mode: 'lines', line: {{color: '{COLOR_NEWAVE}', width: 2}}}});
             }}
-            traces.push({{x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
-                mode: 'lines', line: {{color: '{COLOR_COBRE}', width: 2}}}});
+            traces.push({{x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {{color: '{COLOR_NOVOMODELO}', width: 2}}}});
             var maxCb = d['{var_key}_max_cb'];
             if (maxCb && maxCb.length > 0) {{
-                traces.push({{x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({{x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
-                    line: {{color: '{COLOR_COBRE}', width: 1.5, dash: 'dash'}}}});
+                    line: {{color: '{COLOR_NOVOMODELO}', width: 1.5, dash: 'dash'}}}});
             }}
             // Bound overlays (static from hydros.json, with per-stage
             // overrides from hydro_bounds.parquet shadowing where present).

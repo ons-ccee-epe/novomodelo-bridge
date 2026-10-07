@@ -6,12 +6,12 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cobre_bridge.core import diagnostics as dx
+from novomodelo_bridge.core import diagnostics as dx
 
 
 @dataclass
 class ConversionReport:
-    """Summary of a completed the source-model-to-Cobre conversion."""
+    """Summary of a completed the source-model-to-Novomodelo conversion."""
 
     hydro_count: int = 0
     thermal_count: int = 0

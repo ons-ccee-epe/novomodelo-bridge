@@ -21,8 +21,8 @@ import plotly.graph_objects as go
 import plotly.subplots as ps
 import polars as pl
 
-from cobre_bridge.dashboard.chart_helpers import make_chart_card
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.dashboard.chart_helpers import make_chart_card
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
     escape_attr,
@@ -31,8 +31,8 @@ from cobre_bridge.ui.html.document import (
     plant_explorer_table,
     wrap_chart,
 )
-from cobre_bridge.ui.html.js import PLANT_EXPLORER_JS
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.js import PLANT_EXPLORER_JS
+from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS,
     MARGIN_DEFAULTS,
     apply_stage_date_axis,
@@ -40,10 +40,10 @@ from cobre_bridge.ui.html.plotly import (
     stage_x_dates,
     stage_x_labels,
 )
-from cobre_bridge.ui.theme import COLORS, hex_to_rgba
+from novomodelo_bridge.ui.theme import COLORS, hex_to_rgba
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 # ---------------------------------------------------------------------------
 # Module constants

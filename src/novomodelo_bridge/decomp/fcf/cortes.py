@@ -21,7 +21,7 @@ the named layout, not raw byte arithmetic.
 path directly (confirmed against both a non-GNL deck,
 ``example/newave_rodada/cortesh.dat``, and a GNL deck,
 ``example/decomp-set-24-rv0/cortesh.dat``) — the same ``Cortesh.read(str(path))``
-idiom :func:`cobre_bridge.decomp.converters.hydro.entity.read_hidr` uses
+idiom :func:`novomodelo_bridge.decomp.converters.hydro.entity.read_hidr` uses
 for ``Hidr.read``, not a decoded-text buffer.
 """
 
@@ -106,7 +106,7 @@ class CutFamilySummary:
     A header triage over the active cuts: which plants carry a nonzero
     storage or inflow-lag coefficient, which GNL slots are live, and the
     RHS coefficient scale. Plain data — no logging, no
-    :class:`~cobre_bridge.core.diagnostics.Diagnostic` — so it stays reusable
+    :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` — so it stays reusable
     both as a self-check and as diagnostic input.
     """
 
@@ -181,17 +181,17 @@ def required_inflow_lag_depth(summary: CutFamilySummary) -> int:
     The boundary cuts price inflow-lag state only out to the deepest lag with a
     nonzero ``pi_qafl`` coefficient (``summary.lag_nonzero_by_depth[d-1] > 0``
     for calendar-month depth ``d`` in ``1..12``). That depth is exactly the
-    number of ``HydroInflowLag`` slots cobre must reserve so the terminal
+    number of ``HydroInflowLag`` slots novomodelo must reserve so the terminal
     boundary cut can price its conditioning history — the bridge-side equivalent
-    of cobre's ``boundary_cut_lag_depth`` (which reads the same quantity off the
+    of novomodelo's ``boundary_cut_lag_depth`` (which reads the same quantity off the
     written manifest at load).
 
-    Declared to ``cobre.write_policy_checkpoint`` so the writer reserves that many
+    Declared to ``novomodelo.write_policy_checkpoint`` so the writer reserves that many
     canonical ``HydroInflowLag`` slots in the checkpoint: a DECOMP case has no
-    PAR(p) model for cobre to infer the depth from, so the depth must be carried
-    in the boundary checkpoint itself (cobre's programmatic inflow-lag-depth
+    PAR(p) model for novomodelo to infer the depth from, so the depth must be carried
+    in the boundary checkpoint itself (novomodelo's programmatic inflow-lag-depth
     bootstrap via ``write_policy_checkpoint(inflow_lag_depth=N)``).
-    It is never written to ``config.json`` (cobre 0.14 retired that user field).
+    It is never written to ``config.json`` (novomodelo 0.14 retired that user field).
 
     Returns ``0`` when no cut carries a nonzero lag coefficient — the boundary
     prices no inflow-lag state, so no slots need reserving.

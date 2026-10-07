@@ -9,7 +9,7 @@ imports from here -- this is the DAG's top seam.
 The cascade walk (:func:`_downstream_operated`, shared by this module's own
 ``downstream_id`` entity field and ``scenarios.py``'s incremental-inflow
 attribution) and ``scenarios.py``'s inflow-gauge attribution both read
-:class:`~cobre_bridge.decomp.converters.cadastro.effective.EffectiveCadastro`'s
+:class:`~novomodelo_bridge.decomp.converters.cadastro.effective.EffectiveCadastro`'s
 ``downstream_plant``/``inflow_gauge`` accessors -- the post-``AC
 NUMJUS``/``NUMPOS`` link/gauge -- rather than the base ``hidr`` columns
 directly. ``AC JUSENA`` (a downstream-energy coupling, not a water-routing
@@ -26,29 +26,29 @@ import pandas as pd
 from idecomp.decomp.modelos.dadger import ACALTEFE
 from inewave.newave import Hidr
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.hydro_units import build_mirror_unit_group
-from cobre_bridge.core.productivity import fpha_efficiency
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
+from novomodelo_bridge.core.productivity import fpha_efficiency
+from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
     storage_envelope,
 )
-from cobre_bridge.decomp.converters.hydro.bounds import (
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
     _ITAIPU_CODE,
     _build_split_unit_groups,
     _head_corrected_envelope,
     _rated_envelope,
     _split_plant_frequencies,
 )
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
 
@@ -109,12 +109,12 @@ def _downstream_operated(
     across stages (a temporal ``AC NUMJUS``), a tracked-gap warning is
     logged and the *stage_index* link is used for the whole horizon
     regardless — per-stage cascade topology is not modeled
-    (:meth:`~cobre_bridge.decomp.converters.cadastro.effective.
+    (:meth:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     EffectiveCadastro.downstream_plant_varies`). A temporal override on a
     non-operated intermediate encountered mid-walk is not separately checked
     here (no rv3 row exercises it — see the module docstring); the
     pipeline's own relink diagnostic
-    (:func:`cobre_bridge.decomp.pipeline._topology_relink_diagnostic`) still
+    (:func:`novomodelo_bridge.decomp.pipeline._topology_relink_diagnostic`) still
     surfaces a resulting cascade change via a fallback warning rather than
     dropping it silently.
     """
@@ -143,7 +143,7 @@ def _downstream_operated(
 
 
 #: ``hidr.dat``'s 12 monthly reservoir-evaporation columns in calendar order
-#: (Jan..Dec) — cobre's ``evaporation.coefficients_mm`` is index 0 = January.
+#: (Jan..Dec) — novomodelo's ``evaporation.coefficients_mm`` is index 0 = January.
 _EVAPORATION_MONTH_COLUMNS = (
     "evaporacao_JAN",
     "evaporacao_FEV",
@@ -178,7 +178,7 @@ def _evaporation_coefficients_mm(hidr: pd.DataFrame, code: int) -> list[float] |
     from ``hidr.dat`` — or ``None`` when the plant is absent or every month is
     zero (nothing to model).
 
-    cobre (>= 0.14) computes the evaporation-outflow model internally from
+    novomodelo (>= 0.14) computes the evaporation-outflow model internally from
     these monthly rates and the reservoir area geometry
     (``hydro_geometry.parquet``, emitted by the FPHA path), scaling each stage
     to its ``stage_hours / month_hours`` share of the calendar month — the C11
@@ -206,21 +206,21 @@ def convert_hydros(
 ) -> dict:
     """Build ``hydros.json`` for the operated plants.
 
-    *fpha_codes* (from :func:`cobre_bridge.decomp.converters.fpha.fpha_eligible_codes`)
-    selects the plants emitted with cobre's computed-FPHA generation model:
+    *fpha_codes* (from :func:`novomodelo_bridge.decomp.converters.fpha.fpha_eligible_codes`)
+    selects the plants emitted with novomodelo's computed-FPHA generation model:
     their ``generation.model`` is ``"fpha"`` and they carry the turbine
     ``efficiency`` (η = ρ_esp / K), the ``specific_productivity_mw_per_m3s_per_m``
-    cobre derives ρ_eq from, and an inline constant ``tailrace`` (the
+    novomodelo derives ρ_eq from, and an inline constant ``tailrace`` (the
     ``canal_fuga_medio`` fallback used when ``tailrace_curves.parquet`` carries
     no family for the plant). Plants absent from it — or the whole set being
     ``None`` — keep the constant-productivity model whose ρ_eq rides in
     ``hydro_energy_productivity.parquet``.
 
     *travel_time_hours* (``{plant code: hours}``, from
-    :func:`cobre_bridge.decomp.converters.travel_time.convert_travel_time`) stamps the
+    :func:`novomodelo_bridge.decomp.converters.travel_time.convert_travel_time`) stamps the
     ``VI`` water travel time onto each arc plant's entry; a plant absent from it
     — or the whole map being ``None`` — emits no ``travel_time_hours`` key
-    (cobre defaults it to instantaneous). The key is emitted only when the plant
+    (novomodelo defaults it to instantaneous). The key is emitted only when the plant
     also has a downstream arc for the delay to act on.
 
     ``max_generation_mw`` is the installed (un-derated, ``TEIF``/``IP``-free)
@@ -242,14 +242,14 @@ def convert_hydros(
 
     **``ACALTEFE`` tracked gap:** a plant declaring an ``AC ALTEFE``
     effective-head override is logged (not consumed — see the
-    ``TRACKED COBRE-GAP WORKAROUND`` below) and conversion proceeds with the
+    ``TRACKED NOVOMODELO-GAP WORKAROUND`` below) and conversion proceeds with the
     base ``hidr`` nominal head.
 
     Every plant declares one mirror unit group, except the per-frequency
     split plant (Itaipu, code 66), which declares two conjunto-backed groups
     instead (:func:`_build_split_unit_groups`), whose summed
     ``max_turbined_m3s``/``max_generation_mw`` *are* the entity envelope by
-    construction — cobre rule 41 holds even though the two groups' own
+    construction — novomodelo rule 41 holds even though the two groups' own
     per-stage machine-set changes (if any) need not peak on the same stage,
     nor their head-corrected flows peak on the same stage as their rated
     power. Itaipu's 60 Hz group (group id 1) is placed on
@@ -257,14 +257,14 @@ def convert_hydros(
     corridor into Ivaiporã — rather than the plant's own submercado bus; the
     50 Hz group (group id 0) stays on the plant's own SE bus, where the HVDC
     Elo delivers directly and the ``carga_ande`` load nets in
-    (:func:`~cobre_bridge.decomp.pipeline._convert_scenarios`). This
+    (:func:`~novomodelo_bridge.decomp.pipeline._convert_scenarios`). This
     relocation is unconditional whenever Itaipu is operated. The entity
     ``reservoir`` block is the plant's
     outer per-stage storage envelope (:func:`storage_envelope`), so
     per-stage bound overrides
-    (:func:`cobre_bridge.decomp.converters.bounds.convert_storage_bounds`)
+    (:func:`novomodelo_bridge.decomp.converters.bounds.convert_storage_bounds`)
     always sit inside it. Per-family ``AC`` coverage is reported by
-    ``check decomp`` (:mod:`cobre_bridge.decomp.preflight`), not logged here.
+    ``check decomp`` (:mod:`novomodelo_bridge.decomp.preflight`), not logged here.
     """
     dadger = case.dadger
     hidr = case.hidr
@@ -315,7 +315,7 @@ def convert_hydros(
             # Unconditional 60 Hz -> IV relocation: Itaipu's 60 Hz
             # unit group (group id 1, the higher of the two ascending
             # frequencies) is moved to the transshipment bus -- the AC
-            # corridor into Ivaiporã -- so cobre's HydroGeneration{bus}
+            # corridor into Ivaiporã -- so novomodelo's HydroGeneration{bus}
             # selector can separate the two groups; the 50 Hz group (group
             # id 0) stays on the plant's own SE bus (already computed above
             # as `bus_id`), where its HVDC Elo delivers directly and the
@@ -369,7 +369,7 @@ def convert_hydros(
                 "type": "constant",
                 "value": fpha_efficiency(rho_esp, name),
             }
-            # Inline constant tailrace = mean canal de fuga: cobre's FPHA
+            # Inline constant tailrace = mean canal de fuga: novomodelo's FPHA
             # fallback for a plant whose tailrace_curves.parquet family is
             # absent (all this deck's FPHA plants do carry a family, so it is
             # only a safety net).
@@ -377,7 +377,7 @@ def convert_hydros(
             if cf > 0.0:
                 entry["tailrace"] = {"type": "polynomial", "coefficients": [cf]}
             # Penstock hydraulic losses — a computed FPHA requires the field
-            # (cobre rejects an FPHA plant without it). tipo_perda 1 = a % of
+            # (novomodelo rejects an FPHA plant without it). tipo_perda 1 = a % of
             # gross head (factor); 2 = constant metres; anything else / no loss
             # emits an explicit lossless factor so the required field is present.
             perdas = effective.value(code, "perdas", 0)
@@ -416,7 +416,7 @@ def convert_hydros(
             n_runofriver_collapsed,
         )
 
-    # TRACKED COBRE-GAP WORKAROUND (idecomp limitation, not cobre's): the
+    # TRACKED NOVOMODELO-GAP WORKAROUND (idecomp limitation, not novomodelo's): the
     # source model's AC ALTEFE register overrides a conjunto's effective
     # head, but idecomp's typed accessor exposes only the identifying/timing
     # columns for it, no value column — so it cannot be folded into the
@@ -436,7 +436,7 @@ def convert_hydros(
         )
 
     return {
-        "$schema": cobre_schemas.schema_url_for("system/hydros.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),
         "hydros": hydros,
     }
 
@@ -446,7 +446,7 @@ def _initial_volume_hm3(effective: EffectiveCadastro, code: int, pct: float) -> 
 
     ``pct`` is a percentage of the *initial stage's* effective useful volume,
     not the plant's outer envelope, so the range is read from
-    :func:`~cobre_bridge.decomp.converters.cadastro.effective.
+    :func:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     effective_storage_range` at stage ``0``. A run-of-river (``D``) plant's
     stage-0 range is already the single-point collapse
     ``(vol_ref, vol_ref)``, so its initial

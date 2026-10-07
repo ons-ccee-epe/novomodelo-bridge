@@ -6,7 +6,7 @@ per-node probabilities). DECOMP's inflow file is the *arquivo de vazões
 incrementais*: each gauging-station column already holds the plant's own
 incremental (local) inflow, so each plant's value is read straight through
 from its (post-``AC NUMPOS``) gauge column — no upstream subtraction.
-cobre re-derives the natural flow at each plant by routing upstream
+novomodelo re-derives the natural flow at each plant by routing upstream
 releases down the ``downstream_id`` cascade.
 
 The tree is emitted node-natively: every stage draws its openings from
@@ -29,22 +29,22 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.core.inflow_windows import (
+from novomodelo_bridge.core.inflow_windows import (
     format_observation_windows,
     month_window,
     previous_months,
 )
-from cobre_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from idecomp.decomp import Vazoes
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
 
@@ -60,9 +60,9 @@ def _incremental_context(
 
     Stage-agnostic by design (one cascade for the whole horizon): both the
     station column and the downstream link are read at stage 0
-    (:meth:`~cobre_bridge.decomp.converters.cadastro.effective.
+    (:meth:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     EffectiveCadastro.inflow_gauge`/
-    :func:`~cobre_bridge.decomp.converters.hydro.entity.
+    :func:`~novomodelo_bridge.decomp.converters.hydro.entity.
     _downstream_operated`'s own default).
     A plant whose effective gauge varies across stages (a temporal ``AC
     NUMPOS``) gets a tracked-gap warning here; the downstream sibling gap is
@@ -118,7 +118,7 @@ def convert_recent_observation_windows(
 ) -> list[dict]:
     """``initial_conditions.recent_observations``: the deck's pre-study observed
     inflows (full preceding months + the partial study-start month's weeks) as
-    non-overlapping windows, seeding cobre's PAR inflow-lag accumulator.
+    non-overlapping windows, seeding novomodelo's PAR inflow-lag accumulator.
 
     DECOMP's ``vazoes`` carries two observation tables, natural inflow per posto
     (each posto column is the plant's own incremental, :func:`_incremental_values`):
@@ -133,14 +133,14 @@ def convert_recent_observation_windows(
     Emitted as ``[start, end)`` windows per hydro: the weekly windows are 7-day,
     Saturday-aligned, ending at the study start; the monthly windows are full
     calendar months, with the most recent clipped to end where the weekly
-    windows begin so no two windows overlap (a cobre requirement; adjacent
-    ``start == previous end`` is fine). cobre casts these onto the monthly
+    windows begin so no two windows overlap (a novomodelo requirement; adjacent
+    ``start == previous end`` is fine). novomodelo casts these onto the monthly
     inflow-lag periods to seed the ``p`` lags before stage 0
     (``derive_inflow_seeds``); the forward pass then supplies the study's own
     inflows to complete the accumulator at the coupling.
 
     The monthly history is deliberately routed here and **not** to
-    ``scenarios/inflow_history.parquet``: cobre fits AR seasonal statistics from
+    ``scenarios/inflow_history.parquet``: novomodelo fits AR seasonal statistics from
     that file (needs ≥ 2 observations per season), which the single-realization
     DECOMP tendency cannot satisfy — ``recent_observations`` is the pure lag
     seed, never AR-fit input. Returns ``[]`` when the deck carries neither table.
@@ -280,7 +280,7 @@ def terminal_fan_probabilities(
 
     The DECOMP fan probabilities (``vazoes.probabilidades`` at the terminal
     stage) become the terminal branch-edge weights on the ``policy_graph``
-    node graph; cobre re-normalizes each source's out-edges at load. The
+    node graph; novomodelo re-normalizes each source's out-edges at load. The
     returned list is indexed by 0-based scenario id (``cenario - 1``), the
     same id the external inflow library binds via each fan node's
     ``scenario_id``. Validated to be a contiguous 0-based range summing to 1.
@@ -329,7 +329,7 @@ def deterministic_external_scenarios(
     fraction). Each row expands to ``scenario_counts[stage_id]`` external rows
     (``scenario_id`` ``0..n-1``) with the value repeated, so the library's
     per-stage column count matches the inflow library (1 on the deterministic
-    trunk, the terminal fan width). This satisfies cobre's node-native rule
+    trunk, the terminal fan width). This satisfies novomodelo's node-native rule
     that every non-empty class at an external-column node be external: the
     DECOMP load and NCS are deterministic, so a single value fans out unchanged.
     """
@@ -342,7 +342,7 @@ def deterministic_external_scenarios(
         for scenario_id in range(scenario_counts[int(stage)]):
             rows.append((int(stage), scenario_id, int(entity), float(value)))
     # Sort by (stage_id, scenario_id, entity) to match the inflow emitter and
-    # cobre's canonical external-library order.
+    # novomodelo's canonical external-library order.
     rows.sort()
 
     return pa.table(

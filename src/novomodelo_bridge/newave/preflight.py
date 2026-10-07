@@ -21,16 +21,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
-from cobre_bridge.core.errors import diagnostic_from_exception
-from cobre_bridge.core.preflight import (
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.errors import diagnostic_from_exception
+from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
     PreflightVerdict,
     optional_input_advisory,
 )
-from cobre_bridge.newave.files import NewaveFiles
-from cobre_bridge.newave.switches import (
+from novomodelo_bridge.newave.files import NewaveFiles
+from novomodelo_bridge.newave.switches import (
     DgerSwitches,
     switch_off_diagnostic,
     switched_off_inputs,
@@ -121,7 +121,7 @@ def run_preflight(src: Path) -> PreflightResult:
 
 def _read_switches(files: NewaveFiles) -> DgerSwitches:
     """Parse ``dger.dat`` for its switches; the one content read preflight does."""
-    from cobre_bridge.newave.case import NewaveCase
+    from novomodelo_bridge.newave.case import NewaveCase
 
     return NewaveCase(files=files).switches
 
@@ -131,7 +131,7 @@ def _switch_advisory(
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """INFO advisory per optional input that is present but switched off in
     ``dger.dat``; a ``dger.dat`` that does not parse is a failed check."""
-    from cobre_bridge.newave.converters.constraints import _find_restricao_eletrica
+    from novomodelo_bridge.newave.converters.constraints import _find_restricao_eletrica
 
     try:
         switches = _read_switches(files)

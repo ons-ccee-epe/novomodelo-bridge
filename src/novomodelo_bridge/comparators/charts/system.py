@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.charts._shared import (
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.charts._shared import (
     _BAND_FILL,
     _BAND_LINE,
     _REAL_SUBMARKET_ORDER,
     _aggregate_percentile_traces,
 )
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
 def system_comparison_chart(
@@ -49,10 +49,10 @@ def system_comparison_chart(
             {
                 "x": stages,
                 "y": [cb_by_stage.get(s, 0) for s in stages],
-                "name": "Cobre Mean",
+                "name": "Novomodelo Mean",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
             },
         ]
     )
@@ -75,10 +75,10 @@ def ree_energy_chart(
     """Line chart comparing an REE energy variable by stage.
 
     Mirrors :func:`system_comparison_chart`'s aggregate-line
-    shape (the source model's own value vs Cobre's, summed across every
+    shape (the source model's own value vs Novomodelo's, summed across every
     matched REE per stage), keyed on ``entity_type == "ree"`` instead of
-    ``"bus"``. REE carries no Cobre percentile band --
-    :class:`~cobre_bridge.comparators.model.PercentileData` has no ``ree``
+    ``"bus"``. REE carries no Novomodelo percentile band --
+    :class:`~novomodelo_bridge.comparators.model.PercentileData` has no ``ree``
     field -- so this omits the optional p10-p90 overlay entirely rather than
     fabricating one.
     """
@@ -102,10 +102,10 @@ def ree_energy_chart(
         {
             "x": stages,
             "y": [cb_by_stage.get(s, 0) for s in stages],
-            "name": "Cobre Mean",
+            "name": "Novomodelo Mean",
             "type": "scatter",
             "mode": "lines",
-            "line": {"color": COLOR_COBRE, "width": 2},
+            "line": {"color": COLOR_NOVOMODELO, "width": 2},
         },
     ]
 
@@ -119,7 +119,7 @@ def ree_energy_chart(
 
 
 _BALANCE_VARS: list[tuple[str, str, str, str]] = [
-    # (display_label, newave_var, cobre_var, unit)
+    # (display_label, newave_var, novomodelo_var, unit)
     ("Hydro Generation", "GHTOT", "hydro_gen_mw", "MW"),
     ("Thermal Generation", "GTERM", "thermal_gen_mw", "MW"),
     ("Net Load", "NET_LOAD", "net_load_mw", "MW"),
@@ -194,11 +194,11 @@ def system_per_bus_chart(
         rows_sorted = sorted(rows_list, key=lambda r: r.stage)
         stages = [r.stage for r in rows_sorted]
         nw = [r.newave_value for r in rows_sorted]
-        cb = [r.cobre_value for r in rows_sorted]
+        cb = [r.novomodelo_value for r in rows_sorted]
 
         # P10-P90 band for this bus.
-        cobre_id = rows_sorted[0].cobre_id if rows_sorted else None
-        bus_pct = pct_by_eid.get(cobre_id, {}) if cobre_id is not None else {}
+        novomodelo_id = rows_sorted[0].novomodelo_id if rows_sorted else None
+        bus_pct = pct_by_eid.get(novomodelo_id, {}) if novomodelo_id is not None else {}
         if bus_pct:
             p10 = [float(bus_pct.get(s, {}).get(p10_col, 0) or 0) for s in stages]
             p90 = [float(bus_pct.get(s, {}).get(p90_col, 0) or 0) for s in stages]
@@ -209,7 +209,7 @@ def system_per_bus_chart(
                     "fill": "toself",
                     "fillcolor": _BAND_FILL,
                     "line": {"color": _BAND_LINE},
-                    "name": "Cobre P10–P90",
+                    "name": "Novomodelo P10–P90",
                     "hoverinfo": "skip",
                     "type": "scatter",
                     "xaxis": xa,
@@ -237,10 +237,10 @@ def system_per_bus_chart(
             {
                 "x": stages,
                 "y": cb,
-                "name": "Cobre Mean",
+                "name": "Novomodelo Mean",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
                 "xaxis": xa,
                 "yaxis": ya,
                 "legendgroup": "cb",

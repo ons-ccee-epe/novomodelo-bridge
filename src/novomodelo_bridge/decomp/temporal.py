@@ -15,7 +15,7 @@ rules:
 - the final stage carries its own calendar month's season.
 
 Season ids follow the shared 0-based convention (Jan=0 … Dec=11) via
-:func:`cobre_bridge.core.season_calendar.monthly_season_definitions`.
+:func:`novomodelo_bridge.core.season_calendar.monthly_season_definitions`.
 """
 
 from __future__ import annotations
@@ -24,8 +24,11 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.season_calendar import block_names, monthly_season_definitions
+from novomodelo_bridge.core.season_calendar import (
+    block_names,
+    monthly_season_definitions,
+)
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -33,7 +36,7 @@ if TYPE_CHECKING:
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.case import DecompCase
 
 _SATURDAY = 5
 _WEEK_HOURS = 168.0
@@ -197,13 +200,13 @@ def operative_calendar_from_dadger(dadger: Dadger) -> list[OperativeStage]:
 class CVaRConfig:
     """Resolved CVaR risk measure for the DECOMP study.
 
-    ``from_stage_index`` is the 0-based cobre stage from which DECOMP's ``AR``
+    ``from_stage_index`` is the 0-based novomodelo stage from which DECOMP's ``AR``
     register starts CVaR (starting period − 1). It is recorded for the
     conversion diagnostic only: :func:`stage_records` emits the measure
     *uniformly* across all stages (CVaR collapses to expectation on the
-    deterministic trunk, and cobre's gap rule under CVaR requires a uniform
+    deterministic trunk, and novomodelo's gap rule under CVaR requires a uniform
     measure), so the starting period does not gate emission. ``alpha`` (the
-    worst-fraction quantile — cobre's α-convention equals DECOMP's, no ``1−α``
+    worst-fraction quantile — novomodelo's α-convention equals DECOMP's, no ``1−α``
     flip) and ``lambda_`` (the risk-aversion weight) are fractions in ``(0, 1]``.
     """
 
@@ -289,7 +292,7 @@ def stage_records(
     Every DECOMP stage draws its openings from the external inflow library
     (trunk column 0, terminal fan columns ``0..N-1``), so no stage declares
     ``num_openings`` — the node graph's per-node ``scenario_id`` binds the
-    openings, and cobre rejects a ``num_openings`` on an external-only stage.
+    openings, and novomodelo rejects a ``num_openings`` on an external-only stage.
     State variables follow the lag-blind convention: storage only, no
     inflow-lag state (only the boundary FCF prices lags).
 
@@ -299,7 +302,7 @@ def stage_records(
     onward for two coincident reasons: CVaR on a deterministic (single-opening)
     stage collapses to expectation, so a uniform emission is identical in
     effect to gating it at DECOMP's ``AR`` starting period (only the stochastic
-    fan is actually bound); and cobre admits the ``gap`` stopping rule under
+    fan is actually bound); and novomodelo admits the ``gap`` stopping rule under
     CVaR + enumerated forwards only when the risk measure is **uniform across
     all stages** (``setup/mod.rs::reject_gap_under_nonuniform_risk``) — a
     per-stage mix of expectation and CVaR would force the ``bound_stalling``
@@ -343,7 +346,7 @@ def build_node_graph(
     ids are their own id space: trunk node ``id == stage_id`` (``0..T-2``),
     fan node ``id == (T-1) + k`` ascending with ``scenario_id`` (the
     canonical successor order). Trunk edges carry probability 1.0; each
-    terminal branch edge carries its DECOMP per-scenario weight (cobre
+    terminal branch edge carries its DECOMP per-scenario weight (novomodelo
     re-normalizes out-edges at load).
     """
     terminal = n_stages - 1
@@ -402,7 +405,7 @@ def convert_stages(
     stages = stage_records(case.calendar, cvar)
     nodes, transitions = build_node_graph(len(stages), fan_probabilities)
     return {
-        "$schema": cobre_schemas.schema_url_for("stages.json"),
+        "$schema": novomodelo_schemas.schema_url_for("stages.json"),
         "season_definitions": monthly_season_definitions(),
         "policy_graph": {
             "type": "finite_horizon",

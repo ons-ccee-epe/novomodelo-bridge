@@ -14,8 +14,11 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.inflow_mlt import build_incremental_mlt, coupling_lag_means
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.inflow_mlt import (
+    build_incremental_mlt,
+    coupling_lag_means,
+)
 
 
 def _id_map(hydro_codes: tuple[int, ...]) -> DecompIdMap:
@@ -29,7 +32,7 @@ def _mlt(columns: dict[str, list[float]]) -> pd.DataFrame:
 
 def _build(mlt: pd.DataFrame, context) -> dict[int, dict[int, float]]:
     with patch(
-        "cobre_bridge.decomp.inflow_mlt._incremental_context", return_value=context
+        "novomodelo_bridge.decomp.inflow_mlt._incremental_context", return_value=context
     ):
         return build_incremental_mlt(mlt, object(), _id_map(tuple(context[0])))
 

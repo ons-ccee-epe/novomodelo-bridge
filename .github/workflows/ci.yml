@@ -42,8 +42,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      # cobre-python is a core runtime dependency, so `.[dev]` pulls it on
-      # every Python in the matrix — the tier-2 (`requires_cobre_python`)
+      # novomodelo-python is a core runtime dependency, so `.[dev]` pulls it on
+      # every Python in the matrix — the tier-2 (`requires_novomodelo_python`)
       # boundary-FCF tests now run on all jobs, not just the primary one.
       - run: pip install -e ".[dev]"
       - run: pytest --tb=short

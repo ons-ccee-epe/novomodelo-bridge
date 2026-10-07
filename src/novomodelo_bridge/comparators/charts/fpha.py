@@ -10,13 +10,13 @@ from typing import cast
 
 import polars as pl
 
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.ui.html.document import escape_text, json_for_script
-from cobre_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
+from novomodelo_bridge.ui.html.document import escape_text, json_for_script
+from novomodelo_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
 
 
 def fpha_metrics_table(metrics: pl.DataFrame, reference_label: str = "NEWAVE") -> str:
@@ -63,9 +63,9 @@ def fpha_metrics_table(metrics: pl.DataFrame, reference_label: str = "NEWAVE") -
         "</tr></thead>"
     )
     caption = (
-        f"<caption>Fitted production surface — Cobre vs {reference_label} "
+        f"<caption>Fitted production surface — Novomodelo vs {reference_label} "
         '<span class="cb-caption-note">— NMAE / bias as % of each plant\'s '
-        f"max generation; GHmax ratio = Cobre / {reference_label} at the max "
+        f"max generation; GHmax ratio = Novomodelo / {reference_label} at the max "
         "V/Q corner</span></caption>"
     )
     return (
@@ -94,7 +94,7 @@ def _fpha_widget_data(
 
     plants: dict[int, dict[str, object]] = {}
     for (cid, stage, source), sub in surface.partition_by(
-        "cobre_id", "stage", "source", as_dict=True
+        "novomodelo_id", "stage", "source", as_dict=True
     ).items():
         v_axis = _round(sub["v_hm3"].unique(maintain_order=True).to_list(), 1)
         n_v = len(v_axis)
@@ -116,7 +116,7 @@ def _fpha_widget_data(
         entry["znw" if source == "newave" else "zcb"] = z
 
     for (cid, stage, source), sub in spill.partition_by(
-        "cobre_id", "stage", "source", as_dict=True
+        "novomodelo_id", "stage", "source", as_dict=True
     ).items():
         plant = plants.get(int(cid))
         if plant is None:
@@ -150,14 +150,14 @@ def fpha_detail_chart(
     A plant ``<select>`` (every plant fitted on both sides) drives a stage
     ``<select>``. For a reservoir plant the selected (plant, stage) renders one
     full-width rotatable 3D view of the production surface ``GH(V, Q)`` (sampled
-    at the fitting-grid nodes at ``S = 0``) with NEWAVE / Cobre / Both / Difference
+    at the fitting-grid nodes at ``S = 0``) with NEWAVE / Novomodelo / Both / Difference
     toggle buttons — the two surfaces nearly coincide at ``S = 0``, so toggling
     isolates each and the difference rather than reading a muddy overlay.
     Run-of-river plants (single volume) render an overlaid ``GH`` vs
     turbined-flow curve instead. A further panel shows ``GH`` vs spilled flow at
     the max V/Q corner, exposing the spillage-coefficient behaviour the ``(V, Q)``
     grid holds fixed. Consumes the
-    :func:`cobre_bridge.comparators.analyze.build_fpha_comparison` surface/spill
+    :func:`novomodelo_bridge.comparators.analyze.build_fpha_comparison` surface/spill
     frames.
     """
     if surface.is_empty():
@@ -176,7 +176,7 @@ def fpha_detail_chart(
     js = f"""
     var fphaData = {data_json};
     var fphaNw = '{COLOR_NEWAVE}';
-    var fphaCb = '{COLOR_COBRE}';
+    var fphaCb = '{COLOR_NOVOMODELO}';
     function fphaShow(id, on) {{
         var el = document.getElementById(id);
         if (el) el.style.display = on ? 'block' : 'none';
@@ -203,7 +203,7 @@ def fpha_detail_chart(
         fphaShow('fpha-surf-card', reservoir);
         fphaShow('fpha-line-card', !reservoir);
         if (reservoir) {{
-            // One full-width 3D view; NEWAVE/Cobre/Both/Difference toggle buttons
+            // One full-width 3D view; NEWAVE/Novomodelo/Both/Difference toggle buttons
             // switch which surface(s) show (the two nearly coincide at S=0, so an
             // always-on overlay reads as a blob — toggling isolates the signal).
             var zdiff = d.zcb.map(function(row, i) {{
@@ -214,10 +214,10 @@ def fpha_detail_chart(
                     visible: true, colorscale: 'Viridis', colorbar: {{title: 'MW'}},
                     hovertemplate: '{reference_label}<br>Q=%{{x}}<br>V=%{{y}}' +
                         '<br>GH=%{{z}} MW<extra></extra>'}},
-                {{z: d.zcb, x: d.q, y: d.v, type: 'surface', name: 'Cobre',
+                {{z: d.zcb, x: d.q, y: d.v, type: 'surface', name: 'Novomodelo',
                     visible: true, showscale: false, opacity: 0.9,
                     colorscale: [[0, fphaCb], [1, fphaCb]],
-                    hovertemplate: 'Cobre<br>Q=%{{x}}<br>V=%{{y}}' +
+                    hovertemplate: 'Novomodelo<br>Q=%{{x}}<br>V=%{{y}}' +
                         '<br>GH=%{{z}} MW<extra></extra>'}},
                 {{z: zdiff, x: d.q, y: d.v, type: 'surface', name: 'Difference',
                     visible: false, colorscale: 'RdBu', reversescale: true,
@@ -230,7 +230,7 @@ def fpha_detail_chart(
                         'scene.zaxis.autorange': true}}]}};
             }}
             Plotly.react('fpha-surf', traces, {{
-                title: {{text: 'GH(V,Q): {reference_label} (color) + Cobre (orange)'}},
+                title: {{text: 'GH(V,Q): {reference_label} (color) + Novomodelo (orange)'}},
                 height: 600, margin: {{l: 0, r: 0, t: 80, b: 0}},
                 template: 'plotly_white',
                 scene: {{xaxis: {{title: 'Turbined (m³/s)'}},
@@ -242,18 +242,18 @@ def fpha_detail_chart(
                     y: 1.06, yanchor: 'bottom', buttons: [
                     fphaBtn('{reference_label}', [true, false, false], 'GH (MW)',
                         '{reference_label} GH(V,Q)'),
-                    fphaBtn('Cobre', [false, true, false], 'GH (MW)',
-                        'Cobre GH(V,Q)'),
+                    fphaBtn('Novomodelo', [false, true, false], 'GH (MW)',
+                        'Novomodelo GH(V,Q)'),
                     fphaBtn('Both', [true, true, false], 'GH (MW)',
-                        'GH(V,Q): {reference_label} (color) + Cobre (orange)'),
+                        'GH(V,Q): {reference_label} (color) + Novomodelo (orange)'),
                     fphaBtn('Difference', [false, false, true], 'Δ MW',
-                        'Cobre − {reference_label} (MW)')]}}]
+                        'Novomodelo − {reference_label} (MW)')]}}]
             }}, {{responsive: true}});
         }} else {{
             Plotly.react('fpha-line', [
                 {{x: d.q, y: d.znw[0], name: '{reference_label}', type: 'scatter',
                     mode: 'lines', line: {{color: fphaNw, width: 2}}}},
-                {{x: d.q, y: d.zcb[0], name: 'Cobre', type: 'scatter',
+                {{x: d.q, y: d.zcb[0], name: 'Novomodelo', type: 'scatter',
                     mode: 'lines', line: {{color: fphaCb, width: 2}}}}],
                 Object.assign({{title: 'GH vs turbined flow',
                     xaxis: {{title: 'Turbined (m³/s)'}},
@@ -263,7 +263,7 @@ def fpha_detail_chart(
         Plotly.react('fpha-spill', [
             {{x: d.ss, y: d.spnw, name: '{reference_label}', type: 'scatter',
                 mode: 'lines', line: {{color: fphaNw, width: 2}}}},
-            {{x: d.ss, y: d.spcb, name: 'Cobre', type: 'scatter',
+            {{x: d.ss, y: d.spcb, name: 'Novomodelo', type: 'scatter',
                 mode: 'lines', line: {{color: fphaCb, width: 2}}}}],
             Object.assign({{title: 'GH vs spilled flow (at max V/Q)',
                 xaxis: {{title: 'Spilled (m³/s)'}},

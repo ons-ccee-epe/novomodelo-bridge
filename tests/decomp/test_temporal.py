@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cobre_bridge.decomp.converters.config import convert_config
-from cobre_bridge.decomp.temporal import (
+from novomodelo_bridge.decomp.converters.config import convert_config
+from novomodelo_bridge.decomp.temporal import (
     CVaRConfig,
     OperativeStage,
     build_node_graph,
@@ -110,7 +110,7 @@ class TestStageRecords:
         assert first["state_variables"] == {"storage": True, "inflow_lags": False}
 
     def test_no_num_openings_on_external_stages(self) -> None:
-        """Every DECOMP stage is external-only, so cobre rejects a per-stage
+        """Every DECOMP stage is external-only, so novomodelo rejects a per-stage
         ``num_openings`` (and the retired ``num_scenarios``); the node graph's
         per-node ``scenario_id`` binds the openings instead."""
         for record in stage_records(self._calendar()):
@@ -120,7 +120,7 @@ class TestStageRecords:
     def test_stage_records_inflow_lags_false(self) -> None:
         """Locks the P3 lag-blind convention on EVERY stage, not
         just the first: ``inflow_lags`` disabled, ``storage`` enabled. This is
-        the exact shape that trips cobre's non-fatal external-solver-interop
+        the exact shape that trips novomodelo's non-fatal external-solver-interop
         validation warning on purpose — ``convert decomp --validate``
         whitelists that warning by relying on this convention holding.
         """
@@ -252,7 +252,7 @@ class TestFromDadger:
 
 class TestCVaRRiskMeasure:
     """CVaR resolution + emission: the deck's ``AR`` register (or, for a blank
-    NEWAVE-inherited ``AR``, the FCF header ``cortesh.dat``) maps to cobre's
+    NEWAVE-inherited ``AR``, the FCF header ``cortesh.dat``) maps to novomodelo's
     per-stage ``risk_measure`` and drives the stopping-rule switch."""
 
     def _calendar(self) -> list[OperativeStage]:
@@ -268,7 +268,7 @@ class TestCVaRRiskMeasure:
     def test_stage_records_applies_cvar_uniformly(self) -> None:
         # Emitted on EVERY stage (uniform), regardless of the AR starting
         # period: CVaR collapses to expectation on the deterministic trunk, and
-        # cobre's gap rule under CVaR+enumerated requires a uniform measure.
+        # novomodelo's gap rule under CVaR+enumerated requires a uniform measure.
         cvar = CVaRConfig(from_stage_index=5, alpha=0.15, lambda_=0.4)
         records = stage_records(self._calendar(), cvar)
         assert all(
@@ -304,7 +304,7 @@ class TestCVaRRiskMeasure:
     def test_blank_ar_falls_back_to_cortesh(self) -> None:
         ar = SimpleNamespace(estagio=1, lamb=None, alfa=None)
         with patch(
-            "cobre_bridge.decomp.temporal._cortesh_cvar", return_value=(0.15, 0.4)
+            "novomodelo_bridge.decomp.temporal._cortesh_cvar", return_value=(0.15, 0.4)
         ):
             cvar = resolve_cvar(self._dadger_with_ar(ar), Path("cortesh.dat"))
         assert cvar == CVaRConfig(from_stage_index=0, alpha=0.15, lambda_=0.4)
@@ -322,7 +322,7 @@ class TestConvertConfigStoppingRules:
     """``convert_config`` emits the deck's GP as a relative gap stopping rule
     (with the NI iteration backstop) unconditionally — the faithful analogue of
     DECOMP's ``Zsup/Zinf-1 <= GP`` convergence. It is admissible under CVaR too:
-    cobre computes the exact risk-adjusted upper bound under enumerated forwards,
+    novomodelo computes the exact risk-adjusted upper bound under enumerated forwards,
     and ``stage_records`` emits CVaR uniformly so the measure is stage-uniform."""
 
     @staticmethod

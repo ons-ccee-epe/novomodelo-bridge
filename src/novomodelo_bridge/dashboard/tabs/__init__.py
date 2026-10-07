@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class TabModule(Protocol):
 # Registry
 # ---------------------------------------------------------------------------
 
-from cobre_bridge.dashboard.tabs import (  # noqa: E402
+from novomodelo_bridge.dashboard.tabs import (  # noqa: E402
     constraints,
     costs,
     energy_balance,

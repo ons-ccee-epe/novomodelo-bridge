@@ -1,4 +1,4 @@
-"""Tests for the shared Cobre-I/O seam (``cobre_bridge.cobre.case_io``).
+"""Tests for the shared Novomodelo-I/O seam (``novomodelo_bridge.novomodelo.case_io``).
 
 Pins the contract that the dashboard and the results comparator resolve hydro
 productivity through the SAME canonical cascade, so the two products never
@@ -16,9 +16,9 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from cobre_bridge.cobre.case_io import resolve_hydro_productivities
-from cobre_bridge.cobre.readers import read_cobre_hydro_metadata
-from cobre_bridge.dashboard.data import load_hydro_metadata
+from novomodelo_bridge.dashboard.data import load_hydro_metadata
+from novomodelo_bridge.novomodelo.case_io import resolve_hydro_productivities
+from novomodelo_bridge.novomodelo.readers import read_novomodelo_hydro_metadata
 from tests.conftest import hydro_with_group
 
 
@@ -35,7 +35,7 @@ def _build_case(case_dir: Path) -> None:
 
     # 0.13-shaped hydros.json (unit_groups[].bus_id, no top-level bus_id).
     # Feeds load_hydro_metadata (dashboard/data.py) below.
-    # read_cobre_hydro_metadata (cobre/readers.py) no longer reads
+    # read_novomodelo_hydro_metadata (novomodelo/readers.py) no longer reads
     # any bus id from hydros.json at all, so it is
     # indifferent to this shape.
     hydros = {
@@ -101,7 +101,7 @@ def test_dashboard_and_comparator_agree_on_productivity(tmp_path: Path) -> None:
     case_dir = tmp_path / "case"
     _build_case(case_dir)
 
-    comparator = read_cobre_hydro_metadata(case_dir / "output")
+    comparator = read_novomodelo_hydro_metadata(case_dir / "output")
     dashboard = load_hydro_metadata(case_dir)
 
     for hid in (0, 1):

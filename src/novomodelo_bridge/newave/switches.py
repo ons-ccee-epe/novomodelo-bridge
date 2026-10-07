@@ -12,12 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
 if TYPE_CHECKING:
     from inewave.newave import Dger
 
-    from cobre_bridge.newave.files import NewaveFiles
+    from novomodelo_bridge.newave.files import NewaveFiles
 
 SWITCH_OFF_CODE = "dger-switch-off"
 _CATEGORY = "Input switches"

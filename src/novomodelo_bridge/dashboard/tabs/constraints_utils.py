@@ -1,7 +1,7 @@
 """Presentation helpers for the constraints tab.
 
 The constraint-expression *domain* logic (parser, parameter resolver, LHS
-evaluator) now lives in :mod:`cobre_bridge.cobre.constraint_expr` so the dashboard and
+evaluator) now lives in :mod:`novomodelo_bridge.novomodelo.constraint_expr` so the dashboard and
 the comparator share one definition. This module keeps only the HTML rendering
 plus the small F3 bound-shape derivation used to display it.
 """
@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import pandas as pd
 
-from cobre_bridge.core.generic_constraint_format import shape_from_bounds
-from cobre_bridge.ui.html.document import escape_text
+from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
+from novomodelo_bridge.ui.html.document import escape_text
 
 
 def derive_constraint_shape(bounds_rows: pd.DataFrame) -> str:
     """Derive a constraint's *displayed* direction label from its F3 bound endpoints.
 
-    cobre's F3 ``generic_constraints.json`` objects are sense-free; direction
+    novomodelo's F3 ``generic_constraints.json`` objects are sense-free; direction
     is encoded entirely by which endpoint(s) of ``generic_constraint_bounds
-    .parquet`` are populated (see :mod:`cobre_bridge.core.generic_constraint_format`).
+    .parquet`` are populated (see :mod:`novomodelo_bridge.core.generic_constraint_format`).
     DECOMP's ``RE``/``HQ``/``HV`` families genuinely emit two-sided
     ``"range"`` rows (a single id carrying both ``bound_lower`` and
     ``bound_upper``), and a constraint's per-row direction can vary across
@@ -29,7 +29,7 @@ def derive_constraint_shape(bounds_rows: pd.DataFrame) -> str:
     it feeds only the compact per-constraint "Sense" summary column
     (:func:`build_constraints_summary_table`). Numeric consumers that need
     the real per-(stage, block) bound — the LHS-vs-Bound chart
-    (:func:`cobre_bridge.dashboard.tabs.constraints._build_constraint_lhs_data`)
+    (:func:`novomodelo_bridge.dashboard.tabs.constraints._build_constraint_lhs_data`)
     — read ``bound_lower``/``bound_upper`` directly per row instead of
     relying on this single derived label. Falls back to ``"<="`` — the
     pre-F3 default sense for a constraint with no bound rows — when
@@ -60,7 +60,7 @@ def bound_value_column(shape: str) -> str:
     use this function: it resolves both endpoints directly per
     (stage, block) row so a two-sided band renders, and is violation-tested
     on, both its floor and its ceiling (see
-    :func:`cobre_bridge.dashboard.tabs.constraints._build_constraint_lhs_data`).
+    :func:`novomodelo_bridge.dashboard.tabs.constraints._build_constraint_lhs_data`).
     """
     return "bound_upper" if shape in ("<=", "range") else "bound_lower"
 

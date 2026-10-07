@@ -2,7 +2,7 @@
 
 ``generic_constraint_format`` is the single source of truth both the source
 model and DECOMP generic-constraint writers use to map a pre-F3 ``(sense,
-value)`` pair onto cobre's sense-free ``(bound_lower, bound_upper)``
+value)`` pair onto novomodelo's sense-free ``(bound_lower, bound_upper)``
 interval. Model-agnostic: no source-model/DECOMP coupling in the tests
 either.
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from cobre_bridge.core.generic_constraint_format import (
+from novomodelo_bridge.core.generic_constraint_format import (
     GENERIC_BOUNDS_COLUMNS,
     sense_to_interval,
 )

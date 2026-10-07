@@ -1,4 +1,4 @@
-"""Shared cobre-side generic-constraint loaders, LHS evaluator, and bound resolution."""
+"""Shared novomodelo-side generic-constraint loaders, LHS evaluator, and bound resolution."""
 
 from __future__ import annotations
 
@@ -10,23 +10,23 @@ from typing import NamedTuple
 import pandas as pd
 import polars as pl
 
-from cobre_bridge.cobre.constraint_expr import evaluate_constraint_expressions
-from cobre_bridge.cobre.readers import scan_simulation_entity
-from cobre_bridge.core.generic_constraint_format import shape_from_bounds
+from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
+from novomodelo_bridge.novomodelo.constraint_expr import evaluate_constraint_expressions
+from novomodelo_bridge.novomodelo.readers import scan_simulation_entity
 
 _LOG = logging.getLogger(__name__)
 
 
-def load_generic_constraints(cobre_input_dir: Path) -> list[dict]:
+def load_generic_constraints(novomodelo_input_dir: Path) -> list[dict]:
     """Load constraint definitions from ``constraints/generic_constraints.json``.
 
     The F3 objects are sense-free (no ``sense`` key); direction is derived
     from the companion bounds table's endpoints when a label is needed (see
-    :func:`per_stage_bounds` / :func:`cobre_bridge.core.generic_constraint_format.
+    :func:`per_stage_bounds` / :func:`novomodelo_bridge.core.generic_constraint_format.
     shape_from_bounds`). Returns an empty list when the file is missing or
     malformed.
     """
-    path = cobre_input_dir / "constraints" / "generic_constraints.json"
+    path = novomodelo_input_dir / "constraints" / "generic_constraints.json"
     if not path.exists():
         return []
     try:
@@ -38,13 +38,13 @@ def load_generic_constraints(cobre_input_dir: Path) -> list[dict]:
     return list(data.get("constraints", []))
 
 
-def load_generic_constraint_bounds(cobre_input_dir: Path) -> pl.DataFrame:
+def load_generic_constraint_bounds(novomodelo_input_dir: Path) -> pl.DataFrame:
     """Load bound table from ``constraints/generic_constraint_bounds.parquet``.
 
     F3 shape: nullable ``bound_lower``/``bound_upper`` endpoints, no single
     ``bound`` column — even in the missing-file fallback schema below.
     """
-    path = cobre_input_dir / "constraints" / "generic_constraint_bounds.parquet"
+    path = novomodelo_input_dir / "constraints" / "generic_constraint_bounds.parquet"
     if not path.exists():
         return pl.DataFrame(
             schema={
@@ -58,24 +58,24 @@ def load_generic_constraint_bounds(cobre_input_dir: Path) -> pl.DataFrame:
     return pl.read_parquet(path)
 
 
-def evaluate_lhs_cobre(
+def evaluate_lhs_novomodelo(
     constraints: list[dict],
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     rho_acum_overrides: dict[int, dict[int, float]] | None = None,
 ) -> pl.DataFrame:
-    """Evaluate each constraint's LHS from Cobre simulation outputs.
+    """Evaluate each constraint's LHS from Novomodelo simulation outputs.
 
     Uses the shared
-    :func:`cobre_bridge.cobre.constraint_expr.evaluate_constraint_expressions`
+    :func:`novomodelo_bridge.novomodelo.constraint_expr.evaluate_constraint_expressions`
     (which returns one row per (constraint, scenario, stage, block)) and
     collapses to mean across scenarios and blocks per (constraint, stage).
 
-    ``rho_acum_overrides`` (typically :func:`cobre_bridge.cobre.constraint_expr.
+    ``rho_acum_overrides`` (typically :func:`novomodelo_bridge.novomodelo.constraint_expr.
     load_rho_acum_overrides` against the converted case dir) is forwarded
     verbatim so a ``@rho_acum_h{id}``-scaled constraint (VminOP, RHE)
     resolves against the LP's actual per-stage coefficient rather than the
     simulation's default point-productivity column — see
-    :func:`cobre_bridge.cobre.constraint_expr.evaluate_constraint_expressions`.
+    :func:`novomodelo_bridge.novomodelo.constraint_expr.evaluate_constraint_expressions`.
 
     Returns
     -------
@@ -95,8 +95,8 @@ def evaluate_lhs_cobre(
 
     # Scan with the comparator's own simulation reader (which already takes the
     # ``output/`` directory directly), instead of reaching into the dashboard's
-    # case-dir-based scanner via a synthetic ``cobre_output_dir.parent``. A
-    # present-but-corrupt parquet raises CobreReadError.
+    # case-dir-based scanner via a synthetic ``novomodelo_output_dir.parent``. A
+    # present-but-corrupt parquet raises NovomodeloReadError.
     # NB: ``lf or pl.LazyFrame()`` would evaluate ``bool(lf)``, which polars
     # rejects ("truth value of a LazyFrame is ambiguous") — use explicit None
     # checks.
@@ -108,11 +108,11 @@ def evaluate_lhs_cobre(
         }
     )
 
-    hydros_lf = scan_simulation_entity(cobre_output_dir, "hydros")
+    hydros_lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
     if hydros_lf is None:
         # No hydro simulation → no operation data to evaluate the LHS against.
         return empty
-    exchanges_lf = scan_simulation_entity(cobre_output_dir, "exchanges")
+    exchanges_lf = scan_simulation_entity(novomodelo_output_dir, "exchanges")
     if exchanges_lf is None:
         exchanges_lf = pl.LazyFrame()
 
@@ -145,7 +145,7 @@ class ResolvedBound(NamedTuple):
     the number the numeric comparison and the chart plot, identical to what
     the pre-F3 single ``bound`` column held. ``shape`` is the direction label
     (``">="``/``"<="``/``"=="``/``"range"``) from
-    :func:`~cobre_bridge.core.generic_constraint_format.shape_from_bounds`, for
+    :func:`~novomodelo_bridge.core.generic_constraint_format.shape_from_bounds`, for
     display only.
     """
 

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 import pandas as pd
 import plotly.graph_objects as go
 
-from cobre_bridge.ui.html.document import json_for_script
-from cobre_bridge.ui.theme import hex_to_rgba
+from novomodelo_bridge.ui.html.document import json_for_script
+from novomodelo_bridge.ui.theme import hex_to_rgba
 
 LEGEND_DEFAULTS: dict = dict(
     orientation="h",

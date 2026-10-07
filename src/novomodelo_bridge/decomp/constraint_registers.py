@@ -24,7 +24,7 @@ Each *term* carries its own variable: an ``HQ`` constraint may mix flow variable
 (e.g. ``QDEF`` on one plant and ``QDES`` on another), so the variable is a
 per-term property, not a per-constraint one. A constraint therefore lowers to an
 entity **bound** only when it is a *single term*, its coefficient is ``±1``, and
-its variable has a cobre bounds axis — this covers hydro generation (``FU``),
+its variable has a novomodelo bounds axis — this covers hydro generation (``FU``),
 thermal generation (``FT``), pumping flow (``QBOM``), and the ``HQ`` flow
 family (``QDEF``/``QTUR``/``QDES``/``QVER``); every other shape (multiple
 terms, a non-unit coefficient, or the ``HE`` energy sum) becomes a **generic
@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -59,7 +59,7 @@ _CATEGORY = "Special constraints"
 #: (``limite_{inferior,superior}_1`` … ``_5``).
 _MAX_BLOCK_SLOTS = 5
 
-#: Variables that have a cobre entity-bounds axis — a single-term constraint on
+#: Variables that have a novomodelo entity-bounds axis — a single-term constraint on
 #: one of these lowers to a plant bound (`constraints/bounds.rs`). This is a
 #: family-agnostic *membership* set: the only consumer is `lowers_to_bound`'s
 #: `variable in _BOUNDS_AXIS` test, so the values are never read (do not
@@ -91,7 +91,7 @@ class ConstraintTerm:
     (``codigo_submercado``). ``submarket_de``/``submarket_para`` are the ``FI``
     interchange pair's submarket mnemonics — an interchange term has no plant
     code, so ``code`` carries the documented sentinel ``0`` for it; resolving
-    the pair to a cobre ``line_id`` is a later stage's job, not this reader's.
+    the pair to a novomodelo ``line_id`` is a later stage's job, not this reader's.
     """
 
     code: int
@@ -182,7 +182,7 @@ class ConstraintRecord:
 
 def lowers_to_bound(record: ConstraintRecord) -> bool:
     """A constraint lowers to an entity bound iff it is a single ``(entity,
-    variable)`` term, its coefficient is ``±1``, and the variable has a cobre
+    variable)`` term, its coefficient is ``±1``, and the variable has a novomodelo
     bounds axis; otherwise it is a generic constraint.
 
     A non-unit coefficient (e.g. ``0.5·QDEF``) is not a face-value bound — it
@@ -703,12 +703,12 @@ def detect_libs_electrical(deck_dir: Path) -> Diagnostic | None:
     richer format is unconverted only for its short-form ``RE``/``RE-*`` and
     date-indexed ``-HORIZONTE-DATA``/``-FORMULA-DATA-PATAMAR`` variants (the
     period-keyed long-form cards ARE converted — see
-    :mod:`cobre_bridge.decomp.converters.libs_electrical`). This reads
+    :mod:`novomodelo_bridge.decomp.converters.libs_electrical`). This reads
     ``indices.csv`` (when present) and reports the entry's presence; it does
     not parse or convert the LIBs file itself, and does not know whether the
-    long-form subset converted — the caller (:func:`~cobre_bridge.decomp.
+    long-form subset converted — the caller (:func:`~novomodelo_bridge.decomp.
     pipeline.convert_decomp_case`) is the one that reads
-    :func:`~cobre_bridge.decomp.converters.libs_electrical.read_libs_electrical` and
+    :func:`~novomodelo_bridge.decomp.converters.libs_electrical.read_libs_electrical` and
     decides whether this diagnostic's return value is still worth emitting:
     it suppresses it once the long-form subset converts (the census INFO
     diagnostic, ``decomp-libs-electrical-converted``, is authoritative
@@ -763,7 +763,7 @@ def resolve_libs_electrical_path(deck_dir: Path) -> Path | None:
     ``lib_restricao-eletrica-especial*.csv`` glob in *deck_dir* when
     ``indices.csv`` is absent, carries no such entry, or the entry's own path
     does not resolve to an existing file — mirroring
-    :func:`~cobre_bridge.decomp.files.discover_decomp_files`'s own
+    :func:`~novomodelo_bridge.decomp.files.discover_decomp_files`'s own
     ``find`` fallback idiom for the deck's other optional files.
 
     Parameters

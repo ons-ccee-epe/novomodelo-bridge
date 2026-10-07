@@ -18,7 +18,7 @@ import pandas as pd
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
 _MONTH_ABBR_TO_INT: dict[str, int] = {

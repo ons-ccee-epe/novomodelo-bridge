@@ -1,7 +1,7 @@
 """Typed conversion/compare failures and their mapping to :class:`Diagnostic`.
 
 A hard failure — a required source-model input file missing, a field that could
-not be parsed, an existing Cobre output that was unreadable — is raised as a
+not be parsed, an existing Novomodelo output that was unreadable — is raised as a
 :class:`BridgeError` subclass carrying the location detail (path, field, row)
 that a flat ``str(exc)`` would lose. :func:`diagnostic_from_exception` then maps a
 caught ``(exception, context)`` pair into a single ``ERROR``-severity
@@ -16,7 +16,7 @@ so an ``except FileNotFoundError`` site keeps catching it unchanged.
 
 from __future__ import annotations
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
 
 class BridgeError(Exception):
@@ -61,22 +61,22 @@ class FieldParseError(BridgeError):
         self.row = row
 
 
-class CobreOutputError(BridgeError):
-    """An existing Cobre output file was unreadable or malformed."""
+class NovomodeloOutputError(BridgeError):
+    """An existing Novomodelo output file was unreadable or malformed."""
 
     def __init__(self, message: str, *, path: str | None = None) -> None:
         super().__init__(message)
         self.path = path
 
 
-class CobrePartitionMissingError(BridgeError):
-    """A required Cobre output simulation partition does not exist.
+class NovomodeloPartitionMissingError(BridgeError):
+    """A required Novomodelo output simulation partition does not exist.
 
     Raised by readers that must fail loudly instead of silently returning an
     empty frame when their source partition is absent — e.g. because the
-    Cobre output directory predates the cobre version that introduced the
+    Novomodelo output directory predates the novomodelo version that introduced the
     partition. The message names the missing directory and the minimum
-    required cobre version, so the caller learns their *output* is stale
+    required novomodelo version, so the caller learns their *output* is stale
     rather than concluding there is nothing to report.
     """
 
@@ -97,13 +97,13 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
         "source-field-parse",
         "Check the named field in the source file for a malformed value.",
     ),
-    CobreOutputError: (
-        "cobre-output-unreadable",
-        "Re-run cobre with --output to regenerate the output directory.",
+    NovomodeloOutputError: (
+        "novomodelo-output-unreadable",
+        "Re-run novomodelo with --output to regenerate the output directory.",
     ),
-    CobrePartitionMissingError: (
-        "cobre-partition-missing",
-        "Re-run cobre at the required version to produce this partition.",
+    NovomodeloPartitionMissingError: (
+        "novomodelo-partition-missing",
+        "Re-run novomodelo at the required version to produce this partition.",
     ),
     # Base-class fallback (last, for readability — a concrete subclass above
     # always wins the MRO walk regardless of dict order). No remediation: an

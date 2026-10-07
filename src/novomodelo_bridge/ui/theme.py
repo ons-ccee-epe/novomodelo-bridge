@@ -1,4 +1,4 @@
-"""Shared visual design tokens for the cobre-bridge UI.
+"""Shared visual design tokens for the novomodelo-bridge UI.
 
 Canonical source for the **semantic** colours used across the dashboard and
 comparator Plotly charts: the per-entity generation palette (hydro/thermal/ncs),
@@ -31,7 +31,7 @@ COLORS: dict[str, str] = {
 BUS_COLORS: list[str] = ["#4A90B8", "#F5A623", "#4A8B6F", "#DC4C4C", "#B87333"]
 
 COMPARISON_COLORS: dict[str, str] = {
-    "cobre": "#4A90B8",
+    "novomodelo": "#4A90B8",
     "newave": "#F5A623",
     "diff": "#DC4C4C",
     "match": "#4A8B6F",

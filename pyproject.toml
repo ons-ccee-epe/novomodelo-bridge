@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cobre-bridge"
+name = "novomodelo-bridge"
 version = "0.18.0"
-description = "Convert NEWAVE and DECOMP cases to Cobre input format and compare the results"
+description = "Convert NEWAVE and DECOMP cases to Novomodelo input format and compare the results"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
@@ -21,10 +21,10 @@ dependencies = [
     "rich>=15.0.0",
     "typer>=0.27.2",
     # REQUIRED runtime dep, not an optional extra: `convert decomp` imports the
-    # boundary FCF by default and `convert --validate` / `compare` load cobre
-    # output, so `import cobre` must work out of the box. Pinned exactly to
-    # MIN_COBRE_VERSION in cobre/compat.py, which documents why.
-    "cobre-python==0.18.0",
+    # boundary FCF by default and `convert --validate` / `compare` load novomodelo
+    # output, so `import novomodelo` must work out of the box. Pinned exactly to
+    # MIN_NOVOMODELO_VERSION in novomodelo/compat.py, which documents why.
+    "novomodelo-python==0.18.0",
 ]
 
 [project.optional-dependencies]
@@ -37,10 +37,10 @@ dev = [
 ]
 
 [project.scripts]
-cobre-bridge = "cobre_bridge.cli:main"
+novomodelo-bridge = "novomodelo_bridge.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cobre_bridge"]
+packages = ["src/novomodelo_bridge"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -49,11 +49,11 @@ pythonpath = ["."]
 
 [tool.coverage.run]
 source = [
-    "cobre_bridge.comparators.model",
-    "cobre_bridge.comparators.constraints",
-    "cobre_bridge.comparators.newave.readers",
-    "cobre_bridge.comparators.newave.alignment",
-    "cobre_bridge.comparators.newave.constraints",
+    "novomodelo_bridge.comparators.model",
+    "novomodelo_bridge.comparators.constraints",
+    "novomodelo_bridge.comparators.newave.readers",
+    "novomodelo_bridge.comparators.newave.alignment",
+    "novomodelo_bridge.comparators.newave.constraints",
 ]
 
 [tool.coverage.report]

@@ -1,4 +1,4 @@
-"""Windowed inflow emission (Cobre >= 0.13 input shapes).
+"""Windowed inflow emission (Novomodelo >= 0.13 input shapes).
 
 Builds the two windowed inflow inputs of the unified representation:
 
@@ -11,7 +11,7 @@ Builds the two windowed inflow inputs of the unified representation:
 
 Values are incremental m³/s, produced by the same posto-mapping and
 upstream-subtraction helpers the point-dated emitters use. The pipeline
-switches to these emitters when the Cobre dependency pin moves to the
+switches to these emitters when the Novomodelo dependency pin moves to the
 windowed schema; until then the module is additive and unused by
 ``convert``.
 """
@@ -22,19 +22,19 @@ from datetime import date
 
 import pyarrow as pa
 
-from cobre_bridge.core.inflow_windows import (
+from novomodelo_bridge.core.inflow_windows import (
     format_observation_windows,
     month_window,
     previous_months,
 )
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.stochastic import (
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.stochastic import (
     _incremental_history,
     _vazpast_incremental,
 )
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 
-# Parquet schema for the windowed past-inflow history (Cobre >= 0.13).
+# Parquet schema for the windowed past-inflow history (Novomodelo >= 0.13).
 INFLOW_HISTORY_WINDOW_SCHEMA = pa.schema(
     [
         pa.field("hydro_id", pa.int32()),
@@ -67,13 +67,13 @@ def convert_inflow_history_windows(
     rows_end: list[date] = []
     rows_value: list[float] = []
 
-    for cobre_id in sorted(incremental):
-        values = incremental[cobre_id]
+    for novomodelo_id in sorted(incremental):
+        values = incremental[novomodelo_id]
         for i in range(n_rows):
             y = hist_start_year + (i // 12)
             m = (i % 12) + 1
             start, end = month_window(y, m)
-            rows_hydro_id.append(cobre_id)
+            rows_hydro_id.append(novomodelo_id)
             rows_start.append(start)
             rows_end.append(end)
             rows_value.append(float(values[i]))

@@ -1,6 +1,6 @@
 """REE energy rollup tests for ``comparators.decomp.results``.
 
-Covers the REE membership map, Cobre-side and DECOMP-side per-REE
+Covers the REE membership map, Novomodelo-side and DECOMP-side per-REE
 ENA/EARM sums, the full REE result-comparison rollup, the Balance tab's REE
 rows in ``build_decomp_dataset``, and the REE energy chart.
 """
@@ -12,19 +12,19 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.charts import ree_energy_chart
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.charts import ree_energy_chart
+from novomodelo_bridge.comparators.decomp.results import (
     _EARM_MWH_TO_MWMES,
-    _cobre_ree_sums,
     _decomp_ree_frame,
+    _novomodelo_ree_sums,
     _ree_membership_map,
     _ree_result_comparisons,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.comparators.report_builder import build_comparison_report
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
@@ -38,8 +38,8 @@ from tests.comparators.conftest import (
 )
 
 
-def _ree_cobre_hydro_fixture() -> pl.DataFrame:
-    """Two Cobre hydro plants (ids 0, 1), one stage: ENA sums to 150.0 MW,
+def _ree_novomodelo_hydro_fixture() -> pl.DataFrame:
+    """Two Novomodelo hydro plants (ids 0, 1), one stage: ENA sums to 150.0 MW,
     EARM sums to 730000.0 MWh -- exactly ``1000.0 * _EARM_MWH_TO_MWMES``, so
     the MWh -> MWmes reconciliation lands on a round number."""
     return pl.DataFrame(
@@ -53,37 +53,39 @@ def _ree_cobre_hydro_fixture() -> pl.DataFrame:
 
 
 class TestReeMembershipMap:
-    """``_ree_membership_map``: ``{cobre_hydro_id: codigo_ree}`` via
+    """``_ree_membership_map``: ``{novomodelo_hydro_id: codigo_ree}`` via
     membership, restricted to the operated hydro codes."""
 
-    def test_maps_cobre_ids_to_codigo_ree(self) -> None:
-        ree_by_cobre_id, unmapped = _ree_membership_map(
+    def test_maps_novomodelo_ids_to_codigo_ree(self) -> None:
+        ree_by_novomodelo_id, unmapped = _ree_membership_map(
             _ree_membership_fixture(), {10: 0, 20: 1}
         )
-        assert ree_by_cobre_id == {0: 100, 1: 100}
+        assert ree_by_novomodelo_id == {0: 100, 1: 100}
         assert unmapped == []
 
     def test_reports_unmapped_hydro_codes_instead_of_dropping_silently(self) -> None:
         membership = pl.DataFrame({"codigo_usina": [10], "codigo_ree": [100]})
 
-        ree_by_cobre_id, unmapped = _ree_membership_map(membership, {10: 0, 99: 5})
+        ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, {10: 0, 99: 5})
 
-        assert ree_by_cobre_id == {0: 100}
+        assert ree_by_novomodelo_id == {0: 100}
         assert unmapped == [99]
 
     def test_empty_membership_excludes_every_hydro_code(self) -> None:
-        ree_by_cobre_id, unmapped = _ree_membership_map(pl.DataFrame(), {10: 0, 20: 1})
+        ree_by_novomodelo_id, unmapped = _ree_membership_map(
+            pl.DataFrame(), {10: 0, 20: 1}
+        )
 
-        assert ree_by_cobre_id == {}
+        assert ree_by_novomodelo_id == {}
         assert unmapped == [10, 20]
 
 
-class TestCobreReeSums:
-    """``_cobre_ree_sums``: membership-weighted per-(codigo_ree, stage) sum
-    of Cobre hydro ENA/EARM."""
+class TestNovomodeloReeSums:
+    """``_novomodelo_ree_sums``: membership-weighted per-(codigo_ree, stage) sum
+    of Novomodelo hydro ENA/EARM."""
 
     def test_sums_ena_and_earm_across_member_plants(self) -> None:
-        out = _cobre_ree_sums(_ree_cobre_hydro_fixture(), {0: 100, 1: 100})
+        out = _novomodelo_ree_sums(_ree_novomodelo_hydro_fixture(), {0: 100, 1: 100})
 
         assert out.height == 1
         row = out.row(0, named=True)
@@ -92,8 +94,8 @@ class TestCobreReeSums:
         assert row["ena_mw"] == pytest.approx(150.0)
         assert row["earm_mwh"] == pytest.approx(730000.0)
 
-    def test_cobre_id_absent_from_membership_excluded_from_sum(self) -> None:
-        cobre_hydro = pl.DataFrame(
+    def test_novomodelo_id_absent_from_membership_excluded_from_sum(self) -> None:
+        novomodelo_hydro = pl.DataFrame(
             {
                 "entity_id": [0, 9],
                 "stage_id": [0, 0],
@@ -102,27 +104,27 @@ class TestCobreReeSums:
             }
         )
 
-        out = _cobre_ree_sums(cobre_hydro, {0: 100})
+        out = _novomodelo_ree_sums(novomodelo_hydro, {0: 100})
 
         assert out.height == 1
         row = out.row(0, named=True)
         assert row["ena_mw"] == pytest.approx(90.0)
         assert row["earm_mwh"] == pytest.approx(400000.0)
 
-    def test_empty_cobre_hydro_yields_empty_frame(self) -> None:
-        assert _cobre_ree_sums(pl.DataFrame(), {0: 100}).is_empty()
+    def test_empty_novomodelo_hydro_yields_empty_frame(self) -> None:
+        assert _novomodelo_ree_sums(pl.DataFrame(), {0: 100}).is_empty()
 
     def test_empty_membership_map_yields_empty_frame(self) -> None:
-        assert _cobre_ree_sums(_ree_cobre_hydro_fixture(), {}).is_empty()
+        assert _novomodelo_ree_sums(_ree_novomodelo_hydro_fixture(), {}).is_empty()
 
     def test_missing_energy_columns_degrades_to_empty_instead_of_raising(self) -> None:
-        """A ``cobre_hydro`` frame that carries no ENA/EARM columns at all --
+        """A ``novomodelo_hydro`` frame that carries no ENA/EARM columns at all --
         e.g. the trimmed ``_aligned_fixture()`` shape other fixtures
         use -- must degrade gracefully rather than raising a Polars
         ``ColumnNotFoundError``."""
-        cobre_hydro = pl.DataFrame({"entity_id": [0], "stage_id": [0]})
+        novomodelo_hydro = pl.DataFrame({"entity_id": [0], "stage_id": [0]})
 
-        assert _cobre_ree_sums(cobre_hydro, {0: 100}).is_empty()
+        assert _novomodelo_ree_sums(novomodelo_hydro, {0: 100}).is_empty()
 
 
 class TestDecompReeFrame:
@@ -133,7 +135,7 @@ class TestDecompReeFrame:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_ree",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_ree",
             lambda *_a, **_k: _ree_dec_oper_ree_fixture(),
         )
 
@@ -157,7 +159,7 @@ class TestDecompReeFrame:
 
 class TestReeResultComparisons:
     """``_ree_result_comparisons``: the full REE rollup -- membership map,
-    scenario-averaged DECOMP side, membership-weighted Cobre side, the EARM
+    scenario-averaged DECOMP side, membership-weighted Novomodelo side, the EARM
     MWh -> MWmes reconciliation, and the never-silently-dropped
     unmapped-plant diagnostic."""
 
@@ -169,7 +171,7 @@ class TestReeResultComparisons:
         _patch_ree_sources(monkeypatch)
 
         results, unmapped = _ree_result_comparisons(
-            tmp_path, _ree_cobre_hydro_fixture(), _ree_id_map()
+            tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
         )
 
         assert unmapped == []
@@ -180,38 +182,38 @@ class TestReeResultComparisons:
         assert ena.entity_type == "ree"
         assert ena.entity_name == "SUDESTE"
         assert ena.newave_code == 100
-        assert ena.cobre_id == 100
+        assert ena.novomodelo_id == 100
         assert ena.stage == 0
         assert ena.newave_value == pytest.approx(145.0)
-        assert ena.cobre_value == pytest.approx(150.0)  # unscaled fallback
+        assert ena.novomodelo_value == pytest.approx(150.0)  # unscaled fallback
         assert ena.abs_diff == pytest.approx(5.0)
 
         earm = by_variable["earm_final_mwmes"]
-        assert earm.cobre_value == pytest.approx(730000.0 / _EARM_MWH_TO_MWMES)
+        assert earm.novomodelo_value == pytest.approx(730000.0 / _EARM_MWH_TO_MWMES)
 
     def test_stage_hours_convert_ena_rate_to_mwmes_energy(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # cobre's ena_mw is an average-MW rate; with stage_hours it is converted
+        # novomodelo's ena_mw is an average-MW rate; with stage_hours it is converted
         # to MW-month energy via stage_hours/730 (mirroring EARM's ÷730), so it
         # is comparable to DECOMP's ena_MWmes. Half a month (365h) halves it.
         _patch_ree_sources(monkeypatch)
 
         results, _ = _ree_result_comparisons(
             tmp_path,
-            _ree_cobre_hydro_fixture(),
+            _ree_novomodelo_hydro_fixture(),
             _ree_id_map(),
             stage_hours={0: _EARM_MWH_TO_MWMES / 2},  # 365 h == 0.5 month
         )
 
         ena = {r.variable: r for r in results}["ena_mwmes"]
         # 150.0 MW (rate) × (365 / 730) == 75.0 MWmês.
-        assert ena.cobre_value == pytest.approx(75.0)
+        assert ena.novomodelo_value == pytest.approx(75.0)
         assert ena.newave_value == pytest.approx(145.0)
 
     def test_none_id_map_returns_no_rows_and_no_unmapped(self, tmp_path: Path) -> None:
         results, unmapped = _ree_result_comparisons(
-            tmp_path, _ree_cobre_hydro_fixture(), None
+            tmp_path, _ree_novomodelo_hydro_fixture(), None
         )
 
         assert results == []
@@ -232,17 +234,17 @@ class TestReeResultComparisons:
 
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_cobre_hydro_fixture(), id_map
+                tmp_path, _ree_novomodelo_hydro_fixture(), id_map
             )
 
         assert unmapped == [30]
         assert len(collected) == 1
         assert collected[0].code == "ree-membership-plant-unmapped"
         assert "30" in " ".join(str(n) for n in collected[0].notes)
-        # The unmapped plant's cobre id (2) was never a REE member -- the
+        # The unmapped plant's novomodelo id (2) was never a REE member -- the
         # sums are unaffected (still exactly the two-plant fixture's totals).
         by_variable = {r.variable: r for r in results}
-        assert by_variable["ena_mwmes"].cobre_value == pytest.approx(150.0)
+        assert by_variable["ena_mwmes"].novomodelo_value == pytest.approx(150.0)
 
     def test_no_membership_table_degrades_to_no_rows_no_diagnostic(
         self, tmp_path: Path
@@ -252,7 +254,7 @@ class TestReeResultComparisons:
         per-plant gap -- no diagnostic, just an empty result."""
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_cobre_hydro_fixture(), _ree_id_map()
+                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
             )
 
         assert results == []
@@ -263,13 +265,13 @@ class TestReeResultComparisons:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_membership",
+            "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
             lambda *_a, **_k: _ree_membership_fixture(),
         )
         # ``read_dec_oper_ree`` left unmocked -> raises FileNotFoundError.
 
         results, unmapped = _ree_result_comparisons(
-            tmp_path, _ree_cobre_hydro_fixture(), _ree_id_map()
+            tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
         )
 
         assert results == []
@@ -301,7 +303,7 @@ class TestBuildDecompDatasetRee:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """``tidy`` has ``entity_type=="ree"`` rows for ``ena_mwmes`` and
-        ``earm_final_mwmes``, with ``source`` in {"newave", "cobre"}."""
+        ``earm_final_mwmes``, with ``source`` in {"newave", "novomodelo"}."""
         _patch_aligned_frames(monkeypatch, _ree_aligned_fixture())
         _patch_shared_case(monkeypatch, id_map=_ree_id_map())
         _patch_ree_sources(monkeypatch)
@@ -313,7 +315,7 @@ class TestBuildDecompDatasetRee:
             "ena_mwmes",
             "earm_final_mwmes",
         }
-        assert set(ree_rows["source"].unique().to_list()) == {"newave", "cobre"}
+        assert set(ree_rows["source"].unique().to_list()) == {"newave", "novomodelo"}
         assert dataset.metadata["unmapped"]["ree"] == []
 
     def test_report_ree_section_present_for_decomp_dataset(
@@ -345,11 +347,11 @@ class TestReeEnergyChart:
                 entity_type="ree",
                 entity_name="SUDESTE",
                 newave_code=100,
-                cobre_id=100,
+                novomodelo_id=100,
                 stage=0,
                 variable="ena_mwmes",
                 newave_value=145.0,
-                cobre_value=150.0,
+                novomodelo_value=150.0,
                 abs_diff=5.0,
                 rel_diff=5.0 / 145.0,
             ),
@@ -357,11 +359,11 @@ class TestReeEnergyChart:
                 entity_type="ree",
                 entity_name="SUL",
                 newave_code=200,
-                cobre_id=200,
+                novomodelo_id=200,
                 stage=0,
                 variable="ena_mwmes",
                 newave_value=50.0,
-                cobre_value=48.0,
+                novomodelo_value=48.0,
                 abs_diff=2.0,
                 rel_diff=2.0 / 50.0,
             ),
@@ -376,7 +378,7 @@ class TestReeEnergyChart:
 
         assert "Plotly.newPlot" in html
         assert "195" in html  # 145 + 50 == 195 (newave aggregate)
-        assert "198" in html  # 150 + 48 == 198 (cobre aggregate)
+        assert "198" in html  # 150 + 48 == 198 (novomodelo aggregate)
 
     def test_ignores_rows_of_a_different_variable(self) -> None:
         html = ree_energy_chart(self._results(), "earm_final_mwmes", "REE EARM")

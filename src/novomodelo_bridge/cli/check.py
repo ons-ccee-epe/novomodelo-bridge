@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import typer
 
-from cobre_bridge.cli.args import CheckArgs
-from cobre_bridge.cli.failure import _emit_convert_json
-from cobre_bridge.cli.verdict import build_verdict, check_summary
-from cobre_bridge.core.preflight import PreflightResult, PreflightVerdict
-from cobre_bridge.ui.console import render_checklist
+from novomodelo_bridge.cli.args import CheckArgs
+from novomodelo_bridge.cli.failure import _emit_convert_json
+from novomodelo_bridge.cli.verdict import build_verdict, check_summary
+from novomodelo_bridge.core.preflight import PreflightResult, PreflightVerdict
+from novomodelo_bridge.ui.console import render_checklist
 
 #: Preflight verdict → process exit code: ``OK`` is clean (0), ``WARNINGS`` is
 #: advisory (1), and ``WILL_NOT_CONVERT`` is the most severe (2). Kept as data
@@ -61,13 +61,13 @@ def _render_and_exit(args: CheckArgs, result: PreflightResult, command: str) -> 
 
 def _run_decomp_check(args: CheckArgs) -> None:
     """Execute the check decomp subcommand. Writes no files; runs no pipeline."""
-    from cobre_bridge.decomp.preflight import run_decomp_preflight
+    from novomodelo_bridge.decomp.preflight import run_decomp_preflight
 
     _render_and_exit(args, run_decomp_preflight(args.src), "check decomp")
 
 
 def _run_check(args: CheckArgs) -> None:
     """Execute the check newave subcommand. Writes no files; runs no pipeline."""
-    from cobre_bridge.newave.preflight import run_preflight
+    from novomodelo_bridge.newave.preflight import run_preflight
 
     _render_and_exit(args, run_preflight(args.src), "check newave")

@@ -1,7 +1,7 @@
 """Unit tests for the shared top-level timing-phase module.
 
-Tier-1: pure Python + pandas/plotly, imports no cobre and reads no example/
-deck, so it collects and runs even in a cobre-free environment.
+Tier-1: pure Python + pandas/plotly, imports no novomodelo and reads no example/
+deck, so it collects and runs even in a novomodelo-free environment.
 """
 
 from __future__ import annotations
@@ -10,15 +10,15 @@ import re
 
 import pandas as pd
 
-from cobre_bridge.dashboard.tabs import performance_charts, training
-from cobre_bridge.dashboard.tabs.timing_phases import (
+from novomodelo_bridge.dashboard.tabs import performance_charts, training
+from novomodelo_bridge.dashboard.tabs.timing_phases import (
     TOP_LEVEL_PHASE_COLUMNS,
     TOP_LEVEL_PHASE_CONFIG,
     active_top_level_phases,
     build_timing_stacked_figure,
 )
-from cobre_bridge.ui.html.plotly import fig_to_html
-from cobre_bridge.ui.theme import PERFORMANCE_PHASE_COLORS
+from novomodelo_bridge.ui.html.plotly import fig_to_html
+from novomodelo_bridge.ui.theme import PERFORMANCE_PHASE_COLORS
 
 _EXPECTED_CONFIG: tuple[tuple[str, str, str], ...] = (
     ("forward_wall_ms", "Forward", PERFORMANCE_PHASE_COLORS["forward"]),

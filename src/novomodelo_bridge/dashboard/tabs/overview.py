@@ -1,4 +1,4 @@
-"""v2 Overview tab — executive summary landing page for the Cobre dashboard.
+"""v2 Overview tab — executive summary landing page for the Novomodelo dashboard.
 
 Displays run identity, run status, key metric cards, cost breakdown
 (horizontal stacked bar + summary table), and two quick-look mini charts
@@ -13,33 +13,33 @@ import pandas as pd
 import plotly.graph_objects as go
 import polars as pl
 
-from cobre_bridge.cobre.readers import cobre_software_version
-from cobre_bridge.dashboard.chart_helpers import (
+from novomodelo_bridge.dashboard.chart_helpers import (
     COST_GROUP_COLORS,
     build_cost_table,
     chart_cost_bar,
     compute_cost_summary,
     make_chart_card,
 )
-from cobre_bridge.dashboard.data import _stage_avg_mw
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.dashboard.data import _stage_avg_mw
+from novomodelo_bridge.novomodelo.readers import novomodelo_software_version
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     metric_card,
     metrics_grid,
     section_title,
     wrap_chart,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     MARGIN_DEFAULTS,
     apply_stage_date_axis,
     apply_standard_layout,
     stage_x_dates,
     stage_x_labels,
 )
-from cobre_bridge.ui.theme import COLORS, GENERATION_COLORS
+from novomodelo_bridge.ui.theme import COLORS, GENERATION_COLORS
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 TAB_ID = "tab-overview"
 TAB_LABEL = "Overview"
@@ -69,7 +69,7 @@ def _format_duration(elapsed_seconds: object) -> str:
 
 def _run_identity_strip(data: DashboardData) -> str:
     """Build the run identity row HTML."""
-    version = cobre_software_version(data.training_metadata) or "N/A"
+    version = novomodelo_software_version(data.training_metadata) or "N/A"
     discount_pct = data.discount_rate * 100.0
 
     run_date = data.training_metadata.get("started_at", "N/A")
@@ -255,11 +255,11 @@ def _chart_gen_mix(data: DashboardData) -> go.Figure | None:
     """Build a stacked area chart of mean generation MW per stage.
 
     Computes stage-average MW for hydro, thermal, and NCS using
-    :func:`~cobre_bridge.dashboard.data._stage_avg_mw` and renders them
+    :func:`~novomodelo_bridge.dashboard.data._stage_avg_mw` and renders them
     as stacked area traces.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         A :class:`plotly.graph_objects.Figure`, or ``None`` when all three

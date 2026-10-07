@@ -1,7 +1,7 @@
 """Tests for the cadastro-override calendar resolver.
 
 Pins the ``(mes, semana, ano)`` -> stage-index resolution rules of
-``cobre_bridge.decomp.converters.cadastro.stage_resolution.resolve_effective_stage``
+``novomodelo_bridge.decomp.converters.cadastro.stage_resolution.resolve_effective_stage``
 against a synthetic two-month operative calendar (two July weekly stages +
 one August monthly stage), mirroring the calendar shape the source model's
 operative weeks and months produce. ``mes`` is exercised in its real
@@ -16,8 +16,8 @@ from datetime import date
 
 import pytest
 
-from cobre_bridge.decomp.converters.cadastro import resolve_effective_stage
-from cobre_bridge.decomp.temporal import OperativeStage, build_operative_calendar
+from novomodelo_bridge.decomp.converters.cadastro import resolve_effective_stage
+from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 
 
 @pytest.fixture

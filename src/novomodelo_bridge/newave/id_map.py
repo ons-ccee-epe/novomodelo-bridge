@@ -10,24 +10,29 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity, emit
-from cobre_bridge.newave.plants import active_hydro_codes, fictitious_codes
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+from novomodelo_bridge.newave.plants import active_hydro_codes, fictitious_codes
 
 if TYPE_CHECKING:
     from inewave.newave import Confhd, Conft, Exph, Hidr, Ree, Sistema
 
-    from cobre_bridge.newave.files import NewaveFiles
+    from novomodelo_bridge.newave.files import NewaveFiles
 
 _LOG = logging.getLogger(__name__)
 
 
 class NewaveIdMap:
-    """Bidirectional ID map from the source model 1-based codes to Cobre 0-based IDs.
+    """Bidirectional ID map from the source model 1-based codes to Novomodelo 0-based IDs.
 
     Subsystems, thermals, and hydros are all remapped deterministically by sorting
-    the source model IDs (``codigo_usina``) ascending and assigning Cobre IDs
+    the source model IDs (``codigo_usina``) ascending and assigning Novomodelo IDs
     0, 1, 2, … in that order.  Sorting hydros by code — rather than by the
-    ``confhd.dat`` declaration order — makes the Cobre hydro id follow the
+    ``confhd.dat`` declaration order — makes the Novomodelo hydro id follow the
     ``hidr.dat`` registry order and keeps the mapping independent of how a
     particular deck happens to order ``confhd.dat``.
 
@@ -38,7 +43,7 @@ class NewaveIdMap:
         fictitious ones.  Each unique code maps to one bus ID.
     hydro_codes:
         The source model hydro plant codes (``codigo_usina`` from ``confhd.dat``).
-        Cobre hydro IDs are assigned in ascending code order (the codes are sorted
+        Novomodelo hydro IDs are assigned in ascending code order (the codes are sorted
         here), so the caller need not pre-sort them.
     thermal_codes:
         Iterable of the source model thermal plant codes (``codigo_usina`` from
@@ -52,20 +57,20 @@ class NewaveIdMap:
         thermal_codes: list[int],
     ) -> None:
         self._bus: dict[int, int] = {
-            newave_id: cobre_id
-            for cobre_id, newave_id in enumerate(sorted(subsystem_ids))
+            newave_id: novomodelo_id
+            for novomodelo_id, newave_id in enumerate(sorted(subsystem_ids))
         }
         self._hydro: dict[int, int] = {
-            newave_id: cobre_id
-            for cobre_id, newave_id in enumerate(sorted(hydro_codes))
+            newave_id: novomodelo_id
+            for novomodelo_id, newave_id in enumerate(sorted(hydro_codes))
         }
         self._thermal: dict[int, int] = {
-            newave_id: cobre_id
-            for cobre_id, newave_id in enumerate(sorted(thermal_codes))
+            newave_id: novomodelo_id
+            for novomodelo_id, newave_id in enumerate(sorted(thermal_codes))
         }
 
     def bus_id(self, newave_subsystem_id: int) -> int:
-        """Return the 0-based Cobre bus ID for a source-model subsystem code.
+        """Return the 0-based Novomodelo bus ID for a source-model subsystem code.
 
         Raises
         ------
@@ -75,7 +80,7 @@ class NewaveIdMap:
         return self._bus[newave_subsystem_id]
 
     def hydro_id(self, newave_hydro_code: int) -> int:
-        """Return the 0-based Cobre hydro ID for a source-model plant code.
+        """Return the 0-based Novomodelo hydro ID for a source-model plant code.
 
         Raises
         ------
@@ -85,7 +90,7 @@ class NewaveIdMap:
         return self._hydro[newave_hydro_code]
 
     def thermal_id(self, newave_thermal_code: int) -> int:
-        """Return the 0-based Cobre thermal ID for a source-model plant code.
+        """Return the 0-based Novomodelo thermal ID for a source-model plant code.
 
         Raises
         ------
@@ -101,7 +106,7 @@ class NewaveIdMap:
 
     @property
     def all_hydro_codes(self) -> list[int]:
-        """The source model hydro codes in Cobre-ID order (ascending ``codigo_usina``,
+        """The source model hydro codes in Novomodelo-ID order (ascending ``codigo_usina``,
         matching ``hidr.dat`` registry order)."""
         return list(self._hydro)
 
@@ -117,7 +122,7 @@ def build_id_map(nw_files: NewaveFiles) -> NewaveIdMap:
     Reads ``confhd.dat`` (hydros, existing non-fictitious only), ``conft.dat``
     (thermals), ``sistema.dat`` + ``ree.dat`` (subsystems). This is the single public
     entry point shared by the conversion pipeline and the comparators, so both derive
-    the source model→Cobre mapping the same way.
+    the source model→Novomodelo mapping the same way.
 
     This path-only entry point intentionally does **not** thread ``exph``, so it
     forwards ``exph=None`` to :func:`build_id_map_from_readers`: the comparators and

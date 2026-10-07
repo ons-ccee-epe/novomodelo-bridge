@@ -1,4 +1,4 @@
-<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Thermal per-plant max relative difference (|Cobre − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Generation (MW)</th></tr></thead><tbody><tr><td class="cb-cat">T1</td><td class="cb-num">10.00%</td></tr><tr><td class="cb-cat">T2</td><td class="cb-num">8.33%</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num">9.17%</td></tr></tbody></table></div>
+<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Thermal per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Generation (MW)</th></tr></thead><tbody><tr><td class="cb-cat">T1</td><td class="cb-num">10.00%</td></tr><tr><td class="cb-cat">T2</td><td class="cb-num">8.33%</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num">9.17%</td></tr></tbody></table></div>
     <div class="plant-selector">
         <label for="thermal-select">Thermal Plant:</label>
         <select id="thermal-select"
@@ -9,7 +9,7 @@
     </div>
     <div class="chart-grid-single"><div class="chart-card"><div id="thermal-chart-generation-mw" style="width:100%;height:350px;"></div></div></div>
     <script>
-    var thermalData = {"15_T1":{"name":"T1","code":15,"cobre_id":5,"generation_mw_stages":[1,2],"generation_mw_nw":[50.0,52.0],"generation_mw_cb":[45.0,47.0],"generation_mw_p10":[40.0,42.0],"generation_mw_p90":[50.0,52.0]},"16_T2":{"name":"T2","code":16,"cobre_id":6,"generation_mw_stages":[1],"generation_mw_nw":[60.0],"generation_mw_cb":[55.0],"generation_mw_p10":[50.0],"generation_mw_p90":[60.0]}};
+    var thermalData = {"15_T1":{"name":"T1","code":15,"novomodelo_id":5,"generation_mw_stages":[1,2],"generation_mw_nw":[50.0,52.0],"generation_mw_cb":[45.0,47.0],"generation_mw_p10":[40.0,42.0],"generation_mw_p90":[50.0,52.0]},"16_T2":{"name":"T2","code":16,"novomodelo_id":6,"generation_mw_stages":[1],"generation_mw_nw":[60.0],"generation_mw_cb":[55.0],"generation_mw_p10":[50.0],"generation_mw_p90":[60.0]}};
     function updateThermalCharts() {
         var sel = document.getElementById('thermal-select');
         var pid = sel.value;
@@ -32,7 +32,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -44,13 +44,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -59,11 +59,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['generation_mw_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }

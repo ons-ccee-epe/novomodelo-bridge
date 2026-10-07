@@ -7,9 +7,9 @@ import sys
 
 
 def _run_cli_subprocess(*args: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the cobre-bridge entry point as a real subprocess."""
+    """Invoke the novomodelo-bridge entry point as a real subprocess."""
     return subprocess.run(
-        [sys.executable, "-m", "cobre_bridge.cli", *args],
+        [sys.executable, "-m", "novomodelo_bridge.cli", *args],
         capture_output=True,
         text=True,
     )

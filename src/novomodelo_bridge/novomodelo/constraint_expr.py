@@ -1,13 +1,13 @@
 """Generic-constraint expression parsing and LHS evaluation (presentation-free).
 
-Cobre encodes each generic constraint's left-hand side as a small textual
+Novomodelo encodes each generic constraint's left-hand side as a small textual
 expression over LP variables, e.g.::
 
     "5.68 * hydro_storage(78)"
     "@rho_acum_h78 * hydro_storage(78) - line_exchange(4)"
 
 This module owns the *domain* logic for those expressions — the term parser, the
-scalar-parameter resolver, and the routine that evaluates the LHS from a Cobre
+scalar-parameter resolver, and the routine that evaluates the LHS from a Novomodelo
 simulation's parquet output. It has **no** presentation dependency, so it is the single
 shared home for both the dashboard (which renders the result) and the comparator (which
 checks it against the source model). It deliberately lives at the package top level so
@@ -31,12 +31,12 @@ _LOG = logging.getLogger(__name__)
 #   "5.68 * hydro_storage_final(78)"       — literal coefficient
 #   "hydro_generation(145)"                — implicit 1.0
 #   "- line_exchange(4)"                   — implicit -1.0
-#   "@rho_acum_h78 * hydro_storage_final(78)"  — @name coefficient (cobre sigil)
+#   "@rho_acum_h78 * hydro_storage_final(78)"  — @name coefficient (novomodelo sigil)
 #   "0.5 * @rho_eq_h47 * hydro_generation(47)"  — literal × @name scale
 #
-# ``hydro_storage_final`` (cobre's end-of-stage stored volume Sᴷ) is what the
+# ``hydro_storage_final`` (novomodelo's end-of-stage stored volume Sᴷ) is what the
 # converter emits for VminOP; the bare ``hydro_storage`` alias is still accepted
-# for older cobre cases and normalised to it in :func:`parse_expression`. The
+# for older novomodelo cases and normalised to it in :func:`parse_expression`. The
 # longer name is listed first so the alternation matches it before the prefix.
 _TERM_RE = re.compile(
     r"([+-]?\s*\d*\.?\d*)\s*\*?\s*(?:@([A-Za-z_][A-Za-z0-9_]*)\s*\*\s*)?"
@@ -56,7 +56,7 @@ def resolve_param_to_column(name: str) -> tuple[str, int] | None:
     """Map a parameter ``name`` to the (column, hydro_id) used to look it up.
 
     Returns ``(simulation_column, hydro_id)`` for the two computed parameters
-    cobre-bridge declares (``rho_eq_h{id}``, ``rho_acum_h{id}``), or ``None``
+    novomodelo-bridge declares (``rho_eq_h{id}``, ``rho_acum_h{id}``), or ``None``
     when the name is unrecognised. Callers treat unrecognised parameters as if
     they had value 0 to avoid a hard error.
     """
@@ -86,19 +86,19 @@ def scales_storage_by_rho_acum(constraint: dict) -> bool:
     return False
 
 
-def load_rho_acum_overrides(cobre_case_dir: Path) -> dict[int, dict[int, float]]:
+def load_rho_acum_overrides(novomodelo_case_dir: Path) -> dict[int, dict[int, float]]:
     """Load per-stage ρ_acum overrides from ``constraints/generic_parameters.json``.
 
     Returns ``{hydro_id: {stage_id: ρ_acum}}`` for every ``rho_acum_h{id}``
     entry the writer declared ``kind: "per_stage"`` — the energy-scaled
     coefficient (MWmonth/hm³) the VminOP/RHE LP actually uses at
-    ``@rho_acum_h{id}`` in place of cobre's ``computed`` default (the point
+    ``@rho_acum_h{id}`` in place of novomodelo's ``computed`` default (the point
     productivity ``accumulated_productivity_mw_per_m3s``). Pass the result as
     :func:`evaluate_constraint_expressions`'s ``rho_acum_overrides`` so the
     evaluated LHS matches what the LP actually solved, not the simulation's
     default productivity column.
     """
-    path = cobre_case_dir / "constraints" / "generic_parameters.json"
+    path = novomodelo_case_dir / "constraints" / "generic_parameters.json"
     out: dict[int, dict[int, float]] = {}
     if not path.exists():
         return out
@@ -162,7 +162,7 @@ def _apply_param_scale(
 ) -> None:
     """Scale ``sub["_val"]`` in place by the resolved ``@param_name`` value.
 
-    Mirrors cobre's own ``@name`` resolution at solve time. When the
+    Mirrors novomodelo's own ``@name`` resolution at solve time. When the
     parameter resolves to ``accumulated_productivity_mw_per_m3s`` and
     *rho_acum_overrides* supplies a per-stage value for *entity_id*, the
     override wins row-by-row over the simulation's default productivity
@@ -252,7 +252,7 @@ def evaluate_constraint_expressions(
     # Collect only the referenced entities (tiny subset of full data). We pull
     # productivity columns when any @name reference depends on them so the
     # LHS evaluator can multiply the literal coefficient by the resolved
-    # productivity at solve time (mirrors cobre's @name resolution).
+    # productivity at solve time (mirrors novomodelo's @name resolution).
     schema = hydros_lf.collect_schema()
     h0_cols = ["scenario_id", "stage_id", "hydro_id", "storage_final_hm3"]
     if needs_rho_eq and "equivalent_productivity_mw_per_m3s" in schema:
@@ -287,7 +287,7 @@ def evaluate_constraint_expressions(
     # Pull all three flow columns when line-touching terms are referenced;
     # the per-term branch below picks whichever column matches the
     # variable type.  ``direct_flow_mw`` and ``reverse_flow_mw`` are
-    # the non-negative LP primitives behind cobre's ``line_direct`` /
+    # the non-negative LP primitives behind novomodelo's ``line_direct`` /
     # ``line_reverse`` variables; ``net_flow_mw = direct - reverse`` is
     # the signed shorthand referenced by ``line_exchange``.
     ex_cols = [

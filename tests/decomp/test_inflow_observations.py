@@ -1,6 +1,6 @@
 """Unit tests for the DECOMP pre-study inflow-observation seed
 (``convert_recent_observation_windows``) — the ``recent_observations`` windows
-that seed cobre's PAR inflow-lag accumulator.
+that seed novomodelo's PAR inflow-lag accumulator.
 
 Tier 1 — pure Python. ``_incremental_context`` is patched so the test pins the
 window/date construction (the new logic) rather than the posto→plant topology,
@@ -15,9 +15,9 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.scenarios import convert_recent_observation_windows
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 
 # Study starts 2026-03-14 (Saturday); final stage ends at the 2026-05-01 month
 # boundary — the mar-26 reduced-case shape.
@@ -45,7 +45,7 @@ def _vazoes(monthly: pd.DataFrame | None, weekly: pd.DataFrame | None):
 def _run(monthly, weekly):
     # station_by_code maps hydro code 10 -> posto column "1"; no parents.
     with patch(
-        "cobre_bridge.decomp.scenarios._incremental_context",
+        "novomodelo_bridge.decomp.scenarios._incremental_context",
         return_value=({10: "1"}, {}),
     ):
         return convert_recent_observation_windows(

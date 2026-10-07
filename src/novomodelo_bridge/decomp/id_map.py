@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError
 
 if TYPE_CHECKING:
     from idecomp.decomp import Dadger
@@ -22,7 +22,7 @@ TRANSHIPMENT_BUS_NAME = "IV"
 
 @dataclass(frozen=True)
 class DecompIdMap:
-    """Deterministic mapping from deck codes to dense 0-based Cobre ids.
+    """Deterministic mapping from deck codes to dense 0-based Novomodelo ids.
 
     Hydro codes are the ``UH``-activated *operated* plants (rows carrying an
     initial volume); thermal codes are the ``CT``-declared plants. Both are

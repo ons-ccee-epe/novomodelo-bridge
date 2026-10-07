@@ -1,18 +1,18 @@
 """Boundary FCF importer: reads the source model's cut files and authors a
-cobre policy checkpoint.
+novomodelo policy checkpoint.
 
 :func:`import_boundary_fcf` is the single entry point: it composes the
 cut reader (``fcf/cortes.py``), the terminal-manifest bootstrap
 (``fcf/bootstrap.py``), the manifest-to-manifest mapper (``fcf/mapper.py``),
 and the checkpoint writer (``fcf/writer.py``) in order, then patches the
-converted case's ``config.json`` so cobre loads the authored ``boundary/``
+converted case's ``config.json`` so novomodelo loads the authored ``boundary/``
 checkpoint at its terminal stage. It is thin orchestration only — every
 algorithm it calls already exists in one of the four modules above; this
 module adds no new cut-mapping or checkpoint-authoring logic of its own.
 
 The importer is a **post-conversion** step: it runs against an already
 converted case directory (``convert_decomp_case``'s output), never inside the
-conversion itself, because the bootstrap stage needs a real ``cobre run`` on
+conversion itself, because the bootstrap stage needs a real ``novomodelo run`` on
 the converted case to read back its terminal state-vector layout.
 """
 
@@ -28,43 +28,46 @@ from typing import TYPE_CHECKING
 from idecomp.decomp import Dadgnl, Mlt, Vazoes
 from inewave.newave import Cortesh
 
-from cobre_bridge.cobre.case_writer import CaseWriter
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.decomp.converters.anticipated import read_gnl_model
-from cobre_bridge.decomp.converters.cadastro import build_effective_cadastro
-from cobre_bridge.decomp.fcf.bootstrap import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.decomp.converters.anticipated import read_gnl_model
+from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
+from novomodelo_bridge.decomp.fcf.bootstrap import (
     bootstrap_terminal_manifest,
     ensure_writer_binding,
 )
-from cobre_bridge.decomp.fcf.cortes import (
+from novomodelo_bridge.decomp.fcf.cortes import (
     read_cortes,
     required_inflow_lag_depth,
     summarize_cut_families,
 )
-from cobre_bridge.decomp.fcf.mapper import (
+from novomodelo_bridge.decomp.fcf.mapper import (
     GnlRingPlan,
     GnlThermalTarget,
     map_boundary_cuts,
 )
-from cobre_bridge.decomp.fcf.writer import (
+from novomodelo_bridge.decomp.fcf.writer import (
     build_metadata,
     build_stage_cuts_payload,
     write_boundary_checkpoint,
 )
-from cobre_bridge.decomp.files import DecompFiles
-from cobre_bridge.decomp.inflow_mlt import build_incremental_mlt, coupling_lag_means
-from cobre_bridge.decomp.scenarios import convert_recent_observation_windows
+from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.decomp.inflow_mlt import (
+    build_incremental_mlt,
+    coupling_lag_means,
+)
+from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.anticipated import GnlCommitmentModel
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.fcf.cortes import BoundaryCuts
-    from cobre_bridge.decomp.fcf.mapper import MappingResult
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
+    from novomodelo_bridge.decomp.fcf.mapper import MappingResult
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
 
@@ -87,7 +90,7 @@ def _gnl_targets_from(
 
     Joins ``model.thermals`` (ascending by ``code``, read from ``dadgnl``'s
     ``tg`` registry by
-    :func:`~cobre_bridge.decomp.converters.anticipated.read_gnl_model` —
+    :func:`~novomodelo_bridge.decomp.converters.anticipated.read_gnl_model` —
     reconciled with, never re-derived) onto the converted case's GNL
     thermal ids: ``thermals_doc["thermals"]`` entries carrying
     ``anticipated_config``, sorted ascending, are exactly
@@ -171,9 +174,9 @@ def _post_horizon_start(case_dir: Path) -> int | None:
     disables the covered-lane filter entirely for that case.
 
     The earliest stage's ``year*10000 + month*100 + 1`` month-anchor mirrors
-    the granularity cobre's excised anticipated ring dates every surviving
+    the granularity novomodelo's excised anticipated ring dates every surviving
     slot at (its own ``year_month_day_anchor``): the já-comandada (class-4)
-    window is excised from the ring entirely — cobre's ``ring_index`` returns
+    window is excised from the ring entirely — novomodelo's ``ring_index`` returns
     ``None`` for it, so it never reaches the terminal manifest — which under
     the source model's month-boundary study makes this anchor the first
     signaled (class-3) month.
@@ -204,7 +207,7 @@ def _final_stage_block_hours(case_dir: Path) -> list[float]:
     ``hours`` values in file order — patamar order, matching the source
     model's own cut axis (a weekly deck's ~168 h split across blocks, or the
     coupling month's post-exclusion hours — e.g. 648 h for a 27-day April) —
-    so :func:`~cobre_bridge.decomp.fcf.mapper.map_boundary_cuts`'s GNL branch
+    so :func:`~novomodelo_bridge.decomp.fcf.mapper.map_boundary_cuts`'s GNL branch
     can weight each ``pi_gnl`` patamar column by its own coupling block's
     hours, rather than the stage's total.
     :func:`_coupling_stage_hours` sums this same vector for the
@@ -242,7 +245,7 @@ def _coupling_stage_hours(case_dir: Path) -> float:
     ``fcf/mapper.py``'s header): the source integrates that rate over its
     coupling period's actual hours to obtain the future-cost value, so the
     mapper needs those same hours (``cost_unit_hours``) to reproduce it in
-    cobre's plain-$ objective. Using the actual stage hours (not a fixed 730-h
+    novomodelo's plain-$ objective. Using the actual stage hours (not a fixed 730-h
     month) reproduces the source's ``E(CF)`` to ~2-3 %, where a fixed month
     overshoots by ~15 % on a short coupling period.
 
@@ -270,7 +273,7 @@ def _read_complexo_map(dadger_path: Path) -> dict[int, list[int]]:
     carrying a single set of future-cost coefficients in the boundary cuts — to
     the individual DECOMP plants that share it. The boundary cut header prices
     the complexo (which is absent from the DECOMP model), so
-    :func:`~cobre_bridge.decomp.fcf.mapper.map_boundary_cuts` replicates its
+    :func:`~novomodelo_bridge.decomp.fcf.mapper.map_boundary_cuts` replicates its
     coefficients onto these components. Each ``CX <complexo> <component>`` line
     appends ``component`` to ``complexo``'s list; returns an empty map when the
     deck carries no ``CX`` register or the file is absent (the shared case's
@@ -293,7 +296,7 @@ def _read_complexo_map(dadger_path: Path) -> dict[int, list[int]]:
 def _find_mlt(deck_dir: Path) -> Path | None:
     """Locate the deck's ``mlt.dat`` (média de longo termo), case-insensitively.
 
-    ``mlt.dat`` is not one of :class:`~cobre_bridge.decomp.files.DecompFiles`'
+    ``mlt.dat`` is not one of :class:`~novomodelo_bridge.decomp.files.DecompFiles`'
     resolved inputs (it feeds only the boundary FCF's inflow-lag mean fold, not
     the conversion), so it is discovered here directly. Returns ``None`` when the
     deck carries none.
@@ -314,8 +317,8 @@ def _boundary_inflow_context(
     """The effective cadastro, calendar, and per-plant inflow-lag mean fold.
 
     Reads the deck's ``mlt.dat`` and builds the seasonal-mean fold vector
-    (:func:`~cobre_bridge.decomp.inflow_mlt.build_incremental_mlt` incrementalises
-    the natural MLT, :func:`~cobre_bridge.decomp.inflow_mlt.coupling_lag_means`
+    (:func:`~novomodelo_bridge.decomp.inflow_mlt.build_incremental_mlt` incrementalises
+    the natural MLT, :func:`~novomodelo_bridge.decomp.inflow_mlt.coupling_lag_means`
     aligns it to the cut's lag-depth axis at ``coupling_month``), returning it
     alongside the ``effective``/``calendar`` the recent-observation seed also
     needs — the two ship together (mean fold + raw seed), sharing this one
@@ -353,9 +356,9 @@ def _seed_recent_observations(
 ) -> int:
     """Add ``recent_observations`` to the case's ``initial_conditions.json``.
 
-    Seeds cobre's PAR inflow-lag accumulator with the deck's pre-study observed
+    Seeds novomodelo's PAR inflow-lag accumulator with the deck's pre-study observed
     (already-incremental) inflows
-    (:func:`~cobre_bridge.decomp.scenarios.convert_recent_observation_windows`),
+    (:func:`~novomodelo_bridge.decomp.scenarios.convert_recent_observation_windows`),
     so the boundary cut's inflow-lag terms are evaluated against the real recent
     inflows rather than 0. Mutates the pipeline's own in-memory
     ``initial_conditions`` dict (the one already written to
@@ -377,7 +380,7 @@ def _build_gnl_ring_plan(case_dir: Path, deck_files: DecompFiles) -> GnlRingPlan
 
     Deck-reading wrapper around :func:`_gnl_targets_from`: returns ``None``
     when the deck carries no ``dadgnl`` file at all, or when
-    :func:`~cobre_bridge.decomp.converters.anticipated.read_gnl_model` reports the deck
+    :func:`~novomodelo_bridge.decomp.converters.anticipated.read_gnl_model` reports the deck
     is GNL-off (no committed dispatch, the G6 gate) — reconciled with that
     reader's own gate, never re-derived here. Otherwise threads
     :func:`_post_horizon_start` into the resolved plan so
@@ -407,7 +410,7 @@ def _gnl_deviation_rows(
     formula exactly — never the placement/drop logic itself, which stays the
     mapper's job — to recompute, from the raw ``pi_gnl`` coefficients, how
     far each active cut's per-patamar sensitivities deviate from the uniform
-    rate cobre's hours-weighted fan-out reconstructs. For each unique
+    rate novomodelo's hours-weighted fan-out reconstructs. For each unique
     ``(submercado, lag)`` pair named by ``gnl_plan.targets``, returns
     ``(submercado, lag, carried_sum, relative_spread, absolute_spread)`` from
     whichever active record maximises the relative spread
@@ -474,7 +477,7 @@ def _emit_import_diagnostics(
 
     Always emits ``boundary-fcf-cut-family-summary`` — the importer always
     authors cuts, so the family triage (built from
-    :func:`~cobre_bridge.decomp.fcf.cortes.summarize_cut_families`, never
+    :func:`~novomodelo_bridge.decomp.fcf.cortes.summarize_cut_families`, never
     re-implemented here) is always informative. Additionally emits
     ``boundary-fcf-source-only-plants-dropped`` when ``mapping.dropped`` is
     non-empty — a source-only plant has no target ``HydroStorage`` slot, so
@@ -491,7 +494,7 @@ def _emit_import_diagnostics(
     dated-slot drops); ``gnl_plan=None`` (the default) gates it off
     entirely, so 2-arg callers are unchanged.
 
-    Pure side effect via :func:`cobre_bridge.core.diagnostics.emit`: reads
+    Pure side effect via :func:`novomodelo_bridge.core.diagnostics.emit`: reads
     ``cuts``/``mapping``/``gnl_plan`` but does not alter any of them, so it
     can run before the checkpoint is written without changing the checkpoint
     bytes or the importer's return value. Mirrors ``decomp/pipeline.py``'s
@@ -624,10 +627,10 @@ def _emit_import_diagnostics(
 def _patch_policy_boundary(writer: CaseWriter, config: dict) -> None:
     """Set ``["policy"]["boundary"]`` in ``config.json``, preserving the rest.
 
-    The block carries only ``path``: cobre's boundary loader selects the
+    The block carries only ``path``: novomodelo's boundary loader selects the
     source pool by calendar date (the pool whose ``priced_state_date`` equals
     the loading study's own boundary date), so no stage/pool index is written.
-    ``policy.boundary.source_stage`` is removed from cobre's config contract
+    ``policy.boundary.source_stage`` is removed from novomodelo's config contract
     and rejected by its deny-unknown-fields validation; ``strict`` is left
     unset (its ``false`` default), so a source pricing more state than the
     study models loads and records the superset in the reconciliation report
@@ -679,7 +682,7 @@ def import_boundary_fcf(
        records (``case.files.cortes``), deriving the boundary stage from the
        cut file's own trailer when it is a single-stage partition export.
     3. Checks the writer binding, then runs a 1-iteration in-process
-       ``cobre.run.run`` pass on ``case_dir`` (checkpoint under ``work_dir``,
+       ``novomodelo.run.run`` pass on ``case_dir`` (checkpoint under ``work_dir``,
        the case is never mutated) to read back its terminal state-vector
        layout.
     4. Builds the deck's GNL ring plan (:func:`_build_gnl_ring_plan`) and the
@@ -715,7 +718,7 @@ def import_boundary_fcf(
     RuntimeError
         Propagated verbatim from ``fcf.bootstrap``'s ``ensure_writer_binding``
         (writer binding missing) or ``bootstrap_terminal_manifest`` (the
-        in-process ``cobre.run.run`` failed or its checkpoint was malformed).
+        in-process ``novomodelo.run.run`` failed or its checkpoint was malformed).
     ValueError
         Raised directly when cut files are present but *config* or
         *initial_conditions* is ``None`` (a caller must thread the pipeline's
@@ -736,7 +739,7 @@ def import_boundary_fcf(
             "initial_conditions once cut files are present"
         )
 
-    # A real, non-dry-run writer: the importer runs a real ``cobre`` pass and
+    # A real, non-dry-run writer: the importer runs a real ``novomodelo`` pass and
     # never runs under ``--dry-run``.
     writer = CaseWriter(case_dir)
 
@@ -746,17 +749,17 @@ def import_boundary_fcf(
     # derived value inherits `numpy.int32` from `cortesh.ano_inicio_estudo`'s
     # own numpy dtype (confirmed against this deck) — narrow to a plain `int`
     # here, at the boundary between the numpy-sourced reader and the
-    # JSON/cobre-FFI payloads this function builds below.
+    # JSON/novomodelo-FFI payloads this function builds below.
     boundary_stage = int(cuts.boundary_stage)
 
     ensure_writer_binding()
 
-    # No explicit inflow-lag depth is supplied to the bootstrap: cobre sizes the
+    # No explicit inflow-lag depth is supplied to the bootstrap: novomodelo sizes the
     # HydroInflowLag state block from the case's own PAR(p) model order (the same
     # autoregressive structure the boundary cuts' pi_qafl terms derive from), so
     # the terminal manifest already carries the slots the mapper places those
     # terms onto. The former state_space.inflow_lag_depth override was redundant
-    # with that sizing and is rejected by cobre >= 0.14.
+    # with that sizing and is rejected by novomodelo >= 0.14.
     manifest = bootstrap_terminal_manifest(case_dir, work_dir=work_dir)
     gnl_plan = _build_gnl_ring_plan(case_dir, case.files)
     # Inflow-lag mean fold + recent-observation seed (built together, shipped
@@ -780,7 +783,7 @@ def import_boundary_fcf(
     complexo_components = _read_complexo_map(case.files.dadger)
     # The DECOMP case has no PAR(p) model, so the bootstrap manifest carries no
     # HydroInflowLag slots; the deepest lag the boundary cuts reference is
-    # declared to the writer, which reserves the canonical slots (cobre-side
+    # declared to the writer, which reserves the canonical slots (novomodelo-side
     # design B — see the module's cortes.required_inflow_lag_depth). The mapper
     # then emits the lag terms keyed by hydro rather than into the (absent) slots.
     inflow_lag_depth = required_inflow_lag_depth(summarize_cut_families(cuts))
@@ -796,10 +799,10 @@ def import_boundary_fcf(
         inflow_lag_depth=inflow_lag_depth,
     )
     _LOG.info(
-        "scaling boundary FCF coefficients to cobre cost units over the "
+        "scaling boundary FCF coefficients to novomodelo cost units over the "
         "coupling stage's %.0f h (the source's per-hour cut rate integrated "
         "over the coupling period; inflow-lag additionally x C_M3S2HM3 for "
-        "cobre's m3/s lag state)",
+        "novomodelo's m3/s lag state)",
         cost_unit_hours,
     )
     _emit_import_diagnostics(cuts, mapping, gnl_plan)

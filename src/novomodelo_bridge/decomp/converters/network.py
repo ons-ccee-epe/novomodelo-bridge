@@ -10,7 +10,7 @@ The deficit emitters are deliberately gated: the decks in hand carry a
 single 100 %-depth segment with one cost, uniform across blocks and
 stages. Anything richer fails loudly rather than being silently
 approximated (per-block deficit costs and stage-varying deficit costs
-have no Cobre encoding today).
+have no Novomodelo encoding today).
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _COST_COLUMN = re.compile(r"^custo_(\d+)$")
 _LIMIT_COLUMN = re.compile(r"^limite_superior_(\d+)$")
@@ -40,7 +40,7 @@ _FULL_DEPTH_PERCENT = 100.0
 def _bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
     """Extract one deficit cost per subsystem code from the ``CD`` records.
 
-    Enforces the single-segment shape the Cobre bus model encodes: one
+    Enforces the single-segment shape the Novomodelo bus model encodes: one
     curve per subsystem, 100 % depth, one cost uniform across blocks and
     across every declared stage.
     """
@@ -118,7 +118,7 @@ def convert_buses(
     )
 
     return {
-        "$schema": cobre_schemas.schema_url_for("system/buses.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/buses.json"),
         "buses": buses,
     }
 
@@ -209,14 +209,14 @@ def convert_lines(
     limit of each direction, and — only for (line, stage) entries whose
     blocks actually differ from that base — one per-block override row
     (``block_id = 0..n-1``) per declared block. Base and block rows coexist
-    (cobre rule 36). Block rows carry the ``IA`` record's own per-block
+    (novomodelo rule 36). Block rows carry the ``IA`` record's own per-block
     limit as an absolute MW value, read directly with no factor round-trip.
     The unbounded sentinel (99999) passes through as a plain large capacity.
 
-    TRACKED COBRE-GAP WORKAROUND (C4, the cobre repository's
+    TRACKED NOVOMODELO-GAP WORKAROUND (C4, the novomodelo repository's
     conversion-found-improvements registry): a deck that declares no ``IA``
     pairs still emits ``system/lines.json`` with an empty ``lines`` list,
-    because cobre requires the file structurally even for a lineless study.
+    because novomodelo requires the file structurally even for a lineless study.
     Remove this note when the registry's C4 entry closes.
     """
     calendar = case.calendar
@@ -287,7 +287,10 @@ def convert_lines(
         schema=_LINE_BOUNDS_SCHEMA,
     )
     return (
-        {"$schema": cobre_schemas.schema_url_for("system/lines.json"), "lines": lines},
+        {
+            "$schema": novomodelo_schemas.schema_url_for("system/lines.json"),
+            "lines": lines,
+        },
         bounds,
     )
 
@@ -441,7 +444,9 @@ def convert_pumping_stations(
     ue = dadger.ue(df=True)
     if ue is None or ue.empty:
         return {
-            "$schema": cobre_schemas.schema_url_for("system/pumping_stations.json"),
+            "$schema": novomodelo_schemas.schema_url_for(
+                "system/pumping_stations.json"
+            ),
             "pumping_stations": [],
         }
 
@@ -469,6 +474,6 @@ def convert_pumping_stations(
             }
         )
     return {
-        "$schema": cobre_schemas.schema_url_for("system/pumping_stations.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/pumping_stations.json"),
         "pumping_stations": stations,
     }

@@ -1,14 +1,14 @@
 """Provenance manifest for a conversion run.
 
 Defines :class:`ConversionManifest`, a provenance record emitted alongside a
-converted Cobre case directory so that a downstream agent can know exactly which
+converted Novomodelo case directory so that a downstream agent can know exactly which
 bridge version, git state, source-model case directory, and input files produced
 a given conversion, plus the entity counts and the diagnostics raised during the
-run. It mirrors :mod:`cobre_bridge.comparators.manifest`; both subclass
-:class:`cobre_bridge.core.provenance.ProvenanceManifest` for their shared
+run. It mirrors :mod:`novomodelo_bridge.comparators.manifest`; both subclass
+:class:`novomodelo_bridge.core.provenance.ProvenanceManifest` for their shared
 ``to_json``/``from_json`` behaviour.
 
-The shared :func:`cobre_bridge.core.git.git_sha` runs the git subprocess only
+The shared :func:`novomodelo_bridge.core.git.git_sha` runs the git subprocess only
 inside :meth:`ConversionManifest.create`, never at import time.
 """
 
@@ -19,20 +19,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-import cobre_bridge
-from cobre_bridge.cobre.compat import MIN_COBRE_VERSION
-from cobre_bridge.core.git import git_sha
-from cobre_bridge.core.provenance import ProvenanceManifest
-from cobre_bridge.ui.console import print_status
+import novomodelo_bridge
+from novomodelo_bridge.core.git import git_sha
+from novomodelo_bridge.core.provenance import ProvenanceManifest
+from novomodelo_bridge.novomodelo.compat import MIN_NOVOMODELO_VERSION
+from novomodelo_bridge.ui.console import print_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rich.console import Console
 
-    from cobre_bridge.core.conversion import ConversionReport
-    from cobre_bridge.decomp.files import DecompFiles
-    from cobre_bridge.newave.files import NewaveFiles
+    from novomodelo_bridge.core.conversion import ConversionReport
+    from novomodelo_bridge.decomp.files import DecompFiles
+    from novomodelo_bridge.newave.files import NewaveFiles
 
 
 @dataclass
@@ -55,12 +55,12 @@ class ConversionManifest(ProvenanceManifest):
     input_files: list[dict[str, object]] = field(default_factory=list)
     diagnostics_summary: dict[str, int] = field(default_factory=dict)
     diagnostics: list[dict[str, object]] = field(default_factory=list)
-    # Minimum cobre version the converted output requires. ``convert`` sets it on
+    # Minimum novomodelo version the converted output requires. ``convert`` sets it on
     # every case (all system entities now carry ``operational_start_date``, added
-    # in cobre 0.10.0). Defaults to ``None`` so an older manifest that predates the
+    # in novomodelo 0.10.0). Defaults to ``None`` so an older manifest that predates the
     # field round-trips through ``from_json`` unchanged. Appended last so existing
     # positional construction stays unchanged.
-    min_cobre_version: str | None = None
+    min_novomodelo_version: str | None = None
 
     _NOT_FOUND_LABEL: ClassVar[str] = "Conversion manifest"
 
@@ -75,16 +75,16 @@ class ConversionManifest(ProvenanceManifest):
         input_files: list[dict[str, object]],
         diagnostics_summary: dict[str, int],
         diagnostics: list[dict[str, object]],
-        min_cobre_version: str | None = None,
+        min_novomodelo_version: str | None = None,
     ) -> ConversionManifest:
         """Build a manifest, capturing bridge version, git SHA, and UTC time.
 
-        ``bridge_version`` is taken from :data:`cobre_bridge.__version__`,
+        ``bridge_version`` is taken from :data:`novomodelo_bridge.__version__`,
         ``timestamp`` from :func:`datetime.now` in UTC (ISO 8601) — the only
         non-deterministic field — and ``git_sha`` from
-        :func:`cobre_bridge.core.git.git_sha`. The
+        :func:`novomodelo_bridge.core.git.git_sha`. The
         ``source_dir`` / ``output_dir`` paths are stringified via ``str(...)``.
-        ``min_cobre_version`` records the minimum cobre version the output
+        ``min_novomodelo_version`` records the minimum novomodelo version the output
         requires (``None`` only when omitted, e.g. by an older caller). The
         remaining data fields are caller-supplied.
         """
@@ -92,14 +92,14 @@ class ConversionManifest(ProvenanceManifest):
             command=command,
             source_dir=str(source_dir),
             output_dir=str(output_dir),
-            bridge_version=cobre_bridge.__version__,
+            bridge_version=novomodelo_bridge.__version__,
             git_sha=git_sha(),
             timestamp=datetime.now(tz=UTC).isoformat(),
             entity_counts=entity_counts,
             input_files=input_files,
             diagnostics_summary=diagnostics_summary,
             diagnostics=diagnostics,
-            min_cobre_version=min_cobre_version,
+            min_novomodelo_version=min_novomodelo_version,
         )
 
 
@@ -124,7 +124,7 @@ def _write_conversion_manifest(
     swallowed — the conversion itself already succeeded, so neither changes the
     exit code.
     """
-    from cobre_bridge.core.provenance import (
+    from novomodelo_bridge.core.provenance import (
         hash_input_files,
         summarize_diagnostics,
     )
@@ -146,11 +146,11 @@ def _write_conversion_manifest(
         "lines": report.line_count,
         "stages": report.stage_count,
     }
-    # Record the minimum cobre version the output requires. Every converted case
-    # now emits a ``training.parallelism.backward_scheduler`` block (cobre 0.12.0+),
-    # ``operational_start_date`` on all system entities (cobre 0.10.0+), and a
+    # Record the minimum novomodelo version the output requires. Every converted case
+    # now emits a ``training.parallelism.backward_scheduler`` block (novomodelo 0.12.0+),
+    # ``operational_start_date`` on all system entities (novomodelo 0.10.0+), and a
     # mandatory hydro ``unit_groups`` array with the top-level ``bus_id`` removed
-    # (cobre 0.13.0+), so the output is only loadable by cobre >= MIN_COBRE_VERSION.
+    # (novomodelo 0.13.0+), so the output is only loadable by novomodelo >= MIN_NOVOMODELO_VERSION.
     manifest = ConversionManifest.create(
         command,
         src,
@@ -159,7 +159,7 @@ def _write_conversion_manifest(
         input_files=hash_input_files(files),
         diagnostics_summary=summarize_diagnostics(report.diagnostics),
         diagnostics=[d.to_dict() for d in report.diagnostics],
-        min_cobre_version=MIN_COBRE_VERSION,
+        min_novomodelo_version=MIN_NOVOMODELO_VERSION,
     )
 
     path = dst / "conversion_manifest.json"

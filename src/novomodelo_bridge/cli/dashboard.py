@@ -5,11 +5,11 @@ from __future__ import annotations
 import webbrowser
 from pathlib import Path
 
-from cobre_bridge.cli.args import DashboardArgs
-from cobre_bridge.cli.failure import _emit_convert_json, _fail
-from cobre_bridge.cli.verdict import build_verdict, dashboard_summary
-from cobre_bridge.core.errors import CobreOutputError
-from cobre_bridge.ui.console import (
+from novomodelo_bridge.cli.args import DashboardArgs
+from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
+from novomodelo_bridge.cli.verdict import build_verdict, dashboard_summary
+from novomodelo_bridge.core.errors import NovomodeloOutputError
+from novomodelo_bridge.ui.console import (
     get_console,
     print_status,
     render_diagnostics,
@@ -19,18 +19,18 @@ from cobre_bridge.ui.console import (
 
 def _run_dashboard(args: DashboardArgs) -> None:
     """Execute the dashboard subcommand."""
-    from cobre_bridge.dashboard import build_dashboard
+    from novomodelo_bridge.dashboard import build_dashboard
 
     case_dir: Path = args.case_dir.resolve()
     if not (case_dir / "output" / "simulation").exists():
         _fail(
             "dashboard",
             args,
-            CobreOutputError(f"no simulation output found in {case_dir}"),
+            NovomodeloOutputError(f"no simulation output found in {case_dir}"),
             1,
         )
 
-    from cobre_bridge.core import diagnostics as dx
+    from novomodelo_bridge.core import diagnostics as dx
 
     output_path: Path = args.output or (case_dir / "dashboard.html")
     if not args.json_output and not args.quiet:

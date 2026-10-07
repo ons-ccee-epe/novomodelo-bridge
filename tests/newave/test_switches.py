@@ -1,4 +1,4 @@
-"""The ``dger.dat`` switch table (``cobre_bridge.newave.switches``)."""
+"""The ``dger.dat`` switch table (``novomodelo_bridge.newave.switches``)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.newave.switches import (
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.newave.switches import (
     SWITCH_OFF_CODE,
     DgerSwitches,
     switch_off_diagnostic,

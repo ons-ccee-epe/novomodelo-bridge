@@ -1,14 +1,14 @@
 """Manifest-to-manifest mapper for the source model's boundary cuts.
 
-The bootstrap stage (``fcf/bootstrap.py``) reads back cobre's
+The bootstrap stage (``fcf/bootstrap.py``) reads back novomodelo's
 terminal ``entity_manifest`` — the target case's per-slot state-vector
 layout. This module maps each of the source model's boundary cuts
-(``fcf/cortes.py``'s :class:`~cobre_bridge.decomp.fcf.cortes.BoundaryCuts`)
+(``fcf/cortes.py``'s :class:`~novomodelo_bridge.decomp.fcf.cortes.BoundaryCuts`)
 onto that layout: storage terms join by plant code, inflow-lag
 terms join 1:1 by calendar-month lag slot, and — when the caller supplies a
 :class:`GnlRingPlan` — GNL-anticipated-ring terms join each target's
 *covered* dated ring slot(s) via a chain-rule patamar sum over ``pi_gnl``
-(narrowed to the class-3 signaled, month-anchored lanes cobre's excised ring
+(narrowed to the class-3 signaled, month-anchored lanes novomodelo's excised ring
 actually carries). A source plant with no match in the target manifest is
 dropped (D3), never folded into a neighbour, and recorded in
 :class:`MappingResult.dropped` for the diagnostics layer to render; a GNL
@@ -27,21 +27,21 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.units import C_M3S2HM3
+from novomodelo_bridge.core.units import C_M3S2HM3
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from cobre_bridge.decomp.fcf.bootstrap import TerminalManifest
-    from cobre_bridge.decomp.fcf.cortes import BoundaryCuts
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
+    from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 # --- FCF cost-unit conversion -------------------------------------------------
 # The source's individualized cut coefficients carry three unit conventions (see
 # ``nwlistcf.rel``'s ``UNIDADES DE MEDIDA`` header): ``RHS [($·mês)/h]`` and
 # ``PIVARM``/``PIAFL [($·mês)/(Hm³·h)]`` are a *per-hour* rate with an implicit
 # monthly normalization, and ``PIGTAD`` (the GNL / anticipated-thermal term,
-# ``pi_gnl``) is an energy price ``[$/MWh]`` — none of them a plain cost. cobre's
+# ``pi_gnl``) is an energy price ``[$/MWh]`` — none of them a plain cost. novomodelo's
 # terminal future cost enters an objective already in ``$`` (the same base as the
 # converted immediate costs), so every FCF term must be brought to ``$`` over the
 # coupling stage's hours. :func:`map_boundary_cuts` takes that hour count as
@@ -51,15 +51,15 @@ if TYPE_CHECKING:
 # month overshoots by ~15% on a short coupling period). The GNL term needs those
 # same hours split *per coupling block* (``coupling_block_hours``, patamar order)
 # rather than summed — see the next paragraph. Without any factor the loaded FCF
-# is ~700× too small, cobre under-values stored water by three orders of
+# is ~700× too small, novomodelo under-values stored water by three orders of
 # magnitude, drains the reservoirs, and the boundary policy is numerically inert.
 #
 # The intercept and storage (``PIVARM``) terms take ``× cost_unit_hours`` alone:
 # ``× cost_unit_hours`` integrates the per-hour rate and the storage state is
 # already Hm³. The GNL (``PIGTAD``) term takes a *per-block, hours-weighted*
 # collapse instead of that flat ``× cost_unit_hours`` — ``pi_gnl`` is an energy
-# price ``$/MWh`` pricing cobre's anticipated-thermal ring state, a flat power
-# dispatch ``G`` [MW] (``cobre-core`` ``generic_constraint.rs``: "anticipated
+# price ``$/MWh`` pricing novomodelo's anticipated-thermal ring state, a flat power
+# dispatch ``G`` [MW] (``novomodelo-core`` ``generic_constraint.rs``: "anticipated
 # thermal unit (MW)"). The energy delivered in coupling block ``p`` is ``G · h_p``,
 # so the chain rule gives ``∂E(CF)/∂G = Σ_p pi_gnl[p] · h_p`` — the coupling
 # stage's *per-block* hours in patamar order (``coupling_block_hours``), never its
@@ -69,10 +69,10 @@ if TYPE_CHECKING:
 # Hm³-to-m³/s conversion. The inflow-lag (``PIAFL``) term
 # takes an *additional* ``× C_M3S2HM3``: ``PIAFL`` is per-Hm³, so
 # ``× cost_unit_hours`` yields ``R$/Hm³`` — correct against a storage state in
-# Hm³, but cobre's *inflow-lag* state variable is a raw flow rate in **m³/s**
+# Hm³, but novomodelo's *inflow-lag* state variable is a raw flow rate in **m³/s**
 # (the same physical quantity as the ``z_inflow`` column, stored unscaled in the
 # state vector). Converting ``R$/Hm³ → R$/(m³/s)`` multiplies by the fixed
-# Hm³-per-(m³/s) month factor :data:`~cobre_bridge.core.units.C_M3S2HM3`
+# Hm³-per-(m³/s) month factor :data:`~novomodelo_bridge.core.units.C_M3S2HM3`
 # (``= 2.628``, the source's monthly inflow-volume convention, per the SDDP
 # review): a 1 m³/s recent inflow represents 2.628 Hm³ of monthly volume, so it
 # carries 2.628× the R$/Hm³ water value. Storage must NOT take this factor and
@@ -85,13 +85,13 @@ if TYPE_CHECKING:
 # The source's PAR(p) inflow-lag term prices the inflow *deviation from the
 # seasonal mean* — its state is the increment ``Q_ℓ - μ_ℓ`` about the long-term
 # mean ``μ_ℓ`` (the MLT), not the absolute inflow (reference manual §5.1.9.2:
-# energies are computed on incremental inflows). But cobre evaluates the loaded
+# energies are computed on incremental inflows). But novomodelo evaluates the loaded
 # cut at its *raw* inflow-lag state ``Q_ℓ`` (the PAR lag coefficients are stored
 # "in original units"; the standardized ``σ·η`` form lives only in the forward
 # inflow model, not the loaded cut). Feeding raw ``Q_ℓ`` against a coefficient
 # built for the deviation over-subtracts ``Σ_ℓ PIAFL_ℓ·μ_ℓ`` and over-drains the
 # reservoirs (observed: converged thermal −19.6→−35.5 %, spot −35.4→−55.9 %).
-# The fix folds the mean into the intercept instead of touching cobre's state:
+# The fix folds the mean into the intercept instead of touching novomodelo's state:
 # with ``μ_ℓ`` supplied per plant per lag (``map_boundary_cuts``'s
 # ``inflow_lag_means``, built by ``decomp/inflow_mlt.py``), each cut's RHS is
 # reduced by ``Σ_ℓ (PIAFL_scaled_ℓ)·μ_ℓ`` so the loaded cut reads
@@ -99,11 +99,11 @@ if TYPE_CHECKING:
 # the raw state, per scenario and per lag. ``σ`` is not needed: ``PIAFL`` is
 # per-Hm³ (``1/σ`` is already inside it), so only the means matter. The fold uses
 # the *scaled* coefficient (``× cost_unit_hours × C_M3S2HM3``) and ``μ_ℓ`` in
-# m³/s (cobre's raw lag-state units), and folds only the lag terms actually
+# m³/s (novomodelo's raw lag-state units), and folds only the lag terms actually
 # placed — a dropped plant/lag contributes nothing, so the RHS can never carry a
-# mean cobre will not offset with a matching ``Σ PIAFL·Q`` term.
+# mean novomodelo will not offset with a matching ``Σ PIAFL·Q`` term.
 
-#: cobre `policy.fbs` entity_type codes (confirmed against `policy_export.rs`).
+#: novomodelo `policy.fbs` entity_type codes (confirmed against `policy_export.rs`).
 _HYDRO_STORAGE = 0
 _HYDRO_INFLOW_LAG = 1
 _ANTICIPATED_THERMAL_STATE = 2
@@ -112,7 +112,7 @@ _HYDRO_TRANSIT_BUCKET = 3
 #: `HydroStorage`'s `subindex` is always 0 (policy.fbs: one slot per plant).
 _STORAGE_SUBINDEX = 0
 
-#: cobre's `ENTITY_SLOT_DATE_SENTINEL` (`i32::MIN`), the "no date" value for
+#: novomodelo's `ENTITY_SLOT_DATE_SENTINEL` (`i32::MIN`), the "no date" value for
 #: every per-slot date field — here an `AnticipatedThermalState` slot whose
 #: `interval_start` is unset (the undated in-study anticipation, already priced
 #: by the converter's `past_anticipated_commitments`), never a GNL target.
@@ -127,10 +127,10 @@ class MappedCut:
     ``TerminalManifest.state_dimension`` — every target slot has an
     explicit coefficient, never merely unset. ``intercept`` is the source
     record's ``rhs`` (the ``alpha - beta'xhat`` form; never re-derived, per
-    §2.1), scaled to cobre's cost units and — when :func:`map_boundary_cuts`
+    §2.1), scaled to novomodelo's cost units and — when :func:`map_boundary_cuts`
     is given ``inflow_lag_means`` — reduced by the seasonal-mean fold
     ``Σ placed_lag_coef · mu`` (see the module header). The intercept and every
-    coefficient are scaled to cobre's cost units by :func:`map_boundary_cuts` —
+    coefficient are scaled to novomodelo's cost units by :func:`map_boundary_cuts` —
     intercept and storage by ``× cost_unit_hours``, inflow-lag by an additional
     ``× C_M3S2HM3``, and GNL by the per-block ``coupling_block_hours``
     hours-weighted collapse (see the module header). ``cut_id``, ``iteration``,
@@ -146,11 +146,11 @@ class MappedCut:
     iteration: int
     forward_pass_index: int
     is_active: bool
-    #: Inflow-lag gradient terms keyed by cobre hydro id (``{hydro_id:
+    #: Inflow-lag gradient terms keyed by novomodelo hydro id (``{hydro_id:
     #: (coef_depth1, …, coef_depthN)}``), separate from the storage-aligned
     #: ``coefficients``. Populated only when the boundary needs lag slots the
     #: target manifest does not yet carry (``map_boundary_cuts``'s
-    #: ``inflow_lag_depth``); cobre's ``write_policy_checkpoint`` reserves the
+    #: ``inflow_lag_depth``); novomodelo's ``write_policy_checkpoint`` reserves the
     #: canonical ``HydroInflowLag`` slots and places these values. Empty (the
     #: default) when the manifest already carries the lag slots (placed into
     #: ``coefficients``) or the boundary prices no inflow-lag state.
@@ -178,7 +178,7 @@ class DroppedTerm:
 class GnlThermalTarget:
     """One GNL thermal's ring membership: which `pi_gnl` axes feed it.
 
-    ``thermal_id`` is the cobre ring `entity_id`; ``submercado`` is the
+    ``thermal_id`` is the novomodelo ring `entity_id`; ``submercado`` is the
     1-based source submercado index matching the `pi_gnl` sbm-major column
     layout (`cortes.py::_gnl_columns`); ``nl_lag`` is the plant's 1-based
     dispatch-anticipation lag — the `pi_gnl` lag-axis index whose coefficient
@@ -199,7 +199,7 @@ class GnlRingPlan:
     contract. ``post_horizon_start`` is the ``YYYYMM01`` month-anchor of the
     earliest post-study stage, computed by the importer from
     ``post_study_stages.json`` — this module stays deck-free and never reads
-    that file itself, only the threaded-in int. Under cobre's excised
+    that file itself, only the threaded-in int. Under novomodelo's excised
     anticipated ring, a dated ring slot is *covered* (receives the `pi_gnl`
     coefficient) when ``post_horizon_start is None`` (no filter — the
     default, so every existing construction keeps placing on all dated
@@ -262,7 +262,7 @@ def _default_lag_slot_of(depth: int) -> int:
 def _slot_int(slot: Mapping[str, object], field: str) -> int:
     """Extract `field` from a manifest slot dict, validating it is an `int`.
 
-    cobre's own `load_policy` hands back each slot as an untyped
+    novomodelo's own `load_policy` hands back each slot as an untyped
     `dict[str, object]`; this narrows the three positional-key fields
     (`entity_type`, `entity_id`, `subindex`) with an explicit runtime check
     rather than a bare `cast`, so a malformed slot fails loudly here instead
@@ -388,7 +388,7 @@ def _resolve_storage_targets(
 ) -> tuple[dict[int, tuple[tuple[int, int], ...]], tuple[DroppedTerm, ...]]:
     """Resolve each source plant's target `(hydro_id, storage position)` slot(s).
 
-    Normally a source plant maps 1:1 to its own cobre id, so its value is a
+    Normally a source plant maps 1:1 to its own novomodelo id, so its value is a
     one-tuple `((hydro_id, position),)`. A NEWAVE *complexo* header code
     (absent from `id_map` but present in `complexo_components` — the `CX`
     register) maps **1→many** onto its DECOMP component plants: the complexo's
@@ -456,7 +456,7 @@ def _resolve_gnl_targets(
     pi_gnl flat-column indices to sum}` plus every GNL drop.
 
     `ring_index` (built from the reloaded terminal manifest) never carries
-    the já-comandada (class-4) window at all — cobre excises it from the
+    the já-comandada (class-4) window at all — novomodelo excises it from the
     ring entirely — so a target's dated slot(s) are exactly the in-study and
     class-3 signaled deliveries, keyed by each slot's `interval_start` (its
     delivery-stage start day). They split into *covered*
@@ -629,10 +629,10 @@ def map_boundary_cuts(
 
     `cost_unit_hours` is the coupling (terminal) stage's duration in hours: the
     source model's FCF coefficients are a per-hour cost rate (``($·mês)/h`` etc.,
-    see the module header), so every mapped term is scaled to cobre's plain-$
+    see the module header), so every mapped term is scaled to novomodelo's plain-$
     objective units by integrating over these hours. The intercept and storage
     terms take ``× cost_unit_hours``; the inflow-lag term takes an additional
-    ``× C_M3S2HM3`` because cobre's inflow-lag state is a m³/s flow rate, not the
+    ``× C_M3S2HM3`` because novomodelo's inflow-lag state is a m³/s flow rate, not the
     Hm³ volume ``PIAFL`` is defined against (see the module header). The GNL term
     instead takes the *per-block* hours-weighted collapse
     `Σ_p pi_gnl[p] · coupling_block_hours[p]` — `pi_gnl` is a `$/MWh` energy
@@ -657,11 +657,11 @@ def map_boundary_cuts(
     leaves the entire ring at `0.0`, byte-for-byte matching this function's
     pre-GNL behaviour, and never requires `coupling_block_hours` (see the
     guard below). `intercept` is the source record's `rhs` (never re-derived
-    from alpha/x-hat), scaled to cobre's cost units and then reduced by the
+    from alpha/x-hat), scaled to novomodelo's cost units and then reduced by the
     `inflow_lag_means` fold below; every
-    coefficient is likewise scaled to cobre's cost units per family —
+    coefficient is likewise scaled to novomodelo's cost units per family —
     intercept/storage by ``× cost_unit_hours``, inflow-lag by an additional
-    ``× C_M3S2HM3`` for cobre's m³/s inflow-lag state, and GNL by the
+    ``× C_M3S2HM3`` for novomodelo's m³/s inflow-lag state, and GNL by the
     per-block `coupling_block_hours` collapse above (see the module header).
     Produces one `MappedCut` per source record, active or not —
     active-frontier selection is the checkpoint writer's concern, not the
@@ -676,7 +676,7 @@ def map_boundary_cuts(
     module header): `{hydro_id: (mu_depth1, …, mu_depth12)}` in m³/s, one
     12-vector per plant aligned to the boundary cut's lag-depth axis (built by
     `decomp/inflow_mlt.py::coupling_lag_means`). The source prices the inflow
-    *deviation* `Q - mu`, but cobre evaluates the loaded cut at its raw lag
+    *deviation* `Q - mu`, but novomodelo evaluates the loaded cut at its raw lag
     state `Q`, so for every lag coefficient actually placed the intercept is
     reduced by `placed_coef · mu[depth]`, making the loaded cut
     `RHS_scaled - Σ coef·mu + Σ coef·Q = RHS_scaled + Σ coef·(Q - mu)`. Summed
@@ -750,7 +750,7 @@ def map_boundary_cuts(
 
     # Cost-unit factors (see the module header): the intercept/storage terms
     # integrate the per-hour source rate over the coupling stage's hours; the
-    # inflow-lag term additionally converts cobre's m³/s lag state to the Hm³
+    # inflow-lag term additionally converts novomodelo's m³/s lag state to the Hm³
     # `PIAFL` is defined against. The GNL term is scaled separately, per
     # coupling block, inside the per-record loop below.
     cost_unit_factor = cost_unit_hours
@@ -760,11 +760,11 @@ def map_boundary_cuts(
     for record in cuts.records:
         coefficients = [0.0] * manifest.state_dimension
         # Mean-fold accumulator (see the module header + `inflow_lag_means`): the
-        # source prices the inflow *deviation* Q - mu, but cobre evaluates the
+        # source prices the inflow *deviation* Q - mu, but novomodelo evaluates the
         # loaded cut at its raw lag state Q, so the seasonal mean is folded into
         # the intercept. Summed per record over exactly the lag coefficients
         # actually placed, so a dropped plant/lag contributes nothing to the
-        # fold either — the fold can never reference a term cobre won't apply.
+        # fold either — the fold can never reference a term novomodelo won't apply.
         inflow_lag_coefficients: dict[int, tuple[float, ...]] = {}
         rhs_fold = 0.0
         for plant_index, targets in resolved_storage.items():
@@ -798,8 +798,8 @@ def map_boundary_cuts(
                                 rhs_fold += lag_coefficient * plant_means[depth_index]
                 elif inflow_lag_depth > 0:
                     # The manifest carries no lag slots (a DECOMP case has no
-                    # PAR(p) model for cobre to size them from), so emit the lag
-                    # coefficients keyed by hydro (depth 1..N); cobre's
+                    # PAR(p) model for novomodelo to size them from), so emit the lag
+                    # coefficients keyed by hydro (depth 1..N); novomodelo's
                     # write_policy_checkpoint reserves the canonical
                     # HydroInflowLag slots and places them. Same per-depth
                     # scaling and mean-fold as the aligned path above.

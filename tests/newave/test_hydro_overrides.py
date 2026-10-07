@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity, finalize_diagnostics
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
 from tests.conftest import make_case, make_nw_files
 from tests.newave.conftest import _make_hidr_cadastro
 
@@ -57,7 +57,7 @@ class TestApplyPermanentOverrides:
 
     def test_missing_modif_returns_unchanged(self, tmp_path) -> None:
         """No MODIF.DAT -> cadastro returned unchanged."""
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         cadastro = self._base_cadastro()
         result = _apply_permanent_overrides(cadastro, make_case(tmp_path, modif=None))
@@ -65,7 +65,7 @@ class TestApplyPermanentOverrides:
 
     def test_volmax_override(self, tmp_path) -> None:
         """VOLMAX record updates volume_maximo for the target plant."""
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         # Build MODIF mock: plant 1 gets VOLMAX=2000.
         volmax_rec = MagicMock()
@@ -98,7 +98,7 @@ class TestApplyPermanentOverrides:
         return rec
 
     def _apply(self, tmp_path, code: int, records: list) -> pd.DataFrame:
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         usina_rec = MagicMock()
         usina_rec.codigo = code
@@ -142,7 +142,7 @@ class TestApplyPermanentOverrides:
 
     def test_vazmin_override(self, tmp_path) -> None:
         """VAZMIN record updates vazao_minima_historica for the target plant."""
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         vazmin_rec = MagicMock()
         type(vazmin_rec).__name__ = "VAZMIN"
@@ -165,7 +165,7 @@ class TestApplyPermanentOverrides:
 
     def test_numcnj_nummaq_override(self, tmp_path) -> None:
         """NUMCNJ + NUMMAQ records update machine set counts."""
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         numcnj_rec = MagicMock()
         type(numcnj_rec).__name__ = "NUMCNJ"
@@ -192,7 +192,7 @@ class TestApplyPermanentOverrides:
 
     def test_potefe_override(self, tmp_path) -> None:
         """POTEFE replaces the conjunto's nominal power, leaving the others."""
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         potefe_rec = MagicMock()
         type(potefe_rec).__name__ = "POTEFE"
@@ -245,7 +245,7 @@ class TestApplyPermanentOverrides:
     def test_polynomial_override_replaces_the_whole_polynomial(
         self, tmp_path, type_name, attr, prefix, raw, expected
     ) -> None:
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         poly_rec = MagicMock()
         type(poly_rec).__name__ = type_name
@@ -271,7 +271,7 @@ class TestApplyPermanentOverrides:
 
     def test_unknown_plant_code_skipped(self, tmp_path) -> None:
         """Plant code not in cadastro: diagnostic emitted, no crash."""
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         usina_rec = MagicMock()
         usina_rec.codigo = 999  # not in cadastro
@@ -301,7 +301,7 @@ class TestApplyPermanentOverrides:
         """Temporal override types are ignored in _apply_permanent_overrides."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         vazmint_rec = MagicMock()
         type(vazmint_rec).__name__ = "VAZMINT"
@@ -340,7 +340,9 @@ class TestExtractTemporalOverrides:
 
     def test_missing_modif_returns_empty(self, tmp_path) -> None:
         """No MODIF.DAT -> empty dict returned, no error."""
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         result = _extract_temporal_overrides(make_case(tmp_path, modif=None), [1, 2])
         assert result == {}
@@ -349,7 +351,9 @@ class TestExtractTemporalOverrides:
         """VAZMINT record is extracted with correct month, year, value."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         vazmint_rec = MagicMock()
         type(vazmint_rec).__name__ = "VAZMINT"
@@ -385,7 +389,9 @@ class TestExtractTemporalOverrides:
         can tell hm³ from percent of the useful volume."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         vmaxt_rec = MagicMock()
         type(vmaxt_rec).__name__ = "VMAXT"
@@ -432,7 +438,9 @@ class TestExtractTemporalOverrides:
     def test_dated_volume_without_unit_is_percent_and_reported(self, tmp_path) -> None:
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         vmaxt_rec = MagicMock()
         type(vmaxt_rec).__name__ = "VMAXT"
@@ -461,7 +469,9 @@ class TestExtractTemporalOverrides:
         """Plants not in confhd_codes are excluded from the result."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         vazmint_rec = MagicMock()
         type(vazmint_rec).__name__ = "VAZMINT"
@@ -488,7 +498,9 @@ class TestExtractTemporalOverrides:
         """Multiple records for the same plant are returned in file order."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         def _vazmint(month: int, vazao: float) -> MagicMock:
             r = MagicMock()
@@ -521,7 +533,9 @@ class TestExtractTemporalOverrides:
         """CFUGA record extracted with correct level value."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         cfuga_rec = MagicMock()
         type(cfuga_rec).__name__ = "CFUGA"
@@ -553,7 +567,9 @@ class TestExtractTemporalOverrides:
         """TURBMINT and TURBMAXT records use turbinamento field."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         turbmint_rec = MagicMock()
         type(turbmint_rec).__name__ = "TURBMINT"
@@ -597,7 +613,9 @@ class TestExtractTemporalOverrides:
         horizon entry (PRE) and the post-study tail (POS)."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         pre_rec = MagicMock()
         type(pre_rec).__name__ = "VAZMINT"
@@ -680,7 +698,7 @@ class TestReadGhminPerStage:
         )
 
     def test_missing_ghmin_returns_empty(self, tmp_path) -> None:
-        from cobre_bridge.newave.converters.hydro import _read_ghmin_per_stage
+        from novomodelo_bridge.newave.converters.hydro import _read_ghmin_per_stage
 
         result = _read_ghmin_per_stage(
             make_case(tmp_path, ghmin=None),
@@ -695,7 +713,7 @@ class TestReadGhminPerStage:
         """Sparse entries persist the last applied value forward."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _read_ghmin_per_stage
+        from novomodelo_bridge.newave.converters.hydro import _read_ghmin_per_stage
 
         # Plant 1 at Sep 2024 = 100 MW, Dec 2024 = 80 MW.
         # Stages 0 (Sep) and 1 (Oct) and 2 (Nov) should all be 100.
@@ -733,7 +751,7 @@ class TestReadGhminPerStage:
         """POS year=9999 entries supply per-calendar-month values."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _read_ghmin_per_stage
+        from novomodelo_bridge.newave.converters.hydro import _read_ghmin_per_stage
 
         ghmin_df = pd.DataFrame(
             {
@@ -769,7 +787,7 @@ class TestReadGhminPerStage:
         is meaningful at hydro_bounds' stage granularity."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _read_ghmin_per_stage
+        from novomodelo_bridge.newave.converters.hydro import _read_ghmin_per_stage
 
         ghmin_df = pd.DataFrame(
             {
@@ -818,7 +836,7 @@ class TestApplyPermanentOverridesDiagnostics:
         """A modelled-but-unconsumed type and a genuinely unknown one both land
         in ``modif-permanent-override-unsupported`` — the Type column is what
         distinguishes them, not the code."""
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         volcota_rec = MagicMock()
         type(volcota_rec).__name__ = "VMINP"
@@ -859,7 +877,7 @@ class TestApplyPermanentOverridesDiagnostics:
         deliberate keep-as-log exception: DEBUG only, never a Diagnostic."""
         import logging
 
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         default_rec = MagicMock()
         type(default_rec).__name__ = "DefaultRegister"
@@ -874,7 +892,8 @@ class TestApplyPermanentOverridesDiagnostics:
         with (
             dx.collect() as collected,
             caplog.at_level(
-                logging.DEBUG, logger="cobre_bridge.newave.converters.hydro.overrides"
+                logging.DEBUG,
+                logger="novomodelo_bridge.newave.converters.hydro.overrides",
             ),
         ):
             _apply_permanent_overrides(
@@ -892,7 +911,7 @@ class TestApplyPermanentOverridesDiagnostics:
         record — the pre-migration caplog contract keeps working."""
         import logging
 
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         usina_rec = MagicMock()
         usina_rec.codigo = 999  # not in cadastro
@@ -910,7 +929,7 @@ class TestApplyPermanentOverridesDiagnostics:
         assert len(warnings) == 1
 
     def test_permanent_volume_without_unit_is_hm3_and_reported(self, tmp_path) -> None:
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         volmax_rec = MagicMock()
         type(volmax_rec).__name__ = "VOLMAX"
@@ -934,7 +953,7 @@ class TestApplyPermanentOverridesDiagnostics:
         assert collected[0].table.rows == [[1, "VOLMAX", "??"]]
 
     def test_no_findings_emits_nothing(self, tmp_path) -> None:
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         volmax_rec = MagicMock()
         type(volmax_rec).__name__ = "VOLMAX"
@@ -983,7 +1002,9 @@ class TestExtractTemporalOverridesDiagnostics:
     def test_undated_records_are_skipped_and_reported(self, tmp_path) -> None:
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         records = [
             self._vazmint(None, "POS", None),
@@ -1006,7 +1027,9 @@ class TestExtractTemporalOverridesDiagnostics:
     def test_no_sink_fallback_logs_one_warning(self, tmp_path, caplog) -> None:
         import logging
 
-        from cobre_bridge.newave.converters.hydro import _extract_temporal_overrides
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
 
         case = self._modif_case(tmp_path, [self._vazmint(None, "PRE", None)])
         with caplog.at_level(logging.WARNING):
@@ -1022,7 +1045,7 @@ class TestOverridesResidualLegacyWarning:
     by every not-yet-migrated module) still works for an unrelated string."""
 
     def test_hydro_finding_carries_no_legacy_warning(self, tmp_path) -> None:
-        from cobre_bridge.newave.converters.hydro import _apply_permanent_overrides
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
         usina_rec = MagicMock()
         usina_rec.codigo = 999  # not in cadastro

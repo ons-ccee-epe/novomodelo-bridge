@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import _all_converter_patches, make_case, make_nw_files
 
 
@@ -620,7 +620,7 @@ def _run_with_all_mocks(src: Path, dst: Path) -> object:
     """Run convert_newave_case with all converters replaced by canned fakes."""
     import contextlib
 
-    from cobre_bridge.newave.pipeline import convert_newave_case
+    from novomodelo_bridge.newave.pipeline import convert_newave_case
 
     fake_id_map = MagicMock()
     with contextlib.ExitStack() as stack:

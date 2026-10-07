@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from cobre_bridge.core.errors import SourceFileError
+from novomodelo_bridge.core.errors import SourceFileError
 
 _LOG = logging.getLogger(__name__)
 

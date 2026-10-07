@@ -43,7 +43,7 @@ ROOT_FILES = {
     "ruff.toml",
     "uv.lock",
 }
-# `cobre-bridge.toml` and `~/.config/...` are user-created locations the docs
+# `novomodelo-bridge.toml` and `~/.config/...` are user-created locations the docs
 # legitimately name (external contracts, not repo paths) — not checked.
 # `plans/` is gitignored and `~/git/` is a developer machine — always dead
 # for a reader, except where CLAUDE.md documents the convention by naming

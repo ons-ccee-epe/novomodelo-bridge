@@ -18,16 +18,16 @@ import pyarrow as pa
 import pytest
 from plotly.offline import get_plotlyjs_version
 
-from cobre_bridge.comparators.model import (
+from novomodelo_bridge.comparators.model import (
     PercentileData,
     ResultComparison,
     build_results_summary,
 )
-from cobre_bridge.core.tolerances import is_effectively_infinite
+from novomodelo_bridge.core.tolerances import is_effectively_infinite
 
 if TYPE_CHECKING:
-    from cobre_bridge.comparators.dataset import ComparisonDataset
-    from cobre_bridge.core.diagnostics import Diagnostic
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.core.diagnostics import Diagnostic
 
 # -------------------------------------------------------------------
 # Horizon bounds-helper unit tests
@@ -67,11 +67,11 @@ class TestResultsComparison:
                 entity_type="hydro",
                 entity_name="A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=99.5,
+                novomodelo_value=99.5,
                 abs_diff=0.5,
                 rel_diff=0.005,
             ),
@@ -79,11 +79,11 @@ class TestResultsComparison:
                 entity_type="thermal",
                 entity_name="B",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=50.0,
-                cobre_value=50.1,
+                novomodelo_value=50.1,
                 abs_diff=0.1,
                 rel_diff=0.002,
             ),
@@ -107,10 +107,10 @@ class TestReportFormatting:
     def test_print_results_summary_no_crash(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
-        from cobre_bridge.comparators.verdict import build_compare_verdict
-        from cobre_bridge.ui.compare_summary import (
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.verdict import build_compare_verdict
+        from novomodelo_bridge.ui.compare_summary import (
             print_results_summary_from_dataset,
         )
 
@@ -118,7 +118,7 @@ class TestReportFormatting:
         print_results_summary_from_dataset(
             dataset,
             Path("/fake/nw"),
-            Path("/fake/cobre"),
+            Path("/fake/novomodelo"),
             verdict=build_compare_verdict(dataset),
         )
         out = capsys.readouterr().out
@@ -127,13 +127,13 @@ class TestReportFormatting:
     def test_print_results_summary_with_data(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import (
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import (
             PercentileData,
             ResultComparison,
         )
-        from cobre_bridge.comparators.verdict import build_compare_verdict
-        from cobre_bridge.ui.compare_summary import (
+        from novomodelo_bridge.comparators.verdict import build_compare_verdict
+        from novomodelo_bridge.ui.compare_summary import (
             print_results_summary_from_dataset,
         )
 
@@ -142,11 +142,11 @@ class TestReportFormatting:
                 entity_type="hydro",
                 entity_name="ITAIPU",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=110.0,
+                novomodelo_value=110.0,
                 abs_diff=10.0,
                 rel_diff=0.1,
             ),
@@ -154,11 +154,11 @@ class TestReportFormatting:
                 entity_type="hydro",
                 entity_name="TUCURUI",
                 newave_code=20,
-                cobre_id=1,
+                novomodelo_id=1,
                 stage=1,
                 variable="generation_mw",
                 newave_value=50.0,
-                cobre_value=40.0,
+                novomodelo_value=40.0,
                 abs_diff=10.0,
                 rel_diff=0.2,
             ),
@@ -167,7 +167,7 @@ class TestReportFormatting:
         print_results_summary_from_dataset(
             dataset,
             Path("/nw"),
-            Path("/cobre"),
+            Path("/novomodelo"),
             verdict=build_compare_verdict(dataset),
         )
         out = capsys.readouterr().out
@@ -192,7 +192,7 @@ class _MakeTableSpy:
         self.records: list[dict[str, object]] = []
 
     def __call__(self, *args: object, **kwargs: object) -> object:
-        from cobre_bridge.ui.console import make_table
+        from novomodelo_bridge.ui.console import make_table
 
         self.records.append(dict(kwargs))
         return make_table(*args, **kwargs)  # type: ignore[arg-type]
@@ -202,12 +202,12 @@ class TestToleranceRowColouring:
     """Compare summary table rows are coloured green/red by tolerance."""
 
     def test_results_row_colour_green_for_within_tol_red_otherwise(self) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.verdict import build_compare_verdict
-        from cobre_bridge.ui.compare_summary import (
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.verdict import build_compare_verdict
+        from novomodelo_bridge.ui.compare_summary import (
             print_results_summary_from_dataset,
         )
-        from cobre_bridge.ui.console import compare_row_style
+        from novomodelo_bridge.ui.console import compare_row_style
 
         # gen_within is fully within tol (rel_diff under 1e-2); gen_diverge is not.
         results = [
@@ -215,11 +215,11 @@ class TestToleranceRowColouring:
                 entity_type="hydro",
                 entity_name="ITAIPU",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="gen_within",
                 newave_value=100.0,
-                cobre_value=100.0,
+                novomodelo_value=100.0,
                 abs_diff=0.0,
                 rel_diff=0.0,
             ),
@@ -227,11 +227,11 @@ class TestToleranceRowColouring:
                 entity_type="hydro",
                 entity_name="TUCURUI",
                 newave_code=20,
-                cobre_id=1,
+                novomodelo_id=1,
                 stage=0,
                 variable="gen_diverge",
                 newave_value=100.0,
-                cobre_value=150.0,
+                novomodelo_value=150.0,
                 abs_diff=50.0,
                 rel_diff=0.5,
             ),
@@ -239,11 +239,11 @@ class TestToleranceRowColouring:
         dataset = build_results_dataset(results, PercentileData(), 1e-2)
 
         spy = _MakeTableSpy()
-        with patch("cobre_bridge.ui.compare_summary.make_table", side_effect=spy):
+        with patch("novomodelo_bridge.ui.compare_summary.make_table", side_effect=spy):
             print_results_summary_from_dataset(
                 dataset,
                 Path("/nw"),
-                Path("/cobre"),
+                Path("/novomodelo"),
                 verdict=build_compare_verdict(dataset),
             )
 
@@ -280,8 +280,8 @@ class TestCompareVerdictLine:
     def test_render_compare_verdict_empty_dataset(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from cobre_bridge.comparators.verdict import CompareVerdict
-        from cobre_bridge.ui.console import render_compare_verdict
+        from novomodelo_bridge.comparators.verdict import CompareVerdict
+        from novomodelo_bridge.ui.console import render_compare_verdict
 
         render_compare_verdict(
             CompareVerdict(
@@ -309,9 +309,9 @@ class TestCompareVerdictExitCodes:
         import io
         import sys
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -334,7 +334,7 @@ class TestCompareVerdictExitCodes:
         # ``dataclasses.fields``, which raises on a non-dataclass. The paths
         # need not exist: a missing file degrades to a ``None`` hash/size.
         monkeypatch.setattr(
-            "cobre_bridge.newave.case.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.case.NewaveCase.from_directory",
             classmethod(
                 lambda cls, _dir: MagicMock(
                     id_map=MagicMock(), files=make_nw_files(Path("nw"))
@@ -342,18 +342,18 @@ class TestCompareVerdictExitCodes:
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+            "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
             lambda *a, **k: MagicMock(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.cobre.readers.read_cobre_lines",
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_lines",
             lambda _dir: [],
         )
 
     def test_verdict_results_exit_zero_stdout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
 
         self._patch_compare_context(monkeypatch)
         results = [
@@ -361,24 +361,24 @@ class TestCompareVerdictExitCodes:
                 entity_type="hydro",
                 entity_name="ITAIPU",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=110.0,
+                novomodelo_value=110.0,
                 abs_diff=10.0,
                 rel_diff=0.1,
             ),
         ]
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             lambda **k: build_results_dataset(results, PercentileData(), 1e-2),
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, stderr = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -398,18 +398,18 @@ class TestCompareVerdictExitCodes:
 
 def _fake_results_dataset() -> ComparisonDataset:
     """One-row dataset built through the shared dataset-assembly kernel."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
 
     results = [
         ResultComparison(
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),
@@ -425,7 +425,7 @@ def _fake_decomp_dataset() -> ComparisonDataset:
 
 
 def _dropped_plant_diagnostic() -> Diagnostic:
-    from cobre_bridge.core.diagnostics import Diagnostic, Severity
+    from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
     return Diagnostic(
         code="test-dropped-plant",
@@ -449,7 +449,7 @@ class TestCompareDiagnosticsWiring:
         from tests.conftest import make_decomp_case
 
         monkeypatch.setattr(
-            "cobre_bridge.decomp.case.DecompCase.from_directory",
+            "novomodelo_bridge.decomp.case.DecompCase.from_directory",
             classmethod(lambda cls, _dir: make_decomp_case(Path("decomp"))),
         )
 
@@ -457,14 +457,14 @@ class TestCompareDiagnosticsWiring:
     def _invoke(argv: list[str]) -> Any:
         from typer.testing import CliRunner
 
-        from cobre_bridge.cli import app
+        from novomodelo_bridge.cli import app
 
         return CliRunner().invoke(app, argv)
 
     def test_compare_newave_json_diagnostics_array_is_non_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         TestCompareVerdictExitCodes._patch_compare_context(monkeypatch)
         diagnostic = _dropped_plant_diagnostic()
@@ -474,14 +474,14 @@ class TestCompareDiagnosticsWiring:
             return _fake_results_dataset()
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             _compare_results_with_diagnostic,
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         result = self._invoke(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir), "--json"]
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"]
         )
 
         assert result.exit_code == 0
@@ -492,7 +492,7 @@ class TestCompareDiagnosticsWiring:
     def test_compare_decomp_json_diagnostics_array_is_non_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         self._patch_decomp_case(monkeypatch)
         diagnostic = _dropped_plant_diagnostic()
@@ -504,7 +504,7 @@ class TestCompareDiagnosticsWiring:
             return _fake_decomp_dataset()
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset",
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
             _build_decomp_dataset_with_diagnostic,
         )
 
@@ -520,7 +520,7 @@ class TestCompareDiagnosticsWiring:
     def test_compare_newave_non_json_renders_diagnostic_title_on_stderr(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         TestCompareVerdictExitCodes._patch_compare_context(monkeypatch)
         diagnostic = _dropped_plant_diagnostic()
@@ -530,14 +530,14 @@ class TestCompareDiagnosticsWiring:
             return _fake_results_dataset()
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             _compare_results_with_diagnostic,
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         result = self._invoke(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)]
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)]
         )
 
         assert result.exit_code == 0
@@ -546,7 +546,7 @@ class TestCompareDiagnosticsWiring:
     def test_compare_decomp_non_json_renders_diagnostic_title_on_stderr(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         self._patch_decomp_case(monkeypatch)
         diagnostic = _dropped_plant_diagnostic()
@@ -558,7 +558,7 @@ class TestCompareDiagnosticsWiring:
             return _fake_decomp_dataset()
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset",
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
             _build_decomp_dataset_with_diagnostic,
         )
 
@@ -575,7 +575,7 @@ class TestCompareDiagnosticsWiring:
 
 class TestHtmlReport:
     def test_build_comparison_html_produces_valid_html(self) -> None:
-        from cobre_bridge.comparators.html_report import (
+        from novomodelo_bridge.comparators.html_report import (
             build_comparison_html,
         )
 
@@ -589,9 +589,9 @@ class TestHtmlReport:
         assert "<p>Hello</p>" in html
 
     def test_build_comparison_report_no_crash(self) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
-        from cobre_bridge.comparators.report_builder import (
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.report_builder import (
             build_comparison_report,
         )
 
@@ -599,12 +599,12 @@ class TestHtmlReport:
         dataset = build_results_dataset([], pct, 0.05)
         html = build_comparison_report(dataset)
         assert "<!DOCTYPE html>" in html
-        assert "Cobre vs NEWAVE" in html
+        assert "Novomodelo vs NEWAVE" in html
 
     def test_build_comparison_report_with_data(self) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
-        from cobre_bridge.comparators.report_builder import (
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.report_builder import (
             build_comparison_report,
         )
 
@@ -613,11 +613,11 @@ class TestHtmlReport:
                 entity_type="convergence",
                 entity_name="iter_1",
                 newave_code=1,
-                cobre_id=1,
+                novomodelo_id=1,
                 stage=1,
                 variable="lower_bound",
                 newave_value=1000.0,
-                cobre_value=1001.0,
+                novomodelo_value=1001.0,
                 abs_diff=1.0,
                 rel_diff=0.001,
             ),
@@ -634,7 +634,7 @@ class TestCompareHydrosProductivity:
 
     @staticmethod
     def _run():
-        from cobre_bridge.comparators.newave.results import _compare_hydros
+        from novomodelo_bridge.comparators.newave.results import _compare_hydros
 
         # stage column min = 9 → offset 9 → stages map to 0 (turb>0) and 1
         # (turb==0, must be filtered out of the productivity comparison).
@@ -646,7 +646,7 @@ class TestCompareHydrosProductivity:
                 "value": [30.0, 100.0, 0.0, 0.0],
             }
         )
-        cobre_hydro = pl.DataFrame(
+        novomodelo_hydro = pl.DataFrame(
             {
                 "entity_id": [0, 0],
                 "stage_id": [0, 1],
@@ -655,8 +655,8 @@ class TestCompareHydrosProductivity:
             }
         )
         nw_names = {1: "TEST"}
-        cobre_meta = {0: {"name": "TEST", "min_storage_hm3": 0.0}}
-        return _compare_hydros(nw_hydro, cobre_hydro, nw_names, cobre_meta)
+        novomodelo_meta = {0: {"name": "TEST", "min_storage_hm3": 0.0}}
+        return _compare_hydros(nw_hydro, novomodelo_hydro, nw_names, novomodelo_meta)
 
     def test_productivity_emitted_with_ratio_value(self) -> None:
         prod = [r for r in self._run() if r.variable == "productivity_mw_per_m3s"]
@@ -665,7 +665,7 @@ class TestCompareHydrosProductivity:
         assert r.entity_type == "hydro"
         assert r.stage == 0
         assert r.newave_value == pytest.approx(0.3)  # 30 / 100
-        assert r.cobre_value == pytest.approx(0.33)  # 33 / 100
+        assert r.novomodelo_value == pytest.approx(0.33)  # 33 / 100
 
     def test_zero_turbined_stage_filtered_out(self) -> None:
         prod = [
@@ -680,7 +680,7 @@ class TestReconstructedCost:
     """Reconstruct the source model live immediate cost from MEDIAS × our penalties."""
 
     def test_read_converted_penalties(self, tmp_path: Path) -> None:
-        from cobre_bridge.cobre.readers import read_converted_penalties
+        from novomodelo_bridge.novomodelo.readers import read_converted_penalties
 
         (tmp_path / "penalties.json").write_text('{"hydro": {"spillage_cost": 0.5}}')
         out = tmp_path / "output"
@@ -708,7 +708,7 @@ class TestOverviewCostCharts:
                 "value": [137.0, 100.0, 70.0, 95.0],  # 10⁶ R$
             }
         )
-        cobre = pl.DataFrame(
+        novomodelo = pl.DataFrame(
             {
                 "stage_id": [0, 1],
                 "immediate_cost": [150.0e6, 50.0e6],
@@ -718,30 +718,30 @@ class TestOverviewCostCharts:
                 "thermal_cost_total": [110.0e6, 90.0e6],
             }
         )
-        return nw_sin, cobre
+        return nw_sin, novomodelo
 
     def test_thermal_cost_chart_plots_cterm(self) -> None:
-        from cobre_bridge.comparators.charts import thermal_cost_chart
+        from novomodelo_bridge.comparators.charts import thermal_cost_chart
 
         html = thermal_cost_chart(*self._data(), nw_offset=0)
         assert "No CTERM" not in html
         assert "NEWAVE CTERM" in html
         assert "100.0" in html and "95.0" in html  # CTERM values
-        assert "110.0" in html  # Cobre thermal_cost / 1e6
+        assert "110.0" in html  # Novomodelo thermal_cost / 1e6
 
     def test_other_costs_chart_is_coper_minus_cterm(self) -> None:
-        from cobre_bridge.comparators.charts import other_costs_chart
+        from novomodelo_bridge.comparators.charts import other_costs_chart
 
         html = other_costs_chart(*self._data(), nw_offset=0)
         assert "No COPER" not in html
         # The source model COPER − CTERM: 137−100 = 37, 70−95 = −25 (negative, like the
         # frozen-COPER post-study gap).
         assert "37.0" in html and "-25.0" in html
-        # Cobre immediate − thermal: 150−110 = 40, 50−90 = −40.
+        # Novomodelo immediate − thermal: 150−110 = 40, 50−90 = −40.
         assert "40.0" in html and "-40.0" in html
 
     def test_stage_costs_reader_includes_thermal_cost(self, tmp_path: Path) -> None:
-        from cobre_bridge.cobre.readers import read_cobre_stage_costs
+        from novomodelo_bridge.novomodelo.readers import read_novomodelo_stage_costs
 
         d = tmp_path / "simulation" / "costs" / "scenario_id=0000"
         d.mkdir(parents=True)
@@ -756,7 +756,7 @@ class TestOverviewCostCharts:
             }
         ).write_parquet(d / "data.parquet")
 
-        df = read_cobre_stage_costs(tmp_path)
+        df = read_novomodelo_stage_costs(tmp_path)
         assert "thermal_cost" in df.columns
         row = df.filter(pl.col("stage_id") == 0).row(0, named=True)
         assert row["thermal_cost"] == pytest.approx(20.0)  # block sum 8 + 12
@@ -769,7 +769,7 @@ class TestOverviewCostCharts:
     def test_stage_costs_reader_folds_anticipated_into_thermal_total(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.cobre.readers import read_cobre_stage_costs
+        from novomodelo_bridge.novomodelo.readers import read_novomodelo_stage_costs
 
         d = tmp_path / "simulation" / "costs" / "scenario_id=0000"
         d.mkdir(parents=True)
@@ -785,14 +785,14 @@ class TestOverviewCostCharts:
             }
         ).write_parquet(d / "data.parquet")
 
-        row = read_cobre_stage_costs(tmp_path).row(0, named=True)
+        row = read_novomodelo_stage_costs(tmp_path).row(0, named=True)
         assert row["thermal_cost"] == pytest.approx(8.0)
         assert row["anticipated_thermal_cost"] == pytest.approx(7.0)
         # The source-model-comparable thermal total = live + anticipated GNL fuel.
         assert row["thermal_cost_total"] == pytest.approx(15.0)
 
-    def test_thermal_cost_chart_includes_anticipated_in_cobre_series(self) -> None:
-        from cobre_bridge.comparators.charts import thermal_cost_chart
+    def test_thermal_cost_chart_includes_anticipated_in_novomodelo_series(self) -> None:
+        from novomodelo_bridge.comparators.charts import thermal_cost_chart
 
         nw_sin = pl.DataFrame(
             {
@@ -802,7 +802,7 @@ class TestOverviewCostCharts:
                 "value": [100.0],
             }
         )
-        cobre = pl.DataFrame(
+        novomodelo = pl.DataFrame(
             {
                 "stage_id": [0],
                 "immediate_cost": [150.0e6],
@@ -812,21 +812,21 @@ class TestOverviewCostCharts:
                 "thermal_cost_total": [100.0e6],
             }
         )
-        html = thermal_cost_chart(nw_sin, cobre, nw_offset=0)
-        # Cobre series plots thermal_cost_total (90 + 10) = 100, not 90.
+        html = thermal_cost_chart(nw_sin, novomodelo, nw_offset=0)
+        # Novomodelo series plots thermal_cost_total (90 + 10) = 100, not 90.
         assert "100.0" in html
         assert "anticipated" in html  # legend label
 
     def test_generic_violation_groups_all_source_model_restriction_parcelas(
         self,
     ) -> None:
-        from cobre_bridge.comparators.charts import _resolve_cost_categories
+        from novomodelo_bridge.comparators.charts import _resolve_cost_categories
 
-        # cobre-bridge converts the risk-aversion curve/surface (CAR/SAR), electric
+        # novomodelo-bridge converts the risk-aversion curve/surface (CAR/SAR), electric
         # (RESTELETRICA), interchange (INTERC. MIN.), hydraulic (RHQ/RHV) and
         # piecewise-linear (RLPP) restrictions ALL into generic constraints, so the
         # source model's separate parcelas must sum into the single "Generic Constr.
-        # Viol." row to compare against Cobre's aggregated generic_violation_cost.
+        # Viol." row to compare against Novomodelo's aggregated generic_violation_cost.
         nw_costs = {
             "VIOLACAO CAR": 1.0e7,
             "VIOLACAO SAR": 2.0e7,
@@ -839,19 +839,19 @@ class TestOverviewCostCharts:
             "VIOL.RLPP TURBMAX": 9.0e7,
             "VIOL.RLPP TURBMAXU": 1.0e8,
         }
-        cobre_costs = {
+        novomodelo_costs = {
             "generic_violation_cost": 5.5e8,
             "storage_violation_cost": 1.0e7,
         }
 
         cats = {
             label: (nw, cb)
-            for label, nw, cb, _ in _resolve_cost_categories(nw_costs, cobre_costs)
+            for label, nw, cb, _ in _resolve_cost_categories(nw_costs, novomodelo_costs)
         }
-        # All 10 the source model parcelas land in one row, equal to Cobre's aggregate.
+        # All 10 the source model parcelas land in one row, equal to Novomodelo's aggregate.
         assert cats["Generic Constr. Viol."] == pytest.approx((5.5e8, 5.5e8))
         # CAR/SAR no longer pollute the storage-bounds row (the source model side empty;
-        # the row is now Cobre-only, carrying the individual-reservoir slack).
+        # the row is now Novomodelo-only, carrying the individual-reservoir slack).
         assert cats["Storage Bounds Viol."][0] == pytest.approx(0.0)
         assert cats["Storage Bounds Viol."][1] == pytest.approx(1.0e7)
 
@@ -866,7 +866,7 @@ class TestEdgeCases:
 
     def test_newave_readers_missing_dir(self, tmp_path: Path) -> None:
         """The source model readers return empty DataFrames when dir missing."""
-        from cobre_bridge.comparators.newave.readers import (
+        from novomodelo_bridge.comparators.newave.readers import (
             read_medias_hydro,
             read_medias_system,
             read_medias_thermal,
@@ -881,32 +881,32 @@ class TestEdgeCases:
         assert read_pmo_convergence(fake_dir).is_empty()
         assert read_pmo_productivity_detail(fake_dir).is_empty()
 
-    def test_cobre_readers_missing_dir(self, tmp_path: Path) -> None:
-        """Cobre readers return empty DataFrames when dir missing."""
-        from cobre_bridge.cobre.readers import (
-            read_cobre_bus_means,
-            read_cobre_convergence,
-            read_cobre_hydro_means,
-            read_cobre_hydro_metadata,
-            read_cobre_thermal_means,
+    def test_novomodelo_readers_missing_dir(self, tmp_path: Path) -> None:
+        """Novomodelo readers return empty DataFrames when dir missing."""
+        from novomodelo_bridge.novomodelo.readers import (
+            read_novomodelo_bus_means,
+            read_novomodelo_convergence,
+            read_novomodelo_hydro_means,
+            read_novomodelo_hydro_metadata,
+            read_novomodelo_thermal_means,
         )
 
         fake_dir = tmp_path / "nonexistent"
-        assert read_cobre_hydro_means(fake_dir).is_empty()
-        assert read_cobre_thermal_means(fake_dir).is_empty()
-        assert read_cobre_bus_means(fake_dir).is_empty()
-        assert read_cobre_convergence(fake_dir).is_empty()
-        assert read_cobre_hydro_metadata(fake_dir) == {}
+        assert read_novomodelo_hydro_means(fake_dir).is_empty()
+        assert read_novomodelo_thermal_means(fake_dir).is_empty()
+        assert read_novomodelo_bus_means(fake_dir).is_empty()
+        assert read_novomodelo_convergence(fake_dir).is_empty()
+        assert read_novomodelo_hydro_metadata(fake_dir) == {}
 
-    def test_cobre_convergence_reads_014_upper_bound(self, tmp_path: Path) -> None:
-        """cobre 0.14 renamed ``upper_bound_mean`` -> ``upper_bound`` (with a
+    def test_novomodelo_convergence_reads_014_upper_bound(self, tmp_path: Path) -> None:
+        """novomodelo 0.14 renamed ``upper_bound_mean`` -> ``upper_bound`` (with a
         sibling ``upper_bound_std``/``upper_bound_kind``).  The reader must map
         ``upper_bound`` into the canonical ``upper_bound_mean`` slot and must
         NOT let the prefix-sharing ``_std``/``_kind`` columns hijack it — the
         failure mode is a silently empty convergence frame."""
         import polars as pl
 
-        from cobre_bridge.cobre.readers import read_cobre_convergence
+        from novomodelo_bridge.novomodelo.readers import read_novomodelo_convergence
 
         training = tmp_path / "training"
         training.mkdir()
@@ -920,19 +920,19 @@ class TestEdgeCases:
             }
         ).write_parquet(training / "convergence.parquet")
 
-        df = read_cobre_convergence(tmp_path)
+        df = read_novomodelo_convergence(tmp_path)
         assert not df.is_empty()
         assert df["iteration"].to_list() == [1, 2]
         assert df["lower_bound"].to_list() == [10.0, 20.0]
         assert df["upper_bound_mean"].to_list() == [15.0, 22.0]
 
-    def test_cobre_convergence_reads_legacy_upper_bound_mean(
+    def test_novomodelo_convergence_reads_legacy_upper_bound_mean(
         self, tmp_path: Path
     ) -> None:
         """The legacy ``upper_bound_mean`` spelling still reads (back-compat)."""
         import polars as pl
 
-        from cobre_bridge.cobre.readers import read_cobre_convergence
+        from novomodelo_bridge.novomodelo.readers import read_novomodelo_convergence
 
         training = tmp_path / "training"
         training.mkdir()
@@ -944,7 +944,7 @@ class TestEdgeCases:
             }
         ).write_parquet(training / "convergence.parquet")
 
-        df = read_cobre_convergence(tmp_path)
+        df = read_novomodelo_convergence(tmp_path)
         assert df["upper_bound_mean"].to_list() == [15.0]
 
     def test_empty_alignment_produces_no_results(self) -> None:
@@ -954,9 +954,9 @@ class TestEdgeCases:
 
     def test_html_report_with_empty_results(self) -> None:
         """HTML report renders without error on empty results."""
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
-        from cobre_bridge.comparators.report_builder import (
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.report_builder import (
             build_comparison_report,
         )
 
@@ -967,7 +967,7 @@ class TestEdgeCases:
 
     def test_metric_card_html(self) -> None:
         """metric_card produces expected HTML structure."""
-        from cobre_bridge.comparators.html_report import metric_card
+        from novomodelo_bridge.comparators.html_report import metric_card
 
         html = metric_card("42", "Total")
         assert "42" in html
@@ -996,11 +996,11 @@ class TestComparisonReportIntegration:
                 entity_type="hydro",
                 entity_name="PLANT_A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=1200.0,
-                cobre_value=1195.0,
+                novomodelo_value=1195.0,
                 abs_diff=5.0,
                 rel_diff=0.004,
             ),
@@ -1008,11 +1008,11 @@ class TestComparisonReportIntegration:
                 entity_type="hydro",
                 entity_name="PLANT_A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=1,
                 variable="storage_final_hm3",
                 newave_value=4500.0,
-                cobre_value=4510.0,
+                novomodelo_value=4510.0,
                 abs_diff=10.0,
                 rel_diff=0.002,
             ),
@@ -1020,11 +1020,11 @@ class TestComparisonReportIntegration:
                 entity_type="thermal",
                 entity_name="GAS_A",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=300.0,
-                cobre_value=298.0,
+                novomodelo_value=298.0,
                 abs_diff=2.0,
                 rel_diff=0.007,
             ),
@@ -1032,11 +1032,11 @@ class TestComparisonReportIntegration:
                 entity_type="bus",
                 entity_name="SE",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="spot_price",
                 newave_value=150.0,
-                cobre_value=152.0,
+                novomodelo_value=152.0,
                 abs_diff=2.0,
                 rel_diff=0.013,
             ),
@@ -1044,11 +1044,11 @@ class TestComparisonReportIntegration:
                 entity_type="convergence",
                 entity_name="iteration_1",
                 newave_code=1,
-                cobre_id=1,
+                novomodelo_id=1,
                 stage=1,
                 variable="lower_bound",
                 newave_value=50000.0,
-                cobre_value=50100.0,
+                novomodelo_value=50100.0,
                 abs_diff=100.0,
                 rel_diff=0.002,
             ),
@@ -1082,9 +1082,9 @@ class TestComparisonReportIntegration:
 
     def test_comparison_report_full_pipeline(self) -> None:
         """Full pipeline: multi-entity data renders all 8 tab sections."""
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.html_report import COMPARISON_TABS
-        from cobre_bridge.comparators.report_builder import build_comparison_report
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.html_report import COMPARISON_TABS
+        from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
         results = self._make_results()
         pctiles = self._make_percentile_data()
@@ -1098,8 +1098,8 @@ class TestComparisonReportIntegration:
 
     def test_comparison_report_contains_plotly_chart(self) -> None:
         """Full pipeline with real data produces at least one Plotly chart."""
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.report_builder import build_comparison_report
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
         results = self._make_results()
         pctiles = self._make_percentile_data()
@@ -1115,7 +1115,7 @@ class TestCompareResultsReturnsDataset:
 
     Drives the REAL ``compare_results`` with every reader patched to empty so the
     return-type contract is exercised end-to-end without any case files: every
-    Cobre and source-model reader (MEDIAS / nwlistop / pmo included) returns an
+    Novomodelo and source-model reader (MEDIAS / nwlistop / pmo included) returns an
     empty frame/dict, and the generic-constraint loaders are empty.
     """
 
@@ -1123,8 +1123,8 @@ class TestCompareResultsReturnsDataset:
     def _patch_all_readers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         import pandas as pd
 
-        cr = "cobre_bridge.cobre.readers."
-        nr = "cobre_bridge.comparators.newave.readers."
+        cr = "novomodelo_bridge.novomodelo.readers."
+        nr = "novomodelo_bridge.comparators.newave.readers."
         empty_pl = pl.DataFrame
         empty_pd = lambda *a, **k: pd.DataFrame()  # noqa: E731
 
@@ -1140,35 +1140,37 @@ class TestCompareResultsReturnsDataset:
         ):
             monkeypatch.setattr(nr + name, lambda *a, **k: empty_pl())
 
-        # Frame-returning Cobre readers.
+        # Frame-returning Novomodelo readers.
         for name in (
-            "read_cobre_hydro_means",
-            "read_cobre_thermal_means",
-            "read_cobre_bus_means",
-            "read_cobre_hydro_percentiles",
-            "read_cobre_thermal_percentiles",
-            "read_cobre_bus_percentiles",
-            "read_cobre_line_means",
-            "read_cobre_line_percentiles",
-            "read_cobre_lp_max_generation",
-            "read_cobre_hydro_total_flows",
-            "read_cobre_hydro_withdrawal",
-            "read_cobre_hydro_per_stage_bounds",
-            "read_cobre_spillage_energy",
-            "read_cobre_stage_costs",
-            "read_cobre_bus_aggregates",
-            "read_cobre_convergence",
-            "read_cobre_iteration_timing",
-            "read_cobre_productivity_detail",
+            "read_novomodelo_hydro_means",
+            "read_novomodelo_thermal_means",
+            "read_novomodelo_bus_means",
+            "read_novomodelo_hydro_percentiles",
+            "read_novomodelo_thermal_percentiles",
+            "read_novomodelo_bus_percentiles",
+            "read_novomodelo_line_means",
+            "read_novomodelo_line_percentiles",
+            "read_novomodelo_lp_max_generation",
+            "read_novomodelo_hydro_total_flows",
+            "read_novomodelo_hydro_withdrawal",
+            "read_novomodelo_hydro_per_stage_bounds",
+            "read_novomodelo_spillage_energy",
+            "read_novomodelo_stage_costs",
+            "read_novomodelo_bus_aggregates",
+            "read_novomodelo_convergence",
+            "read_novomodelo_iteration_timing",
+            "read_novomodelo_productivity_detail",
         ):
             monkeypatch.setattr(cr + name, lambda *a, **k: empty_pl())
-        # Dict / scalar Cobre readers.
-        monkeypatch.setattr(cr + "read_cobre_hydro_metadata", lambda *a, **k: {})
-        monkeypatch.setattr(cr + "read_cobre_hydro_bus_labels", lambda *a, **k: {})
-        monkeypatch.setattr(cr + "read_cobre_thermal_metadata", lambda *a, **k: {})
-        monkeypatch.setattr(cr + "read_cobre_bus_metadata", lambda *a, **k: {})
-        monkeypatch.setattr(cr + "read_cobre_cost_breakdown", lambda *a, **k: {})
-        monkeypatch.setattr(cr + "read_cobre_training_duration", lambda *a, **k: 0.0)
+        # Dict / scalar Novomodelo readers.
+        monkeypatch.setattr(cr + "read_novomodelo_hydro_metadata", lambda *a, **k: {})
+        monkeypatch.setattr(cr + "read_novomodelo_hydro_bus_labels", lambda *a, **k: {})
+        monkeypatch.setattr(cr + "read_novomodelo_thermal_metadata", lambda *a, **k: {})
+        monkeypatch.setattr(cr + "read_novomodelo_bus_metadata", lambda *a, **k: {})
+        monkeypatch.setattr(cr + "read_novomodelo_cost_breakdown", lambda *a, **k: {})
+        monkeypatch.setattr(
+            cr + "read_novomodelo_training_duration", lambda *a, **k: 0.0
+        )
 
         # The remaining source-model readers (pmo / net-load / tim).
         monkeypatch.setattr(nr + "read_pmo_convergence", lambda *a, **k: empty_pl())
@@ -1184,32 +1186,32 @@ class TestCompareResultsReturnsDataset:
 
         # Names / cadastro.
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.alignment.read_reference_names",
+            "novomodelo_bridge.comparators.newave.alignment.read_reference_names",
             lambda _case: ({}, {}, {}),
         )
         monkeypatch.setattr(
-            "cobre_bridge.newave.converters.hydro.read_cadastro",
+            "novomodelo_bridge.newave.converters.hydro.read_cadastro",
             lambda _case: empty_pd(),
         )
 
         # Generic-constraint loaders (case dir resolves under tmp_path).
         monkeypatch.setattr(
-            "cobre_bridge.cobre.case_io.case_dir_for", lambda _d: tmp_path
+            "novomodelo_bridge.novomodelo.case_io.case_dir_for", lambda _d: tmp_path
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.constraints.load_generic_constraints",
+            "novomodelo_bridge.comparators.constraints.load_generic_constraints",
             lambda _d: [],
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.constraints.load_generic_constraint_bounds",
+            "novomodelo_bridge.comparators.constraints.load_generic_constraint_bounds",
             lambda _d: empty_pl(),
         )
 
     def test_compare_results_returns_validated_dataset(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.comparators.dataset import ComparisonDataset
-        from cobre_bridge.comparators.newave.results import compare_results
+        from novomodelo_bridge.comparators.dataset import ComparisonDataset
+        from novomodelo_bridge.comparators.newave.results import compare_results
 
         self._patch_all_readers(monkeypatch, tmp_path)
 
@@ -1220,7 +1222,7 @@ class TestCompareResultsReturnsDataset:
             case=case,
             id_map=MagicMock(),
             alignment=MagicMock(),
-            cobre_output_dir=tmp_path,
+            novomodelo_output_dir=tmp_path,
             tolerance=0.05,
         )
 
@@ -1239,7 +1241,7 @@ class TestProductivityDetail:
     """Productivity-tab readers, assembly, and charts.
 
     The Productivity tab is a *static* conversion-fidelity check: The source model pmo
-    productivities vs what cobre-bridge computes from the same HIDR cadastro, plus a
+    productivities vs what novomodelo-bridge computes from the same HIDR cadastro, plus a
     per-stage realized-productivity line chart and a grouped building-blocks table.
     """
 
@@ -1285,17 +1287,17 @@ class TestProductivityDetail:
             )
         )
 
-    def test_cobre_productivity_detail_reader(self, tmp_path: Path) -> None:
-        """Cobre reader surfaces the converted building blocks per hydro."""
-        from cobre_bridge.cobre.readers import (
-            read_cobre_productivity_detail,
+    def test_novomodelo_productivity_detail_reader(self, tmp_path: Path) -> None:
+        """Novomodelo reader surfaces the converted building blocks per hydro."""
+        from novomodelo_bridge.novomodelo.readers import (
+            read_novomodelo_productivity_detail,
         )
 
         out = tmp_path / "output"
         out.mkdir()
         self._write_hydros_json(tmp_path)  # hydros.json resolves from case_dir
 
-        detail = read_cobre_productivity_detail(out)
+        detail = read_novomodelo_productivity_detail(out)
         assert set(detail) == {0, 1}
         alpha = detail[0]
         assert alpha["name"] == "ALPHA"
@@ -1304,20 +1306,20 @@ class TestProductivityDetail:
         assert alpha["losses_m"] == pytest.approx(0.8)
         assert alpha["vmin_hm3"] == pytest.approx(100.0)
         assert alpha["vmax_hm3"] == pytest.approx(500.0)
-        # The reader no longer reads point/equivalent/accumulated from Cobre.
+        # The reader no longer reads point/equivalent/accumulated from Novomodelo.
         assert "point" not in alpha
         assert "equivalent" not in alpha
         assert "accumulated" not in alpha
 
-    def test_cobre_productivity_detail_missing_dir(self, tmp_path: Path) -> None:
-        from cobre_bridge.cobre.readers import (
-            read_cobre_productivity_detail,
+    def test_novomodelo_productivity_detail_missing_dir(self, tmp_path: Path) -> None:
+        from novomodelo_bridge.novomodelo.readers import (
+            read_novomodelo_productivity_detail,
         )
 
-        assert read_cobre_productivity_detail(tmp_path / "nope") == {}
+        assert read_novomodelo_productivity_detail(tmp_path / "nope") == {}
 
     def test_pmo_productivity_detail_missing_pmo(self, tmp_path: Path) -> None:
-        from cobre_bridge.comparators.newave.readers import (
+        from novomodelo_bridge.comparators.newave.readers import (
             read_pmo_productivity_detail,
         )
 
@@ -1337,16 +1339,16 @@ class TestProductivityDetail:
         """A small productivity_detail frame for the chart/table smoke tests.
 
         ``cb_point`` / ``cb_equivalent`` / ``cb_accumulated`` are the
-        cobre-bridge *static* values (here close to the pmo side, so the
+        novomodelo-bridge *static* values (here close to the pmo side, so the
         scatters cluster on y = x).
         """
-        from cobre_bridge.comparators.analyze import _PRODUCTIVITY_DETAIL_SCHEMA
+        from novomodelo_bridge.comparators.analyze import _PRODUCTIVITY_DETAIL_SCHEMA
 
         return pl.DataFrame(
             {
                 "plant_name": ["ALPHA", "BETA"],
                 "newave_code": [1, 2],
-                "cobre_id": [0, 1],
+                "novomodelo_id": [0, 1],
                 "nw_altura_min": [0.69, None],
                 "nw_altura_65": [0.81, 0.40],
                 "nw_altura_max": [0.85, None],
@@ -1369,19 +1371,19 @@ class TestProductivityDetail:
             schema=_PRODUCTIVITY_DETAIL_SCHEMA,
         )
 
-    def test_build_productivity_detail_computes_cobre_bridge_side(self) -> None:
-        """cb_point/equivalent/accumulated come from the converter, not Cobre."""
+    def test_build_productivity_detail_computes_novomodelo_bridge_side(self) -> None:
+        """cb_point/equivalent/accumulated come from the converter, not Novomodelo."""
         import pandas as pd
 
-        from cobre_bridge.comparators.analyze import build_productivity_detail
-        from cobre_bridge.comparators.newave.alignment import (
+        from novomodelo_bridge.comparators.analyze import build_productivity_detail
+        from novomodelo_bridge.comparators.newave.alignment import (
             EntityAlignment,
             HydroEntity,
         )
-        from cobre_bridge.core.productivity import compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         alignment = EntityAlignment(
-            hydros=[HydroEntity(newave_code=6, cobre_id=69, name="ALPHA")]
+            hydros=[HydroEntity(newave_code=6, novomodelo_id=69, name="ALPHA")]
         )
         nw_detail = pl.DataFrame(
             {
@@ -1415,7 +1417,7 @@ class TestProductivityDetail:
             },
             index=pd.Index([6], name="codigo_usina"),
         )
-        cobre_detail = {
+        novomodelo_detail = {
             69: {
                 "name": "ALPHA",
                 "specific_productivity": 0.009,
@@ -1427,7 +1429,7 @@ class TestProductivityDetail:
         }
         cb_accumulated = {6: 12.34}
         df = build_productivity_detail(
-            alignment, nw_detail, cadastro, cobre_detail, cb_accumulated
+            alignment, nw_detail, cadastro, novomodelo_detail, cb_accumulated
         )
         assert df.height == 1
         row = df.row(0, named=True)
@@ -1435,7 +1437,7 @@ class TestProductivityDetail:
         assert row["nw_altura_65"] == pytest.approx(0.813)
         assert row["nw_equivalent"] == pytest.approx(0.7865)
         assert row["nw_accumulated_earm"] == pytest.approx(5.3517)
-        # cobre-bridge side computed from the cadastro / cascade map.
+        # novomodelo-bridge side computed from the cadastro / cascade map.
         expected_point = compute_productivity(cadastro.loc[6])
         assert row["cb_point"] == pytest.approx(expected_point)
         assert row["cb_point"] == pytest.approx(4.2408)
@@ -1451,14 +1453,14 @@ class TestProductivityDetail:
         the dead-storage volume_minimo/maximo the converter freezes them off."""
         import pandas as pd
 
-        from cobre_bridge.comparators.analyze import build_productivity_detail
-        from cobre_bridge.comparators.newave.alignment import (
+        from novomodelo_bridge.comparators.analyze import build_productivity_detail
+        from novomodelo_bridge.comparators.newave.alignment import (
             EntityAlignment,
             HydroEntity,
         )
 
         alignment = EntityAlignment(
-            hydros=[HydroEntity(newave_code=4, cobre_id=7, name="ROR")]
+            hydros=[HydroEntity(newave_code=4, novomodelo_id=7, name="ROR")]
         )
         cadastro = pd.DataFrame(
             {
@@ -1469,19 +1471,23 @@ class TestProductivityDetail:
             },
             index=pd.Index([4], name="codigo_usina"),
         )
-        cobre_detail = {7: {"name": "ROR", "vmin_hm3": 265.9, "vmax_hm3": 265.9}}
+        novomodelo_detail = {7: {"name": "ROR", "vmin_hm3": 265.9, "vmax_hm3": 265.9}}
         df = build_productivity_detail(
-            alignment, pl.DataFrame({"plant_name": ["ROR"]}), cadastro, cobre_detail, {}
+            alignment,
+            pl.DataFrame({"plant_name": ["ROR"]}),
+            cadastro,
+            novomodelo_detail,
+            {},
         )
         row = df.row(0, named=True)
-        # The source model side uses volume_referencia (265.9), matching Cobre — no
+        # The source model side uses volume_referencia (265.9), matching Novomodelo — no
         # spurious delta vs the cadastro volume_minimo/maximo (304).
         assert row["nw_vmin_hm3"] == pytest.approx(265.9)
         assert row["nw_vmax_hm3"] == pytest.approx(265.9)
         assert row["cb_vmin_hm3"] == pytest.approx(265.9)
 
     def test_comparison_scatter_renders_series_and_stats(self) -> None:
-        from cobre_bridge.comparators.charts import (
+        from novomodelo_bridge.comparators.charts import (
             productivity_comparison_scatter,
         )
 
@@ -1507,7 +1513,7 @@ class TestProductivityDetail:
             assert "y = x" in html
 
     def test_comparison_scatter_empty_and_bad_kind(self) -> None:
-        from cobre_bridge.comparators.charts import (
+        from novomodelo_bridge.comparators.charts import (
             productivity_comparison_scatter,
         )
 
@@ -1520,7 +1526,7 @@ class TestProductivityDetail:
     @staticmethod
     def _per_stage_results():
         """Per-stage productivity_mw_per_m3s ResultComparison rows, 2 plants."""
-        from cobre_bridge.comparators.model import ResultComparison
+        from novomodelo_bridge.comparators.model import ResultComparison
 
         rows: list[ResultComparison] = []
         for name, code, cid, base in (("ALPHA", 1, 0, 0.78), ("BETA", 2, 1, 0.40)):
@@ -1532,11 +1538,11 @@ class TestProductivityDetail:
                         entity_type="hydro",
                         entity_name=name,
                         newave_code=code,
-                        cobre_id=cid,
+                        novomodelo_id=cid,
                         stage=stage,
                         variable="productivity_mw_per_m3s",
                         newave_value=nw,
-                        cobre_value=cb,
+                        novomodelo_value=cb,
                         abs_diff=abs(nw - cb),
                         rel_diff=abs(nw - cb) / nw,
                     )
@@ -1544,8 +1550,8 @@ class TestProductivityDetail:
         return rows
 
     def test_per_stage_chart_reuses_shared_per_plant_dropdown(self) -> None:
-        from cobre_bridge.comparators.analyze import productivity_per_stage_frame
-        from cobre_bridge.comparators.charts import productivity_per_stage_chart
+        from novomodelo_bridge.comparators.analyze import productivity_per_stage_frame
+        from novomodelo_bridge.comparators.charts import productivity_per_stage_chart
 
         html = productivity_per_stage_chart(
             productivity_per_stage_frame(self._per_stage_results())
@@ -1556,19 +1562,19 @@ class TestProductivityDetail:
         assert "ALPHA (1)" in html and "BETA (2)" in html
         assert "prodstage-chart-productivity-mw-per-m3s" in html
         assert "Realized productivity" in html
-        # Per-stage the source model + Cobre arrays embedded for the JS to plot.
+        # Per-stage the source model + Novomodelo arrays embedded for the JS to plot.
         assert "productivity_mw_per_m3s_nw" in html
         assert "productivity_mw_per_m3s_cb" in html
 
     def test_per_stage_chart_no_rows(self) -> None:
-        from cobre_bridge.comparators.analyze import productivity_per_stage_frame
-        from cobre_bridge.comparators.charts import productivity_per_stage_chart
+        from novomodelo_bridge.comparators.analyze import productivity_per_stage_frame
+        from novomodelo_bridge.comparators.charts import productivity_per_stage_chart
 
         empty = productivity_per_stage_frame([])
         assert "No per-stage productivity data" in productivity_per_stage_chart(empty)
 
     def test_blocks_table_grouped_header_and_highlight(self) -> None:
-        from cobre_bridge.comparators.charts import productivity_blocks_table
+        from novomodelo_bridge.comparators.charts import productivity_blocks_table
 
         html = productivity_blocks_table(self._detail_df())
         assert "cost-breakdown-table" in html
@@ -1589,13 +1595,13 @@ class TestProductivityDetail:
     def test_blocks_table_empty(self) -> None:
         import polars as pl
 
-        from cobre_bridge.comparators.charts import productivity_blocks_table
+        from novomodelo_bridge.comparators.charts import productivity_blocks_table
 
         assert "No productivity data" in productivity_blocks_table(pl.DataFrame())
 
 
-class TestEvaluateLhsCobre:
-    """Regression cover for evaluate_lhs_cobre's simulation-scan paths.
+class TestEvaluateLhsNovomodelo:
+    """Regression cover for evaluate_lhs_novomodelo's simulation-scan paths.
 
     The real-LazyFrame path was untested and regressed once: `lf or
     pl.LazyFrame()` evaluated bool(lf), which polars rejects.
@@ -1615,7 +1621,7 @@ class TestEvaluateLhsCobre:
 
     def test_evaluates_lhs_from_a_real_simulation_lazyframe(self) -> None:
         """A present simulation (LazyFrame, not None) must evaluate, not raise."""
-        from cobre_bridge.comparators.constraints import evaluate_lhs_cobre
+        from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
 
         hydros = pl.DataFrame(
             {
@@ -1632,10 +1638,10 @@ class TestEvaluateLhsCobre:
             return hydros if entity == "hydros" else None
 
         with patch(
-            "cobre_bridge.comparators.constraints.scan_simulation_entity",
+            "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
             side_effect=fake_scan,
         ):
-            result = evaluate_lhs_cobre(self._storage_constraint(), Path("/out"))
+            result = evaluate_lhs_novomodelo(self._storage_constraint(), Path("/out"))
 
         rows = {
             (r["constraint_id"], r["stage_id"]): r["lhs_value"]
@@ -1646,19 +1652,19 @@ class TestEvaluateLhsCobre:
 
     def test_missing_simulation_returns_empty(self) -> None:
         """Both entities absent (None) → empty frame, no error."""
-        from cobre_bridge.comparators.constraints import evaluate_lhs_cobre
+        from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
 
         with patch(
-            "cobre_bridge.comparators.constraints.scan_simulation_entity",
+            "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
             return_value=None,
         ):
-            result = evaluate_lhs_cobre(self._storage_constraint(), Path("/out"))
+            result = evaluate_lhs_novomodelo(self._storage_constraint(), Path("/out"))
         assert result.is_empty()
 
     def test_no_constraints_returns_empty_without_scanning(self) -> None:
-        from cobre_bridge.comparators.constraints import evaluate_lhs_cobre
+        from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
 
-        result = evaluate_lhs_cobre([], Path("/out"))
+        result = evaluate_lhs_novomodelo([], Path("/out"))
         assert result.is_empty()
 
 
@@ -1671,27 +1677,27 @@ class TestShapeFromBounds:
     """Unit tests for the F3 inverse-mapping helper."""
 
     def test_lower_only_is_ge(self) -> None:
-        from cobre_bridge.core.generic_constraint_format import shape_from_bounds
+        from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
 
         assert shape_from_bounds(10.0, None) == ">="
 
     def test_upper_only_is_le(self) -> None:
-        from cobre_bridge.core.generic_constraint_format import shape_from_bounds
+        from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
 
         assert shape_from_bounds(None, 10.0) == "<="
 
     def test_both_equal_is_eq(self) -> None:
-        from cobre_bridge.core.generic_constraint_format import shape_from_bounds
+        from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
 
         assert shape_from_bounds(7.0, 7.0) == "=="
 
     def test_both_unequal_is_range(self) -> None:
-        from cobre_bridge.core.generic_constraint_format import shape_from_bounds
+        from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
 
         assert shape_from_bounds(1.0, 10.0) == "range"
 
     def test_both_none_raises_value_error(self) -> None:
-        from cobre_bridge.core.generic_constraint_format import shape_from_bounds
+        from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
 
         with pytest.raises(ValueError, match="at least one endpoint"):
             shape_from_bounds(None, None)
@@ -1703,7 +1709,7 @@ class TestGenericConstraintF3Loaders:
     def test_bounds_loader_missing_file_has_no_bound_column(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.comparators.constraints import (
+        from novomodelo_bridge.comparators.constraints import (
             load_generic_constraint_bounds,
         )
 
@@ -1714,7 +1720,7 @@ class TestGenericConstraintF3Loaders:
     def test_bounds_loader_reads_f3_parquet_endpoints(self, tmp_path: Path) -> None:
         import pyarrow.parquet as pq
 
-        from cobre_bridge.comparators.constraints import (
+        from novomodelo_bridge.comparators.constraints import (
             load_generic_constraint_bounds,
         )
 
@@ -1739,7 +1745,7 @@ class TestGenericConstraintF3Loaders:
         assert df["bound_upper"].to_list() == [None]
 
     def test_constraints_loader_parses_sense_free_json(self, tmp_path: Path) -> None:
-        from cobre_bridge.comparators.constraints import (
+        from novomodelo_bridge.comparators.constraints import (
             load_generic_constraints,
         )
 
@@ -1786,7 +1792,7 @@ class TestPerStageBoundsResolution:
         )
 
     def test_resolves_ge_from_lower_endpoint(self) -> None:
-        from cobre_bridge.comparators.constraints import per_stage_bounds
+        from novomodelo_bridge.comparators.constraints import per_stage_bounds
 
         resolved = per_stage_bounds(self._f3_bounds())
         assert resolved[0][0].value == 500.0
@@ -1794,7 +1800,7 @@ class TestPerStageBoundsResolution:
         assert resolved[0][1].value == 520.0
 
     def test_resolves_le_from_upper_endpoint(self) -> None:
-        from cobre_bridge.comparators.constraints import per_stage_bounds
+        from novomodelo_bridge.comparators.constraints import per_stage_bounds
 
         resolved = per_stage_bounds(self._f3_bounds())
         assert resolved[1][0].value == 200.0
@@ -1802,7 +1808,7 @@ class TestPerStageBoundsResolution:
         assert resolved[1][1].value == 210.0
 
     def test_resolves_eq_from_either_endpoint(self) -> None:
-        from cobre_bridge.comparators.constraints import per_stage_bounds
+        from novomodelo_bridge.comparators.constraints import per_stage_bounds
 
         resolved = per_stage_bounds(self._f3_bounds())
         assert resolved[2][0].value == 300.0
@@ -1818,11 +1824,11 @@ class TestAC3NumericRegressionAcrossF3Migration:
     def test_f3_limits_and_verdicts_match_pre_f3_content(self, tmp_path: Path) -> None:
         import pyarrow.parquet as pq
 
-        from cobre_bridge.comparators.constraints import (
+        from novomodelo_bridge.comparators.constraints import (
             load_generic_constraint_bounds,
             per_stage_bounds,
         )
-        from cobre_bridge.core.generic_constraint_format import sense_to_interval
+        from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 
         # Pre-F3 ground truth this case is migrated from: constraint 0 is a
         # VminOP-style `>=` security-curve floor; constraint 1 is an
@@ -1889,32 +1895,32 @@ class TestConstraintsChartShapeLabelFromBounds:
     field on the (now sense-free) constraint dict."""
 
     def test_chart_title_uses_shape_derived_from_bounds(self) -> None:
-        from cobre_bridge.comparators.charts import constraints_comparison_chart
-        from cobre_bridge.comparators.constraints import ResolvedBound
+        from novomodelo_bridge.comparators.charts import constraints_comparison_chart
+        from novomodelo_bridge.comparators.constraints import ResolvedBound
 
         constraints = [{"id": 0, "name": "VminOP_X"}]  # sense-free (F3)
         lhs_newave = pl.DataFrame(
             {"constraint_id": [0], "stage_id": [0], "lhs_value": [510.0]}
         )
-        lhs_cobre = pl.DataFrame(
+        lhs_novomodelo = pl.DataFrame(
             {"constraint_id": [0], "stage_id": [0], "lhs_value": [508.0]}
         )
         bound_by_constraint = {0: {0: ResolvedBound(500.0, ">=")}}
 
         html = constraints_comparison_chart(
-            constraints, lhs_newave, lhs_cobre, bound_by_constraint
+            constraints, lhs_newave, lhs_novomodelo, bound_by_constraint
         )
         # json_for_script escapes `>` as `>` before embedding in <script>.
         assert "VminOP_X (\\u003e=)" in html
 
     def test_chart_title_defaults_when_no_bound_data(self) -> None:
-        from cobre_bridge.comparators.charts import constraints_comparison_chart
+        from novomodelo_bridge.comparators.charts import constraints_comparison_chart
 
         constraints = [{"id": 0, "name": "RE_1"}]
         lhs_newave = pl.DataFrame(
             {"constraint_id": [0], "stage_id": [0], "lhs_value": [10.0]}
         )
-        lhs_cobre = pl.DataFrame(
+        lhs_novomodelo = pl.DataFrame(
             schema={
                 "constraint_id": pl.Int32,
                 "stage_id": pl.Int32,
@@ -1924,7 +1930,7 @@ class TestConstraintsChartShapeLabelFromBounds:
 
         # No bound entries for cid 0 -> the "<=" default (matching the old
         # `c.get("sense", "<=")` fallback) is used.
-        html = constraints_comparison_chart(constraints, lhs_newave, lhs_cobre, {})
+        html = constraints_comparison_chart(constraints, lhs_newave, lhs_novomodelo, {})
         assert "RE_1 (\\u003c=)" in html
 
 
@@ -1948,15 +1954,15 @@ class TestNoSenseOrSingleBoundColumnRemainsInComparators:
     @pytest.mark.parametrize(
         "relative_path",
         [
-            "src/cobre_bridge/comparators/constraints.py",
-            "src/cobre_bridge/comparators/newave/constraints.py",
-            "src/cobre_bridge/comparators/charts/__init__.py",
-            "src/cobre_bridge/comparators/charts/_shared.py",
-            "src/cobre_bridge/comparators/charts/costs.py",
-            "src/cobre_bridge/comparators/charts/convergence.py",
-            "src/cobre_bridge/comparators/charts/performance.py",
-            "src/cobre_bridge/comparators/charts/spillage.py",
-            "src/cobre_bridge/comparators/newave/results.py",
+            "src/novomodelo_bridge/comparators/constraints.py",
+            "src/novomodelo_bridge/comparators/newave/constraints.py",
+            "src/novomodelo_bridge/comparators/charts/__init__.py",
+            "src/novomodelo_bridge/comparators/charts/_shared.py",
+            "src/novomodelo_bridge/comparators/charts/costs.py",
+            "src/novomodelo_bridge/comparators/charts/convergence.py",
+            "src/novomodelo_bridge/comparators/charts/performance.py",
+            "src/novomodelo_bridge/comparators/charts/spillage.py",
+            "src/novomodelo_bridge/comparators/newave/results.py",
         ],
     )
     def test_module_has_no_sense_or_bound_column_access(

@@ -1,21 +1,21 @@
 """FPHA (hydro production function) conversion for DECOMP-like decks.
 
-cobre evaluates reservoir generation with a *computed* FPHA: given the plant
+novomodelo evaluates reservoir generation with a *computed* FPHA: given the plant
 geometry (a volume→height→area VHA curve), the tailrace curve families, the
 specific productivity ``ρ_esp`` and turbine efficiency, and a volume fitting
-window, cobre fits the production-function hyperplanes itself. This module
-builds the DECOMP-side inputs, mirroring :mod:`cobre_bridge.newave.converters.hydro`
-and :mod:`cobre_bridge.newave.converters.tailrace` on the source-model side and reusing
-their shared cores (:func:`~cobre_bridge.core.tailrace.build_tailrace_table`,
-:func:`~cobre_bridge.core.productivity.fpha_efficiency`).
+window, novomodelo fits the production-function hyperplanes itself. This module
+builds the DECOMP-side inputs, mirroring :mod:`novomodelo_bridge.newave.converters.hydro`
+and :mod:`novomodelo_bridge.newave.converters.tailrace` on the source-model side and reusing
+their shared cores (:func:`~novomodelo_bridge.core.tailrace.build_tailrace_table`,
+:func:`~novomodelo_bridge.core.productivity.fpha_efficiency`).
 
 Eligibility mirrors the source-model rule: a plant with a non-degenerate
 volume→cota polynomial (the forebay curve), a positive ``ρ_esp``, and a positive
 ``AC``-adjusted rated turbined flow and power. Ineligible plants keep the
 constant-productivity path.
 
-**Fitting window (a cobre-bridge modelling parameter).** The source model fits
-each plant's FPHA locally, around its initial state. cobre-bridge opens a volume
+**Fitting window (a novomodelo-bridge modelling parameter).** The source model fits
+each plant's FPHA locally, around its initial state. novomodelo-bridge opens a volume
 band of ±:data:`FPHA_VOLUME_WINDOW_FRACTION` of the plant's *useful* volume
 (``volume_maximo − volume_minimo``) on each side of the initial reservoir
 volume, clamped to ``[volume_minimo, volume_maximo]`` — collapsing to a single
@@ -29,33 +29,33 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
-from cobre_bridge.core.diagnostics import emit
-from cobre_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
-from cobre_bridge.core.productivity import evaluate_cota, fpha_efficiency
-from cobre_bridge.core.tailrace import build_tailrace_table
-from cobre_bridge.decomp.converters.cadastro import effective_storage_range
-from cobre_bridge.decomp.converters.hydro.bounds import _rated_envelope
+from novomodelo_bridge.core.diagnostics import emit
+from novomodelo_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
+from novomodelo_bridge.core.productivity import evaluate_cota, fpha_efficiency
+from novomodelo_bridge.core.tailrace import build_tailrace_table
+from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
+from novomodelo_bridge.decomp.converters.hydro.bounds import _rated_envelope
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
 
 #: Half-width of the FPHA volume fitting window as a fraction of a plant's
 #: useful volume (``volume_maximo − volume_minimo``): the window spans
 #: ±this fraction on each side of the initial reservoir volume (a 10% -> ±10%,
-#: 20%-wide band), clamped to ``[volume_minimo, volume_maximo]``. A cobre-bridge
+#: 20%-wide band), clamped to ``[volume_minimo, volume_maximo]``. A novomodelo-bridge
 #: modelling choice: the source model fits the FPHA locally around the initial
 #: state, and this band captures the operative volume swing over a
 #: weekly/monthly horizon without over-extrapolating the fit.
 FPHA_VOLUME_WINDOW_FRACTION = 0.10
 
 #: Number of volume samples per plant in the VHA geometry table — matches
-#: :func:`cobre_bridge.newave.converters.hydro.generate_hydro_geometry`.
+#: :func:`novomodelo_bridge.newave.converters.hydro.generate_hydro_geometry`.
 _GEOMETRY_N_POINTS = 100
 
 _GEOMETRY_SCHEMA = pa.schema(
@@ -86,7 +86,7 @@ def convert_tailrace_curves(case: DecompCase, id_map: DecompIdMap) -> pa.Table |
     """Build ``system/tailrace_curves.parquet`` from the ``polinjus`` families.
 
     Thin DECOMP wrapper over the shared
-    :func:`~cobre_bridge.core.tailrace.build_tailrace_table` core — the
+    :func:`~novomodelo_bridge.core.tailrace.build_tailrace_table` core — the
     ``polinjus`` object exposes the identical ``hidreletrica_curvajusante`` /
     ``…_polinomio_segmento`` frames the source-model side reads. ``None`` when
     the deck has no ``polinjus`` or no segment maps to a converted hydro.
@@ -100,14 +100,14 @@ def convert_tailrace_curves(case: DecompCase, id_map: DecompIdMap) -> pa.Table |
 
 
 def is_fpha_eligible(effective: EffectiveCadastro, code: int) -> bool:
-    """Whether plant *code* can be fit by cobre's computed FPHA.
+    """Whether plant *code* can be fit by novomodelo's computed FPHA.
 
     Requires a non-degenerate (post-``AC COTVOL``) volume→cota polynomial, a
     positive ``produtibilidade_especifica`` at the initial stage, and a
     positive rated turbined flow **and** rated power
-    (:func:`~cobre_bridge.decomp.converters.hydro.bounds._rated_envelope`,
+    (:func:`~novomodelo_bridge.decomp.converters.hydro.bounds._rated_envelope`,
     the ``AC NUMCON``/``NUMMAQ``/``POTEFE``/``VAZEFE``-adjusted envelope
-    ``hydros.json`` emits). cobre samples the fit on ``[0, max_turbined]`` and
+    ``hydros.json`` emits). novomodelo samples the fit on ``[0, max_turbined]`` and
     clamps it at ``max_generation``, so a zero on either side collapses the
     production cloud and aborts the fit. Storage swing is not required — a
     run-of-river plant fits through the single-volume path.
@@ -138,7 +138,7 @@ def fpha_eligible_codes(effective: EffectiveCadastro, id_map: DecompIdMap) -> se
     production-model doc, and the energy-productivity parquet exclusion, so the
     three agree on which plants are FPHA. A plant passing every check but
     rated capacity is reported through
-    :func:`~cobre_bridge.core.hydro_units.fpha_zero_capacity_diagnostic`.
+    :func:`~novomodelo_bridge.core.hydro_units.fpha_zero_capacity_diagnostic`.
     """
     eligible: set[int] = set()
     zero_capacity: list[tuple[str, int, float, float]] = []
@@ -193,7 +193,7 @@ def convert_hydro_geometry(
 ) -> pa.Table:
     """Build ``system/hydro_geometry.parquet`` (volume→height→area VHA curves).
 
-    Mirrors :func:`cobre_bridge.newave.converters.hydro.generate_hydro_geometry` but
+    Mirrors :func:`novomodelo_bridge.newave.converters.hydro.generate_hydro_geometry` but
     reads the **effective** (post-``AC COTVOL``) volume→cota polynomial and the
     base ``a*_cota_area`` height→area polynomial, sampling
     :data:`_GEOMETRY_N_POINTS` uniform volume points over the stage-0 effective

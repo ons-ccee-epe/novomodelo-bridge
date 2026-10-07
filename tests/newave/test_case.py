@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from cobre_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.case import NewaveCase
 from tests.conftest import make_case, make_nw_files
 
 
@@ -31,7 +31,7 @@ def _confhd(rows: list[dict]) -> MagicMock:
 
 def test_required_reader_parses_once_and_caches(tmp_path: Path) -> None:
     case = NewaveCase(files=make_nw_files(tmp_path))
-    with patch("cobre_bridge.newave.case.Dger") as mock_dger:
+    with patch("novomodelo_bridge.newave.case.Dger") as mock_dger:
         sentinel = object()
         mock_dger.read.return_value = sentinel
         first = case.dger
@@ -43,14 +43,14 @@ def test_required_reader_parses_once_and_caches(tmp_path: Path) -> None:
 
 def test_optional_reader_is_none_when_file_absent(tmp_path: Path) -> None:
     case = NewaveCase(files=make_nw_files(tmp_path))  # modif defaults to None
-    with patch("cobre_bridge.newave.case.Modif") as mock_modif:
+    with patch("novomodelo_bridge.newave.case.Modif") as mock_modif:
         assert case.modif is None
     mock_modif.read.assert_not_called()
 
 
 def test_polinjus_is_none_when_file_absent(tmp_path: Path) -> None:
     case = NewaveCase(files=make_nw_files(tmp_path))  # polinjus defaults to None
-    with patch("cobre_bridge.newave.case.UsinasHidreletricas") as mock_uh:
+    with patch("novomodelo_bridge.newave.case.UsinasHidreletricas") as mock_uh:
         assert case.polinjus is None
     mock_uh.read.assert_not_called()
 
@@ -58,7 +58,7 @@ def test_polinjus_is_none_when_file_absent(tmp_path: Path) -> None:
 def test_polinjus_parses_when_file_present(tmp_path: Path) -> None:
     polinjus_path = tmp_path / "polinjus.csv"
     case = NewaveCase(files=make_nw_files(tmp_path, polinjus=polinjus_path))
-    with patch("cobre_bridge.newave.case.UsinasHidreletricas") as mock_uh:
+    with patch("novomodelo_bridge.newave.case.UsinasHidreletricas") as mock_uh:
         sentinel = object()
         mock_uh.read.return_value = sentinel
         assert case.polinjus is sentinel
@@ -68,7 +68,7 @@ def test_polinjus_parses_when_file_present(tmp_path: Path) -> None:
 
 def test_newave_case_exph_none_when_absent(tmp_path: Path) -> None:
     case = NewaveCase(files=make_nw_files(tmp_path))  # exph defaults to None
-    with patch("cobre_bridge.newave.case.Exph") as mock_exph:
+    with patch("novomodelo_bridge.newave.case.Exph") as mock_exph:
         assert case.exph is None
     mock_exph.read.assert_not_called()
 
@@ -89,7 +89,7 @@ def test_fpha_enabled_reflects_dger_flag(
 def test_optional_reader_parses_when_file_present(tmp_path: Path) -> None:
     modif_path = tmp_path / "modif.dat"
     case = NewaveCase(files=make_nw_files(tmp_path, modif=modif_path))
-    with patch("cobre_bridge.newave.case.Modif") as mock_modif:
+    with patch("novomodelo_bridge.newave.case.Modif") as mock_modif:
         sentinel = object()
         mock_modif.read.return_value = sentinel
         assert case.modif is sentinel
@@ -100,7 +100,7 @@ def test_optional_reader_parses_when_file_present(tmp_path: Path) -> None:
 def test_from_directory_binds_files_without_parsing(tmp_path: Path) -> None:
     files = make_nw_files(tmp_path)
     with patch(
-        "cobre_bridge.newave.case.NewaveFiles.from_directory", return_value=files
+        "novomodelo_bridge.newave.case.NewaveFiles.from_directory", return_value=files
     ) as mock_from_dir:
         case = NewaveCase.from_directory(tmp_path)
     assert case.files is files
@@ -110,14 +110,14 @@ def test_from_directory_binds_files_without_parsing(tmp_path: Path) -> None:
 def test_make_case_prefills_slots_without_io(tmp_path: Path) -> None:
     sentinel = object()
     case = make_case(tmp_path, dger=sentinel)
-    with patch("cobre_bridge.newave.case.Dger") as mock_dger:
+    with patch("novomodelo_bridge.newave.case.Dger") as mock_dger:
         assert case.dger is sentinel
     mock_dger.read.assert_not_called()
 
 
 def test_make_case_forces_optional_to_none(tmp_path: Path) -> None:
     case = make_case(tmp_path, cvar=None)
-    with patch("cobre_bridge.newave.case.Cvar") as mock_cvar:
+    with patch("novomodelo_bridge.newave.case.Cvar") as mock_cvar:
         assert case.cvar is None
     mock_cvar.read.assert_not_called()
 

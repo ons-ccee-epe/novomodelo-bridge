@@ -1,6 +1,6 @@
 """Tier-1 tests for the one shared bound-table merge.
 
-Pure polars — imports no ``cobre`` and reads no ``example/`` deck.
+Pure polars — imports no ``novomodelo`` and reads no ``example/`` deck.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from cobre_bridge.core.bound_merge import merge_bound_tables
+from novomodelo_bridge.core.bound_merge import merge_bound_tables
 
 
 def test_base_only_rows_survive() -> None:

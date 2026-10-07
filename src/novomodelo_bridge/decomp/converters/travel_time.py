@@ -6,10 +6,10 @@ plant, plus that plant's defluent flow in the (up to five) weeks of the month
 before the study start — ordered most-recent first (manual §3.4.6.6). A plant
 without a ``VI`` register has an instantaneous arc (default travel time nil).
 
-cobre models the delayed arc with ``Hydro.travel_time_hours`` and seeds the
+novomodelo models the delayed arc with ``Hydro.travel_time_hours`` and seeds the
 water already in transit at the study start with
 ``initial_conditions.past_defluences`` — one ``[start_date, end_date)`` window
-per pre-study release period, keyed by the upstream (releasing) plant. cobre's
+per pre-study release period, keyed by the upstream (releasing) plant. novomodelo's
 config-time validator (``travel_time.rs`` rule 5) requires those windows to
 **cover** the arc's in-transit span ``[start_0 − travel_time, start_0)`` with no
 gap and none future-dated (rule 5b), so this module tiles exactly that span
@@ -29,15 +29,15 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from cobre_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 
 if TYPE_CHECKING:
     from datetime import date
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
 
@@ -128,14 +128,14 @@ def convert_travel_time(
     start_date: date,
     week_hours: float,
 ) -> tuple[dict[int, float], list[dict]]:
-    """Resolve the ``VI`` registers into cobre travel-time inputs.
+    """Resolve the ``VI`` registers into novomodelo travel-time inputs.
 
     Returns ``(travel_time_hours_by_code, past_defluences)`` where the first is
-    the ``{plant code: travel_time_hours}`` map :func:`~cobre_bridge.decomp.
+    the ``{plant code: travel_time_hours}`` map :func:`~novomodelo_bridge.decomp.
     hydro.convert_hydros` stamps onto each arc plant's ``hydros.json`` entry,
     and the second is the ``initial_conditions.past_defluences`` list seeding
     the in-transit water. Both cover the same set of plants — those operated
-    **and** carrying a downstream cascade arc — so cobre's coverage rule sees a
+    **and** carrying a downstream cascade arc — so novomodelo's coverage rule sees a
     seed for every declared arc.
     """
     travel_times = read_travel_times(dadger)

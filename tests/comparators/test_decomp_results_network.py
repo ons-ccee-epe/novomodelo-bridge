@@ -18,17 +18,17 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.decomp.results import (
     _corridor_line_alignment,
     _interc_side,
     _line_bounds_and_meta,
     _line_entity_names,
     _line_result_comparisons,
-    _read_cobre_lines_index,
+    _read_novomodelo_lines_index,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.report_builder import build_comparison_report
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
     _patch_aligned_frames,
@@ -61,7 +61,7 @@ def _line_entry(
 
 
 def _write_lines_json(case_dir: Path, lines: list[dict[str, Any]]) -> Path:
-    """Write ``system/lines.json`` under *case_dir* and return the Cobre
+    """Write ``system/lines.json`` under *case_dir* and return the Novomodelo
     output dir (``case_dir/output``) that ``case_dir_for`` resolves back to
     *case_dir* from."""
     system_dir = case_dir / "system"
@@ -83,7 +83,7 @@ def _write_line_bounds_parquet(case_dir: Path, rows: list[dict[str, Any]]) -> No
 
 class TestCorridorLineAlignment:
     """``_corridor_line_alignment`` -- corridor (bus_de, bus_para)
-    -> ordered cobre (line_id, sign) legs."""
+    -> ordered novomodelo (line_id, sign) legs."""
 
     def test_direct_line_corridor_maps_with_positive_sign(self, tmp_path: Path) -> None:
         id_map = _decomp_id_map_three_subsystems()
@@ -94,7 +94,7 @@ class TestCorridorLineAlignment:
         assert alignment[(0, 1)] == [(0, 1)]
 
     def test_reverse_declared_line_gets_negative_sign(self, tmp_path: Path) -> None:
-        """A cobre line declared S -> SE realizes the SE -> S corridor with
+        """A novomodelo line declared S -> SE realizes the SE -> S corridor with
         sign -1, orienting the line's own net_flow_mw onto the requested
         direction."""
         id_map = _decomp_id_map_three_subsystems()
@@ -150,7 +150,7 @@ class TestCorridorLineAlignment:
             tmp_path, [_line_entry(0, 0, 1), _line_entry(1, 0, 1)]
         )
 
-        assert (0, 1) not in _read_cobre_lines_index(output_dir)
+        assert (0, 1) not in _read_novomodelo_lines_index(output_dir)
         assert (0, 1) not in _corridor_line_alignment(output_dir, id_map)
 
 
@@ -175,23 +175,23 @@ def _dec_oper_interc_frame(
 
 
 class TestIntercSide:
-    """``_interc_side`` -- the aligned per-(cobre line_id, stage)
+    """``_interc_side`` -- the aligned per-(novomodelo line_id, stage)
     DECOMP net-flow frame, plus the unresolved-corridor report."""
 
     def _patch_interc(
         self, monkeypatch: pytest.MonkeyPatch, frame: pl.DataFrame
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_interc",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_interc",
             lambda *_args, **_kwargs: frame,
         )
 
     def test_direct_line_corridor_reproduces_a_positive_flow(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Sign orientation: a known de -> para positive flow, on a cobre
+        """Sign orientation: a known de -> para positive flow, on a novomodelo
         line declared in that same de -> para direction, yields a positive
-        aligned cobre net-flow."""
+        aligned novomodelo net-flow."""
         id_map = _decomp_id_map_three_subsystems()
         output_dir = _write_lines_json(tmp_path, [_line_entry(0, 0, 1)])
         self._patch_interc(
@@ -259,8 +259,8 @@ class TestIntercSide:
     def test_reverse_declared_line_flips_the_aligned_sign(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """The cobre line runs S -> SE; the DECOMP corridor is declared
-        SE -> S with a positive flow, so the aligned cobre net-flow must be
+        """The novomodelo line runs S -> SE; the DECOMP corridor is declared
+        SE -> S with a positive flow, so the aligned novomodelo net-flow must be
         negative to stay oriented to the line's own
         source_bus_id -> target_bus_id convention."""
         id_map = _decomp_id_map_three_subsystems()
@@ -280,7 +280,7 @@ class TestIntercSide:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """The aligned net-flow is the origin-side reading, matching a
-        lossless cobre line -- not ``intercambio_origem_MW - perdas_MW``."""
+        lossless novomodelo line -- not ``intercambio_origem_MW - perdas_MW``."""
         id_map = _decomp_id_map_three_subsystems()
         output_dir = _write_lines_json(tmp_path, [_line_entry(0, 0, 1)])
         self._patch_interc(
@@ -330,7 +330,7 @@ class TestIntercSide:
     ) -> None:
         """Regression: the source model reports every physical interface as
         two corridor rows, one per direction (both ``SE -> S`` and
-        ``S -> SE``). Both align onto the same direct cobre line leg with
+        ``S -> SE``). Both align onto the same direct novomodelo line leg with
         opposite sign -- the returned frame must collapse them to a single
         ``(entity_id, stage_id)`` row (not the duplicate keys that used to
         fan out ``_line_result_comparisons``'s join into a spurious extra
@@ -385,7 +385,7 @@ class TestIntercSide:
 
 
 class TestLineEntityNames:
-    """Display name per cobre line id for the Network tab."""
+    """Display name per novomodelo line id for the Network tab."""
 
     def test_uses_the_name_from_line_meta_when_present(self) -> None:
         id_map = _decomp_id_map_three_subsystems()
@@ -416,7 +416,7 @@ class TestLineEntityNames:
 
 class TestLineResultComparisons:
     """Corridor-aligned line ``ResultComparison`` rows, joining
-    the DECOMP net-flow onto Cobre's per-line simulation means."""
+    the DECOMP net-flow onto Novomodelo's per-line simulation means."""
 
     def test_id_map_none_returns_no_rows_and_no_unresolved(
         self, tmp_path: Path
@@ -435,7 +435,7 @@ class TestLineResultComparisons:
             raise FileNotFoundError("dec_oper_interc.csv not found")
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_interc", _boom
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_interc", _boom
         )
 
         results, unresolved = _line_result_comparisons(tmp_path, tmp_path, id_map, [])
@@ -443,21 +443,21 @@ class TestLineResultComparisons:
         assert results == []
         assert unresolved == []
 
-    def test_joins_source_and_cobre_into_result_comparison_rows(
+    def test_joins_source_and_novomodelo_into_result_comparison_rows(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         id_map = _decomp_id_map_three_subsystems()
         line_meta = [_line_entry(0, 0, 1, name="SE-S")]
         output_dir = _write_lines_json(tmp_path, line_meta)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_interc",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_interc",
             lambda *_args, **_kwargs: _dec_oper_interc_frame(
                 de=1, para=2, origem_mw=250.0
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_line_means",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_line_means",
             lambda *_args, **_kwargs: pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
@@ -472,25 +472,25 @@ class TestLineResultComparisons:
         row = results[0]
         assert row.entity_type == "line"
         assert row.entity_name == "SE-S"
-        assert row.cobre_id == 0
+        assert row.novomodelo_id == 0
         assert row.stage == 0
         assert row.variable == "net_flow_mw"
         assert row.newave_value == 250.0
-        assert row.cobre_value == 240.0
+        assert row.novomodelo_value == 240.0
         # D-SOURCE-TOKEN-adjacent: no single source code covers a line that
         # may be a shared leg of more than one corridor -- see the module
         # docstring.
         assert row.newave_code == 0
 
-    def test_unresolved_corridors_surface_even_with_no_cobre_line_output(
+    def test_unresolved_corridors_surface_even_with_no_novomodelo_line_output(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """NE (code 3) has no realizing line -- reported unresolved even
-        though there is nothing to join against on the Cobre side."""
+        though there is nothing to join against on the Novomodelo side."""
         id_map = _decomp_id_map_three_subsystems()
         output_dir = _write_lines_json(tmp_path, [_line_entry(0, 0, 1)])
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_interc",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_interc",
             lambda *_args, **_kwargs: _dec_oper_interc_frame(
                 de=1, para=3, origem_mw=90.0
             ),
@@ -503,7 +503,7 @@ class TestLineResultComparisons:
 
 
 class TestLineBoundsAndMeta:
-    """Cobre-side line capacity bounds + metadata, read straight
+    """Novomodelo-side line capacity bounds + metadata, read straight
     from the converted case (mirrors ``results.compare_results``)."""
 
     def test_reads_line_bounds_parquet_and_lines_json(self, tmp_path: Path) -> None:
@@ -551,26 +551,26 @@ def _patch_network(
     *,
     id_map: DecompIdMap,
     interc_frame: pl.DataFrame,
-    cobre_line_means: pl.DataFrame,
-    cobre_line_pct: pl.DataFrame | None = None,
+    novomodelo_line_means: pl.DataFrame,
+    novomodelo_line_pct: pl.DataFrame | None = None,
 ) -> None:
     """Stub the line seam: the deck's id map, its interchange
-    table, and Cobre's own per-line simulation output -- mirroring
+    table, and Novomodelo's own per-line simulation output -- mirroring
     ``_patch_aligned_frames``'s "patch at the seam" convention."""
     _patch_shared_case(monkeypatch, id_map=id_map)
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.read_dec_oper_interc",
+        "novomodelo_bridge.comparators.decomp.results.read_dec_oper_interc",
         lambda *_args, **_kwargs: interc_frame,
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers.read_cobre_line_means",
-        lambda *_args, **_kwargs: cobre_line_means,
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers.read_novomodelo_line_means",
+        lambda *_args, **_kwargs: novomodelo_line_means,
     )
-    if cobre_line_pct is not None:
+    if novomodelo_line_pct is not None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_line_percentiles",
-            lambda *_args, **_kwargs: cobre_line_pct,
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_line_percentiles",
+            lambda *_args, **_kwargs: novomodelo_line_pct,
         )
 
 
@@ -581,7 +581,7 @@ class TestBuildDecompDatasetNetwork:
     def _case_dirs(self, tmp_path: Path) -> tuple[Path, Path]:
         """A deck dir and a converted-case ``output/`` dir, isolated under
         *tmp_path* -- unlike ``build_decomp_dataset(tmp_path, tmp_path)``,
-        ``case_dir_for(cobre_output_dir)`` must resolve to a real directory
+        ``case_dir_for(novomodelo_output_dir)`` must resolve to a real directory
         this test controls, since ``_line_bounds_and_meta`` reads
         ``system/``/``constraints/`` from it."""
         case_dir = tmp_path / "case"
@@ -604,37 +604,37 @@ class TestBuildDecompDatasetNetwork:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
-        decomp_dir, cobre_output_dir = self._case_dirs(tmp_path)
+        decomp_dir, novomodelo_output_dir = self._case_dirs(tmp_path)
         _patch_network(
             monkeypatch,
             id_map=_decomp_id_map_three_subsystems(),
             interc_frame=_dec_oper_interc_frame(de=1, para=2, origem_mw=250.0),
-            cobre_line_means=pl.DataFrame(
+            novomodelo_line_means=pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
         )
 
-        dataset = build_decomp_dataset(decomp_dir, cobre_output_dir)
+        dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
         line_rows = dataset.tidy.filter(pl.col("entity_type") == "line")
         assert not line_rows.is_empty()
         assert set(line_rows["variable"].unique().to_list()) == {"net_flow_mw"}
-        assert set(line_rows["source"].unique().to_list()) <= {"newave", "cobre"}
+        assert set(line_rows["source"].unique().to_list()) <= {"newave", "novomodelo"}
         assert "net_flow_mw" in dataset.summary["variable"].to_list()
 
     def test_line_percentiles_populate_metadata_when_present(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
-        decomp_dir, cobre_output_dir = self._case_dirs(tmp_path)
+        decomp_dir, novomodelo_output_dir = self._case_dirs(tmp_path)
         _patch_network(
             monkeypatch,
             id_map=_decomp_id_map_three_subsystems(),
             interc_frame=_dec_oper_interc_frame(de=1, para=2, origem_mw=250.0),
-            cobre_line_means=pl.DataFrame(
+            novomodelo_line_means=pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
-            cobre_line_pct=pl.DataFrame(
+            novomodelo_line_pct=pl.DataFrame(
                 {
                     "entity_id": [0],
                     "stage_id": [0],
@@ -645,7 +645,7 @@ class TestBuildDecompDatasetNetwork:
             ),
         )
 
-        dataset = build_decomp_dataset(decomp_dir, cobre_output_dir)
+        dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
         line_pct = dataset.render.line
         assert isinstance(line_pct, pl.DataFrame)
@@ -654,24 +654,24 @@ class TestBuildDecompDatasetNetwork:
             set(line_pct.columns)
         )
 
-    def test_line_percentiles_stay_empty_when_cobre_output_lacks_them(
+    def test_line_percentiles_stay_empty_when_novomodelo_output_lacks_them(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """No percentile mock: no ``simulation/exchanges`` partition under
         the case's output dir, so the reader degrades to its own empty
         default and no band is fabricated (deterministic-tree caveat)."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
-        decomp_dir, cobre_output_dir = self._case_dirs(tmp_path)
+        decomp_dir, novomodelo_output_dir = self._case_dirs(tmp_path)
         _patch_network(
             monkeypatch,
             id_map=_decomp_id_map_three_subsystems(),
             interc_frame=_dec_oper_interc_frame(de=1, para=2, origem_mw=250.0),
-            cobre_line_means=pl.DataFrame(
+            novomodelo_line_means=pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
         )
 
-        dataset = build_decomp_dataset(decomp_dir, cobre_output_dir)
+        dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
         line_pct = dataset.render.line
         assert isinstance(line_pct, pl.DataFrame)
@@ -681,17 +681,17 @@ class TestBuildDecompDatasetNetwork:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
-        decomp_dir, cobre_output_dir = self._case_dirs(tmp_path)
+        decomp_dir, novomodelo_output_dir = self._case_dirs(tmp_path)
         _patch_network(
             monkeypatch,
             id_map=_decomp_id_map_three_subsystems(),
             interc_frame=_dec_oper_interc_frame(de=1, para=2, origem_mw=250.0),
-            cobre_line_means=pl.DataFrame(
+            novomodelo_line_means=pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
         )
 
-        dataset = build_decomp_dataset(decomp_dir, cobre_output_dir)
+        dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
         line_bounds = dataset.render.line_bounds
         assert isinstance(line_bounds, pl.DataFrame)
@@ -704,17 +704,17 @@ class TestBuildDecompDatasetNetwork:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
-        decomp_dir, cobre_output_dir = self._case_dirs(tmp_path)
+        decomp_dir, novomodelo_output_dir = self._case_dirs(tmp_path)
         _patch_network(
             monkeypatch,
             id_map=_decomp_id_map_three_subsystems(),
             interc_frame=_dec_oper_interc_frame(de=1, para=2, origem_mw=250.0),
-            cobre_line_means=pl.DataFrame(
+            novomodelo_line_means=pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
         )
 
-        dataset = build_decomp_dataset(decomp_dir, cobre_output_dir)
+        dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
         line_meta = dataset.render.line_meta
         assert isinstance(line_meta, list)
@@ -727,17 +727,17 @@ class TestBuildDecompDatasetNetwork:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
-        decomp_dir, cobre_output_dir = self._case_dirs(tmp_path)
+        decomp_dir, novomodelo_output_dir = self._case_dirs(tmp_path)
         _patch_network(
             monkeypatch,
             id_map=_decomp_id_map_three_subsystems(),
             interc_frame=_dec_oper_interc_frame(de=1, para=2, origem_mw=250.0),
-            cobre_line_means=pl.DataFrame(
+            novomodelo_line_means=pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
         )
 
-        dataset = build_decomp_dataset(decomp_dir, cobre_output_dir)
+        dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
         html = build_comparison_report(dataset)
 
         assert "Line Net Flow" in html
@@ -748,18 +748,18 @@ class TestBuildDecompDatasetNetwork:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
-        decomp_dir, cobre_output_dir = self._case_dirs(tmp_path)
+        decomp_dir, novomodelo_output_dir = self._case_dirs(tmp_path)
         # NE (code 3) has no realizing line in this case's lines.json.
         _patch_network(
             monkeypatch,
             id_map=_decomp_id_map_three_subsystems(),
             interc_frame=_dec_oper_interc_frame(de=1, para=3, origem_mw=90.0),
-            cobre_line_means=pl.DataFrame(
+            novomodelo_line_means=pl.DataFrame(
                 {"entity_id": [0], "stage_id": [0], "net_flow_mw": [240.0]}
             ),
         )
 
-        dataset = build_decomp_dataset(decomp_dir, cobre_output_dir)
+        dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
         assert dataset.metadata["unmapped"]["line"] == [[1, 3]]
         line_rows = dataset.tidy.filter(pl.col("entity_type") == "line")

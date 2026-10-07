@@ -1,6 +1,6 @@
 """Branch coverage for ``comparators.constraints`` and ``comparators.newave.constraints``.
 
-Uses the committed converted-Cobre-input fixture (``generic_constraints.json``
+Uses the committed converted-Novomodelo-input fixture (``generic_constraints.json``
 + ``generic_constraint_bounds.parquet``) and a NEWAVE ``MEDIAS-USIH.CSV``
 result under ``fixtures/constraints_compare/``, plus a small in-test pyarrow
 simulation parquet and in-test ``generic_parameters.json`` / ``hydros.json``
@@ -20,34 +20,37 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from cobre_bridge.cobre.constraint_expr import (
-    load_rho_acum_overrides,
-    scales_storage_by_rho_acum,
-)
-from cobre_bridge.comparators.constraints import (
+from novomodelo_bridge.comparators.constraints import (
     _resolve_bound,
-    evaluate_lhs_cobre,
+    evaluate_lhs_novomodelo,
     load_generic_constraint_bounds,
     load_generic_constraints,
     per_stage_bounds,
 )
-from cobre_bridge.comparators.newave.alignment import EntityAlignment
-from cobre_bridge.comparators.newave.constraints import (
+from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
+from novomodelo_bridge.comparators.newave.constraints import (
     _load_hydro_min_storage,
     apply_vminop_useful_energy,
     evaluate_lhs_newave,
 )
-from cobre_bridge.comparators.newave.readers import read_medias_hydro
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.comparators.newave.readers import read_medias_hydro
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo.constraint_expr import (
+    load_rho_acum_overrides,
+    scales_storage_by_rho_acum,
+)
 
-_COBRE_INPUT_DIR = (
-    Path(__file__).parent.parent / "fixtures" / "constraints_compare" / "cobre_input"
+_NOVOMODELO_INPUT_DIR = (
+    Path(__file__).parent.parent
+    / "fixtures"
+    / "constraints_compare"
+    / "novomodelo_input"
 )
 _NEWAVE_DIR = (
     Path(__file__).parent.parent / "fixtures" / "constraints_compare" / "newave"
 )
 
-# ``fixtures/constraints_compare/cobre_input/constraints/generic_constraints.json``:
+# ``fixtures/constraints_compare/novomodelo_input/constraints/generic_constraints.json``:
 # constraint 0 = non-VminOP generation sum (RE-style, "<=" bound); constraint
 # 1 = VminOP storage constraint scaled by ``@rho_acum_h0`` (">=" bound). The
 # companion bounds parquet carries 2 stages (0, 1) for each.
@@ -68,7 +71,7 @@ _EMPTY_LINE_MEANS = pl.DataFrame(
 
 
 def _id_map() -> NewaveIdMap:
-    # hydro_codes sorted ascending -> cobre id: 10 -> 0, 20 -> 1.
+    # hydro_codes sorted ascending -> novomodelo id: 10 -> 0, 20 -> 1.
     return NewaveIdMap(subsystem_ids=[1], hydro_codes=[10, 20], thermal_codes=[])
 
 
@@ -95,8 +98,8 @@ def _write_sim_hydros_parquet(output_dir: Path) -> None:
     pq.write_table(table, sim_dir / "data.parquet")
 
 
-def _write_generic_parameters(cobre_case_dir: Path) -> None:
-    path = cobre_case_dir / "constraints" / "generic_parameters.json"
+def _write_generic_parameters(novomodelo_case_dir: Path) -> None:
+    path = novomodelo_case_dir / "constraints" / "generic_parameters.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -113,8 +116,8 @@ def _write_generic_parameters(cobre_case_dir: Path) -> None:
     )
 
 
-def _write_hydros_json(cobre_case_dir: Path) -> None:
-    path = cobre_case_dir / "system" / "hydros.json"
+def _write_hydros_json(novomodelo_case_dir: Path) -> None:
+    path = novomodelo_case_dir / "system" / "hydros.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -135,7 +138,7 @@ def _write_hydros_json(cobre_case_dir: Path) -> None:
 
 class TestLoadGenericConstraints:
     def test_parses_sense_free_constraints(self) -> None:
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
         assert {c["id"] for c in constraints} == {_NON_VMINOP_ID, _VMINOP_ID}
         assert all("sense" not in c for c in constraints)
 
@@ -158,7 +161,7 @@ class TestLoadGenericConstraints:
 
 class TestLoadGenericConstraintBounds:
     def test_parses_f3_bound_endpoints(self) -> None:
-        df = load_generic_constraint_bounds(_COBRE_INPUT_DIR)
+        df = load_generic_constraint_bounds(_NOVOMODELO_INPUT_DIR)
         assert "bound" not in df.columns
         assert set(df["constraint_id"].to_list()) == {_NON_VMINOP_ID, _VMINOP_ID}
 
@@ -224,7 +227,7 @@ class TestResolveBound:
 
 class TestPerStageBounds:
     def test_resolves_both_constraints_from_fixture(self) -> None:
-        bounds = load_generic_constraint_bounds(_COBRE_INPUT_DIR)
+        bounds = load_generic_constraint_bounds(_NOVOMODELO_INPUT_DIR)
         resolved = per_stage_bounds(bounds)
         assert resolved[_NON_VMINOP_ID][0].shape == "<="
         assert resolved[_NON_VMINOP_ID][0].value == 200.0
@@ -232,7 +235,7 @@ class TestPerStageBounds:
         assert resolved[_VMINOP_ID][0].value == 100.0
 
     def test_max_stage_drops_later_stages(self) -> None:
-        bounds = load_generic_constraint_bounds(_COBRE_INPUT_DIR)
+        bounds = load_generic_constraint_bounds(_NOVOMODELO_INPUT_DIR)
         resolved = per_stage_bounds(bounds, max_stage=0)
         assert set(resolved[_NON_VMINOP_ID]) == {0}
 
@@ -251,24 +254,24 @@ class TestPerStageBounds:
 
 class TestScalesStorageByRhoAcum:
     def test_true_for_rho_acum_scaled_storage(self) -> None:
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
         vminop = next(c for c in constraints if c["id"] == _VMINOP_ID)
         assert scales_storage_by_rho_acum(vminop) is True
 
     def test_false_for_plain_generation_sum(self) -> None:
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
         non_vminop = next(c for c in constraints if c["id"] == _NON_VMINOP_ID)
         assert scales_storage_by_rho_acum(non_vminop) is False
 
 
 # ---------------------------------------------------------------------------
-# evaluate_lhs_newave / evaluate_lhs_cobre
+# evaluate_lhs_newave / evaluate_lhs_novomodelo
 # ---------------------------------------------------------------------------
 
 
 class TestEvaluateLhsNewave:
     def test_evaluates_non_vminop_generation_sum(self) -> None:
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
         nw_hydro = read_medias_hydro(_NEWAVE_DIR)
         lhs = evaluate_lhs_newave(
             constraints, nw_hydro, _EMPTY_LINE_MEANS, EntityAlignment(), _id_map(), 1
@@ -280,7 +283,7 @@ class TestEvaluateLhsNewave:
     def test_vminop_rho_param_constraint_is_skipped(self) -> None:
         """@rho_acum params have no source-model-side productivity handy, so
         the generic evaluator skips those stages entirely (no zero row)."""
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
         nw_hydro = read_medias_hydro(_NEWAVE_DIR)
         lhs = evaluate_lhs_newave(
             constraints, nw_hydro, _EMPTY_LINE_MEANS, EntityAlignment(), _id_map(), 1
@@ -295,12 +298,12 @@ class TestEvaluateLhsNewave:
         assert lhs.is_empty()
 
 
-class TestEvaluateLhsCobre:
+class TestEvaluateLhsNovomodelo:
     def test_evaluates_both_constraints_from_simulation(self, tmp_path: Path) -> None:
         _write_sim_hydros_parquet(tmp_path)
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
 
-        lhs = evaluate_lhs_cobre(constraints, tmp_path)
+        lhs = evaluate_lhs_novomodelo(constraints, tmp_path)
 
         rows = {
             (r["constraint_id"], r["stage_id"]): r["lhs_value"]
@@ -316,19 +319,19 @@ class TestEvaluateLhsCobre:
 
     def test_degrades_to_empty_frame_on_no_constraints(self, tmp_path: Path) -> None:
         _write_sim_hydros_parquet(tmp_path)
-        assert evaluate_lhs_cobre([], tmp_path).is_empty()
+        assert evaluate_lhs_novomodelo([], tmp_path).is_empty()
 
     def test_degrades_to_empty_frame_when_no_hydro_simulation(
         self, tmp_path: Path, caplog
     ) -> None:
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
         with caplog.at_level(logging.WARNING):
-            lhs = evaluate_lhs_cobre(constraints, tmp_path)
+            lhs = evaluate_lhs_novomodelo(constraints, tmp_path)
         assert lhs.is_empty()
         assert "Simulation directory not found" in caplog.text
 
 
-class TestEvaluateLhsCobreRhoAcumOverride:
+class TestEvaluateLhsNovomodeloRhoAcumOverride:
     """Regression for the dashboard/DECOMP-compare LHS-scale bug: without
     ``rho_acum_overrides``, a ``@rho_acum_h{id}``-scaled constraint (VminOP,
     RHE) silently resolves against the simulation's *default* productivity
@@ -339,14 +342,14 @@ class TestEvaluateLhsCobreRhoAcumOverride:
         self, tmp_path: Path
     ) -> None:
         _write_sim_hydros_parquet(tmp_path)
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
         # Deliberately different from the sim default (0.5 at stage 0, see
         # _write_sim_hydros_parquet) -- mirrors the real VminOP/RHE gap
-        # between cobre's computed default and the LP's per_stage override.
+        # between novomodelo's computed default and the LP's per_stage override.
         overrides = {0: {0: 2.19, 1: 2.5}}
 
-        default_lhs = evaluate_lhs_cobre(constraints, tmp_path)
-        override_lhs = evaluate_lhs_cobre(constraints, tmp_path, overrides)
+        default_lhs = evaluate_lhs_novomodelo(constraints, tmp_path)
+        override_lhs = evaluate_lhs_novomodelo(constraints, tmp_path, overrides)
 
         def _row(df: pl.DataFrame, cid: int, stage: int) -> float:
             sub = df.filter(
@@ -380,8 +383,10 @@ class TestEvaluateLhsCobreRhoAcumOverride:
         # Between 0.5*500=250 (default) and 2.19*500=1095 (override).
         bound_lower = 600.0
 
-        default_lhs = evaluate_lhs_cobre(constraint, tmp_path)
-        override_lhs = evaluate_lhs_cobre(constraint, tmp_path, {0: {0: 2.19, 1: 2.5}})
+        default_lhs = evaluate_lhs_novomodelo(constraint, tmp_path)
+        override_lhs = evaluate_lhs_novomodelo(
+            constraint, tmp_path, {0: {0: 2.19, 1: 2.5}}
+        )
 
         default_value = float(
             default_lhs.filter(pl.col("stage_id") == 0)["lhs_value"][0]
@@ -401,28 +406,28 @@ class TestEvaluateLhsCobreRhoAcumOverride:
 
 class TestApplyVminopUsefulEnergy:
     def test_rewrites_vminop_rows_to_useful_energy(self, tmp_path: Path) -> None:
-        cobre_case_dir = tmp_path / "case"
-        cobre_output_dir = tmp_path / "case" / "output"
-        _write_generic_parameters(cobre_case_dir)
-        _write_hydros_json(cobre_case_dir)
-        _write_sim_hydros_parquet(cobre_output_dir)
+        novomodelo_case_dir = tmp_path / "case"
+        novomodelo_output_dir = tmp_path / "case" / "output"
+        _write_generic_parameters(novomodelo_case_dir)
+        _write_hydros_json(novomodelo_case_dir)
+        _write_sim_hydros_parquet(novomodelo_output_dir)
 
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
-        gc_bounds = load_generic_constraint_bounds(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
+        gc_bounds = load_generic_constraint_bounds(_NOVOMODELO_INPUT_DIR)
         nw_hydro = read_medias_hydro(_NEWAVE_DIR)
         id_map = _id_map()
         gc_lhs_nw = evaluate_lhs_newave(
             constraints, nw_hydro, _EMPTY_LINE_MEANS, EntityAlignment(), id_map, 1
         )
-        gc_lhs_cb = evaluate_lhs_cobre(constraints, cobre_output_dir)
+        gc_lhs_cb = evaluate_lhs_novomodelo(constraints, novomodelo_output_dir)
 
         new_bounds, new_lhs_nw, new_lhs_cb = apply_vminop_useful_energy(
             constraints,
             gc_bounds,
             gc_lhs_nw,
             gc_lhs_cb,
-            cobre_case_dir,
-            cobre_output_dir,
+            novomodelo_case_dir,
+            novomodelo_output_dir,
             nw_hydro,
             id_map,
             nw_offset=1,
@@ -435,7 +440,7 @@ class TestApplyVminopUsefulEnergy:
         non_vminop_bounds = new_bounds.filter(pl.col("constraint_id") == _NON_VMINOP_ID)
         assert sorted(non_vminop_bounds["bound_upper"].to_list()) == [200.0, 210.0]
 
-        # cobre LHS = rho_acum(stage) * (storage_final - min_storage).
+        # novomodelo LHS = rho_acum(stage) * (storage_final - min_storage).
         cb_vminop = {
             r["stage_id"]: r["lhs_value"]
             for r in new_lhs_cb.filter(pl.col("constraint_id") == _VMINOP_ID).iter_rows(
@@ -481,8 +486,8 @@ class TestApplyVminopUsefulEnergy:
     def test_missing_rho_or_vmin_or_sim_degrades_with_warning(
         self, tmp_path: Path, caplog
     ) -> None:
-        constraints = load_generic_constraints(_COBRE_INPUT_DIR)
-        gc_bounds = load_generic_constraint_bounds(_COBRE_INPUT_DIR)
+        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
+        gc_bounds = load_generic_constraint_bounds(_NOVOMODELO_INPUT_DIR)
         nw_hydro = read_medias_hydro(_NEWAVE_DIR)
         id_map = _id_map()
         # No generic_parameters.json / hydros.json / simulation written under
@@ -490,7 +495,7 @@ class TestApplyVminopUsefulEnergy:
         gc_lhs_nw = evaluate_lhs_newave(
             constraints, nw_hydro, _EMPTY_LINE_MEANS, EntityAlignment(), id_map, 1
         )
-        gc_lhs_cb = evaluate_lhs_cobre(constraints, tmp_path)
+        gc_lhs_cb = evaluate_lhs_novomodelo(constraints, tmp_path)
 
         with caplog.at_level(logging.WARNING):
             out_bounds, out_nw, out_cb = apply_vminop_useful_energy(

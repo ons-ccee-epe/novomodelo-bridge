@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from cobre_bridge.decomp.fcf.mapper import MappingResult
-from cobre_bridge.decomp.fcf.writer import (
+from novomodelo_bridge.decomp.fcf.mapper import MappingResult
+from novomodelo_bridge.decomp.fcf.writer import (
     build_metadata,
     build_stage_cuts_payload,
     write_boundary_checkpoint,
 )
 from tests._fcf_fixtures import make_manifest, make_mapped_cut, make_slot
-from tests.conftest import requires_cobre_python
+from tests.conftest import requires_novomodelo_python
 
 
 def test_build_stage_cuts_payload_shape() -> None:
@@ -84,9 +84,9 @@ def test_build_metadata_refuses_none_cost_scale_factor() -> None:
         )
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 def test_write_boundary_checkpoint_creates_files(tmp_path: Path) -> None:
-    import cobre
+    import novomodelo
 
     manifest = make_manifest([make_slot(0, i, 0) for i in range(2)])
     mapping = MappingResult(
@@ -118,12 +118,12 @@ def test_write_boundary_checkpoint_creates_files(tmp_path: Path) -> None:
     write_boundary_checkpoint(boundary_dir, payload, metadata)
 
     assert (boundary_dir / "manifest.bin").exists()
-    # cobre 0.14 keys the cut file by pool id (stage_id 10 -> "010.bin"),
+    # novomodelo 0.14 keys the cut file by pool id (stage_id 10 -> "010.bin"),
     # replacing the old positional "stage_NNN.bin".
     assert (boundary_dir / "cuts" / "010.bin").exists()
     assert (boundary_dir / "basis").is_dir()
 
-    reloaded = cobre.results.load_policy(
+    reloaded = novomodelo.results.load_policy(
         boundary_dir.parent, policy_subdir=boundary_dir.name
     )
     # 0.14 nests the algorithm provenance (incl. cost_scale_factor) under a
@@ -131,9 +131,9 @@ def test_write_boundary_checkpoint_creates_files(tmp_path: Path) -> None:
     assert "state_dimension" not in reloaded["metadata"]
     assert reloaded["metadata"]["producer"]["cost_scale_factor"] is not None
     # Only the software and version that wrote a checkpoint load it, so the
-    # boundary must carry the installed cobre-python's own identity.
-    assert reloaded["metadata"]["software"] == "cobre"
-    assert reloaded["metadata"]["software_version"] == cobre.__version__
+    # boundary must carry the installed novomodelo-python's own identity.
+    assert reloaded["metadata"]["software"] == "novomodelo"
+    assert reloaded["metadata"]["software_version"] == novomodelo.__version__
     reloaded_stage = reloaded["stage_cuts"][0]
     assert reloaded_stage["state_dimension"] == 2
     assert len(reloaded_stage["cuts"]) == 1
@@ -206,7 +206,7 @@ def test_build_stage_cuts_payload_carries_keyed_inflow_lag_coefficients() -> Non
         priced_state_date=manifest.priced_state_date,
     )
     # The keyed lag coefficients ride alongside the storage-aligned vector, as
-    # lists cobre's write_policy_checkpoint consumes to place its reserved slots.
+    # lists novomodelo's write_policy_checkpoint consumes to place its reserved slots.
     assert payload["cuts"][0]["inflow_lag_coefficients"] == {0: [2.0, 3.0, 0.0]}
 
 

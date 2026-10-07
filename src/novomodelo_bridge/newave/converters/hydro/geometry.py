@@ -15,28 +15,38 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity, emit
-from cobre_bridge.core.hydro_units import fpha_zero_capacity_diagnostic, rated_capacity
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.hydro.overrides import _apply_permanent_overrides
-from cobre_bridge.newave.filling import ExpansionConfig, exph_unit_rows
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+from novomodelo_bridge.core.hydro_units import (
+    fpha_zero_capacity_diagnostic,
+    rated_capacity,
+)
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.hydro.overrides import (
+    _apply_permanent_overrides,
+)
+from novomodelo_bridge.newave.filling import ExpansionConfig, exph_unit_rows
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 _LOG = logging.getLogger(__name__)
 
 
 def _is_fpha_eligible(hreg: pd.Series) -> bool:
-    """Whether a hydro plant can be fit by cobre's *computed* FPHA.
+    """Whether a hydro plant can be fit by novomodelo's *computed* FPHA.
 
     Requires a non-degenerate volume→cota polynomial (the forebay curve), a
     positive specific productivity ``rho_esp`` (needed to derive the
     dimensionless turbine efficiency), and a positive rated turbined flow
-    **and** rated power (:func:`~cobre_bridge.core.hydro_units.rated_capacity`
-    over the declared machine sets). cobre samples the fit on
+    **and** rated power (:func:`~novomodelo_bridge.core.hydro_units.rated_capacity`
+    over the declared machine sets). novomodelo samples the fit on
     ``[0, max_turbined]`` and clamps it at ``max_generation``, so a zero on
     either side collapses the production cloud and aborts the fit. Storage
     swing is **not** required: run-of-river / zero-storage plants
-    (``vmax == vmin``) emit a single VHA geometry row and cobre fits them
+    (``vmax == vmin``) emit a single VHA geometry row and novomodelo fits them
     through the single-volume FPHA path (γ_V = 0), matching the source model,
     which fits these plants with ``Npt_V = 1``.
     """
@@ -109,7 +119,7 @@ def fpha_eligible_codes(case: NewaveCase) -> set[int]:
     the machine configuration :func:`convert_hydros` declares, so an expanding
     plant with no machine in service at the study start still qualifies. A
     plant passing every check but rated capacity is reported through
-    :func:`~cobre_bridge.core.hydro_units.fpha_zero_capacity_diagnostic`.
+    :func:`~novomodelo_bridge.core.hydro_units.fpha_zero_capacity_diagnostic`.
     """
     if not case.fpha_enabled:
         return set()
@@ -296,7 +306,7 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
         # Polynomial coefficients for height -> area (m -> km2).
         ca_coeffs = [float(hreg[f"a{i}_cota_area"]) for i in range(5)]
 
-        cobre_id = id_map.hydro_id(newave_code)
+        novomodelo_id = id_map.hydro_id(newave_code)
 
         if vol_min == vol_max:
             # Run-of-river or fixed-level: emit a single geometry point
@@ -306,7 +316,7 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
             h = np.maximum(h, 0.0)
             a = _eval_poly(ca_coeffs, h)
             a = np.maximum(a, 0.0)
-            hydro_ids.append(cobre_id)
+            hydro_ids.append(novomodelo_id)
             volumes.append(float(v[0]))
             heights.append(float(h[0]))
             areas.append(float(a[0]))
@@ -319,7 +329,7 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
         area_arr: np.ndarray = _eval_poly(ca_coeffs, height_arr)
         area_arr = np.maximum(area_arr, 0.0)
 
-        hydro_ids.extend([cobre_id] * _N_POINTS)
+        hydro_ids.extend([novomodelo_id] * _N_POINTS)
         volumes.extend(vol_grid.tolist())
         heights.extend(height_arr.tolist())
         areas.extend(area_arr.tolist())

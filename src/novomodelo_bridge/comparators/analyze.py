@@ -3,7 +3,7 @@
 These are the ANALYZE-layer adapters. They turn the existing
 ``list[ResultComparison]`` + ``PercentileData`` value frames produced by
 ``results.py`` into the canonical tidy/long frame defined by
-:data:`cobre_bridge.comparators.dataset.TIDY_SCHEMA`.
+:data:`novomodelo_bridge.comparators.dataset.TIDY_SCHEMA`.
 
 It runs BEHIND the existing report flow (strangler-fig): it calls no readers and
 recomputes no diffs — it consumes the passed-in objects verbatim and never
@@ -21,28 +21,31 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import polars as pl
 
-from cobre_bridge.comparators.dataset import (
+from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
     TIDY_SCHEMA,
     ComparisonDataset,
     RenderInputs,
 )
-from cobre_bridge.comparators.fpha import (
+from novomodelo_bridge.comparators.fpha import (
     FPHA_METRICS_SCHEMA,
     FPHA_SPILL_SCHEMA,
     FPHA_SURFACE_SCHEMA,
     dense_grid,
 )
-from cobre_bridge.comparators.model import build_results_summary
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.comparators.model import build_results_summary
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     import pandas as pd
 
-    from cobre_bridge.comparators.model import PercentileData, ResultComparison
-    from cobre_bridge.comparators.newave.alignment import EntityAlignment, HydroEntity
+    from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+    from novomodelo_bridge.comparators.newave.alignment import (
+        EntityAlignment,
+        HydroEntity,
+    )
 
 _LOG = logging.getLogger(__name__)
 
@@ -62,11 +65,11 @@ _PCT_STAGE_COL: str = "stage_id"
 
 
 def tidy_from_results(results: Sequence[ResultComparison]) -> pl.DataFrame:
-    """Map ``ResultComparison`` rows into tidy ``newave``/``cobre`` value rows.
+    """Map ``ResultComparison`` rows into tidy ``newave``/``novomodelo`` value rows.
 
     Each input row yields exactly two tidy rows: one ``source="newave"`` with
-    ``value = r.newave_value`` and one ``source="cobre"`` with
-    ``value = r.cobre_value``. Both carry ``entity_id = r.cobre_id``,
+    ``value = r.newave_value`` and one ``source="novomodelo"`` with
+    ``value = r.novomodelo_value``. Both carry ``entity_id = r.novomodelo_id``,
     ``entity_name = r.entity_name``, ``stage = r.stage``,
     ``variable = r.variable``, and the sentinels ``bus = -1`` / ``block = -1``.
 
@@ -77,7 +80,7 @@ def tidy_from_results(results: Sequence[ResultComparison]) -> pl.DataFrame:
         A frame conforming exactly (columns, order, dtypes) to
         :data:`TIDY_SCHEMA`, with ``2 * len(results)`` rows.
     """
-    return _tidy_newave_cobre_pair(results)
+    return _tidy_newave_novomodelo_pair(results)
 
 
 def tidy_percentiles_from_percentile_data(pct: PercentileData) -> pl.DataFrame:
@@ -131,7 +134,7 @@ def tidy_results_dataset(
     exactly to :data:`TIDY_SCHEMA`.
 
     Args:
-        results: The result comparisons (``newave``/``cobre`` rows).
+        results: The result comparisons (``newave``/``novomodelo`` rows).
         pct: The percentile data (``p10``/``p50``/``p90`` rows).
 
     Returns:
@@ -148,7 +151,7 @@ def summary_frame_from_results(
 ) -> pl.DataFrame:
     """Project the existing per-variable summary into a ``SUMMARY_SCHEMA`` frame.
 
-    Calls the canonical :func:`cobre_bridge.comparators.model.build_results_summary`
+    Calls the canonical :func:`novomodelo_bridge.comparators.model.build_results_summary`
     and turns its ``by_variable`` mapping into one row per variable. The numbers
     are carried verbatim from that summary — no statistic is recomputed here, so
     console and HTML aggregates derive from the same analysis.
@@ -221,8 +224,8 @@ def top_divergences_from_results(
 
     Returns:
         A list of at most ``n`` dicts, each with keys ``entity_type``,
-        ``entity_name``, ``cobre_id``, ``stage``, ``variable``, ``newave_value``,
-        ``cobre_value``, ``abs_diff``, ``rel_diff``. Empty ``results`` yields
+        ``entity_name``, ``novomodelo_id``, ``stage``, ``variable``, ``newave_value``,
+        ``novomodelo_value``, ``abs_diff``, ``rel_diff``. Empty ``results`` yields
         ``[]``.
     """
     if not results:
@@ -237,11 +240,11 @@ def top_divergences_from_results(
         {
             "entity_type": r.entity_type,
             "entity_name": r.entity_name,
-            "cobre_id": r.cobre_id,
+            "novomodelo_id": r.novomodelo_id,
             "stage": r.stage,
             "variable": r.variable,
             "newave_value": r.newave_value,
-            "cobre_value": r.cobre_value,
+            "novomodelo_value": r.novomodelo_value,
             "abs_diff": r.abs_diff,
             "rel_diff": r.rel_diff,
         }
@@ -255,7 +258,7 @@ def results_footer_counts(
     """Compute the results-summary footer counts as JSON-native metadata.
 
     Mirrors the footer of
-    :func:`cobre_bridge.ui.compare_summary.print_results_summary_from_dataset`,
+    :func:`novomodelo_bridge.ui.compare_summary.print_results_summary_from_dataset`,
     which prints
     ``summary.total`` and the per-entity-type comparison counts. The counts are
     derived here inline (one increment per comparison row) so the console footer
@@ -291,7 +294,7 @@ def build_results_dataset(
     frame from :func:`summary_frame_from_results`, a ``metadata`` dict
     carrying provenance not read by the HTML report (top divergences, footer
     counts, hydro names), and the typed
-    :class:`~cobre_bridge.comparators.dataset.RenderInputs` the report reads
+    :class:`~novomodelo_bridge.comparators.dataset.RenderInputs` the report reads
     (the raw ``results`` list plus every non-tidy artifact drained from
     ``pct``). Both the NEWAVE track (this function) and the DECOMP track
     (``decomp.results.build_decomp_dataset``, which calls this function with
@@ -300,7 +303,7 @@ def build_results_dataset(
     surface. Validates before returning.
 
     Args:
-        results: The result comparisons (``newave``/``cobre`` rows + summary).
+        results: The result comparisons (``newave``/``novomodelo`` rows + summary).
         pct: The percentile data (``p10``/``p50``/``p90`` rows + carry-over).
         tolerance: Relative tolerance forwarded to the summary builder.
 
@@ -309,7 +312,7 @@ def build_results_dataset(
         ``top_divergences`` and ``footer_counts`` (the ``total`` /
         ``by_entity_type`` needed to render the console footer
         byte-identically) plus ``nw_hydro_names``, and whose ``render`` holds
-        every report-facing input (``nw_costs``, ``cobre_costs``,
+        every report-facing input (``nw_costs``, ``novomodelo_costs``,
         ``nw_bus_names`` among them).
 
     Raises:
@@ -327,28 +330,28 @@ def build_results_dataset(
         # take ``list[ResultComparison]`` directly.
         results=list(results),
         nw_costs=pct.nw_costs,
-        cobre_costs=pct.cobre_costs,
+        novomodelo_costs=pct.novomodelo_costs,
         nw_bus_names=pct.nw_bus_names,
         # --- Overview/System/Energy-Balance/Network tab inputs ---
         nw_sin=pct.nw_sin,
-        cobre_stage_costs=pct.cobre_stage_costs,
+        novomodelo_stage_costs=pct.novomodelo_stage_costs,
         nw_offset=pct.nw_offset,
         nw_convergence=pct.nw_convergence,
-        cobre_convergence=pct.cobre_convergence,
+        novomodelo_convergence=pct.novomodelo_convergence,
         bus=pct.bus,
         nw_market=pct.nw_market,
         bus_aggregates=pct.bus_aggregates,
-        cobre_bus_meta=pct.cobre_bus_meta,
+        novomodelo_bus_meta=pct.novomodelo_bus_meta,
         nw_net_load=pct.nw_net_load,
-        cobre_hydro_means=pct.cobre_hydro_means,
+        novomodelo_hydro_means=pct.novomodelo_hydro_means,
         hydro=pct.hydro,
         line=pct.line,
         line_bounds=pct.line_bounds,
         line_meta=pct.line_meta,
         # --- Hydro Operation / Hydro Details tab inputs ---
-        cobre_hydro_meta=pct.cobre_hydro_meta,
+        novomodelo_hydro_meta=pct.novomodelo_hydro_meta,
         nw_hydro_slacks=pct.nw_hydro_slacks,
-        cobre_hydro_per_stage_bounds=pct.cobre_hydro_per_stage_bounds,
+        novomodelo_hydro_per_stage_bounds=pct.novomodelo_hydro_per_stage_bounds,
         # --- Thermal Operation / Thermal Details / Productivity ---
         thermal=pct.thermal,
         productivity_detail=pct.productivity_detail,
@@ -370,12 +373,12 @@ def build_results_dataset(
         gc_constraints=pct.gc_constraints,
         gc_bounds=pct.gc_bounds,
         gc_lhs_newave=pct.gc_lhs_newave,
-        gc_lhs_cobre=pct.gc_lhs_cobre,
+        gc_lhs_novomodelo=pct.gc_lhs_novomodelo,
         nw_max_stage=pct.nw_max_stage,
         nw_tim_iterations=pct.nw_tim_iterations,
         nw_tim_stages=pct.nw_tim_stages,
-        cobre_training_seconds=pct.cobre_training_seconds,
-        cobre_iteration_timing=pct.cobre_iteration_timing,
+        novomodelo_training_seconds=pct.novomodelo_training_seconds,
+        novomodelo_iteration_timing=pct.novomodelo_iteration_timing,
     )
 
     dataset = ComparisonDataset(
@@ -459,7 +462,7 @@ def per_stage_sum_from_results(
     entity_type: str,
     variable: str,
 ) -> tuple[dict[int, float], dict[int, float], set[int]]:
-    """Sum the source model/Cobre values per stage for one entity type (and variable).
+    """Sum the source model/Novomodelo values per stage for one entity type (and variable).
 
     Pure numeric core of the inline per-stage accumulation loop repeated in
     ``charts.system_comparison_chart`` / ``hydro_aggregate_chart`` /
@@ -468,7 +471,7 @@ def per_stage_sum_from_results(
     system/hydro case), and when ``variable == ""`` every variable of that
     entity type is included (the ``thermal_generation_chart`` case, which keys
     only on entity type). Each surviving row adds ``newave_value`` /
-    ``cobre_value`` into its stage bucket (both starting at ``0.0``).
+    ``novomodelo_value`` into its stage bucket (both starting at ``0.0``).
 
     Args:
         results: The comparison rows; consumed verbatim (read-only).
@@ -479,8 +482,8 @@ def per_stage_sum_from_results(
 
     Returns:
         ``(nw_by_stage, cb_by_stage, matched_ids)`` where the first two map
-        ``stage`` to the summed ``newave_value`` / ``cobre_value`` and
-        ``matched_ids`` is the set of ``cobre_id`` over the filtered rows.
+        ``stage`` to the summed ``newave_value`` / ``novomodelo_value`` and
+        ``matched_ids`` is the set of ``novomodelo_id`` over the filtered rows.
         Empty when no row matches.
     """
     filtered = [
@@ -493,9 +496,9 @@ def per_stage_sum_from_results(
     cb_by_stage: dict[int, float] = {}
     for r in filtered:
         nw_by_stage[r.stage] = nw_by_stage.get(r.stage, 0.0) + r.newave_value
-        cb_by_stage[r.stage] = cb_by_stage.get(r.stage, 0.0) + r.cobre_value
+        cb_by_stage[r.stage] = cb_by_stage.get(r.stage, 0.0) + r.novomodelo_value
 
-    matched_ids = {r.cobre_id for r in filtered}
+    matched_ids = {r.novomodelo_id for r in filtered}
     return nw_by_stage, cb_by_stage, matched_ids
 
 
@@ -547,7 +550,7 @@ class _BusNameLookupCache:
     variable: 6 ``hydro_per_bus_chart`` + 5 ``hydro_slack_per_bus_chart``
     calls); each resolves every plant's bus via :func:`_bus_name_lookups`,
     which -- for an ambiguous or empty-map condition -- emits a
-    :class:`~cobre_bridge.core.diagnostics.Diagnostic`. Compare has no diagnostics
+    :class:`~novomodelo_bridge.core.diagnostics.Diagnostic`. Compare has no diagnostics
     de-dup sink, so without this cache the identical warning logs ~11x for
     one condition.
 
@@ -582,8 +585,8 @@ def _bus_name_lookups(
     ``hydro_to_bus`` maps each plant id to its single owning bus, sourced from
     ``hydro_meta[hid]["bus_ids"]`` -- the distinct-``(hydro_id, bus_id)``-pair
     label the ``simulation/hydro_bus_generation`` partition carries per plant
-    (see ``cobre_readers.read_cobre_hydro_bus_labels``). ``hydro_meta`` itself
-    (``cobre_readers.read_cobre_hydro_metadata``) carries no bus information --
+    (see ``novomodelo_readers.read_novomodelo_hydro_bus_labels``). ``hydro_meta`` itself
+    (``novomodelo_readers.read_novomodelo_hydro_metadata``) carries no bus information --
     it is plant physics only -- ``"bus_ids"`` is merged onto it
     by the results-comparison orchestrator before it reaches here.
 
@@ -594,7 +597,7 @@ def _bus_name_lookups(
     added to every one of them either: either choice would misreport the
     per-bus roll-up (silently dropping one bus's share, or double-counting
     the plant's whole value at each bus it touches). It is instead excluded
-    from ``hydro_to_bus`` and a :class:`~cobre_bridge.core.diagnostics.Diagnostic`
+    from ``hydro_to_bus`` and a :class:`~novomodelo_bridge.core.diagnostics.Diagnostic`
     is raised naming the plant (id and, when available, its
     ``hydro_meta[hid]["name"]``), so the ambiguity surfaces instead of
     quietly producing wrong numbers. If that leaves ``hydro_to_bus`` empty
@@ -687,13 +690,13 @@ def per_bus_sums_from_results(
     Pure numeric core of the per-bus accumulation in
     ``charts.hydro_per_bus_chart``. Rows are filtered to
     ``entity_type == "hydro"`` and ``variable``; each plant is mapped to its
-    owning bus via ``hydro_meta[cobre_id]["bus_ids"]`` (see
+    owning bus via ``hydro_meta[novomodelo_id]["bus_ids"]`` (see
     :func:`_bus_name_lookups` -- plants with no resolvable single bus,
     including genuinely multi-bus plants, are skipped and diagnosed there),
     the bus name is resolved via ``bus_meta[bus_id]["name"]`` (fallback
     ``str(bus_id)``) and upper-cased, and the fictitious buses ``NOFICT1/2/3``
-    are dropped. Surviving rows accumulate ``newave_value`` / ``cobre_value``
-    into their ``(bus, stage)`` bucket and add ``cobre_id`` to the bus's id
+    are dropped. Surviving rows accumulate ``newave_value`` / ``novomodelo_value``
+    into their ``(bus, stage)`` bucket and add ``novomodelo_id`` to the bus's id
     set.
 
     Args:
@@ -717,7 +720,7 @@ def per_bus_sums_from_results(
     for r in results:
         if r.entity_type != "hydro" or r.variable != variable:
             continue
-        bus_id = hydro_to_bus.get(r.cobre_id)
+        bus_id = hydro_to_bus.get(r.novomodelo_id)
         if bus_id is None:
             continue
         bus_name = bus_id_to_name.get(bus_id, str(bus_id)).upper()
@@ -729,9 +732,9 @@ def per_bus_sums_from_results(
             per_bus_nw[bus_name].get(r.stage, 0.0) + r.newave_value
         )
         per_bus_cb[bus_name][r.stage] = (
-            per_bus_cb[bus_name].get(r.stage, 0.0) + r.cobre_value
+            per_bus_cb[bus_name].get(r.stage, 0.0) + r.novomodelo_value
         )
-        per_bus_ids.setdefault(bus_name, set()).add(r.cobre_id)
+        per_bus_ids.setdefault(bus_name, set()).add(r.novomodelo_id)
 
     return {
         bus_name: {
@@ -865,13 +868,13 @@ def per_bus_band_from_pct(
 def plant_percentile_arrays(
     pct_df: pl.DataFrame | None,
     var_stages: Sequence[tuple[str, str, list[int]]],
-    plant_cobre_id: int,
+    plant_novomodelo_id: int,
 ) -> dict[str, list[float]]:
     """Extract one plant's per-stage ``{var}_p10``/``{var}_p90`` arrays.
 
     Pure numeric core of the inner extraction in
     ``charts._enrich_with_percentiles``. For the single
-    plant ``plant_cobre_id`` it filters ``pct_df`` to that entity **once**, then
+    plant ``plant_novomodelo_id`` it filters ``pct_df`` to that entity **once**, then
     for each ``(var_key, _, stages)`` triple whose ``{var}_p10``/``{var}_p90``
     columns are present, reads the rounded per-stage values aligned to that
     variable's own ``stages`` axis with the legacy ``round(float(... or 0), 2)``
@@ -888,7 +891,7 @@ def plant_percentile_arrays(
         var_stages: ``(var_key, label, stages)`` triples; only ``var_key`` and
             ``stages`` (the per-variable stage axis the arrays align to) are
             used.
-        plant_cobre_id: The ``entity_id`` to extract.
+        plant_novomodelo_id: The ``entity_id`` to extract.
 
     Returns:
         A dict mapping ``{var}_p10``/``{var}_p90`` to the rounded per-stage float
@@ -898,7 +901,7 @@ def plant_percentile_arrays(
     if pct_df is None or pct_df.is_empty():
         return {}
 
-    sub = pct_df.filter(pl.col("entity_id") == plant_cobre_id).sort("stage_id")
+    sub = pct_df.filter(pl.col("entity_id") == plant_novomodelo_id).sort("stage_id")
     if sub.is_empty():
         return {}
 
@@ -917,8 +920,8 @@ def plant_percentile_arrays(
     return arrays
 
 
-def cobre_sum_and_newave_sin(
-    cobre_hydro: pl.DataFrame,
+def novomodelo_sum_and_newave_sin(
+    novomodelo_hydro: pl.DataFrame,
     variable: str,
     nw_sin: pl.DataFrame | None,
     nw_variable: str | None,
@@ -926,11 +929,11 @@ def cobre_sum_and_newave_sin(
     nw_offset: int,
     matched_ids: set[int] | None = None,
 ) -> tuple[dict[int, float], dict[int, float]]:
-    """Roll a Cobre per-hydro variable and a source-model-SIN long frame to per-stage
+    """Roll a Novomodelo per-hydro variable and a source-model-SIN long frame to per-stage
     totals.
 
-    Pure numeric core of ``charts.cobre_aggregate_chart``. The
-    Cobre side sums ``variable`` across (optionally ``matched_ids``-filtered) plants per
+    Pure numeric core of ``charts.novomodelo_aggregate_chart``. The
+    Novomodelo side sums ``variable`` across (optionally ``matched_ids``-filtered) plants per
     ``stage_id`` — delegated to :func:`per_stage_sum_from_frame` so the
     grouping/sort/filter semantics stay identical. The source model side folds the long
     ``nw_sin`` frame into a per-stage total: rows are filtered to
@@ -939,28 +942,30 @@ def cobre_sum_and_newave_sin(
     ``value`` is ``None``. Never raises.
 
     Args:
-        cobre_hydro: Per-hydro Cobre means with ``entity_id``, ``stage_id`` and
+        novomodelo_hydro: Per-hydro Novomodelo means with ``entity_id``, ``stage_id`` and
             the ``variable`` column.
-        variable: The column to sum on the Cobre side.
+        variable: The column to sum on the Novomodelo side.
         nw_sin: Long-format the source model SIN frame with ``stage``, ``variable`` and
             ``value`` columns, or ``None``.
         nw_variable: The (already upper-cased) variable to keep in ``nw_sin``, or
             ``None`` to skip the source model side entirely.
         nw_factor: Multiplicative factor applied to each source-model value (unit
             alignment).
-        nw_offset: Subtracted from each source-model ``stage`` to align with the Cobre
+        nw_offset: Subtracted from each source-model ``stage`` to align with the Novomodelo
             ``stage_id`` axis.
-        matched_ids: Optional Cobre entity filter forwarded to the Cobre sum.
+        matched_ids: Optional Novomodelo entity filter forwarded to the Novomodelo sum.
 
     Returns:
-        ``(cobre_by_stage, nw_by_stage)``. ``cobre_by_stage`` is empty when
-        ``cobre_hydro`` is empty or ``variable`` is absent; ``nw_by_stage`` is
+        ``(novomodelo_by_stage, nw_by_stage)``. ``novomodelo_by_stage`` is empty when
+        ``novomodelo_hydro`` is empty or ``variable`` is absent; ``nw_by_stage`` is
         empty when ``nw_sin``/``nw_variable`` is missing or ``nw_sin`` is empty.
     """
-    if cobre_hydro.is_empty() or variable not in cobre_hydro.columns:
+    if novomodelo_hydro.is_empty() or variable not in novomodelo_hydro.columns:
         return {}, {}
 
-    cobre_by_stage = per_stage_sum_from_frame(cobre_hydro, variable, matched_ids)
+    novomodelo_by_stage = per_stage_sum_from_frame(
+        novomodelo_hydro, variable, matched_ids
+    )
 
     nw_by_stage: dict[int, float] = {}
     if nw_sin is not None and nw_variable is not None and not nw_sin.is_empty():
@@ -975,7 +980,7 @@ def cobre_sum_and_newave_sin(
             s = int(stage_raw) - nw_offset
             nw_by_stage[s] = nw_by_stage.get(s, 0.0) + float(val) * nw_factor
 
-    return cobre_by_stage, nw_by_stage
+    return novomodelo_by_stage, nw_by_stage
 
 
 def bus_groups_and_pct(
@@ -1030,14 +1035,14 @@ def bus_groups_and_pct(
 
 def spillage_lookups(
     results: Sequence[ResultComparison],
-    cobre_spill_energy: pl.DataFrame,
+    novomodelo_spill_energy: pl.DataFrame,
 ) -> tuple[dict[str, dict[int, float]], dict[str, dict[int, float]]]:
-    """Build the source model and Cobre per-variable, per-stage spillage lookups.
+    """Build the source model and Novomodelo per-variable, per-stage spillage lookups.
 
     Pure numeric core of ``charts.system_spillage_energy_chart``. The source
     model lookup is keyed by each
     ``system_spillage`` row's ``variable`` (e.g. ``VERTOT``/``VERTcont``/ ``VERTfio``)
-    then ``stage`` to ``newave_value``. The Cobre lookup maps the ``cobre_spill_energy``
+    then ``stage`` to ``newave_value``. The Novomodelo lookup maps the ``novomodelo_spill_energy``
     frame's ``total_mw``/``reservoir_mw``/``rorov_mw`` columns per ``stage_id`` under
     the keys ``spill_energy_total_mw`` / ``spill_energy_reservoir_mw`` /
     ``spill_energy_rorov_mw``. Never raises.
@@ -1045,13 +1050,13 @@ def spillage_lookups(
     Args:
         results: The comparison rows; only ``entity_type == "system_spillage"``
             rows contribute. Consumed verbatim (read-only).
-        cobre_spill_energy: A per-stage frame with ``stage_id``, ``total_mw``,
+        novomodelo_spill_energy: A per-stage frame with ``stage_id``, ``total_mw``,
             ``reservoir_mw`` and ``rorov_mw`` columns (may be empty).
 
     Returns:
         ``(nw_lookup, cb_lookup)``. ``nw_lookup`` is empty when no
         ``system_spillage`` row is present; ``cb_lookup`` is empty when
-        ``cobre_spill_energy`` is empty.
+        ``novomodelo_spill_energy`` is empty.
     """
     nw_rows = [r for r in results if r.entity_type == "system_spillage"]
 
@@ -1060,8 +1065,8 @@ def spillage_lookups(
         nw_lookup.setdefault(r.variable, {})[r.stage] = r.newave_value
 
     cb_lookup: dict[str, dict[int, float]] = {}
-    if not cobre_spill_energy.is_empty():
-        for row in cobre_spill_energy.iter_rows(named=True):
+    if not novomodelo_spill_energy.is_empty():
+        for row in novomodelo_spill_energy.iter_rows(named=True):
             sid = int(row["stage_id"])
             for lookup_key, column in (
                 ("spill_energy_total_mw", "total_mw"),
@@ -1215,10 +1220,10 @@ def _tidy_one_percentile_frame(
     return _conform(tidy)
 
 
-def _tidy_newave_cobre_pair(
+def _tidy_newave_novomodelo_pair(
     results: Sequence[ResultComparison],
 ) -> pl.DataFrame:
-    """Emit the two ``newave``/``cobre`` tidy rows per comparison.
+    """Emit the two ``newave``/``novomodelo`` tidy rows per comparison.
 
     Used by :func:`tidy_from_results`. Returns a 0-row frame for empty input.
     """
@@ -1229,7 +1234,7 @@ def _tidy_newave_cobre_pair(
     sentinel = [_SENTINEL] * n
     shared = {
         "entity_type": [r.entity_type for r in results],
-        "entity_id": [r.cobre_id for r in results],
+        "entity_id": [r.novomodelo_id for r in results],
         "entity_name": [r.entity_name for r in results],
         "bus": sentinel,
         "stage": [r.stage for r in results],
@@ -1245,12 +1250,16 @@ def _tidy_newave_cobre_pair(
         },
         schema=TIDY_SCHEMA,
     )
-    cobre = pl.DataFrame(
-        {**shared, "source": ["cobre"] * n, "value": [r.cobre_value for r in results]},
+    novomodelo = pl.DataFrame(
+        {
+            **shared,
+            "source": ["novomodelo"] * n,
+            "value": [r.novomodelo_value for r in results],
+        },
         schema=TIDY_SCHEMA,
     )
 
-    return _conform(pl.concat([newave, cobre], how="vertical"))
+    return _conform(pl.concat([newave, novomodelo], how="vertical"))
 
 
 def _conform(frame: pl.DataFrame) -> pl.DataFrame:
@@ -1274,9 +1283,9 @@ def _conform(frame: pl.DataFrame) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 # Production-function (FPHA) comparison
 #
-# The source model's fit and Cobre's fit use different plane counts and
+# The source model's fit and Novomodelo's fit use different plane counts and
 # philosophies, so they are NOT comparable plane-by-plane; instead both
-# envelopes (:func:`cobre_bridge.comparators.fpha.dense_grid`) are evaluated
+# envelopes (:func:`novomodelo_bridge.comparators.fpha.dense_grid`) are evaluated
 # on a shared (V, Q) grid (at S = 0) and the resulting surfaces are compared.
 # A separate spillage slice (GH vs S at the max corner) covers the S
 # dimension the (V, Q) grid holds fixed.
@@ -1311,7 +1320,7 @@ def build_fpha_comparison(
     ``fpha_eco``, at ``S = 0``); single-volume (run-of-river) plants collapse the
     ``V`` axis to one point, leaving a ``Q`` curve. Both envelopes are evaluated at
     the same nodes — the model's real resolution, not a synthetic densification.
-    The source model's k-th period aligns to Cobre stage ``k``.
+    The source model's k-th period aligns to Novomodelo stage ``k``.
 
     Args:
         nw_planes: The source model's planes (from ``read_fpha_planes``), or
@@ -1319,16 +1328,16 @@ def build_fpha_comparison(
         nw_grid: The source model's fitting grid (from ``read_fpha_grid``), or
             ``None`` — supplies the ``(V, Q)`` nodes and the useful-volume
             reference.
-        cb_planes: Cobre's planes (from ``read_cobre_fpha_planes``), or ``None``.
-        hydros: Aligned hydro entities pairing source codes to Cobre ids/names.
+        cb_planes: Novomodelo's planes (from ``read_novomodelo_fpha_planes``), or ``None``.
+        hydros: Aligned hydro entities pairing source codes to Novomodelo ids/names.
         spill_n: Sample count for the spillage slice (a synthetic ``S`` sweep,
             independent of the ``(V, Q)`` fitting grid).
 
     Returns:
         ``(metrics, surface, spill)`` frames conforming to
-        :data:`cobre_bridge.comparators.fpha.FPHA_METRICS_SCHEMA`,
-        :data:`~cobre_bridge.comparators.fpha.FPHA_SURFACE_SCHEMA`, and
-        :data:`~cobre_bridge.comparators.fpha.FPHA_SPILL_SCHEMA`. All three
+        :data:`novomodelo_bridge.comparators.fpha.FPHA_METRICS_SCHEMA`,
+        :data:`~novomodelo_bridge.comparators.fpha.FPHA_SURFACE_SCHEMA`, and
+        :data:`~novomodelo_bridge.comparators.fpha.FPHA_SPILL_SCHEMA`. All three
         are empty (but typed) when either side lacks fitted planes or no
         plant is fitted on both sides.
     """
@@ -1347,8 +1356,8 @@ def build_fpha_comparison(
     ):
         return empty
 
-    code_to_cobre = {h.newave_code: h.cobre_id for h in hydros}
-    name_of = {h.cobre_id: h.name for h in hydros}
+    code_to_novomodelo = {h.newave_code: h.novomodelo_id for h in hydros}
+    name_of = {h.novomodelo_id: h.name for h in hydros}
 
     periods = sorted({int(p) for p in nw_planes.get_column("periodo").to_list()})
     stage_of = {p: i for i, p in enumerate(periods)}
@@ -1379,11 +1388,11 @@ def build_fpha_comparison(
     metric_rows: list[dict[str, object]] = []
 
     for (code, periodo), nw_sub in nw_lookup.items():
-        cobre_id = code_to_cobre.get(code)
+        novomodelo_id = code_to_novomodelo.get(code)
         stage = stage_of.get(periodo)
-        if cobre_id is None or stage is None:
+        if novomodelo_id is None or stage is None:
             continue
-        cb_sub = cb_lookup.get((cobre_id, stage))
+        cb_sub = cb_lookup.get((novomodelo_id, stage))
         grid_row = grid_lookup.get((code, periodo))
         if cb_sub is None or grid_row is None:
             continue
@@ -1411,7 +1420,7 @@ def build_fpha_comparison(
 
         flat_v = vv.reshape(-1)
         n = flat_v.size
-        geo_cid.append(np.full(n, cobre_id, dtype=np.int64))
+        geo_cid.append(np.full(n, novomodelo_id, dtype=np.int64))
         geo_stage.append(np.full(n, stage, dtype=np.int64))
         geo_v.append(flat_v)
         geo_q.append(qq.reshape(-1))
@@ -1429,7 +1438,7 @@ def build_fpha_comparison(
         nw_sp = dense_grid(*nw_arr, v_fix, q_fix, s_axis, volume_offset=v_min)
         cb_sp = dense_grid(*cb_arr, v_fix, q_fix, s_axis, volume_offset=0.0)
         ns = s_axis.size
-        sp_cid.append(np.full(ns, cobre_id, dtype=np.int64))
+        sp_cid.append(np.full(ns, novomodelo_id, dtype=np.int64))
         sp_stage.append(np.full(ns, stage, dtype=np.int64))
         sp_s.append(s_axis)
         sp_gh_nw.append(nw_sp)
@@ -1444,11 +1453,11 @@ def build_fpha_comparison(
         scaled = denom > 1e-9
         metric_rows.append(
             {
-                "cobre_id": cobre_id,
-                "plant_name": name_of.get(cobre_id, f"hydro_{cobre_id}"),
+                "novomodelo_id": novomodelo_id,
+                "plant_name": name_of.get(novomodelo_id, f"hydro_{novomodelo_id}"),
                 "stage": stage,
                 "n_planes_newave": nw_sub.height,
-                "n_planes_cobre": cb_sub.height,
+                "n_planes_novomodelo": cb_sub.height,
                 "n_v": n_v,
                 "nmae": float(np.mean(np.abs(diff)) / denom) if scaled else None,
                 "bias": float(np.mean(diff) / denom) if scaled else None,
@@ -1462,16 +1471,16 @@ def build_fpha_comparison(
 
     names = pl.DataFrame(
         {
-            "cobre_id": list(name_of.keys()),
+            "novomodelo_id": list(name_of.keys()),
             "plant_name": list(name_of.values()),
         },
-        schema={"cobre_id": pl.Int64, "plant_name": pl.Utf8},
+        schema={"novomodelo_id": pl.Int64, "plant_name": pl.Utf8},
     )
 
     def _stack_surface(gh: list[np.ndarray], source: str) -> pl.DataFrame:
         return pl.DataFrame(
             {
-                "cobre_id": np.concatenate(geo_cid),
+                "novomodelo_id": np.concatenate(geo_cid),
                 "stage": np.concatenate(geo_stage),
                 "v_hm3": np.concatenate(geo_v),
                 "q_m3s": np.concatenate(geo_q),
@@ -1480,17 +1489,19 @@ def build_fpha_comparison(
         ).with_columns(pl.lit(source).alias("source"))
 
     surface = (
-        pl.concat([_stack_surface(gh_nw, "newave"), _stack_surface(gh_cb, "cobre")])
-        .join(names, on="cobre_id", how="left")
+        pl.concat(
+            [_stack_surface(gh_nw, "newave"), _stack_surface(gh_cb, "novomodelo")]
+        )
+        .join(names, on="novomodelo_id", how="left")
         .select(list(FPHA_SURFACE_SCHEMA))
         .cast({col: dtype() for col, dtype in FPHA_SURFACE_SCHEMA.items()})
-        .sort(["cobre_id", "stage", "source", "v_hm3", "q_m3s"])
+        .sort(["novomodelo_id", "stage", "source", "v_hm3", "q_m3s"])
     )
 
     def _stack_spill(gh: list[np.ndarray], source: str) -> pl.DataFrame:
         return pl.DataFrame(
             {
-                "cobre_id": np.concatenate(sp_cid),
+                "novomodelo_id": np.concatenate(sp_cid),
                 "stage": np.concatenate(sp_stage),
                 "s_m3s": np.concatenate(sp_s),
                 "gh_mw": np.concatenate(gh),
@@ -1498,15 +1509,17 @@ def build_fpha_comparison(
         ).with_columns(pl.lit(source).alias("source"))
 
     spill = (
-        pl.concat([_stack_spill(sp_gh_nw, "newave"), _stack_spill(sp_gh_cb, "cobre")])
-        .join(names, on="cobre_id", how="left")
+        pl.concat(
+            [_stack_spill(sp_gh_nw, "newave"), _stack_spill(sp_gh_cb, "novomodelo")]
+        )
+        .join(names, on="novomodelo_id", how="left")
         .select(list(FPHA_SPILL_SCHEMA))
         .cast({col: dtype() for col, dtype in FPHA_SPILL_SCHEMA.items()})
-        .sort(["cobre_id", "stage", "source", "s_m3s"])
+        .sort(["novomodelo_id", "stage", "source", "s_m3s"])
     )
 
     metrics = pl.DataFrame(metric_rows, schema=FPHA_METRICS_SCHEMA).sort(
-        ["cobre_id", "stage"]
+        ["novomodelo_id", "stage"]
     )
     return metrics, surface, spill
 
@@ -1523,18 +1536,18 @@ def fpha_metric_summary(metrics: pl.DataFrame) -> pl.DataFrame:
             (non-empty; the render function handles the empty case).
 
     Returns:
-        One row per ``cobre_id`` with columns ``plant_name``, ``n_v``,
+        One row per ``novomodelo_id`` with columns ``plant_name``, ``n_v``,
         ``planes_nw``, ``planes_cb``, ``mean_nmae``, ``worst_nmae``,
         ``mean_bias``, ``ghr_min``, ``ghr_max``, sorted by ``worst_nmae``
         descending (nulls last).
     """
     return (
-        metrics.group_by("cobre_id")
+        metrics.group_by("novomodelo_id")
         .agg(
             pl.col("plant_name").first().alias("plant_name"),
             pl.col("n_v").first().alias("n_v"),
             pl.col("n_planes_newave").max().alias("planes_nw"),
-            pl.col("n_planes_cobre").max().alias("planes_cb"),
+            pl.col("n_planes_novomodelo").max().alias("planes_cb"),
             (pl.col("nmae").mean() * 100.0).alias("mean_nmae"),
             (pl.col("nmae").max() * 100.0).alias("worst_nmae"),
             (pl.col("bias").mean() * 100.0).alias("mean_bias"),
@@ -1552,7 +1565,7 @@ def fpha_metric_summary(metrics: pl.DataFrame) -> pl.DataFrame:
 _PRODUCTIVITY_DETAIL_SCHEMA: dict[str, type[pl.DataType]] = {
     "plant_name": pl.Utf8,
     "newave_code": pl.Int64,
-    "cobre_id": pl.Int64,
+    "novomodelo_id": pl.Int64,
     # The source model pmo.dat head-dependent productivities (FPHA).
     "nw_altura_min": pl.Float64,
     "nw_altura_65": pl.Float64,
@@ -1565,14 +1578,14 @@ _PRODUCTIVITY_DETAIL_SCHEMA: dict[str, type[pl.DataType]] = {
     "nw_losses_m": pl.Float64,
     "nw_vmin_hm3": pl.Float64,
     "nw_vmax_hm3": pl.Float64,
-    # cobre-bridge side: the *static* productivities the converter computes from the
+    # novomodelo-bridge side: the *static* productivities the converter computes from the
     # source model inputs (HIDR cadastro + cascade), so the scatters are a
     # conversion-fidelity check against the matching pmo column rather than a comparison
     # against the per-stage simulation output.
     "cb_point": pl.Float64,
     "cb_equivalent": pl.Float64,
     "cb_accumulated": pl.Float64,
-    # cobre-bridge converted building blocks (from system/hydros.json).
+    # novomodelo-bridge converted building blocks (from system/hydros.json).
     "cb_specific_productivity": pl.Float64,
     "cb_tailwater_m": pl.Float64,
     "cb_losses_m": pl.Float64,
@@ -1585,26 +1598,26 @@ def build_productivity_detail(
     alignment: EntityAlignment,
     nw_prod_detail: pl.DataFrame,
     nw_cadastro: pd.DataFrame,
-    cobre_prod_detail: dict[int, dict],
+    novomodelo_prod_detail: dict[int, dict],
     cb_accumulated: dict[int, float],
 ) -> pl.DataFrame:
     """Assemble the per-plant static productivity comparison frame.
 
     One row per aligned hydro pair (``alignment.hydros``). The source model side carries
     the pmo.dat head-dependent productivities (matched by plant name) and the HIDR
-    cadastro building blocks (matched by the source model code). The cobre-bridge side
+    cadastro building blocks (matched by the source model code). The novomodelo-bridge side
     carries the *static* productivities the converter computes from those same inputs —
     ``cb_point`` from :func:`compute_productivity`, ``cb_equivalent`` from
     :func:`stored_energy_productivity`, ``cb_accumulated`` from the cascade accumulated
     map — plus the building blocks written into ``system/hydros.json``
-    (``cobre_prod_detail``). Matching pmo and cobre-bridge columns should land on ``y =
+    (``novomodelo_prod_detail``). Matching pmo and novomodelo-bridge columns should land on ``y =
     x`` (validating the conversion), since both are derived from the same the source
     model inputs.
 
     Returns an empty frame (with the full schema) when there are no aligned
     hydros.
     """
-    from cobre_bridge.core.productivity import (
+    from novomodelo_bridge.core.productivity import (
         compute_productivity,
         stored_energy_productivity,
     )
@@ -1624,11 +1637,11 @@ def build_productivity_detail(
         return f if f == f else None  # drop NaN
 
     def _nw_reservoir_bounds(code: int) -> tuple[float | None, float | None]:
-        """The source model reservoir bounds as cobre-bridge models them.
+        """The source model reservoir bounds as novomodelo-bridge models them.
 
         Daily-regulation ('D') plants are frozen at ``volume_referencia`` by the
         converter (they can't store across stages), so compare like-for-like
-        against Cobre's reservoir rather than the dead-storage
+        against Novomodelo's reservoir rather than the dead-storage
         ``volume_minimo``/``volume_maximo``. Otherwise every run-of-river plant
         shows a spurious Vmin/Vmax delta in the building-blocks table.
         """
@@ -1644,7 +1657,7 @@ def build_productivity_detail(
         )
 
     def _cb_static(code: int) -> tuple[float | None, float | None, float | None]:
-        """cobre-bridge (point, equivalent, accumulated) computed from inputs."""
+        """novomodelo-bridge (point, equivalent, accumulated) computed from inputs."""
         if code not in nw_cadastro.index:
             return None, None, None
         hreg = nw_cadastro.loc[code]
@@ -1659,14 +1672,14 @@ def build_productivity_detail(
     rows: list[dict] = []
     for hydro in alignment.hydros:
         nw_prod = nw_by_name.get(hydro.name.strip().upper(), {})
-        cb = cobre_prod_detail.get(hydro.cobre_id, {})
+        cb = novomodelo_prod_detail.get(hydro.novomodelo_id, {})
         cb_point, cb_equiv, cb_acc = _cb_static(hydro.newave_code)
         nw_vmin, nw_vmax = _nw_reservoir_bounds(hydro.newave_code)
         rows.append(
             {
                 "plant_name": hydro.name,
                 "newave_code": hydro.newave_code,
-                "cobre_id": hydro.cobre_id,
+                "novomodelo_id": hydro.novomodelo_id,
                 "nw_altura_min": nw_prod.get("altura_min"),
                 "nw_altura_65": nw_prod.get("altura_65"),
                 "nw_altura_max": nw_prod.get("altura_max"),
@@ -1700,10 +1713,10 @@ def build_productivity_detail(
 _PRODUCTIVITY_PER_STAGE_SCHEMA: dict[str, type[pl.DataType]] = {
     "plant_name": pl.Utf8,
     "newave_code": pl.Int64,
-    "cobre_id": pl.Int64,
+    "novomodelo_id": pl.Int64,
     "stage": pl.Int64,
     "newave_value": pl.Float64,
-    "cobre_value": pl.Float64,
+    "novomodelo_value": pl.Float64,
 }
 
 
@@ -1727,10 +1740,10 @@ def productivity_per_stage_frame(results: Sequence[ResultComparison]) -> pl.Data
         {
             "plant_name": r.entity_name,
             "newave_code": r.newave_code,
-            "cobre_id": r.cobre_id,
+            "novomodelo_id": r.novomodelo_id,
             "stage": r.stage,
             "newave_value": r.newave_value,
-            "cobre_value": r.cobre_value,
+            "novomodelo_value": r.novomodelo_value,
         }
         for r in results
         if r.entity_type == "hydro" and r.variable == "productivity_mw_per_m3s"
@@ -1753,7 +1766,7 @@ def productivity_scatter_errors(
 
     Args:
         nw_vals: The source-model reference values.
-        cb_vals: The cobre-bridge values, aligned positionally with *nw_vals*.
+        cb_vals: The novomodelo-bridge values, aligned positionally with *nw_vals*.
 
     Returns:
         ``(mean_rel, max_rel)``; both ``0.0`` when no pair clears the
@@ -1784,7 +1797,7 @@ def cost_percent_deltas(
     """Per-category Δ/Δ% rows (worst-``|Δ|``-first) plus the totals row.
 
     Pure numeric core of ``charts.costs.cost_breakdown_table``. *categories* is
-    the ``(label, newave_sum, cobre_sum, color)`` list from
+    the ``(label, newave_sum, novomodelo_sum, color)`` list from
     ``charts.costs._resolve_cost_categories``. Each row's ``pct`` — and the
     totals row's ``total_pct`` — is ``None`` where the source-model
     denominator's magnitude is ``<= 0.01`` (division would be undefined).

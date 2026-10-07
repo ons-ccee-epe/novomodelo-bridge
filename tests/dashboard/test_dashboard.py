@@ -1,7 +1,7 @@
 """Tests for the dashboard data layer and tab registry.
 
 Covers:
-- Data loader helpers in cobre_bridge.dashboard.data
+- Data loader helpers in novomodelo_bridge.dashboard.data
 - Tab registry (get_renderable_tabs, TAB_MODULES)
 - can_render contracts for constraints and stochastic tabs
 - TabModule protocol compliance for every registered module
@@ -18,9 +18,9 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.errors import CobreOutputError
-from cobre_bridge.dashboard.data import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.errors import NovomodeloOutputError
+from novomodelo_bridge.dashboard.data import (
     _aggregate_timing_by_iteration,
     _correct_wall_times_from_convergence,
     _normalize_output_columns,
@@ -35,12 +35,12 @@ from cobre_bridge.dashboard.data import (
     resolve_hydro_bus_id,
     scan_entity,
 )
-from cobre_bridge.dashboard.tabs import (
+from novomodelo_bridge.dashboard.tabs import (
     TAB_MODULES,
     collect_required_js,
     get_renderable_tabs,
 )
-from cobre_bridge.ui.html.document import build_html
+from novomodelo_bridge.ui.html.document import build_html
 from tests.conftest import hydro_with_group
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ def test_load_hydro_bus_map_missing_unit_groups_raises_named_error(
     hydros_json = {"hydros": [{"id": 3, "name": "ORPHAN"}]}
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
-    with pytest.raises(CobreOutputError, match=r"hydro 3 \(ORPHAN\)"):
+    with pytest.raises(NovomodeloOutputError, match=r"hydro 3 \(ORPHAN\)"):
         load_hydro_bus_map(tmp_path)
 
 
@@ -251,7 +251,7 @@ def test_load_hydro_bus_map_empty_unit_groups_raises_named_error(
     hydros_json = {"hydros": [{"id": 4, "name": "EMPTY_GROUPS", "unit_groups": []}]}
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
-    with pytest.raises(CobreOutputError, match=r"hydro 4 \(EMPTY_GROUPS\)"):
+    with pytest.raises(NovomodeloOutputError, match=r"hydro 4 \(EMPTY_GROUPS\)"):
         load_hydro_bus_map(tmp_path)
 
 
@@ -415,7 +415,7 @@ def test_load_hydro_metadata_missing_unit_groups_raises_named_error(
     }
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
-    with pytest.raises(CobreOutputError, match=r"hydro 2 \(ORPHAN\)"):
+    with pytest.raises(NovomodeloOutputError, match=r"hydro 2 \(ORPHAN\)"):
         load_hydro_metadata(tmp_path)
 
 
@@ -429,7 +429,7 @@ def test_resolve_hydro_bus_id_is_the_single_shared_implementation(
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
     with patch(
-        "cobre_bridge.dashboard.data.resolve_hydro_bus_id",
+        "novomodelo_bridge.dashboard.data.resolve_hydro_bus_id",
         wraps=resolve_hydro_bus_id,
     ) as mock_resolve:
         bus_map = load_hydro_bus_map(tmp_path)
@@ -498,7 +498,7 @@ def test_scan_entity_calls_scan_parquet_with_correct_path(tmp_path: Path) -> Non
     mock_lf = MagicMock(spec=pl.LazyFrame)
 
     with patch(
-        "cobre_bridge.dashboard.data.pl.scan_parquet", return_value=mock_lf
+        "novomodelo_bridge.dashboard.data.pl.scan_parquet", return_value=mock_lf
     ) as mock_scan:
         result = scan_entity(tmp_path, "hydros")
 
@@ -536,7 +536,7 @@ def test_get_renderable_tabs_returns_tabs_sorted_by_tab_order() -> None:
 
     fake_data = MagicMock()
 
-    with patch("cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_high, mock_low]):
+    with patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_high, mock_low]):
         result = get_renderable_tabs(fake_data)
 
     ids = [tab_id for tab_id, _label, _html in result]
@@ -565,7 +565,7 @@ def test_get_renderable_tabs_excludes_modules_where_can_render_is_false() -> Non
 
     fake_data = MagicMock()
 
-    with patch("cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_yes, mock_no]):
+    with patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_yes, mock_no]):
         result = get_renderable_tabs(fake_data)
 
     ids = [tab_id for tab_id, _label, _html in result]
@@ -597,7 +597,7 @@ def test_get_renderable_tabs_shows_placeholder_when_render_raises() -> None:
 
     fake_data = MagicMock()
 
-    with patch("cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_bad, mock_good]):
+    with patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_bad, mock_good]):
         result = get_renderable_tabs(fake_data)
 
     by_id = {tab_id: html for tab_id, _label, html in result}
@@ -619,7 +619,7 @@ def test_get_renderable_tabs_returns_correct_tuple_structure() -> None:
 
     fake_data = MagicMock()
 
-    with patch("cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_mod]):
+    with patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_mod]):
         result = get_renderable_tabs(fake_data)
 
     assert len(result) == 1
@@ -655,7 +655,7 @@ def test_collect_required_js_includes_stochastic_js_on_training_only_case() -> N
     fake_data.stochastic_available = True
 
     with patch(
-        "cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_stochastic, mock_plants]
+        "novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_stochastic, mock_plants]
     ):
         result = collect_required_js(fake_data)
 
@@ -680,7 +680,7 @@ def test_collect_required_js_dedupes_shared_block_across_tabs() -> None:
     fake_data = MagicMock()
 
     with patch(
-        "cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_stochastic, mock_plants]
+        "novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_stochastic, mock_plants]
     ):
         result = collect_required_js(fake_data)
 
@@ -696,7 +696,7 @@ def test_collect_required_js_tolerates_module_with_no_required_js_attr() -> None
 
     fake_data = MagicMock()
 
-    with patch("cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_bare]):
+    with patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_bare]):
         result = collect_required_js(fake_data)
 
     assert result == ""
@@ -711,7 +711,7 @@ def test_collect_required_js_excludes_modules_where_can_render_is_false() -> Non
 
     fake_data = MagicMock()
 
-    with patch("cobre_bridge.dashboard.tabs.TAB_MODULES", [mock_no]):
+    with patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_no]):
         result = collect_required_js(fake_data)
 
     assert result == ""
@@ -1121,7 +1121,7 @@ class TestDashboardIntegration:
 
     def test_build_dashboard_integration(self, case_dir: Path, tmp_path: Path) -> None:
         """build_dashboard() writes a valid HTML file with at least 3 tab sections."""
-        from cobre_bridge.dashboard import build_dashboard
+        from novomodelo_bridge.dashboard import build_dashboard
 
         output_path = tmp_path / "dashboard.html"
 
@@ -1149,7 +1149,7 @@ class TestDashboardIntegration:
         (see ``PLOTLY_TITLE_SHIM_JS``), so it must land in ``<head>``, not the
         end-of-body ``<script>``, which executes too late.
         """
-        from cobre_bridge.dashboard import build_dashboard
+        from novomodelo_bridge.dashboard import build_dashboard
 
         output_path = tmp_path / "dashboard.html"
         build_dashboard(case_dir, output_path)
@@ -1168,8 +1168,8 @@ class TestDashboardIntegration:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from cobre_bridge.dashboard import build_dashboard
-        from cobre_bridge.dashboard.data import DashboardData
+        from novomodelo_bridge.dashboard import build_dashboard
+        from novomodelo_bridge.dashboard.data import DashboardData
 
         constraints_dir = case_dir / "constraints"
         constraints_dir.mkdir(parents=True, exist_ok=True)
@@ -1210,7 +1210,7 @@ class TestDashboardIntegration:
 
 @pytest.fixture()
 def _v2_case(tmp_path: Path) -> Path:
-    """Build the same minimal Cobre case used by TestDashboardIntegration.
+    """Build the same minimal Novomodelo case used by TestDashboardIntegration.
 
     Returns the ``case`` Path so individual tests can write optional files
     before calling ``DashboardData.load()``.
@@ -1341,7 +1341,7 @@ def _v2_case(tmp_path: Path) -> Path:
 
 def test_load_config_present(_v2_case: Path) -> None:
     """config and discount_rate are populated from config.json when it exists."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     _write_json(
         _v2_case / "config.json",
@@ -1356,7 +1356,7 @@ def test_load_config_present(_v2_case: Path) -> None:
 
 def test_load_config_absent(_v2_case: Path) -> None:
     """config defaults to {} and discount_rate to 0.0 when config.json is absent."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     # Ensure no config.json is present
     config_path = _v2_case / "config.json"
@@ -1370,7 +1370,7 @@ def test_load_config_absent(_v2_case: Path) -> None:
 
 def test_load_training_metadata_present(_v2_case: Path) -> None:
     """training_metadata is populated from output/training/metadata.json."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     _write_json(
         _v2_case / "output" / "training" / "metadata.json",
@@ -1397,7 +1397,7 @@ def test_load_training_metadata_present(_v2_case: Path) -> None:
 
 def test_load_stages_data_preserved(_v2_case: Path) -> None:
     """stages_data contains the raw stages list from stages.json."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     data = DashboardData.load(_v2_case)
 
@@ -1408,7 +1408,7 @@ def test_load_stages_data_preserved(_v2_case: Path) -> None:
 
 def test_simulation_metadata_field(_v2_case: Path) -> None:
     """simulation_metadata is populated from output/simulation/metadata.json."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     _write_json(
         _v2_case / "output" / "simulation" / "metadata.json",
@@ -1436,7 +1436,7 @@ def test_load_hydro_bounds_present(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     bounds_dir = _v2_case / "constraints"
     bounds_dir.mkdir(parents=True, exist_ok=True)
@@ -1465,7 +1465,7 @@ def test_load_hydro_bounds_present(_v2_case: Path) -> None:
 
 def test_load_hydro_bounds_absent(_v2_case: Path) -> None:
     """hydro_bounds is an empty DataFrame when hydro_bounds.parquet is absent."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     # Ensure the file is not present
     hb_path = _v2_case / "constraints" / "hydro_bounds.parquet"
@@ -1481,7 +1481,7 @@ def test_load_thermal_bounds_present(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     bounds_dir = _v2_case / "constraints"
     bounds_dir.mkdir(parents=True, exist_ok=True)
@@ -1513,7 +1513,7 @@ def test_load_ncs_stats_present(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     scenarios_dir = _v2_case / "scenarios"
     scenarios_dir.mkdir(parents=True, exist_ok=True)
@@ -1539,7 +1539,7 @@ def test_load_ncs_stats_present(_v2_case: Path) -> None:
 def test_load_line_block_bounds_present(_v2_case: Path) -> None:
     """line_block_bounds holds only the per-block (block_id non-null) rows.
 
-    Cobre 0.13 deleted the standalone per-block exchange-factor JSON document
+    Novomodelo 0.13 deleted the standalone per-block exchange-factor JSON document
     and folded it into absolute-MW override rows inside line_bounds.parquet;
     the stage-level base row (block_id is null) must not leak
     into this field.
@@ -1547,7 +1547,7 @@ def test_load_line_block_bounds_present(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     constraints_dir = _v2_case / "constraints"
     constraints_dir.mkdir(parents=True, exist_ok=True)
@@ -1582,7 +1582,7 @@ def test_load_line_block_bounds_absent_is_empty_not_raising(_v2_case: Path) -> N
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     constraints_dir = _v2_case / "constraints"
     constraints_dir.mkdir(parents=True, exist_ok=True)
@@ -1606,7 +1606,7 @@ def test_load_line_block_bounds_absent_is_empty_not_raising(_v2_case: Path) -> N
 
 def test_load_line_block_bounds_no_file_is_empty_not_raising(_v2_case: Path) -> None:
     """No line_bounds.parquet at all still yields an empty frame, not a raise."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     data = DashboardData.load(_v2_case)
 
@@ -1626,9 +1626,9 @@ def test_load_inflow_history_present(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
-    from cobre_bridge.dashboard.tabs import stochastic
-    from cobre_bridge.newave.converters.inflow_windows import (
+    from novomodelo_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.tabs import stochastic
+    from novomodelo_bridge.newave.converters.inflow_windows import (
         INFLOW_HISTORY_WINDOW_SCHEMA,
     )
 
@@ -1655,7 +1655,7 @@ def test_load_inflow_history_present(_v2_case: Path) -> None:
 
 def test_load_inflow_history_absent(_v2_case: Path) -> None:
     """inflow_history is an empty DataFrame when the file is missing."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     ih_path = _v2_case / "scenarios" / "inflow_history.parquet"
     assert not ih_path.exists()
@@ -1670,7 +1670,7 @@ def test_load_correlation_present(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     stochastic_dir = _v2_case / "output" / "stochastic"
     stochastic_dir.mkdir(parents=True, exist_ok=True)
@@ -1699,7 +1699,7 @@ def test_load_correlation_present(_v2_case: Path) -> None:
 
 def test_load_correlation_absent_no_stochastic(_v2_case: Path) -> None:
     """correlation is an empty dict when the stochastic output directory is missing."""
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     stochastic_dir = _v2_case / "output" / "stochastic"
     assert not stochastic_dir.exists()
@@ -1714,7 +1714,7 @@ def test_load_inflow_lags_lf_present(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     lags_dir = _v2_case / "output" / "simulation" / "inflow_lags" / "scenario_id=0"
     lags_dir.mkdir(parents=True, exist_ok=True)
@@ -1742,7 +1742,7 @@ def test_load_inflow_lags_lf_present(_v2_case: Path) -> None:
 
 def test_compute_non_fictitious_bus_ids_filters_zero_load() -> None:
     """Bus with zero mean_mw in all stages is excluded; nonzero bus is included."""
-    from cobre_bridge.dashboard.data import compute_non_fictitious_bus_ids
+    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
 
     load_stats = pd.DataFrame(
         {
@@ -1759,7 +1759,7 @@ def test_compute_non_fictitious_bus_ids_filters_zero_load() -> None:
 
 def test_compute_non_fictitious_bus_ids_all_nonzero() -> None:
     """All buses with nonzero load in at least one stage are returned sorted."""
-    from cobre_bridge.dashboard.data import compute_non_fictitious_bus_ids
+    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
 
     load_stats = pd.DataFrame(
         {
@@ -1776,7 +1776,7 @@ def test_compute_non_fictitious_bus_ids_all_nonzero() -> None:
 
 def test_compute_non_fictitious_bus_ids_empty_df() -> None:
     """Empty DataFrame returns an empty list."""
-    from cobre_bridge.dashboard.data import compute_non_fictitious_bus_ids
+    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
 
     result = compute_non_fictitious_bus_ids(pd.DataFrame())
 
@@ -1785,7 +1785,7 @@ def test_compute_non_fictitious_bus_ids_empty_df() -> None:
 
 def test_compute_non_fictitious_bus_ids_missing_column() -> None:
     """DataFrame missing mean_mw column returns an empty list (defensive)."""
-    from cobre_bridge.dashboard.data import compute_non_fictitious_bus_ids
+    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
 
     load_stats = pd.DataFrame({"bus_id": [0, 1], "stage_id": [0, 0]})
 
@@ -1799,7 +1799,7 @@ def test_non_fictitious_bus_ids_field_on_data(_v2_case: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
     # Overwrite the load_stats with two buses: 0 has load, 1 is fictitious
     load_stats_table = pa.table(
@@ -1972,7 +1972,7 @@ def test_tab_registry_contains_all_modules() -> None:
 
 class TestSectionLoaders:
     def test_loaders_are_independently_callable(self, _v2_case: Path) -> None:
-        from cobre_bridge.dashboard.data import (
+        from novomodelo_bridge.dashboard.data import (
             load_entity_metadata,
             load_scenario_inputs,
             load_temporal_context,
@@ -1990,7 +1990,10 @@ class TestSectionLoaders:
         assert isinstance(scenario.load_factors_list, list)
 
     def test_loaders_compose_to_full_aggregate(self, _v2_case: Path) -> None:
-        from cobre_bridge.dashboard.data import DashboardData, load_temporal_context
+        from novomodelo_bridge.dashboard.data import (
+            DashboardData,
+            load_temporal_context,
+        )
 
         data = DashboardData.load(_v2_case)
         temporal = load_temporal_context(_v2_case)
@@ -2002,7 +2005,7 @@ class TestSectionLoaders:
 
 
 # ---------------------------------------------------------------------------
-# _normalize_output_columns — cobre 0.14 diagnostic-output axis renames
+# _normalize_output_columns — novomodelo 0.14 diagnostic-output axis renames
 # ---------------------------------------------------------------------------
 
 

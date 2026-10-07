@@ -1,11 +1,11 @@
-"""Stochastic data converter: maps the source model inflow and load data to Cobre
+"""Stochastic data converter: maps the source model inflow and load data to Novomodelo
 Parquet.
 
 Converts ``vazoes.dat`` (historical inflow series), ``vazpast.dat`` (recent
 past inflows), ``sistema.dat`` (load demand), ``patamar.dat`` (load block
 factors), and ``c_adic.dat`` (additional generation added to load) into
 PyArrow Tables and dicts that are written as Parquet files and JSON files in
-the ``scenarios/`` directory of a Cobre case.
+the ``scenarios/`` directory of a Novomodelo case.
 """
 
 from __future__ import annotations
@@ -18,14 +18,14 @@ import pandas as pd
 import pyarrow as pa
 from inewave.newave import Cadic, Dger, Vazoes
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.errors import FieldParseError
-from cobre_bridge.newave import plants
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.horizon import POST_STUDY_YEAR, study_horizon
-from cobre_bridge.newave.id_map import NewaveIdMap
-from cobre_bridge.newave.switches import switch_off_diagnostic
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.newave import plants
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, study_horizon
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.switches import switch_off_diagnostic
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def _build_upstream_postos(
         The full ``Confhd.usinas`` cascade.
     filling_codes:
         Codes of admitted ``NE``-with-filling plants
-        (:func:`cobre_bridge.newave.plants.filling_hydro_codes`).  Such a plant
+        (:func:`novomodelo_bridge.newave.plants.filling_hydro_codes`).  Such a plant
         *receives* inflow during filling and operation, so its posto enters
         the map as a real node rather than being walked through: an upstream
         plant forms a posto edge **to** the filling plant instead of stepping
@@ -243,7 +243,7 @@ def _case_filling_codes(case: NewaveCase) -> set[int]:
     """Return the admitted ``NE``-with-filling codes for *case*.
 
     Reads the filling set from ``case`` exactly once via
-    :func:`cobre_bridge.newave.plants.filling_hydro_codes`, tolerating an absent
+    :func:`novomodelo_bridge.newave.plants.filling_hydro_codes`, tolerating an absent
     ``exph.dat`` (``case.exph is None`` → empty set).  The result is passed
     to :func:`_build_upstream_postos` so admitted filling postos enter the
     inflow map as real nodes.
@@ -281,7 +281,7 @@ def _vazpast_incremental(
 ) -> dict[int, dict[int, float]]:
     """Read the hydrological-tendency file and return incremental inflows.
 
-    Returns ``{cobre_hydro_id: {calendar_month: value_m3s}}`` after the
+    Returns ``{novomodelo_hydro_id: {calendar_month: value_m3s}}`` after the
     posto -> plant mapping and the natural -> incremental subtraction.
     Empty when the file is absent, unreadable, or carries no tendency data.
     """
@@ -300,14 +300,14 @@ def _vazpast_incremental(
         return {}
 
     # The vazpast "codigo_usina" column is actually the posto (gauging station),
-    # same convention as vazoes.dat.  Map posto -> hydro_code -> cobre_id.
+    # same convention as vazoes.dat.  Map posto -> hydro_code -> novomodelo_id.
     confhd_df = case.confhd.usinas
-    posto_to_cobre_id: dict[int, int] = {}
+    posto_to_novomodelo_id: dict[int, int] = {}
     for _, row in confhd_df.iterrows():
         code = int(row["codigo_usina"])
         posto = int(row["posto"])
         try:
-            posto_to_cobre_id[posto] = id_map.hydro_id(code)
+            posto_to_novomodelo_id[posto] = id_map.hydro_id(code)
         except KeyError:
             pass
 
@@ -315,7 +315,7 @@ def _vazpast_incremental(
     natural: dict[int, dict[int, float]] = {}
     for posto, plant_df in df_tend.groupby("codigo_usina"):
         posto = int(posto)
-        if posto not in posto_to_cobre_id:
+        if posto not in posto_to_novomodelo_id:
             continue
         month_vals: dict[int, float] = {}
         for _, row in plant_df.iterrows():
@@ -334,7 +334,7 @@ def _vazpast_incremental(
             up_nat = natural.get(up_posto, {})
             for m in inc_vals:
                 inc_vals[m] -= up_nat.get(m, 0.0)
-        incremental[posto_to_cobre_id[posto]] = inc_vals
+        incremental[posto_to_novomodelo_id[posto]] = inc_vals
 
     return incremental
 
@@ -346,7 +346,7 @@ def _incremental_history(
     """Read the historical record and return incremental series per hydro.
 
     Returns ``(hist_start_year, n_rows, series_by_hydro)``: monthly
-    incremental inflow arrays (m³/s) keyed by Cobre hydro id, one entry per
+    incremental inflow arrays (m³/s) keyed by Novomodelo hydro id, one entry per
     month from January of ``hist_start_year``, truncated at the month
     before the study start.
 
@@ -412,7 +412,7 @@ def _incremental_history(
 
 
 def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
-    """Convert the source model historical inflow data to Cobre inflow seasonal
+    """Convert the source model historical inflow data to Novomodelo inflow seasonal
     statistics.
 
     For each hydro plant and each study stage (calendar month), computes the
@@ -426,7 +426,7 @@ def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
         Parsed the source model case.
     id_map:
         Entity ID map produced during entity conversion.  Used to resolve the source
-        model hydro codes to 0-based Cobre hydro IDs.
+        model hydro codes to 0-based Novomodelo hydro IDs.
 
     Returns
     -------
@@ -502,7 +502,7 @@ def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
     rows_std: list[float] = []
 
     for hydro_code in hydro_codes:
-        cobre_hydro_id = id_map.hydro_id(hydro_code)
+        novomodelo_hydro_id = id_map.hydro_id(hydro_code)
         posto = posto_for_hydro.get(hydro_code)
         inc_series = incremental_by_posto.get(posto) if posto is not None else None
 
@@ -522,7 +522,7 @@ def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
                 seasonal_std[cal_month] = 0.0
 
         for stage_id, cm in enumerate(study_months):
-            rows_hydro_id.append(cobre_hydro_id)
+            rows_hydro_id.append(novomodelo_hydro_id)
             rows_stage_id.append(stage_id)
             rows_mean.append(seasonal_mean[cm])
             rows_std.append(seasonal_std[cm])
@@ -541,7 +541,7 @@ def convert_load_factors(
     case: NewaveCase,
     id_map: NewaveIdMap,
 ) -> dict:
-    """Convert the source model patamar load factors to a Cobre ``load_factors.json``
+    """Convert the source model patamar load factors to a Novomodelo ``load_factors.json``
     dict.
 
     Reads ``patamar.dat::carga_patamares`` and ``dger.dat`` to produce one
@@ -557,7 +557,7 @@ def convert_load_factors(
         Parsed the source model case.
     id_map:
         Entity ID map.  Used to resolve the source model subsystem codes to 0-based
-        Cobre bus IDs.
+        Novomodelo bus IDs.
 
     Returns
     -------
@@ -591,7 +591,7 @@ def convert_load_factors(
                 num_blocks,
             )
         return {
-            "$schema": cobre_schemas.schema_url_for("scenarios/load_factors.json"),
+            "$schema": novomodelo_schemas.schema_url_for("scenarios/load_factors.json"),
             "load_factors": [],
         }
 
@@ -678,7 +678,7 @@ def convert_load_factors(
                 y += 1
 
     return {
-        "$schema": cobre_schemas.schema_url_for("scenarios/load_factors.json"),
+        "$schema": novomodelo_schemas.schema_url_for("scenarios/load_factors.json"),
         "load_factors": load_factors,
     }
 
@@ -696,7 +696,7 @@ def _derive_study_stage_months(dger: Dger) -> list[int]:
     -------
     list[int]
         Calendar month (1-12) for each stage.  Length equals
-        :attr:`~cobre_bridge.newave.horizon.StudyHorizon.total_stages`.
+        :attr:`~novomodelo_bridge.newave.horizon.StudyHorizon.total_stages`.
     """
     horizon = study_horizon(dger)
     start_month = horizon.start_month
@@ -708,7 +708,7 @@ def parse_cadical(path: Path) -> dict[tuple[int, int, int], float]:
     """Parse a C_ADIC.DAT file into a lookup of added load values.
 
     Public, stable parsing seam: both this converter and the results
-    comparator (:mod:`cobre_bridge.comparators.newave.readers`) reconstruct the source
+    comparator (:mod:`novomodelo_bridge.comparators.newave.readers`) reconstruct the source
     model load from C_ADIC via this function, so its signature and the
     ``(subsystem_code, year, cal_month) -> total_mw`` return shape are part of the
     shared contract — change them in lockstep with both callers.
@@ -750,7 +750,7 @@ def parse_cadical(path: Path) -> dict[tuple[int, int, int], float]:
 
 
 def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
-    """Convert the source model subsystem load data to Cobre load seasonal statistics.
+    """Convert the source model subsystem load data to Novomodelo load seasonal statistics.
 
     Reads ``sistema.dat`` and converts the ``mercado_energia`` DataFrame
     (load demand per subsystem per month) into a PyArrow Table.  When a
@@ -767,7 +767,7 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
         Parsed the source model case.
     id_map:
         Entity ID map.  Used to resolve the source model subsystem codes to 0-based
-        Cobre bus IDs.
+        Novomodelo bus IDs.
 
     Returns
     -------

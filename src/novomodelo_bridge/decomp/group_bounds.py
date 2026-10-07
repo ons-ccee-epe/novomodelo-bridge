@@ -1,11 +1,11 @@
 """``constraints/hydro_unit_group_bounds.parquet`` — per-group bound overlay.
 
 Every hydro declares a mandatory, stage-invariant ``unit_groups[]`` array
-(``build_mirror_unit_group``, ``core/hydro_units.py``). cobre 0.13 adds a
+(``build_mirror_unit_group``, ``core/hydro_units.py``). novomodelo 0.13 adds a
 stage-varying (optionally per-block) overlay for it — this table — letting
 any of a group's four declared bounds be *lowered* per stage/block.
 
-Verified against cobre's ``hydro_unit_group_bounds`` schema:
+Verified against novomodelo's ``hydro_unit_group_bounds`` schema:
 
 ======================= ========== ============
 Column                  Arrow type Required?
@@ -22,18 +22,18 @@ Column                  Arrow type Required?
 
 All four bound columns are block-eligible (see the reader module docstring) —
 unlike the plant-axis ``hydro_bounds``, this family has no block-ineligible
-column (contrast ``thermal_bounds.cost_per_mwh``), so cobre rule 37 never
+column (contrast ``thermal_bounds.cost_per_mwh``), so novomodelo rule 37 never
 touches it.
 
-**The overlay is id-addressed, not position-addressed.** cobre matches an
-override row to a group by the group's own declared ``id`` (cobre builds
+**The overlay is id-addressed, not position-addressed.** novomodelo matches an
+override row to a group by the group's own declared ``id`` (novomodelo builds
 ``group_position[(hydro.id, group.id)]`` and looks each row up by
 ``(row.hydro_id, row.hydro_unit_group_id)``), and it sorts both
 ``unit_groups[]`` and the bound rows by their full key on load
 (``entities/hydro.rs::sort_unit_groups``). Producer emission
 order is therefore never load-bearing; the only producer obligation is that
 ``hydro_unit_group_id`` names the target group's declared ``id`` and that
-group ids are unique within a plant (cobre rule 39).
+group ids are unique within a plant (novomodelo rule 39).
 
 This module is **value-fed, not deck-deriving** — it computes nothing about
 availability, unit maintenance, or Itaipu's split. :func:`_empty` is what
@@ -50,8 +50,8 @@ import pyarrow as pa
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _HYDRO_UNIT_GROUP_BOUNDS_SCHEMA = pa.schema(
     [
@@ -156,7 +156,7 @@ def convert_hydro_unit_group_bounds(
     that block (a ``0.0`` value is a real bound and is emitted; a column
     with no per-block breakdown stays ``None`` on the override rows). Row
     order (base before its overrides, keys sorted) is a source-code
-    convention for readability only — cobre re-sorts on load, so it is never
+    convention for readability only — novomodelo re-sorts on load, so it is never
     load-bearing (see the module docstring's id-addressed note).
 
     Raises

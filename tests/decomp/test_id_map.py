@@ -1,15 +1,15 @@
 """Tests for the deterministic entity-id map (``decomp/id_map.py``).
 
 Tier 1 — pure Python; a duck-typed stub deck exercises the ``from_dadger``
-parse boundary with no ``idecomp``/``cobre`` import.
+parse boundary with no ``idecomp``/``novomodelo`` import.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from cobre_bridge.core.errors import FieldParseError, diagnostic_from_exception
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 
 class _NoSbDadger:

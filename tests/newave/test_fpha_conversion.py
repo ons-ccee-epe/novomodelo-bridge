@@ -2,7 +2,7 @@
 
 FPHA is gated on the source model's ``dger`` ``funcao_producao_uhe == 0``
 (:attr:`NewaveCase.fpha_enabled`). When on, reservoir plants with storage swing are
-emitted as ``model: "fpha"`` so cobre fits the production function; when off, every
+emitted as ``model: "fpha"`` so novomodelo fits the production function; when off, every
 plant stays on the constant-productivity path (regression-preserving).
 """
 
@@ -14,10 +14,10 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.core.productivity import fpha_efficiency
-from cobre_bridge.newave.converters.hydro import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.productivity import fpha_efficiency
+from novomodelo_bridge.newave.converters.hydro import (
     _fpha_computed_config,
     _is_fpha_eligible,
     _parse_fpha_plane_reduction,
@@ -26,7 +26,7 @@ from cobre_bridge.newave.converters.hydro import (
     convert_production_models,
     fpha_eligible_codes,
 )
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
 from tests.newave.conftest import (
     _make_confhd_df,
@@ -36,7 +36,7 @@ from tests.newave.conftest import (
     _make_ree_df,
 )
 
-# cobre's phi = K * eta * q * h_net with K = g/1000.
+# novomodelo's phi = K * eta * q * h_net with K = g/1000.
 _K = 9.81e-3
 # A physically realistic specific productivity -> eta in (0, 1].
 _REALISTIC_RHO_ESP = 0.00892
@@ -75,7 +75,7 @@ class TestIsFphaEligible:
         assert _is_fpha_eligible(_reservoir_row()) is True
 
     def test_run_of_river_zero_storage_is_eligible(self) -> None:
-        # Single-volume plant (vmax == vmin): cobre fits it via the single-volume
+        # Single-volume plant (vmax == vmin): novomodelo fits it via the single-volume
         # FPHA path (γ_V = 0), so it IS eligible given a poly + ρ_esp.
         assert _is_fpha_eligible(_reservoir_row(vmin=50.0, vmax=50.0)) is True
 
@@ -106,7 +106,7 @@ class TestFphaEfficiency:
         assert 0.0 < eta <= 1.0
 
     def test_unphysical_rho_esp_clamped_to_one(self) -> None:
-        # rho_esp >> K would imply eta > 1; cobre requires (0, 1].
+        # rho_esp >> K would imply eta > 1; novomodelo requires (0, 1].
         assert fpha_efficiency(0.9, "USINA") == 1.0
 
 
@@ -385,11 +385,11 @@ class TestFphaConverters:
         )
 
     def test_energy_productivity_includes_fpha_plants(self, tmp_path: Path) -> None:
-        # FPHA plants must keep an equivalent_productivity row: cobre's
+        # FPHA plants must keep an equivalent_productivity row: novomodelo's
         # energy-conversion build resolves their ρ_eq from this parquet override
         # (build_energy_and_templates feeds the VHA-geometry derivation an empty
         # map, so the parquet is the only working source). Excluding them makes
-        # cobre fail at load with "cannot derive ρ_eq".
+        # novomodelo fail at load with "cannot derive ρ_eq".
         table = convert_hydro_energy_productivity(self._case(tmp_path), self._id_map())
         rows = {r["hydro_id"]: r for r in table.to_pylist()}
         assert 0 in rows  # FPHA reservoir is NOT excluded

@@ -24,36 +24,36 @@ from typing import TYPE_CHECKING, cast
 import pandas as pd
 from idecomp.decomp.modelos import dadger as _dadger_models
 
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
-from cobre_bridge.core.errors import FieldParseError, diagnostic_from_exception
-from cobre_bridge.core.preflight import (
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
+from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
     PreflightVerdict,
     optional_input_advisory,
 )
-from cobre_bridge.decomp import constraint_registers
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.decomp import constraint_registers
+from novomodelo_bridge.decomp.converters.cadastro import (
     APPLIED_AC_CLASSES,
     UNINGESTABLE_AC_CLASSES,
 )
-from cobre_bridge.decomp.files import discover_decomp_files
+from novomodelo_bridge.decomp.files import discover_decomp_files
 
 if TYPE_CHECKING:
     from idecomp.decomp import Dadger, Vazoes
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.cadastro import CadastroResolutionReport
-    from cobre_bridge.decomp.files import DecompFiles
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.cadastro import CadastroResolutionReport
+    from novomodelo_bridge.decomp.files import DecompFiles
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _CONTEXT = "Preflight"
 
 #: Every idecomp `AC` register class, discovered by reflection so a future
 #: idecomp release adding one lands automatically in the deferred bucket
 #: (the conservative default) with no edit here. idecomp is a hard
-#: dependency (unlike the optional `cobre` wheel), so this module-scope
+#: dependency (unlike the optional `novomodelo` wheel), so this module-scope
 #: import/reflection is safe in every CI tier.
 _ALL_AC_CLASSES: frozenset[type] = frozenset(
     obj
@@ -94,7 +94,7 @@ def _calendar_check(
     dadger: Dadger,
 ) -> tuple[CheckItem, list[OperativeStage], str | None]:
     """Build the operative calendar, turning its validation into one check."""
-    from cobre_bridge.decomp.temporal import operative_calendar_from_dadger
+    from novomodelo_bridge.decomp.temporal import operative_calendar_from_dadger
 
     try:
         calendar = operative_calendar_from_dadger(dadger)
@@ -122,7 +122,7 @@ def _calendar_check(
 
 def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckItem]:
     """Per-stage probability mass and the trunk-plus-terminal-fan shape gate."""
-    from cobre_bridge.decomp.scenarios import convert_scenario_probabilities
+    from novomodelo_bridge.decomp.scenarios import convert_scenario_probabilities
 
     try:
         table = convert_scenario_probabilities(vazoes, calendar).to_pydict()
@@ -173,7 +173,7 @@ def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckIt
 
 def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
     """The per-(bus, stage) identity ``Σ_b f_b·h_b = H`` (matrix row 17)."""
-    from cobre_bridge.decomp.load import convert_load_factors
+    from novomodelo_bridge.decomp.load import convert_load_factors
 
     try:
         document = convert_load_factors(case, id_map)
@@ -225,7 +225,7 @@ def _ac_present(dadger: Dadger, classes: frozenset[type]) -> list[type]:
 
     A class is present iff its ``AC`` frame is a non-empty
     ``pd.DataFrame`` — mirrors the resolver's own guard
-    (:func:`cobre_bridge.decomp.converters.cadastro.overrides.
+    (:func:`novomodelo_bridge.decomp.converters.cadastro.overrides.
     _read_scalar_overrides` and its siblings), so a ``None``/empty frame
     (an unregistered mnemonic, or an absent one) contributes nothing.
     """
@@ -256,8 +256,8 @@ def _ac_coverage(
     *report* (for ``out_of_horizon``) — no file I/O, no calendar, no
     ``hidr``. The three buckets are computed once by set arithmetic against
     the module-level :data:`_ALL_AC_CLASSES` reflection and the resolver's
-    own :data:`~cobre_bridge.decomp.converters.cadastro.overrides.
-    APPLIED_AC_CLASSES` / :data:`~cobre_bridge.decomp.converters.cadastro.
+    own :data:`~novomodelo_bridge.decomp.converters.cadastro.overrides.
+    APPLIED_AC_CLASSES` / :data:`~novomodelo_bridge.decomp.converters.cadastro.
     overrides.UNINGESTABLE_AC_CLASSES` registries
     — enumerate-and-diff, never a hand-maintained list, so a newly-applied
     family automatically drops off the deferred bucket and a new idecomp
@@ -376,7 +376,7 @@ def _special_constraint_coverage(
     will and will not carry — without running a conversion.
 
     A pure read of *dadger* (through the same census
-    :func:`~cobre_bridge.decomp.constraint_registers.read_constraints` the
+    :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints` the
     pipeline consumes) and *files* (whose ``dadger`` path feeds the E1
     unreadable-electrical scan, and whose parent deck directory feeds the
     LIBs-electrical scan) — no conversion, no emitter.
@@ -389,8 +389,8 @@ def _special_constraint_coverage(
     probes (per spec §10, never a hard-coded oracle), plus a ``WARNING`` per
     present deferred surface. The deferred diagnostics are produced verbatim
     by the E1 detection helpers
-    (:func:`~cobre_bridge.decomp.constraint_registers.detect_unreadable_electrical`
-    / :func:`~cobre_bridge.decomp.constraint_registers.detect_libs_electrical`)
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unreadable_electrical`
+    / :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`)
     — never re-derived here.
     """
     census = constraint_registers.read_constraints(dadger)
@@ -461,8 +461,8 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
     """
     from idecomp.decomp import Dadger, Vazoes
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
     try:
         files = discover_decomp_files(src)
@@ -547,8 +547,10 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         else:
             checks.extend(_tree_checks(vazoes, calendar))
 
-        from cobre_bridge.decomp.converters.cadastro import build_effective_cadastro
-        from cobre_bridge.decomp.converters.hydro import read_hidr
+        from novomodelo_bridge.decomp.converters.cadastro import (
+            build_effective_cadastro,
+        )
+        from novomodelo_bridge.decomp.converters.hydro import read_hidr
 
         try:
             hidr = read_hidr(files.hidr)

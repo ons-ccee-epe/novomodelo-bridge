@@ -21,7 +21,7 @@ from tests.newave.conftest import _run_with_all_mocks
 
 class TestConversionReport:
     def test_str_format(self) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         report = ConversionReport(
             hydro_count=3,
@@ -38,7 +38,7 @@ class TestConversionReport:
         assert "60 stages" in s
 
     def test_default_zeros(self) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         report = ConversionReport()
         assert report.hydro_count == 0
@@ -59,7 +59,7 @@ class TestConvertNewaweCasePipeline:
 
     def test_all_output_files_written(self, tmp_path: Path) -> None:
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _run_with_all_mocks(src, dst)
 
@@ -87,9 +87,9 @@ class TestConvertNewaweCasePipeline:
 
     def test_exchange_factors_json_is_not_written(self, tmp_path: Path) -> None:
         """The per-block exchange factors are folded into line_bounds.parquet
-        (cobre decision 10); the pipeline must not write the deleted file."""
+        (novomodelo decision 10); the pipeline must not write the deleted file."""
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _run_with_all_mocks(src, dst)
 
@@ -102,7 +102,7 @@ class TestConvertNewaweCasePipeline:
         untouched by the exchange-factors migration (which draws the line at
         authored-vs-sampled data; deleting these by analogy would be wrong)."""
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _run_with_all_mocks(src, dst)
 
@@ -116,7 +116,7 @@ class TestConvertNewaweCasePipeline:
 
     def test_json_files_are_valid_json(self, tmp_path: Path) -> None:
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _run_with_all_mocks(src, dst)
 
@@ -136,7 +136,7 @@ class TestConvertNewaweCasePipeline:
         import pyarrow.parquet as pq
 
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _run_with_all_mocks(src, dst)
 
@@ -147,7 +147,7 @@ class TestConvertNewaweCasePipeline:
 
     def test_report_counts_from_converter_output(self, tmp_path: Path) -> None:
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         report = _run_with_all_mocks(src, dst)
 
@@ -161,10 +161,10 @@ class TestConvertNewaweCasePipeline:
         self, tmp_path: Path
     ) -> None:
         """When convert_production_models returns data, the file is written."""
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _FAKE_PROD_MODELS = {
             "production_models": [
@@ -194,7 +194,7 @@ class TestConvertNewaweCasePipeline:
             # Override the production_models patch (entered last -> exits first).
             stack.enter_context(
                 patch(
-                    "cobre_bridge.newave.pipeline.hydro_conv.convert_production_models",
+                    "novomodelo_bridge.newave.pipeline.hydro_conv.convert_production_models",
                     return_value=_FAKE_PROD_MODELS,
                 )
             )
@@ -207,27 +207,27 @@ class TestConvertNewaweCasePipeline:
         assert data["production_models"][0]["hydro_id"] == 0
 
     def test_production_models_always_written(self, tmp_path: Path) -> None:
-        """Cobre HEAD requires hydro_production_models.json — pipeline always writes it.
+        """Novomodelo HEAD requires hydro_production_models.json — pipeline always writes it.
 
         Productivity moved out of `hydros.json:generation`, so the production
-        models file is now mandatory for the converted case to load in cobre.
+        models file is now mandatory for the converted case to load in novomodelo.
         """
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _run_with_all_mocks(src, dst)
 
         assert (dst / "system" / "hydro_production_models.json").exists()
 
     def test_missing_required_file_raises(self, tmp_path: Path) -> None:
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         with (
             patch(
-                "cobre_bridge.newave.pipeline.NewaveCase.from_directory",
+                "novomodelo_bridge.newave.pipeline.NewaveCase.from_directory",
                 side_effect=FileNotFoundError(
                     f"Required NEWAVE file not found in {src}: hidr.dat"
                 ),
@@ -241,15 +241,17 @@ class TestConvertNewaweCasePipeline:
         """``dry_run=True`` writes nothing yet records the would-write paths."""
         import contextlib
 
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         fake_id_map = MagicMock()
         with (
-            patch("cobre_bridge.cobre.case_writer.pq.write_table") as write_table,
+            patch(
+                "novomodelo_bridge.novomodelo.case_writer.pq.write_table"
+            ) as write_table,
             contextlib.ExitStack() as stack,
         ):
             for p in _all_converter_patches(fake_id_map):
@@ -278,11 +280,11 @@ class TestEmissionCheckWiring:
         """The fully-mocked fixture never builds a hydro_bounds table, so rule
         43 is explicitly "not applicable" (INFO), not silently absent, and the
         convert verdict stays clean."""
-        from cobre_bridge.cli.verdict import _convert_status
-        from cobre_bridge.core.diagnostics import Severity
+        from novomodelo_bridge.cli.verdict import _convert_status
+        from novomodelo_bridge.core.diagnostics import Severity
 
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
         report = _run_with_all_mocks(src, dst)
 
         not_applicable = [
@@ -299,15 +301,15 @@ class TestEmissionCheckWiring:
     ) -> None:
         """A hydro_bounds row above the plant's declared max_turbined_m3s is
         clamped back to the declaration and reported as a WARNING, so the
-        convert verdict stays "ok" instead of erroring on cobre rule 43."""
+        convert verdict stays "ok" instead of erroring on novomodelo rule 43."""
         import contextlib
 
-        from cobre_bridge.cli.verdict import _convert_status
-        from cobre_bridge.core.diagnostics import Severity
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.cli.verdict import _convert_status
+        from novomodelo_bridge.core.diagnostics import Severity
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         hydros = {
             "$schema": "http://example",
@@ -343,13 +345,13 @@ class TestEmissionCheckWiring:
                 stack.enter_context(p)
             stack.enter_context(
                 patch(
-                    "cobre_bridge.newave.pipeline.hydro_conv.convert_hydros",
+                    "novomodelo_bridge.newave.pipeline.hydro_conv.convert_hydros",
                     return_value=hydros,
                 )
             )
             stack.enter_context(
                 patch(
-                    "cobre_bridge.newave.pipeline.hydro_conv.convert_storage_bounds",
+                    "novomodelo_bridge.newave.pipeline.hydro_conv.convert_storage_bounds",
                     return_value=over_declared_bounds,
                 )
             )
@@ -383,7 +385,7 @@ class TestPipelineInflowHistory:
     def test_inflow_history_always_written(self, tmp_path: Path) -> None:
         """inflow_history.parquet is always written (from vazoes.dat)."""
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
 
         _run_with_all_mocks(src, dst)
 
@@ -395,11 +397,11 @@ class TestConversionWarningCapture:
     """``convert_newave_case`` surfaces converter warnings via ConversionReport."""
 
     def test_captures_and_dedupes_package_warnings(self, tmp_path: Path) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.newave import pipeline
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.newave import pipeline
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
-        log = logging.getLogger("cobre_bridge.newave.converters.fake")
+        log = logging.getLogger("novomodelo_bridge.newave.converters.fake")
 
         def fake_impl(
             src: Path,
@@ -424,9 +426,9 @@ class TestConversionWarningCapture:
         ]
 
     def test_no_warnings_when_clean(self, tmp_path: Path) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.newave import pipeline
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.newave import pipeline
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         with patch.object(
             pipeline,
@@ -438,10 +440,10 @@ class TestConversionWarningCapture:
         assert report.warnings == []
 
     def test_collector_detached_even_on_exception(self, tmp_path: Path) -> None:
-        from cobre_bridge.newave import pipeline
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.newave import pipeline
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
-        pkg_logger = logging.getLogger("cobre_bridge")
+        pkg_logger = logging.getLogger("novomodelo_bridge")
         handlers_before = list(pkg_logger.handlers)
         with (
             patch.object(
@@ -461,8 +463,8 @@ class TestConversionWarningCapture:
         """A failure partway through the write phase must not leave a partial,
         valid-looking case behind: the known pipeline outputs are removed so a
         plain (no --force) re-run is not refused as non-empty."""
-        from cobre_bridge.newave import pipeline
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.newave import pipeline
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         dst = tmp_path / "dst"
 
@@ -498,8 +500,8 @@ class TestConversionWarningCapture:
         """A dry-run failure must never clear ``dst``: it wrote nothing, and
         ``dst`` may be a pre-existing populated directory the user never
         asked to clear."""
-        from cobre_bridge.newave import pipeline
-        from cobre_bridge.newave.pipeline import convert_newave_case
+        from novomodelo_bridge.newave import pipeline
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         dst = tmp_path / "dst"
         dst.mkdir()
@@ -528,9 +530,9 @@ class TestConversionWarningCapture:
 
 def test_convert_newave_case_threads_on_phase(tmp_path: Path) -> None:
     """``convert_newave_case`` forwards its ``on_phase`` callback to the impl."""
-    from cobre_bridge.core.conversion import ConversionReport
-    from cobre_bridge.newave import pipeline
-    from cobre_bridge.newave.pipeline import convert_newave_case
+    from novomodelo_bridge.core.conversion import ConversionReport
+    from novomodelo_bridge.newave import pipeline
+    from novomodelo_bridge.newave.pipeline import convert_newave_case
 
     received: list[str] = []
 

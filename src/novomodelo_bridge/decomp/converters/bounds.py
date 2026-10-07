@@ -18,7 +18,7 @@ Semantics pinned against the reference manual (§4.5.11):
   ruling, 2026-08-09): both constraints hold on the same ``(hydro, stage,
   block)`` cell, so this module still emits the ``RQ``/``UH`` contribution
   unconditionally, and the accumulator (``bounds_accumulator.resolve`` /
-  :func:`~cobre_bridge.decomp.bounds_accumulator.intersect`) composes it
+  :func:`~novomodelo_bridge.decomp.bounds_accumulator.intersect`) composes it
   with the RHQ ``QDEF``-derived ``outflow`` contribution
   (``single_term_bounds.single_term_bound_contributions``) via
   max-of-lowers/min-of-uppers — the tighter side of each source wins, never
@@ -33,14 +33,14 @@ Semantics pinned against the reference manual (§4.5.11):
   plant from the cascade headwater down to — but excluding — the first
   reservoir, to avoid infeasibility on a stage/scenario with zero inflow.
   Such a plant
-  (:func:`~cobre_bridge.decomp.converters.cadastro.unregulated_runofriver_codes`)
+  (:func:`~novomodelo_bridge.decomp.converters.cadastro.unregulated_runofriver_codes`)
   contributes no ``outflow`` floor here (neither RQ nor UH). An explicit RHQ
   ``QDEF`` window is a user-declared constraint and is **not** released — it
   still lowers to its ``outflow`` bound in ``single_term_bounds``.
 
-Both emitters here return :class:`~cobre_bridge.decomp.bounds_accumulator.
+Both emitters here return :class:`~novomodelo_bridge.decomp.bounds_accumulator.
 BoundContribution` lists — the accumulator, not this module, resolves
-per-cell collisions and fans them into the cobre bound parquet rows.
+per-cell collisions and fans them into the novomodelo bound parquet rows.
 
 The ``RQ``/``UH`` minimum-outflow floor is a stage-level value
 (``block_id = None``) that holds across every block. ``block_id`` on the
@@ -55,17 +55,17 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.core.tolerances import floats_differ
-from cobre_bridge.decomp.bounds_accumulator import BoundContribution
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.core.tolerances import floats_differ
+from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
+from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
     storage_envelope,
 )
 
 if TYPE_CHECKING:
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 
 def convert_hydro_bounds(
@@ -90,7 +90,7 @@ def convert_hydro_bounds(
     non-positive (or ``NaN``) emits no contribution.
 
     *unregulated_codes* (see
-    :func:`~cobre_bridge.decomp.converters.cadastro.unregulated_runofriver_codes`)
+    :func:`~novomodelo_bridge.decomp.converters.cadastro.unregulated_runofriver_codes`)
     is the set of run-of-river plant codes whose minimum-outflow floor is
     released: a plant in it contributes no ``outflow`` floor here at all, RQ
     or UH alike.
@@ -184,7 +184,7 @@ def convert_storage_bounds(
     For each hydro *code*, the outer envelope is ``storage_envelope(effective,
     code)`` — the widest floor/ceiling the plant's per-stage volumes ever
     reach, and the default the entity ``reservoir`` block
-    declares. A stage whose effective range (:func:`~cobre_bridge.decomp.
+    declares. A stage whose effective range (:func:`~novomodelo_bridge.decomp.
     cadastro.effective_storage_range`) differs from that envelope (past float
     noise) contributes a stage-level (``block_id = None``) override; a stage
     equal to the envelope contributes nothing and simply inherits it. A plant
@@ -234,7 +234,7 @@ def convert_volume_espera_bounds(
     stage ``k − 1``). It is a **hard** maximum-storage limit — the register
     carries no penalty field — so the reservoir may not fill above it, which
     forces releases during the flood season (verified: DECOMP pins ITAPARICA
-    at its 55.1 % VE ceiling every flood-season stage). cobre has no other
+    at its 55.1 % VE ceiling every flood-season stage). novomodelo has no other
     input for it, so it is emitted here as a per-stage ``max_storage_hm3``
     upper bound in absolute hm³ (``env_min + VE% · (env_max − env_min)``, the
     same ``volume útil`` base the source reports storage against), one-sided
@@ -298,7 +298,7 @@ def convert_volume_espera_bounds(
     return contributions
 
 
-#: cobre ``hydro_bounds`` column for a consumptive water withdrawal, in m³/s
+#: novomodelo ``hydro_bounds`` column for a consumptive water withdrawal, in m³/s
 #: (positive = water removed from the plant's balance). The DECOMP ``TI``
 #: irrigation rate and the source model's ``dsvagua`` file both land here.
 _WATER_WITHDRAWAL_SCHEMA = pa.schema(
@@ -319,13 +319,13 @@ def convert_irrigation_withdrawal(
     The ``TI`` register (*taxas de irrigação por UHE*) declares the water a hydro
     loses to irrigation, one rate (m³/s) per study stage (``taxa_k`` → stage
     ``k − 1``). It is a **consumptive** withdrawal — the water leaves the river
-    and is unavailable for generation downstream — so it maps 1:1 to cobre's
+    and is unavailable for generation downstream — so it maps 1:1 to novomodelo's
     ``hydro_bounds`` ``water_withdrawal_m3s`` column, the DECOMP counterpart of
     the source model's ``dsvagua`` water-withdrawal file
-    (:func:`cobre_bridge.newave.converters.hydro.convert_water_withdrawal`). Omitting it
-    leaves that flow in the balance, so cobre turbines it and over-generates.
+    (:func:`novomodelo_bridge.newave.converters.hydro.convert_water_withdrawal`). Omitting it
+    leaves that flow in the balance, so novomodelo turbines it and over-generates.
 
-    The ``TI`` rate is already a positive withdrawal, matching cobre's positive
+    The ``TI`` rate is already a positive withdrawal, matching novomodelo's positive
     ``water_withdrawal_m3s`` convention (no sign flip — unlike the source model's
     negative-``valor`` ``dsvagua`` convention). A stage beyond the register's own
     ``taxa`` columns repeats the last declared rate (seasonal carry-forward,

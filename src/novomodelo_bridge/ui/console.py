@@ -1,11 +1,11 @@
-"""Rich terminal rendering for the cobre-bridge CLI.
+"""Rich terminal rendering for the novomodelo-bridge CLI.
 
 The single place that turns plain data —
-:class:`~cobre_bridge.core.diagnostics.Diagnostic` objects, a
-:class:`~cobre_bridge.core.conversion.ConversionReport`, comparator summary tables —
+:class:`~novomodelo_bridge.core.diagnostics.Diagnostic` objects, a
+:class:`~novomodelo_bridge.core.conversion.ConversionReport`, comparator summary tables —
 into styled terminal output. Keeping all Rich usage here means the rest of the package
 stays presentation-free and the styling (copper-accented palette from
-:mod:`cobre_bridge.ui.theme`, severity colours, table boxes) is consistent across
+:mod:`novomodelo_bridge.ui.theme`, severity colours, table boxes) is consistent across
 commands.
 
 Stream discipline mirrors the previous CLI contract that tests rely on: *primary
@@ -38,16 +38,16 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
-from cobre_bridge.core.preflight import PreflightVerdict
-from cobre_bridge.ui.theme import COPPER_ACCENT, SEVERITY
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.preflight import PreflightVerdict
+from novomodelo_bridge.ui.theme import COPPER_ACCENT, SEVERITY
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
-    from cobre_bridge.comparators.verdict import CompareVerdict
-    from cobre_bridge.core.conversion import ConversionReport
-    from cobre_bridge.core.preflight import PreflightResult
+    from novomodelo_bridge.comparators.verdict import CompareVerdict
+    from novomodelo_bridge.core.conversion import ConversionReport
+    from novomodelo_bridge.core.preflight import PreflightResult
 
 #: Width used when the output is not a real terminal (tests, pipes), so rendered
 #: tables and panels are deterministic instead of wrapping at Rich's 80-col default.
@@ -252,11 +252,11 @@ def render_checklist(
     diagnostics_console: Console | None = None,
     quiet: bool = False,
 ) -> None:
-    """Render a :class:`~cobre_bridge.core.preflight.PreflightResult` as a ✓/✗
+    """Render a :class:`~novomodelo_bridge.core.preflight.PreflightResult` as a ✓/✗
     checklist.
 
     The headline (``✓ Ready to convert`` / ``⚠ Ready with warnings`` / ``✖ Will not
-    convert``) and one ✓/✗ line per :class:`~cobre_bridge.core.preflight.CheckItem`
+    convert``) and one ✓/✗ line per :class:`~novomodelo_bridge.core.preflight.CheckItem`
     are the primary result of ``check`` and go to **stdout** (the given *console* or
     :func:`get_console`). The verdict is taken verbatim from ``result.verdict`` — it is
     never recomputed here.

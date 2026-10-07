@@ -1,4 +1,4 @@
-"""Thermal entity converter: maps the source model thermal plant data to Cobre thermal
+"""Thermal entity converter: maps the source model thermal plant data to Novomodelo thermal
 JSON.
 
 Also provides ``convert_thermal_bounds`` which builds a per-stage
@@ -19,18 +19,18 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.diagnostics import (
+from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
     emit,
     format_stage_ranges,
 )
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.anticipated import read_anticipated_dispatch
-from cobre_bridge.newave.horizon import build_stage_dates, historical_start_date
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
+from novomodelo_bridge.newave.horizon import build_stage_dates, historical_start_date
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 _LOG = logging.getLogger(__name__)
 
@@ -51,17 +51,17 @@ def thermal_generation_bounds(case: NewaveCase) -> dict[int, tuple[float, float]
 
     These are the plant-level (non-stage-varying) bounds written to
     ``thermals.json`` as ``generation.min_mw`` / ``generation.max_mw``, and the
-    interval Cobre's semantic validator enforces on each
+    interval Novomodelo's semantic validator enforces on each
     ``past_anticipated_commitments.values_mw`` entry.
 
     The pair is the **envelope** of the per-stage bounds
     :func:`convert_thermal_bounds` writes: the smallest minimum and the largest
     maximum the plant reaches over the horizon, so it can never be tighter than
-    the stage Cobre enforces it at. Reading the TERM.DAT registry pair directly
+    the stage Novomodelo enforces it at. Reading the TERM.DAT registry pair directly
     instead would ignore EXPT.DAT, MANUTT.DAT and the maintenance-year IP rule,
     which enter only through those stages — and for a plant whose registry GTMIN
     exceeds its registry capacity product it would publish an inverted interval,
-    which Cobre refuses to load (``max_mw`` must be >= ``min_mw``).
+    which Novomodelo refuses to load (``max_mw`` must be >= ``min_mw``).
 
     A plant no capacity source describes is absent from the mapping; callers
     supply their own default.
@@ -75,11 +75,11 @@ def thermal_generation_bounds(case: NewaveCase) -> dict[int, tuple[float, float]
 
 
 def convert_thermals(case: NewaveCase, id_map: NewaveIdMap) -> dict:
-    """Convert the source model thermal plant data to a Cobre ``thermals.json`` dict.
+    """Convert the source model thermal plant data to a Novomodelo ``thermals.json`` dict.
 
     Reads ``conft.dat``, ``clast.dat``, and ``term.dat`` from *case*.
     Returns a dict with a ``"thermals"`` key containing a list of thermal
-    entries sorted by Cobre 0-based ID.
+    entries sorted by Novomodelo 0-based ID.
 
     Parameters
     ----------
@@ -108,7 +108,7 @@ def convert_thermals(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     gen_bounds = thermal_generation_bounds(case)
 
     # The source model carries no per-thermal commissioning date; treat every
-    # thermal as in service since the historical record (Cobre uses the date only
+    # thermal as in service since the historical record (Novomodelo uses the date only
     # as a canonical-ordering key, tiebroken by id).
     op_date = historical_start_date(case.dger)
 
@@ -147,7 +147,7 @@ def convert_thermals(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     thermals.sort(key=lambda t: t["id"])
 
     return {
-        "$schema": cobre_schemas.schema_url_for("system/thermals.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/thermals.json"),
         "thermals": thermals,
     }
 

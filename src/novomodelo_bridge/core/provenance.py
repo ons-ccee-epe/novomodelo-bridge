@@ -2,8 +2,8 @@
 
 Defines :class:`ProvenanceManifest`, the plain base class supplying
 ``to_json``/``from_json`` for the two provenance-record dataclasses
-(:class:`cobre_bridge.cli.conversion_manifest.ConversionManifest` and
-:class:`cobre_bridge.comparators.manifest.ComparisonManifest`), plus the
+(:class:`novomodelo_bridge.cli.conversion_manifest.ConversionManifest` and
+:class:`novomodelo_bridge.comparators.manifest.ComparisonManifest`), plus the
 input-hashing and diagnostics-summarizing helpers both records use
 (:func:`hash_input_files`, :func:`summarize_diagnostics`). Track-neutral: this
 module imports neither manifest module, so either can depend on it without a
@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Self
 
 if TYPE_CHECKING:
-    from cobre_bridge.core.diagnostics import Diagnostic
-    from cobre_bridge.decomp.files import DecompFiles
-    from cobre_bridge.newave.files import NewaveFiles
+    from novomodelo_bridge.core.diagnostics import Diagnostic
+    from novomodelo_bridge.decomp.files import DecompFiles
+    from novomodelo_bridge.newave.files import NewaveFiles
 
 _HASH_CHUNK_BYTES = 8192
 
@@ -70,7 +70,7 @@ def hash_input_files(files: NewaveFiles | DecompFiles) -> list[dict[str, object]
     files dataclass works), skipping the ``directory`` field and any field
     whose value is not a :class:`~pathlib.Path` (which also skips an absent
     optional, stored as ``None``, and a non-path field such as
-    :class:`~cobre_bridge.decomp.files.DecompFiles`'s ``revision``). For
+    :class:`~novomodelo_bridge.decomp.files.DecompFiles`'s ``revision``). For
     each remaining ``(name, path)`` it produces an entry
     ``{"field", "path", "sha256", "size_bytes"}`` where ``sha256`` is the
     SHA-256 hex digest of the file's raw bytes and ``size_bytes`` is the file

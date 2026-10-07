@@ -1,7 +1,7 @@
-# Cobre-Bridge — Agent Guidelines
+# Novomodelo-Bridge — Agent Guidelines
 
-cobre-bridge is a Python CLI that converts NEWAVE and DECOMP cases into the
-input format of Cobre (the Rust SDDP solver at https://github.com/cobre-rs/cobre)
+novomodelo-bridge is a Python CLI that converts NEWAVE and DECOMP cases into the
+input format of Novomodelo (the Rust SDDP solver at https://github.com/ons-ccee-epe/novomodelo)
 and compares the two models' results. The human-facing documents are the
 source of truth for what the tool does and how the code is laid out; this file
 adds only what an agent working in this checkout needs beyond them.
@@ -22,7 +22,7 @@ adds only what an agent working in this checkout needs beyond them.
 
 ```bash
 pip install -e ".[dev]"                      # or: uv sync --extra dev
-pytest                                       # suite; tier-2 tests skip without cobre-python
+pytest                                       # suite; tier-2 tests skip without novomodelo-python
 ruff check . && ruff format --check .        # whole tree, as CI and the pre-commit hook run it
 python3 scripts/ci/check_no_plan_leaks.py    # hard gates, also run by CI
 python3 scripts/ci/check_comment_refs.py
@@ -44,7 +44,7 @@ is read and are the authoritative statements; do not restate them here:
 - `.claude/rules/testing.md` (`tests/`) — the three test tiers, deck guards,
   mock discipline, golden files.
 - `.claude/rules/bridge.md` (`src/`) — twin-track symmetry, the tracked
-  cobre-gap protocol, presentation and I/O boundaries, exit-code and `--json`
+  novomodelo-gap protocol, presentation and I/O boundaries, exit-code and `--json`
   contracts.
 
 Hard rules that are fixed before any commit:
@@ -59,24 +59,24 @@ Hard rules that are fixed before any commit:
   in the same change, or the asymmetry is recorded in the architecture-debt
   registry under `plans/`. Never import an underscore-private name across the
   `newave/` ↔ `decomp/` boundary.
-- Never silently work around a cobre limitation: log or emit a diagnostic,
-  mark the site `TRACKED COBRE-GAP (Cn)`, and register the removal condition
-  in the cobre repository. Those comments are protected in cleanup passes.
+- Never silently work around a novomodelo limitation: log or emit a diagnostic,
+  mark the site `TRACKED NOVOMODELO-GAP (Cn)`, and register the removal condition
+  in the novomodelo repository. Those comments are protected in cleanup passes.
 - Comments are default-off: a comment ships only if it survives the Deletion
   Test; never delete or weaken a load-bearing unit or direction contract.
 
 ## Local decks
 
 `example/` is gitignored. It holds real NEWAVE and DECOMP decks and their
-converted-and-solved Cobre cases for manual runs only. No test reads it and no
+converted-and-solved Novomodelo cases for manual runs only. No test reads it and no
 test reaches outside the repository (`tests/test_local_data_policy.py`
 enforces both); real-format inputs are committed as small excerpts under
 `tests/fixtures/` and synthetic mini-decks under `tests/decks/`. End-to-end
 checks that need a whole real deck are catalogued in `docs/real-deck-checks.md`.
 When exercising a real deck by hand, convert into a fresh directory and run
-cobre before comparing so an existing run's `output/` is not clobbered.
+novomodelo before comparing so an existing run's `output/` is not clobbered.
 
-A local cobre checkout, when present, is the reference for the input contract
-(serde structs and schemas); a bridge release `X.Y.Z` pairs with cobre
-`X.Y.Z`, and the `cobre-python` pin in `pyproject.toml` is exactly
-`MIN_COBRE_VERSION`.
+A local novomodelo checkout, when present, is the reference for the input contract
+(serde structs and schemas); a bridge release `X.Y.Z` pairs with novomodelo
+`X.Y.Z`, and the `novomodelo-python` pin in `pyproject.toml` is exactly
+`MIN_NOVOMODELO_VERSION`.

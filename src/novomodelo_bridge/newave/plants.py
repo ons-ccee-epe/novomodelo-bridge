@@ -1,9 +1,9 @@
-"""Canonical definition of "which hydro plants are in the Cobre case".
+"""Canonical definition of "which hydro plants are in the Novomodelo case".
 
 The source model's ``confhd.dat`` lists every hydro the study knows about, tagged by
 ``usina_existente`` (``EX`` and ``EE`` = in operation, ``NE``/``NC`` = not yet
 built) and including *fictitious* accounting plants. Only the in-service,
-non-fictitious plants become LP variables in Cobre.
+non-fictitious plants become LP variables in Novomodelo.
 
 A plant is identified as **fictitious structurally**, not by the ``FICT.`` name
 prefix: a fictitious accounting twin shares its inflow gauge (``posto``) with a
@@ -89,7 +89,7 @@ def filling_hydro_codes(
 ) -> set[int]:
     """Return codes of ``NE`` plants that carry an ``exph`` dead-volume filling row.
 
-    A future (``usina_existente == "NE"``) plant is *admitted* into the Cobre LP iff
+    A future (``usina_existente == "NE"``) plant is *admitted* into the Novomodelo LP iff
     its ``codigo_usina`` appears in *exph_df* with a non-null
     ``data_inicio_enchimento`` — the filling schedule lives on the first ``exph`` row
     per plant, while unit rows carry ``NaT`` there. ``NC`` plants and bare ``NE``
@@ -124,11 +124,11 @@ def active_hydros(
     cadastro: pd.DataFrame,
     exph_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Return the existing, non-fictitious hydro rows that enter the Cobre LP.
+    """Return the existing, non-fictitious hydro rows that enter the Novomodelo LP.
 
     The in-service rows (:data:`IN_SERVICE_STATUSES`) minus
     :func:`fictitious_codes`, in confhd
-    declaration order (the id-map relies on this order to assign 0-based Cobre
+    declaration order (the id-map relies on this order to assign 0-based Novomodelo
     hydro IDs). *cadastro* (``Hidr.cadastro``) is required for the structural
     fictitious test; with the data unavailable, no plant is classified
     fictitious and all existing plants are returned.

@@ -1,4 +1,4 @@
-# Contributing to cobre-bridge
+# Contributing to novomodelo-bridge
 
 Thanks for helping. This page gets a checkout running, explains how the tests
 and quality gates are organised, and lists the conventions CI enforces. Read
@@ -7,17 +7,17 @@ and quality gates are organised, and lists the conventions CI enforces. Read
 ## Development setup
 
 ```bash
-git clone https://github.com/cobre-rs/cobre-bridge.git
-cd cobre-bridge
+git clone https://github.com/ons-ccee-epe/novomodelo-bridge.git
+cd novomodelo-bridge
 uv sync --extra dev             # or: python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
-uv run cobre-bridge --version
+uv run novomodelo-bridge --version
 ```
 
 `uv.lock` is committed, so `uv sync` reproduces the CI environment.
-`cobre-python` is a core dependency with prebuilt wheels for a fixed set of
+`novomodelo-python` is a core dependency with prebuilt wheels for a fixed set of
 platforms; on a platform without one the sync stops at that package. You can
 still work on the pure-Python parts: install the remaining dependencies by
-hand and run the tier-1 tests described below, which never import cobre.
+hand and run the tier-1 tests described below, which never import novomodelo.
 
 Install the pre-commit hook to run the same lint and gate steps as CI before
 each commit:
@@ -47,22 +47,22 @@ together; `tests/test_packaging.py` fails if they differ.
 
 Every test runs from the repository alone. Two tiers exist:
 
-- **Tier 1**: pure Python, imports no `cobre`. Runs everywhere. No test module
-  may `import cobre` at module scope.
-- **Tier 2**: needs `cobre-python` but no solver binary. Marked with
-  `requires_cobre_python` from `tests/conftest.py`; the `import cobre` lives
+- **Tier 1**: pure Python, imports no `novomodelo`. Runs everywhere. No test module
+  may `import novomodelo` at module scope.
+- **Tier 2**: needs `novomodelo-python` but no solver binary. Marked with
+  `requires_novomodelo_python` from `tests/conftest.py`; the `import novomodelo` lives
   inside the guarded test body.
 
 Real-format inputs live as small excerpts under `tests/fixtures/` (NEWAVE and
-DECOMP result files, cobre's contract schema and example case), and the two
+DECOMP result files, novomodelo's contract schema and example case), and the two
 synthetic mini-decks under `tests/decks/` drive the end-to-end conversions.
 No test reads the gitignored `example/` tree or anything under your home
 directory; `tests/test_local_data_policy.py` fails the build if one does.
-Checks that need a whole real deck or a solved cobre case are catalogued in
+Checks that need a whole real deck or a solved novomodelo case are catalogued in
 `docs/real-deck-checks.md`, with what each verified and what it needs, rather
 than kept as permanently skipped tests.
 
-The `tests/` tree mirrors `src/cobre_bridge/`: one `test_<module>.py` per
+The `tests/` tree mirrors `src/novomodelo_bridge/`: one `test_<module>.py` per
 source module in the matching directory. Shared case builders (`make_case`,
 `make_decomp_case`) live in `tests/conftest.py`. Golden files under
 `tests/golden/` are regenerated with `scripts/regen-goldens.sh`, never edited
@@ -83,9 +83,9 @@ on them, and they are the canonical statements for humans too. In short:
   `Diagnostic` through the `collect()` sink. Rich is imported only in `ui/`.
   CLI messages are self-contained: no repository paths or internal symbols,
   because most users have no checkout.
-- **Cobre gaps are tracked.** A workaround for a cobre limitation carries a
-  `TRACKED COBRE-GAP` comment at the site, a log line or diagnostic, and an
-  entry with its removal condition in the cobre repository. Those comments
+- **Novomodelo gaps are tracked.** A workaround for a novomodelo limitation carries a
+  `TRACKED NOVOMODELO-GAP` comment at the site, a log line or diagnostic, and an
+  entry with its removal condition in the novomodelo repository. Those comments
   are never removed in a cleanup pass.
 - **Exit codes and `--json`.** An error status and a non-zero exit code travel
   together, and every failure path under `--json` emits exactly one verdict
@@ -123,7 +123,7 @@ on them, and they are the canonical statements for humans too. In short:
 2. Emit a `Diagnostic` for every input the converter cannot carry over
    faithfully, with the affected entities and stages in its detail table.
 3. Wire it into the track's `pipeline.py`. Write output only through the
-   `CaseWriter`; register a new file's `$schema` URL in `cobre/schemas.py`.
+   `CaseWriter`; register a new file's `$schema` URL in `novomodelo/schemas.py`.
 4. Describe the new output or field in the track's TOML under `docs/lineage/`
    (the deck file, record or column it comes from, and the transformation, in
    Portuguese) and regenerate the data map with `scripts/gen-lineage-docs.py`.
@@ -139,11 +139,11 @@ on them, and they are the canonical statements for humans too. In short:
 
 ## Releasing
 
-A bridge release `X.Y.Z` pairs with cobre `X.Y.Z`.
+A bridge release `X.Y.Z` pairs with novomodelo `X.Y.Z`.
 
-1. Bump `version` in `pyproject.toml`. When the cobre pairing moves, bump the
-   exact `cobre-python` pin and `MIN_COBRE_VERSION`
-   (`src/cobre_bridge/cobre/compat.py`) together and refresh `uv.lock`;
+1. Bump `version` in `pyproject.toml`. When the novomodelo pairing moves, bump the
+   exact `novomodelo-python` pin and `MIN_NOVOMODELO_VERSION`
+   (`src/novomodelo_bridge/novomodelo/compat.py`) together and refresh `uv.lock`;
    `tests/test_packaging.py` fails if they differ.
 2. Move the `Unreleased` entries in `CHANGELOG.md` under the new version.
 3. Tag `vX.Y.Z` and push the tag. `.github/workflows/release.yml` builds,

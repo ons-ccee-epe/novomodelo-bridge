@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from cobre_bridge.ui.html.css import comparison_css
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.ui.html.css import comparison_css
+from novomodelo_bridge.ui.html.document import (
     build_html,
     chart_grid,
     metric_card,
@@ -11,13 +11,13 @@ from cobre_bridge.ui.html.document import (
     section_title,
     wrap_chart,
 )
-from cobre_bridge.ui.html.js import PLOTLY_TITLE_SHIM_JS, TAB_SWITCH_JS
-from cobre_bridge.ui.theme import COMPARISON_COLORS
+from novomodelo_bridge.ui.html.js import PLOTLY_TITLE_SHIM_JS, TAB_SWITCH_JS
+from novomodelo_bridge.ui.theme import COMPARISON_COLORS
 
 CSS = comparison_css()
 JS = TAB_SWITCH_JS
 
-COLOR_COBRE = COMPARISON_COLORS["cobre"]
+COLOR_NOVOMODELO = COMPARISON_COLORS["novomodelo"]
 COLOR_NEWAVE = COMPARISON_COLORS["newave"]
 COLOR_DIFF = COMPARISON_COLORS["diff"]
 COLOR_MATCH = COMPARISON_COLORS["match"]
@@ -55,7 +55,7 @@ def build_comparison_html(
 __all__ = [
     "CSS",
     "JS",
-    "COLOR_COBRE",
+    "COLOR_NOVOMODELO",
     "COLOR_NEWAVE",
     "COLOR_DIFF",
     "COLOR_MATCH",

@@ -1,6 +1,6 @@
-"""Unit tests for the typed CLI argument dataclasses (``cobre_bridge.cli.args``).
+"""Unit tests for the typed CLI argument dataclasses (``novomodelo_bridge.cli.args``).
 
-Tier 1 — pure Python, imports no cobre.
+Tier 1 — pure Python, imports no novomodelo.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from cobre_bridge.cli.args import (
+from novomodelo_bridge.cli.args import (
     CheckArgs,
     CommonArgs,
     CompareArgs,
@@ -100,7 +100,7 @@ def test_compare_args_frozen_instance_raises_on_assignment() -> None:
     args = CompareArgs(
         **_common_kwargs(),
         source_dir=Path("source"),
-        cobre_output_dir=Path("cobre"),
+        novomodelo_output_dir=Path("novomodelo"),
         tolerance=None,
         format=None,
         out_dir=None,
@@ -183,7 +183,7 @@ def test_rich_import_only_inside_type_checking_guard() -> None:
     runtime ``from rich import ...`` placed before or beside the
     ``TYPE_CHECKING`` guard is still caught.
     """
-    import cobre_bridge.cli.args as module
+    import novomodelo_bridge.cli.args as module
 
     tree = ast.parse(inspect.getsource(module))
     rich_imports = _rich_import_nodes(tree)
@@ -201,12 +201,12 @@ class TestParseFormats:
     """``_parse_formats`` token parsing and validation."""
 
     def test_parse_formats_default(self) -> None:
-        from cobre_bridge.cli.args import _parse_formats
+        from novomodelo_bridge.cli.args import _parse_formats
 
         assert _parse_formats(None) == {"console", "parquet", "json"}
 
     def test_parse_formats_comma_and_repeat(self) -> None:
-        from cobre_bridge.cli.args import _parse_formats
+        from novomodelo_bridge.cli.args import _parse_formats
 
         assert _parse_formats(["csv,json", "parquet"]) == {
             "csv",
@@ -215,7 +215,7 @@ class TestParseFormats:
         }
 
     def test_parse_formats_all_expands(self) -> None:
-        from cobre_bridge.cli.args import _parse_formats
+        from novomodelo_bridge.cli.args import _parse_formats
 
         assert _parse_formats(["all"]) == {
             "console",
@@ -226,7 +226,7 @@ class TestParseFormats:
         }
 
     def test_parse_formats_unknown_raises(self) -> None:
-        from cobre_bridge.cli.args import _parse_formats
+        from novomodelo_bridge.cli.args import _parse_formats
 
         with pytest.raises(ValueError, match="bogus"):
             _parse_formats(["bogus"])

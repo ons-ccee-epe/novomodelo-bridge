@@ -1,1 +1,1 @@
-"""Comparators for validating converted Cobre cases against source models."""
+"""Comparators for validating converted Novomodelo cases against source models."""

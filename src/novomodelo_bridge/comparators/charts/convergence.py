@@ -1,25 +1,25 @@
-"""Convergence overlay chart: source-model vs Cobre lower/upper bounds."""
+"""Convergence overlay chart: source-model vs Novomodelo lower/upper bounds."""
 
 from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
 def convergence_chart(
     nw_conv: pl.DataFrame,
-    cobre_conv: pl.DataFrame,
+    novomodelo_conv: pl.DataFrame,
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Convergence overlay: The source model vs Cobre lower/upper bounds.
+    """Convergence overlay: The source model vs Novomodelo lower/upper bounds.
 
     Accepts raw convergence DataFrames directly so it can show the source model data
-    even when Cobre convergence is empty.
+    even when Novomodelo convergence is empty.
     """
     lb_nw: dict[int, float] = {}
     ub_nw: dict[int, float] = {}
@@ -32,8 +32,8 @@ def convergence_chart(
             lb_nw[it] = float(row["lower_bound"])
             ub_nw[it] = float(row["upper_bound_mean"])
 
-    if not cobre_conv.is_empty():
-        for row in cobre_conv.iter_rows(named=True):
+    if not novomodelo_conv.is_empty():
+        for row in novomodelo_conv.iter_rows(named=True):
             it = int(row["iteration"])
             lb_cb[it] = float(row["lower_bound"])
             ub_cb[it] = float(row["upper_bound_mean"])
@@ -73,25 +73,25 @@ def convergence_chart(
             {
                 "x": cb_iters,
                 "y": [lb_cb[i] for i in cb_iters],
-                "name": "Cobre Lower",
+                "name": "Novomodelo Lower",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE},
+                "line": {"color": COLOR_NOVOMODELO},
             }
         )
         traces.append(
             {
                 "x": cb_iters,
                 "y": [ub_cb.get(i) for i in cb_iters],
-                "name": "Cobre Upper",
+                "name": "Novomodelo Upper",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "dash": "dash"},
+                "line": {"color": COLOR_NOVOMODELO, "dash": "dash"},
             }
         )
 
     layout = {
-        "title": f"Convergence: {reference_label} vs Cobre",
+        "title": f"Convergence: {reference_label} vs Novomodelo",
         "xaxis": {"title": "Iteration"},
         "yaxis": {"title": "Cost (R$)", "type": "log"},
     }

@@ -1,4 +1,4 @@
-"""v2 Training tab module for the Cobre dashboard.
+"""v2 Training tab module for the Novomodelo dashboard.
 
 Displays convergence metrics, bounds evolution, cut pool dynamics,
 cut management heatmaps, and iteration timing breakdown.
@@ -12,27 +12,27 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from cobre_bridge.dashboard.chart_helpers import make_chart_card
-from cobre_bridge.dashboard.tabs.timing_phases import (
+from novomodelo_bridge.dashboard.chart_helpers import make_chart_card
+from novomodelo_bridge.dashboard.tabs.timing_phases import (
     active_top_level_phases,
     build_timing_stacked_figure,
 )
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
     metric_card,
     metrics_grid,
     section_title,
 )
-from cobre_bridge.ui.html.plotly import apply_standard_layout
-from cobre_bridge.ui.theme import (
+from novomodelo_bridge.ui.html.plotly import apply_standard_layout
+from novomodelo_bridge.ui.theme import (
     COLORS,
     COPPER_ACCENT,
     hex_to_rgba,
 )
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 TAB_ID = "tab-training"
 TAB_LABEL = "Training"
@@ -103,7 +103,7 @@ def _chart_convergence_hero(conv: pd.DataFrame) -> go.Figure:
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Upper bound std band (drawn first so it appears under lines). cobre 0.14
+    # Upper bound std band (drawn first so it appears under lines). novomodelo 0.14
     # leaves ``upper_bound_std`` NULL for an exact (enumerated) upper bound, so a
     # missing std collapses the band to a zero width — the line still renders
     # instead of vanishing into NaN.
@@ -411,7 +411,7 @@ def _chart_cut_activity_heatmap(
         height=500,
         margin={"l": 80, "r": 30, "t": 60, "b": 50},
     )
-    from cobre_bridge.ui.html.plotly import fig_to_html
+    from novomodelo_bridge.ui.html.plotly import fig_to_html
 
     return fig_to_html(fig, unified_hover=False)
 
@@ -466,7 +466,7 @@ def _chart_cut_deactivation_heatmap(
         height=500,
         margin={"l": 80, "r": 30, "t": 60, "b": 50},
     )
-    from cobre_bridge.ui.html.plotly import fig_to_html
+    from novomodelo_bridge.ui.html.plotly import fig_to_html
 
     return fig_to_html(fig, unified_hover=False)
 

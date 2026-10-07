@@ -12,8 +12,8 @@ pmo.dat, sistema.dat, newave.tim, the FPHA reports) is an OPTIONAL
 input, and this module contains no ``raise`` statement — an absent
 input AND a present-but-unparseable input both degrade to a typed-empty
 frame (or ``None``, for the pmo/FPHA readers) plus a ``_LOG.warning``.
-This is a genuine behaviour difference from ``cobre_readers``/
-``decomp_readers``, which raise (``CobreReadError``/``ValueError``/
+This is a genuine behaviour difference from ``novomodelo_readers``/
+``decomp_readers``, which raise (``NovomodeloReadError``/``ValueError``/
 ``FileNotFoundError``) on a present-but-corrupt file or an absent
 required one: an empty frame from real-but-broken data can fabricate a
 false zero-vs-zero match (``.claude/rules/comments.md`` §4), but every
@@ -31,8 +31,8 @@ from pathlib import Path
 import pandas as pd
 import polars as pl
 
-from cobre_bridge.core.paths import find_case_insensitive
-from cobre_bridge.newave.files import NewaveFiles
+from novomodelo_bridge.core.paths import find_case_insensitive
+from novomodelo_bridge.newave.files import NewaveFiles
 
 _LOG = logging.getLogger(__name__)
 
@@ -359,7 +359,7 @@ def read_pmo_convergence(newave_dir: Path) -> pl.DataFrame:
     )
 
     # The source model pmo.dat exports convergence values in 10^6 R$. Multiply by 1e6 to
-    # convert to R$ (matching Cobre convention).
+    # convert to R$ (matching Novomodelo convention).
     return result.with_columns(
         pl.col("lower_bound") * 1e6,
         pl.col("upper_bound_mean") * 1e6,
@@ -470,13 +470,13 @@ def read_nwlistop_intercambio(case_dir: Path) -> pl.DataFrame:
     block-decomposed flow (``patamar``) plus an aggregated ``TOTAL``
     row whose value is the block-hours-weighted month average — the
     natural counterpart to the per-stage interchange we want to
-    compare against Cobre's ``net_flow_mw``.
+    compare against Novomodelo's ``net_flow_mw``.
 
     Stage numbering follows the MEDIAS convention: 1 = first calendar
     month of the file (typically January of the source model's first study year), 9 =
     September year 1, 21 = September year 2, etc. This matches MEDIAS column headers
     (which start at the first study month, e.g. 9 for a September-start study) so the
-    existing ``_nw_stage_offset`` logic translates both consistently into Cobre's
+    existing ``_nw_stage_offset`` logic translates both consistently into Novomodelo's
     0-based ``stage_id``.
 
     Returns columns ``from_submarket_code`` (Int64),
@@ -689,7 +689,7 @@ def read_newave_net_load(files: NewaveFiles) -> pl.DataFrame:
     Computes ``net_load = mercado_energia + c_adic - sum(geracao_usinas_nao_simuladas)``
     per submarket and date.  The C_ADIC contribution (must-take energy from
     Itaipu, ANDE, MMGD, etc.) is added so the newave load is comparable to
-    cobre's simulation output, which already includes C_ADIC.
+    novomodelo's simulation output, which already includes C_ADIC.
 
     Returns a DataFrame compatible with the ``nw_market`` schema used in
     the energy balance charts:
@@ -742,7 +742,7 @@ def read_newave_net_load(files: NewaveFiles) -> pl.DataFrame:
     cadical_path = files.c_adic
     if cadical_path is not None:
         try:
-            from cobre_bridge.newave.converters.stochastic import parse_cadical
+            from novomodelo_bridge.newave.converters.stochastic import parse_cadical
 
             cadical = parse_cadical(cadical_path)
             load_df = load_df.copy()

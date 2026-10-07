@@ -3,10 +3,10 @@ paths:
   - "**/*.py"
 ---
 
-# Cobre-Bridge Comment & Docstring Rules
+# Novomodelo-Bridge Comment & Docstring Rules
 
 Governs every `#` comment and docstring in any `.py` file in this repo.
-Python adaptation of cobre's comment discipline (`~/git/cobre/.claude/rules/comments.md`);
+Python adaptation of novomodelo's comment discipline (`~/git/novomodelo/.claude/rules/comments.md`);
 the Deletion Test and the Four Voices are identical, the directive set is adapted
 to Python and to this repo's domain (file-format conversion with unit traps).
 
@@ -107,7 +107,7 @@ When in doubt, **delete** and put the thought in the commit message.
 - **D2 — Units and conventions.** Annotate values carrying physical units or a
   convention trap — this repo is made of them: `m³/s` vs `hm³`, MW vs MWmes/MWh,
   k$ vs R$ (×1000), per-block vs per-stage vs hours-weighted aggregation,
-  1-based source-model ids vs 0-based cobre ids, calendar vs stage indexing.
+  1-based source-model ids vs 0-based novomodelo ids, calendar vs stage indexing.
   This is the one comment a good name usually cannot carry, and the direction
   of the conversion ("divide by stage hours, not multiply") is the load-bearing
   clause.
@@ -129,15 +129,15 @@ When in doubt, **delete** and put the thought in the commit message.
   bibliographic years, calendar/data-coverage years, a deck revision name
   (`mar-26-rv2`) naming a still-existing fixture that pins a contract.
 - **N3 — No drift-prone refs.** Never a source-file line reference — this
-  repo's `file.py:NNN` or cobre's `file.rs:NNN` / `file.rs ~NN` alike (they
+  repo's `file.py:NNN` or novomodelo's `file.rs:NNN` / `file.rs ~NN` alike (they
   drift on every edit above the line) — nor commit hashes, `MEMORY.md`,
   `.claude/` paths other than `.claude/rules/*`, machine-local paths
   (`~/git/...`), paths into gitignored dirs (`plans/`), repo-relative paths
-  into the cobre source tree (`crates/...`, `cobre-io/src/...`), or a bare
+  into the novomodelo source tree (`crates/...`, `novomodelo-io/src/...`), or a bare
   internal design-doc section pointer (`design §5`, whose doc lives in
   `plans/`). A pip-installed reader can resolve none of them. Reference by
-  symbol, by named test, or by a stable external anchor — the cobre book, a
-  schema name, a published reference `manual §`, or a cobre `file.rs::symbol`
+  symbol, by named test, or by a stable external anchor — the novomodelo book, a
+  schema name, a published reference `manual §`, or a novomodelo `file.rs::symbol`
   (all durable, all allowed). For a symbol+line hybrid, keep the symbol, strip
   the line. Gate: `scripts/ci/check_comment_refs.py` (every class hard).
 - **N4 — No plan/workstream leakage** in `src/`, `README.md`, `CHANGELOG.md`,
@@ -165,8 +165,8 @@ current limitation. Never a plan token. Bare ownerless `TODO`s are discouraged.
 A blunt minimization pass that deletes one of these is worse than the bloat it
 removes:
 
-- **`TRACKED COBRE-GAP (Cn)` comments.** Each marks a deliberate workaround for
-  a cobre limitation, with its removal condition registered in cobre's
+- **`TRACKED NOVOMODELO-GAP (Cn)` comments.** Each marks a deliberate workaround for
+  a novomodelo limitation, with its removal condition registered in novomodelo's
   `conversion-found-improvements` registry. Never delete or reword one away;
   when the gap closes, the workaround and its comment leave together
   (see `.claude/rules/bridge.md`).

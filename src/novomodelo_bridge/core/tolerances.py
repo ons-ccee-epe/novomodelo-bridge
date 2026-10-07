@@ -1,5 +1,5 @@
 """The shared relative-tolerance idiom for comparing a float against a
-declared/reference value, mirroring cobre-io's semantic-validation
+declared/reference value, mirroring novomodelo-io's semantic-validation
 ``ENVELOPE_TOLERANCE``.
 
 Also carries :func:`is_effectively_infinite`, the shared "is this bound
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 
-#: Mirrors cobre-io's semantic-validation ``ENVELOPE_TOLERANCE``. A relative
+#: Mirrors novomodelo-io's semantic-validation ``ENVELOPE_TOLERANCE``. A relative
 #: tolerance, not an absolute one — an absolute epsilon would false-fire on a
 #: plant declared at, say, 1e6 m^3/s and float-noise-pass a plant near zero.
 RELATIVE_TOLERANCE: float = 1e-9

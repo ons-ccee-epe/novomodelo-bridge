@@ -1,4 +1,4 @@
-"""Registry-integrity guard for `cobre_schemas.SCHEMA_URLS`/`schema_url_for`.
+"""Registry-integrity guard for `novomodelo_schemas.SCHEMA_URLS`/`schema_url_for`.
 
 Every per-track schema-URL constant and inline `$schema` literal has been
 repointed at this registry, so there is no live constant left to import here
@@ -18,32 +18,32 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from tests.conftest import _all_converter_patches, _make_fake_newave_dir, make_case
 
 _CANONICAL_PREFIX = (
-    "https://raw.githubusercontent.com/cobre-rs/cobre/refs/heads/main/schemas/"
+    "https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/"
 )
 
 
 def test_schema_urls_has_sixteen_entries() -> None:
-    assert len(cobre_schemas.SCHEMA_URLS) == 16
+    assert len(novomodelo_schemas.SCHEMA_URLS) == 16
 
 
 def test_schema_url_for_hit() -> None:
-    assert cobre_schemas.schema_url_for("system/buses.json") == (
+    assert novomodelo_schemas.schema_url_for("system/buses.json") == (
         f"{_CANONICAL_PREFIX}buses.schema.json"
     )
 
 
 def test_schema_url_for_unregistered_raises_key_error() -> None:
     with pytest.raises(KeyError):
-        cobre_schemas.schema_url_for("does/not/exist.json")
+        novomodelo_schemas.schema_url_for("does/not/exist.json")
 
 
 def test_all_urls_have_canonical_shape() -> None:
-    for relpath, url in cobre_schemas.SCHEMA_URLS.items():
+    for relpath, url in novomodelo_schemas.SCHEMA_URLS.items():
         assert url.startswith(_CANONICAL_PREFIX), relpath
         assert url.endswith(".schema.json"), relpath
 
@@ -99,24 +99,24 @@ def _patamar_mock() -> MagicMock:
 
 
 def test_stages_json_emit_matches_registry(tmp_path) -> None:
-    from cobre_bridge.newave.converters.temporal import convert_stages
+    from novomodelo_bridge.newave.converters.temporal import convert_stages
 
     case = make_case(tmp_path, dger=_dger_mock(), patamar=_patamar_mock())
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[], thermal_codes=[])
 
     result = convert_stages(case, id_map)
 
-    assert result["$schema"] == cobre_schemas.SCHEMA_URLS["stages.json"]
+    assert result["$schema"] == novomodelo_schemas.SCHEMA_URLS["stages.json"]
 
 
 def test_config_json_emit_matches_registry(tmp_path) -> None:
-    from cobre_bridge.newave.converters.temporal import convert_config
+    from novomodelo_bridge.newave.converters.temporal import convert_config
 
     case = make_case(tmp_path, dger=_dger_mock())
 
     result = convert_config(case)
 
-    assert result["$schema"] == cobre_schemas.SCHEMA_URLS["config.json"]
+    assert result["$schema"] == novomodelo_schemas.SCHEMA_URLS["config.json"]
 
 
 def test_generic_constraints_json_emit_matches_registry(tmp_path) -> None:
@@ -124,12 +124,12 @@ def test_generic_constraints_json_emit_matches_registry(tmp_path) -> None:
     own merge site (not a single converter), so this exercises the real
     pipeline run with every converter mocked except ``convert_vminop_constraints``
     — the minimum needed to reach the merge and get a non-empty file."""
-    from cobre_bridge.core.generic_constraint_builder import GENERIC_BOUNDS_SCHEMA
-    from cobre_bridge.newave.converters.constraints import VminopResult
-    from cobre_bridge.newave.pipeline import convert_newave_case
+    from novomodelo_bridge.core.generic_constraint_builder import GENERIC_BOUNDS_SCHEMA
+    from novomodelo_bridge.newave.converters.constraints import VminopResult
+    from novomodelo_bridge.newave.pipeline import convert_newave_case
 
     src = _make_fake_newave_dir(tmp_path)
-    dst = tmp_path / "cobre_case"
+    dst = tmp_path / "novomodelo_case"
 
     fake_bounds = pa.table(
         {
@@ -156,7 +156,7 @@ def test_generic_constraints_json_emit_matches_registry(tmp_path) -> None:
         # pipeline's merge actually runs and writes the file.
         stack.enter_context(
             patch(
-                "cobre_bridge.newave.pipeline.constraints_conv.convert_vminop_constraints",
+                "novomodelo_bridge.newave.pipeline.constraints_conv.convert_vminop_constraints",
                 return_value=fake_vminop,
             )
         )
@@ -165,5 +165,5 @@ def test_generic_constraints_json_emit_matches_registry(tmp_path) -> None:
     doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
     assert (
         doc["$schema"]
-        == cobre_schemas.SCHEMA_URLS["constraints/generic_constraints.json"]
+        == novomodelo_schemas.SCHEMA_URLS["constraints/generic_constraints.json"]
     )

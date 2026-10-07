@@ -1,10 +1,10 @@
-"""Tests for the fail-loud contract of the Cobre output readers.
+"""Tests for the fail-loud contract of the Novomodelo output readers.
 
 ROBUST-01: a read/parse/aggregation failure on an **already-existing**
-Cobre output file must raise :class:`CobreReadError` (so the comparison
+Novomodelo output file must raise :class:`NovomodeloReadError` (so the comparison
 engine never reports a false "no divergence" on unreadable data), while a
 genuinely **absent** optional output must still yield an empty frame.  The
-CLI maps :class:`CobreReadError` to exit code 2 (distinct from exit 1 =
+CLI maps :class:`NovomodeloReadError` to exit code 2 (distinct from exit 1 =
 "mismatches found").
 """
 
@@ -20,33 +20,33 @@ import pyarrow.parquet as pq
 import pytest
 import typer
 
-from cobre_bridge.cli.args import CompareArgs
-from cobre_bridge.cobre.readers import (
-    CobreReadError,
+from novomodelo_bridge.cli.args import CompareArgs
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.novomodelo.readers import (
+    NovomodeloReadError,
     _load_entity_bus_map,
-    cobre_software_version,
-    read_cobre_bus_aggregates,
-    read_cobre_bus_means,
-    read_cobre_hydro_bus_generation,
-    read_cobre_hydro_bus_labels,
-    read_cobre_hydro_means,
-    read_cobre_hydro_metadata,
-    read_cobre_hydro_per_stage_bounds,
-    read_cobre_hydro_withdrawal,
-    read_cobre_line_bounds,
-    read_cobre_line_means,
-    read_cobre_lines,
-    read_cobre_lp_max_generation,
-    read_cobre_thermal_means,
-    read_cobre_thermal_metadata,
-    read_cobre_training_metadata,
+    novomodelo_software_version,
+    read_novomodelo_bus_aggregates,
+    read_novomodelo_bus_means,
+    read_novomodelo_hydro_bus_generation,
+    read_novomodelo_hydro_bus_labels,
+    read_novomodelo_hydro_means,
+    read_novomodelo_hydro_metadata,
+    read_novomodelo_hydro_per_stage_bounds,
+    read_novomodelo_hydro_withdrawal,
+    read_novomodelo_line_bounds,
+    read_novomodelo_line_means,
+    read_novomodelo_lines,
+    read_novomodelo_lp_max_generation,
+    read_novomodelo_thermal_means,
+    read_novomodelo_thermal_metadata,
+    read_novomodelo_training_metadata,
 )
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.core.errors import CobrePartitionMissingError
 
 # ---------------------------------------------------------------------------
-# Fixtures: build corrupt vs. valid-but-empty Cobre output layouts on disk.
+# Fixtures: build corrupt vs. valid-but-empty Novomodelo output layouts on disk.
 # ---------------------------------------------------------------------------
 
 _GARBAGE = b"this is definitely not a valid parquet file -- no PAR1 footer"
@@ -174,7 +174,7 @@ def _write_corrupt_parquet(path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Corrupt *existing* file -> CobreReadError.
+# Corrupt *existing* file -> NovomodeloReadError.
 # ---------------------------------------------------------------------------
 
 
@@ -182,46 +182,46 @@ class TestCorruptExistingRaises:
     def test_hydro_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         _write_corrupt_sim_parquet(out, "hydros")
-        with pytest.raises(CobreReadError, match="scan parquets"):
-            read_cobre_hydro_means(out)
+        with pytest.raises(NovomodeloReadError, match="scan parquets"):
+            read_novomodelo_hydro_means(out)
 
     def test_thermal_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         _write_corrupt_sim_parquet(out, "thermals")
-        with pytest.raises(CobreReadError):
-            read_cobre_thermal_means(out)
+        with pytest.raises(NovomodeloReadError):
+            read_novomodelo_thermal_means(out)
 
     def test_bus_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         _write_corrupt_sim_parquet(out, "buses")
-        with pytest.raises(CobreReadError):
-            read_cobre_bus_means(out)
+        with pytest.raises(NovomodeloReadError):
+            read_novomodelo_bus_means(out)
 
     def test_line_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         _write_corrupt_sim_parquet(out, "exchanges")
-        with pytest.raises(CobreReadError):
-            read_cobre_line_means(out)
+        with pytest.raises(NovomodeloReadError):
+            read_novomodelo_line_means(out)
 
     def test_lp_max_generation_corrupt_bounds_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         _write_corrupt_parquet(out / "training" / "dictionaries" / "bounds.parquet")
-        with pytest.raises(CobreReadError, match="bounds.parquet"):
-            read_cobre_lp_max_generation(out)
+        with pytest.raises(NovomodeloReadError, match="bounds.parquet"):
+            read_novomodelo_lp_max_generation(out)
 
     def test_hydro_withdrawal_corrupt_constraints_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         _write_corrupt_parquet(tmp_path / "constraints" / "hydro_bounds.parquet")
-        with pytest.raises(CobreReadError, match="hydro_bounds.parquet"):
-            read_cobre_hydro_withdrawal(out)
+        with pytest.raises(NovomodeloReadError, match="hydro_bounds.parquet"):
+            read_novomodelo_hydro_withdrawal(out)
 
     def test_hydro_per_stage_bounds_corrupt_constraints_raises(
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
         _write_corrupt_parquet(tmp_path / "constraints" / "hydro_bounds.parquet")
-        with pytest.raises(CobreReadError, match="hydro_bounds.parquet"):
-            read_cobre_hydro_per_stage_bounds(out)
+        with pytest.raises(NovomodeloReadError, match="hydro_bounds.parquet"):
+            read_novomodelo_hydro_per_stage_bounds(out)
 
 
 # ---------------------------------------------------------------------------
@@ -233,43 +233,43 @@ class TestAbsentReturnsEmpty:
     def test_hydro_means_absent_dir_empty(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
-        df = read_cobre_hydro_means(out)
+        df = read_novomodelo_hydro_means(out)
         assert df.is_empty()
 
     def test_thermal_means_absent_dir_empty(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
-        df = read_cobre_thermal_means(out)
+        df = read_novomodelo_thermal_means(out)
         assert df.is_empty()
 
     def test_bus_means_absent_dir_empty(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
-        df = read_cobre_bus_means(out)
+        df = read_novomodelo_bus_means(out)
         assert df.is_empty()
 
     def test_line_means_absent_dir_empty(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
-        df = read_cobre_line_means(out)
+        df = read_novomodelo_line_means(out)
         assert df.is_empty()
 
     def test_lp_max_generation_absent_file_empty(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
-        df = read_cobre_lp_max_generation(out)
+        df = read_novomodelo_lp_max_generation(out)
         assert df.is_empty()
 
     def test_hydro_withdrawal_absent_file_empty(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
-        df = read_cobre_hydro_withdrawal(out)
+        df = read_novomodelo_hydro_withdrawal(out)
         assert df.is_empty()
 
     def test_hydro_per_stage_bounds_absent_file_empty(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
-        df = read_cobre_hydro_per_stage_bounds(out)
+        df = read_novomodelo_hydro_per_stage_bounds(out)
         assert df.is_empty()
 
 
@@ -287,23 +287,23 @@ class TestSoftMetadataReadersStaySoft:
         sysdir.mkdir(parents=True)
         (sysdir / "thermals.json").write_text("{ this is not valid json ")
         out.mkdir()
-        assert read_cobre_thermal_metadata(out) == {}
+        assert read_novomodelo_thermal_metadata(out) == {}
 
 
 # ---------------------------------------------------------------------------
-# CLI maps CobreReadError -> exit code 2 (distinct from 1 = mismatches).
+# CLI maps NovomodeloReadError -> exit code 2 (distinct from 1 = mismatches).
 # ---------------------------------------------------------------------------
 
 
-class TestCliExitCodeTwoOnCobreReadError:
+class TestCliExitCodeTwoOnNovomodeloReadError:
     def test_results_cli_exits_2_when_reader_raises(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from cobre_bridge.cli.compare import _run_newave_comparison
+        from novomodelo_bridge.cli.compare import _run_newave_comparison
 
         args = CompareArgs(
             source_dir=tmp_path / "newave",
-            cobre_output_dir=tmp_path / "output",
+            novomodelo_output_dir=tmp_path / "output",
             tolerance=1e-2,
             format=None,
             out_dir=None,
@@ -315,23 +315,25 @@ class TestCliExitCodeTwoOnCobreReadError:
         )
 
         def _raise(**_kwargs: object) -> object:
-            raise CobreReadError("Failed to aggregate hydro simulation data: /x/hydros")
+            raise NovomodeloReadError(
+                "Failed to aggregate hydro simulation data: /x/hydros"
+            )
 
         with (
             patch(
-                "cobre_bridge.cobre.readers.read_cobre_lines",
+                "novomodelo_bridge.novomodelo.readers.read_novomodelo_lines",
                 return_value=[],
             ),
             patch(
-                "cobre_bridge.newave.case.NewaveCase.from_directory",
+                "novomodelo_bridge.newave.case.NewaveCase.from_directory",
                 return_value=MagicMock(),
             ),
             patch(
-                "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+                "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
                 return_value=object(),
             ),
             patch(
-                "cobre_bridge.comparators.newave.results.compare_results",
+                "novomodelo_bridge.comparators.newave.results.compare_results",
                 side_effect=_raise,
             ),
         ):
@@ -345,7 +347,7 @@ class TestCliExitCodeTwoOnCobreReadError:
 
 # ---------------------------------------------------------------------------
 # End-to-end-ish: a corrupt existing parquet drives the reader through the
-# real (unpatched) code path to CobreReadError, proving the antipattern fix
+# real (unpatched) code path to NovomodeloReadError, proving the antipattern fix
 # rather than only the CLI wiring.
 # ---------------------------------------------------------------------------
 
@@ -359,12 +361,12 @@ class TestCorruptDrivesRealReaderPath:
 
         # Corrupt-but-existing -> raises.
         _write_corrupt_parquet(bounds)
-        with pytest.raises(CobreReadError):
-            read_cobre_lp_max_generation(out)
+        with pytest.raises(NovomodeloReadError):
+            read_novomodelo_lp_max_generation(out)
 
         # Same reader, file removed -> empty, no raise.
         bounds.unlink()
-        result = read_cobre_lp_max_generation(out)
+        result = read_novomodelo_lp_max_generation(out)
         assert isinstance(result, pl.DataFrame)
         assert result.is_empty()
 
@@ -413,7 +415,7 @@ class TestHydroBusGenerationValidPartition:
             ],
         )
 
-        df = read_cobre_hydro_bus_generation(out).collect()
+        df = read_novomodelo_hydro_bus_generation(out).collect()
 
         assert _HYDRO_BUS_GENERATION_COLUMNS.issubset(set(df.columns))
         assert df.height == 2
@@ -438,7 +440,7 @@ class TestHydroBusGenerationValidPartition:
             ],
         )
 
-        schema = read_cobre_hydro_bus_generation(out).collect_schema()
+        schema = read_novomodelo_hydro_bus_generation(out).collect_schema()
         assert schema["stage_id"] == pl.Int32
         assert schema["block_id"] == pl.Int32
         assert schema["hydro_id"] == pl.Int32
@@ -456,8 +458,8 @@ class TestHydroBusGenerationAbsentRaisesNamed:
         out = tmp_path / "output"
         out.mkdir()
 
-        with pytest.raises(CobrePartitionMissingError) as excinfo:
-            read_cobre_hydro_bus_generation(out)
+        with pytest.raises(NovomodeloPartitionMissingError) as excinfo:
+            read_novomodelo_hydro_bus_generation(out)
 
         message = str(excinfo.value)
         assert str(out / "simulation" / "hydro_bus_generation") in message
@@ -470,10 +472,10 @@ class TestHydroBusGenerationAbsentRaisesNamed:
         # A narrower type than plain Exception -- callers can distinguish
         # this from every other failure mode this reader can raise, and it
         # is never caught-and-discarded inside the reader itself.
-        with pytest.raises(CobrePartitionMissingError):
-            read_cobre_hydro_bus_generation(out)
-        assert issubclass(CobrePartitionMissingError, Exception)
-        assert CobrePartitionMissingError is not Exception
+        with pytest.raises(NovomodeloPartitionMissingError):
+            read_novomodelo_hydro_bus_generation(out)
+        assert issubclass(NovomodeloPartitionMissingError, Exception)
+        assert NovomodeloPartitionMissingError is not Exception
 
     def test_missing_output_dir_itself_also_raises_named_error(
         self, tmp_path: Path
@@ -483,8 +485,8 @@ class TestHydroBusGenerationAbsentRaisesNamed:
         # FileNotFoundError from deeper I/O and never an empty frame.
         out = tmp_path / "does-not-exist"
 
-        with pytest.raises(CobrePartitionMissingError):
-            read_cobre_hydro_bus_generation(out)
+        with pytest.raises(NovomodeloPartitionMissingError):
+            read_novomodelo_hydro_bus_generation(out)
 
 
 class TestHydroBusGenerationPresentButEmpty:
@@ -495,7 +497,7 @@ class TestHydroBusGenerationPresentButEmpty:
         sim_dir = out / "simulation" / "hydro_bus_generation"
         sim_dir.mkdir(parents=True)  # present, but no scenario partitions written.
 
-        df = read_cobre_hydro_bus_generation(out).collect()
+        df = read_novomodelo_hydro_bus_generation(out).collect()
 
         assert df.is_empty()
         assert set(df.columns) == _HYDRO_BUS_GENERATION_COLUMNS
@@ -508,7 +510,7 @@ class TestHydroBusGenerationPresentButEmpty:
         sim_dir.mkdir(parents=True)
 
         with dx.collect() as collected:
-            read_cobre_hydro_bus_generation(out)
+            read_novomodelo_hydro_bus_generation(out)
 
         empties = [
             d for d in collected if d.code == "hydro-bus-generation-partition-empty"
@@ -520,13 +522,13 @@ class TestHydroBusGenerationPresentButEmpty:
         out = tmp_path / "output"
 
         # Absent -> named error.
-        with pytest.raises(CobrePartitionMissingError):
-            read_cobre_hydro_bus_generation(out)
+        with pytest.raises(NovomodeloPartitionMissingError):
+            read_novomodelo_hydro_bus_generation(out)
 
         # Same output dir, partition directory now created (still empty) ->
         # no raise, distinct outcome from the absent case above.
         (out / "simulation" / "hydro_bus_generation").mkdir(parents=True)
-        df = read_cobre_hydro_bus_generation(out).collect()
+        df = read_novomodelo_hydro_bus_generation(out).collect()
         assert df.is_empty()
 
 
@@ -570,7 +572,7 @@ class TestHydroBusGenerationNullableBlockId:
             ],
         )
 
-        df = read_cobre_hydro_bus_generation(out).collect()
+        df = read_novomodelo_hydro_bus_generation(out).collect()
         assert df.height == 3
         assert df.filter(pl.col("block_id").is_null()).height == 1
 
@@ -582,24 +584,24 @@ class TestHydroBusGenerationNullableBlockId:
         assert totals["generation_mwh"].to_list() == [730.0 + 876.0 + 0.0]
 
 
-class TestHydroBusGenerationCorruptRaisesCobreReadError:
-    def test_corrupt_parquet_raises_cobrereaderror_not_named_absence(
+class TestHydroBusGenerationCorruptRaisesNovomodeloReadError:
+    def test_corrupt_parquet_raises_novomodeloreaderror_not_named_absence(
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
         _write_corrupt_sim_parquet(out, "hydro_bus_generation")
 
         # Present-but-corrupt is a different failure than absence: the
-        # existing CobreReadError contract applies, not the new named
+        # existing NovomodeloReadError contract applies, not the new named
         # partition-missing error.
-        with pytest.raises(CobreReadError):
-            read_cobre_hydro_bus_generation(out)
+        with pytest.raises(NovomodeloReadError):
+            read_novomodelo_hydro_bus_generation(out)
 
 
 # ---------------------------------------------------------------------------
-# read_cobre_hydro_metadata drops "bus_id"; the
+# read_novomodelo_hydro_metadata drops "bus_id"; the
 # plant->bus label is re-sourced from the hydro_bus_generation partition via
-# read_cobre_hydro_bus_labels.
+# read_novomodelo_hydro_bus_labels.
 # ---------------------------------------------------------------------------
 
 
@@ -617,14 +619,14 @@ class TestHydroMetadataHasNoBusId:
             [{"id": 0, "name": "H0", "bus_id": 100}],
         )
 
-        result = read_cobre_hydro_metadata(out)
+        result = read_novomodelo_hydro_metadata(out)
 
         assert "bus_id" not in result[0]
 
     def test_absent_hydros_json_returns_empty_dict(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir(parents=True)
-        assert read_cobre_hydro_metadata(out) == {}
+        assert read_novomodelo_hydro_metadata(out) == {}
 
 
 class TestHydroBusLabels:
@@ -665,7 +667,7 @@ class TestHydroBusLabels:
             ],
         )
 
-        result = read_cobre_hydro_bus_labels(out)
+        result = read_novomodelo_hydro_bus_labels(out)
 
         assert result == {1: frozenset({5})}
 
@@ -712,7 +714,7 @@ class TestHydroBusLabels:
             ],
         )
 
-        result = read_cobre_hydro_bus_labels(out)
+        result = read_novomodelo_hydro_bus_labels(out)
 
         assert result == {9: frozenset({100, 101}), 1: frozenset({100})}
 
@@ -720,8 +722,8 @@ class TestHydroBusLabels:
         out = tmp_path / "output"
         out.mkdir(parents=True)
 
-        with pytest.raises(CobrePartitionMissingError):
-            read_cobre_hydro_bus_labels(out)
+        with pytest.raises(NovomodeloPartitionMissingError):
+            read_novomodelo_hydro_bus_labels(out)
 
     def test_present_but_empty_partition_returns_empty_dict(
         self, tmp_path: Path
@@ -729,11 +731,11 @@ class TestHydroBusLabels:
         out = tmp_path / "output"
         (out / "simulation" / "hydro_bus_generation").mkdir(parents=True)
 
-        assert read_cobre_hydro_bus_labels(out) == {}
+        assert read_novomodelo_hydro_bus_labels(out) == {}
 
 
 # ---------------------------------------------------------------------------
-# read_cobre_bus_aggregates rewired onto hydro_bus_generation;
+# read_novomodelo_bus_aggregates rewired onto hydro_bus_generation;
 # the _load_entity_bus_map silent-failure clause is gone.
 # ---------------------------------------------------------------------------
 
@@ -756,7 +758,7 @@ def _build_full_bus_aggregates_case(tmp_path: Path) -> Path:
     _write_stages_json(tmp_path, _STAGE_BLOCKS)
 
     # Hydro: one plant on bus 5. generation_mwh is block_mw * block_hours,
-    # exactly as cobre's writer produces it.
+    # exactly as novomodelo's writer produces it.
     _write_hydro_bus_generation_partition(
         out,
         scenario_id=0,
@@ -909,7 +911,7 @@ class TestBusAggregatesHydroReportsNonZero:
     ) -> None:
         out = _build_full_bus_aggregates_case(tmp_path)
 
-        result = read_cobre_bus_aggregates(out)
+        result = read_novomodelo_bus_aggregates(out)
 
         row = result.filter((pl.col("bus_id") == 5) & (pl.col("stage_id") == 0))
         assert row.height == 1
@@ -942,7 +944,7 @@ class TestBusAggregatesHydroReportsNonZero:
         # that explicitly, then confirm hydro generation is still reported.
         assert not (tmp_path / "system" / "hydros.json").exists()
 
-        result = read_cobre_bus_aggregates(out)
+        result = read_novomodelo_bus_aggregates(out)
 
         row = result.filter((pl.col("bus_id") == 5) & (pl.col("stage_id") == 0))
         assert row["hydro_gen_mw_p50"][0] > 0.0
@@ -959,7 +961,7 @@ class TestBusAggregatesThermalNcsUnchanged:
     ) -> None:
         out = _build_full_bus_aggregates_case(tmp_path)
 
-        result = read_cobre_bus_aggregates(out)
+        result = read_novomodelo_bus_aggregates(out)
         row = result.filter((pl.col("bus_id") == 5) & (pl.col("stage_id") == 0))
         assert row.height == 1
 
@@ -982,7 +984,7 @@ class TestBusAggregatesThermalNcsUnchanged:
 
 class TestBusAggregatesMissingHydroPartitionRaisesNamed:
     """A missing hydro_bus_generation partition surfaces the
-    named error through read_cobre_bus_aggregates -- it is not caught and
+    named error through read_novomodelo_bus_aggregates -- it is not caught and
     converted to empty here, even though thermal/NCS data is present."""
 
     def test_missing_partition_raises_through_bus_aggregates(
@@ -1010,8 +1012,8 @@ class TestBusAggregatesMissingHydroPartitionRaisesNamed:
             ],
         )
 
-        with pytest.raises(CobrePartitionMissingError):
-            read_cobre_bus_aggregates(out)
+        with pytest.raises(NovomodeloPartitionMissingError):
+            read_novomodelo_bus_aggregates(out)
 
 
 class TestBusAggregatesEnergyNotReweighted:
@@ -1031,7 +1033,7 @@ class TestBusAggregatesEnergyNotReweighted:
         # Two hydro plants on the same bus, one scenario. A null-block_id
         # stage-level row is included to prove it is summed in
         # without corrupting the result -- its
-        # generation_mwh is 0.0, a real value cobre could legitimately
+        # generation_mwh is 0.0, a real value novomodelo could legitimately
         # write for a slack/violation-only stage-level row.
         _write_hydro_bus_generation_partition(
             out,
@@ -1085,7 +1087,7 @@ class TestBusAggregatesEnergyNotReweighted:
             ],
         )
 
-        result = read_cobre_bus_aggregates(out)
+        result = read_novomodelo_bus_aggregates(out)
         row = result.filter((pl.col("bus_id") == 5) & (pl.col("stage_id") == 0))
         assert row.height == 1
 
@@ -1107,8 +1109,8 @@ class TestBusAggregatesHydroFallsBackToBlockZeroMwWithoutStagesJson:
     ``None``), the hydro branch has no stage-hours denominator to convert an
     energy total back into a power figure, so it must mirror every sibling
     aggregator in this module (``_agg_entity_by_bus``,
-    :func:`read_cobre_hydro_means`, :func:`read_cobre_thermal_means`,
-    :func:`read_cobre_bus_means`) and report the ``block_id == 0``
+    :func:`read_novomodelo_hydro_means`, :func:`read_novomodelo_thermal_means`,
+    :func:`read_novomodelo_bus_means`) and report the ``block_id == 0``
     representative block's ``generation_mw`` -- already a genuine MW figure
     -- summed across hydros per bus. The pre-fix code instead relabeled the
     raw ``generation_mwh`` sum as ``hydro_gen_mw``, off by the block-hours
@@ -1172,7 +1174,7 @@ class TestBusAggregatesHydroFallsBackToBlockZeroMwWithoutStagesJson:
             ],
         )
 
-        result = read_cobre_bus_aggregates(out)
+        result = read_novomodelo_bus_aggregates(out)
         row = result.filter((pl.col("bus_id") == 5) & (pl.col("stage_id") == 0))
         assert row.height == 1
 
@@ -1196,14 +1198,14 @@ class TestLoadEntityBusMapNoBareExcept:
     """No bare except remains; a corrupt JSON raises a typed error
     rather than yielding {}."""
 
-    def test_corrupt_json_raises_cobrereaderror_not_empty_dict(
+    def test_corrupt_json_raises_novomodeloreaderror_not_empty_dict(
         self, tmp_path: Path
     ) -> None:
         sysdir = tmp_path / "system"
         sysdir.mkdir(parents=True)
         (sysdir / "thermals.json").write_text("{ this is not valid json ")
 
-        with pytest.raises(CobreReadError):
+        with pytest.raises(NovomodeloReadError):
             _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
 
     def test_missing_bus_id_field_raises_instead_of_being_filtered(
@@ -1214,7 +1216,7 @@ class TestLoadEntityBusMapNoBareExcept:
         # missing its bus_id is a real problem now, not a skippable row.
         _write_entity_bus_json(tmp_path, "thermals", [{"id": 1}])
 
-        with pytest.raises(CobreReadError):
+        with pytest.raises(NovomodeloReadError):
             _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
 
     def test_missing_file_still_returns_empty_dict(self, tmp_path: Path) -> None:
@@ -1237,7 +1239,7 @@ class TestLoadEntityBusMapNoBareExcept:
 # hand-built fixtures in test_chart_helpers.py that never touch these
 # readers; the two classes below are the honest substitute --
 # proving, on a synthetic 0.13 output dir, that
-# read_cobre_bus_aggregates' hydro branch is both correctly weighted
+# read_novomodelo_bus_aggregates' hydro branch is both correctly weighted
 # and reconciles exactly with the unchanged plant-keyed path.
 # ---------------------------------------------------------------------------
 
@@ -1246,7 +1248,7 @@ class TestEnergyNotReweightedHandComputedProof:
     """Hand-computes one (bus, stage) energy figure from
     ``stages.json`` ``blocks[].hours`` and a synthetic ``hydro_bus_generation``
     partition, and proves -- rather than merely asserts -- that
-    ``read_cobre_bus_aggregates`` uses ``generation_mwh`` un-re-weighted.
+    ``read_novomodelo_bus_aggregates`` uses ``generation_mwh`` un-re-weighted.
 
     Both the correct and the incorrect (double-hours-weighted) hand
     computations are derived programmatically from the same underlying
@@ -1266,7 +1268,7 @@ class TestEnergyNotReweightedHandComputedProof:
         _write_stages_json(tmp_path, stage_blocks)
 
         # One plant, one bus, one scenario: generation_mwh is exactly
-        # generation_mw * block_hours, as cobre's writer produces it.
+        # generation_mw * block_hours, as novomodelo's writer produces it.
         rows: list[dict[str, object]] = [
             {
                 "stage_id": 0,
@@ -1289,7 +1291,7 @@ class TestEnergyNotReweightedHandComputedProof:
         ]
         _write_hydro_bus_generation_partition(out, scenario_id=0, rows=rows)
 
-        result = read_cobre_bus_aggregates(out)
+        result = read_novomodelo_bus_aggregates(out)
         row = result.filter((pl.col("bus_id") == 5) & (pl.col("stage_id") == 0))
         assert row.height == 1
         actual = row["hydro_gen_mw_p50"][0]
@@ -1325,9 +1327,9 @@ class TestEnergyNotReweightedHandComputedProof:
 
 class TestBusSumMatchesPlantTotalCrossCheck:
     """The strongest guard here: total hydro
-    generation summed over buses (the new ``read_cobre_bus_aggregates``
+    generation summed over buses (the new ``read_novomodelo_bus_aggregates``
     source) must equal the plant-keyed total from the unchanged
-    ``simulation/hydros/`` (``read_cobre_hydro_means``), and no bus may gain
+    ``simulation/hydros/`` (``read_novomodelo_hydro_means``), and no bus may gain
     hydro generation it has no plants for.
 
     Three plants across two hydro buses (bus 5 hosts two plants, bus 6 hosts
@@ -1491,8 +1493,8 @@ class TestBusSumMatchesPlantTotalCrossCheck:
     ) -> None:
         out = self._build_case(tmp_path)
 
-        bus_result = read_cobre_bus_aggregates(out)
-        plant_result = read_cobre_hydro_means(out)
+        bus_result = read_novomodelo_bus_aggregates(out)
+        plant_result = read_novomodelo_hydro_means(out)
 
         # Plant-keyed total (unchanged simulation/hydros/ path): sum of
         # each plant's block-hours-weighted mean MW at stage 0.
@@ -1502,7 +1504,7 @@ class TestBusSumMatchesPlantTotalCrossCheck:
         ].sum()
         assert plant_total == pytest.approx(44.0)
 
-        # Bus-summed total (the new read_cobre_bus_aggregates source): sum
+        # Bus-summed total (the new read_novomodelo_bus_aggregates source): sum
         # of each bus's hydro_gen_mw_p50 (== the single-scenario exact
         # value) at stage 0. A null (bus 7 -- no hydro plant) must not
         # silently contribute a stray nonzero via an unguarded sum.
@@ -1525,14 +1527,14 @@ class TestBusSumMatchesPlantTotalCrossCheck:
 
 
 # ---------------------------------------------------------------------------
-# read_cobre_lines / read_cobre_line_bounds /
-# read_cobre_training_metadata -- the three previously-missing readers that
+# read_novomodelo_lines / read_novomodelo_line_bounds /
+# read_novomodelo_training_metadata -- the three previously-missing readers that
 # every ad-hoc lines.json / line_bounds.parquet / training/metadata.json
 # site now routes through.
 # ---------------------------------------------------------------------------
 
 
-class TestReadCobreLines:
+class TestReadNovomodeloLines:
     def test_present_returns_lines_list(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         system_dir = tmp_path / "system"
@@ -1540,25 +1542,25 @@ class TestReadCobreLines:
         lines = [{"id": 0, "source_bus_id": 0, "target_bus_id": 1}]
         (system_dir / "lines.json").write_text(json.dumps({"lines": lines}))
 
-        assert read_cobre_lines(out) == lines
+        assert read_novomodelo_lines(out) == lines
 
     def test_absent_returns_empty_list(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
 
-        assert read_cobre_lines(out) == []
+        assert read_novomodelo_lines(out) == []
 
-    def test_corrupt_json_raises_cobrereaderror(self, tmp_path: Path) -> None:
+    def test_corrupt_json_raises_novomodeloreaderror(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         system_dir = tmp_path / "system"
         system_dir.mkdir(parents=True)
         (system_dir / "lines.json").write_text("not valid json{")
 
-        with pytest.raises(CobreReadError, match="lines.json"):
-            read_cobre_lines(out)
+        with pytest.raises(NovomodeloReadError, match="lines.json"):
+            read_novomodelo_lines(out)
 
 
-class TestReadCobreLineBounds:
+class TestReadNovomodeloLineBounds:
     def test_present_returns_raw_frame(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         constraints_dir = tmp_path / "constraints"
@@ -1576,7 +1578,7 @@ class TestReadCobreLineBounds:
             constraints_dir / "line_bounds.parquet",
         )
 
-        df = read_cobre_line_bounds(out)
+        df = read_novomodelo_line_bounds(out)
 
         assert not df.is_empty()
         assert df["direct_mw"][0] == 1200.0
@@ -1586,22 +1588,22 @@ class TestReadCobreLineBounds:
         out = tmp_path / "output"
         out.mkdir()
 
-        df = read_cobre_line_bounds(out)
+        df = read_novomodelo_line_bounds(out)
 
         assert df.is_empty()
         assert {"line_id", "stage_id", "block_id", "direct_mw", "reverse_mw"}.issubset(
             set(df.columns)
         )
 
-    def test_corrupt_parquet_raises_cobrereaderror(self, tmp_path: Path) -> None:
+    def test_corrupt_parquet_raises_novomodeloreaderror(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         _write_corrupt_parquet(tmp_path / "constraints" / "line_bounds.parquet")
 
-        with pytest.raises(CobreReadError, match="line_bounds.parquet"):
-            read_cobre_line_bounds(out)
+        with pytest.raises(NovomodeloReadError, match="line_bounds.parquet"):
+            read_novomodelo_line_bounds(out)
 
 
-class TestReadCobreTrainingMetadata:
+class TestReadNovomodeloTrainingMetadata:
     def test_present_returns_dict(self, tmp_path: Path) -> None:
         out = tmp_path / "case" / "output"
         training_dir = out / "training"
@@ -1610,7 +1612,7 @@ class TestReadCobreTrainingMetadata:
             json.dumps({"version": "0.14.3", "duration_seconds": 12.0})
         )
 
-        assert read_cobre_training_metadata(out) == {
+        assert read_novomodelo_training_metadata(out) == {
             "version": "0.14.3",
             "duration_seconds": 12.0,
         }
@@ -1619,13 +1621,13 @@ class TestReadCobreTrainingMetadata:
         out = tmp_path / "output"
         out.mkdir()
 
-        assert read_cobre_training_metadata(out) == {}
+        assert read_novomodelo_training_metadata(out) == {}
 
     def test_unified_path_rule_resolves_the_case_dir_parent_fallback(
         self, tmp_path: Path
     ) -> None:
         """A case layout with no doubled ``output/`` segment (the shape
-        ``export._read_cobre_version`` used to resolve via its own fallback
+        ``export._read_novomodelo_version`` used to resolve via its own fallback
         but ``dashboard.load_output_metadata`` could not) still
         resolves through the one unified candidate search."""
         case_dir = tmp_path / "case"
@@ -1633,7 +1635,7 @@ class TestReadCobreTrainingMetadata:
         training_dir.mkdir(parents=True)
         (training_dir / "metadata.json").write_text(json.dumps({"version": "0.14.3"}))
 
-        assert read_cobre_training_metadata(case_dir / "output") == {
+        assert read_novomodelo_training_metadata(case_dir / "output") == {
             "version": "0.14.3"
         }
 
@@ -1643,27 +1645,29 @@ class TestReadCobreTrainingMetadata:
         training_dir.mkdir(parents=True)
         (training_dir / "metadata.json").write_text("not valid json{")
 
-        assert read_cobre_training_metadata(out) == {}
+        assert read_novomodelo_training_metadata(out) == {}
 
 
-class TestCobreSoftwareVersion:
+class TestNovomodeloSoftwareVersion:
     def test_reads_software_version(self) -> None:
         assert (
-            cobre_software_version({"software": "cobre", "software_version": "0.18.0"})
+            novomodelo_software_version(
+                {"software": "novomodelo", "software_version": "0.18.0"}
+            )
             == "0.18.0"
         )
 
     def test_falls_back_to_the_pre_software_key(self) -> None:
-        assert cobre_software_version({"cobre_version": "0.17.0"}) == "0.17.0"
+        assert novomodelo_software_version({"cobre_version": "0.17.0"}) == "0.17.0"
 
     def test_prefers_software_version_when_both_are_present(self) -> None:
         assert (
-            cobre_software_version(
+            novomodelo_software_version(
                 {"software_version": "0.18.0", "cobre_version": "0.17.0"}
             )
             == "0.18.0"
         )
 
     def test_absent_or_non_string_returns_none(self) -> None:
-        assert cobre_software_version({}) is None
-        assert cobre_software_version({"software_version": 18}) is None
+        assert novomodelo_software_version({}) is None
+        assert novomodelo_software_version({"software_version": 18}) is None

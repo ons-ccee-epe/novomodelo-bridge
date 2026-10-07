@@ -1,6 +1,6 @@
 """Top-level timing-phase config, detector, and stacked-bar figure builder.
 
-Shared by the Performance and Training tabs so a new cobre timing column is
+Shared by the Performance and Training tabs so a new novomodelo timing column is
 registered once instead of drifting between two copies.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
-from cobre_bridge.ui.theme import PERFORMANCE_PHASE_COLORS
+from novomodelo_bridge.ui.theme import PERFORMANCE_PHASE_COLORS
 
 # The six non-overlapping top-level phases (sum ≈ iteration total). Any
 # sub-component or aggregate-CPU column lives in performance_charts instead —

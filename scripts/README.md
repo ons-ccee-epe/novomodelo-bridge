@@ -1,6 +1,6 @@
 # `scripts/`
 
-Helper scripts for cobre-bridge, grouped by role. `CONTRIBUTING.md` says when
+Helper scripts for novomodelo-bridge, grouped by role. `CONTRIBUTING.md` says when
 to run them in a normal development loop.
 
 - **`ci/`** — quality gates and advisory reports (see below). The gates run in
@@ -17,7 +17,7 @@ to run them in a normal development loop.
   runs the same checks plus emission coverage against the mini decks. The
   loader, tracer, and renderer live in `lineage/`.
 - **`regen-goldens.sh`** — regenerates the `tests/golden/` snapshots by running
-  their consumer tests with `COBRE_BRIDGE_UPDATE_GOLDENS=1`. Goldens are
+  their consumer tests with `NOVOMODELO_BRIDGE_UPDATE_GOLDENS=1`. Goldens are
   regenerated via this path, never hand-edited; review the resulting
   `git diff tests/golden/` before committing.
 - **`analyze_results.py`** — local analysis utility, not a gate.

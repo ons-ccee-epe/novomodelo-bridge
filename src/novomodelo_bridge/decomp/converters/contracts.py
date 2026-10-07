@@ -19,18 +19,18 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.decomp.converters.thermal import _hours_weighted
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.decomp.converters.thermal import _hours_weighted
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
 
@@ -188,7 +188,7 @@ def read_contracts(
 def warn_nonnull_loss_factor(contracts: Sequence[Contract]) -> None:
     """D2: WARN (never fold, never reject) on a non-null, non-zero ``fator_perdas``.
 
-    cobre's ``energy_contracts`` entity has no loss-factor field, so the
+    novomodelo's ``energy_contracts`` entity has no loss-factor field, so the
     source model's per-stage ``fator_perdas`` is intentionally excluded from
     every emitted number (``price_per_mwh``, ``limits``). A deck that
     declares one anyway is not an error — it is a WARNING, and the WARNING
@@ -219,7 +219,7 @@ def warn_nonnull_loss_factor(contracts: Sequence[Contract]) -> None:
                 "contract(s) is ignored"
             ),
             summary=(
-                "The source model's fator_perdas (loss factor) has no cobre "
+                "The source model's fator_perdas (loss factor) has no novomodelo "
                 "energy_contracts target; it is ignored — not folded into "
                 "price_per_mwh or limits, and does not reject the deck"
             ),
@@ -277,7 +277,7 @@ def convert_energy_contracts(
             }
         )
     return {
-        "$schema": cobre_schemas.schema_url_for("system/energy_contracts.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/energy_contracts.json"),
         "contracts": out,
     }
 
@@ -304,7 +304,7 @@ def convert_contract_bounds(
     Every ``(contract, stage)`` gets a base row (``block_id = None``) carrying
     the hours-weighted ``min_mw``/``max_mw`` and the D3-signed hours-weighted
     ``price_per_mwh``. Unlike ``convert_thermal_bounds`` — whose
-    ``cost_per_mwh`` stays stage-level only (cobre rule 37) — all three value
+    ``cost_per_mwh`` stays stage-level only (novomodelo rule 37) — all three value
     columns here are block-eligible (decision 6: contract price legitimately
     varies per block), so the uniformity test spans ``min_mw``, ``max_mw``,
     *and* the signed per-block price. Where the stage is not uniform across

@@ -2,7 +2,7 @@
 
 Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
 the DECOMP-side NPV/cost frames, scenario probabilities and
-probability-weighting, the union of source-model and Cobre cost rows, and the
+probability-weighting, the union of source-model and Novomodelo cost rows, and the
 Overview tab's cost sections in ``build_decomp_dataset``. The remaining
 concern bands (network, energy balance, performance, hydro/thermal detail,
 productivity, FPHA, REE, evaporation, constraints, CLI) stay in the mega file
@@ -16,8 +16,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.charts import _COST_MAP
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.charts import _COST_MAP
+from novomodelo_bridge.comparators.decomp.results import (
     _DEVIATION_VIOLATION_LABEL,
     _NW_COST_LABELS,
     _bus_side,
@@ -29,8 +29,8 @@ from cobre_bridge.comparators.decomp.results import (
     _weighted_group_mean,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.report_builder import build_comparison_report
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import _balance_fixture, _patch_aligned_frames
 
 
@@ -93,12 +93,12 @@ class TestCostFrames:
 
     def _patch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_args, **_kwargs: _relato_costs_frame(),
         )
         # No scenario-fan stage by default -- relato2 is optional.
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato2_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_args, **_kwargs: pl.DataFrame(),
         )
 
@@ -131,11 +131,11 @@ class TestCostFrames:
         stages, and its expected cost uses the real (unequal) tree
         probabilities -- not a 50/50 mean."""
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_args, **_kwargs: _relato_costs_frame(),  # weekly stages 1, 2
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato2_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_args, **_kwargs: _relato2_costs_frame(),  # fan stage 3
         )
 
@@ -262,7 +262,7 @@ class TestCostFrames:
             raise FileNotFoundError("no relato.rvN found")
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs", _boom
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
         )
 
         with pytest.raises(FileNotFoundError):
@@ -304,11 +304,11 @@ class TestScenarioProbabilities:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_a, **_k: _relato_costs_frame(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato2_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_a, **_k: _relato2_costs_frame(),
         )
 
@@ -331,11 +331,11 @@ class TestScenarioProbabilities:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_a, **_k: _relato_costs_with_overlapping_fan_stage(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato2_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_a, **_k: _relato2_costs_frame(),
         )
 
@@ -355,10 +355,10 @@ class TestScenarioProbabilities:
             raise FileNotFoundError("no relato.rvN found")
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs", _boom
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato2_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_a, **_k: pl.DataFrame(),
         )
 
@@ -377,10 +377,10 @@ class TestScenarioProbabilities:
             raise FileNotFoundError("no relato.rvN found")
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs", _boom
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato2_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_a, **_k: _relato2_costs_frame(),
         )
 
@@ -481,15 +481,15 @@ class TestScenarioWeightingIntegration:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_sist",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_a, **_k: _bus_fan_stage_frame(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_a, **_k: _relato_costs_frame(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato2_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_a, **_k: _relato2_costs_frame(),
         )
 
@@ -512,7 +512,7 @@ class TestScenarioWeightingIntegration:
         degrades to empty, and `_bus_side` must reproduce the exact
         pre-existing unweighted-mean value on the fan stage."""
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_sist",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_a, **_k: _bus_fan_stage_frame(),
         )
 
@@ -565,11 +565,11 @@ class TestUnionCostRows:
         assert combined is earm
 
 
-def _cobre_cost_breakdown_fixture() -> dict[str, float]:
+def _novomodelo_cost_breakdown_fixture() -> dict[str, float]:
     return {"thermal_cost": 200_000.0, "deficit_cost": 1_000.0}
 
 
-def _cobre_stage_costs_fixture() -> pl.DataFrame:
+def _novomodelo_stage_costs_fixture() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "stage_id": [0, 1],
@@ -583,8 +583,8 @@ def _cobre_stage_costs_fixture() -> pl.DataFrame:
 
 
 class TestBuildDecompDatasetCosts:
-    """Overview cost metadata (nw_costs/cobre_costs/nw_sin cost
-    rows/cobre_stage_costs) filled by ``build_decomp_dataset``."""
+    """Overview cost metadata (nw_costs/novomodelo_costs/nw_sin cost
+    rows/novomodelo_stage_costs) filled by ``build_decomp_dataset``."""
 
     def _patch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_aligned_frames(monkeypatch, _balance_fixture())
@@ -594,21 +594,21 @@ class TestBuildDecompDatasetCosts:
         # unaffected by that stub) so patching ``read_relato_costs`` below
         # actually takes effect through it.
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results._cost_frames", _cost_frames
+            "novomodelo_bridge.comparators.decomp.results._cost_frames", _cost_frames
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_relato_costs",
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_args, **_kwargs: _relato_costs_frame(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_cost_breakdown",
-            lambda *_args, **_kwargs: _cobre_cost_breakdown_fixture(),
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_cost_breakdown",
+            lambda *_args, **_kwargs: _novomodelo_cost_breakdown_fixture(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_stage_costs",
-            lambda *_args, **_kwargs: _cobre_stage_costs_fixture(),
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_stage_costs",
+            lambda *_args, **_kwargs: _novomodelo_stage_costs_fixture(),
         )
 
     def test_nw_sin_retains_earm_ena_rows_alongside_the_new_cost_rows(
@@ -624,7 +624,7 @@ class TestBuildDecompDatasetCosts:
         assert {"EARMF", "ENA"} <= variables
         assert {"COPER", "CUSTO_FUTURO", "CTERM"} <= variables
 
-    def test_nw_costs_cobre_costs_stage_costs_and_offset_are_populated(
+    def test_nw_costs_novomodelo_costs_stage_costs_and_offset_are_populated(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         self._patch(monkeypatch)
@@ -632,8 +632,10 @@ class TestBuildDecompDatasetCosts:
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
         assert dataset.render.nw_costs["GERACAO TERMICA"] == pytest.approx(220_000.0)
-        assert dataset.render.cobre_costs["thermal_cost"] == pytest.approx(200_000.0)
-        stage_costs = dataset.render.cobre_stage_costs
+        assert dataset.render.novomodelo_costs["thermal_cost"] == pytest.approx(
+            200_000.0
+        )
+        stage_costs = dataset.render.novomodelo_stage_costs
         assert isinstance(stage_costs, pl.DataFrame)
         assert not stage_costs.is_empty()
         assert dataset.render.nw_offset == 1
@@ -650,5 +652,5 @@ class TestBuildDecompDatasetCosts:
         assert "Per-Stage Cost" in html
         assert "No cost data available." not in html
         assert "NEWAVE Thermal Cost" in html
-        assert "Cobre Thermal Cost" in html
+        assert "Novomodelo Thermal Cost" in html
         assert "Plotly.newPlot" in html

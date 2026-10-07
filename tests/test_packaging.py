@@ -1,13 +1,13 @@
 """Packaging guards: the declared dependencies must let a plain install work.
 
 `convert decomp` imports the deck's boundary FCF by default and needs
-`import cobre` to succeed, so `cobre-python` must be a CORE runtime dependency —
+`import novomodelo` to succeed, so `novomodelo-python` must be a CORE runtime dependency —
 not an optional extra. This module locks that down: a fresh
-`pip install cobre-bridge` (no extras) must pull a checkpoint-capable cobre. It was the
-absence of exactly this guard that let a release ship with `cobre-python` as an
+`pip install novomodelo-bridge` (no extras) must pull a checkpoint-capable novomodelo. It was the
+absence of exactly this guard that let a release ship with `novomodelo-python` as an
 extra, so a plain install failed `convert decomp` on any real deck. It also keeps
 the ruff CI installs on the version `uv.lock` pins. Tier-1: reads `pyproject.toml`,
-`uv.lock` and the CI workflow, never imports cobre.
+`uv.lock` and the CI workflow, never imports novomodelo.
 """
 
 from __future__ import annotations
@@ -24,76 +24,78 @@ def _core_dependencies() -> list[str]:
     return data["project"]["dependencies"]
 
 
-def _cobre_python_pin(deps: list[str]) -> str | None:
+def _novomodelo_python_pin(deps: list[str]) -> str | None:
     for dep in deps:
-        if dep.replace(" ", "").startswith("cobre-python"):
+        if dep.replace(" ", "").startswith("novomodelo-python"):
             return dep
     return None
 
 
-def test_cobre_python_is_a_core_runtime_dependency() -> None:
-    """`cobre-python` must be in `[project].dependencies`, not an extra, so a
-    plain `pip install cobre-bridge` gives a working `convert decomp`."""
+def test_novomodelo_python_is_a_core_runtime_dependency() -> None:
+    """`novomodelo-python` must be in `[project].dependencies`, not an extra, so a
+    plain `pip install novomodelo-bridge` gives a working `convert decomp`."""
     core = _core_dependencies()
-    assert _cobre_python_pin(core) is not None, (
-        "cobre-python must be a core runtime dependency, not an optional extra; "
+    assert _novomodelo_python_pin(core) is not None, (
+        "novomodelo-python must be a core runtime dependency, not an optional extra; "
         f"found core dependencies: {core}"
     )
 
 
-def test_cobre_python_core_pin_is_exactly_min_cobre_version() -> None:
-    """The core `cobre-python` pin must be exactly `MIN_COBRE_VERSION`: cobre
+def test_novomodelo_python_core_pin_is_exactly_min_novomodelo_version() -> None:
+    """The core `novomodelo-python` pin must be exactly `MIN_NOVOMODELO_VERSION`: novomodelo
     loads a policy checkpoint only in the version that wrote it, so the
     boundary `convert decomp` writes must come from the paired release."""
-    from cobre_bridge.cli import MIN_COBRE_VERSION
+    from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
 
-    pin = _cobre_python_pin(_core_dependencies())
+    pin = _novomodelo_python_pin(_core_dependencies())
     assert pin is not None
-    assert pin.replace(" ", "") == f"cobre-python=={MIN_COBRE_VERSION}", (
-        f"cobre-python core pin {pin!r} must be exactly "
-        f"cobre-python=={MIN_COBRE_VERSION}"
+    assert pin.replace(" ", "") == f"novomodelo-python=={MIN_NOVOMODELO_VERSION}", (
+        f"novomodelo-python core pin {pin!r} must be exactly "
+        f"novomodelo-python=={MIN_NOVOMODELO_VERSION}"
     )
 
 
 _UV_LOCK = Path(__file__).resolve().parent.parent / "uv.lock"
 
 
-def _lock_cobre_python_requirement() -> dict[str, str] | None:
-    """The `cobre-bridge` package's `cobre-python` requires-dist entry from
+def _lock_novomodelo_python_requirement() -> dict[str, str] | None:
+    """The `novomodelo-bridge` package's `novomodelo-python` requires-dist entry from
     uv.lock, or None if absent."""
     data = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
     for package in data["package"]:
-        if package.get("name") == "cobre-bridge":
+        if package.get("name") == "novomodelo-bridge":
             for req in package.get("metadata", {}).get("requires-dist", []):
-                if req.get("name") == "cobre-python":
+                if req.get("name") == "novomodelo-python":
                     return req
     return None
 
 
-def test_uv_lock_cobre_python_is_a_core_dependency() -> None:
-    """uv.lock must record cobre-python as a core requirement — not gated
+def test_uv_lock_novomodelo_python_is_a_core_dependency() -> None:
+    """uv.lock must record novomodelo-python as a core requirement — not gated
     behind an `extra` — so `uv sync` installs it by default, matching
     pyproject. Guards against the lock drifting back to a `validation` extra."""
-    req = _lock_cobre_python_requirement()
-    assert req is not None, "cobre-python missing from uv.lock requires-dist"
+    req = _lock_novomodelo_python_requirement()
+    assert req is not None, "novomodelo-python missing from uv.lock requires-dist"
     marker = req.get("marker", "")
     assert "extra" not in marker, (
-        "cobre-python must be a core dependency in uv.lock, not gated behind "
+        "novomodelo-python must be a core dependency in uv.lock, not gated behind "
         f"an extra; found marker {marker!r}"
     )
 
 
-def test_uv_lock_cobre_python_is_pinned_exactly_to_min_cobre_version() -> None:
-    """The uv.lock cobre-python specifier must be exactly MIN_COBRE_VERSION, so
+def test_uv_lock_novomodelo_python_is_pinned_exactly_to_min_novomodelo_version() -> (
+    None
+):
+    """The uv.lock novomodelo-python specifier must be exactly MIN_NOVOMODELO_VERSION, so
     a regenerated lock never resolves a release other than the paired one."""
-    from cobre_bridge.cli import MIN_COBRE_VERSION
+    from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
 
-    req = _lock_cobre_python_requirement()
+    req = _lock_novomodelo_python_requirement()
     assert req is not None
     specifier = req.get("specifier", "").replace(" ", "")
-    assert specifier == f"=={MIN_COBRE_VERSION}", (
-        f"uv.lock cobre-python specifier {specifier!r} must be exactly "
-        f"=={MIN_COBRE_VERSION}"
+    assert specifier == f"=={MIN_NOVOMODELO_VERSION}", (
+        f"uv.lock novomodelo-python specifier {specifier!r} must be exactly "
+        f"=={MIN_NOVOMODELO_VERSION}"
     )
 
 

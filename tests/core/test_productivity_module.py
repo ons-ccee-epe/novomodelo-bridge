@@ -7,7 +7,7 @@ import logging
 import pandas as pd
 import pytest
 
-from cobre_bridge.core.productivity import (
+from novomodelo_bridge.core.productivity import (
     KTURB_BY_TIPO_TURBINA,
     compute_productivity,
     equivalent_productivity,
@@ -19,7 +19,7 @@ from cobre_bridge.core.productivity import (
     stored_energy_productivity,
 )
 
-# cobre's phi = K * eta * q * h_net with K = g/1000 (mirrors the module's
+# novomodelo's phi = K * eta * q * h_net with K = g/1000 (mirrors the module's
 # private _GRAVITY_MW_FACTOR — pinned here rather than imported, per the D2
 # unit contract in fpha_efficiency's docstring).
 _K = 9.81e-3
@@ -47,7 +47,7 @@ def _hreg(**overrides: object) -> pd.Series:
 
 
 def test_hydro_aliases_point_to_public_functions() -> None:
-    from cobre_bridge.newave.converters.hydro import (
+    from novomodelo_bridge.newave.converters.hydro import (
         _compute_integrated_productivity,
         _compute_productivity,
         _equivalent_productivity,
@@ -60,8 +60,8 @@ def test_hydro_aliases_point_to_public_functions() -> None:
 
 def test_constraints_and_fict_cascade_import_public_names() -> None:
     # Cross-boundary callers must no longer reach into hydro privates.
-    import cobre_bridge.newave.converters.constraints as c
-    import cobre_bridge.newave.converters.fict_cascade as fc
+    import novomodelo_bridge.newave.converters.constraints as c
+    import novomodelo_bridge.newave.converters.fict_cascade as fc
 
     assert c.compute_productivity is compute_productivity
     assert c.stored_energy_productivity is stored_energy_productivity
@@ -86,7 +86,7 @@ def test_equivalent_vs_integrated_agree_on_linear_polynomial() -> None:
 def test_equivalent_productivity_from_coeffs_all_zero_guard_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.WARNING, logger="cobre_bridge.core.productivity"):
+    with caplog.at_level(logging.WARNING, logger="novomodelo_bridge.core.productivity"):
         result = equivalent_productivity_from_coeffs(
             [0.0, 0.0, 0.0, 0.0, 0.0],
             volume_min_hm3=0.0,
@@ -162,13 +162,15 @@ class TestFphaEfficiency:
         assert 0.0 < eta <= 1.0
 
     def test_unphysical_rho_esp_clamped_to_one(self) -> None:
-        # rho_esp >> K would imply eta > 1; cobre requires (0, 1].
+        # rho_esp >> K would imply eta > 1; novomodelo requires (0, 1].
         assert fpha_efficiency(0.9, "USINA") == 1.0
 
     def test_clamp_warns_naming_the_plant(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="cobre_bridge.core.productivity"):
+        with caplog.at_level(
+            logging.WARNING, logger="novomodelo_bridge.core.productivity"
+        ):
             fpha_efficiency(0.9, "CLAMPED PLANT")
         assert any("CLAMPED PLANT" in record.getMessage() for record in caplog.records)
 

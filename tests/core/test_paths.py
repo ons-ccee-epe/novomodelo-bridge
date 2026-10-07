@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cobre_bridge.core.paths import find_case_insensitive
+from novomodelo_bridge.core.paths import find_case_insensitive
 
 
 def test_find_case_insensitive_mixed_case_hit_returns_path(tmp_path: Path) -> None:

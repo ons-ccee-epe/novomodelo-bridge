@@ -1,6 +1,6 @@
 """Evaporation comparison tests for ``comparators.decomp.results``.
 
-Covers hm³ -> m³/s stage-hours conversion, Cobre stage-hours lookup, the
+Covers hm³ -> m³/s stage-hours conversion, Novomodelo stage-hours lookup, the
 source-model evaporated-volume side, the full evaporation result-comparison
 reconciliation, and the Hydro Plant Detail tab's ``evaporation_m3s`` rows in
 ``build_decomp_dataset``.
@@ -15,17 +15,17 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.decomp.results import (
     _HM3_TO_M3S_HOUR_FACTOR,
     _AlignedDecompFrames,
-    _cobre_stage_hours,
     _evap_side,
     _evaporation_result_comparisons,
     _hm3_to_m3s,
+    _novomodelo_stage_hours,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.report_builder import build_comparison_report
-from cobre_bridge.core import diagnostics as dx
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core import diagnostics as dx
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
@@ -37,7 +37,7 @@ from tests.comparators.conftest import (
 
 def _write_stages_json(case_dir: Path, stage_hours: dict[int, list[float]]) -> Path:
     """Write a minimal ``stages.json`` -- *stage_hours* maps
-    ``stage_id -> [block_hours, ...]``. Mirrors ``test_cobre_readers.py``'s
+    ``stage_id -> [block_hours, ...]``. Mirrors ``test_novomodelo_readers.py``'s
     own ``_write_stages_json`` helper shape, duplicated locally rather than
     imported so this file keeps no cross-test-module dependency."""
     data = {
@@ -82,19 +82,19 @@ class TestHm3ToM3s:
         assert _HM3_TO_M3S_HOUR_FACTOR * 730.0 == pytest.approx(2.628)
 
 
-class TestCobreStageHours:
-    """`_cobre_stage_hours`: per-stage total hours from the Cobre case's own
-    ``stages.json``, via `cobre_readers._load_block_hours`."""
+class TestNovomodeloStageHours:
+    """`_novomodelo_stage_hours`: per-stage total hours from the Novomodelo case's own
+    ``stages.json``, via `novomodelo_readers._load_block_hours`."""
 
     def test_sums_block_hours_per_stage(self, tmp_path: Path) -> None:
         _write_stages_json(tmp_path, {0: [24.0, 144.0], 1: [168.0]})
 
-        hours = _cobre_stage_hours(tmp_path)
+        hours = _novomodelo_stage_hours(tmp_path)
 
         assert hours == {0: pytest.approx(168.0), 1: pytest.approx(168.0)}
 
     def test_no_stages_json_returns_empty_dict(self, tmp_path: Path) -> None:
-        assert _cobre_stage_hours(tmp_path) == {}
+        assert _novomodelo_stage_hours(tmp_path) == {}
 
 
 def _evap_dec_oper_evap_fixture() -> pl.DataFrame:
@@ -116,14 +116,14 @@ def _evap_dec_oper_evap_fixture() -> pl.DataFrame:
 
 
 def _evap_aligned_fixture() -> _AlignedDecompFrames:
-    """``_aligned_fixture()`` with its ``cobre_hydro`` extended to carry
+    """``_aligned_fixture()`` with its ``novomodelo_hydro`` extended to carry
     ``evaporation_m3s`` -- the base fixture only carries E1's
     ``_HYDRO_VARIABLES`` columns. Plant 0 (code 10) = 2.5 m³/s, plant 1
     (code 20) = 3.0 m³/s."""
     base = _aligned_fixture()
     return dataclasses.replace(
         base,
-        cobre_hydro=base.cobre_hydro.with_columns(
+        novomodelo_hydro=base.novomodelo_hydro.with_columns(
             pl.Series("evaporation_m3s", [2.5, 3.0])
         ),
     )
@@ -135,29 +135,29 @@ def _patch_evap_sources(
     stage_hours: dict[int, list[float]] | None = None,
 ) -> None:
     """Wire ``read_dec_oper_evap`` (outside ``_read_aligned_frames``) to
-    :func:`_evap_dec_oper_evap_fixture`, and ``_cobre_stage_hours`` to a
+    :func:`_evap_dec_oper_evap_fixture`, and ``_novomodelo_stage_hours`` to a
     fixed one-stage 168h lookup unless *stage_hours* overrides it."""
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.read_dec_oper_evap",
+        "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap",
         lambda *_a, **_k: _evap_dec_oper_evap_fixture(),
     )
     hours = {0: 168.0} if stage_hours is None else stage_hours
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results._cobre_stage_hours",
+        "novomodelo_bridge.comparators.decomp.results._novomodelo_stage_hours",
         lambda *_a, **_k: hours,
     )
 
 
 class TestEvapSide:
     """`_evap_side`: the source model's per-(hydro, stage) evaporated volume,
-    scenario-averaged and mapped onto Cobre ids -- mirrors `_hydro_side`'s
+    scenario-averaged and mapped onto Novomodelo ids -- mirrors `_hydro_side`'s
     own fold exactly."""
 
-    def test_scenario_means_and_maps_to_cobre_ids(
+    def test_scenario_means_and_maps_to_novomodelo_ids(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_evap",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap",
             lambda *_a, **_k: _evap_dec_oper_evap_fixture(),
         )
 
@@ -175,7 +175,7 @@ class TestEvapSide:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_evap",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap",
             lambda *_a, **_k: _evap_dec_oper_evap_fixture(),
         )
 
@@ -195,7 +195,7 @@ class TestEvapSide:
 class TestEvaporationResultComparisons:
     """`_evaporation_result_comparisons`: the full evaporation reconciliation
     -- scenario-averaged source-model volume converted to m³/s via the
-    stage's own hours, joined against Cobre's ``evaporation_m3s``, with a
+    stage's own hours, joined against Novomodelo's ``evaporation_m3s``, with a
     one-sided plant excluded from the pairing and counted rather than
     silently dropped."""
 
@@ -207,13 +207,13 @@ class TestEvaporationResultComparisons:
         results, one_sided = _evaporation_result_comparisons(
             tmp_path,
             tmp_path,
-            _evap_aligned_fixture().cobre_hydro,
+            _evap_aligned_fixture().novomodelo_hydro,
             _ree_id_map(),
             {0: "A", 1: "B"},
         )
 
         assert one_sided == []
-        by_id = {r.cobre_id: r for r in results}
+        by_id = {r.novomodelo_id: r for r in results}
         assert set(by_id) == {0, 1}
 
         for r in results:
@@ -223,27 +223,27 @@ class TestEvaporationResultComparisons:
         # Plant 0 (code 10): scenario-mean 1.2 hm³ over a 168h stage.
         assert by_id[0].newave_code == 10
         assert by_id[0].newave_value == pytest.approx(_hm3_to_m3s(1.2, 168.0))
-        assert by_id[0].cobre_value == pytest.approx(2.5)
+        assert by_id[0].novomodelo_value == pytest.approx(2.5)
         # Plant 1 (code 20): scenario-mean 2.2 hm³ over the same stage.
         assert by_id[1].newave_code == 20
         assert by_id[1].newave_value == pytest.approx(_hm3_to_m3s(2.2, 168.0))
-        assert by_id[1].cobre_value == pytest.approx(3.0)
+        assert by_id[1].novomodelo_value == pytest.approx(3.0)
 
-    def test_plant_present_only_on_cobre_side_excluded_and_counted(
+    def test_plant_present_only_on_novomodelo_side_excluded_and_counted(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A hydro present in Cobre's ``evaporation_m3s`` but absent from
+        """A hydro present in Novomodelo's ``evaporation_m3s`` but absent from
         the source model's own evaporation table is excluded from the paired
         comparison and counted."""
-        # Source model reports evaporation for plant 10 (cobre id 0) only.
+        # Source model reports evaporation for plant 10 (novomodelo id 0) only.
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_evap",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap",
             lambda *_a, **_k: _evap_dec_oper_evap_fixture().filter(
                 pl.col("codigo_usina") == 10
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results._cobre_stage_hours",
+            "novomodelo_bridge.comparators.decomp.results._novomodelo_stage_hours",
             lambda *_a, **_k: {0: 168.0},
         )
 
@@ -251,12 +251,12 @@ class TestEvaporationResultComparisons:
             results, one_sided = _evaporation_result_comparisons(
                 tmp_path,
                 tmp_path,
-                _evap_aligned_fixture().cobre_hydro,  # carries ids 0 AND 1
+                _evap_aligned_fixture().novomodelo_hydro,  # carries ids 0 AND 1
                 _ree_id_map(),
                 {0: "A", 1: "B"},
             )
 
-        assert [r.cobre_id for r in results] == [0]
+        assert [r.novomodelo_id for r in results] == [0]
         assert one_sided == [1]
         assert len(collected) == 1
         assert collected[0].code == "evaporation-plant-one-sided"
@@ -266,27 +266,27 @@ class TestEvaporationResultComparisons:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """AC (reverse direction): a hydro present in the source model's own
-        evaporation table but absent from Cobre's ``evaporation_m3s`` is
+        evaporation table but absent from Novomodelo's ``evaporation_m3s`` is
         excluded from the paired comparison and counted."""
         _patch_evap_sources(monkeypatch)
-        # Cobre reports evaporation_m3s for plant 0 (code 10) only.
-        cobre_hydro = _evap_aligned_fixture().cobre_hydro.filter(
+        # Novomodelo reports evaporation_m3s for plant 0 (code 10) only.
+        novomodelo_hydro = _evap_aligned_fixture().novomodelo_hydro.filter(
             pl.col("entity_id") == 0
         )
 
         with dx.collect() as collected:
             results, one_sided = _evaporation_result_comparisons(
-                tmp_path, tmp_path, cobre_hydro, _ree_id_map(), {0: "A", 1: "B"}
+                tmp_path, tmp_path, novomodelo_hydro, _ree_id_map(), {0: "A", 1: "B"}
             )
 
-        assert [r.cobre_id for r in results] == [0]
+        assert [r.novomodelo_id for r in results] == [0]
         assert one_sided == [1]
         assert len(collected) == 1
         assert collected[0].code == "evaporation-plant-one-sided"
 
     def test_none_id_map_returns_no_rows_and_no_unmapped(self, tmp_path: Path) -> None:
         results, one_sided = _evaporation_result_comparisons(
-            tmp_path, tmp_path, _evap_aligned_fixture().cobre_hydro, None, {}
+            tmp_path, tmp_path, _evap_aligned_fixture().novomodelo_hydro, None, {}
         )
 
         assert results == []
@@ -301,7 +301,7 @@ class TestEvaporationResultComparisons:
             results, one_sided = _evaporation_result_comparisons(
                 tmp_path,
                 tmp_path,
-                _evap_aligned_fixture().cobre_hydro,
+                _evap_aligned_fixture().novomodelo_hydro,
                 _ree_id_map(),
                 {0: "A", 1: "B"},
             )
@@ -310,7 +310,7 @@ class TestEvaporationResultComparisons:
         assert one_sided == []
         assert collected == []
 
-    def test_no_evaporation_m3s_column_on_cobre_side_degrades_to_no_rows(
+    def test_no_evaporation_m3s_column_on_novomodelo_side_degrades_to_no_rows(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_evap_sources(monkeypatch)
@@ -318,7 +318,7 @@ class TestEvaporationResultComparisons:
         results, one_sided = _evaporation_result_comparisons(
             tmp_path,
             tmp_path,
-            _aligned_fixture().cobre_hydro,  # no evaporation_m3s column
+            _aligned_fixture().novomodelo_hydro,  # no evaporation_m3s column
             _ree_id_map(),
             {0: "A", 1: "B"},
         )
@@ -332,18 +332,18 @@ class TestEvaporationResultComparisons:
         """No ``stages.json`` reconciliation denominator -- degrades
         gracefully rather than raising or fabricating a divisor."""
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_evap",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap",
             lambda *_a, **_k: _evap_dec_oper_evap_fixture(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results._cobre_stage_hours",
+            "novomodelo_bridge.comparators.decomp.results._novomodelo_stage_hours",
             lambda *_a, **_k: {},
         )
 
         results, one_sided = _evaporation_result_comparisons(
             tmp_path,
             tmp_path,
-            _evap_aligned_fixture().cobre_hydro,
+            _evap_aligned_fixture().novomodelo_hydro,
             _ree_id_map(),
             {0: "A", 1: "B"},
         )
@@ -380,7 +380,7 @@ class TestBuildDecompDatasetEvaporation:
     ) -> None:
         """``tidy`` has ``entity_type=="hydro"``/
         ``variable=="evaporation_m3s"`` rows with ``source`` in
-        {"newave", "cobre"}, and ``dataset.summary`` includes the
+        {"newave", "novomodelo"}, and ``dataset.summary`` includes the
         ``evaporation_m3s`` variable."""
         _patch_aligned_frames(monkeypatch, _evap_aligned_fixture())
         _patch_shared_case(monkeypatch, id_map=_ree_id_map())
@@ -392,7 +392,7 @@ class TestBuildDecompDatasetEvaporation:
             (pl.col("entity_type") == "hydro")
             & (pl.col("variable") == "evaporation_m3s")
         )
-        assert set(evap_rows["source"].unique().to_list()) == {"newave", "cobre"}
+        assert set(evap_rows["source"].unique().to_list()) == {"newave", "novomodelo"}
         assert evap_rows.height == 4  # 2 plants * 2 sources
         assert dataset.metadata["unmapped"]["evaporation"] == []
 
@@ -405,13 +405,13 @@ class TestBuildDecompDatasetEvaporation:
         _patch_aligned_frames(monkeypatch, _evap_aligned_fixture())
         _patch_shared_case(monkeypatch, id_map=_ree_id_map())
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_evap",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap",
             lambda *_a, **_k: _evap_dec_oper_evap_fixture().filter(
                 pl.col("codigo_usina") == 10
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results._cobre_stage_hours",
+            "novomodelo_bridge.comparators.decomp.results._novomodelo_stage_hours",
             lambda *_a, **_k: {0: 168.0},
         )
 

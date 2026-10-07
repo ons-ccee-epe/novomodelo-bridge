@@ -1,6 +1,6 @@
-"""Shared sense <-> interval mapping for cobre's F3 generic-constraint bounds.
+"""Shared sense <-> interval mapping for novomodelo's F3 generic-constraint bounds.
 
-cobre's generic-constraint model (the ``generic-constraint-authoring`` F3
+novomodelo's generic-constraint model (the ``generic-constraint-authoring`` F3
 clean break) is **sense-free**: a ``generic_constraints.json`` object carries
 no ``sense`` key, and its companion bounds table carries two nullable
 endpoints (``bound_lower``/``bound_upper``) instead of a single ``bound``

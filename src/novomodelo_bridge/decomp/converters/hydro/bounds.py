@@ -24,20 +24,20 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from cobre_bridge.core.hydro_units import build_mirror_unit_group
-from cobre_bridge.core.productivity import KTURB_BY_TIPO_TURBINA
-from cobre_bridge.core.tolerances import relative_tolerance
-from cobre_bridge.decomp.converters.hydro.productivity import (
+from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
+from novomodelo_bridge.core.productivity import KTURB_BY_TIPO_TURBINA
+from novomodelo_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.decomp.converters.hydro.productivity import (
     _equivalent_productivity_mw_per_m3s,
 )
-from cobre_bridge.decomp.group_bounds import GroupBoundEntry
+from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 
 #: Itaipu's plant code — the one plant whose ``MP``/``FD`` maintenance and
@@ -65,7 +65,7 @@ def _conjunto_rated_ac_adjusted(
     call directly for a single conjunto to get one per-frequency group's own
     bounds. Reads ``effective.machine_set(code, conjunto_index,
     stage_index)``: when present, its three fields already reflect
-    :func:`~cobre_bridge.decomp.converters.cadastro.effective.
+    :func:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     build_effective_cadastro`'s independent per-field densification (a
     field with no override of its own is the ``hidr`` base, forward-filled
     flat); ``None`` means the pair carries no override at all, and every
@@ -130,7 +130,7 @@ def _rated_envelope(
     non-split plant (:func:`convert_hydros`) and the per-plant comparison
     base for the B8 availability overlay
     (:func:`convert_hydro_group_availability`) — mirrors
-    :func:`~cobre_bridge.decomp.converters.cadastro.effective.
+    :func:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     storage_envelope`'s outer-bound construction: the widest each of
     :func:`_compute_max_turbined_rated_ac_adjusted`'s two components ever
     reaches over the horizon, taken independently (the two maxima need not
@@ -139,7 +139,7 @@ def _rated_envelope(
     date-blind value exactly. Not used for the split plant
     (Itaipu): its entity envelope is instead the *sum* of the two groups'
     own :func:`_conjunto_rated_envelope`, computed in
-    :func:`convert_hydros`, so cobre rule 41 holds by construction rather
+    :func:`convert_hydros`, so novomodelo rule 41 holds by construction rather
     than by coincidence of the two groups peaking on the same stage.
     """
     per_stage = [
@@ -184,7 +184,7 @@ def _conjunto_h_nom(hreg: pd.Series, conjunto_index: int) -> float:
     byte-identical across the two source families), so a missing column only
     ever happens in a hand-built test fixture that doesn't exercise the head
     correction. The source model's own effective-head override
-    (``AC ALTEFE``) is never consulted here — see the ``TRACKED COBRE-GAP
+    (``AC ALTEFE``) is never consulted here — see the ``TRACKED NOVOMODELO-GAP
     WORKAROUND`` in :func:`convert_hydros`.
     """
     raw = hreg.get(f"queda_nominal_conjunto_{conjunto_index}")
@@ -475,7 +475,7 @@ def _build_split_unit_groups(
     Returns the groups plus their summed ``(max_turbined_m3s,
     max_generation_mw)``: :func:`convert_hydros` declares the plant's own
     entity envelope as exactly this sum, rather than recomputing it
-    independently, so cobre rule 41 holds by construction even though the
+    independently, so novomodelo rule 41 holds by construction even though the
     two groups' own per-stage machine-set changes (if any) need not peak on
     the same stage.
     """
@@ -775,7 +775,7 @@ def convert_itaipu_frequency_min_generation(
     the ``IV`` bus, the transshipment corridor into Ivaiporã). Each is a
     per-(estágio, patamar) list, forward-filled across the calendar the same
     way
-    :func:`~cobre_bridge.decomp.converters.libs_electrical.read_carga_ande`
+    :func:`~novomodelo_bridge.decomp.converters.libs_electrical.read_carga_ande`
     fills the co-located ``carga_ande`` load. In DECOMP the 50 Hz floor binds
     (the 50 Hz
     half sits exactly at it), so dropping it lets the converted case
@@ -785,7 +785,7 @@ def convert_itaipu_frequency_min_generation(
     Returns ``{(hydro_id, hydro_unit_group_id, stage_index): [MW per block]}``
     for the two Itaipu groups, ready to merge into the
     ``hydro_unit_group_bounds`` overlay's ``min_generation_mw`` column
-    (:func:`~cobre_bridge.decomp.group_bounds.convert_hydro_unit_group_bounds`).
+    (:func:`~novomodelo_bridge.decomp.group_bounds.convert_hydro_unit_group_bounds`).
     Returns ``{}`` when the deck operates no Itaipu or carries no ``RI``
     register (a deck with no Itaipu import).
 

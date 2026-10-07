@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.summary_counts import footer_counts
-from cobre_bridge.ui.console import (
+from novomodelo_bridge.core.summary_counts import footer_counts
+from novomodelo_bridge.ui.console import (
     compare_row_style,
     get_console,
     make_table,
@@ -16,8 +16,8 @@ from cobre_bridge.ui.console import (
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from cobre_bridge.comparators.dataset import ComparisonDataset
-    from cobre_bridge.comparators.verdict import CompareVerdict
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.verdict import CompareVerdict
 
 
 def _fmt_metric(x: float) -> str:
@@ -36,7 +36,7 @@ def _fmt_metric(x: float) -> str:
 def print_results_summary_from_dataset(
     dataset: ComparisonDataset,
     newave_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     *,
     verdict: CompareVerdict,
     reference_label: str = "NEWAVE",
@@ -55,8 +55,8 @@ def print_results_summary_from_dataset(
         The canonical comparison dataset for the results subcommand.
     newave_dir:
         Path to the source model case directory.
-    cobre_output_dir:
-        Path to the Cobre output directory.
+    novomodelo_output_dir:
+        Path to the Novomodelo output directory.
     verdict:
         The pre-built compare verdict to render at the top of the summary.
         Built by the caller (``cli/compare.py``) via ``build_compare_verdict``
@@ -76,13 +76,15 @@ def print_results_summary_from_dataset(
 
     target.print()
     target.print(
-        f"Cobre vs {reference_label} Results Comparison",
+        f"Novomodelo vs {reference_label} Results Comparison",
         soft_wrap=True,
         markup=False,
     )
     target.print("=" * 88, soft_wrap=True)
     target.print(f"{reference_label} case:  {newave_dir}", soft_wrap=True, markup=False)
-    target.print(f"Cobre output: {cobre_output_dir}", soft_wrap=True, markup=False)
+    target.print(
+        f"Novomodelo output: {novomodelo_output_dir}", soft_wrap=True, markup=False
+    )
 
     # Per-variable table. WithinTol = share within the (relative) tolerance; sMAPE =
     # mean symmetric error (robust to near-zero source-model references).

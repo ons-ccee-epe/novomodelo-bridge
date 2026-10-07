@@ -140,7 +140,7 @@ class Diagnostic:
 # log record. A ContextVar (not a module global) keeps concurrent conversions in the
 # same process from cross-contaminating each other's diagnostics.
 _ACTIVE: ContextVar[list[Diagnostic] | None] = ContextVar(
-    "cobre_bridge_diagnostics", default=None
+    "novomodelo_bridge_diagnostics", default=None
 )
 
 
@@ -180,7 +180,7 @@ def emit(diagnostic: Diagnostic, *, logger: logging.Logger | None = None) -> Non
 
 
 class WarningCollector(logging.Handler):
-    """Capture ``WARNING``+ records emitted under ``cobre_bridge`` during a run.
+    """Capture ``WARNING``+ records emitted under ``novomodelo_bridge`` during a run.
 
     Converters log every degraded-input substitution (vazpast → empty, c_adic →
     no load, EXPT/RE skipped, REE.DAT cutoff fallback, …) at ``WARNING`` level.

@@ -1,4 +1,4 @@
-"""Initial conditions converter: maps the source model initial storage to Cobre JSON."""
+"""Initial conditions converter: maps the source model initial storage to Novomodelo JSON."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ from datetime import date
 
 import pandas as pd
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.anticipated import read_anticipated_dispatch
-from cobre_bridge.newave.converters.hydro import read_cadastro
-from cobre_bridge.newave.converters.thermal import thermal_generation_bounds
-from cobre_bridge.newave.id_map import NewaveIdMap
-from cobre_bridge.newave.plants import filling_hydro_codes
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
+from novomodelo_bridge.newave.converters.hydro import read_cadastro
+from novomodelo_bridge.newave.converters.thermal import thermal_generation_bounds
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.plants import filling_hydro_codes
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 _LOG = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def _filling_row(exph_df: pd.DataFrame, code: int) -> pd.Series:
     the filling schedule lives on the first ``exph`` row per plant, identified by
     a non-null ``data_inicio_enchimento`` (unit rows carry ``NaT`` there). Callers
     must only invoke this for a ``code`` already admitted by
-    :func:`cobre_bridge.newave.plants.filling_hydro_codes`, which guarantees the
+    :func:`novomodelo_bridge.newave.plants.filling_hydro_codes`, which guarantees the
     predicate selects at least one row (so ``.iloc[0]`` never raises).
     """
     return exph_df.loc[
@@ -38,7 +38,7 @@ def _delivery_window(start_year: int, start_month: int, k: int) -> tuple[str, st
 
     Delivery stage ``k`` is the monthly study stage ``k`` months after the
     study start; the window is ``[first-of-month, first-of-next-month)`` — the
-    exclusive end cobre's windowed-record validator expects.
+    exclusive end novomodelo's windowed-record validator expects.
     """
     total = (start_month - 1) + k
     year = start_year + total // 12
@@ -49,7 +49,7 @@ def _delivery_window(start_year: int, start_month: int, k: int) -> tuple[str, st
 
 
 def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
-    """Convert the source model initial reservoir storage to a Cobre initial_conditions
+    """Convert the source model initial reservoir storage to a Novomodelo initial_conditions
     dict.
 
     Reads ``hidr.dat`` and ``confhd.dat`` from *case*.  Initial
@@ -82,7 +82,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     existing = case.active_hydros
 
     # ``NE`` plants carrying an exph dead-volume filling row are seeded into the
-    # separate ``filling_storage`` list, never ``storage`` — cobre's IC reader
+    # separate ``filling_storage`` list, never ``storage`` — novomodelo's IC reader
     # rejects a hydro that appears in both arrays.  Computed once here from the same
     # admission predicate ``case.active_hydros`` uses; ``set()`` when there is no
     # filling plant, so the in-loop guard below never fires.
@@ -128,9 +128,9 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             filling_storage.append(
                 {
                     "hydro_id": id_map.hydro_id(newave_code),
-                    # cobre-io's ``RawHydroStorage`` keys both ``storage`` and
+                    # novomodelo-io's ``RawHydroStorage`` keys both ``storage`` and
                     # ``filling_storage`` on ``value_hm3``; this must match the
-                    # ``storage`` entries' key below or cobre fails to deserialize.
+                    # ``storage`` entries' key below or novomodelo fails to deserialize.
                     "value_hm3": (morto / 100.0) * vol_min,
                 }
             )
@@ -189,14 +189,14 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
     # ── Past anticipated thermal commitments (from adterm.dat) ──────────
     # Empty for non-GNL cases (despacho_antecipado_gnl=0 in dger.dat). Each entry maps
-    # a thermal's source-model code to its cobre thermal_id.
+    # a thermal's source-model code to its novomodelo thermal_id.
     #
-    # Cobre honours non-zero pre-horizon seeds: the always-active anticipated "fishing"
+    # Novomodelo honours non-zero pre-horizon seeds: the always-active anticipated "fishing"
     # equality pins generation to the committed MW at each delivery stage. The committed
     # value must lie within the plant's static generation bounds ``[min_mw, max_mw]``
-    # (``thermals.json`` / ``cobre-io`` semantic validator); an out-of-range seed makes
+    # (``thermals.json`` / ``novomodelo-io`` semantic validator); an out-of-range seed makes
     # that stage's fishing equality infeasible, so we clamp into range and warn rather
-    # than emit a case cobre would reject.
+    # than emit a case novomodelo would reject.
     anticipated = read_anticipated_dispatch(case)
     gen_bounds = thermal_generation_bounds(case) if anticipated else {}
     if anticipated:
@@ -209,7 +209,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         except KeyError:
             _LOG.warning(
                 "adterm.dat references thermal code=%d that is absent from "
-                "the cobre id map; skipping its anticipated commitment.",
+                "the novomodelo id map; skipping its anticipated commitment.",
                 newave_code,
             )
             continue
@@ -227,7 +227,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                 hi,
                 ", ".join(f"{s:.4f}" for s in seeded),
             )
-        # cobre 0.14 takes past_anticipated_commitments as windowed records
+        # novomodelo 0.14 takes past_anticipated_commitments as windowed records
         # {thermal_id, start_date, end_date, value_mw}, one per leading delivery
         # stage, tiling the plant's lead horizon exactly (strict full coverage,
         # zero-MW stages written explicitly — a missing lead stage is rejected).
@@ -244,7 +244,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     past_anticipated_commitments.sort(key=lambda c: (c["thermal_id"], c["start_date"]))
 
     result: dict = {
-        "$schema": cobre_schemas.schema_url_for("initial_conditions.json"),
+        "$schema": novomodelo_schemas.schema_url_for("initial_conditions.json"),
         "storage": storage,
         "filling_storage": filling_storage,
     }

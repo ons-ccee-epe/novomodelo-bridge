@@ -1,18 +1,18 @@
-"""Canonical Cobre cost-component taxonomy — one source for both stacks.
+"""Canonical Novomodelo cost-component taxonomy — one source for both stacks.
 
-Cobre's per-stage ``costs`` parquet carries one column per cost component plus a
+Novomodelo's per-stage ``costs`` parquet carries one column per cost component plus a
 few derived/aggregate columns. Two places classify those columns:
 
 - the dashboard cost chart (``dashboard/chart_helpers.py::COST_GROUPS``), and
-- the source model↔Cobre cost-breakdown comparison
-  (``comparators.charts._COST_MAP`` + ``cobre_readers.read_cobre_cost_breakdown``).
+- the source model↔Novomodelo cost-breakdown comparison
+  (``comparators.charts._COST_MAP`` + ``novomodelo_readers.read_novomodelo_cost_breakdown``).
 
 They used to each hard-code their own column lists and drifted: the comparator's
 sum list omitted ``contract_cost`` entirely (silently dropping it from the
 breakdown), and the dashboard had no ``excess_cost`` group (lumping it into
 "Other"). This module owns the canonical sets so neither stack can silently miss
 a column; a drift-guard test asserts both classify exactly
-:data:`COBRE_COST_COMPONENT_COLUMNS`.
+:data:`NOVOMODELO_COST_COMPONENT_COLUMNS`.
 
 This is presentation-free: labels, colours, grouping and the source-model-side alignment
 stay in the two consumers.
@@ -42,16 +42,16 @@ COST_PARTITION_COLUMNS: frozenset[str] = frozenset(
     {"scenario_id", "stage_id", "block_id"}
 )
 
-# : Every individual Cobre cost-component column, in a stable display-ish order.
+# : Every individual Novomodelo cost-component column, in a stable display-ish order.
 # : This is the single definition of "which columns are summable cost components".
 # : Both consumers must classify exactly these (enforced by
-# : ``tests/cobre/test_cost_categories.py``); a new Cobre cost column added here that a
+# : ``tests/novomodelo/test_cost_categories.py``); a new Novomodelo cost column added here that a
 # : consumer fails to map is a drift bug, caught by that test.
-COBRE_COST_COMPONENT_COLUMNS: tuple[str, ...] = (
+NOVOMODELO_COST_COMPONENT_COLUMNS: tuple[str, ...] = (
     # Generation / operational
     "thermal_cost",
     # Anticipated (forward-committed, GNL) thermal fuel, booked on the decision-stage
-    # commitment column. Added to Cobre's costs schema after 0.8.0; absent in older runs
+    # commitment column. Added to Novomodelo's costs schema after 0.8.0; absent in older runs
     # (read as 0). Grouped with thermal generation so the thermal category matches the
     # source model CTERM (which books GNL at delivery).
     "anticipated_thermal_cost",

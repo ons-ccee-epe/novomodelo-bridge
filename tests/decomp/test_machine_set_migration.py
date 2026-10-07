@@ -10,7 +10,7 @@ overrides through a date-blind ``_read_ac_machine_overrides``/
 ``machine_set`` accessors, so a plant whose machine set changes
 mid-horizon gets the correct per-stage capacity — a fixture no real deck
 (rv3) exercises, since every machine-set override there resolves to stage 0.
-Tier-1: pure Python, no ``import cobre``, no ``example/`` read.
+Tier-1: pure Python, no ``import novomodelo``, no ``example/`` read.
 """
 
 from __future__ import annotations
@@ -21,13 +21,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro, MachineSet
-from cobre_bridge.decomp.converters.hydro import (
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro, MachineSet
+from novomodelo_bridge.decomp.converters.hydro import (
     convert_hydro_group_availability,
     convert_hydros,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage, build_operative_calendar
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 from tests.conftest import make_decomp_case
 
 _HYDRO_CODE = 7

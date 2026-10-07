@@ -2,10 +2,10 @@
 
 ``compare decomp`` writes its
 machine-readable artifacts through the same shared
-:func:`cobre_bridge.comparators.export.write_artifacts` entry point as
+:func:`novomodelo_bridge.comparators.export.write_artifacts` entry point as
 ``compare newave`` — there is no DECOMP-specific writer any more. This module
 exercises that shared path against a DECOMP-shaped
-:class:`~cobre_bridge.comparators.dataset.ComparisonDataset` (built the way
+:class:`~novomodelo_bridge.comparators.dataset.ComparisonDataset` (built the way
 ``build_decomp_dataset`` builds one), focusing on the one thing worth
 DECOMP-specific coverage for: that the ``unmapped`` entity provenance
 (``dataset.metadata["unmapped"]``) survives into the written artifact set.
@@ -19,12 +19,12 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.dataset import (
+from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
     TIDY_SCHEMA,
     ComparisonDataset,
 )
-from cobre_bridge.comparators.export import write_artifacts
+from novomodelo_bridge.comparators.export import write_artifacts
 
 
 def _make_decomp_dataset() -> ComparisonDataset:
@@ -32,7 +32,7 @@ def _make_decomp_dataset() -> ComparisonDataset:
 
     One hydro-generation row and one thermal-generation row, plus a
     DECOMP-flavoured ``unmapped`` metadata entry (entities present in the
-    deck's own outputs that the id map could not resolve into Cobre ids).
+    deck's own outputs that the id map could not resolve into Novomodelo ids).
     """
     tidy = pl.DataFrame(
         {
@@ -43,7 +43,7 @@ def _make_decomp_dataset() -> ComparisonDataset:
             "stage": [0, 0],
             "block": [-1, -1],
             "variable": ["generation_mw", "generation_mw"],
-            "source": ["newave", "cobre"],
+            "source": ["newave", "novomodelo"],
             "value": [100.0, 90.0],
         },
         schema=TIDY_SCHEMA,
@@ -72,14 +72,14 @@ def _make_decomp_dataset() -> ComparisonDataset:
 def test_write_artifacts_emits_expected_files(tmp_path: Path) -> None:
     dataset = _make_decomp_dataset()
     decomp_dir = tmp_path / "decomp"
-    cobre_output_dir = tmp_path / "output"
+    novomodelo_output_dir = tmp_path / "output"
     out = tmp_path / "artifacts"
 
     write_artifacts(
         dataset,
         command="compare decomp",
         source_dir=decomp_dir,
-        cobre_output_dir=cobre_output_dir,
+        novomodelo_output_dir=novomodelo_output_dir,
         tolerance=1e-2,
         out_dir=out,
         formats=["parquet", "json", "csv"],
@@ -107,7 +107,7 @@ def test_unmapped_provenance_survives_in_metadata_json(tmp_path: Path) -> None:
         dataset,
         command="compare decomp",
         source_dir=tmp_path / "decomp",
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1e-2,
         out_dir=out,
         formats=["parquet"],
@@ -125,7 +125,7 @@ def test_manifest_records_command_tolerance_and_artifacts(tmp_path: Path) -> Non
         dataset,
         command="compare decomp",
         source_dir=tmp_path / "decomp",
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1e-2,
         out_dir=out,
         formats=["parquet", "json", "csv"],
@@ -157,7 +157,7 @@ def test_manifest_records_source_dir_input_files_and_diagnostics(
         dataset,
         command="compare decomp",
         source_dir=decomp_dir,
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1e-2,
         out_dir=out,
         formats=["json"],
@@ -180,7 +180,7 @@ def test_unknown_format_raises_valueerror(tmp_path: Path) -> None:
             dataset,
             command="compare decomp",
             source_dir=tmp_path / "decomp",
-            cobre_output_dir=tmp_path / "output",
+            novomodelo_output_dir=tmp_path / "output",
             tolerance=1e-2,
             out_dir=tmp_path / "artifacts",
             formats=["xml"],
@@ -199,7 +199,7 @@ def test_empty_dataset_still_writes_typed_artifacts(tmp_path: Path) -> None:
         empty_dataset,
         command="compare decomp",
         source_dir=tmp_path / "decomp",
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1e-2,
         out_dir=out,
         formats=["parquet", "json", "csv"],

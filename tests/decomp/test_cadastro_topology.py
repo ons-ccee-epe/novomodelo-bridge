@@ -3,7 +3,7 @@
 Covers the two plant-keyed, ``int``-valued mnemonics (``ACNUMJUS`` — the
 water-routing downstream plant — and ``ACNUMPOS`` — the inflow gauge),
 flowing through the shared
-:func:`~cobre_bridge.decomp.converters.cadastro.overrides._read_keyed_overrides`
+:func:`~novomodelo_bridge.decomp.converters.cadastro.overrides._read_keyed_overrides`
 reader (with ``_plant_code_key``), and their effect on the re-sourced
 cascade walk (``_downstream_operated``), the incremental-inflow cascade
 (``_incremental_context``/``convert_external_inflows``), the entity
@@ -23,19 +23,22 @@ import pandas as pd
 import pytest
 from idecomp.decomp.modelos.dadger import ACNUMJUS, ACNUMPOS
 
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
 )
-from cobre_bridge.decomp.converters.hydro import convert_hydros
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.pipeline import _topology_relink_diagnostic
-from cobre_bridge.decomp.scenarios import _incremental_context, convert_external_inflows
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.converters.hydro import convert_hydros
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.pipeline import _topology_relink_diagnostic
+from novomodelo_bridge.decomp.scenarios import (
+    _incremental_context,
+    convert_external_inflows,
+)
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 
 if TYPE_CHECKING:
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
 class _FakeDadger:

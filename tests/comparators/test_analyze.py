@@ -8,13 +8,13 @@ from typing import cast
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.analyze import (
+from novomodelo_bridge.comparators.analyze import (
     aggregate_percentile_band,
     build_results_dataset,
     bus_groups_and_pct,
-    cobre_sum_and_newave_sin,
     cost_percent_deltas,
     fpha_metric_summary,
+    novomodelo_sum_and_newave_sin,
     per_bus_band_from_pct,
     per_bus_sums_from_frame,
     per_bus_sums_from_results,
@@ -31,21 +31,21 @@ from cobre_bridge.comparators.analyze import (
     tidy_results_dataset,
     top_divergences_from_results,
 )
-from cobre_bridge.comparators.dataset import (
+from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
     TIDY_SCHEMA,
     ComparisonDataset,
 )
-from cobre_bridge.comparators.model import (
+from novomodelo_bridge.comparators.model import (
     PercentileData,
     ResultComparison,
     build_results_summary,
 )
-from cobre_bridge.comparators.verdict import (
+from novomodelo_bridge.comparators.verdict import (
     CompareVerdict,
     build_compare_verdict,
 )
-from cobre_bridge.core import diagnostics as dx
+from novomodelo_bridge.core import diagnostics as dx
 
 
 def _make_results() -> list[ResultComparison]:
@@ -54,11 +54,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),
@@ -66,11 +66,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="TUCURUI",
             newave_code=20,
-            cobre_id=1,
+            novomodelo_id=1,
             stage=1,
             variable="generation_mw",
             newave_value=50.0,
-            cobre_value=40.0,
+            novomodelo_value=40.0,
             abs_diff=10.0,
             rel_diff=0.2,
         ),
@@ -78,11 +78,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="thermal",
             entity_name="ANGRA",
             newave_code=30,
-            cobre_id=2,
+            novomodelo_id=2,
             stage=0,
             variable="generation_mw",
             newave_value=0.0,
-            cobre_value=5.0,
+            novomodelo_value=5.0,
             abs_diff=5.0,
             rel_diff=None,
         ),
@@ -99,7 +99,7 @@ def test_tidy_from_results_row_count_and_sources() -> None:
     out = tidy_from_results(results)
 
     assert out.height == 2 * len(results)
-    assert set(out["source"].unique().to_list()) == {"newave", "cobre"}
+    assert set(out["source"].unique().to_list()) == {"newave", "novomodelo"}
 
 
 def test_tidy_from_results_schema_conforms() -> None:
@@ -115,8 +115,10 @@ def test_tidy_from_results_values_and_sentinels() -> None:
 
     newave_row = out.filter((pl.col("entity_id") == 0) & (pl.col("source") == "newave"))
     assert newave_row["value"].to_list() == [100.0]
-    cobre_row = out.filter((pl.col("entity_id") == 0) & (pl.col("source") == "cobre"))
-    assert cobre_row["value"].to_list() == [110.0]
+    novomodelo_row = out.filter(
+        (pl.col("entity_id") == 0) & (pl.col("source") == "novomodelo")
+    )
+    assert novomodelo_row["value"].to_list() == [110.0]
     assert out["bus"].unique().to_list() == [-1]
     assert out["block"].unique().to_list() == [-1]
 
@@ -243,11 +245,11 @@ def _make_many_results(n: int) -> list[ResultComparison]:
             entity_type="hydro",
             entity_name=f"PLANT_{i:03d}",
             newave_code=i,
-            cobre_id=i,
+            novomodelo_id=i,
             stage=i % 4,
             variable="generation_mw",
             newave_value=float(i),
-            cobre_value=float(i) + float(i),
+            novomodelo_value=float(i) + float(i),
             abs_diff=float(i),
             rel_diff=None if i == 0 else 1.0,
         )
@@ -289,11 +291,11 @@ def test_top_divergences_sorted_and_truncated() -> None:
     assert set(top[0].keys()) == {
         "entity_type",
         "entity_name",
-        "cobre_id",
+        "novomodelo_id",
         "stage",
         "variable",
         "newave_value",
-        "cobre_value",
+        "novomodelo_value",
         "abs_diff",
         "rel_diff",
     }
@@ -333,7 +335,7 @@ def test_build_results_dataset_validates_and_carries_metadata() -> None:
             }
         ),
         nw_costs={"deficit": 1.0},
-        cobre_costs={"deficit": 2.0},
+        novomodelo_costs={"deficit": 2.0},
         nw_bus_names={0: "SUDESTE"},
         nw_hydro_names={0: "ITAIPU", 1: "TUCURUI"},
     )
@@ -343,7 +345,7 @@ def test_build_results_dataset_validates_and_carries_metadata() -> None:
     dataset.validate()
     assert len(dataset.metadata["top_divergences"]) == len(results)
     assert dataset.render.nw_costs == {"deficit": 1.0}
-    assert dataset.render.cobre_costs == {"deficit": 2.0}
+    assert dataset.render.novomodelo_costs == {"deficit": 2.0}
     assert dataset.render.nw_bus_names == {0: "SUDESTE"}
     assert dataset.metadata["nw_hydro_names"] == {0: "ITAIPU", 1: "TUCURUI"}
     assert dataset.tidy.height == 2 * len(results) + 6
@@ -363,14 +365,14 @@ def test_build_results_dataset_populates_render_inputs() -> None:
     pct = PercentileData(
         thermal=pl.DataFrame({"entity_id": [0], "stage_id": [0]}),
         nw_max_stage=12,
-        cobre_training_seconds=3.5,
+        novomodelo_training_seconds=3.5,
     )
 
     dataset = build_results_dataset(results, pct, 1e-2)
 
     assert dataset.render.results == list(results)
     assert dataset.render.nw_max_stage == 12
-    assert dataset.render.cobre_training_seconds == 3.5
+    assert dataset.render.novomodelo_training_seconds == 3.5
     assert isinstance(dataset.render.thermal, pl.DataFrame)
     assert isinstance(dataset.render.gc_constraints, list)
 
@@ -386,7 +388,7 @@ def test_metadata_json_holds_only_provenance_at_top_level(tmp_path: Path) -> Non
     import dataclasses
     import json
 
-    from cobre_bridge.comparators.dataset import RenderInputs
+    from novomodelo_bridge.comparators.dataset import RenderInputs
 
     results = _make_results()
     pct = PercentileData(
@@ -425,8 +427,8 @@ def test_render_inputs_fields_match_report_builder_consumption() -> None:
     import inspect
     import re
 
-    from cobre_bridge.comparators import report_builder
-    from cobre_bridge.comparators.dataset import RenderInputs
+    from novomodelo_bridge.comparators import report_builder
+    from novomodelo_bridge.comparators.dataset import RenderInputs
 
     field_names = {f.name for f in dataclasses.fields(RenderInputs)}
     source = inspect.getsource(report_builder)
@@ -467,16 +469,16 @@ def test_build_results_dataset_carries_footer_counts() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _band_result(stage: int, cobre_id: int, var: str) -> ResultComparison:
+def _band_result(stage: int, novomodelo_id: int, var: str) -> ResultComparison:
     return ResultComparison(
         entity_type="hydro",
-        entity_name=f"H{cobre_id}",
-        newave_code=cobre_id + 10,
-        cobre_id=cobre_id,
+        entity_name=f"H{novomodelo_id}",
+        newave_code=novomodelo_id + 10,
+        novomodelo_id=novomodelo_id,
         stage=stage,
         variable=var,
-        newave_value=float(stage * 100 + cobre_id),
-        cobre_value=float(stage * 100 + cobre_id) - 5.0,
+        newave_value=float(stage * 100 + novomodelo_id),
+        novomodelo_value=float(stage * 100 + novomodelo_id) - 5.0,
         abs_diff=5.0,
         rel_diff=None,
     )
@@ -549,26 +551,26 @@ def test_aggregate_percentile_band_filters_entity_ids() -> None:
 
 def test_per_stage_sum_from_results_filters_entity_type_and_variable() -> None:
     results = [
-        _band_result(stage=1, cobre_id=0, var="storage_final_hm3"),
-        _band_result(stage=1, cobre_id=1, var="storage_final_hm3"),
-        _band_result(stage=2, cobre_id=0, var="storage_final_hm3"),
+        _band_result(stage=1, novomodelo_id=0, var="storage_final_hm3"),
+        _band_result(stage=1, novomodelo_id=1, var="storage_final_hm3"),
+        _band_result(stage=2, novomodelo_id=0, var="storage_final_hm3"),
         # different variable / type -> excluded.
-        _band_result(stage=1, cobre_id=9, var="other"),
+        _band_result(stage=1, novomodelo_id=9, var="other"),
         ResultComparison(
             entity_type="thermal",
             entity_name="T",
             newave_code=99,
-            cobre_id=99,
+            novomodelo_id=99,
             stage=1,
             variable="storage_final_hm3",
             newave_value=1000.0,
-            cobre_value=1.0,
+            novomodelo_value=1.0,
             abs_diff=999.0,
             rel_diff=None,
         ),
     ]
     nw, cb, matched = per_stage_sum_from_results(results, "hydro", "storage_final_hm3")
-    # newave_value = stage*100 + cobre_id; cobre_value = that - 5.
+    # newave_value = stage*100 + novomodelo_id; novomodelo_value = that - 5.
     # stage 1: entities 0,1 -> 100 + 101 = 201; stage 2: entity 0 -> 200.
     assert nw == {1: 100.0 + 101.0, 2: 200.0}
     assert cb == {1: 95.0 + 96.0, 2: 195.0}
@@ -581,11 +583,11 @@ def test_per_stage_sum_from_results_empty_variable_matches_all() -> None:
             entity_type="thermal",
             entity_name="T1",
             newave_code=21,
-            cobre_id=5,
+            novomodelo_id=5,
             stage=1,
             variable="generation_mw",
             newave_value=50.0,
-            cobre_value=45.0,
+            novomodelo_value=45.0,
             abs_diff=5.0,
             rel_diff=None,
         ),
@@ -593,11 +595,11 @@ def test_per_stage_sum_from_results_empty_variable_matches_all() -> None:
             entity_type="thermal",
             entity_name="T2",
             newave_code=22,
-            cobre_id=6,
+            novomodelo_id=6,
             stage=1,
             variable="commitment",  # different variable, same type -> still kept
             newave_value=1.0,
-            cobre_value=1.0,
+            novomodelo_value=1.0,
             abs_diff=0.0,
             rel_diff=None,
         ),
@@ -609,7 +611,7 @@ def test_per_stage_sum_from_results_empty_variable_matches_all() -> None:
 
 
 def test_per_stage_sum_from_results_no_match_returns_empty() -> None:
-    results = [_band_result(stage=1, cobre_id=0, var="v")]
+    results = [_band_result(stage=1, novomodelo_id=0, var="v")]
     nw, cb, matched = per_stage_sum_from_results(results, "bus", "v")
     assert nw == {}
     assert cb == {}
@@ -655,7 +657,7 @@ def test_per_stage_sum_from_frame_empty_returns_empty() -> None:
 
 
 def _hydro_row(
-    cobre_id: int,
+    novomodelo_id: int,
     stage: int,
     variable: str,
     nw: float,
@@ -665,13 +667,13 @@ def _hydro_row(
 ) -> ResultComparison:
     return ResultComparison(
         entity_type=entity_type,
-        entity_name=f"H{cobre_id}",
-        newave_code=cobre_id + 10,
-        cobre_id=cobre_id,
+        entity_name=f"H{novomodelo_id}",
+        newave_code=novomodelo_id + 10,
+        novomodelo_id=novomodelo_id,
         stage=stage,
         variable=variable,
         newave_value=nw,
-        cobre_value=cb,
+        novomodelo_value=cb,
         abs_diff=abs(nw - cb),
         rel_diff=None,
     )
@@ -682,7 +684,7 @@ def test_per_bus_sums_from_results_buckets_and_skips_fictitious() -> None:
     #
     # The bus label is re-sourced from the hydro_bus_generation
     # partition's distinct (hydro_id, bus_id) pairs (merged onto hydro_meta as
-    # "bus_ids" by the results-comparison orchestrator) -- read_cobre_hydro_metadata
+    # "bus_ids" by the results-comparison orchestrator) -- read_novomodelo_hydro_metadata
     # itself no longer carries a "bus_id" key.
     results = [
         _hydro_row(0, 1, "storage_final_hm3", 100.0, 90.0),
@@ -1042,16 +1044,18 @@ def test_plant_percentile_arrays_filters_once_per_plant() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _bus_rc(name: str, cobre_id: int, stage: int, variable: str) -> ResultComparison:
+def _bus_rc(
+    name: str, novomodelo_id: int, stage: int, variable: str
+) -> ResultComparison:
     return ResultComparison(
         entity_type="bus",
         entity_name=name,
-        newave_code=cobre_id + 10,
-        cobre_id=cobre_id,
+        newave_code=novomodelo_id + 10,
+        novomodelo_id=novomodelo_id,
         stage=stage,
         variable=variable,
-        newave_value=float(stage * 10 + cobre_id),
-        cobre_value=float(stage * 10 + cobre_id) - 1.0,
+        newave_value=float(stage * 10 + novomodelo_id),
+        novomodelo_value=float(stage * 10 + novomodelo_id) - 1.0,
         abs_diff=1.0,
         rel_diff=None,
     )
@@ -1062,18 +1066,18 @@ def _spill_rc(stage: int, variable: str, nw: float) -> ResultComparison:
         entity_type="system_spillage",
         entity_name="SIN",
         newave_code=0,
-        cobre_id=0,
+        novomodelo_id=0,
         stage=stage,
         variable=variable,
         newave_value=nw,
-        cobre_value=nw - 1.0,
+        novomodelo_value=nw - 1.0,
         abs_diff=1.0,
         rel_diff=None,
     )
 
 
-def test_cobre_sum_and_newave_sin_sums_both_sides() -> None:
-    cobre_hydro = pl.DataFrame(
+def test_novomodelo_sum_and_newave_sin_sums_both_sides() -> None:
+    novomodelo_hydro = pl.DataFrame(
         {
             "entity_id": [0, 1, 0, 1],
             "stage_id": [1, 1, 2, 2],
@@ -1089,17 +1093,17 @@ def test_cobre_sum_and_newave_sin_sums_both_sides() -> None:
         }
     )
 
-    cobre_by_stage, nw_by_stage = cobre_sum_and_newave_sin(
-        cobre_hydro, "stored_energy_final_mwh", nw_sin, "EARMF", 730.0, 1, None
+    novomodelo_by_stage, nw_by_stage = novomodelo_sum_and_newave_sin(
+        novomodelo_hydro, "stored_energy_final_mwh", nw_sin, "EARMF", 730.0, 1, None
     )
 
-    assert cobre_by_stage == {1: 2800.0, 2: 3000.0}
+    assert novomodelo_by_stage == {1: 2800.0, 2: 3000.0}
     # stage 2 -> 2-1=1, stage 3 -> 3-1=2; value * 730.
     assert nw_by_stage == {1: 3.0 * 730.0, 2: 4.0 * 730.0}
 
 
-def test_cobre_sum_and_newave_sin_applies_factor_and_offset() -> None:
-    cobre_hydro = pl.DataFrame({"entity_id": [0], "stage_id": [5], "v": [10.0]})
+def test_novomodelo_sum_and_newave_sin_applies_factor_and_offset() -> None:
+    novomodelo_hydro = pl.DataFrame({"entity_id": [0], "stage_id": [5], "v": [10.0]})
     nw_sin = pl.DataFrame(
         {
             "stage": [10, 11, None, 12],
@@ -1108,28 +1112,33 @@ def test_cobre_sum_and_newave_sin_applies_factor_and_offset() -> None:
         }
     )
 
-    cobre_by_stage, nw_by_stage = cobre_sum_and_newave_sin(
-        cobre_hydro, "v", nw_sin, "EARMF", 2.0, 3, None
+    novomodelo_by_stage, nw_by_stage = novomodelo_sum_and_newave_sin(
+        novomodelo_hydro, "v", nw_sin, "EARMF", 2.0, 3, None
     )
 
-    assert cobre_by_stage == {5: 10.0}
+    assert novomodelo_by_stage == {5: 10.0}
     # Row 1: " earmf " strips/uppercases to EARMF -> stage 10-3=7, 1.0*2=2.0.
     # Row 2: value None -> skipped. Row 3: stage None -> skipped.
     # Row 4: variable OTHER -> filtered out.
     assert nw_by_stage == {7: 2.0}
 
 
-def test_cobre_sum_and_newave_sin_empty_returns_empty() -> None:
+def test_novomodelo_sum_and_newave_sin_empty_returns_empty() -> None:
     empty = pl.DataFrame(schema={"entity_id": pl.Int64, "stage_id": pl.Int64})
-    assert cobre_sum_and_newave_sin(empty, "v", None, None, 1.0, 0, None) == ({}, {})
+    assert novomodelo_sum_and_newave_sin(empty, "v", None, None, 1.0, 0, None) == (
+        {},
+        {},
+    )
 
-    cobre_hydro = pl.DataFrame({"entity_id": [0], "stage_id": [1], "v": [5.0]})
+    novomodelo_hydro = pl.DataFrame({"entity_id": [0], "stage_id": [1], "v": [5.0]})
     # Missing variable column -> ({}, {}).
-    assert cobre_sum_and_newave_sin(
-        cobre_hydro, "absent", None, None, 1.0, 0, None
+    assert novomodelo_sum_and_newave_sin(
+        novomodelo_hydro, "absent", None, None, 1.0, 0, None
     ) == ({}, {})
-    # No nw_sin -> only Cobre side populated.
-    cb, nw = cobre_sum_and_newave_sin(cobre_hydro, "v", None, "EARMF", 1.0, 0, None)
+    # No nw_sin -> only Novomodelo side populated.
+    cb, nw = novomodelo_sum_and_newave_sin(
+        novomodelo_hydro, "v", None, "EARMF", 1.0, 0, None
+    )
     assert cb == {1: 5.0}
     assert nw == {}
 
@@ -1185,7 +1194,7 @@ def test_spillage_lookups_builds_nw_and_cb() -> None:
         _spill_rc(2, "VERTOT", 110.0),
         _spill_rc(1, "VERTcont", 60.0),
     ]
-    cobre_spill_energy = pl.DataFrame(
+    novomodelo_spill_energy = pl.DataFrame(
         {
             "stage_id": [1, 2],
             "total_mw": [96.0, 106.0],
@@ -1194,7 +1203,7 @@ def test_spillage_lookups_builds_nw_and_cb() -> None:
         }
     )
 
-    nw_lookup, cb_lookup = spillage_lookups(results, cobre_spill_energy)
+    nw_lookup, cb_lookup = spillage_lookups(results, novomodelo_spill_energy)
 
     assert nw_lookup["VERTOT"] == {1: 100.0, 2: 110.0}
     assert nw_lookup["VERTcont"] == {1: 60.0}
@@ -1325,7 +1334,7 @@ class TestCompareVerdict:
 def _reldiff_result(
     name: str,
     code: int,
-    cobre_id: int,
+    novomodelo_id: int,
     stage: int,
     var: str,
     rel_diff: float | None,
@@ -1335,11 +1344,11 @@ def _reldiff_result(
         entity_type=entity_type,
         entity_name=name,
         newave_code=code,
-        cobre_id=cobre_id,
+        novomodelo_id=novomodelo_id,
         stage=stage,
         variable=var,
         newave_value=100.0,
-        cobre_value=100.0 * (1.0 + (rel_diff or 0.0)),
+        novomodelo_value=100.0 * (1.0 + (rel_diff or 0.0)),
         abs_diff=100.0 * (rel_diff or 0.0),
         rel_diff=rel_diff,
     )
@@ -1360,11 +1369,11 @@ def test_plant_max_reldiff_ranking_orders_worst_first_and_computes_median() -> N
             entity_type="thermal",
             entity_name="ANGRA",
             newave_code=30,
-            cobre_id=2,
+            novomodelo_id=2,
             stage=0,
             variable="gen",
             newave_value=10.0,
-            cobre_value=99.0,
+            novomodelo_value=99.0,
             abs_diff=89.0,
             rel_diff=8.9,
         ),
@@ -1436,11 +1445,11 @@ def test_productivity_scatter_errors_empty_input_returns_zero_zero() -> None:
 def test_fpha_metric_summary_aggregates_per_plant_and_sorts_worst_first() -> None:
     metrics = pl.DataFrame(
         {
-            "cobre_id": [0, 0, 1],
+            "novomodelo_id": [0, 0, 1],
             "plant_name": ["ITAIPU", "ITAIPU", "TUCURUI"],
             "stage": [0, 1, 0],
             "n_planes_newave": [3, 5, 2],
-            "n_planes_cobre": [4, 6, 2],
+            "n_planes_novomodelo": [4, 6, 2],
             "n_v": [1, 1, 3],
             "nmae": [0.02, 0.04, 0.10],
             "bias": [0.01, -0.01, 0.05],
@@ -1450,7 +1459,7 @@ def test_fpha_metric_summary_aggregates_per_plant_and_sorts_worst_first() -> Non
     )
 
     agg = fpha_metric_summary(metrics)
-    rows = {int(r["cobre_id"]): r for r in agg.iter_rows(named=True)}
+    rows = {int(r["novomodelo_id"]): r for r in agg.iter_rows(named=True)}
 
     itaipu = rows[0]
     assert itaipu["plant_name"] == "ITAIPU"
@@ -1467,7 +1476,7 @@ def test_fpha_metric_summary_aggregates_per_plant_and_sorts_worst_first() -> Non
     assert tucurui["worst_nmae"] == pytest.approx(10.0)
 
     # Sorted worst-NMAE first: TUCURUI (10%) before ITAIPU (4%).
-    assert list(agg["cobre_id"]) == [1, 0]
+    assert list(agg["novomodelo_id"]) == [1, 0]
 
 
 # ---------------------------------------------------------------------------

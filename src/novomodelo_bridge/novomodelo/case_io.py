@@ -1,13 +1,13 @@
-"""Shared low-level readers for Cobre case/output files.
+"""Shared low-level readers for Novomodelo case/output files.
 
 Both the dashboard (``dashboard/data.py``) and the comparator
-(``cobre/readers.py``) read the same on-disk Cobre artifacts. This
+(``novomodelo/readers.py``) read the same on-disk Novomodelo artifacts. This
 module holds the pieces they genuinely share, so a fix lands in one place
 instead of drifting between two near-copies.
 
 Currently it owns the hydro-productivity resolution (the parquet override table
 plus the legacy production-models JSON fallback). It is the seed of the wider
-shared Cobre-I/O foundation; more low-level readers can move here over time.
+shared Novomodelo-I/O foundation; more low-level readers can move here over time.
 """
 
 from __future__ import annotations
@@ -20,16 +20,16 @@ _LOG = logging.getLogger(__name__)
 
 
 def case_dir_for(output_dir: Path) -> Path:
-    """Return the Cobre *case* directory that owns *output_dir*.
+    """Return the Novomodelo *case* directory that owns *output_dir*.
 
-    A Cobre case lays its inputs (``system/``, ``constraints/``,
+    A Novomodelo case lays its inputs (``system/``, ``constraints/``,
     ``penalties.json``, …) in the case directory and its solver outputs
     (``simulation/``, ``training/``, ``policy/``) one level below, in
     ``<case_dir>/output``. The comparator is handed the ``output/`` directory,
     so the case directory is its parent.
 
     This is the single home for that "``output`` sits under the case" contract,
-    which used to be hard-coded as ``cobre_output_dir.parent`` at ~13 sites — and
+    which used to be hard-coded as ``novomodelo_output_dir.parent`` at ~13 sites — and
     the one place a future custom ``--output`` layout would override.
     """
     return output_dir.parent
@@ -38,7 +38,7 @@ def case_dir_for(output_dir: Path) -> Path:
 def productivity_from_energy_parquet(case_dir: Path) -> dict[int, float]:
     """Return ``{hydro_id: ρ_eq}`` from ``hydro_energy_productivity.parquet``.
 
-    Cobre's productivity-resolution-rules contract puts per-(hydro, stage) ρ_eq
+    Novomodelo's productivity-resolution-rules contract puts per-(hydro, stage) ρ_eq
     in the parquet override table. Prefer the per-hydro NULL-stage_id "default"
     row; fall back to the productivity at the smallest stage_id when no default
     row exists. Returns ``{}`` when the file is absent or unreadable.
@@ -89,7 +89,7 @@ def productivity_from_energy_parquet(case_dir: Path) -> dict[int, float]:
 def productivity_from_production_models(case_dir: Path) -> dict[int, float]:
     """Legacy fallback: read productivity from ``hydro_production_models.json``.
 
-    Pre-modernization cobre-bridge cases (before the parquet-only contract) embed
+    Pre-modernization novomodelo-bridge cases (before the parquet-only contract) embed
     ``productivity_mw_per_m3s`` in the JSON stage_range entries; this preserves
     dashboard/compare support for those older outputs. New cases use
     :func:`productivity_from_energy_parquet` instead. Returns ``{}`` when the file

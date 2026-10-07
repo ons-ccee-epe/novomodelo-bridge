@@ -4,26 +4,26 @@ from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.ui.html.plotly import facet_grid
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.ui.html.plotly import facet_grid
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
 def performance_metric_cards(
     nw_tim_stages: dict[str, float],
-    cobre_training_seconds: float,
+    novomodelo_training_seconds: float,
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Headline timing KPIs: The source model total / training, Cobre total, speedup."""
-    from cobre_bridge.comparators.html_report import metric_card, metrics_grid
-    from cobre_bridge.ui.theme import COMPARISON_COLORS
+    """Headline timing KPIs: The source model total / training, Novomodelo total, speedup."""
+    from novomodelo_bridge.comparators.html_report import metric_card, metrics_grid
+    from novomodelo_bridge.ui.theme import COMPARISON_COLORS
 
     nw_total = float(nw_tim_stages.get("Tempo Total", 0.0))
     nw_policy = float(nw_tim_stages.get("Calculo da Politica", 0.0))
-    cb_total = float(cobre_training_seconds)
+    cb_total = float(novomodelo_training_seconds)
     speedup = (nw_policy / cb_total) if cb_total > 1e-6 else float("nan")
 
     def _fmt_dur(seconds: float) -> str:
@@ -51,12 +51,12 @@ def performance_metric_cards(
         ),
         metric_card(
             _fmt_dur(cb_total),
-            "Cobre Training",
-            color=COMPARISON_COLORS.get("cobre"),
+            "Novomodelo Training",
+            color=COMPARISON_COLORS.get("novomodelo"),
         ),
         metric_card(
             _fmt_x(speedup),
-            f"Speedup ({reference_label} policy ÷ Cobre training)",
+            f"Speedup ({reference_label} policy ÷ Novomodelo training)",
             color=COMPARISON_COLORS.get("match"),
         ),
     ]
@@ -65,12 +65,12 @@ def performance_metric_cards(
 
 def performance_iteration_chart(
     nw_tim_iterations: pl.DataFrame,
-    cobre_convergence: pl.DataFrame,
+    novomodelo_convergence: pl.DataFrame,
     reference_label: str = "NEWAVE",
 ) -> str:
     """Line chart of total seconds per training iteration.
 
-    The source model total times come from ``newave.tim`` (already in seconds); Cobre
+    The source model total times come from ``newave.tim`` (already in seconds); Novomodelo
     comes from ``training/convergence.parquet:time_total_ms`` converted to seconds.
     Iteration 1 carries clock-init garbage on the source model side; we clip to a
     sensible max for the chart but show the raw value in the tooltip via a textual
@@ -78,9 +78,9 @@ def performance_iteration_chart(
     """
     has_nw = not nw_tim_iterations.is_empty()
     has_cb = (
-        not cobre_convergence.is_empty()
-        and "iteration" in cobre_convergence.columns
-        and "time_total_ms" in cobre_convergence.columns
+        not novomodelo_convergence.is_empty()
+        and "iteration" in novomodelo_convergence.columns
+        and "time_total_ms" in novomodelo_convergence.columns
     )
     if not has_nw and not has_cb:
         return "<p>No timing data available.</p>"
@@ -106,9 +106,9 @@ def performance_iteration_chart(
 
     if has_cb:
         df = (
-            cobre_convergence.sort("iteration")
-            if isinstance(cobre_convergence, pl.DataFrame)
-            else cobre_convergence.sort_values("iteration")
+            novomodelo_convergence.sort("iteration")
+            if isinstance(novomodelo_convergence, pl.DataFrame)
+            else novomodelo_convergence.sort_values("iteration")
         )
         it_col = (
             df["iteration"].to_list()
@@ -126,10 +126,10 @@ def performance_iteration_chart(
             {
                 "x": it_col,
                 "y": secs,
-                "name": "Cobre",
+                "name": "Novomodelo",
                 "type": "scatter",
                 "mode": "lines+markers",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
                 "marker": {"size": 5},
             }
         )
@@ -150,13 +150,13 @@ def performance_iteration_chart(
 
 def performance_fwd_bwd_split_chart(
     nw_tim_iterations: pl.DataFrame,
-    cobre_convergence: pl.DataFrame,
+    novomodelo_convergence: pl.DataFrame,
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Stacked forward / backward split per iteration, the source model vs Cobre.
+    """Stacked forward / backward split per iteration, the source model vs Novomodelo.
 
     Two panels stacked vertically: top panel = the source model (backward +
-    forward stacked bars in seconds), bottom panel = Cobre (same but
+    forward stacked bars in seconds), bottom panel = Novomodelo (same but
     converted from ms).
 
     ``nw_tim_iterations`` renders its panel only when it actually carries the
@@ -171,9 +171,11 @@ def performance_fwd_bwd_split_chart(
         "backward_seconds",
     }.issubset(nw_tim_iterations.columns)
     has_cb = (
-        not cobre_convergence.is_empty()
-        and "iteration" in cobre_convergence.columns
-        and {"time_forward_ms", "time_backward_ms"}.issubset(cobre_convergence.columns)
+        not novomodelo_convergence.is_empty()
+        and "iteration" in novomodelo_convergence.columns
+        and {"time_forward_ms", "time_backward_ms"}.issubset(
+            novomodelo_convergence.columns
+        )
     )
     if not has_nw and not has_cb:
         return "<p>No forward/backward split available.</p>"
@@ -191,11 +193,11 @@ def performance_fwd_bwd_split_chart(
         panels.append((reference_label, it, bw_clipped, fw_clipped))
         all_secs.extend([v for v in bw_clipped + fw_clipped if v > 0])
     if has_cb:
-        df = cobre_convergence.sort("iteration")
+        df = novomodelo_convergence.sort("iteration")
         it = df["iteration"].to_list()
         bw = [float(v) / 1000.0 for v in df["time_backward_ms"].to_list()]
         fw = [float(v) / 1000.0 for v in df["time_forward_ms"].to_list()]
-        panels.append(("Cobre", it, bw, fw))
+        panels.append(("Novomodelo", it, bw, fw))
         all_secs.extend(bw + fw)
 
     nrows = len(panels)

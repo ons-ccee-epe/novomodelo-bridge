@@ -4,11 +4,11 @@
 The source model's ``polinjus`` cadastro stores, per hydro plant, one or more *families*
 of downstream (tailrace) level curves — the downstream level as a piecewise polynomial
 in the total outflow (turbined + spilled + lateral). Each family is keyed by the
-downstream plant's reference level. cobre's FPHA production model consumes these as
+downstream plant's reference level. novomodelo's FPHA production model consumes these as
 ``system/tailrace_curves.parquet`` — piecewise-quartic backwater families — to evaluate
 the exact net head.
 
-The mapping reads the ``inewave`` source columns (left) and emits descriptive cobre
+The mapping reads the ``inewave`` source columns (left) and emits descriptive novomodelo
 output columns (right):
 
 ==========================================  ================================
@@ -24,9 +24,9 @@ output columns (right):
 ==========================================  ================================
 
 The family/segment indices are the source model's 1-based sequential keys and are passed
-through unchanged — cobre treats them as opaque per-plant grouping keys (the d31
+through unchanged — novomodelo treats them as opaque per-plant grouping keys (the d31
 reference case likewise uses 1-based ``family_id``/``segment_id``). Only the plant code
-is remapped to cobre's dense 0-based id; plants absent from the id map (filtered
+is remapped to novomodelo's dense 0-based id; plants absent from the id map (filtered
 fictitious plants, etc.) are skipped.
 """
 
@@ -37,11 +37,11 @@ from typing import TYPE_CHECKING, cast
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.core.tailrace import build_tailrace_table
+from novomodelo_bridge.core.tailrace import build_tailrace_table
 
 if TYPE_CHECKING:
-    from cobre_bridge.newave.case import NewaveCase
-    from cobre_bridge.newave.id_map import NewaveIdMap
+    from novomodelo_bridge.newave.case import NewaveCase
+    from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 
 def convert_tailrace_curves(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table | None:
@@ -54,7 +54,7 @@ def convert_tailrace_curves(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table |
         Parsed the source model case. ``case.polinjus`` supplies the downstream-level
         curve families (``None`` when the case ships no ``polinjus`` file).
     id_map:
-        Entity ID map translating the source model plant codes to 0-based Cobre hydro
+        Entity ID map translating the source model plant codes to 0-based Novomodelo hydro
         IDs.
 
     Returns
@@ -63,7 +63,7 @@ def convert_tailrace_curves(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table |
         A table with the eleven ``tailrace_curves`` columns sorted by
         ``(hydro_id, family_id, segment_id)``, or ``None`` when the case has no
         ``polinjus`` file or no segment maps to a converted hydro. ``None`` means
-        "do not write the optional file"; cobre's FPHA then falls back to the
+        "do not write the optional file"; novomodelo's FPHA then falls back to the
         entity-level tailrace from ``hydros.json``.
     """
     uh = case.polinjus

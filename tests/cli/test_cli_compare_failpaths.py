@@ -8,7 +8,7 @@ staying empty/stderr-only, and a plain run still renders the diagnostic to
 stderr. The missing-case and read-error conditions fail before any primary
 result is printed, so their plain-mode stdout is empty; the bad-``--format``
 condition fails only after the compare itself already ran, so its plain-mode
-stdout still carries the (untouched) results summary. Tier-1: no ``cobre``
+stdout still carries the (untouched) results summary. Tier-1: no ``novomodelo``
 import at module scope; all inputs are synthetic/mocked, never a gitignored
 ``example/`` deck.
 """
@@ -30,9 +30,9 @@ def _invoke_main(
     argv: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> tuple[int, str, str]:
     """Run the CLI in-process with ``sys.argv``/stdout/stderr captured."""
-    from cobre_bridge import cli
+    from novomodelo_bridge import cli
 
-    monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+    monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
@@ -56,7 +56,7 @@ def _patch_compare_context(monkeypatch: pytest.MonkeyPatch) -> None:
     # ``dataclasses.fields``, which raises on a non-dataclass. The paths
     # need not exist: a missing file degrades to a ``None`` hash/size.
     monkeypatch.setattr(
-        "cobre_bridge.newave.case.NewaveCase.from_directory",
+        "novomodelo_bridge.newave.case.NewaveCase.from_directory",
         classmethod(
             lambda cls, _dir: MagicMock(
                 id_map=MagicMock(), files=make_nw_files(Path("nw"))
@@ -64,27 +64,29 @@ def _patch_compare_context(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+        "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
         lambda *a, **k: MagicMock(),
     )
-    monkeypatch.setattr("cobre_bridge.cobre.readers.read_cobre_lines", lambda _dir: [])
+    monkeypatch.setattr(
+        "novomodelo_bridge.novomodelo.readers.read_novomodelo_lines", lambda _dir: []
+    )
 
 
 def _fake_results_dataset() -> object:
     """A one-row within-tol dataset built through the shared assembly kernel."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.model import PercentileData, ResultComparison
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 
     results = [
         ResultComparison(
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=100.0,
+            novomodelo_value=100.0,
             abs_diff=0.0,
             rel_diff=0.0,
         ),
@@ -103,14 +105,14 @@ class TestCompareNewaveMissingSourceCase:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.newave.case.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.case.NewaveCase.from_directory",
             classmethod(self._raise_missing),
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, stderr = _invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir), "--json"],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"],
             monkeypatch,
         )
 
@@ -126,14 +128,14 @@ class TestCompareNewaveMissingSourceCase:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.newave.case.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.case.NewaveCase.from_directory",
             classmethod(self._raise_missing),
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, stderr = _invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -150,18 +152,18 @@ class TestCompareNewaveBadFormat:
     ) -> None:
         _patch_compare_context(monkeypatch)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             lambda **k: _fake_results_dataset(),
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, stderr = _invoke_main(
             [
                 "compare",
                 "newave",
                 str(tmp_path / "nw"),
-                str(cobre_dir),
+                str(novomodelo_dir),
                 "--format",
                 "bogus",
                 "--json",
@@ -185,18 +187,18 @@ class TestCompareNewaveBadFormat:
         to stderr. Mirrors the pre-existing ``bogus`` stderr/exit-2 assertions."""
         _patch_compare_context(monkeypatch)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             lambda **k: _fake_results_dataset(),
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, stderr = _invoke_main(
             [
                 "compare",
                 "newave",
                 str(tmp_path / "nw"),
-                str(cobre_dir),
+                str(novomodelo_dir),
                 "--format",
                 "bogus",
             ],
@@ -213,15 +215,15 @@ class TestCompareDecompReadError:
 
     @staticmethod
     def _raise_read_error(*_args: object, **_kwargs: object) -> object:
-        from cobre_bridge.cobre.readers import CobreReadError
+        from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
 
-        raise CobreReadError("bad parquet partition")
+        raise NovomodeloReadError("bad parquet partition")
 
     def test_json_emits_error_envelope_exit_2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset",
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
             self._raise_read_error,
         )
 
@@ -241,7 +243,7 @@ class TestCompareDecompReadError:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset",
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
             self._raise_read_error,
         )
 
@@ -263,14 +265,14 @@ class TestCompareNewaveSuccessStillExitsZero:
     ) -> None:
         _patch_compare_context(monkeypatch)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             lambda **k: _fake_results_dataset(),
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _stdout, _stderr = _invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 

@@ -21,7 +21,7 @@ import polars as pl
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from cobre_bridge.comparators.model import ResultComparison
+    from novomodelo_bridge.comparators.model import ResultComparison
 
 
 class SchemaError(ValueError):
@@ -33,7 +33,7 @@ class SchemaError(ValueError):
 
 
 #: Allowed values for the tidy ``source`` column.
-VALID_SOURCES: frozenset[str] = frozenset({"newave", "cobre", "p10", "p50", "p90"})
+VALID_SOURCES: frozenset[str] = frozenset({"newave", "novomodelo", "p10", "p50", "p90"})
 
 #: Ordered schema of the canonical tidy/long value frame. Every consumer
 #: relies on this exact column contract.
@@ -67,7 +67,7 @@ _METADATA_FILE: str = "metadata.json"
 #: field name can never collide with a provenance key.
 _RENDER_KEY: str = "__render__"
 
-#: ``RenderInputs`` fields whose value is a ``dict`` keyed by a Cobre/source
+#: ``RenderInputs`` fields whose value is a ``dict`` keyed by a Novomodelo/source
 #: entity id (``int``), not ``str``. JSON object keys are always strings, so
 #: -- unlike a generic ``metadata`` dict, whose non-string-key coercion is a
 #: one-way, accepted trade-off -- these three are looked up by ``int`` id
@@ -75,7 +75,7 @@ _RENDER_KEY: str = "__render__"
 #: key there is a silent lookup miss, not a type-checker nuisance, so
 #: :func:`_render_from_json` coerces them back to ``int`` explicitly.
 _INT_KEYED_RENDER_FIELDS: frozenset[str] = frozenset(
-    {"nw_bus_names", "cobre_bus_meta", "cobre_hydro_meta"}
+    {"nw_bus_names", "novomodelo_bus_meta", "novomodelo_hydro_meta"}
 )
 
 #: Ordered schema of the per-variable summary frame.
@@ -108,21 +108,23 @@ class RenderInputs:
 
     bus: pl.DataFrame = field(default_factory=pl.DataFrame)
     bus_aggregates: pl.DataFrame = field(default_factory=pl.DataFrame)
-    cobre_bus_meta: dict[int, dict] = field(default_factory=dict)
-    cobre_convergence: pl.DataFrame = field(default_factory=pl.DataFrame)
-    cobre_costs: dict[str, float] = field(default_factory=dict)
-    cobre_hydro_means: pl.DataFrame = field(default_factory=pl.DataFrame)
-    cobre_hydro_meta: dict[int, dict] = field(default_factory=dict)
-    cobre_hydro_per_stage_bounds: pl.DataFrame = field(default_factory=pl.DataFrame)
-    cobre_iteration_timing: pl.DataFrame = field(default_factory=pl.DataFrame)
-    cobre_stage_costs: pl.DataFrame = field(default_factory=pl.DataFrame)
-    cobre_training_seconds: float = 0.0
+    novomodelo_bus_meta: dict[int, dict] = field(default_factory=dict)
+    novomodelo_convergence: pl.DataFrame = field(default_factory=pl.DataFrame)
+    novomodelo_costs: dict[str, float] = field(default_factory=dict)
+    novomodelo_hydro_means: pl.DataFrame = field(default_factory=pl.DataFrame)
+    novomodelo_hydro_meta: dict[int, dict] = field(default_factory=dict)
+    novomodelo_hydro_per_stage_bounds: pl.DataFrame = field(
+        default_factory=pl.DataFrame
+    )
+    novomodelo_iteration_timing: pl.DataFrame = field(default_factory=pl.DataFrame)
+    novomodelo_stage_costs: pl.DataFrame = field(default_factory=pl.DataFrame)
+    novomodelo_training_seconds: float = 0.0
     fpha_metrics: pl.DataFrame = field(default_factory=pl.DataFrame)
     fpha_spill: pl.DataFrame = field(default_factory=pl.DataFrame)
     fpha_surface: pl.DataFrame = field(default_factory=pl.DataFrame)
     gc_bounds: pl.DataFrame = field(default_factory=pl.DataFrame)
     gc_constraints: list[dict] = field(default_factory=list)
-    gc_lhs_cobre: pl.DataFrame = field(default_factory=pl.DataFrame)
+    gc_lhs_novomodelo: pl.DataFrame = field(default_factory=pl.DataFrame)
     gc_lhs_newave: pl.DataFrame = field(default_factory=pl.DataFrame)
     hydro: pl.DataFrame = field(default_factory=pl.DataFrame)
     line: pl.DataFrame = field(default_factory=pl.DataFrame)
@@ -454,7 +456,7 @@ def _render_from_json(view: dict[str, object]) -> RenderInputs:
             wrapped frame entry declares an unknown frame type; the message
             names the offending key.
     """
-    from cobre_bridge.comparators.model import ResultComparison
+    from novomodelo_bridge.comparators.model import ResultComparison
 
     raw = _metadata_from_json(view)
 

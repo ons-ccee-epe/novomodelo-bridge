@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.chart_helpers.
+"""Unit tests for novomodelo_bridge.dashboard.chart_helpers.
 
 Covers compute_percentiles, stage_hours_weighted_mean, add_mean_p50_band,
 make_chart_card, compute_npv_costs, group_costs, and compute_cost_summary.
@@ -15,10 +15,10 @@ import plotly.graph_objects as go
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators import charts as _cmp_charts
-from cobre_bridge.comparators import report_builder
-from cobre_bridge.comparators.model import PercentileData, ResultComparison
-from cobre_bridge.dashboard.chart_helpers import (
+from novomodelo_bridge.comparators import charts as _cmp_charts
+from novomodelo_bridge.comparators import report_builder
+from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.dashboard.chart_helpers import (
     COST_GROUP_COLORS,
     COST_GROUPS,
     add_mean_p50_band,
@@ -276,7 +276,7 @@ def test_add_mean_p50_band_returns_figure(percentile_df: pd.DataFrame) -> None:
 def test_add_mean_p50_band_is_the_promoted_plotly_helpers_function() -> None:
     """chart_helpers re-exports the helper promoted to ui.html.plotly rather
     than defining its own copy — the two names must be the same object."""
-    from cobre_bridge.ui.html.plotly import add_mean_p50_band as _promoted
+    from novomodelo_bridge.ui.html.plotly import add_mean_p50_band as _promoted
 
     assert add_mean_p50_band is _promoted
 
@@ -790,7 +790,7 @@ def test_chart_cost_bar_error_bars_omitted_when_nan() -> None:
 # comparators.charts golden-string parity
 #
 # These tests guard that re-pointing the per-stage / percentile-band
-# aggregation in ``cobre_bridge.comparators.charts`` onto the analyze-layer
+# aggregation in ``novomodelo_bridge.comparators.charts`` onto the analyze-layer
 # primitives (``analyze.aggregate_percentile_band`` /
 # ``per_stage_sum_from_results`` / ``per_stage_sum_from_frame``) leaves the
 # rendered HTML character-for-character identical.
@@ -808,7 +808,7 @@ def test_chart_cost_bar_error_bars_omitted_when_nan() -> None:
 def _rc(
     entity_type: str,
     name: str,
-    cobre_id: int,
+    novomodelo_id: int,
     stage: int,
     variable: str,
     nw: float,
@@ -819,12 +819,12 @@ def _rc(
     return ResultComparison(
         entity_type=entity_type,
         entity_name=name,
-        newave_code=cobre_id + 10,
-        cobre_id=cobre_id,
+        newave_code=novomodelo_id + 10,
+        novomodelo_id=novomodelo_id,
         stage=stage,
         variable=variable,
         newave_value=nw,
-        cobre_value=cb,
+        novomodelo_value=cb,
         abs_diff=abs_diff,
         rel_diff=rel,
     )
@@ -983,7 +983,7 @@ def per_bus_hydro_pct() -> pl.DataFrame:
 
 
 @pytest.fixture()
-def slack_cobre_hydro() -> pl.DataFrame:
+def slack_novomodelo_hydro() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "entity_id": [0, 1, 0, 1, 2],
@@ -1017,7 +1017,7 @@ def slack_pct() -> pl.DataFrame:
 
 
 @pytest.fixture()
-def detail_cobre_hydro() -> pl.DataFrame:
+def detail_novomodelo_hydro() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "entity_id": [0, 0, 1, 1],
@@ -1029,7 +1029,7 @@ def detail_cobre_hydro() -> pl.DataFrame:
     )
 
 
-# read_cobre_hydro_metadata no longer carries a plant
+# read_novomodelo_hydro_metadata no longer carries a plant
 # "bus_id"; the per-bus roll-up now sources the plant->bus label
 # from "bus_ids" (see analyze._bus_name_lookups), merged onto hydro_meta by
 # the results-comparison orchestrator from the hydro_bus_generation
@@ -1055,14 +1055,14 @@ def test_hydro_per_bus_chart_html_matches_golden(
 
 
 def test_hydro_slack_per_bus_chart_html_matches_golden(
-    slack_cobre_hydro: pl.DataFrame,
+    slack_novomodelo_hydro: pl.DataFrame,
     slack_nw: pl.DataFrame,
     slack_pct: pl.DataFrame,
     per_bus_hydro_meta: dict[int, dict],
     per_bus_bus_meta: dict[int, dict],
 ) -> None:
     html = _cmp_charts.hydro_slack_per_bus_chart(
-        slack_cobre_hydro,
+        slack_novomodelo_hydro,
         slack_nw,
         "water_withdrawal_violation_pos_m3s",
         "Withdrawal Slack by Bus",
@@ -1122,7 +1122,7 @@ def test_hydro_slack_per_bus_chart_excludes_multi_bus_plant(
     two_bus_hydro_meta: dict[int, dict],
     two_bus_bus_meta: dict[int, dict],
 ) -> None:
-    cobre_hydro = pl.DataFrame(
+    novomodelo_hydro = pl.DataFrame(
         {
             "entity_id": [0, 9],
             "stage_id": [1, 1],
@@ -1130,7 +1130,7 @@ def test_hydro_slack_per_bus_chart_excludes_multi_bus_plant(
         }
     )
     html = _cmp_charts.hydro_slack_per_bus_chart(
-        cobre_hydro,
+        novomodelo_hydro,
         None,
         "water_withdrawal_violation_pos_m3s",
         "Withdrawal Slack by Bus",
@@ -1213,12 +1213,12 @@ def test_line_summary_chart_html_matches_golden(
 def test_build_hydro_detail_tab_html_matches_golden(
     per_bus_results: list[ResultComparison],
     per_bus_hydro_pct: pl.DataFrame,
-    detail_cobre_hydro: pl.DataFrame,
+    detail_novomodelo_hydro: pl.DataFrame,
 ) -> None:
     html = report_builder.build_hydro_detail_tab(
         per_bus_results,
         per_bus_hydro_pct,
-        detail_cobre_hydro,
+        detail_novomodelo_hydro,
     )
     assert_html_golden(html, "build_hydro_detail_tab.html")
 
@@ -1234,10 +1234,10 @@ def test_build_thermal_detail_tab_html_matches_golden(
 # ---------------------------------------------------------------------------
 # system/network draw-only golden-string parity
 #
-# Guards that re-pointing the Cobre-sum + the source-model-SIN fold
-# (cobre_aggregate_chart), the per-bus grouping + per-eid percentile lookup
+# Guards that re-pointing the Novomodelo-sum + the source-model-SIN fold
+# (novomodelo_aggregate_chart), the per-bus grouping + per-eid percentile lookup
 # (system_per_bus_chart), and the spillage nw/cb lookups (system_spillage_energy_chart)
-# onto the analyze-layer functions (cobre_sum_and_newave_sin / bus_groups_and_pct /
+# onto the analyze-layer functions (novomodelo_sum_and_newave_sin / bus_groups_and_pct /
 # spillage_lookups) leaves the rendered HTML character-for-character identical. The
 # golden files were captured from the LEGACY (pre-re-point) charts.py on the fixtures
 # below; the random chart-<hex> div id is normalised away by _strip_chart_id.
@@ -1245,7 +1245,7 @@ def test_build_thermal_detail_tab_html_matches_golden(
 
 
 @pytest.fixture()
-def agg_cobre_hydro() -> pl.DataFrame:
+def agg_novomodelo_hydro() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "entity_id": [0, 1, 0, 1],
@@ -1280,13 +1280,13 @@ def agg_nw_sin() -> pl.DataFrame:
     )
 
 
-def test_cobre_aggregate_chart_html_matches_golden(
-    agg_cobre_hydro: pl.DataFrame,
+def test_novomodelo_aggregate_chart_html_matches_golden(
+    agg_novomodelo_hydro: pl.DataFrame,
     agg_pct: pl.DataFrame,
     agg_nw_sin: pl.DataFrame,
 ) -> None:
-    html = _cmp_charts.cobre_aggregate_chart(
-        agg_cobre_hydro,
+    html = _cmp_charts.novomodelo_aggregate_chart(
+        agg_novomodelo_hydro,
         "stored_energy_final_mwh",
         "Stored Energy SIN",
         "MWh",
@@ -1297,7 +1297,7 @@ def test_cobre_aggregate_chart_html_matches_golden(
         nw_offset=1,
         matched_ids=None,
     )
-    assert_html_golden(html, "cobre_aggregate_chart.html")
+    assert_html_golden(html, "novomodelo_aggregate_chart.html")
 
 
 @pytest.fixture()
@@ -1347,7 +1347,7 @@ def spill_results() -> list[ResultComparison]:
 
 
 @pytest.fixture()
-def cobre_spill_energy() -> pl.DataFrame:
+def novomodelo_spill_energy() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "stage_id": [1, 2],
@@ -1360,9 +1360,11 @@ def cobre_spill_energy() -> pl.DataFrame:
 
 def test_system_spillage_energy_chart_html_matches_golden(
     spill_results: list[ResultComparison],
-    cobre_spill_energy: pl.DataFrame,
+    novomodelo_spill_energy: pl.DataFrame,
 ) -> None:
-    html = _cmp_charts.system_spillage_energy_chart(spill_results, cobre_spill_energy)
+    html = _cmp_charts.system_spillage_energy_chart(
+        spill_results, novomodelo_spill_energy
+    )
     assert_html_golden(html, "system_spillage_energy_chart.html")
 
 
@@ -1388,11 +1390,11 @@ def _report_fixture_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="PLANT_A",
             newave_code=1,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=1200.0,
-            cobre_value=1195.0,
+            novomodelo_value=1195.0,
             abs_diff=5.0,
             rel_diff=0.004,
         ),
@@ -1400,11 +1402,11 @@ def _report_fixture_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="PLANT_A",
             newave_code=1,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=1,
             variable="storage_final_hm3",
             newave_value=4500.0,
-            cobre_value=4510.0,
+            novomodelo_value=4510.0,
             abs_diff=10.0,
             rel_diff=0.002,
         ),
@@ -1412,11 +1414,11 @@ def _report_fixture_results() -> list[ResultComparison]:
             entity_type="thermal",
             entity_name="GAS_A",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=300.0,
-            cobre_value=298.0,
+            novomodelo_value=298.0,
             abs_diff=2.0,
             rel_diff=0.007,
         ),
@@ -1424,11 +1426,11 @@ def _report_fixture_results() -> list[ResultComparison]:
             entity_type="bus",
             entity_name="SE",
             newave_code=1,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="spot_price",
             newave_value=150.0,
-            cobre_value=152.0,
+            novomodelo_value=152.0,
             abs_diff=2.0,
             rel_diff=0.013,
         ),
@@ -1436,11 +1438,11 @@ def _report_fixture_results() -> list[ResultComparison]:
             entity_type="convergence",
             entity_name="iteration_1",
             newave_code=1,
-            cobre_id=1,
+            novomodelo_id=1,
             stage=1,
             variable="lower_bound",
             newave_value=50000.0,
-            cobre_value=50100.0,
+            novomodelo_value=50100.0,
             abs_diff=100.0,
             rel_diff=0.002,
         ),
@@ -1475,8 +1477,8 @@ def _report_fixture_pct() -> PercentileData:
 
 def test_build_comparison_report_dataset_golden() -> None:
     """The dataset seam renders byte-identically to the legacy signature."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     results = _report_fixture_results()
     pct = _report_fixture_pct()
@@ -1523,8 +1525,8 @@ def _extract_tab_content(html: str, tab_id: str) -> str:
 )
 def test_report_tab_matches_golden(tab_id: str, golden_name: str) -> None:
     """Each migrated tab renders byte-identically after the metadata drain."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     results = _report_fixture_results()
     pct = _report_fixture_pct()
@@ -1558,8 +1560,8 @@ def test_report_tab_matches_golden(tab_id: str, golden_name: str) -> None:
 )
 def test_report_hydro_tab_matches_golden(tab_id: str, golden_name: str) -> None:
     """Each hydro tab renders byte-identically after the metadata drain."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     results = _report_fixture_results()
     pct = _report_fixture_pct()
@@ -1597,8 +1599,8 @@ def test_report_thermal_productivity_tab_matches_golden(
     tab_id: str, golden_name: str
 ) -> None:
     """Each thermal/productivity tab renders byte-identically after the drain."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     results = _report_fixture_results()
     pct = _report_fixture_pct()
@@ -1616,8 +1618,8 @@ def test_report_thermal_productivity_tab_matches_golden(
 # Guards that re-pointing the Constraints and Performance tab blocks of
 # ``build_comparison_report`` to read their frame/list/int/float/dict args from
 # ``dataset.metadata`` named keys (``gc_constraints`` / ``gc_bounds`` /
-# ``gc_lhs_newave`` / ``gc_lhs_cobre`` / ``nw_max_stage`` / ``nw_tim_iterations``
-# / ``nw_tim_stages`` / ``cobre_training_seconds`` / ``cobre_iteration_timing``)
+# ``gc_lhs_newave`` / ``gc_lhs_novomodelo`` / ``nw_max_stage`` / ``nw_tim_iterations``
+# / ``nw_tim_stages`` / ``novomodelo_training_seconds`` / ``novomodelo_iteration_timing``)
 # instead of the monolithic ``pct`` object leaves each tab's rendered HTML
 # character-for-character identical. The goldens were captured from the LEGACY
 # (pre-re-point) report_builder on the ``_constraints_perf_fixture_pct`` fixture
@@ -1656,7 +1658,7 @@ def _constraints_perf_fixture_pct() -> PercentileData:
             "lhs_value": [510.0, 525.0, 305.0, 312.0],
         }
     )
-    gc_lhs_cobre = pl.DataFrame(
+    gc_lhs_novomodelo = pl.DataFrame(
         {
             "constraint_id": [0, 0, 1, 1],
             "stage_id": [0, 1, 0, 1],
@@ -1671,7 +1673,7 @@ def _constraints_perf_fixture_pct() -> PercentileData:
             "total_seconds": [30.0, 27.0, 25.5],
         }
     )
-    cobre_iteration_timing = pl.DataFrame(
+    novomodelo_iteration_timing = pl.DataFrame(
         {
             "iteration": [1, 2, 3],
             "time_total_ms": [25000.0, 24000.0, 23000.0],
@@ -1683,12 +1685,12 @@ def _constraints_perf_fixture_pct() -> PercentileData:
         gc_constraints=gc_constraints,
         gc_bounds=gc_bounds,
         gc_lhs_newave=gc_lhs_newave,
-        gc_lhs_cobre=gc_lhs_cobre,
+        gc_lhs_novomodelo=gc_lhs_novomodelo,
         nw_max_stage=1,
         nw_tim_iterations=nw_tim_iterations,
         nw_tim_stages={"Tempo Total": 120.0, "Calculo da Politica": 90.0},
-        cobre_training_seconds=72.0,
-        cobre_iteration_timing=cobre_iteration_timing,
+        novomodelo_training_seconds=72.0,
+        novomodelo_iteration_timing=novomodelo_iteration_timing,
     )
 
 
@@ -1703,8 +1705,8 @@ def test_report_constraints_performance_tab_matches_golden(
     tab_id: str, golden_name: str
 ) -> None:
     """Constraints/Performance tabs render byte-identically after the drain."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     results = _report_fixture_results()
     pct = _constraints_perf_fixture_pct()
@@ -1718,8 +1720,8 @@ def test_report_constraints_performance_tab_matches_golden(
 
 def test_report_productivity_tab_empty_detail_renders_fallback() -> None:
     """Empty ``productivity_detail`` renders the literal no-data fallback."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     results = _report_fixture_results()
     # The shared fixture leaves ``productivity_detail`` empty by default.
@@ -1735,9 +1737,9 @@ def test_report_productivity_tab_empty_detail_renders_fallback() -> None:
 
 def test_build_comparison_report_empty_dataset_has_all_tabs() -> None:
     """An empty dataset/pct renders all 11 tab ids without raising."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.html_report import COMPARISON_TABS
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.html_report import COMPARISON_TABS
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     dataset = build_results_dataset([], PercentileData(), 0.05)
     html = build_comparison_report(dataset)
@@ -1750,7 +1752,7 @@ def test_build_comparison_report_empty_dataset_has_all_tabs() -> None:
 # facet_grid subplot-domain helper
 #
 # These tests pin the `facet_grid` / `FacetPanel` helper in
-# `cobre_bridge.ui.html.plotly` to the legacy gap-based subplot-domain
+# `novomodelo_bridge.ui.html.plotly` to the legacy gap-based subplot-domain
 # arithmetic hand-copied across `comparators.charts`. They assert the exact
 # domain pairs for the representative call sites (the 2-column grids, the
 # single-column spillage stack, and the unclamped performance stack including
@@ -1762,7 +1764,7 @@ def test_build_comparison_report_empty_dataset_has_all_tabs() -> None:
 
 def test_facet_grid_default_2col_n4() -> None:
     """facet_grid(4) reproduces the 2-column grid domains panel-for-panel."""
-    from cobre_bridge.ui.html.plotly import facet_grid
+    from novomodelo_bridge.ui.html.plotly import facet_grid
 
     panels = facet_grid(4)
     assert len(panels) == 4
@@ -1776,7 +1778,7 @@ def test_facet_grid_default_2col_n4() -> None:
 
 def test_facet_grid_single_col_spillage() -> None:
     """facet_grid(3, ncols=1, row_gap=0.05) matches the spillage layout."""
-    from cobre_bridge.ui.html.plotly import facet_grid
+    from novomodelo_bridge.ui.html.plotly import facet_grid
 
     panels = facet_grid(3, ncols=1, row_gap=0.05)
     assert all(p.x_domain == [0.0, 1.0] for p in panels)
@@ -1789,7 +1791,7 @@ def test_facet_grid_single_col_spillage() -> None:
 
 def test_facet_grid_single_col_unclamped_preserves_neg_zero() -> None:
     """The unclamped performance stack preserves the legacy -0.0 y-domain low."""
-    from cobre_bridge.ui.html.plotly import facet_grid
+    from novomodelo_bridge.ui.html.plotly import facet_grid
 
     panels = facet_grid(2, ncols=1, row_gap=0.10, min_row_h=0.0)
     assert panels[0].y_domain == [0.55, 1.0]
@@ -1803,7 +1805,7 @@ def test_facet_grid_single_col_unclamped_preserves_neg_zero() -> None:
 @pytest.mark.parametrize("n", range(1, 8))
 def test_facet_grid_matches_inline_formula(n: int) -> None:
     """facet_grid(n) matches the legacy inline formula panel-by-panel."""
-    from cobre_bridge.ui.html.plotly import facet_grid
+    from novomodelo_bridge.ui.html.plotly import facet_grid
 
     ncols = 2
     row_gap = 0.06
@@ -1827,14 +1829,14 @@ def test_facet_grid_matches_inline_formula(n: int) -> None:
 
 def test_facet_grid_zero_returns_empty() -> None:
     """facet_grid(0) returns [] per its contract and does not raise."""
-    from cobre_bridge.ui.html.plotly import facet_grid
+    from novomodelo_bridge.ui.html.plotly import facet_grid
 
     assert facet_grid(0) == []
 
 
 def test_facet_panel_is_frozen() -> None:
     """FacetPanel is immutable: assigning a field raises FrozenInstanceError."""
-    from cobre_bridge.ui.html.plotly import FacetPanel
+    from novomodelo_bridge.ui.html.plotly import FacetPanel
 
     panel = FacetPanel(row=0, col=0, x_domain=[0.0, 1.0], y_domain=[0.0, 1.0])
     with pytest.raises(dataclasses.FrozenInstanceError):

@@ -21,7 +21,7 @@ import plotly.graph_objects as go
 import polars as pl
 from plotly.subplots import make_subplots
 
-from cobre_bridge.dashboard.chart_helpers import (
+from novomodelo_bridge.dashboard.chart_helpers import (
     COST_GROUP_COLORS,
     COST_GROUPS,
     add_mean_p50_band,
@@ -33,7 +33,7 @@ from cobre_bridge.dashboard.chart_helpers import (
     group_costs,
     make_chart_card,
 )
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
     json_for_script,
@@ -42,22 +42,22 @@ from cobre_bridge.ui.html.document import (
     section_title,
     wrap_chart,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS as _LEGEND,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     MARGIN_DEFAULTS as _MARGIN,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     apply_stage_date_axis,
     apply_standard_layout,
     stage_x_dates,
     stage_x_labels,
 )
-from cobre_bridge.ui.theme import BUS_COLORS, COLORS
+from novomodelo_bridge.ui.theme import BUS_COLORS, COLORS
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 TAB_ID = "tab-costs"
 TAB_LABEL = "Costs"
@@ -237,7 +237,7 @@ def _render_cost_composition(data: DashboardData) -> str:
     """Render stacked area chart of undiscounted cost composition per stage.
 
     Groups individual cost component columns into logical categories using
-    :func:`~cobre_bridge.dashboard.chart_helpers.group_costs`, computes the
+    :func:`~novomodelo_bridge.dashboard.chart_helpers.group_costs`, computes the
     mean across scenarios per stage (summing blocks first), then builds a
     stacked area chart with one area per group.
 

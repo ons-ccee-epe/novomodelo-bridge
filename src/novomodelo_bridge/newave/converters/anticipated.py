@@ -1,7 +1,7 @@
 """The source model anticipated thermal dispatch (``adterm.dat``) reader.
 
 Maps the source model's per-(thermal, lag, patamar) MW dispatch table into the
-single-MW-per-delivery-stage form Cobre's anticipated thermal model expects.
+single-MW-per-delivery-stage form Novomodelo's anticipated thermal model expects.
 
 The source model side
 -----------
@@ -12,15 +12,15 @@ study stages on GNL / fuel-constrained thermals.  The :class:`Adterm`
 * ``codigo_usina`` — the source model thermal code
 * ``nome_usina`` — plant name (informational)
 * ``lag`` — 1-based stage offset.  ``lag=1`` delivers at the first study
-  stage (Cobre stage 0), ``lag=2`` at stage 1, etc.
+  stage (Novomodelo stage 0), ``lag=2`` at stage 1, etc.
 * ``patamar`` — 1-based block index within the delivery stage
 * ``valor`` — committed MW for that block
 
 Activation is gated by ``dger.despacho_antecipado_gnl``: when the flag is 0 (or absent)
-the source model ignores adterm.dat entirely; cobre-bridge mirrors that by treating
+the source model ignores adterm.dat entirely; novomodelo-bridge mirrors that by treating
 every thermal as non-anticipated.
 
-Cobre side
+Novomodelo side
 ----------
 For each anticipated thermal the LP needs a single MW value per delivery stage
 (``InitialConditions.past_anticipated_commitments``).  The MW is held
@@ -32,9 +32,9 @@ block-duration-weighted mean:
 
 where ``f_b`` is the block fraction at the delivery stage (from
 ``patamar.dat``).  This preserves the total committed MWh exactly while
-respecting the cobre LP's constant-MW-per-stage convention.
+respecting the novomodelo LP's constant-MW-per-stage convention.
 
-**Cobre seeding (>= 0.7.0).**  Cobre honours non-zero pre-horizon
+**Novomodelo seeding (>= 0.7.0).**  Novomodelo honours non-zero pre-horizon
 seeds: the always-active anticipated "fishing" equality pins
 generation to the committed MW at each delivery stage (``slot 0`` may hold a non-zero
 seed at stage 0), so passing the true committed MW through reproduces the source model's
@@ -56,7 +56,7 @@ import pandas as pd
 from inewave.newave import Dger, Patamar
 
 if TYPE_CHECKING:
-    from cobre_bridge.newave.case import NewaveCase
+    from novomodelo_bridge.newave.case import NewaveCase
 
 _LOG = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class AnticipatedDispatch:
         Equals the maximum ``lag`` observed for this plant in adterm.dat.
     values_mw:
         Block-duration-weighted mean MW per delivery stage.  Index ``k`` (0-based)
-        corresponds to delivery stage ``k`` (Cobre 0-based), i.e. The source model ``lag
+        corresponds to delivery stage ``k`` (Novomodelo 0-based), i.e. The source model ``lag
         = k + 1``.  Length equals ``lead_stages``.
     """
 
@@ -85,7 +85,7 @@ def is_anticipated_dispatch_enabled(dger: Dger) -> bool:
 
     The source model treats the field as a boolean flag (``0`` = ignore adterm.dat, any
     non-zero value = honour it).  When the attribute is missing or ``None`` we default
-    to ``False`` (safer; matches the historical cobre-bridge behaviour of producing no
+    to ``False`` (safer; matches the historical novomodelo-bridge behaviour of producing no
     ``anticipated_config``).
     """
     raw = getattr(dger, "despacho_antecipado_gnl", None)
@@ -160,12 +160,12 @@ def read_anticipated_dispatch(
 
     The MW per delivery stage is block-duration-weighted (see module
     docstring).  Plants whose maximum lag exceeds the study horizon are
-    truncated to the horizon length and a warning is emitted — Cobre's
+    truncated to the horizon length and a warning is emitted — Novomodelo's
     semantic validator otherwise rejects ``entry_stage_id +
     lead_stages > n_stages``. This in-study-only ceiling matches the source
     model's own data availability; the sibling conversion track's
     post-horizon anticipated-delivery surface
-    (:mod:`cobre_bridge.decomp.converters.anticipated`) has no analog here — a
+    (:mod:`novomodelo_bridge.decomp.converters.anticipated`) has no analog here — a
     registered asymmetry, not an unported feature.
     """
     dger = case.dger
@@ -208,7 +208,7 @@ def read_anticipated_dispatch(
         if max_lag > n_stages_total:
             _LOG.warning(
                 "adterm.dat plant code=%d has lag=%d exceeding the %d-stage "
-                "horizon; truncating to %d (cobre would reject otherwise).",
+                "horizon; truncating to %d (novomodelo would reject otherwise).",
                 code_int,
                 max_lag,
                 n_stages_total,

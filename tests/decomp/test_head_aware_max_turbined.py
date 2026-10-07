@@ -17,7 +17,7 @@ it, which reduces to a net head — and hence an operating head
 
 Tier-1 only: synthetic ``_FakeDadger`` doubles and
 ``build_operative_calendar``, no real deck under ``example/``, no
-``import cobre`` at module scope.
+``import novomodelo`` at module scope.
 """
 
 from __future__ import annotations
@@ -30,14 +30,14 @@ import pandas as pd
 import pytest
 from idecomp.decomp.modelos.dadger import ACALTEFE
 
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-from cobre_bridge.decomp.converters.hydro import (
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.hydro import (
     convert_hydro_group_availability,
     convert_hydros,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 
 #: ``h_op = ρ_eq / ρ_esp`` for every fixture below that uses the default
@@ -367,7 +367,7 @@ def test_acaltefe_present_warns_and_proceeds(
     dadger = _FakeDadger(uh=_uh_frame([1]), altefe=altefe_rows)
 
     with caplog.at_level(
-        logging.WARNING, logger="cobre_bridge.decomp.converters.hydro.entity"
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
     ):
         doc = convert_hydros(_case(dadger, hidr), id_map, effective=effective)
 

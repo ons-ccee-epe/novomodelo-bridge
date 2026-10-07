@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from cobre_bridge.core.errors import SourceFileError
-from cobre_bridge.decomp import constraint_registers
+from novomodelo_bridge.core.errors import SourceFileError
+from novomodelo_bridge.decomp import constraint_registers
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ def _resolve_fc_record_path(dadger: Path, deck_dir: Path, *, tipo: str) -> Path 
     """Resolve one boundary-FCF file named by the deck's ``FC`` register.
 
     A lightweight fixed-width text scan of *dadger* — mirroring
-    :func:`~cobre_bridge.decomp.constraint_registers.resolve_libs_electrical_path`'s
+    :func:`~novomodelo_bridge.decomp.constraint_registers.resolve_libs_electrical_path`'s
     own text-scan idiom for a deck-relative file named by an index entry —
     rather than a full :class:`idecomp.decomp.Dadger` parse (the caller
     re-parses *dadger* structurally right after discovery returns;

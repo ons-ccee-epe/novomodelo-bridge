@@ -2,8 +2,8 @@
 
 ``convert_decomp_case(src, dst)`` discovers the deck (``caso.dat`` names
 the revision extension; the ``rvN`` index file names the data files),
-parses it once, and writes a Cobre case directory. A deck feature the
-conversion leaves out (water travel time behind a tracked cobre gap, the
+parses it once, and writes a Novomodelo case directory. A deck feature the
+conversion leaves out (water travel time behind a tracked novomodelo gap, the
 register term types their emitters name) is reported as a diagnostic by the
 emitter that detects it, never dropped silently.
 """
@@ -20,48 +20,48 @@ import polars as pl
 import pyarrow as pa
 from idecomp.decomp import Dadger, Vazoes
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.cobre.case_writer import CaseWriter
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core import emission_checks
-from cobre_bridge.core.bound_merge import merge_bound_tables
-from cobre_bridge.core.conversion import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core import emission_checks
+from novomodelo_bridge.core.bound_merge import merge_bound_tables
+from novomodelo_bridge.core.conversion import (
     ClearedArtifacts,
     ConversionReport,
     clear_dst_contents,
 )
-from cobre_bridge.core.generic_constraint_builder import ConstraintIdAllocator
-from cobre_bridge.decomp import (
+from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.decomp import (
     bounds_accumulator,
     constraint_registers,
 )
-from cobre_bridge.decomp import group_bounds as group_bounds_conv
-from cobre_bridge.decomp import load as load_conv
-from cobre_bridge.decomp import scenarios as scenarios_conv
-from cobre_bridge.decomp import temporal as temporal_conv
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.converters import anticipated as anticipated_conv
-from cobre_bridge.decomp.converters import bounds as bounds_conv
-from cobre_bridge.decomp.converters import cadastro as cadastro_conv
-from cobre_bridge.decomp.converters import config as config_conv
-from cobre_bridge.decomp.converters import constraints as constraints_conv
-from cobre_bridge.decomp.converters import contracts as contracts_conv
-from cobre_bridge.decomp.converters import fpha as fpha_conv
-from cobre_bridge.decomp.converters import hydro as hydro_conv
-from cobre_bridge.decomp.converters import libs_electrical as libs_electrical_conv
-from cobre_bridge.decomp.converters import (
+from novomodelo_bridge.decomp import group_bounds as group_bounds_conv
+from novomodelo_bridge.decomp import load as load_conv
+from novomodelo_bridge.decomp import scenarios as scenarios_conv
+from novomodelo_bridge.decomp import temporal as temporal_conv
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters import anticipated as anticipated_conv
+from novomodelo_bridge.decomp.converters import bounds as bounds_conv
+from novomodelo_bridge.decomp.converters import cadastro as cadastro_conv
+from novomodelo_bridge.decomp.converters import config as config_conv
+from novomodelo_bridge.decomp.converters import constraints as constraints_conv
+from novomodelo_bridge.decomp.converters import contracts as contracts_conv
+from novomodelo_bridge.decomp.converters import fpha as fpha_conv
+from novomodelo_bridge.decomp.converters import hydro as hydro_conv
+from novomodelo_bridge.decomp.converters import libs_electrical as libs_electrical_conv
+from novomodelo_bridge.decomp.converters import (
     libs_electrical_emit,
     single_term_bounds,
 )
-from cobre_bridge.decomp.converters import ncs as ncs_conv
-from cobre_bridge.decomp.converters import network as network_conv
-from cobre_bridge.decomp.converters import thermal as thermal_conv
-from cobre_bridge.decomp.converters import travel_time as travel_time_conv
-from cobre_bridge.decomp.converters.scalar_parameters import (
+from novomodelo_bridge.decomp.converters import ncs as ncs_conv
+from novomodelo_bridge.decomp.converters import network as network_conv
+from novomodelo_bridge.decomp.converters import thermal as thermal_conv
+from novomodelo_bridge.decomp.converters import travel_time as travel_time_conv
+from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 
 _LOG = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ def _rejoin_thermal_cost(thermal_bounds: pa.Table, cost_table: pa.Table) -> pa.T
     table), restoring the ``cost_per_mwh`` column ``convert_thermal_bounds``
     carries alongside rather than through its bound contributions.
 
-    Merged via :func:`~cobre_bridge.core.bound_merge.merge_bound_tables`
+    Merged via :func:`~novomodelo_bridge.core.bound_merge.merge_bound_tables`
     (``precedence="base"``, immaterial here since the two frames share no
     non-key column) on ``(thermal_id, stage_id, block_id)`` — not a
     left-join keyed off *thermal_bounds* — because a ``(thermal, stage)``
@@ -440,7 +440,7 @@ def _topology_relink_diagnostic(
 
     As a defensive backstop — a precise relink check — also walks the
     incremental-inflow cascade
-    (:func:`~cobre_bridge.decomp.scenarios._incremental_context`) under
+    (:func:`~novomodelo_bridge.decomp.scenarios._incremental_context`) under
     both *effective* and a base-only cadastro (same registry, no override
     maps) and compares the resolved ``parents`` maps: an ``AC NUMJUS`` on a
     non-operated intermediate can change which operated plant receives an
@@ -501,7 +501,7 @@ def _topology_relink_diagnostic(
 
 
 #: The withdrawal axis's own side-table schema -- mirrors
-#: :func:`~cobre_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`'s shape
+#: :func:`~novomodelo_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`'s shape
 #: plus the ``block_id`` column :func:`_fan_resolved_rows` needs as a fan-out
 #: key (always ``None``: the axis is registered ``block_eligible=False``).
 _HYDRO_WITHDRAWAL_SCHEMA = pa.schema(
@@ -519,7 +519,7 @@ def _water_withdrawal_contributions(
 ) -> list[bounds_accumulator.BoundContribution]:
     """Base-only ``("hydro", "water_withdrawal")`` contributions from
     *withdrawal*
-    (:func:`~cobre_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`'s
+    (:func:`~novomodelo_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`'s
     per-(hydro, stage) table) -- one ``block_id=None`` contribution per row,
     since irrigation withdrawal has no per-block dimension.
     """
@@ -546,7 +546,7 @@ def _attach_water_withdrawal(
     """Fold the ``TI`` irrigation withdrawal into ``hydro_bounds``.
 
     Routes *withdrawal*
-    (:func:`~cobre_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`)
+    (:func:`~novomodelo_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`)
     through the same ``BoundContribution`` -> :func:`bounds_accumulator.resolve`
     primitive as every other hydro bound (so a withdrawal colliding with another
     contributor on the axis loud-fails instead of one silently overwriting the
@@ -554,7 +554,7 @@ def _attach_water_withdrawal(
     ``water_withdrawal_m3s`` is not a ``HYDRO_BOUNDS_SCHEMA`` column (its axis
     rides its own side-table, per that schema's own comment), so the resolved
     rows fan out into their own table (:func:`_fan_resolved_rows`) and attach via
-    :func:`~cobre_bridge.core.bound_merge.merge_bound_tables` — mirroring
+    :func:`~novomodelo_bridge.core.bound_merge.merge_bound_tables` — mirroring
     :func:`_rejoin_thermal_cost`'s ``-1`` block-id sentinel dance (polars' join
     never matches null keys against each other), restored to null afterward.
     Returns ``hydro_bounds`` unchanged when the deck declares no irrigation.
@@ -599,16 +599,16 @@ def _diversion_channels(
     id_map: DecompIdMap,
     effective: cadastro_conv.EffectiveCadastro,
 ) -> tuple[dict[int, dict], list[int]]:
-    """Cobre ``diversion`` channels for hydros carrying a positive diversion floor.
+    """Novomodelo ``diversion`` channels for hydros carrying a positive diversion floor.
 
-    A single-term QDES limit lowers to a ``min_diversion_m3s`` row; cobre couples
+    A single-term QDES limit lowers to a ``min_diversion_m3s`` row; novomodelo couples
     a positive floor to a declared diversion channel (without one, diversion is
     pinned ``[0, 0]`` and any positive floor is infeasible). The source deck
     already declares the channel — read into ``effective.diversions`` — so this
-    returns, keyed by cobre hydro id, the ``{downstream_id, max_flow_m3s}`` entry
+    returns, keyed by novomodelo hydro id, the ``{downstream_id, max_flow_m3s}`` entry
     for every floored hydro whose channel resolves (a numeric limit and a
     downstream plant that survives into the case). Its second element lists the
-    cobre ids of any floored hydro whose channel does NOT resolve — a genuine
+    novomodelo ids of any floored hydro whose channel does NOT resolve — a genuine
     gap the caller surfaces rather than emitting an invalid case silently.
 
     Only floored hydros get a channel: an unconstrained diverter keeps
@@ -660,7 +660,7 @@ def _base_diversion_channels(
     """Diversion channels + ``max_diversion`` bounds for BASE ``desvio`` diverters.
 
     A base ``desvio`` (the ``hidr`` field) with neither an ``AC DESVIO`` limit
-    nor a QDES single-term bound leaves cobre's diversion column pinned
+    nor a QDES single-term bound leaves novomodelo's diversion column pinned
     ``[0, 0]`` (``max_diversion_m3s`` defaults to 0), stranding any downstream
     plant fed *solely* by that diversion -- e.g. MOXOTO's spill-side split to
     P.AFONSO 4, which otherwise receives no water and generates 0 MW. This
@@ -672,7 +672,7 @@ def _base_diversion_channels(
     (``already_bounded_ids`` -- a QDES/``AC DESVIO`` floor already handled by
     :func:`_diversion_channels`), so this only *adds* the previously-unmodelled
     base channels and never overrides an explicit source limit. Returns the
-    ``{downstream_id, max_flow_m3s}`` channel per source cobre id and the
+    ``{downstream_id, max_flow_m3s}`` channel per source novomodelo id and the
     per-stage ``diversion`` bound contributions to fold into the accumulator.
     """
     operated = set(id_map.hydro_codes)
@@ -718,9 +718,9 @@ def _libs_electrical_census_diagnostic(
 ) -> dx.Diagnostic:
     """The ``decomp-libs-electrical-converted`` INFO diagnostic:
     the authoritative per-restriction census for the deck's LIBs-era
-    long-form electrical file -- how many restrictions converted to a cobre
+    long-form electrical file -- how many restrictions converted to a novomodelo
     generic constraint, and how many were dropped, broken down by
-    :class:`~cobre_bridge.decomp.converters.libs_electrical_emit.LibsElectricalResult`'s
+    :class:`~novomodelo_bridge.decomp.converters.libs_electrical_emit.LibsElectricalResult`'s
     four drop reasons (``inactive``/``unrecognized-token``/
     ``unresolved-bucket-bc``/``unresolved-bucket-a``, each already carrying
     its own per-restriction WARNING/INFO diagnostic).
@@ -747,7 +747,7 @@ def _libs_electrical_census_diagnostic(
         ),
         summary=(
             f"{n_converted} of {n_converted + n_dropped} LIBs-era long-form "
-            "electrical restriction(s) converted to a cobre generic "
+            "electrical restriction(s) converted to a novomodelo generic "
             "constraint; the rest were dropped (see table for the "
             "per-reason breakdown)."
         ),
@@ -851,8 +851,8 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     fan_probabilities = artifacts.fan_probabilities
 
     # DECOMP risk aversion (CVaR): resolve the AR register / FCF-header CVaR
-    # into a per-stage cobre risk measure, emitted uniformly across all stages
-    # (temporal.stage_records) so cobre admits the gap stopping rule under CVaR
+    # into a per-stage novomodelo risk measure, emitted uniformly across all stages
+    # (temporal.stage_records) so novomodelo admits the gap stopping rule under CVaR
     # with enumerated forwards (it computes the exact risk-adjusted upper bound).
     cvar = temporal_conv.resolve_cvar(dadger, case.files.cortesh)
     if cvar is not None:
@@ -867,7 +867,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
                     f"lambda={cvar.lambda_:.4g}); DECOMP starts it at stage "
                     f"{cvar.from_stage_index} but it is emitted uniformly on every "
                     "stage (it collapses to expectation on the deterministic trunk), "
-                    "so cobre's gap stopping rule stays admissible under the "
+                    "so novomodelo's gap stopping rule stays admissible under the "
                     "risk-adjusted enumerated upper bound."
                 ),
             ),
@@ -886,7 +886,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
 
     # FPHA-anchor fidelity: the source model fits each plant's hydro production
     # function around its initial reservoir volume. FPHA-eligible reservoirs get
-    # cobre's computed-FPHA model (geometry + tailrace families, fit over a
+    # novomodelo's computed-FPHA model (geometry + tailrace families, fit over a
     # ±window around the initial volume); the rest keep constant productivity,
     # whose ρ_eq is likewise anchored at the initial volume (not the full-range mean) —
     # see hydro._equivalent_productivity_mw_per_m3s and decomp/converters/fpha.py.
@@ -905,7 +905,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         reference_volumes[code] = {"volume_hm3": v_init}
 
     # penalties.json takes the full per-plant ρ_eq list (system ρ_avg/ρ_max);
-    # the parquet omits FPHA plants (cobre computes their ρ_eq, so a parquet row
+    # the parquet omits FPHA plants (novomodelo computes their ρ_eq, so a parquet row
     # would double-supply it).
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
@@ -923,16 +923,16 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
             productivity["equivalent_productivity_mw_per_m3s"].to_pylist(),
         ),
     )
-    # TRACKED COBRE-GAP WORKAROUND (VI water travel time): the converter
-    # (decomp/travel_time.py) is complete and `cobre validate` accepts the
-    # emitted travel_time_hours + past_defluences, but cobre's transit-bucket
+    # TRACKED NOVOMODELO-GAP WORKAROUND (VI water travel time): the converter
+    # (decomp/travel_time.py) is complete and `novomodelo validate` accepts the
+    # emitted travel_time_hours + past_defluences, but novomodelo's transit-bucket
     # cut generation currently produces an invalid cut that blows the lower
-    # bound past the upper bound (a large negative gap that cobre clamps to
+    # bound past the upper bound (a large negative gap that novomodelo clamps to
     # zero and mistakes for convergence, stopping on a corrupted policy). So VI
     # is DEFERRED alongside GNL and the boundary FCF: detected for the deferral
     # warning below, but not emitted. Restore by wiring convert_travel_time back
-    # into hydros.json + initial_conditions.past_defluences once the cobre bug
-    # is fixed. Removal condition tracked in the cobre repository's
+    # into hydros.json + initial_conditions.past_defluences once the novomodelo bug
+    # is fixed. Removal condition tracked in the novomodelo repository's
     # conversion-found-improvements registry (C-travel-time).
     has_travel_time = bool(travel_time_conv.read_travel_times(dadger))
     artifacts.has_travel_time = has_travel_time
@@ -940,7 +940,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # it with the left/right temporal-boundary arrays, and those need the thermal
     # ids assigned when thermals.json is built.
     initial_conditions_doc: dict = {
-        "$schema": cobre_schemas.schema_url_for("initial_conditions.json"),
+        "$schema": novomodelo_schemas.schema_url_for("initial_conditions.json"),
         "storage": hydro_conv.convert_initial_storage(
             case, id_map, effective=effective
         ),
@@ -957,7 +957,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.hydros_dict = hydros_dict
     # hydros.json is written after the bound tables are resolved (below): a
     # plant carrying a positive QDES diversion floor (min_diversion_m3s > 0)
-    # must also declare its diversion channel, or cobre rejects the floor as
+    # must also declare its diversion channel, or novomodelo rejects the floor as
     # infeasible against the channel-less [0, 0] pin. That coupling can only be
     # applied once the resolved hydro_bounds are in hand.
     lines_doc, line_bounds = network_conv.convert_lines(case, id_map)
@@ -967,7 +967,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         # synthesizes an SE<->IV line only when the deck's own IA register does
         # NOT already wire IV<->SE; when it does (as on most Itaipu decks), the
         # helper reuses that line -- its real operational capacity -- and adding
-        # a second one would make cobre reject the duplicate.
+        # a second one would make novomodelo reject the duplicate.
         itaipu_submercado = int(case.hidr.loc[hydro_conv._ITAIPU_CODE, "submercado"])
         lines_doc, line_bounds = network_conv.append_iv_se_line(
             case,
@@ -1034,7 +1034,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     writer.write_parquet(
         "system/hydro_energy_productivity.parquet", productivity_parquet
     )
-    # FPHA geometry + tailrace inputs cobre fits the production function from.
+    # FPHA geometry + tailrace inputs novomodelo fits the production function from.
     writer.write_parquet(
         "system/hydro_geometry.parquet",
         fpha_conv.convert_hydro_geometry(effective, id_map),
@@ -1107,7 +1107,7 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     # Under the node-native explicit tree every stochastic class is sourced
     # externally: inflow (the tree), NCS (renewables), and load. A
     # deterministic (std = 0) external load class still occupies its noise slot
-    # and standardizes to eta = 0 (value == mean) under cobre's scheme-aware
+    # and standardizes to eta = 0 (value == mean) under novomodelo's scheme-aware
     # load membership (`std > 0 OR load_scheme == External`). Each deterministic
     # per-(entity, stage) mean fans out unchanged across the same per-stage
     # scenario columns as the inflow library (1 on the trunk, the terminal fan
@@ -1119,7 +1119,7 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
             ncs_stats,
             entity_column="ncs_id",
             value_in="mean",
-            # cobre's clean break (0.14) removed the legacy ``value`` alias for
+            # novomodelo's clean break (0.14) removed the legacy ``value`` alias for
             # the NCS availability column; the sole accepted spelling is now
             # ``availability_factor`` (external inflow/load keep value_m3s/value_mw).
             value_out="availability_factor",
@@ -1166,7 +1166,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     # producers each clamp their emitted upper to the plant's own declared
     # max_generation_mw/max_turbined_m3s, so a looser source-declared ceiling
     # on either axis (a real cross-source mismatch — see BELO MONTE's RE
-    # ceiling on both real decks) never trips cobre rule 43
+    # ceiling on both real decks) never trips novomodelo rule 43
     # (emission_checks.check_hydro_bounds_no_raising, self-checked below).
     hydro_capacities: dict[int, single_term_bounds.HydroCapacities] = {
         hydro["id"]: single_term_bounds.HydroCapacities(
@@ -1215,7 +1215,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     # exactly ONE resolve() + build_bound_tables() pass, so a new special
     # constraint colliding with a legacy bound on the same (entity, stage,
     # block) cell correctly intersects instead of producing the
-    # two-rows-same-column parquet cobre rejects.
+    # two-rows-same-column parquet novomodelo rejects.
     contribs = [
         *bounds_conv.convert_hydro_bounds(
             case, id_map, effective=effective, unregulated_codes=unregulated_codes
@@ -1232,7 +1232,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             hydro_capacities=hydro_capacities,
         ),
     ]
-    # Base `desvio` diverters carry no QDES flow bound, so cobre pins their
+    # Base `desvio` diverters carry no QDES flow bound, so novomodelo pins their
     # diversion column to [0, 0] and strands any plant fed solely by the
     # diversion (e.g. MOXOTO -> P.AFONSO 4, which otherwise generates 0 MW).
     # Give the still-unbounded ones a max_diversion bound + a routed channel.
@@ -1256,9 +1256,9 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     hydro_bounds = bound_tables.hydro.sort_by(
         [("hydro_id", "ascending"), *_BOUND_SORT_KEYS]
     )
-    # Fold in the TI irrigation withdrawal (a consumptive water use cobre reads
+    # Fold in the TI irrigation withdrawal (a consumptive water use novomodelo reads
     # from hydro_bounds.water_withdrawal_m3s): water lost to irrigation is
-    # unavailable for generation, so omitting it lets cobre turbine the extra
+    # unavailable for generation, so omitting it lets novomodelo turbine the extra
     # flow and over-generate. Mirrors the source model's dsvagua path.
     hydro_bounds = _attach_water_withdrawal(
         hydro_bounds,
@@ -1267,7 +1267,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     )
     # Attach the diversion channel to every hydro that carries a positive
     # diversion floor, then write hydros.json (its write was deferred from
-    # `_convert_core_entities`'s system-file block for exactly this). cobre
+    # `_convert_core_entities`'s system-file block for exactly this). novomodelo
     # couples the two: a `min_diversion_m3s > 0` row is infeasible unless the
     # hydro also declares a `diversion` channel. The source deck already
     # carries the channel (read into `effective.diversions`); this is the
@@ -1311,7 +1311,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
                     f"({sorted(diversion_floor_no_channel)}) carry a positive "
                     "min_diversion_m3s floor but no resolvable diversion channel "
                     "(absent/limitless channel or an unmapped downstream plant); "
-                    "cobre rejects the case until the channel is supplied."
+                    "novomodelo rejects the case until the channel is supplied."
                 ),
             ),
             logger=_LOG,
@@ -1376,7 +1376,7 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     # FD, capped by the ρ_eq·q_max hydraulic ceiling) for every plant,
     # single-group and Itaipu's own two per-frequency groups (code 66) alike.
     # Sparse by construction — a value only lands here where it lowers that
-    # group's own declared envelope — so cobre rule 45 (a group-bound max_*
+    # group's own declared envelope — so novomodelo rule 45 (a group-bound max_*
     # may not exceed that group's declared max) is now reachable; its mirror
     # is wired into the self-check block below.
     availability_values = hydro_conv.convert_hydro_group_availability(
@@ -1500,7 +1500,7 @@ def _emit_and_write(
     :class:`ConstraintIdAllocator`, write the generic-constraint artifacts and
     scalar parameters, emit the detection diagnostics and the travel-time
     deferral warning, and return the
-    :class:`~cobre_bridge.core.conversion.ConversionReport` built from
+    :class:`~novomodelo_bridge.core.conversion.ConversionReport` built from
     ``writer.would_write``.
     """
     case = artifacts.case
@@ -1545,13 +1545,13 @@ def _emit_and_write(
     energy_contracts_doc = artifacts.energy_contracts_doc
     assert energy_contracts_doc is not None
 
-    # Post-emission self-checks: mirror cheap cobre load invariants (rules 43,
+    # Post-emission self-checks: mirror cheap novomodelo load invariants (rules 43,
     # 41, 45, 38, 36, and the block_id-range rule) over the in-memory artifacts
     # before the constraint tables are written. rule 43 is reachable because
     # hydro_bounds carries max_turbined_m3s/max_generation_mw whenever a
     # single-term special constraint (e.g. an RE FU generation ceiling) lowers
     # to one; it raises when such a bound exceeds the entity's own declared
-    # capacity. See cobre_bridge.core.emission_checks for the rule scope.
+    # capacity. See novomodelo_bridge.core.emission_checks for the rule scope.
     bound_families = [
         emission_checks.BoundFamily("Hydro", "hydro_id", hydro_bounds),
         emission_checks.BoundFamily("Thermal", "thermal_id", thermal_bounds_table),
@@ -1599,7 +1599,7 @@ def _emit_and_write(
 
     # Emit every RE/RHQ/RHV/RHE special constraint that did NOT lower to an
     # entity bound (`census.to_generic`, resolved once in `_resolve_bounds`)
-    # as a Cobre generic constraint, over one shared 0-based constraint-id
+    # as a Novomodelo generic constraint, over one shared 0-based constraint-id
     # allocator so ids never collide across emitters regardless of which
     # family produced them. The three emitters run in this fixed order (E7);
     # `big_m`, `line_map`, and `hydro_to_ree` are shared inputs every emitter
@@ -1709,7 +1709,7 @@ def _emit_and_write(
         writer.write_json(
             "constraints/generic_constraints.json",
             {
-                "$schema": cobre_schemas.schema_url_for(
+                "$schema": novomodelo_schemas.schema_url_for(
                     "constraints/generic_constraints.json"
                 ),
                 "constraints": generic_constraints,
@@ -1721,7 +1721,7 @@ def _emit_and_write(
         )
 
     # Every `@rho_acum_h{id}` sigil a surviving RHE
-    # expression references must resolve, or cobre fails to load the case --
+    # expression references must resolve, or novomodelo fails to load the case --
     # write generic_parameters.json whenever any RHE constraint survives,
     # never only when another generic family also happens to be present.
     if rhe_generics.rho_acum_overrides:
@@ -1759,10 +1759,10 @@ def _emit_and_write(
 
     # Milestone-deferral warning. Boundary FCF is imported by default now (the
     # CLI runs the importer after this converter returns), reservoir evaporation
-    # is converted (cobre >= 0.14's C11 fix), and windowed inflow inputs are a
+    # is converted (novomodelo >= 0.14's C11 fix), and windowed inflow inputs are a
     # source-model concept that does not apply to the external explicit tree the
     # DECOMP path emits — so none of those are deferred. Only VI water travel
-    # time remains deferred (a tracked cobre-gap; see the note in
+    # time remains deferred (a tracked novomodelo-gap; see the note in
     # `_convert_core_entities` where it is detected), and only when the deck
     # actually carries it.
     if has_travel_time:
@@ -1795,14 +1795,14 @@ def convert_decomp_case(
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
 ) -> ConversionReport:
-    """Convert one deck revision into a Cobre case directory.
+    """Convert one deck revision into a Novomodelo case directory.
 
     Mirrors the NEWAVE twin ``convert_newave_case``'s return contract: wraps
-    the conversion in a top-level :func:`cobre_bridge.core.diagnostics.collect`
+    the conversion in a top-level :func:`novomodelo_bridge.core.diagnostics.collect`
     sink and a package-logger ``dx.WarningCollector`` so every structured
     ``dx.emit`` finding *and* every residual ``logger.warning`` string is
     captured, then returns them as one de-duplicated
-    :class:`~cobre_bridge.core.conversion.ConversionReport`.
+    :class:`~novomodelo_bridge.core.conversion.ConversionReport`.
 
     Parameters
     ----------
@@ -1810,7 +1810,7 @@ def convert_decomp_case(
         When ``True``, run the full in-memory conversion but write nothing to
         *dst* (no files, no subdirectories). The would-write paths are still
         recorded in
-        :attr:`~cobre_bridge.core.conversion.ConversionReport.would_write_paths`.
+        :attr:`~novomodelo_bridge.core.conversion.ConversionReport.would_write_paths`.
     fcf_inputs_out:
         Optional :class:`FcfInputs` out-parameter. When given, its
         ``config``/``initial_conditions`` fields are assigned the same
@@ -1829,8 +1829,8 @@ def convert_decomp_case(
     Raises
     ------
     ValueError
-        If the post-emission self-checks (cobre 0.13 rules 43/41/45/38/36 and
-        the ``block_id``-range rule; see :mod:`cobre_bridge.core.emission_checks`)
+        If the post-emission self-checks (novomodelo 0.13 rules 43/41/45/38/36 and
+        the ``block_id``-range rule; see :mod:`novomodelo_bridge.core.emission_checks`)
         find an ``ERROR``-severity violation in the converted artifacts. An
         ``INFO`` finding (e.g. rule 43's "not applicable" report, emitted when
         no hydro-bounds capacity column is populated) never raises. No report
@@ -1856,7 +1856,7 @@ def convert_decomp_case(
             clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
 
     collector = dx.WarningCollector()
-    pkg_logger = logging.getLogger("cobre_bridge")
+    pkg_logger = logging.getLogger("novomodelo_bridge")
     pkg_logger.addHandler(collector)
     try:
         # Structured diagnostics emitted by converters (and the inner

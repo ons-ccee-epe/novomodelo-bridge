@@ -1,19 +1,19 @@
 """Hydro unit-group construction shared by both conversion tracks.
 
-``build_mirror_unit_group`` is the single builder for cobre's mandatory
+``build_mirror_unit_group`` is the single builder for novomodelo's mandatory
 ``unit_groups`` array entries — reused verbatim by the source-model track
-(:mod:`cobre_bridge.newave.converters.hydro.entity`) and the DECOMP track
-(:mod:`cobre_bridge.decomp.converters.hydro`). :func:`rated_capacity` is the
+(:mod:`novomodelo_bridge.newave.converters.hydro.entity`) and the DECOMP track
+(:mod:`novomodelo_bridge.decomp.converters.hydro`). :func:`rated_capacity` is the
 nameplate sum over a ``hidr`` row's machine sets, and
 :func:`fpha_zero_capacity_diagnostic` reports the plants either track keeps
-off cobre's computed FPHA because that capacity is zero.
+off novomodelo's computed FPHA because that capacity is zero.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -51,7 +51,7 @@ def fpha_zero_capacity_diagnostic(
     their rated turbined flow or rated power is zero.
 
     Each entry of *plants* is ``(name, code, max_turbined_m3s,
-    max_generation_mw)``. cobre's computed FPHA samples ``[0, max_turbined]``
+    max_generation_mw)``. novomodelo's computed FPHA samples ``[0, max_turbined]``
     and clamps at ``max_generation``; a zero on either side collapses the
     production cloud and aborts the fit, so such a plant cannot be ``fpha``.
     """
@@ -85,20 +85,20 @@ def build_mirror_unit_group(
 ) -> dict[str, object]:
     """Build one "mirror" unit group for a hydro plant.
 
-    cobre requires every hydro to declare a non-empty ``unit_groups`` array
+    novomodelo requires every hydro to declare a non-empty ``unit_groups`` array
     (``RawUnitGroup``, all seven fields present). For the ordinary,
     single-group plant every caller in the bridge emits, the group's bounds
     *mirror* the plant's own generation envelope verbatim — no clamping, no
     zeroing of minima, no recomputation — and with a single group,
     ``sum(group maxima) == plant maximum`` holds trivially, which is exactly
-    what cobre rule 41 checks, so the rule is satisfied by construction.
+    what novomodelo rule 41 checks, so the rule is satisfied by construction.
 
     A plant whose halves are maintained independently (e.g. a two-frequency
     split) instead calls this twice, once per physically separate group,
     passing each group's own conjunto-backed bounds (not the plant's) and a
     distinct ``group_id`` — the caller is responsible for the group maxima
     still summing to the plant envelope (rule 41) and for the ids being
-    unique within the plant (cobre rule 39; the overlay is id-addressed, so
+    unique within the plant (novomodelo rule 39; the overlay is id-addressed, so
     array order is never load-bearing — see ``decomp/group_bounds.py``).
 
     Parameters

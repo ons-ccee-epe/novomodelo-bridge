@@ -10,9 +10,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from cobre_bridge.comparators.charts import (
+from novomodelo_bridge.comparators.charts import (
     _BALANCE_VARS,
-    cobre_aggregate_chart,
     constraints_comparison_chart,
     convergence_chart,
     cost_breakdown_chart,
@@ -26,6 +25,7 @@ from cobre_bridge.comparators.charts import (
     hydro_slack_per_bus_chart,
     immediate_cost_chart,
     line_summary_chart,
+    novomodelo_aggregate_chart,
     other_costs_chart,
     overview_metrics,
     performance_fwd_bwd_split_chart,
@@ -40,7 +40,7 @@ from cobre_bridge.comparators.charts import (
     thermal_cost_chart,
     thermal_generation_chart,
 )
-from cobre_bridge.comparators.charts._shared import (
+from novomodelo_bridge.comparators.charts._shared import (
     _BAND_FILL,
     _BAND_LINE,
     _REAL_SUBMARKET_ORDER,
@@ -48,25 +48,25 @@ from cobre_bridge.comparators.charts._shared import (
     _enrich_with_percentiles,
     _plant_max_reldiff_table,
 )
-from cobre_bridge.comparators.constraints import per_stage_bounds
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators.constraints import per_stage_bounds
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
     build_comparison_html,
     chart_grid,
     section_title,
     wrap_chart,
 )
-from cobre_bridge.comparators.model import (
+from novomodelo_bridge.comparators.model import (
     ResultComparison,
     ResultsSummary,
     ResultVariableStats,
 )
-from cobre_bridge.core.summary_counts import footer_counts
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.core.summary_counts import footer_counts
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 if TYPE_CHECKING:
-    from cobre_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
 
 
 def _results_summary_from_dataset(dataset: ComparisonDataset) -> ResultsSummary:
@@ -113,7 +113,7 @@ def build_energy_balance_tab(
 ) -> str:
     """Build per-bus energy balance charts with p10/p90 bands.
 
-    One 2x2 faceted chart per variable, with the source model mean + Cobre p10/p50/p90.
+    One 2x2 faceted chart per variable, with the source model mean + Novomodelo p10/p50/p90.
     """
     if bus_agg.is_empty() and nw_market.is_empty():
         return "<p>No energy balance data available.</p>"
@@ -128,18 +128,18 @@ def build_energy_balance_tab(
         if nw_offset == 0:
             nw_offset = int(nw_net_load["stage"].min())
 
-    # Build Cobre bus_id → name and the source model code → bus_id lookups.
-    cobre_name_to_id: dict[str, int] = {
+    # Build Novomodelo bus_id → name and the source model code → bus_id lookups.
+    novomodelo_name_to_id: dict[str, int] = {
         m["name"].strip().upper(): eid for eid, m in bus_meta.items()
     }
     nw_code_to_name: dict[int, str] = {
         code: name.strip().upper() for code, name in nw_bus_names.items()
     }
 
-    # Match the source model bus codes to Cobre bus IDs by name.
-    matched: dict[int, tuple[int, str]] = {}  # nw_code → (cobre_bus_id, name)
+    # Match the source model bus codes to Novomodelo bus IDs by name.
+    matched: dict[int, tuple[int, str]] = {}  # nw_code → (novomodelo_bus_id, name)
     for nw_code, nw_name in nw_code_to_name.items():
-        cid = cobre_name_to_id.get(nw_name)
+        cid = novomodelo_name_to_id.get(nw_name)
         if cid is not None:
             matched[nw_code] = (cid, nw_name)
 
@@ -165,12 +165,12 @@ def build_energy_balance_tab(
         var = str(row["variable"]).strip().upper()
         nw_lookup.setdefault((code, var), {})[stage] = float(row["value"])
 
-    # Pre-index Cobre percentile data: {bus_id: {stage: row_dict}}
-    cobre_lookup: dict[int, dict[int, dict]] = {}
+    # Pre-index Novomodelo percentile data: {bus_id: {stage: row_dict}}
+    novomodelo_lookup: dict[int, dict[int, dict]] = {}
     for row in bus_agg.iter_rows(named=True):
         bid = int(row["bus_id"])
         sid = int(row["stage_id"])
-        cobre_lookup.setdefault(bid, {})[sid] = row
+        novomodelo_lookup.setdefault(bid, {})[sid] = row
 
     parts: list[str] = []
 
@@ -179,11 +179,11 @@ def build_energy_balance_tab(
         p50_col = f"{cb_var}_p50"
         p90_col = f"{cb_var}_p90"
 
-        # Check if Cobre has this variable.
-        has_cobre = not bus_agg.is_empty() and p50_col in bus_agg.columns
+        # Check if Novomodelo has this variable.
+        has_novomodelo = not bus_agg.is_empty() and p50_col in bus_agg.columns
         has_newave = bool(nw_var)
 
-        if not has_cobre and not has_newave:
+        if not has_novomodelo and not has_newave:
             continue
 
         parts.append(section_title(display_label))
@@ -224,15 +224,15 @@ def build_energy_balance_tab(
                 "anchor": xa,
             }
 
-            # Determine stage range from Cobre data.
-            bus_pct = cobre_lookup.get(cid, {})
+            # Determine stage range from Novomodelo data.
+            bus_pct = novomodelo_lookup.get(cid, {})
             nw_data = nw_lookup.get((nw_code, nw_var), {}) if nw_var else {}
             all_stages = sorted(set(bus_pct.keys()) | set(nw_data.keys()))
             if not all_stages:
                 continue
 
-            # Cobre P10-P90 band.
-            if has_cobre and bus_pct:
+            # Novomodelo P10-P90 band.
+            if has_novomodelo and bus_pct:
                 p10 = [
                     float(bus_pct.get(s, {}).get(p10_col, 0) or 0) for s in all_stages
                 ]
@@ -249,7 +249,7 @@ def build_energy_balance_tab(
                         "fill": "toself",
                         "fillcolor": _BAND_FILL,
                         "line": {"color": _BAND_LINE},
-                        "name": "Cobre P10–P90",
+                        "name": "Novomodelo P10–P90",
                         "hoverinfo": "skip",
                         "type": "scatter",
                         "xaxis": xa,
@@ -262,10 +262,10 @@ def build_energy_balance_tab(
                     {
                         "x": all_stages,
                         "y": p50,
-                        "name": "Cobre Median",
+                        "name": "Novomodelo Median",
                         "type": "scatter",
                         "mode": "lines",
-                        "line": {"color": COLOR_COBRE, "width": 2},
+                        "line": {"color": COLOR_NOVOMODELO, "width": 2},
                         "xaxis": xa,
                         "yaxis": ya,
                         "legendgroup": "cb",
@@ -318,16 +318,16 @@ _HYDRO_VARIABLES = [
     ("water_value_per_hm3", "Water Value (R$/hm³)"),
 ]
 
-# Cobre-only per-plant variables (no per-plant equivalent in the source model).
+# Novomodelo-only per-plant variables (no per-plant equivalent in the source model).
 #
 # Withdrawal-slack ``pos``/``neg`` labels follow the source model's convention,
-# the *inverse* of Cobre's column-name convention: Cobre's
+# the *inverse* of Novomodelo's column-name convention: Novomodelo's
 # ``water_withdrawal_violation_pos_m3s`` is the physical equivalent of the source
 # model's ``VIOL_NEG_VRETIRUH`` and vice versa. ``_NW_HYDRO_SLACK_VARS`` in
-# ``results.py`` is swapped to match, so each panel pairs the right Cobre column
+# ``results.py`` is swapped to match, so each panel pairs the right Novomodelo column
 # with the right source-model series under a source-model-style label.
 # Evaporation slacks share the source model's convention, so no swap is needed.
-_HYDRO_COBRE_ONLY_VARIABLES = [
+_HYDRO_NOVOMODELO_ONLY_VARIABLES = [
     ("stored_energy_initial_mwh", "Stored Energy Initial (MWh)"),
     ("stored_energy_final_mwh", "Stored Energy Final (MWh)"),
     ("incremental_inflow_energy_mw", "Natural Inflow Energy (MW)"),
@@ -340,7 +340,7 @@ _HYDRO_COBRE_ONLY_VARIABLES = [
 # columns to overlay as dashed reference lines.  Each entry is
 # ``(static_meta_key, per_stage_bound_col)`` for the lower and upper
 # bound respectively; either side may be ``None`` (e.g. "Outflow" has
-# a min but typically no max in cobre).  The dashboard renders one
+# a min but typically no max in novomodelo).  The dashboard renders one
 # dashed line per non-null bound; per-stage values shadow the static
 # value when both are present at a given stage.
 _HYDRO_BOUND_OVERLAY: dict[str, dict[str, tuple[str | None, str | None]]] = {
@@ -366,32 +366,32 @@ _HYDRO_BOUND_OVERLAY: dict[str, dict[str, tuple[str | None, str | None]]] = {
 def build_hydro_detail_tab(
     results: list[ResultComparison],
     pct_df: pl.DataFrame | None = None,
-    cobre_hydro: pl.DataFrame | None = None,
-    cobre_hydro_meta: dict[int, dict] | None = None,
-    cobre_hydro_per_stage_bounds: pl.DataFrame | None = None,
+    novomodelo_hydro: pl.DataFrame | None = None,
+    novomodelo_hydro_meta: dict[int, dict] | None = None,
+    novomodelo_hydro_per_stage_bounds: pl.DataFrame | None = None,
     nw_hydro_slacks: pl.DataFrame | None = None,
     reference_label: str = "NEWAVE",
 ) -> str:
     """Build interactive per-plant hydro detail with JS dropdown.
 
-    Comparison variables (the source model + Cobre) are populated from ``results``.
-    Cobre-only variables (EARM, ENA, plus the three operational slacks:
+    Comparison variables (the source model + Novomodelo) are populated from ``results``.
+    Novomodelo-only variables (EARM, ENA, plus the three operational slacks:
     withdrawal pos/neg and inflow non-negativity) are populated from
-    ``cobre_hydro`` if provided — these display only the Cobre line and
+    ``novomodelo_hydro`` if provided — these display only the Novomodelo line and
     band.
 
-    When ``cobre_hydro_meta`` is supplied, static reservoir / outflow /
+    When ``novomodelo_hydro_meta`` is supplied, static reservoir / outflow /
     turbined / generation bounds are surfaced as dashed reference lines
     on the matching variable charts.  When
-    ``cobre_hydro_per_stage_bounds`` is also supplied, any per-stage
+    ``novomodelo_hydro_per_stage_bounds`` is also supplied, any per-stage
     overrides from ``constraints/hydro_bounds.parquet`` replace the
     static value at the affected stages — matching what the LP
     actually saw.
 
     When ``nw_hydro_slacks`` is supplied, the source model ``VIOL_POS_VRETIRUH`` /
     ``VIOL_NEG_VRETIRUH`` series (converted to m³/s) are rendered as a source-model line
-    on the two withdrawal-slack panels alongside the existing Cobre Mean + p10/p90 band.
-    The inflow-non-negativity slack stays Cobre-only because the source model has no
+    on the two withdrawal-slack panels alongside the existing Novomodelo Mean + p10/p90 band.
+    The inflow-non-negativity slack stays Novomodelo-only because the source model has no
     direct counterpart.
     """
     hydro_data = [r for r in results if r.entity_type == "hydro"]
@@ -399,51 +399,51 @@ def build_hydro_detail_tab(
         return "<p>No hydro data available.</p>"
 
     plants: dict[tuple[str, int], dict[str, dict[int, tuple[float, float]]]] = {}
-    cobre_ids: dict[tuple[str, int], int] = {}
+    novomodelo_ids: dict[tuple[str, int], int] = {}
     for r in hydro_data:
         key = (r.entity_name, r.newave_code)
         plants.setdefault(key, {}).setdefault(r.variable, {})[r.stage] = (
             r.newave_value,
-            r.cobre_value,
+            r.novomodelo_value,
         )
-        cobre_ids[key] = r.cobre_id
+        novomodelo_ids[key] = r.novomodelo_id
 
     if not plants:
         return "<p>No hydro data available.</p>"
 
-    # Build cobre_id -> {var: {stage: value}} for cobre-only variables.
-    cobre_only_lookup: dict[int, dict[str, dict[int, float]]] = {}
-    # Per-(cobre_id, stage_id) Cobre LP gen-max for the dashed overlay trace on the
+    # Build novomodelo_id -> {var: {stage: value}} for novomodelo-only variables.
+    novomodelo_only_lookup: dict[int, dict[str, dict[int, float]]] = {}
+    # Per-(novomodelo_id, stage_id) Novomodelo LP gen-max for the dashed overlay trace on the
     # generation_mw chart. The source model GHMAX_FPHC trace was found to be unhelpful
     # in practice and is intentionally not surfaced — see report notes.
     gen_max_cb_lookup: dict[int, dict[int, float]] = {}
-    cobre_only_vars = [v for v, _ in _HYDRO_COBRE_ONLY_VARIABLES]
-    if cobre_hydro is not None and not cobre_hydro.is_empty():
-        avail_vars = [v for v in cobre_only_vars if v in cobre_hydro.columns]
-        has_cb_lp_max = "cobre_lp_gen_max_mw" in cobre_hydro.columns
-        for row in cobre_hydro.iter_rows(named=True):
+    novomodelo_only_vars = [v for v, _ in _HYDRO_NOVOMODELO_ONLY_VARIABLES]
+    if novomodelo_hydro is not None and not novomodelo_hydro.is_empty():
+        avail_vars = [v for v in novomodelo_only_vars if v in novomodelo_hydro.columns]
+        has_cb_lp_max = "novomodelo_lp_gen_max_mw" in novomodelo_hydro.columns
+        for row in novomodelo_hydro.iter_rows(named=True):
             eid = int(row["entity_id"])
             sid = int(row["stage_id"])
-            entry = cobre_only_lookup.setdefault(eid, {})
+            entry = novomodelo_only_lookup.setdefault(eid, {})
             for v in avail_vars:
                 val = row.get(v)
                 if val is None:
                     continue
                 entry.setdefault(v, {})[sid] = float(val)
             if has_cb_lp_max:
-                val_cb = row.get("cobre_lp_gen_max_mw")
+                val_cb = row.get("novomodelo_lp_gen_max_mw")
                 if val_cb is not None:
                     gen_max_cb_lookup.setdefault(eid, {})[sid] = float(val_cb)
 
-    # cobre_id -> bound_col -> {stage: value} for the per-stage overrides
+    # novomodelo_id -> bound_col -> {stage: value} for the per-stage overrides
     # supplied by ``hydro_bounds.parquet``.  Falls back to the empty dict
     # when the parquet is absent.
     per_stage_bounds_lookup: dict[int, dict[str, dict[int, float]]] = {}
     if (
-        cobre_hydro_per_stage_bounds is not None
-        and not cobre_hydro_per_stage_bounds.is_empty()
+        novomodelo_hydro_per_stage_bounds is not None
+        and not novomodelo_hydro_per_stage_bounds.is_empty()
     ):
-        for row in cobre_hydro_per_stage_bounds.iter_rows(named=True):
+        for row in novomodelo_hydro_per_stage_bounds.iter_rows(named=True):
             eid = int(row["entity_id"])
             sid = int(row["stage_id"])
             entry_map = per_stage_bounds_lookup.setdefault(eid, {})
@@ -452,10 +452,10 @@ def build_hydro_detail_tab(
                     continue
                 entry_map.setdefault(col, {})[sid] = float(val)
 
-    static_meta = cobre_hydro_meta or {}
+    static_meta = novomodelo_hydro_meta or {}
 
-    # cobre_id -> {var: {stage_id: nw_value}} for the two withdrawal slacks. Drives the
-    # source model line on the matching cobre-only chart panels.
+    # novomodelo_id -> {var: {stage_id: nw_value}} for the two withdrawal slacks. Drives the
+    # source model line on the matching novomodelo-only chart panels.
     nw_slack_lookup: dict[int, dict[str, dict[int, float]]] = {}
     _NW_SLACK_VARS = (
         "water_withdrawal_violation_pos_m3s",
@@ -473,16 +473,16 @@ def build_hydro_detail_tab(
                     continue
                 entry_map.setdefault(v, {})[sid] = float(val)
 
-    all_vars = _HYDRO_VARIABLES + _HYDRO_COBRE_ONLY_VARIABLES
+    all_vars = _HYDRO_VARIABLES + _HYDRO_NOVOMODELO_ONLY_VARIABLES
 
     js_plants: dict[str, dict] = {}
     for (name, nw_code), var_data in sorted(plants.items()):
         pid = f"{nw_code}_{name}"
-        cid = cobre_ids.get((name, nw_code), -1)
+        cid = novomodelo_ids.get((name, nw_code), -1)
         entry: dict = {
             "name": name,
             "code": nw_code,
-            "cobre_id": cid,
+            "novomodelo_id": cid,
         }
         for var_key, _var_label in _HYDRO_VARIABLES:
             stage_data = var_data.get(var_key, {})
@@ -490,10 +490,10 @@ def build_hydro_detail_tab(
             entry[f"{var_key}_stages"] = stages
             entry[f"{var_key}_nw"] = [stage_data[s][0] for s in stages]
             entry[f"{var_key}_cb"] = [stage_data[s][1] for s in stages]
-        cobre_only = cobre_only_lookup.get(cid, {})
+        novomodelo_only = novomodelo_only_lookup.get(cid, {})
         nw_slacks_for_plant = nw_slack_lookup.get(cid, {})
-        for var_key, _var_label in _HYDRO_COBRE_ONLY_VARIABLES:
-            stage_data_co = cobre_only.get(var_key, {})
+        for var_key, _var_label in _HYDRO_NOVOMODELO_ONLY_VARIABLES:
+            stage_data_co = novomodelo_only.get(var_key, {})
             stages = sorted(stage_data_co.keys())
             entry[f"{var_key}_stages"] = stages
             nw_stage_map = nw_slacks_for_plant.get(var_key)
@@ -504,7 +504,7 @@ def build_hydro_detail_tab(
             else:
                 entry[f"{var_key}_nw"] = []
             entry[f"{var_key}_cb"] = [round(stage_data_co[s], 2) for s in stages]
-        # Cobre LP gen_max overlay (dashed trace). Aligned to the
+        # Novomodelo LP gen_max overlay (dashed trace). Aligned to the
         # generation_mw stage grid populated above.
         gen_stages = entry.get("generation_mw_stages", [])
         cb_max_map = gen_max_cb_lookup.get(cid, {})
@@ -514,7 +514,7 @@ def build_hydro_detail_tab(
             ]
 
         # Bound overlays per variable.  Static values come from
-        # ``hydros.json`` via cobre_hydro_meta; per-stage rows in
+        # ``hydros.json`` via novomodelo_hydro_meta; per-stage rows in
         # hydro_bounds.parquet shadow the static value at the matching
         # stages.  When the bound is structurally absent (e.g.
         # max_outflow), we skip emitting the array so the JS layer
@@ -574,14 +574,14 @@ def build_thermal_detail_tab(
         return "<p>No thermal data available.</p>"
 
     plants: dict[tuple[str, int], dict[str, dict[int, tuple[float, float]]]] = {}
-    cobre_ids: dict[tuple[str, int], int] = {}
+    novomodelo_ids: dict[tuple[str, int], int] = {}
     for r in thermal_data:
         key = (r.entity_name, r.newave_code)
         plants.setdefault(key, {}).setdefault(r.variable, {})[r.stage] = (
             r.newave_value,
-            r.cobre_value,
+            r.novomodelo_value,
         )
-        cobre_ids[key] = r.cobre_id
+        novomodelo_ids[key] = r.novomodelo_id
 
     if not plants:
         return "<p>No thermal data available.</p>"
@@ -594,7 +594,7 @@ def build_thermal_detail_tab(
         entry: dict = {
             "name": name,
             "code": nw_code,
-            "cobre_id": cobre_ids.get((name, nw_code), -1),
+            "novomodelo_id": novomodelo_ids.get((name, nw_code), -1),
         }
         for var_key, _var_label in thermal_vars:
             stage_data = var_data.get(var_key, {})
@@ -627,7 +627,7 @@ def build_comparison_report(
     """Build a complete HTML comparison report.
 
     Every tab sources its non-tidy inputs from ``dataset.render`` (see
-    :class:`~cobre_bridge.comparators.dataset.RenderInputs`): each tab reads
+    :class:`~novomodelo_bridge.comparators.dataset.RenderInputs`): each tab reads
     its own named, already-typed fields, and the chart functions that still
     take ``list[ResultComparison]`` directly read ``dataset.render.results``.
 
@@ -657,26 +657,26 @@ def build_comparison_report(
     # --- Overview tab ---
     overview_parts: list[str] = []
     nw_costs = dataset.render.nw_costs
-    cobre_costs = dataset.render.cobre_costs
+    novomodelo_costs = dataset.render.novomodelo_costs
     overview_parts.append(
-        overview_metrics(summary, nw_costs, cobre_costs, reference_label)
+        overview_metrics(summary, nw_costs, novomodelo_costs, reference_label)
     )
     overview_parts.append(section_title("Cost Breakdown"))
     overview_parts.append(
         chart_grid(
             [
                 wrap_chart(
-                    cost_breakdown_chart(nw_costs, cobre_costs, reference_label)
+                    cost_breakdown_chart(nw_costs, novomodelo_costs, reference_label)
                 ),
                 wrap_chart(
-                    cost_breakdown_table(nw_costs, cobre_costs, reference_label)
+                    cost_breakdown_table(nw_costs, novomodelo_costs, reference_label)
                 ),
             ],
         )
     )
     overview_parts.append(section_title("Per-Stage Cost"))
     nw_sin = dataset.render.nw_sin
-    cobre_stage_costs = dataset.render.cobre_stage_costs
+    novomodelo_stage_costs = dataset.render.novomodelo_stage_costs
     nw_offset = dataset.render.nw_offset
     # Two side-by-side charts — immediate and future cost have very
     # different scales (one is per-stage operating cost, the other is a
@@ -686,12 +686,12 @@ def build_comparison_report(
             [
                 wrap_chart(
                     immediate_cost_chart(
-                        nw_sin, cobre_stage_costs, nw_offset, reference_label
+                        nw_sin, novomodelo_stage_costs, nw_offset, reference_label
                     )
                 ),
                 wrap_chart(
                     future_cost_chart(
-                        nw_sin, cobre_stage_costs, nw_offset, reference_label
+                        nw_sin, novomodelo_stage_costs, nw_offset, reference_label
                     )
                 ),
             ],
@@ -705,12 +705,12 @@ def build_comparison_report(
             [
                 wrap_chart(
                     thermal_cost_chart(
-                        nw_sin, cobre_stage_costs, nw_offset, reference_label
+                        nw_sin, novomodelo_stage_costs, nw_offset, reference_label
                     )
                 ),
                 wrap_chart(
                     other_costs_chart(
-                        nw_sin, cobre_stage_costs, nw_offset, reference_label
+                        nw_sin, novomodelo_stage_costs, nw_offset, reference_label
                     )
                 ),
             ],
@@ -719,7 +719,7 @@ def build_comparison_report(
 
     overview_parts.append(section_title("Convergence"))
     nw_conv = dataset.render.nw_convergence
-    cb_conv = dataset.render.cobre_convergence
+    cb_conv = dataset.render.novomodelo_convergence
     overview_parts.append(
         chart_grid(
             [wrap_chart(convergence_chart(nw_conv, cb_conv, reference_label))],
@@ -763,24 +763,24 @@ def build_comparison_report(
     balance_html = build_energy_balance_tab(
         dataset.render.nw_market,
         dataset.render.bus_aggregates,
-        dataset.render.cobre_bus_meta,
+        dataset.render.novomodelo_bus_meta,
         dataset.render.nw_bus_names,
         nw_net_load=dataset.render.nw_net_load,
         reference_label=reference_label,
     )
-    balance_cobre_hydro_means = dataset.render.cobre_hydro_means
+    balance_novomodelo_hydro_means = dataset.render.novomodelo_hydro_means
     balance_hydro = dataset.render.hydro
     balance_nw_sin = dataset.render.nw_sin
     balance_nw_offset = dataset.render.nw_offset
     energy_balance_extra: list[str] = []
-    if not balance_cobre_hydro_means.is_empty():
+    if not balance_novomodelo_hydro_means.is_empty():
         energy_balance_extra.append(section_title("System Energy (EARM / ENA)"))
         energy_balance_extra.append(
             chart_grid(
                 [
                     wrap_chart(
-                        cobre_aggregate_chart(
-                            balance_cobre_hydro_means,
+                        novomodelo_aggregate_chart(
+                            balance_novomodelo_hydro_means,
                             "stored_energy_final_mwh",
                             "System Stored Energy (EARM)",
                             "MWh",
@@ -793,8 +793,8 @@ def build_comparison_report(
                         )
                     ),
                     wrap_chart(
-                        cobre_aggregate_chart(
-                            balance_cobre_hydro_means,
+                        novomodelo_aggregate_chart(
+                            balance_novomodelo_hydro_means,
                             "incremental_inflow_energy_mw",
                             "System Natural Inflow Energy (ENA)",
                             "MW",
@@ -859,7 +859,7 @@ def build_comparison_report(
     tab_contents["tab-network"] = "\n".join(network_parts)
 
     # --- Constraints tab --- Per-constraint LHS comparison: The source-model-side LHS
-    # evaluated against MEDIAS-USIH / int*.out output, Cobre-side LHS as the mean across
+    # evaluated against MEDIAS-USIH / int*.out output, Novomodelo-side LHS as the mean across
     # scenarios and blocks from the simulation parquet. Bounds are taken from
     # constraints/generic_constraint_bounds.parquet's F3 sense-free `bound_lower`/
     # `bound_upper` endpoints via `per_stage_bounds` (block 0 preferred when blocks
@@ -868,7 +868,7 @@ def build_comparison_report(
     gc_constraints = dataset.render.gc_constraints
     gc_bounds_df = dataset.render.gc_bounds
     gc_lhs_nw = dataset.render.gc_lhs_newave
-    gc_lhs_cb = dataset.render.gc_lhs_cobre
+    gc_lhs_cb = dataset.render.gc_lhs_novomodelo
     gc_max_stage = dataset.render.nw_max_stage
     bound_lookup = per_stage_bounds(gc_bounds_df, max_stage=gc_max_stage)
     if gc_max_stage is not None:
@@ -904,13 +904,13 @@ def build_comparison_report(
 
     # --- Hydro Operation tab ---
     hydro_pct = dataset.render.hydro
-    cobre_hydro_means = dataset.render.cobre_hydro_means
+    novomodelo_hydro_means = dataset.render.novomodelo_hydro_means
     nw_sin = dataset.render.nw_sin
     nw_offset = dataset.render.nw_offset
-    matched_hydro_ids = {r.cobre_id for r in results if r.entity_type == "hydro"}
+    matched_hydro_ids = {r.novomodelo_id for r in results if r.entity_type == "hydro"}
 
-    hydro_meta = dataset.render.cobre_hydro_meta
-    bus_meta = dataset.render.cobre_bus_meta
+    hydro_meta = dataset.render.novomodelo_hydro_meta
+    bus_meta = dataset.render.novomodelo_bus_meta
     hydro_parts: list[str] = []
     for var, title in [
         ("storage_final_hm3", "Storage by Bus (hm³)"),
@@ -940,15 +940,15 @@ def build_comparison_report(
             )
         )
 
-    # System-level EARM and ENA (Cobre per-hydro aggregate vs the source model SIN). The
+    # System-level EARM and ENA (Novomodelo per-hydro aggregate vs the source model SIN). The
     # source model EARMF is in MWmes (mean MW over a month); convert to MWh via the
     # canonical 730 h/month factor used by the source model.  ENA is already in MW (mean
     # power) on both sides.
     hydro_parts.append(section_title("Aggregate Energy Variables"))
     energy_charts = [
         wrap_chart(
-            cobre_aggregate_chart(
-                cobre_hydro_means,
+            novomodelo_aggregate_chart(
+                novomodelo_hydro_means,
                 "stored_energy_final_mwh",
                 "Stored Energy (EARM)",
                 "MWh",
@@ -962,8 +962,8 @@ def build_comparison_report(
             )
         ),
         wrap_chart(
-            cobre_aggregate_chart(
-                cobre_hydro_means,
+            novomodelo_aggregate_chart(
+                novomodelo_hydro_means,
                 "incremental_inflow_energy_mw",
                 "Natural Inflow Energy (ENA)",
                 "MW",
@@ -979,7 +979,7 @@ def build_comparison_report(
     ]
     hydro_parts.append(chart_grid(energy_charts))
 
-    # System-aggregate (SIN) totals for each hydro variable. Sums Cobre plant values per
+    # System-aggregate (SIN) totals for each hydro variable. Sums Novomodelo plant values per
     # stage and overlays the source model total. Mirrors the per-bus facet section but
     # collapses across buses — useful as a one-glance global view alongside the per-bus
     # disaggregation.
@@ -1001,15 +1001,15 @@ def build_comparison_report(
     hydro_parts.append(chart_grid(aggregate_charts))
 
     # Slack variables: same per-bus + SIN-total treatment as the operational
-    # variables above, but driven by the per-(entity_id, stage_id) Cobre frame and the
+    # variables above, but driven by the per-(entity_id, stage_id) Novomodelo frame and the
     # source model slack frame (no ResultComparison rows exist for slacks).  The inflow
     # non-negativity slack has no source-model counterpart, so its the source model
-    # source is passed as None — the chart still renders the Cobre Mean + p10/p90 band,
+    # source is passed as None — the chart still renders the Novomodelo Mean + p10/p90 band,
     # just without an overlaid the source model line.
     nw_hydro_slacks = dataset.render.nw_hydro_slacks
     # Withdrawal pos/neg are SWAPPED to follow the source model's sign convention; the
     # ``_NW_HYDRO_SLACK_VARS`` mapping in ``results.py`` is correspondingly swapped so
-    # each panel pairs the right Cobre column with the right The source model series.
+    # each panel pairs the right Novomodelo column with the right The source model series.
     # Evaporation pos/neg already share the source model's convention.
     slack_specs: list[tuple[str, str, bool]] = [
         ("water_withdrawal_violation_neg_m3s", "Withdrawal Slack Pos (m³/s)", True),
@@ -1025,7 +1025,7 @@ def build_comparison_report(
                 [
                     wrap_chart(
                         hydro_slack_per_bus_chart(
-                            cobre_hydro_means,
+                            novomodelo_hydro_means,
                             nw_hydro_slacks if has_newave else None,
                             var,
                             slack_title + " by Bus",
@@ -1045,7 +1045,7 @@ def build_comparison_report(
     slack_sin_charts = [
         wrap_chart(
             hydro_slack_aggregate_chart(
-                cobre_hydro_means,
+                novomodelo_hydro_means,
                 nw_hydro_slacks if has_newave else None,
                 var,
                 slack_title,
@@ -1064,9 +1064,9 @@ def build_comparison_report(
     tab_contents["tab-hydro-detail"] = build_hydro_detail_tab(
         results,
         hydro_pct,
-        cobre_hydro_means,
-        cobre_hydro_meta=hydro_meta,
-        cobre_hydro_per_stage_bounds=dataset.render.cobre_hydro_per_stage_bounds,
+        novomodelo_hydro_means,
+        novomodelo_hydro_meta=hydro_meta,
+        novomodelo_hydro_per_stage_bounds=dataset.render.novomodelo_hydro_per_stage_bounds,
         nw_hydro_slacks=nw_hydro_slacks,
         reference_label=reference_label,
     )
@@ -1097,7 +1097,7 @@ def build_comparison_report(
     per_stage_df = dataset.render.productivity_per_stage
     prod_parts: list[str] = []
     static_title = (
-        "Static productivity — pmo vs cobre-bridge conversion "
+        "Static productivity — pmo vs novomodelo-bridge conversion "
         "(point / equivalent / accumulated)"
     )
     # the static (pmo-derived) and realized (per-stage) halves are
@@ -1134,7 +1134,7 @@ def build_comparison_report(
                         productivity_comparison_scatter(
                             prod_df,
                             "accumulated",
-                            "Accumulated — pmo vs cobre-bridge cascade",
+                            "Accumulated — pmo vs novomodelo-bridge cascade",
                             reference_label,
                         )
                     ),
@@ -1148,7 +1148,7 @@ def build_comparison_report(
             '<p style="color:#64748B;margin:-8px 0 12px">Productivity is constant'
             " within a stage but varies across stages, tracking the reservoir"
             f" head reached each stage — pick a reservoir to compare {reference_label}"
-            " vs Cobre.</p>"
+            " vs Novomodelo.</p>"
         )
         # Reuses the shared per-plant dropdown widget (same as the hydro/thermal
         # detail tabs), so every reservoir is selectable — not a fixed subset.
@@ -1175,8 +1175,8 @@ def build_comparison_report(
             '<p style="color:#64748B;margin:-8px 0 12px">Both solvers fit the'
             " hydro production surface GH(V, Q, S) as a set of hyperplanes; this"
             " compares the resulting surfaces at the fitting-grid nodes. Use the"
-            f" {reference_label} / Cobre / Both / Difference buttons to isolate each"
-            f" surface or their difference (Cobre − {reference_label}, MW); they"
+            f" {reference_label} / Novomodelo / Both / Difference buttons to isolate each"
+            f" surface or their difference (Novomodelo − {reference_label}, MW); they"
             " nearly coincide at S = 0. Spillage (S) is shown separately at the max"
             " V/Q corner. Pick a plant and stage.</p>"
         )
@@ -1194,8 +1194,8 @@ def build_comparison_report(
     # --- Performance tab ---
     nw_tim_iters = dataset.render.nw_tim_iterations
     nw_tim_stages = dataset.render.nw_tim_stages
-    cb_train_secs = dataset.render.cobre_training_seconds
-    cb_conv_perf = dataset.render.cobre_iteration_timing
+    cb_train_secs = dataset.render.novomodelo_training_seconds
+    cb_conv_perf = dataset.render.novomodelo_iteration_timing
     perf_parts: list[str] = []
     perf_parts.append(
         performance_metric_cards(nw_tim_stages, cb_train_secs, reference_label)
@@ -1229,6 +1229,6 @@ def build_comparison_report(
     tab_contents["tab-performance"] = "\n".join(perf_parts)
 
     return build_comparison_html(
-        title=f"Cobre vs {reference_label} Results Comparison",
+        title=f"Novomodelo vs {reference_label} Results Comparison",
         tab_contents=tab_contents,
     )

@@ -23,14 +23,14 @@ its payload by supplying a ``summary`` dict, never a new top-level key.
 The envelope itself is deterministic: it carries no timestamp, no git SHA, no
 absolute path. Determinism of the ``summary`` contents is the caller's
 responsibility; provenance (if ever needed) lives in
-:mod:`cobre_bridge.cli.conversion_manifest`, never here.
+:mod:`novomodelo_bridge.cli.conversion_manifest`, never here.
 
 Version bump policy for :data:`SCHEMA_VERSION`: increment it when a key is
 renamed or removed, or when an existing key's meaning changes — a breaking
 change for consumers. Adding a NEW optional key under ``summary`` is
 backward-compatible and does NOT bump the version.
 
-This is a pure leaf: besides :class:`~cobre_bridge.core.diagnostics.Severity` (the
+This is a pure leaf: besides :class:`~novomodelo_bridge.core.diagnostics.Severity` (the
 runtime dependency of ``_convert_status``), it imports stdlib only — the
 cross-module ``Diagnostic`` / ``ConversionReport`` / ``CompareVerdict`` types
 are referenced under ``TYPE_CHECKING``. It reads its inputs, allocates fresh
@@ -42,15 +42,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.diagnostics import Severity
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from cobre_bridge.comparators.dataset import ComparisonDataset
-    from cobre_bridge.comparators.verdict import CompareVerdict
-    from cobre_bridge.core.conversion import ConversionReport
-    from cobre_bridge.core.diagnostics import Diagnostic
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.verdict import CompareVerdict
+    from novomodelo_bridge.core.conversion import ConversionReport
+    from novomodelo_bridge.core.diagnostics import Diagnostic
 
 # Bump only on a breaking change: a key rename/removal or a meaning change.
 # Adding a NEW optional key under ``summary`` is backward-compatible — do NOT bump.
@@ -133,7 +133,7 @@ def compare_summary(verdict: CompareVerdict) -> dict[str, object]:
     (NOT a percentage), matching :attr:`CompareVerdict.worst_smape`.
 
     Mirrors the console ``all_within_tol`` guard in
-    :func:`cobre_bridge.ui.console.render_compare_verdict`: on a perfect match the
+    :func:`novomodelo_bridge.ui.console.render_compare_verdict`: on a perfect match the
     "worst" clause is meaningless, so ``worst_variable`` is nulled to ``None`` and
     ``worst_smape`` to ``0.0``. Otherwise both pass through verbatim.
     """
@@ -169,7 +169,7 @@ def decomp_dataset_summary(
     Returns the shared headline fields from :func:`compare_summary`
     (``within_tol``, ``total``, ``worst_variable``, ``worst_smape``,
     ``all_within_tol`` — sourced via
-    :func:`~cobre_bridge.comparators.verdict.build_compare_verdict`, so the
+    :func:`~novomodelo_bridge.comparators.verdict.build_compare_verdict`, so the
     headline is computed once from ``dataset.summary`` and matches
     ``compare newave``'s) PLUS the three DECOMP-specific keys read straight
     from *dataset*, in this fixed order: ``stages`` (the count of distinct
@@ -181,11 +181,11 @@ def decomp_dataset_summary(
     *tolerance* is accepted for call-site symmetry with the other compare
     commands' summary builders — it is not consumed here because
     ``dataset.summary``'s ``within_tol_rate`` (which
-    :func:`~cobre_bridge.comparators.verdict.build_compare_verdict` reads) was
+    :func:`~novomodelo_bridge.comparators.verdict.build_compare_verdict` reads) was
     already computed against a tolerance when the caller built *dataset*
     (e.g. via ``build_decomp_dataset(..., tolerance=...)``).
     """
-    from cobre_bridge.comparators.verdict import build_compare_verdict
+    from novomodelo_bridge.comparators.verdict import build_compare_verdict
 
     summary = compare_summary(build_compare_verdict(dataset))
     summary["stages"] = int(dataset.tidy["stage"].n_unique())

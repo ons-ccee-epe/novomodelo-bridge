@@ -13,9 +13,9 @@ if TYPE_CHECKING:
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
-from cobre_bridge.decomp.converters.cadastro.overrides import (
+from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     DiversionChannel,
     MachineSet,
     OutOfHorizon,
@@ -143,7 +143,7 @@ class EffectiveCadastro:
         carries no ``AC NUMJUS`` override at all (absent from
         :attr:`downstream_links`) — the same "absent means base" convention
         every other accessor here follows. ``0`` is a valid return (the
-        sink); the cascade walk (:func:`~cobre_bridge.decomp.converters.
+        sink); the cascade walk (:func:`~novomodelo_bridge.decomp.converters.
         hydro.entity._downstream_operated`) treats it as such.
         """
         if code not in self.downstream_links:
@@ -153,7 +153,7 @@ class EffectiveCadastro:
     def downstream_plant_varies(self, code: int) -> bool:
         """Whether *code*'s effective downstream link varies across stages
         (a temporal ``AC NUMJUS``) — the tracked-gap trigger:
-        :func:`~cobre_bridge.decomp.converters.hydro.entity.
+        :func:`~novomodelo_bridge.decomp.converters.hydro.entity.
         _downstream_operated` reads one stage-representative link for the
         whole horizon (stage 0 by default), so a caller checks this to warn
         rather than silently picking a stage. ``False`` for a plant with no
@@ -207,10 +207,10 @@ def effective_storage_range(
     is ``tipo_regulacao in ("M", "S")`` — is unchanged: the per-stage
     ``(volume_minimo, volume_maximo)`` via :meth:`EffectiveCadastro.value`.
     This is the one place the ``D``-collapse predicate lives; every storage
-    consumer (:func:`storage_envelope`, :func:`cobre_bridge.decomp.converters.bounds.
-    convert_storage_bounds`, :func:`cobre_bridge.decomp.converters.hydro.entity.
+    consumer (:func:`storage_envelope`, :func:`novomodelo_bridge.decomp.converters.bounds.
+    convert_storage_bounds`, :func:`novomodelo_bridge.decomp.converters.hydro.entity.
     convert_initial_storage`) routes through it. Productivity does **not** —
-    :func:`cobre_bridge.decomp.converters.hydro.productivity.
+    :func:`novomodelo_bridge.decomp.converters.hydro.productivity.
     _equivalent_productivity_mw_per_m3s` keeps reading the full
     ``(volume_minimo, volume_maximo)`` range directly,
     validated independently of this collapse.
@@ -242,7 +242,7 @@ def storage_envelope(effective: EffectiveCadastro, code: int) -> tuple[float, fl
     envelope collapses to that same point; every ``M``/``S`` plant is
     unchanged. This is the envelope the entity ``reservoir`` block
     declares as its default storage bounds;
-    :func:`cobre_bridge.decomp.converters.bounds.convert_storage_bounds` emits a
+    :func:`novomodelo_bridge.decomp.converters.bounds.convert_storage_bounds` emits a
     per-stage override wherever a stage's effective bounds differ from it.
     """
     ranges = [
@@ -386,15 +386,15 @@ def build_effective_cadastro(
     code, seeded from the base ``codigo_usina_jusante``/``posto`` columns
     and densified the same way as every other per-stage series. Consumed by
     :meth:`EffectiveCadastro.downstream_plant`/``inflow_gauge`` — the
-    cascade walk (:func:`~cobre_bridge.decomp.converters.hydro.entity.
+    cascade walk (:func:`~novomodelo_bridge.decomp.converters.hydro.entity.
     _downstream_operated`) and the incremental-inflow gauge attribution
-    (:func:`~cobre_bridge.decomp.scenarios._incremental_context`) read one
+    (:func:`~novomodelo_bridge.decomp.scenarios._incremental_context`) read one
     stage-representative (stage 0) value off these, never per-stage, so a
     temporal ``NUMJUS``/``NUMPOS`` is a tracked gap
     (:meth:`EffectiveCadastro.downstream_plant_varies`/``inflow_gauge_varies``),
     not a silent per-stage cascade. ``AC JUSENA``/``AC NPOSNW`` are
     deliberately **not** ingested here — no DECOMP consumer; see the
-    deferred-fidelity warning in :mod:`cobre_bridge.decomp.converters.hydro`.
+    deferred-fidelity warning in :mod:`novomodelo_bridge.decomp.converters.hydro`.
 
     Raises
     ------

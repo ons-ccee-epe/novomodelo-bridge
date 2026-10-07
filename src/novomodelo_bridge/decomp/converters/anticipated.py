@@ -5,13 +5,13 @@ the ``CT`` thermal registry the main thermal converter reads — so these plants
 invisible to ``decomp/converters/thermal.py`` and must be modelled here.
 The **read/model layer** (:func:`read_gnl_model` and its helpers) is pure: it
 turns ``dadgnl`` into a structured commitment model and does nothing else — no
-``cobre`` import, no filesystem writes, no clamping, no decision about lead
+``novomodelo`` import, no filesystem writes, no clamping, no decision about lead
 declaration or ring placement; it returns the true committed values as data. The
-**emission layer** (:func:`convert_gnl`) turns that model into cobre's
+**emission layer** (:func:`convert_gnl`) turns that model into novomodelo's
 anticipated-dispatch inputs and owns the bounds policy the reader defers: it
 clamps each committed MW into the plant's ``tg`` capability at its own delivery
 stage, warning (via the module logger) on an out-of-range value, so the
-converted case never pins a delivery cobre would reject.
+converted case never pins a delivery novomodelo would reject.
 
 ``dadgnl`` has three register families:
 
@@ -20,7 +20,7 @@ converted case never pins a delivery cobre would reject.
   ``disponibilidade`` (max MW), ``inflexibilidade`` (min MW). Like ``CT`` it is
   sparse by stage — stage 1 is mandatory and a later stage inherits the last
   declared record — and is densified by the same routine
-  (:func:`~cobre_bridge.decomp.converters.thermal.dense_stage_records`). Fixed
+  (:func:`~novomodelo_bridge.decomp.converters.thermal.dense_stage_records`). Fixed
   3-block shape, so ``tg(df=True)`` is well-formed.
 * ``gl`` — the committed weekly dispatch: one register per ``(codigo_usina,
   estagio)`` carrying ``data_inicio`` (the delivery-stage start date, a
@@ -50,7 +50,7 @@ Post-horizon anticipated delivery — the já-comandada (class-4) windows and th
 signaled (class-3) ``thermal_bounds`` this module emits — is a feature of the
 source model with no counterpart in the sibling conversion track: its
 committed-dispatch reader
-(:func:`cobre_bridge.newave.converters.anticipated.read_anticipated_dispatch`)
+(:func:`novomodelo_bridge.newave.converters.anticipated.read_anticipated_dispatch`)
 truncates any lag past the study horizon rather than surfacing one past it, so
 this asymmetry is registered, not an oversight or a missing port.
 """
@@ -64,8 +64,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, NamedTuple
 
-from cobre_bridge.decomp.converters.thermal import dense_stage_records
-from cobre_bridge.decomp.temporal import hours_weighted
+from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
+from novomodelo_bridge.decomp.temporal import hours_weighted
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -73,7 +73,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from idecomp.decomp import Dadgnl
 
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
 
@@ -367,7 +367,7 @@ def classify_gnl_windows(
     operative week (``start + _HOURS_PER_OPERATIVE_WEEK``) — never ``c.hours``,
     which the source model leaves at ``0`` past the horizon (``duracao`` is
     only tracked for weeks inside its own operative calendar). Pure: no
-    ``cobre`` import, no I/O, no MW clamping (the emission site's job).
+    ``novomodelo`` import, no I/O, no MW clamping (the emission site's job).
 
     Raises
     ------
@@ -425,13 +425,13 @@ def _classify_plant(
 
 
 # ---------------------------------------------------------------------------
-# Emission: GNL model -> cobre anticipated-dispatch inputs (both boundaries)
+# Emission: GNL model -> novomodelo anticipated-dispatch inputs (both boundaries)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class GnlEmission:
-    """The cobre inputs an anticipated GNL fleet contributes to a converted case.
+    """The novomodelo inputs an anticipated GNL fleet contributes to a converted case.
 
     ``thermals`` are created ``system/thermals.json`` entries (GNL plants are
     absent from ``CT``); ``past_anticipated_commitments`` extends
@@ -549,7 +549,7 @@ def _clamp_committed(
     values): the source model's ``gl`` geração and ``tg`` disponibilidade are
     independent fields, so a commitment can exceed capability, and a
     ``past_anticipated_commitment`` whose ``value_mw`` falls outside the plant's
-    static generation bounds is rejected by cobre's semantic validator
+    static generation bounds is rejected by novomodelo's semantic validator
     (``initial_conditions.rs`` requires every ``value_mw`` in ``[min, max]``). It
     is clamped into range with a warning instead — mirroring the sibling NEWAVE
     path (``converters/initial_conditions.py``).
@@ -581,12 +581,12 @@ def _clamp_committed(
 def _lead_delivery_stage_count(
     lead_hours: float, cumulative_hours: Sequence[float]
 ) -> int:
-    """Leading study stages cobre treats as pre-study-committed for lead ``H``.
+    """Leading study stages novomodelo treats as pre-study-committed for lead ``H``.
 
-    Mirrors cobre-io's ``lead_delivery_stage_count`` for ``LeadTime``: the count
+    Mirrors novomodelo-io's ``lead_delivery_stage_count`` for ``LeadTime``: the count
     of leading stages whose stage-end cumulative hours are ``<= H`` (tie-
     inclusive). The bridge tiles exactly these with
-    ``past_anticipated_commitments`` so the left boundary matches the depth cobre
+    ``past_anticipated_commitments`` so the left boundary matches the depth novomodelo
     derives from ``H`` — for a lead reaching past the horizon this is every study
     stage.
     """
@@ -626,7 +626,7 @@ def _month_end_duration_hours(start: date) -> float:
     Uses the month's own last day-of-month number as the exclusive boundary
     directly (``2026-06-06`` -> ``2026-06-30``, 24 d/576 h) — not the
     following month's first day, which would add a spurious extra day
-    (600 h) and miss cobre's own post-study e2e fixture by one day.
+    (600 h) and miss novomodelo's own post-study e2e fixture by one day.
     """
     _, last_day = _calendar.monthrange(start.year, start.month)
     return float(last_day - start.day) * 24.0
@@ -653,10 +653,10 @@ def _build_post_study_calendar(
       (:func:`_month_end_duration_hours`), never the study stage's own
       recorded duration. Anchoring this mirror at ``horizon_end`` instead of
       ``class4_end`` collapses every já-comandada week onto the mirror's own
-      dates, so cobre would see one class-3 (study-decided) stage instead of
+      dates, so novomodelo would see one class-3 (study-decided) stage instead of
       one per study stage.
 
-    Returns ``[]`` when ``stage_spans`` is empty. Pure: no I/O, no ``cobre``
+    Returns ``[]`` when ``stage_spans`` is empty. Pure: no I/O, no ``novomodelo``
     import.
     """
     if not stage_spans:
@@ -727,13 +727,13 @@ def convert_gnl(
     bus_id_of: Callable[[int], int],
     calendar: Sequence[OperativeStage],
 ) -> GnlEmission:
-    """Convert a :class:`GnlCommitmentModel` into cobre's anticipated-GNL inputs.
+    """Convert a :class:`GnlCommitmentModel` into novomodelo's anticipated-GNL inputs.
 
     Each GNL plant is *created* (absent from ``CT``) with a dense id assigned
     after the existing thermals (``first_thermal_id`` onward, ascending by
     code) and marked anticipated via ``anticipated_config = {"lead_time_hours":
     lead}``. ``lead`` is **per plant** — ``(class4_end − horizon_start).days *
-    24.0`` — long enough that cobre's own study-reachable boundary lands
+    24.0`` — long enough that novomodelo's own study-reachable boundary lands
     exactly at that plant's já-comandada cutoff ``class4_end``
     (:func:`classify_gnl_windows`): every class-4 window then stays inside the
     study's reach, and only the class-3 (signaled) stages at or after
@@ -769,7 +769,7 @@ def convert_gnl(
     carrier a signaled stage needs to be priced at all. A class-4
     (já-comandada) stage gets none: its delivery is already fixed by the
     ``past_anticipated_commitments`` window above, and a ``thermal_bounds`` row
-    there would let cobre re-optimize a cell the source model has already
+    there would let novomodelo re-optimize a cell the source model has already
     committed. ``post_study_stages`` is ``None`` when the model declares no
     ``GS`` calendar (``model.weeks_per_month`` empty) — the deck's own signal
     that there is no post-study month to price; otherwise it is emitted with its
@@ -777,7 +777,7 @@ def convert_gnl(
     class-4.
 
     Each plant's ``thermals.json`` ``generation`` pair is the envelope of its
-    per-stage capability (smallest minimum, largest maximum): cobre validates
+    per-stage capability (smallest minimum, largest maximum): novomodelo validates
     every ``past_anticipated_commitments`` value against that static pair, so a
     stage-1 pair would reject a commitment the plant's own stage allows. Its
     ``cost_per_mwh`` is the first stage's, as for ``CT`` plants.
@@ -788,7 +788,7 @@ def convert_gnl(
     horizon_start = calendar[0].start_date
     stage_spans = [(stage.start_date, stage.end_date) for stage in calendar]
     stage_hours = [stage.total_hours for stage in calendar]
-    # Cumulative operative-stage boundaries S_0=0, S_1, .., S_n, matching cobre's
+    # Cumulative operative-stage boundaries S_0=0, S_1, .., S_n, matching novomodelo's
     # `cumulative_stage_boundaries(study_stage_durations)` — the clock the
     # anticipated-delivery decider is resolved against.
     cumulative_hours = [0.0]
@@ -816,7 +816,7 @@ def convert_gnl(
     )
 
     if post_calendar:
-        # The left boundary tiles exactly the leading stages cobre derives from H
+        # The left boundary tiles exactly the leading stages novomodelo derives from H
         # (every study stage, since H spans the whole study horizon).
         tile_k = _lead_delivery_stage_count(lead_hours, cumulative_hours)
     else:
@@ -853,7 +853,7 @@ def convert_gnl(
             )
 
         plant_classification = classification.plants[thermal.code]
-        # Per plant, not the tile-sizing global H: long enough that cobre's own
+        # Per plant, not the tile-sizing global H: long enough that novomodelo's own
         # study-reachable boundary lands exactly at this plant's já-comandada
         # cutoff, so every class-4 window stays inside the study's reach and
         # only class-3 (signaled) stages need thermal_bounds pricing.
@@ -910,7 +910,7 @@ def convert_gnl(
             )
 
         # A class-4 stage's delivery is already fixed by the class-4 window
-        # above; giving it a thermal_bounds row too would let cobre
+        # above; giving it a thermal_bounds row too would let novomodelo
         # re-optimize an already-committed cell. Only class-3 (signaled)
         # stages get the carrier.
         class4_end = plant_classification.class4_end

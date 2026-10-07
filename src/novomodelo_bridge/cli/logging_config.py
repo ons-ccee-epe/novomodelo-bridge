@@ -27,7 +27,7 @@ def configure_logging(verbose: int, log_file: Path | None) -> None:
     """Configure logging for a CLI run.
 
     *verbose* is a graduated count selecting the live console level:
-    ``0`` keeps ``cobre_bridge`` warnings recorded — the diagnostics collector and
+    ``0`` keeps ``novomodelo_bridge`` warnings recorded — the diagnostics collector and
     ``--diagnostics-json`` rely on them — but off the live console (the Rich
     diagnostics block is the single user-facing surface, and warnings are not
     printed twice); ``1`` (``-v`` / ``--verbose``) raises the console to INFO; and
@@ -40,7 +40,7 @@ def configure_logging(verbose: int, log_file: Path | None) -> None:
 
     When *log_file* is not ``None``, its missing parent directories are created and
     a DEBUG ``FileHandler`` is attached to the
-    ``cobre_bridge`` logger and the package logger level is lowered to DEBUG, so the
+    ``novomodelo_bridge`` logger and the package logger level is lowered to DEBUG, so the
     file always captures the full trace even at console verbose ``0`` (the console
     output stays at the ladder level — it is driven by ``basicConfig``/root, while
     ``NULL_HANDLER`` keeps suppressed records off ``logging.lastResort``). The
@@ -50,7 +50,7 @@ def configure_logging(verbose: int, log_file: Path | None) -> None:
     """
     global _LOG_FILE_HANDLER
 
-    pkg = logging.getLogger("cobre_bridge")
+    pkg = logging.getLogger("novomodelo_bridge")
     if verbose >= 1:
         level = logging.DEBUG if verbose >= 2 else logging.INFO
         logging.basicConfig(

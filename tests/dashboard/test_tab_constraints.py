@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.tabs.constraints.
+"""Unit tests for novomodelo_bridge.dashboard.tabs.constraints.
 
 Covers module constants, can_render, _build_metrics_row, the new
 _compute_violation_zones, _build_constraint_lhs_data, _build_lhs_section,
@@ -25,9 +25,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-import cobre_bridge.dashboard.tabs.constraints as tab_constraints
-from cobre_bridge.core.generic_constraint_format import sense_to_interval
-from cobre_bridge.dashboard.tabs.constraints import (
+import novomodelo_bridge.dashboard.tabs.constraints as tab_constraints
+from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
+from novomodelo_bridge.dashboard.tabs.constraints import (
     _build_constraint_lhs_data,
     _build_lhs_section,
     _build_metrics_row,
@@ -35,7 +35,7 @@ from cobre_bridge.dashboard.tabs.constraints import (
     can_render,
     render,
 )
-from cobre_bridge.dashboard.tabs.constraints_utils import (
+from novomodelo_bridge.dashboard.tabs.constraints_utils import (
     bound_value_column,
     build_constraints_summary_table,
     derive_constraint_shape,
@@ -208,7 +208,7 @@ def _make_mock_data(
     data.simulation_available = True
     # A real, non-existent Path so render()'s load_rho_acum_overrides() call
     # degrades to {} instead of running json.load() against a MagicMock.
-    data.case_dir = Path("nonexistent-cobre-bridge-dashboard-case")
+    data.case_dir = Path("nonexistent-novomodelo-bridge-dashboard-case")
     return data
 
 
@@ -784,7 +784,9 @@ def test_no_three_separate_old_section_titles() -> None:
 # test_render (existing + updated)
 # ---------------------------------------------------------------------------
 
-_PATCH_EVAL = "cobre_bridge.dashboard.tabs.constraints.evaluate_constraint_expressions"
+_PATCH_EVAL = (
+    "novomodelo_bridge.dashboard.tabs.constraints.evaluate_constraint_expressions"
+)
 
 _STUB_LHS_DF = pd.DataFrame(
     columns=["constraint_id", "scenario_id", "stage_id", "block_id", "lhs_value"]
@@ -883,7 +885,7 @@ def test_render_wires_rho_acum_overrides_into_evaluate_constraint_expressions() 
     sentinel_overrides = {0: {0: 2.19}}
     with (
         patch(
-            "cobre_bridge.dashboard.tabs.constraints.load_rho_acum_overrides",
+            "novomodelo_bridge.dashboard.tabs.constraints.load_rho_acum_overrides",
             return_value=sentinel_overrides,
         ) as mock_load,
         patch(_PATCH_EVAL, return_value=_STUB_LHS_DF) as mock_eval,
@@ -900,11 +902,11 @@ def test_render_wires_rho_acum_overrides_into_evaluate_constraint_expressions() 
 
 
 class TestParseExpression:
-    """``parse_expression`` recognises both legacy literal coefficients and the cobre
+    """``parse_expression`` recognises both legacy literal coefficients and the novomodelo
     HEAD ``@name`` sigil."""
 
     def _parse(self, expr: str) -> list[tuple]:
-        from cobre_bridge.cobre.constraint_expr import parse_expression
+        from novomodelo_bridge.novomodelo.constraint_expr import parse_expression
 
         return parse_expression(expr)
 
@@ -967,11 +969,11 @@ class TestParseExpression:
 
 
 class TestResolveParamToColumn:
-    """``resolve_param_to_column`` maps cobre-bridge's per-hydro names to simulation
+    """``resolve_param_to_column`` maps novomodelo-bridge's per-hydro names to simulation
     columns."""
 
     def _resolve(self, name: str):
-        from cobre_bridge.cobre.constraint_expr import resolve_param_to_column
+        from novomodelo_bridge.novomodelo.constraint_expr import resolve_param_to_column
 
         return resolve_param_to_column(name)
 
@@ -1036,7 +1038,9 @@ class TestEvaluateAtName:
     columns."""
 
     def _evaluate(self, expression: str, *, with_productivity: bool = True):
-        from cobre_bridge.cobre.constraint_expr import evaluate_constraint_expressions
+        from novomodelo_bridge.novomodelo.constraint_expr import (
+            evaluate_constraint_expressions,
+        )
 
         constraints = [
             {
@@ -1093,14 +1097,16 @@ class TestEvaluateAtNameRhoAcumOverride:
     """``rho_acum_overrides`` replaces the default productivity column at
     ``@rho_acum_h{id}`` -- the mechanism VminOP/RHE need to match the LP's
     own resolution instead of the simulation's default point productivity
-    (see :func:`cobre_bridge.cobre.constraint_expr.load_rho_acum_overrides`)."""
+    (see :func:`novomodelo_bridge.novomodelo.constraint_expr.load_rho_acum_overrides`)."""
 
     def _evaluate(
         self,
         expression: str,
         rho_acum_overrides: dict[int, dict[int, float]] | None,
     ):
-        from cobre_bridge.cobre.constraint_expr import evaluate_constraint_expressions
+        from novomodelo_bridge.novomodelo.constraint_expr import (
+            evaluate_constraint_expressions,
+        )
 
         constraints = [
             {
@@ -1206,7 +1212,9 @@ class TestStorageOnlyFastPath:
     """
 
     def _evaluate(self, expression: str):
-        from cobre_bridge.cobre.constraint_expr import evaluate_constraint_expressions
+        from novomodelo_bridge.novomodelo.constraint_expr import (
+            evaluate_constraint_expressions,
+        )
 
         constraints = [
             {
@@ -1306,7 +1314,7 @@ class TestLoadGenericConstraintsF3Shape:
     F3 ``bound_lower``/``bound_upper`` pair — with no ``bound`` column."""
 
     def test_loads_f3_bounds_parquet_verbatim(self, tmp_path: Path) -> None:
-        from cobre_bridge.dashboard.data import load_generic_constraints
+        from novomodelo_bridge.dashboard.data import load_generic_constraints
 
         constraints_dir = tmp_path / "constraints"
         constraints_dir.mkdir()
@@ -1335,7 +1343,7 @@ class TestLoadGenericConstraintsF3Shape:
         assert math.isnan(result.bounds["bound_upper"].iloc[0])
 
     def test_missing_files_give_empty_defaults(self, tmp_path: Path) -> None:
-        from cobre_bridge.dashboard.data import load_generic_constraints
+        from novomodelo_bridge.dashboard.data import load_generic_constraints
 
         result = load_generic_constraints(tmp_path)
 
@@ -1368,10 +1376,10 @@ class TestNoSenseOrSingleBoundColumnRemainsInDashboardOrReport:
     @pytest.mark.parametrize(
         "relative_path",
         [
-            "src/cobre_bridge/dashboard/tabs/constraints.py",
-            "src/cobre_bridge/dashboard/tabs/constraints_utils.py",
-            "src/cobre_bridge/dashboard/data.py",
-            "src/cobre_bridge/comparators/report_builder.py",
+            "src/novomodelo_bridge/dashboard/tabs/constraints.py",
+            "src/novomodelo_bridge/dashboard/tabs/constraints_utils.py",
+            "src/novomodelo_bridge/dashboard/data.py",
+            "src/novomodelo_bridge/comparators/report_builder.py",
         ],
     )
     def test_module_has_no_sense_or_bound_column_access(

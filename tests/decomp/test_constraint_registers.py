@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
     detect_libs_electrical,
@@ -20,13 +20,13 @@ from cobre_bridge.decomp.constraint_registers import (
     lowers_to_bound,
     read_constraints,
 )
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-from cobre_bridge.decomp.converters.constraints import (
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.constraints import (
     emit_re_generics,
     emit_rhq_rhv_generics,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import _FakeDadger, make_decomp_case
 
 
@@ -335,7 +335,7 @@ def test_hq_qbom_no_double_emission() -> None:
 
 def test_hq_qdes_single_lowers_to_diversion_bound() -> None:
     """A single-term ``QDES`` RHQ lowers to a two-sided hydro ``diversion``
-    bound (M3), now that cobre's
+    bound (M3), now that novomodelo's
     generic-constraint-authoring landed ``min_diversion_m3s``."""
     dadger = _FakeDadger(
         hq=_decl((6, 1, 1)),
@@ -353,7 +353,7 @@ def test_hq_qdes_single_lowers_to_diversion_bound() -> None:
 
 def test_hq_qver_single_lowers_to_spillage_bound() -> None:
     """A single-term ``QVER`` RHQ lowers to a two-sided hydro ``spillage``
-    bound (M5), now that cobre's
+    bound (M5), now that novomodelo's
     generic-constraint-authoring landed ``min/max_spillage_m3s``."""
     dadger = _FakeDadger(
         hq=_decl((9, 1, 1)),

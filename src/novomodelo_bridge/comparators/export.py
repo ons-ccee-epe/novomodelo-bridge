@@ -20,17 +20,17 @@ import json
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from cobre_bridge.cobre.readers import (
-    cobre_software_version,
-    read_cobre_training_metadata,
+from novomodelo_bridge.comparators.manifest import ComparisonManifest
+from novomodelo_bridge.novomodelo.readers import (
+    novomodelo_software_version,
+    read_novomodelo_training_metadata,
 )
-from cobre_bridge.comparators.manifest import ComparisonManifest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from cobre_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
 
 #: The artifact formats :func:`write_artifacts` knows how to emit.
 _VALID_FORMATS: frozenset[str] = frozenset({"parquet", "json", "csv"})
@@ -52,7 +52,7 @@ def write_artifacts(
     *,
     command: str,
     source_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_output_dir: Path,
     tolerance: float,
     out_dir: Path,
     formats: Sequence[str],
@@ -85,8 +85,8 @@ def write_artifacts(
         dataset: The validated canonical dataset to export.
         command: The originating command label (e.g. ``"compare results"``).
         source_dir: The source-model case directory (recorded in the manifest).
-        cobre_output_dir: The Cobre output directory (recorded in the manifest
-            and probed for the Cobre version).
+        novomodelo_output_dir: The Novomodelo output directory (recorded in the manifest
+            and probed for the Novomodelo version).
         tolerance: The comparison tolerance (recorded in the manifest).
         out_dir: Destination directory; created with ``parents=True``.
         formats: The artifact formats to emit; each must be in
@@ -95,7 +95,7 @@ def write_artifacts(
             conversion manifest's ``input_files``); omitted (``None``) records
             an empty list.
         diagnostics: The compare run's diagnostics, each as a
-            :meth:`~cobre_bridge.core.diagnostics.Diagnostic.to_dict` dict; omitted
+            :meth:`~novomodelo_bridge.core.diagnostics.Diagnostic.to_dict` dict; omitted
             (``None``) records an empty ``diagnostics`` list and an empty
             ``diagnostics_summary``.
 
@@ -156,9 +156,9 @@ def write_artifacts(
     manifest = ComparisonManifest.create(
         command,
         source_dir,
-        cobre_output_dir,
+        novomodelo_output_dir,
         tolerance,
-        cobre_version=_read_cobre_version(cobre_output_dir),
+        novomodelo_version=_read_novomodelo_version(novomodelo_output_dir),
         input_files=input_files,
         diagnostics_summary=diagnostics_summary,
         diagnostics=diagnostics,
@@ -189,18 +189,20 @@ def _coerce_top_divergences(value: object) -> list[dict[str, object]]:
     return []
 
 
-def _read_cobre_version(cobre_output_dir: Path) -> str | None:
-    """Return the Cobre version recorded in the training metadata, or ``None``.
+def _read_novomodelo_version(novomodelo_output_dir: Path) -> str | None:
+    """Return the Novomodelo version recorded in the training metadata, or ``None``.
 
-    Delegates to :func:`cobre_readers.read_cobre_training_metadata` for the
+    Delegates to :func:`novomodelo_readers.read_novomodelo_training_metadata` for the
     unified candidate-directory search; keeps its own
-    ``(cobre_output_dir) -> str | None`` signature and ``str``-type guard so
+    ``(novomodelo_output_dir) -> str | None`` signature and ``str``-type guard so
     existing callers/tests stay green.
 
     Args:
-        cobre_output_dir: The Cobre output directory handed to the comparator.
+        novomodelo_output_dir: The Novomodelo output directory handed to the comparator.
 
     Returns:
-        The recorded Cobre version when present and readable, else ``None``.
+        The recorded Novomodelo version when present and readable, else ``None``.
     """
-    return cobre_software_version(read_cobre_training_metadata(cobre_output_dir))
+    return novomodelo_software_version(
+        read_novomodelo_training_metadata(novomodelo_output_dir)
+    )

@@ -1,6 +1,6 @@
 """Subprocess tests for the ``convert newave`` early-exit failure paths.
 
-Tier 1 — pure Python, imports no cobre. Locks in the migration of
+Tier 1 — pure Python, imports no novomodelo. Locks in the migration of
 ``_run_newave_conversion``/``_run_decomp_conversion`` from ``SimpleNamespace``
 to the typed ``ConvertArgs``, and the routing of the two NEWAVE early-exit
 paths (source-missing, dest-not-empty) through ``_fail``: a
@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from cobre_bridge.cli.args import ConvertArgs
-from cobre_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
+from novomodelo_bridge.cli.args import ConvertArgs
+from novomodelo_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
 from tests.cli.conftest import _run_cli_subprocess
 from tests.conftest import _make_fake_newave_dir
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from cobre_bridge.core.units import HM3_TO_MWH_PER_RHO
+from novomodelo_bridge.core.units import HM3_TO_MWH_PER_RHO
 
 # --- the source model micro-penalties (page 88, current v30) -------------------------
-# Energy-domain (R$/MWh) — passed through to cobre without conversion. Flow-domain
+# Energy-domain (R$/MWh) — passed through to novomodelo without conversion. Flow-domain
 # (multiplied by ρ_avg before emission) — see `_PEVERT` group.
 #
 # These are the source model's v30 values verbatim: tiny (~1e-4 R$/MWh) regularization
@@ -17,12 +17,12 @@ PINT = 0.000273  # intercâmbio  → line.exchange_cost
 PCORTEOL = 0.000344  # corte geração eólica → ncs.curtailment_cost
 PEXC = 0.000355  # excesso de energia → bus.excess_cost
 
-# Flow-domain (R$/MWh equivalent, multiplied by ρ_avg before emission). Cobre's
+# Flow-domain (R$/MWh equivalent, multiplied by ρ_avg before emission). Novomodelo's
 # `hydro.spillage_cost` covers ALL spillage (reservoir + run-of-river). In the
 # *individualized* model (manual §3.24, p.88, "the source model individualizado" column)
 # BOTH controllable (pEVERT) and run-of-river (pPFIO) spillage use the same base
 # 0.000300 — only the REE-aggregated ("the source model equivalente") column raises
-# pEVERT to 0.000327. Cobre cases are individualized, so anchor on 0.000300.
+# pEVERT to 0.000327. Novomodelo cases are individualized, so anchor on 0.000300.
 _PEVERT = 0.000300  # vertimento controlável → hydro.spillage_cost
 _PTURB = 0.000333  # turbinamento → hydro.turbined_cost (applied to every hydro)
 _PCDESV = 0.000300  # volume desviado → hydro.diversion_cost
@@ -42,10 +42,10 @@ _EVAPORATION_MULT = 10.0
 # turbined/outflow-below/outflow-above slack costs share an LP coefficient. Reintroduce
 # distinct spacing here if HiGHS degeneracy resurfaces.
 
-# --- Cobre Family-D fields not yet wired into the LP -----------------------
-# Storage-floor and filling-target violation costs are declared on cobre's schema
+# --- Novomodelo Family-D fields not yet wired into the LP -----------------------
+# Storage-floor and filling-target violation costs are declared on novomodelo's schema
 # but `lp_builder/matrix.rs` does NOT use them in the objective (all 0.0 at build
-# time). We still emit faithful values so the case is ready for the day cobre
+# time). We still emit faithful values so the case is ready for the day novomodelo
 # wires them in — DERIVED from the deficit cost via ρ_max_acum (energy-equivalent,
 # × HM3_TO_MWH_PER_RHO), exactly like `evaporation_violation_cost`, rather than
 # hard-coded placeholders.
@@ -121,19 +121,19 @@ def hydro_penalty_costs(
     turbined_below_cost = turbmn_mwh * rho_avg
     generation_below_cost = ghmin_mwh  # energy-domain, no productivity factor
 
-    # Storage floor / filling target: cobre's Family-D slots are dormant in the
+    # Storage floor / filling target: novomodelo's Family-D slots are dormant in the
     # LP today (priced 0.0) but we still populate them with faithful, DERIVED
-    # values so the case is ready when cobre wires them in.
+    # values so the case is ready when novomodelo wires them in.
     #
-    # Conversion from the source model R$/MWh to cobre R$/hm³ is purely volumetric:
+    # Conversion from the source model R$/MWh to novomodelo R$/hm³ is purely volumetric:
     # 1 hm³ of stored water released through the cascade yields
     #   1e6 m³ × ρ MW/(m³/s) × 1/3600 s/h = (1e6/3600) × ρ MWh
-    # so cobre_coef = P_R$_MWh × ρ × HM3_TO_MWH_PER_RHO. The 730h/month assumption
+    # so novomodelo_coef = P_R$_MWh × ρ × HM3_TO_MWH_PER_RHO. The 730h/month assumption
     # cancels out — this is dimensional energy-equivalence, not a per-hour rate.
     # ρ here is ρ_max_acum (MAX_PRODTACUM_SIN), per the agreed criterion and
     # matching the evaporation / water-withdrawal slacks (manual p.87).
     #
-    # ⚠️ This volumetric (730-cancelling) form is correct ONLY because cobre
+    # ⚠️ This volumetric (730-cancelling) form is correct ONLY because novomodelo
     # prices these Family-D slots with NO time multiplier (`objective = penalty`).
     # If they are ever wired into the LP with a `× block_hours` term (like the
     # generic/VminOP slack), this conversion becomes wrong: the slack would then
@@ -178,7 +178,7 @@ def hydro_penalty_costs(
     turbined_cost = _PTURB * rho_avg
     diversion_cost = _PCDESV * rho_avg
 
-    # Inflow non-negativity: The source model has no PENALID variable for this. Cobre's
+    # Inflow non-negativity: The source model has no PENALID variable for this. Novomodelo's
     # default is 1000 R$/(m³/s · h), which is far below the operationally- significant
     # flow-domain slacks above (turbined / outflow / evaporation / water-withdrawal).
     # When the LP can choose between letting incremental natural inflow go negative (a

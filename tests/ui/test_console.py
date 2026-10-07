@@ -1,4 +1,4 @@
-"""Unit tests for the Rich rendering layer (``cobre_bridge.ui.console``)."""
+"""Unit tests for the Rich rendering layer (``novomodelo_bridge.ui.console``)."""
 
 from __future__ import annotations
 
@@ -6,10 +6,14 @@ import io
 
 from rich.console import Console
 
-from cobre_bridge.core.conversion import ConversionReport
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
-from cobre_bridge.core.preflight import CheckItem, PreflightResult, PreflightVerdict
-from cobre_bridge.ui.console import (
+from novomodelo_bridge.core.conversion import ConversionReport
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+from novomodelo_bridge.core.preflight import (
+    CheckItem,
+    PreflightResult,
+    PreflightVerdict,
+)
+from novomodelo_bridge.ui.console import (
     _SUCCESS_STYLE,
     MAX_TABLE_ROWS,
     _progress_enabled,
@@ -330,8 +334,8 @@ class TestCompareRowStyle:
         assert compare_row_style(within_tol=True) == _SUCCESS_STYLE
 
     def test_not_within_tol_returns_error_style(self) -> None:
-        from cobre_bridge.core.diagnostics import Severity
-        from cobre_bridge.ui.console import _SEVERITY_STYLE
+        from novomodelo_bridge.core.diagnostics import Severity
+        from novomodelo_bridge.ui.console import _SEVERITY_STYLE
 
         assert compare_row_style(within_tol=False) == _SEVERITY_STYLE[Severity.ERROR]
 

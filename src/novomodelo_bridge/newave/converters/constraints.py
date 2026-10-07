@@ -1,14 +1,14 @@
 """Generic constraints converter: VminOP (minimum stored energy) from curva.dat
 and electric constraints from restricao-eletrica.csv.
 
-Converts the source model minimum stored energy constraints into Cobre generic
+Converts the source model minimum stored energy constraints into Novomodelo generic
 constraints. Each REE with entries in ``curva.dat`` becomes one generic constraint whose
 expression is a weighted sum of ``hydro_storage_final`` variables (the end-of-stage
 stored volume the source model's security curve bounds), with weights equal to the
 accumulated cascade productivities.
 
 Electric constraints from ``restricao-eletrica.csv`` (discovered via
-``indices.csv``) are converted into Cobre generic constraints with
+``indices.csv``) are converted into Novomodelo generic constraints with
 ``hydro_generation`` and ``line_exchange`` variables.
 """
 
@@ -25,28 +25,33 @@ from typing import Any, Literal, NamedTuple
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.cobre.scalar_parameters import rho_acum_name
-from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity, emit
-from cobre_bridge.core.generic_constraint_builder import (
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
     GenericConstraintResult,
 )
-from cobre_bridge.core.productivity import (
+from novomodelo_bridge.core.productivity import (
     compute_productivity,
     stored_energy_productivity,
 )
-from cobre_bridge.core.units import C_M3S2HM3, MONTH_HOURS
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.hydro import (
+from novomodelo_bridge.core.units import C_M3S2HM3, MONTH_HOURS
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.hydro import (
     _apply_permanent_overrides,
     compute_per_stage_own_integrated_productivities,
 )
-from cobre_bridge.newave.converters.temporal import _month_hours
-from cobre_bridge.newave.id_map import NewaveIdMap
-from cobre_bridge.newave.plants import active_hydros
-from cobre_bridge.newave.switches import switch_off_diagnostic
+from novomodelo_bridge.newave.converters.temporal import _month_hours
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.plants import active_hydros
+from novomodelo_bridge.newave.switches import switch_off_diagnostic
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+from novomodelo_bridge.novomodelo.scalar_parameters import rho_acum_name
 
 _LOG = logging.getLogger(__name__)
 
@@ -114,7 +119,7 @@ def _vminop_energy_factor(start_year: int, start_month: int, stage: int) -> floa
 
     ρ_acum is in MW/(m³/s), so ``ρ_acum · storage[hm³]`` overstates the true stored
     energy (MWmonth) by the hm³↔(m³/s)·month factor. That factor scales with the month's
-    length, and cobre prices the VminOP slack with each stage's **real** ``block_hours``
+    length, and novomodelo prices the VminOP slack with each stage's **real** ``block_hours``
     (672–744 h — actual calendar months), **not** the source model's fixed 730 h
     convention. Using the actual month length here makes the effective slack penalty
     resolve to the intended R$/MWh on every stage; the fixed ``C_M3S2HM3`` would leave a
@@ -150,7 +155,7 @@ def _build_hydro_downstream_map(
 
     The map collapses any chain of fictitious plants between a real plant and
     its next real downstream — see
-    :func:`cobre_bridge.newave.converters.fict_cascade.resolve_cascade` for the
+    :func:`novomodelo_bridge.newave.converters.fict_cascade.resolve_cascade` for the
     resolution rules.  ``downstream_code`` is ``None`` when the cascade
     terminates at the sea.
 
@@ -166,7 +171,7 @@ def _build_hydro_downstream_map(
         the cascade stops short.  Defaults to empty only for callers that
         operate on FICT-free plant sets (e.g. unit tests).
     """
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     if cadastro is None:
         cadastro = pd.DataFrame()
@@ -189,7 +194,7 @@ def compute_accumulated_integrated_productivities(
     """Cascade-sum of per-plant stored-energy (EARM) productivity.
 
     Public, stable seam: the results comparator
-    (:mod:`cobre_bridge.comparators.newave.results`) calls this to build its
+    (:mod:`novomodelo_bridge.comparators.newave.results`) calls this to build its
     productivity-detail tab, so the ``(cadastro, confhd_df) -> {code: rho}``
     contract is shared across the converter↔comparator boundary. It is *not*
     interchangeable with :func:`compute_accumulated_productivities` (which uses
@@ -205,7 +210,7 @@ def compute_accumulated_integrated_productivities(
     :func:`convert_vminop_constraints` — the per-stage version is computed
     separately and accounts for CFUGA/CMONT overrides.
     """
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     resolutions = resolve_cascade(confhd_df, cadastro)
     downstream_map: dict[int, int | None] = {
@@ -234,11 +239,11 @@ def compute_accumulated_productivities(
     traversing the cascade DAG from downstream (sea-level sinks) to upstream.
 
     The cascade chain is resolved with
-    :func:`cobre_bridge.newave.converters.fict_cascade.resolve_cascade`, so any
+    :func:`novomodelo_bridge.newave.converters.fict_cascade.resolve_cascade`, so any
     fictitious plants between a real plant and its next real downstream are
     collapsed: the FICTs' ρ_eq is folded into the upstream real plant's own
     ρ_eq and the next real plant becomes the direct downstream.  This makes
-    cobre-bridge's accumulated productivity reproduce the source model's
+    novomodelo-bridge's accumulated productivity reproduce the source model's
     ``produtibilidade_acumulada_calculo_earm`` from ``pmo.dat``.
 
     Parameters
@@ -253,7 +258,7 @@ def compute_accumulated_productivities(
     dict[int, float]
         Mapping from plant code to accumulated productivity in MW/(m³/s).
     """
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     resolutions = resolve_cascade(confhd_df, cadastro)
     downstream_map: dict[int, int | None] = {
@@ -311,7 +316,7 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
 
     Falls back to ``None`` when the source model files cannot be read (mocked tests).
     """
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     try:
         cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
@@ -394,7 +399,7 @@ def _warn_if_non_fixa_penalization(configuracoes_penalizacao: list[Any] | None) 
     anything else = the source model's iterative / variable penalization (the
     ``ETAPA-2`` adjustment).
 
-    Cobre-bridge models the **FIXA** convention: a per-stage VminOP (minimum stored
+    Novomodelo-bridge models the **FIXA** convention: a per-stage VminOP (minimum stored
     energy) slack penalized at the fixed curve cost.  This is the faithful equivalent of
     the source model FIXA, so a FIXA deck needs no warning.  It does **not** reproduce
     the iterative / variable penalization, so a non-FIXA deck will show an expected
@@ -418,7 +423,7 @@ def _warn_if_non_fixa_penalization(configuracoes_penalizacao: list[Any] | None) 
                 title="Security curve uses FIXA penalization",
                 summary=(
                     "curva.dat selects TIPO DE PENALIZACAO = 0 (FIXA): matches "
-                    "cobre-bridge's VminOP modelling (a per-stage curve slack "
+                    "novomodelo-bridge's VminOP modelling (a per-stage curve slack "
                     "at the fixed penalty), so no VminOP violation-penalty "
                     "difference is expected from the curve handling."
                 ),
@@ -434,7 +439,7 @@ def _warn_if_non_fixa_penalization(configuracoes_penalizacao: list[Any] | None) 
             title="Security curve uses non-FIXA penalization",
             summary=(
                 f"curva.dat selects TIPO DE PENALIZACAO = {tipo} (non-FIXA): "
-                "cobre-bridge models the FIXA convention and does not "
+                "novomodelo-bridge models the FIXA convention and does not "
                 "reproduce NEWAVE's iterative / variable curve penalization, "
                 "so a VminOP violation-penalty difference is expected."
             ),
@@ -490,13 +495,13 @@ def convert_vminop_constraints(
     id_map: NewaveIdMap,
     allocator: ConstraintIdAllocator | None = None,
 ) -> VminopResult | None:
-    """Convert curva.dat VminOP constraints to Cobre generic constraints.
+    """Convert curva.dat VminOP constraints to Novomodelo generic constraints.
 
-    Expressions are emitted using the cobre HEAD ``@name`` sigil, with one
+    Expressions are emitted using the novomodelo HEAD ``@name`` sigil, with one
     ``@rho_acum_h{hydro_id}`` per hydro term.  The accumulated productivity used both
     for the per-stage RHS bound and (via the fourth return value) for the
     ``@rho_acum_h{id}`` override is the cascade-summed *integrated* productivity — the
-    source model's stored-energy / EARM convention — which differs from cobre's default
+    source model's stored-energy / EARM convention — which differs from novomodelo's default
     point ρ_acum (gen = ρ·Q coefficient) by up to ~10% on plants with non-trivial head
     swing.
 
@@ -520,7 +525,7 @@ def convert_vminop_constraints(
     tuple[dict, pa.Table, list[int], dict[int, list[float]]] | None
         ``(constraints_dict, bounds_table, referenced_hydro_ids,
         rho_acum_per_stage_overrides)`` or ``None`` if ``curva.dat`` is
-        absent.  The fourth element maps cobre hydro_id → per-stage
+        absent.  The fourth element maps novomodelo hydro_id → per-stage
         integrated ρ_acum and is fed into ``build_scalar_parameters`` so
         the LP coefficient at ``@rho_acum_h{id}`` matches the RHS bound.
     """
@@ -530,7 +535,7 @@ def convert_vminop_constraints(
 
     # Honor dger.dat's `curva_aversao` switch: The source model itself disables the
     # risk-aversion curve when this flag is 0, even if curva.dat is on disk. Mirror that
-    # here so the converted cobre case matches the source model's behavior. When the
+    # here so the converted novomodelo case matches the source model's behavior. When the
     # field is absent (None), preserve historical behavior and emit the constraints —
     # only an explicit 0 disables them.
     dger = case.dger
@@ -546,7 +551,7 @@ def convert_vminop_constraints(
     if curva_df is None or curva_df.empty:
         return None
 
-    # Cobre's per-stage curve slack reproduces the source model's FIXA penalization
+    # Novomodelo's per-stage curve slack reproduces the source model's FIXA penalization
     # (TIPO DE PENALIZACAO = 0); warn only when the deck selects a non-FIXA mode, which
     # the bridge does not reproduce.
     _warn_if_non_fixa_penalization(curva.configuracoes_penalizacao)
@@ -578,7 +583,7 @@ def convert_vminop_constraints(
     # cascade here and use it both for the per-stage RHS bound *and* (via the return
     # value) to override the `@rho_acum_h{id}` scalar parameter in
     # generic_parameters.json so the LP's constraint coefficient matches the source
-    # model.  Without the override the LHS would use cobre's default point ρ_acum and
+    # model.  Without the override the LHS would use novomodelo's default point ρ_acum and
     # silently drift from the RHS by ~10% on plants with non-trivial head swing.
     acc_prod = compute_accumulated_integrated_productivities(cadastro, confhd_df)
     per_stage_own_int = compute_per_stage_own_integrated_productivities(case)
@@ -592,11 +597,11 @@ def convert_vminop_constraints(
     # hm³↔(m³/s)·month factor (≈ 2.628). The VminOP slack penalty is a R$/MWh value
     # (penalid.dat); without this conversion the slack is that factor too large, so the
     # effective curve-violation cost rises above the deficit cost and the LP prefers
-    # deficit to violating the security curve — i.e. Cobre hoards water under scarcity
+    # deficit to violating the security curve — i.e. Novomodelo hoards water under scarcity
     # instead of drawing it down like the source model.
     #
     # The factor is applied *per stage* via :func:`_vminop_energy_factor`, which
-    # uses each stage's real month length (cobre prices the slack as
+    # uses each stage's real month length (novomodelo prices the slack as
     # ``penalty × block_hours`` with the actual 672–744 h durations, not the
     # fixed 730 h). The factor cancels between LHS and RHS, so the binding
     # storage level is unchanged; only the slack's energy units (and thus the
@@ -656,8 +661,8 @@ def convert_vminop_constraints(
             continue
 
         # Build expression: sum of
-        # @rho_acum_h{cobre_id} * hydro_storage_final(cobre_id).
-        # The coefficient is resolved by cobre to its own ρ_acum at solve time.
+        # @rho_acum_h{novomodelo_id} * hydro_storage_final(novomodelo_id).
+        # The coefficient is resolved by novomodelo to its own ρ_acum at solve time.
         # We collect the participating plants here; the RHS bound for each
         # stage is computed below using the per-stage ρ_acum so LHS and RHS
         # stay aligned through CFUGA/CMONT temporal overrides.
@@ -677,13 +682,13 @@ def convert_vminop_constraints(
             if acc_prod.get(plant_code, 0.0) <= 0.0:
                 continue
             try:
-                cobre_id = id_map.hydro_id(plant_code)
+                novomodelo_id = id_map.hydro_id(plant_code)
             except KeyError:
                 continue
             terms.append(
-                f"@{rho_acum_name(cobre_id)} * hydro_storage_final({cobre_id})"
+                f"@{rho_acum_name(novomodelo_id)} * hydro_storage_final({novomodelo_id})"
             )
-            referenced_ids.append(cobre_id)
+            referenced_ids.append(novomodelo_id)
             active_plant_codes.append(plant_code)
 
         # Pre-compute (vol_min, vol_max) per active plant once.
@@ -844,7 +849,9 @@ def convert_vminop_constraints(
         return None
 
     constraints_dict = {
-        "$schema": cobre_schemas.schema_url_for("constraints/generic_constraints.json"),
+        "$schema": novomodelo_schemas.schema_url_for(
+            "constraints/generic_constraints.json"
+        ),
         "constraints": result.constraints,
     }
 
@@ -854,19 +861,19 @@ def convert_vminop_constraints(
         result.bounds.num_rows,
     )
 
-    # Build the per_stage override for rho_acum_h{id}: map cobre hydro_id to
+    # Build the per_stage override for rho_acum_h{id}: map novomodelo hydro_id to
     # the integrated cascade ρ per stage. Only emit overrides for plants
     # actually referenced by a VminOP expression so unaffected hydros keep
-    # cobre's default `computed` resolution.
+    # novomodelo's default `computed` resolution.
     rho_acum_overrides: dict[int, list[float]] = {}
     for plant_code, per_stage_values in per_stage_acc.items():
         try:
-            cobre_id = id_map.hydro_id(plant_code)
+            novomodelo_id = id_map.hydro_id(plant_code)
         except KeyError:
             continue
-        if cobre_id not in all_referenced_ids:
+        if novomodelo_id not in all_referenced_ids:
             continue
-        rho_acum_overrides[cobre_id] = list(per_stage_values)
+        rho_acum_overrides[novomodelo_id] = list(per_stage_values)
 
     return VminopResult(
         constraints_dict,
@@ -1053,7 +1060,7 @@ def _parse_formula(
     # dropped terms it reports carry which constraint they came from.
     skipped: list[_ElectricTermSkip] | None = None,
 ) -> str | None:
-    """Translate a source-model RE formula into a Cobre expression string.
+    """Translate a source-model RE formula into a Novomodelo expression string.
 
     Unknown plant codes or interchange pairs are skipped. Returns ``None`` if
     no valid terms remain after translation. See
@@ -1075,7 +1082,7 @@ def _parse_formula(
         if fn == "ger_usih":
             plant_code = args[0]
             try:
-                cobre_id = id_map.hydro_id(plant_code)
+                novomodelo_id = id_map.hydro_id(plant_code)
             except KeyError:
                 if skipped is not None:
                     skipped.append(
@@ -1087,7 +1094,7 @@ def _parse_formula(
                         )
                     )
                 continue
-            parsed_terms.append((coeff, f"hydro_generation({cobre_id})"))
+            parsed_terms.append((coeff, f"hydro_generation({novomodelo_id})"))
 
         elif fn == "ener_interc":
             if len(args) < 2:
@@ -1118,7 +1125,7 @@ def _parse_formula(
                 continue
 
             # The source model's ``ener_interc(A, B)`` is the directional flow from A to
-            # B as a non-negative variable.  Map to Cobre's
+            # B as a non-negative variable.  Map to Novomodelo's
             # ``line_direct``/``line_reverse`` so the sign is encoded by the variable
             # choice rather than by negating the coefficient (the latter would dilute
             # the bound when LP solutions route in the non-canonical direction).  See
@@ -1389,7 +1396,7 @@ def convert_electric_constraints(
     # Read ELETRI penalty from PENALID.DAT for slack costs. The source model manual v29
     # §3.24: ELETRI is energy-domain (R$/MWh) and applies only in individualized
     # periods. When absent in PENALID.DAT, the source model considers the constraint
-    # only in the final simulation — cobre has no equivalent nuance, so we keep the
+    # only in the final simulation — novomodelo has no equivalent nuance, so we keep the
     # slack enabled with a high default (10 × MAX_DEFICIT, matching the source model's
     # evaporation/FPHA-folga magnitude) so RE_* constraints stay soft but very expensive
     # to violate.
@@ -1464,7 +1471,7 @@ def convert_electric_constraints(
         has_re_dat = cod in re_conjuntos
 
         if has_csv:
-            cobre_expr = _parse_formula(
+            novomodelo_expr = _parse_formula(
                 expressions[cod],
                 id_map,
                 line_id_map,
@@ -1476,7 +1483,7 @@ def convert_electric_constraints(
             terms: list[str] = []
             for plant_code in sorted(re_conjuntos[cod]):
                 try:
-                    cobre_id = id_map.hydro_id(plant_code)
+                    novomodelo_id = id_map.hydro_id(plant_code)
                 except KeyError:
                     elec_term_skips.append(
                         _ElectricTermSkip(
@@ -1487,12 +1494,12 @@ def convert_electric_constraints(
                         )
                     )
                     continue
-                terms.append(f"hydro_generation({cobre_id})")
-            cobre_expr = " + ".join(terms) if terms else None
+                terms.append(f"hydro_generation({novomodelo_id})")
+            novomodelo_expr = " + ".join(terms) if terms else None
         else:
             continue
 
-        if cobre_expr is None:
+        if novomodelo_expr is None:
             elec_constraint_skips.append(
                 _ElectricConstraintSkip(
                     constraint_code=cod, reason="no valid terms in expression"
@@ -1558,14 +1565,14 @@ def convert_electric_constraints(
             sup_id = builder.add_constraint(
                 name=f"RE_{cod}",
                 description=f"Electric constraint {cod}",
-                expression=cobre_expr,
+                expression=novomodelo_expr,
                 slack=slack_config,
             )
         if has_inf:
             inf_id = builder.add_constraint(
                 name=f"RE_{cod}",
                 description=f"Electric constraint {cod}",
-                expression=cobre_expr,
+                expression=novomodelo_expr,
                 slack=slack_config,
             )
 
@@ -1622,7 +1629,7 @@ def convert_electric_constraints(
                     ),
                     summary=(
                         f"{len(hydro_unmapped)} electric constraint term(s) "
-                        "reference a hydro plant code with no matching cobre "
+                        "reference a hydro plant code with no matching novomodelo "
                         "entity; the term is dropped."
                     ),
                     table=DiagnosticTable(
@@ -1651,7 +1658,7 @@ def convert_electric_constraints(
                     summary=(
                         f"{len(no_line)} electric constraint interchange "
                         "term(s) reference a subsystem pair with no matching "
-                        "cobre line; the term is dropped."
+                        "novomodelo line; the term is dropped."
                     ),
                     table=DiagnosticTable(
                         columns=["Constraint", "From", "To"],
@@ -1858,7 +1865,7 @@ def convert_agrint_constraints(
     id_map: NewaveIdMap,
     allocator: ConstraintIdAllocator | None = None,
 ) -> GenericConstraintResult | None:
-    """Convert AGRINT.DAT exchange group constraints to Cobre generic constraints.
+    """Convert AGRINT.DAT exchange group constraints to Novomodelo generic constraints.
 
     Each group in AGRINT.DAT defines a weighted sum of directional interchange
     flows.  Each group becomes one ``<=`` generic constraint with a high-default
@@ -1920,7 +1927,7 @@ def convert_agrint_constraints(
         terms_raw = groups[group_id]
 
         # The source model's ``Interc(A→B)`` is the *non-negative directional* flow from
-        # A to B (zero whenever physical flow goes B→A).  Cobre's ``line_direct(id)`` /
+        # A to B (zero whenever physical flow goes B→A).  Novomodelo's ``line_direct(id)`` /
         # ``line_reverse(id)`` are the matching non-negative LP variables:
         # ``line_direct`` is the flow in the canonical (src<tgt) direction,
         # ``line_reverse`` the flow in the opposite direction.
@@ -2016,7 +2023,7 @@ def convert_agrint_constraints(
                 ),
                 summary=(
                     f"{len(agrint_term_skips)} AGRINT group term(s) reference "
-                    "a subsystem pair with no matching cobre line; the term "
+                    "a subsystem pair with no matching novomodelo line; the term "
                     "is dropped."
                 ),
                 table=DiagnosticTable(

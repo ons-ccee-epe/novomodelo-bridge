@@ -1,17 +1,17 @@
-"""Post-emission self-checks mirroring cobre 0.13's new hard validation rules.
+"""Post-emission self-checks mirroring novomodelo 0.13's new hard validation rules.
 
-Both pipelines build every artifact in memory before writing the Cobre case
+Both pipelines build every artifact in memory before writing the Novomodelo case
 directory. This module inspects those in-memory artifacts — the ``hydros.json``
 document, the ``thermals.json`` document, the ``stages.json`` document, and the
-``*_bounds`` Parquet tables — for the cobre 0.13 rules the bridge is most
+``*_bounds`` Parquet tables — for the novomodelo 0.13 rules the bridge is most
 likely to violate silently, and reports a match as an ``ERROR``
-:class:`~cobre_bridge.core.diagnostics.Diagnostic` through the sink the pipeline
+:class:`~novomodelo_bridge.core.diagnostics.Diagnostic` through the sink the pipeline
 already runs converters inside. A failure here therefore surfaces with
 bridge-side context (entity, stage, column, declared vs. offending value) in
-milliseconds, instead of at ``cobre validate``/``cobre run`` load time.
+milliseconds, instead of at ``novomodelo validate``/``novomodelo run`` load time.
 
-This is a **courtesy mirror**, not a substitute: cobre remains the authority.
-Each rule is scoped to match cobre's own implementation exactly (cobre's
+This is a **courtesy mirror**, not a substitute: novomodelo remains the authority.
+Each rule is scoped to match novomodelo's own implementation exactly (novomodelo's
 semantic validation layer):
 
 - Rule 43 — :func:`check_hydro_bounds_no_raising`
@@ -45,7 +45,7 @@ from typing import NamedTuple
 
 import pyarrow as pa
 
-from cobre_bridge.core.diagnostics import (
+from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
@@ -53,7 +53,7 @@ from cobre_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
-from cobre_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.core.tolerances import relative_tolerance
 
 _LOG = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class EmissionCheckError(ValueError):
 
 
 def _tolerance(declared: float) -> float:
-    """``ENVELOPE_TOLERANCE * max(|declared|, 1.0)`` — cobre's envelope tolerance."""
+    """``ENVELOPE_TOLERANCE * max(|declared|, 1.0)`` — novomodelo's envelope tolerance."""
     return relative_tolerance(declared)
 
 
@@ -96,7 +96,7 @@ class BoundFamily:
     ``hydro_unit_group_id`` for the ``hydro_unit_group_bounds`` family) that,
     when set, both row-level checks fold into the **key** alongside
     *entity_column*/``stage_id``/``block_id`` instead of treating it as a
-    value column — mirroring cobre rule 36's own widened key ``(hydro_id,
+    value column — mirroring novomodelo rule 36's own widened key ``(hydro_id,
     hydro_unit_group_id, stage_id, block_id, column)``.
     ``None`` (the default) reproduces the three pre-existing families'
     unchanged, single-entity-key behaviour.
@@ -143,7 +143,7 @@ def check_hydro_bounds_no_raising(
     hydros: Mapping[str, object],
     hydro_bounds: pa.Table | None,
 ) -> None:
-    """Cobre rule 43 mirror: no ``hydro_bounds`` row may raise ``max_turbined_m3s``
+    """Novomodelo rule 43 mirror: no ``hydro_bounds`` row may raise ``max_turbined_m3s``
     or ``max_generation_mw`` above the hydro's own declared value in
     ``hydros.json`` (``generation.max_turbined_m3s`` /
     ``generation.max_generation_mw``), each column checked independently.
@@ -169,7 +169,7 @@ def check_hydro_bounds_no_raising(
                 title="Hydro-bounds raising check (rule 43) not applicable",
                 summary=(
                     "hydro_bounds carries neither max_turbined_m3s nor "
-                    "max_generation_mw for this case, so cobre rule 43 (no row "
+                    "max_generation_mw for this case, so novomodelo rule 43 (no row "
                     "may raise a hydro's declared capacity) has nothing to scan"
                 ),
             ),
@@ -224,7 +224,7 @@ def check_hydro_bounds_no_raising(
             summary=(
                 f"{len(rows)} (hydro, column) combination(s) have a hydro_bounds "
                 "row that raises max_turbined_m3s or max_generation_mw above the "
-                "plant's own declared value in system/hydros.json (cobre rule 43)"
+                "plant's own declared value in system/hydros.json (novomodelo rule 43)"
             ),
             table=DiagnosticTable(
                 columns=["Hydro ID", "Column", "Stages", "Declared", "Worst offending"],
@@ -287,7 +287,7 @@ def clamp_hydro_bounds_to_declared(
     table.
 
     A per-stage override (TURBMAXT, VAZMAXT, an RE ceiling) can raise a MAX
-    column above the plant's declaration, which cobre rejects on load (rule 43
+    column above the plant's declaration, which novomodelo rejects on load (rule 43
     and its outflow analogue). Rather than raise the declaration to fit the
     override — which would let a bound *loosen* the declared capacity — this
     ceils each value at the declared max and floors it at the declared min, so
@@ -378,7 +378,7 @@ def clamp_hydro_bounds_to_declared(
                 "bound outside the plant's declared envelope in system/hydros.json "
                 "(e.g. a TURBMAXT/VAZMAXT/RE override above the reference-head "
                 "declaration); each was clamped to the declared bound so the row "
-                "stays a valid tightening (cobre rule 43 and its outflow analogue)"
+                "stays a valid tightening (novomodelo rule 43 and its outflow analogue)"
             ),
             table=DiagnosticTable(
                 columns=["Hydro ID", "Column", "Stages", "Declared", "Clamped from"],
@@ -397,13 +397,13 @@ def clamp_hydro_bounds_to_declared(
 
 
 def check_unit_group_envelope(hydros: Mapping[str, object]) -> None:
-    """Cobre rule 41 mirror: the sum of a hydro's unit-group maxima must not
+    """Novomodelo rule 41 mirror: the sum of a hydro's unit-group maxima must not
     exceed the hydro's own declared value in ``hydros.json``, each of
     ``max_turbined_m3s`` / ``max_generation_mw`` checked independently, against
     the entity declaration only — never a per-stage ``hydro_bounds`` override.
 
     Always structurally applicable: both pipelines declare a non-empty
-    ``unit_groups`` on every hydro (cobre requires it), so there is no
+    ``unit_groups`` on every hydro (novomodelo requires it), so there is no
     "nothing to scan" case to report here.
     """
     raw_hydros = hydros.get("hydros")
@@ -456,7 +456,7 @@ def check_unit_group_envelope(hydros: Mapping[str, object]) -> None:
             summary=(
                 f"{len(rows)} hydro/column combination(s) have unit groups whose "
                 "max_turbined_m3s or max_generation_mw sums above the plant's "
-                "own declared value in system/hydros.json (cobre rule 41)"
+                "own declared value in system/hydros.json (novomodelo rule 41)"
             ),
             table=DiagnosticTable(
                 columns=["Hydro ID", "Column", "Declared", "Group sum"],
@@ -515,7 +515,7 @@ def check_group_bound_envelope(
     hydros: Mapping[str, object],
     group_bounds: pa.Table | None,
 ) -> None:
-    """Cobre rule 45 mirror: no ``hydro_unit_group_bounds`` row may raise
+    """Novomodelo rule 45 mirror: no ``hydro_unit_group_bounds`` row may raise
     ``max_turbined_m3s`` or ``max_generation_mw`` above *that group's own*
     declared value in ``hydros.json`` (``unit_groups[].max_turbined_m3s`` /
     ``unit_groups[].max_generation_mw``), each column checked independently
@@ -594,7 +594,7 @@ def check_group_bound_envelope(
                 f"{len(rows)} (hydro, group, column) combination(s) have a "
                 "hydro_unit_group_bounds row that raises max_turbined_m3s or "
                 "max_generation_mw above that group's own declared value in "
-                "system/hydros.json (cobre rule 45)"
+                "system/hydros.json (novomodelo rule 45)"
             ),
             table=DiagnosticTable(
                 columns=[
@@ -633,7 +633,7 @@ class _RowUniquenessFinding(NamedTuple):
 
 
 def check_bound_row_uniqueness(families: Sequence[BoundFamily]) -> None:
-    """Cobre rule 36 mirror: at most one row per ``(entity, [group,] stage,
+    """Novomodelo rule 36 mirror: at most one row per ``(entity, [group,] stage,
     block, column)`` within a family, checked independently for every
     non-key column.
 
@@ -641,7 +641,7 @@ def check_bound_row_uniqueness(families: Sequence[BoundFamily]) -> None:
     ``hydro_unit_group_bounds``), when set, folds into the **key** rather
     than being treated as a value column — two groups of the same plant
     setting the same column at the same ``(stage, block)`` are distinct
-    keys, not a collision, mirroring cobre rule 36's own widened key
+    keys, not a collision, mirroring novomodelo rule 36's own widened key
     ``(hydro_id, hydro_unit_group_id, stage_id, block_id, column)``.
     A family with ``group_column=None`` (the
     three pre-existing families) is unaffected: the finding's rendered
@@ -743,7 +743,7 @@ def check_bound_row_uniqueness(families: Sequence[BoundFamily]) -> None:
             title=f"Duplicate bound rows ({len(findings)} finding(s))",
             summary=(
                 f"{len(findings)} bound row(s) set the same column twice for the "
-                "same (entity, stage, block) key (cobre rule 36)"
+                "same (entity, stage, block) key (novomodelo rule 36)"
             ),
             table=DiagnosticTable(
                 columns=columns,
@@ -907,12 +907,12 @@ def check_block_id_not_on_anticipated_thermal(
     thermals: Mapping[str, object],
     thermal_bounds: pa.Table | None,
 ) -> None:
-    """Cobre rule 38 mirror: no ``thermal_bounds`` row may carry a non-null
+    """Novomodelo rule 38 mirror: no ``thermal_bounds`` row may carry a non-null
     ``block_id`` for a thermal whose ``thermals.json`` entry declares a
     non-null ``anticipated_config``
     (``block_bounds.rs::check_block_id_on_anticipated_thermal``). An
     anticipated thermal's dispatch is committed ahead of the block axis, so
-    cobre rejects any block-scoped bound on it outright.
+    novomodelo rejects any block-scoped bound on it outright.
 
     Structurally inapplicable, without a finding, when *thermal_bounds* is
     absent/empty, carries no ``block_id`` column, or no thermal declares
@@ -953,7 +953,7 @@ def check_block_id_not_on_anticipated_thermal(
             summary=(
                 f"{len(rows)} thermal_bounds row(s) carry a non-null block_id "
                 "for a thermal whose thermals.json entry declares "
-                "anticipated_config (cobre rule 38)"
+                "anticipated_config (novomodelo rule 38)"
             ),
             table=DiagnosticTable(
                 columns=["Thermal ID", "Stage", "block_id"],

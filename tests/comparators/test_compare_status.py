@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators.analyze import build_results_dataset
-from cobre_bridge.comparators.model import PercentileData, ResultComparison
-from cobre_bridge.comparators.verdict import compare_status
+from novomodelo_bridge.comparators.analyze import build_results_dataset
+from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.verdict import compare_status
 
 
 def test_compare_status_empty_dataset_returns_no_comparable_rows() -> None:
@@ -47,11 +47,11 @@ def test_compare_status_all_within_tol_returns_ok() -> None:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=100.0,
+            novomodelo_value=100.0,
             abs_diff=0.0,
             rel_diff=0.0,
         ),
@@ -67,11 +67,11 @@ def test_compare_status_any_mismatch_returns_mismatch() -> None:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),

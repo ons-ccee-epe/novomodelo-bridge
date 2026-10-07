@@ -18,7 +18,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.decomp.results import (
     _BUS_VARIABLES,
     _CANONICAL_VARIABLE,
     _HYDRO_VARIABLES,
@@ -32,9 +32,9 @@ from cobre_bridge.comparators.decomp.results import (
     _weighted_group_mean,
     build_decomp_dataset,
 )
-from cobre_bridge.core.errors import FieldParseError, SourceFileError
-from cobre_bridge.decomp.files import DecompFiles
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
+from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
     _no_dec_oper,
@@ -320,38 +320,38 @@ class TestResultComparisons:
                 "geracao_MW": [100.0, 50.0],
             }
         )
-        cobre = pl.DataFrame(
+        novomodelo = pl.DataFrame(
             {
                 "entity_id": [0, 1],
                 "stage_id": [0, 0],
                 "generation_mw": [90.0, 50.0],
             }
         )
-        return source, cobre
+        return source, novomodelo
 
     def test_emits_one_result_comparison_per_row_with_the_canonical_variable(
         self,
     ) -> None:
-        source, cobre = self._pair()
+        source, novomodelo = self._pair()
         results = _result_comparisons(
-            source, cobre, _HYDRO_VARIABLES, names={0: "A", 1: "B"}
+            source, novomodelo, _HYDRO_VARIABLES, names={0: "A", 1: "B"}
         )
         assert {r.variable for r in results} == {"generation_mw"}
-        by_id = {r.cobre_id: r for r in results}
+        by_id = {r.novomodelo_id: r for r in results}
         assert by_id[0].newave_code == 10
         assert by_id[0].entity_name == "A"
         assert by_id[0].entity_type == "hydro"
         assert by_id[0].stage == 0
         assert by_id[0].newave_value == 100.0
-        assert by_id[0].cobre_value == 90.0
+        assert by_id[0].novomodelo_value == 90.0
         assert by_id[0].abs_diff == pytest.approx(10.0)
         assert by_id[0].rel_diff == pytest.approx(0.1)
         assert by_id[1].newave_code == 11
         assert by_id[1].abs_diff == pytest.approx(0.0)
 
     def test_variables_missing_on_either_side_are_skipped(self) -> None:
-        source, cobre = self._pair()
-        results = _result_comparisons(source, cobre, _HYDRO_VARIABLES, names={})
+        source, novomodelo = self._pair()
+        results = _result_comparisons(source, novomodelo, _HYDRO_VARIABLES, names={})
         # Only generation's columns are present in both frames.
         assert {r.variable for r in results} == {"generation_mw"}
 
@@ -364,10 +364,10 @@ class TestResultComparisons:
                 "geracao_MW": [1.0],
             }
         )
-        cobre = pl.DataFrame(
+        novomodelo = pl.DataFrame(
             {"entity_id": [9], "stage_id": [9], "generation_mw": [1.0]}
         )
-        assert _result_comparisons(source, cobre, _HYDRO_VARIABLES, names={}) == []
+        assert _result_comparisons(source, novomodelo, _HYDRO_VARIABLES, names={}) == []
 
     def test_canonical_variable_covers_all_eight_today_variables(self) -> None:
         """D-SOURCE-TOKEN-adjacent guard: every ``_Variable`` spec this module
@@ -412,34 +412,37 @@ class TestBuildDecompDataset:
             "productivity_mw_per_m3s",
         }
 
-    def test_tidy_sources_are_newave_and_cobre_only(
+    def test_tidy_sources_are_newave_and_novomodelo_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
-        assert set(dataset.tidy["source"].unique().to_list()) == {"newave", "cobre"}
+        assert set(dataset.tidy["source"].unique().to_list()) == {
+            "newave",
+            "novomodelo",
+        }
 
     def test_hydro_storage_rows_compare_useful_volume(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """The cobre-side value must be ``useful_storage_hm3`` (already
-        ``storage_final_hm3 - min_storage_hm3`` upstream in ``_cobre_hydro``),
+        """The novomodelo-side value must be ``useful_storage_hm3`` (already
+        ``storage_final_hm3 - min_storage_hm3`` upstream in ``_novomodelo_hydro``),
         not the raw absolute ``storage_final_hm3``."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
-        cobre_storage = (
+        novomodelo_storage = (
             dataset.tidy.filter(
                 (pl.col("variable") == "storage_final_hm3")
-                & (pl.col("source") == "cobre")
+                & (pl.col("source") == "novomodelo")
             )
             .sort("entity_id")["value"]
             .to_list()
         )
-        assert cobre_storage == [480.0, 300.0]
+        assert novomodelo_storage == [480.0, 300.0]
 
     def test_unmapped_codes_surface_in_metadata_and_are_excluded_from_tidy(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -483,9 +486,9 @@ class TestBuildDecompDataset:
             source_hydro=fixture.source_hydro.clear(),
             source_thermal=fixture.source_thermal.clear(),
             source_bus=fixture.source_bus.clear(),
-            cobre_hydro=fixture.cobre_hydro.clear(),
-            cobre_thermal=fixture.cobre_thermal.clear(),
-            cobre_bus=fixture.cobre_bus.clear(),
+            novomodelo_hydro=fixture.novomodelo_hydro.clear(),
+            novomodelo_thermal=fixture.novomodelo_thermal.clear(),
+            novomodelo_bus=fixture.novomodelo_bus.clear(),
             hydro_names={},
             thermal_names={},
             bus_names={},
@@ -535,7 +538,7 @@ class TestBusSideExcludesTranshipment:
             }
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_sist",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_args, **_kwargs: source_frame,
         )
         bus_codes = {code: id_map.bus_id(code) for code in id_map.bus_codes}
@@ -569,7 +572,7 @@ def _patch_discoverable_deck_with_no_sb(
     ``FieldParseError`` parse-boundary raise (rather than the discovery
     failure the bare-``tmp_path`` tests exercise)."""
     monkeypatch.setattr(
-        "cobre_bridge.decomp.case.discover_decomp_files",
+        "novomodelo_bridge.decomp.case.discover_decomp_files",
         lambda _src: _decomp_files_stub(tmp_path),
     )
     monkeypatch.setattr(
@@ -667,37 +670,37 @@ class TestBuildDecompDatasetSingleParse:
         )
         monkeypatch.setattr("idecomp.decomp.Dadger.read", spy)
         monkeypatch.setattr(
-            "cobre_bridge.decomp.case.discover_decomp_files",
+            "novomodelo_bridge.decomp.case.discover_decomp_files",
             lambda _src: _decomp_files_stub(decomp_dir),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             lambda *_a, **_k: _usih_frame([{"codigo_usina": 999, "estagio": 1}]),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             lambda *_a, **_k: _usih_frame([{"codigo_usina": 998, "estagio": 1}]),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_sist",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_a, **_k: _minimal_sist_frame(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results._cost_frames",
+            "novomodelo_bridge.comparators.decomp.results._cost_frames",
             lambda *_a, **_k: ({}, pl.DataFrame()),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_bus_aggregates",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_bus_aggregates",
             lambda *_a, **_k: pl.DataFrame(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_hydro_bus_labels",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_hydro_bus_labels",
             lambda *_a, **_k: {},
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.constraints.evaluate_lhs_cobre",
+            "novomodelo_bridge.comparators.constraints.evaluate_lhs_novomodelo",
             lambda *_a, **_k: pl.DataFrame(),
         )
 
@@ -743,15 +746,15 @@ class TestBuildDecompDatasetSingleParse:
         ]
         output_dir = _write_generic_constraints_case(case_dir, constraints, bound_rows)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usih",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_usit",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
             _no_dec_oper,
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
             lambda *_a, **_k: pl.DataFrame(
                 {
                     "estagio": [1],
@@ -764,7 +767,7 @@ class TestBuildDecompDatasetSingleParse:
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.constraints.evaluate_lhs_cobre",
+            "novomodelo_bridge.comparators.constraints.evaluate_lhs_novomodelo",
             lambda *_a, **_k: pl.DataFrame(
                 {"constraint_id": [0], "stage_id": [0], "lhs_value": [3000.0]}
             ),
@@ -800,7 +803,7 @@ class TestBuildDecompDatasetSingleParse:
             "ena_mwmes",
             "earm_final_mwmes",
         }
-        assert set(ree_rows["source"].unique().to_list()) == {"newave", "cobre"}
+        assert set(ree_rows["source"].unique().to_list()) == {"newave", "novomodelo"}
 
         # Constraints tab DECOMP-side LHS, derived via the shared case's
         # dadger/id_map (TestBuildDecompDatasetConstraints).
@@ -809,5 +812,5 @@ class TestBuildDecompDatasetSingleParse:
         assert nw_row["constraint_id"] == 0
         assert nw_row["stage_id"] == 0
         assert nw_row["lhs_value"] == pytest.approx(2951.58)
-        cb_row = dataset.render.gc_lhs_cobre.row(0, named=True)
+        cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}

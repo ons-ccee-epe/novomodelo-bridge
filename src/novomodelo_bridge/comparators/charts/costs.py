@@ -9,27 +9,27 @@ from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.cobre.cost_categories import AGGREGATE_COST_COLUMNS
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.novomodelo.cost_categories import AGGREGATE_COST_COLUMNS
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 # Per-category mapping between the source model pmo.dat
-# `custo_operacao_series_simuladas` `parcela` labels and cobre simulation cost-record
+# `custo_operacao_series_simuladas` `parcela` labels and novomodelo simulation cost-record
 # columns.
 #
-# Tuple layout: (display_label, [newave_keys], [cobre_columns], hex_color).
+# Tuple layout: (display_label, [newave_keys], [novomodelo_columns], hex_color).
 #
 # Ordering reflects logical grouping and drives the legend order in the
 # stacked bar.
 _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
-    # Operational / generation costs. Cobre's anticipated_thermal_cost (GNL
+    # Operational / generation costs. Novomodelo's anticipated_thermal_cost (GNL
     # forward-committed fuel, booked on the decision column) is folded in here so the
     # thermal category matches the source model GERACAO TERMICA / CTERM, which books GNL
-    # fuel at delivery. Absent in pre-anticipation Cobre runs (summed as 0).
+    # fuel at delivery. Absent in pre-anticipation Novomodelo runs (summed as 0).
     (
         "Thermal Generation",
         ["GERACAO TERMICA"],
@@ -40,7 +40,7 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
     ("Energy Excess", ["EXCESSO ENERGIA"], ["excess_cost"], "#F59E0B"),
     ("Exchange", ["INTERCAMBIO"], ["exchange_cost"], "#7C3AED"),
     ("Pumping", [], ["pumping_cost"], "#0891B2"),
-    # Energy-contract cost — cobre-only column (no source-model parcela analogue).
+    # Energy-contract cost — novomodelo-only column (no source-model parcela analogue).
     ("Contract", [], ["contract_cost"], "#0D9488"),
     # Regularisation costs (per-unit-flow charges, not violations)
     (
@@ -95,15 +95,15 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
         ["evaporation_violation_cost"],
         "#9333EA",
     ),
-    # FPHA folga slack (the source model) — cobre has no direct analogue; left as The
+    # FPHA folga slack (the source model) — novomodelo has no direct analogue; left as The
     # source-model-only column so it shows up in the report rather than being hidden.
     ("FPHA Slack", ["VIOLACAO FPHA"], [], "#DB2777"),
     ("Inflow Non-Negativity", [], ["inflow_penalty_cost"], "#EA580C"),
     # Generic constraint violations: The source model reports the risk-aversion curve
     # and surface (CAR/SAR), electric (RESTELETRICA), interchange-group (INTERC. MIN.),
     # hydraulic (RHQ/RHV) and piecewise-linear (RLPP) restriction violations as separate
-    # parcelas, but cobre-bridge converts them all into Cobre generic constraints, so
-    # Cobre aggregates their slacks into a single `generic_violation_cost`. Sum the
+    # parcelas, but novomodelo-bridge converts them all into Novomodelo generic constraints, so
+    # Novomodelo aggregates their slacks into a single `generic_violation_cost`. Sum the
     # source model parcelas to compare like-for-like.
     (
         "Generic Constr. Viol.",
@@ -126,27 +126,27 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
 
 _COST_COLOR_DEFAULT = "#6B7280"  # for any unmapped residual category
 
-# Cobre cost-record fields that are aggregates / metadata and must not appear as
+# Novomodelo cost-record fields that are aggregates / metadata and must not appear as
 # their own category in the breakdown (they would double-count or pollute the
 # chart). Single-sourced with the dashboard via cost_categories.
-_COBRE_NON_COST_KEYS: frozenset[str] = AGGREGATE_COST_COLUMNS
+_NOVOMODELO_NON_COST_KEYS: frozenset[str] = AGGREGATE_COST_COLUMNS
 
 
 def _resolve_cost_categories(
     nw_costs: dict[str, float],
-    cobre_costs: dict[str, float],
+    novomodelo_costs: dict[str, float],
 ) -> list[tuple[str, float, float, str]]:
-    """Resolve the source model/Cobre cost dicts into a sorted list of categories.
+    """Resolve the source model/Novomodelo cost dicts into a sorted list of categories.
 
-    Each entry is ``(display_label, newave_sum, cobre_sum, color)``. Categories with
+    Each entry is ``(display_label, newave_sum, novomodelo_sum, color)``. Categories with
     both sides ≤ 0.01 R$ are filtered out. Mapped entries from :data:`_COST_MAP` come
-    first (preserving its logical ordering); unmapped the source model/Cobre keys are
+    first (preserving its logical ordering); unmapped the source model/Novomodelo keys are
     appended at the end.
     """
     categories: list[tuple[str, float, float, str]] = []
     for display_label, nw_keys, cb_keys, color in _COST_MAP:
         nw_sum = sum(nw_costs.get(k, 0.0) for k in nw_keys)
-        cb_sum = sum(cobre_costs.get(k, 0.0) for k in cb_keys)
+        cb_sum = sum(novomodelo_costs.get(k, 0.0) for k in cb_keys)
         if abs(nw_sum) < 0.01 and abs(cb_sum) < 0.01:
             continue
         categories.append((display_label, nw_sum, cb_sum, color))
@@ -157,8 +157,8 @@ def _resolve_cost_categories(
             categories.append((k.title(), v, 0.0, _COST_COLOR_DEFAULT))
 
     mapped_cb = {k for _, _, cb_keys, _ in _COST_MAP for k in cb_keys}
-    for k, v in sorted(cobre_costs.items()):
-        if k in _COBRE_NON_COST_KEYS:
+    for k, v in sorted(novomodelo_costs.items()):
+        if k in _NOVOMODELO_NON_COST_KEYS:
             continue
         if k not in mapped_cb and abs(v) > 0.01:
             categories.append(
@@ -170,10 +170,10 @@ def _resolve_cost_categories(
 
 def cost_breakdown_chart(
     nw_costs: dict[str, float],
-    cobre_costs: dict[str, float],
+    novomodelo_costs: dict[str, float],
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Stacked vertical bar comparing the source model vs Cobre per cost category in
+    """Stacked vertical bar comparing the source model vs Novomodelo per cost category in
     NPV.
 
     Bars are stacked with the largest-magnitude category at the bottom for
@@ -181,17 +181,17 @@ def cost_breakdown_chart(
     :data:`_COST_MAP`. Y-axis is 10⁹ R$ for legibility on Brazilian-scale
     cases.
     """
-    if not nw_costs and not cobre_costs:
+    if not nw_costs and not novomodelo_costs:
         return "<p>No cost data available.</p>"
 
-    categories = _resolve_cost_categories(nw_costs, cobre_costs)
+    categories = _resolve_cost_categories(nw_costs, novomodelo_costs)
     if not categories:
         return "<p>No cost data available.</p>"
 
     # Sort so largest total cost is at the bottom of the stack (drawn first).
     categories = sorted(categories, key=lambda t: -(t[1] + t[2]))
 
-    x_labels = [reference_label, "Cobre"]
+    x_labels = [reference_label, "Novomodelo"]
     traces: list[dict] = []
 
     for label, nw_v, cb_v, color in categories:
@@ -232,20 +232,20 @@ def cost_breakdown_chart(
 
 def cost_breakdown_table(
     nw_costs: dict[str, float],
-    cobre_costs: dict[str, float],
+    novomodelo_costs: dict[str, float],
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Per-category NPV diff table — the source model, Cobre, Δ, Δ% — sorted by |Δ|.
+    """Per-category NPV diff table — the source model, Novomodelo, Δ, Δ% — sorted by |Δ|.
 
     Returns an HTML ``<table>`` styled to fit alongside
     :func:`cost_breakdown_chart` inside a 2-column ``chart_grid``. Color swatches
     in the first column mirror the colors used in the bar chart so the reader
     can cross-reference at a glance.
     """
-    if not nw_costs and not cobre_costs:
+    if not nw_costs and not novomodelo_costs:
         return "<p>No cost data available.</p>"
 
-    categories = _resolve_cost_categories(nw_costs, cobre_costs)
+    categories = _resolve_cost_categories(nw_costs, novomodelo_costs)
     if not categories:
         return "<p>No cost data available.</p>"
 
@@ -272,7 +272,7 @@ def cost_breakdown_table(
         "<thead><tr>"
         '<th class="cb-cat">Category</th>'
         f'<th class="cb-num">{reference_label}</th>'
-        '<th class="cb-num">Cobre</th>'
+        '<th class="cb-num">Novomodelo</th>'
         '<th class="cb-num">Δ</th>'
         '<th class="cb-num">Δ%</th>'
         "</tr></thead>"
@@ -307,15 +307,15 @@ def cost_breakdown_table(
 
 def _extract_stage_cost_series(
     nw_sin: pl.DataFrame,
-    cobre_stage_costs: pl.DataFrame,
+    novomodelo_stage_costs: pl.DataFrame,
     nw_offset: int,
     nw_variable: str,
     cb_column: str,
 ) -> tuple[list[int], dict[int, float], dict[int, float]]:
-    """Pull aligned the source model/Cobre per-stage cost series.
+    """Pull aligned the source model/Novomodelo per-stage cost series.
 
     Returns the sorted list of 0-based stages present on either side, plus ``{stage:
-    R$}`` dicts for the source model (from MEDIAS-SIN, converted from 10⁶ R$) and Cobre
+    R$}`` dicts for the source model (from MEDIAS-SIN, converted from 10⁶ R$) and Novomodelo
     (from the simulation costs parquet).
     """
     nw_by_stage: dict[int, float] = {}
@@ -325,8 +325,8 @@ def _extract_stage_cost_series(
             nw_by_stage[int(row["stage"]) - nw_offset] = float(row["value"]) * 1e6
 
     cb_by_stage: dict[int, float] = {}
-    if cobre_stage_costs is not None and not cobre_stage_costs.is_empty():
-        for row in cobre_stage_costs.iter_rows(named=True):
+    if novomodelo_stage_costs is not None and not novomodelo_stage_costs.is_empty():
+        for row in novomodelo_stage_costs.iter_rows(named=True):
             v = row.get(cb_column)
             if v is None:
                 continue
@@ -338,7 +338,7 @@ def _extract_stage_cost_series(
 
 def _stage_cost_subplot(
     nw_sin: pl.DataFrame,
-    cobre_stage_costs: pl.DataFrame,
+    novomodelo_stage_costs: pl.DataFrame,
     nw_offset: int,
     *,
     nw_variable: str,
@@ -349,7 +349,7 @@ def _stage_cost_subplot(
 ) -> str:
     """Render a single stage-cost line chart (one variable, both sides)."""
     stages, nw_by_stage, cb_by_stage = _extract_stage_cost_series(
-        nw_sin, cobre_stage_costs, nw_offset, nw_variable, cb_column
+        nw_sin, novomodelo_stage_costs, nw_offset, nw_variable, cb_column
     )
     if not stages:
         return f"<p>No {nw_variable} data available.</p>"
@@ -380,7 +380,7 @@ def _stage_cost_subplot(
                 "name": cb_label,
                 "type": "scatter",
                 "mode": "lines+markers",
-                "line": {"color": COLOR_COBRE},
+                "line": {"color": COLOR_NOVOMODELO},
                 "hovertemplate": (
                     f"stage %{{x}}<br>{cb_label}: %{{y:.2f}} 10⁶ R$<extra></extra>"
                 ),
@@ -398,61 +398,61 @@ def _stage_cost_subplot(
 
 def immediate_cost_chart(
     nw_sin: pl.DataFrame,
-    cobre_stage_costs: pl.DataFrame,
+    novomodelo_stage_costs: pl.DataFrame,
     nw_offset: int = 0,
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Per-stage *immediate* cost: The source model ``COPER`` vs Cobre
+    """Per-stage *immediate* cost: The source model ``COPER`` vs Novomodelo
     ``immediate_cost``.
 
     The source model values come from MEDIAS-SIN in 10⁶ R$ (converted to R$ here by
     multiplying by 1e6).  Stage numbering on the source model side starts at the study's
     first calendar month — *nw_offset* (the minimum stage in MEDIAS-SIN) is subtracted
-    to align with Cobre's 0-based ``stage_id``.
+    to align with Novomodelo's 0-based ``stage_id``.
     """
     return _stage_cost_subplot(
         nw_sin,
-        cobre_stage_costs,
+        novomodelo_stage_costs,
         nw_offset,
         nw_variable="COPER",
         cb_column="immediate_cost",
-        title=f"Immediate Cost — {reference_label} COPER vs Cobre",
+        title=f"Immediate Cost — {reference_label} COPER vs Novomodelo",
         nw_label=f"{reference_label} COPER",
-        cb_label="Cobre immediate_cost",
+        cb_label="Novomodelo immediate_cost",
     )
 
 
 def future_cost_chart(
     nw_sin: pl.DataFrame,
-    cobre_stage_costs: pl.DataFrame,
+    novomodelo_stage_costs: pl.DataFrame,
     nw_offset: int = 0,
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Per-stage *future* cost: The source model ``CUSTO_FUTURO`` vs Cobre
+    """Per-stage *future* cost: The source model ``CUSTO_FUTURO`` vs Novomodelo
     ``future_cost``."""
     return _stage_cost_subplot(
         nw_sin,
-        cobre_stage_costs,
+        novomodelo_stage_costs,
         nw_offset,
         nw_variable="CUSTO_FUTURO",
         cb_column="future_cost",
-        title=f"Future Cost — {reference_label} CUSTO_FUTURO vs Cobre",
+        title=f"Future Cost — {reference_label} CUSTO_FUTURO vs Novomodelo",
         nw_label=f"{reference_label} CUSTO_FUTURO",
-        cb_label="Cobre future_cost",
+        cb_label="Novomodelo future_cost",
     )
 
 
 def thermal_cost_chart(
     nw_sin: pl.DataFrame,
-    cobre_stage_costs: pl.DataFrame,
+    novomodelo_stage_costs: pl.DataFrame,
     nw_offset: int = 0,
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Per-stage thermal cost: The source model ``CTERM`` vs Cobre thermal (incl.
+    """Per-stage thermal cost: The source model ``CTERM`` vs Novomodelo thermal (incl.
     anticip.).
 
-    The Cobre side is ``thermal_cost_total`` = ``thermal_cost`` +
-    ``anticipated_thermal_cost`` (the GNL forward-committed fuel Cobre books on the
+    The Novomodelo side is ``thermal_cost_total`` = ``thermal_cost`` +
+    ``anticipated_thermal_cost`` (the GNL forward-committed fuel Novomodelo books on the
     decision column), so it lines up with the source model ``CTERM``, which carries GNL
     fuel at delivery. Both are the live thermal generation cost, so this is an
     apples-to-apples comparison even in the post-study (where COPER is frozen — see
@@ -460,25 +460,25 @@ def thermal_cost_chart(
     """
     return _stage_cost_subplot(
         nw_sin,
-        cobre_stage_costs,
+        novomodelo_stage_costs,
         nw_offset,
         nw_variable="CTERM",
         cb_column="thermal_cost_total",
-        title=f"Thermal Cost — {reference_label} CTERM vs Cobre",
+        title=f"Thermal Cost — {reference_label} CTERM vs Novomodelo",
         nw_label=f"{reference_label} CTERM",
-        cb_label="Cobre thermal (incl. anticipated)",
+        cb_label="Novomodelo thermal (incl. anticipated)",
     )
 
 
 def other_costs_chart(
     nw_sin: pl.DataFrame,
-    cobre_stage_costs: pl.DataFrame,
+    novomodelo_stage_costs: pl.DataFrame,
     nw_offset: int = 0,
     reference_label: str = "NEWAVE",
 ) -> str:
     """Per-stage non-thermal operation cost: ``COPER − CTERM`` per stage.
 
-    The source model: ``COPER − CTERM``. Cobre: ``immediate_cost − thermal_cost_total``
+    The source model: ``COPER − CTERM``. Novomodelo: ``immediate_cost − thermal_cost_total``
     (``thermal_cost_total`` = live + anticipated GNL fuel, matching the thermal
     category). This isolates everything in the immediate cost that is *not* thermal
     generation (deficit, penalties, slacks). On the source model side it goes
@@ -487,10 +487,10 @@ def other_costs_chart(
     frozen-COPER gap explicitly.
     """
     _, nw_coper, cb_imm = _extract_stage_cost_series(
-        nw_sin, cobre_stage_costs, nw_offset, "COPER", "immediate_cost"
+        nw_sin, novomodelo_stage_costs, nw_offset, "COPER", "immediate_cost"
     )
     _, nw_cterm, cb_therm = _extract_stage_cost_series(
-        nw_sin, cobre_stage_costs, nw_offset, "CTERM", "thermal_cost_total"
+        nw_sin, novomodelo_stage_costs, nw_offset, "CTERM", "thermal_cost_total"
     )
 
     nw_other = {s: nw_coper[s] - nw_cterm[s] for s in nw_coper if s in nw_cterm}
@@ -524,12 +524,12 @@ def other_costs_chart(
             {
                 "x": stages,
                 "y": _series(cb_other),
-                "name": "Cobre immediate − thermal",
+                "name": "Novomodelo immediate − thermal",
                 "type": "scatter",
                 "mode": "lines+markers",
-                "line": {"color": COLOR_COBRE},
+                "line": {"color": COLOR_NOVOMODELO},
                 "hovertemplate": (
-                    "stage %{x}<br>Cobre immediate − thermal: "
+                    "stage %{x}<br>Novomodelo immediate − thermal: "
                     "%{y:.2f} 10⁶ R$<extra></extra>"
                 ),
             }

@@ -51,9 +51,9 @@ class TestCliInProcess:
         """Run cli.main() in-process, capturing stdout/stderr and exit code."""
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -70,7 +70,7 @@ class TestCliInProcess:
     def test_exit_code_0_with_force_on_nonempty_dst(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -86,7 +86,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _ = self._invoke_main(
@@ -100,7 +100,7 @@ class TestCliInProcess:
     def test_stdout_contains_converted_summary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -114,7 +114,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _ = self._invoke_main(
@@ -135,7 +135,7 @@ class TestCliInProcess:
         dst = tmp_path / "dst"
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             side_effect=ValueError("boom"),
         ):
             code, stdout, stderr = self._invoke_main(
@@ -152,13 +152,13 @@ class TestCliInProcess:
 
     def test_convert_verdict_shape(self) -> None:
         """The convert ``summary``+``status`` helpers feed the unified envelope."""
-        from cobre_bridge.cli.verdict import (
+        from novomodelo_bridge.cli.verdict import (
             _convert_status,
             _convert_verdict_summary,
             build_verdict,
         )
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         report = ConversionReport(
             hydro_count=10,
@@ -201,12 +201,12 @@ class TestCliInProcess:
 
     def test_convert_verdict_error_status_on_error_diagnostic(self) -> None:
         """Any ERROR-severity diagnostic flips ``status`` to ``"error"``."""
-        from cobre_bridge.cli.verdict import (
+        from novomodelo_bridge.cli.verdict import (
             _convert_status,
             _convert_verdict_summary,
             build_verdict,
         )
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         error = Diagnostic(
             code="boom-code",
@@ -236,7 +236,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--json`` on a successful conversion emits one JSON verdict to stdout."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -250,7 +250,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, stderr = self._invoke_main(
@@ -288,7 +288,7 @@ class TestCliInProcess:
         dst = tmp_path / "dst"
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             side_effect=ValueError("boom"),
         ):
             code, stdout, stderr = self._invoke_main(
@@ -319,8 +319,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An ERROR diagnostic reaching a non-raising report exits 1 under --json."""
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -343,7 +343,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -359,7 +359,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--json`` and ``--diagnostics-json PATH`` both produce output."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -374,7 +374,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _ = self._invoke_main(
@@ -406,7 +406,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Without ``--json`` the human ``✓ Converted ...`` summary still prints."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -420,7 +420,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _ = self._invoke_main(
@@ -438,8 +438,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A successful conversion leaves a valid provenance manifest in dst."""
-        from cobre_bridge.cli.conversion_manifest import ConversionManifest
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -453,7 +453,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -476,10 +476,10 @@ class TestCliInProcess:
         # The fake source dir's stub files were discovered and hashed.
         assert manifest.input_files
 
-    def test_conversion_manifest_records_min_cobre_version(
+    def test_conversion_manifest_records_min_novomodelo_version(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The manifest's ``min_cobre_version`` tracks the CLI constant, pinned.
+        """The manifest's ``min_novomodelo_version`` tracks the CLI constant, pinned.
 
         A manifest written after the bump must record the real
         floor (``"0.18.0"``), not a stale value — the manifest is provenance,
@@ -487,11 +487,11 @@ class TestCliInProcess:
         just equality with the constant) catches an accidental revert of the
         constant itself.
         """
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.cli.conversion_manifest import ConversionManifest
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
+        from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_COBRE_VERSION == "0.18.0"
+        assert MIN_NOVOMODELO_VERSION == "0.18.0"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -500,7 +500,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -510,14 +510,14 @@ class TestCliInProcess:
 
         assert code == 0
         manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")
-        assert manifest.min_cobre_version == "0.18.0"
-        assert manifest.min_cobre_version == MIN_COBRE_VERSION
+        assert manifest.min_novomodelo_version == "0.18.0"
+        assert manifest.min_novomodelo_version == MIN_NOVOMODELO_VERSION
 
     def test_manifest_not_in_json_verdict(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--json`` stdout is the convert verdict; the manifest is a side file."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -531,7 +531,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -564,8 +564,8 @@ class TestCliInProcess:
         """
         import types
 
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -578,29 +578,29 @@ class TestCliInProcess:
             stage_count=60,
         )
 
-        # Fix the installed-version gate at exactly MIN_COBRE_VERSION so this
-        # test exercises the injected fake ``cobre.io.validate`` below
-        # regardless of whichever cobre-python happens to be installed in the
-        # dev/CI venv (which may itself now be older than MIN_COBRE_VERSION).
+        # Fix the installed-version gate at exactly MIN_NOVOMODELO_VERSION so this
+        # test exercises the injected fake ``novomodelo.io.validate`` below
+        # regardless of whichever novomodelo-python happens to be installed in the
+        # dev/CI venv (which may itself now be older than MIN_NOVOMODELO_VERSION).
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
-            lambda: MIN_COBRE_VERSION,
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: MIN_NOVOMODELO_VERSION,
         )
-        # Inject a fake ``cobre.io`` whose ``validate`` reports a failure with one
-        # warning and two errors; the real ``cobre`` package is not installed.
-        cobre_pkg = types.ModuleType("cobre")
-        cobre_io = types.ModuleType("cobre.io")
-        cobre_io.validate = lambda _dst: {  # type: ignore[attr-defined]
+        # Inject a fake ``novomodelo.io`` whose ``validate`` reports a failure with one
+        # warning and two errors; the real ``novomodelo`` package is not installed.
+        novomodelo_pkg = types.ModuleType("novomodelo")
+        novomodelo_io = types.ModuleType("novomodelo.io")
+        novomodelo_io.validate = lambda _dst: {  # type: ignore[attr-defined]
             "valid": False,
             "warnings": ["w"],
             "errors": ["e1", "e2"],
         }
-        cobre_pkg.io = cobre_io  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "cobre", cobre_pkg)
-        monkeypatch.setitem(sys.modules, "cobre.io", cobre_io)
+        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
+        monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, stderr = self._invoke_main(
@@ -641,8 +641,8 @@ class TestCliInProcess:
         """
         import types
 
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -656,22 +656,22 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
-            lambda: MIN_COBRE_VERSION,
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: MIN_NOVOMODELO_VERSION,
         )
-        cobre_pkg = types.ModuleType("cobre")
-        cobre_io = types.ModuleType("cobre.io")
-        cobre_io.validate = lambda _dst: {  # type: ignore[attr-defined]
+        novomodelo_pkg = types.ModuleType("novomodelo")
+        novomodelo_io = types.ModuleType("novomodelo.io")
+        novomodelo_io.validate = lambda _dst: {  # type: ignore[attr-defined]
             "valid": False,
             "warnings": [],
             "errors": ["e1"],
         }
-        cobre_pkg.io = cobre_io  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "cobre", cobre_pkg)
-        monkeypatch.setitem(sys.modules, "cobre.io", cobre_io)
+        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
+        monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -685,7 +685,7 @@ class TestCliInProcess:
     def test_convert_json_validate_raising_still_emits_one_verdict(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A raising ``cobre.io.validate`` under ``--json`` still emits one verdict.
+        """A raising ``novomodelo.io.validate`` under ``--json`` still emits one verdict.
 
         The conversion succeeded, so stdout must still carry exactly one JSON
         object (the --json contract) even though validation crashed and the
@@ -693,8 +693,8 @@ class TestCliInProcess:
         """
         import types
 
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -710,23 +710,23 @@ class TestCliInProcess:
         def _raise(_dst: str) -> dict[str, object]:
             raise RuntimeError("validator blew up")
 
-        # Fix the installed-version gate at exactly MIN_COBRE_VERSION so this
+        # Fix the installed-version gate at exactly MIN_NOVOMODELO_VERSION so this
         # test reaches (and exercises) the injected raising ``validate`` below
-        # regardless of whichever cobre-python happens to be installed in the
-        # dev/CI venv (which may itself now be older than MIN_COBRE_VERSION).
+        # regardless of whichever novomodelo-python happens to be installed in the
+        # dev/CI venv (which may itself now be older than MIN_NOVOMODELO_VERSION).
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
-            lambda: MIN_COBRE_VERSION,
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: MIN_NOVOMODELO_VERSION,
         )
-        cobre_pkg = types.ModuleType("cobre")
-        cobre_io = types.ModuleType("cobre.io")
-        cobre_io.validate = _raise  # type: ignore[attr-defined]
-        cobre_pkg.io = cobre_io  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "cobre", cobre_pkg)
-        monkeypatch.setitem(sys.modules, "cobre.io", cobre_io)
+        novomodelo_pkg = types.ModuleType("novomodelo")
+        novomodelo_io = types.ModuleType("novomodelo.io")
+        novomodelo_io.validate = _raise  # type: ignore[attr-defined]
+        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
+        monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, stderr = self._invoke_main(
@@ -757,7 +757,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Without ``--validate`` the convert ``summary`` carries no validation key."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -771,7 +771,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _ = self._invoke_main(
@@ -787,9 +787,9 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The manifest carries the conversion's diagnostics + their summary."""
-        from cobre_bridge.cli.conversion_manifest import ConversionManifest
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -811,7 +811,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -826,8 +826,8 @@ class TestCliInProcess:
 
     def test_clear_dst_removes_manifest(self, tmp_path: Path) -> None:
         """``clear_dst_contents`` removes a stale top-level manifest on --force."""
-        from cobre_bridge.core.conversion import clear_dst_contents
-        from cobre_bridge.newave.pipeline import NEWAVE_CLEARED_ARTIFACTS
+        from novomodelo_bridge.core.conversion import clear_dst_contents
+        from novomodelo_bridge.newave.pipeline import NEWAVE_CLEARED_ARTIFACTS
 
         dst = tmp_path / "dst"
         dst.mkdir()
@@ -842,7 +842,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A manifest write OSError is warned-and-swallowed; exit stays 0."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -860,11 +860,11 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.newave.pipeline.convert_newave_case",
+                "novomodelo_bridge.newave.pipeline.convert_newave_case",
                 return_value=fake_report,
             ),
             patch(
-                "cobre_bridge.cli.conversion_manifest.ConversionManifest.to_json",
+                "novomodelo_bridge.cli.conversion_manifest.ConversionManifest.to_json",
                 _raise,
             ),
         ):
@@ -880,7 +880,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--dry-run`` into an empty dst writes nothing and exits 0."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -895,7 +895,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -917,7 +917,7 @@ class TestCliInProcess:
         dst = tmp_path / "dst"
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             side_effect=ValueError("boom"),
         ):
             code, stdout, stderr = self._invoke_main(
@@ -934,7 +934,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--dry-run --json`` emits a sorted, dst-relative would-write document."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -953,7 +953,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -990,7 +990,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A non-empty dst without ``--force`` is refused even under ``--dry-run``."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1008,7 +1008,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ) as convert:
             code, _stdout, stderr = self._invoke_main(
@@ -1029,7 +1029,7 @@ class TestCliInProcess:
         """``--dry-run --validate`` skips validation and notes it on stderr."""
         import builtins
 
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1046,14 +1046,16 @@ class TestCliInProcess:
         real_import = builtins.__import__
 
         def _guard_import(name: str, *args: object, **kwargs: object) -> object:
-            # No cobre validation import may be attempted under --dry-run.
-            if name.startswith("cobre.io"):
-                raise AssertionError("validation must not import cobre under --dry-run")
+            # No novomodelo validation import may be attempted under --dry-run.
+            if name.startswith("novomodelo.io"):
+                raise AssertionError(
+                    "validation must not import novomodelo under --dry-run"
+                )
             return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
 
         with (
             patch(
-                "cobre_bridge.newave.pipeline.convert_newave_case",
+                "novomodelo_bridge.newave.pipeline.convert_newave_case",
                 return_value=fake_report,
             ),
             patch.object(builtins, "__import__", _guard_import),
@@ -1069,30 +1071,30 @@ class TestCliInProcess:
         assert "Validation" not in stderr
 
     @staticmethod
-    def _inject_cobre_io(
+    def _inject_novomodelo_io(
         monkeypatch: pytest.MonkeyPatch, validate: MagicMock
     ) -> MagicMock:
-        """Inject a fake ``cobre`` / ``cobre.io`` whose ``validate`` is *validate*.
+        """Inject a fake ``novomodelo`` / ``novomodelo.io`` whose ``validate`` is *validate*.
 
         Mirrors the established pattern in the other ``--validate`` tests so the
-        real (unreleased-schema) cobre package is never touched. Returns the
+        real (unreleased-schema) novomodelo package is never touched. Returns the
         ``validate`` mock so the test can assert on its call count.
         """
         import types
 
-        cobre_pkg = types.ModuleType("cobre")
-        cobre_io = types.ModuleType("cobre.io")
-        cobre_io.validate = validate  # type: ignore[attr-defined]
-        cobre_pkg.io = cobre_io  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "cobre", cobre_pkg)
-        monkeypatch.setitem(sys.modules, "cobre.io", cobre_io)
+        novomodelo_pkg = types.ModuleType("novomodelo")
+        novomodelo_io = types.ModuleType("novomodelo.io")
+        novomodelo_io.validate = validate  # type: ignore[attr-defined]
+        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
+        monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
         return validate
 
-    def test_validate_skipped_when_cobre_python_old(
+    def test_validate_skipped_when_novomodelo_python_old(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A too-old cobre-python skips ``validate`` and exits 0."""
-        from cobre_bridge.core.conversion import ConversionReport
+        """A too-old novomodelo-python skips ``validate`` and exits 0."""
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1101,12 +1103,13 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version", lambda: "0.9.0"
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: "0.9.0",
         )
-        validate = self._inject_cobre_io(monkeypatch, MagicMock())
+        validate = self._inject_novomodelo_io(monkeypatch, MagicMock())
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1121,7 +1124,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The skip records the explicit reason under ``summary.validation``."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1130,12 +1133,13 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version", lambda: "0.9.0"
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: "0.9.0",
         )
-        validate = self._inject_cobre_io(monkeypatch, MagicMock())
+        validate = self._inject_novomodelo_io(monkeypatch, MagicMock())
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1153,17 +1157,20 @@ class TestCliInProcess:
             "valid": None,
             "warnings": 0,
             "errors": 0,
-            "skipped_reason": "cobre-python-too-old",
+            "skipped_reason": "novomodelo-python-too-old",
         }
         assert doc["summary"]["validation"]["ran"] is False
-        assert doc["summary"]["validation"]["skipped_reason"] == "cobre-python-too-old"
+        assert (
+            doc["summary"]["validation"]["skipped_reason"]
+            == "novomodelo-python-too-old"
+        )
 
     def test_validate_skip_human_message(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The skip note lands on stderr with the version + skip phrasing."""
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1172,12 +1179,13 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version", lambda: "0.9.0"
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: "0.9.0",
         )
-        validate = self._inject_cobre_io(monkeypatch, MagicMock())
+        validate = self._inject_novomodelo_io(monkeypatch, MagicMock())
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -1187,24 +1195,24 @@ class TestCliInProcess:
 
         assert code == 0
         validate.assert_not_called()
-        assert "skipping cobre-python validation" in stderr
-        assert MIN_COBRE_VERSION in stderr
+        assert "skipping novomodelo-python validation" in stderr
+        assert MIN_NOVOMODELO_VERSION in stderr
 
     def test_validate_skipped_for_installed_0_12_below_new_min(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An install below the floor gets an honest skip, not a false reject.
 
-        A cobre-python older than ``MIN_COBRE_VERSION`` cannot read the emitted
+        A novomodelo-python older than ``MIN_NOVOMODELO_VERSION`` cannot read the emitted
         output, so the gate must skip validation rather than run it and reject:
         no ``validate`` call, exit 0, and a warning naming *both* the installed
         and required versions so the skip is diagnosable rather than a silent
         no-op.
         """
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_COBRE_VERSION == "0.18.0"
+        assert MIN_NOVOMODELO_VERSION == "0.18.0"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1213,13 +1221,13 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
             lambda: "0.12.0",
         )
-        validate = self._inject_cobre_io(monkeypatch, MagicMock())
+        validate = self._inject_novomodelo_io(monkeypatch, MagicMock())
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, stdout, stderr = self._invoke_main(
@@ -1232,10 +1240,10 @@ class TestCliInProcess:
         # Does not fail, and does not silently pretend it validated: the
         # warning names both versions, and the JSON summary is explicit that
         # validation did not run (not that it ran and passed).
-        assert "skipping cobre-python validation" in stderr
+        assert "skipping novomodelo-python validation" in stderr
         assert "0.12.0" in stderr
         assert "0.18.0" in stderr
-        assert MIN_COBRE_VERSION in stderr
+        assert MIN_NOVOMODELO_VERSION in stderr
         doc = json.loads(stdout)
         assert doc["status"] == "ok"
         assert doc["summary"]["validation"] == {
@@ -1243,15 +1251,15 @@ class TestCliInProcess:
             "valid": None,
             "warnings": 0,
             "errors": 0,
-            "skipped_reason": "cobre-python-too-old",
+            "skipped_reason": "novomodelo-python-too-old",
         }
 
-    def test_validate_runs_when_cobre_python_supports_schema(
+    def test_validate_runs_when_novomodelo_python_supports_schema(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The case validates when the installed cobre-python knows the schema."""
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        """The case validates when the installed novomodelo-python knows the schema."""
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1260,16 +1268,16 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
-            lambda: MIN_COBRE_VERSION,
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: MIN_NOVOMODELO_VERSION,
         )
-        validate = self._inject_cobre_io(
+        validate = self._inject_novomodelo_io(
             monkeypatch,
             MagicMock(return_value={"valid": True, "warnings": [], "errors": []}),
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1280,11 +1288,11 @@ class TestCliInProcess:
         assert code == 0
         validate.assert_called_once()
 
-    def test_validate_falls_through_when_cobre_python_absent(
+    def test_validate_falls_through_when_novomodelo_python_absent(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No installed cobre-python → the version gate defers to the generic skip."""
-        from cobre_bridge.core.conversion import ConversionReport
+        """No installed novomodelo-python → the version gate defers to the generic skip."""
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1293,17 +1301,18 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version", lambda: None
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: None,
         )
-        # Force ``import cobre.io`` to raise regardless of whether the real
-        # cobre-python is installed in this environment (a ``None`` entry in
+        # Force ``import novomodelo.io`` to raise regardless of whether the real
+        # novomodelo-python is installed in this environment (a ``None`` entry in
         # sys.modules makes the import fail), so the generic "not installed"
         # branch runs rather than the version gate.
-        monkeypatch.setitem(sys.modules, "cobre", None)
-        monkeypatch.setitem(sys.modules, "cobre.io", None)
+        monkeypatch.setitem(sys.modules, "novomodelo", None)
+        monkeypatch.setitem(sys.modules, "novomodelo.io", None)
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -1312,13 +1321,13 @@ class TestCliInProcess:
             )
 
         assert code == 0
-        assert "cobre package not installed" in stderr
+        assert "novomodelo package not installed" in stderr
 
-    def test_validate_runs_when_cobre_python_metadata_absent(
+    def test_validate_runs_when_novomodelo_python_metadata_absent(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No version metadata + an importable cobre.io → validation runs."""
-        from cobre_bridge.core.conversion import ConversionReport
+        """No version metadata + an importable novomodelo.io → validation runs."""
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1327,15 +1336,16 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version", lambda: None
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: None,
         )
-        validate = self._inject_cobre_io(
+        validate = self._inject_novomodelo_io(
             monkeypatch,
             MagicMock(return_value={"valid": True, "warnings": [], "errors": []}),
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1352,14 +1362,14 @@ class TestCliInProcess:
         """``convert newave --validate`` still renders the interop warning.
 
         ``convert newave`` passes an empty whitelist to the shared
-        ``_run_cobre_validation`` helper, so a warning DECOMP whitelists (the
-        cobre external-solver-interop note) must still render here — the
+        ``_run_novomodelo_validation`` helper, so a warning DECOMP whitelists (the
+        novomodelo external-solver-interop note) must still render here — the
         byte-identical-behavior guarantee the helper extraction
         must not break. Contrast with
         ``test_convert_decomp_validate_whitelists_interop`` below.
         """
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1368,15 +1378,15 @@ class TestCliInProcess:
         )
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
-            lambda: MIN_COBRE_VERSION,
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: MIN_NOVOMODELO_VERSION,
         )
         interop_warning = (
             "inflow lags are disabled on all study stages. This is a valid "
             "configuration for external-solver interoperability; otherwise "
             "it is likely a misconfiguration."
         )
-        validate = self._inject_cobre_io(
+        validate = self._inject_novomodelo_io(
             monkeypatch,
             MagicMock(
                 return_value={
@@ -1388,7 +1398,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=fake_report,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -1405,7 +1415,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A successful ``convert decomp`` prints the ``✓ Converted ...`` summary."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1415,7 +1425,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1430,8 +1440,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A ``WARNING`` diagnostic on the report renders the notes roll-up + title."""
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1453,7 +1463,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -1469,7 +1479,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``convert decomp --json`` emits the unified verdict envelope."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1479,7 +1489,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1508,7 +1518,7 @@ class TestCliInProcess:
         dst = tmp_path / "dst"
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             side_effect=ValueError("bad"),
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1524,8 +1534,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An ERROR diagnostic reaching a non-raising report exits 1 without --json."""
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1548,7 +1558,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1562,8 +1572,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--diagnostics-json`` writes the report-shaped sidecar (summary + findings)."""
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1587,7 +1597,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1613,7 +1623,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The sidecar and ``--json`` are independent: stdout verdict AND file written."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1624,7 +1634,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1652,7 +1662,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Absent the flag, no sidecar file is created."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1663,7 +1673,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1680,27 +1690,27 @@ class TestCliInProcess:
         """``convert decomp --validate`` whitelists the interop inflow-lags warning.
 
         The P3 lag-blind stage shape (``inflow_lags=false`` on every stage,
-        locked in ``test_decomp_temporal.py``) trips cobre's non-fatal
+        locked in ``test_decomp_temporal.py``) trips novomodelo's non-fatal
         external-solver-interop warning on purpose; DECOMP's whitelist keeps
         it off stderr while newave's does not (see the sibling
         ``test_convert_newave_validate_unchanged_by_helper`` above).
         """
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
-            lambda: MIN_COBRE_VERSION,
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: MIN_NOVOMODELO_VERSION,
         )
         interop_warning = (
             "inflow lags are disabled on all study stages. This is a valid "
             "configuration for external-solver interoperability; otherwise "
             "it is likely a misconfiguration."
         )
-        validate = self._inject_cobre_io(
+        validate = self._inject_novomodelo_io(
             monkeypatch,
             MagicMock(
                 return_value={
@@ -1715,7 +1725,7 @@ class TestCliInProcess:
             hydro_count=1, thermal_count=1, bus_count=1, line_count=0, stage_count=4
         )
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -1732,7 +1742,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--dry-run`` into an empty dst writes nothing and exits 0."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1747,7 +1757,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1765,7 +1775,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--dry-run --json`` emits a sorted, dst-relative would-write document."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1784,7 +1794,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1827,7 +1837,7 @@ class TestCliInProcess:
         dst = tmp_path / "dst"
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             side_effect=ValueError("bad"),
         ):
             code, stdout, _stderr = self._invoke_main(
@@ -1853,7 +1863,7 @@ class TestCliInProcess:
         """``--dry-run --validate`` skips validation and notes it on stderr."""
         import builtins
 
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1870,14 +1880,16 @@ class TestCliInProcess:
         real_import = builtins.__import__
 
         def _guard_import(name: str, *args: object, **kwargs: object) -> object:
-            # No cobre validation import may be attempted under --dry-run.
-            if name.startswith("cobre.io"):
-                raise AssertionError("validation must not import cobre under --dry-run")
+            # No novomodelo validation import may be attempted under --dry-run.
+            if name.startswith("novomodelo.io"):
+                raise AssertionError(
+                    "validation must not import novomodelo under --dry-run"
+                )
             return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
             patch.object(builtins, "__import__", _guard_import),
@@ -1897,7 +1909,7 @@ class TestCliInProcess:
     ) -> None:
         """``--dry-run --diagnostics-json`` writes no sidecar: the dry-run branch
         returns before the sidecar block runs."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1913,7 +1925,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1936,8 +1948,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A successful ``convert decomp`` leaves a valid provenance manifest."""
-        from cobre_bridge.cli.conversion_manifest import ConversionManifest
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1947,7 +1959,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1970,13 +1982,13 @@ class TestCliInProcess:
         # The stub deck's dadger/vazoes/hidr files were discovered and hashed.
         assert manifest.input_files
 
-    def test_convert_decomp_manifest_records_min_cobre_version(
+    def test_convert_decomp_manifest_records_min_novomodelo_version(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The DECOMP manifest's ``min_cobre_version`` tracks the CLI constant."""
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.cli.conversion_manifest import ConversionManifest
-        from cobre_bridge.core.conversion import ConversionReport
+        """The DECOMP manifest's ``min_novomodelo_version`` tracks the CLI constant."""
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1985,7 +1997,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -1995,14 +2007,14 @@ class TestCliInProcess:
 
         assert code == 0
         manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")
-        assert manifest.min_cobre_version == MIN_COBRE_VERSION
+        assert manifest.min_novomodelo_version == MIN_NOVOMODELO_VERSION
 
     def test_convert_decomp_dry_run_writes_no_manifest(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--dry-run`` writes no provenance manifest: the dry-run branch
         returns before the manifest-write block runs."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -2017,7 +2029,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -2029,7 +2041,7 @@ class TestCliInProcess:
         assert not (dst / "conversion_manifest.json").exists()
 
     # ------------------------------------------------------------------
-    # Boundary FCF (default on; --no-fcf opts out; in-process, no --cobre-bin)
+    # Boundary FCF (default on; --no-fcf opts out; in-process, no --novomodelo-bin)
     # ------------------------------------------------------------------
 
     def test_convert_decomp_no_fcf_skips_import(
@@ -2038,7 +2050,7 @@ class TestCliInProcess:
         """``--no-fcf`` skips the importer even when the deck declares cut
         files: no ``boundary/`` directory, and the deck is never re-discovered
         for the FCF gate."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2049,11 +2061,11 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf"
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf"
             ) as mock_import,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -2073,8 +2085,8 @@ class TestCliInProcess:
         importer, which runs with ``cost_scale_factor=1.0``, exits 0,
         confirms the boundary FCF on stderr, and whose ``--json`` verdict
         carries ``summary["boundary_fcf"]``."""
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.decomp.case import DecompCase
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.decomp.case import DecompCase
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2085,18 +2097,18 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
             patch(
-                "cobre_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
             ) as mock_capability,
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf",
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
                 return_value=dst / "boundary",
             ) as mock_import,
             patch(
-                "cobre_bridge.decomp.case.DecompCase.from_directory",
+                "novomodelo_bridge.decomp.case.DecompCase.from_directory",
                 wraps=DecompCase.from_directory,
             ) as mock_from_directory,
         ):
@@ -2110,12 +2122,12 @@ class TestCliInProcess:
         mock_capability.assert_called_once()
         mock_import.assert_called_once()
         assert mock_import.call_args.kwargs["cost_scale_factor"] == 1.0
-        assert "cobre_bin" not in mock_import.call_args.kwargs
+        assert "novomodelo_bin" not in mock_import.call_args.kwargs
         assert mock_import.call_args.args[0] == dst
         assert isinstance(mock_import.call_args.args[1], DecompCase)
         # The boundary-FCF confirmation surfaces on stderr regardless of --json;
-        # the boundary loads on a plain `cobre run <case>` (no --output recipe).
-        assert f"cobre run {dst}" in stderr
+        # the boundary loads on a plain `novomodelo run <case>` (no --output recipe).
+        assert f"novomodelo run {dst}" in stderr
         assert "--output" not in stderr
         doc = json.loads(stdout)
         assert doc["summary"]["boundary_fcf"] == {
@@ -2129,7 +2141,7 @@ class TestCliInProcess:
         """A deck that declares no cortes files converts with exit 0 and an
         INFO note (not an error): the importer never runs and no ``boundary/``
         directory is written."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)  # no cortesh/cortes files
         dst = tmp_path / "dst"
@@ -2140,11 +2152,11 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf"
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf"
             ) as mock_import,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -2161,8 +2173,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A failing capability probe exits 1 with the install remediation."""
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.decomp.fcf.capability import REMEDIATION
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.decomp.fcf.capability import REMEDIATION
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2173,15 +2185,15 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
             patch(
-                "cobre_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability",
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability",
                 side_effect=RuntimeError(REMEDIATION),
             ),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf"
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf"
             ) as mock_import,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -2190,7 +2202,7 @@ class TestCliInProcess:
             )
 
         assert code == 1
-        assert "cobre-python" in stderr
+        assert "novomodelo-python" in stderr
         mock_import.assert_not_called()
 
     def test_convert_decomp_boundary_fcf_runs_before_validate(
@@ -2198,8 +2210,8 @@ class TestCliInProcess:
     ) -> None:
         """The boundary-FCF import runs BEFORE ``--validate``; a validation
         failure still exits 2 once the import already succeeded."""
-        from cobre_bridge.cli import MIN_COBRE_VERSION
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2219,19 +2231,21 @@ class TestCliInProcess:
             return {"valid": False, "warnings": [], "errors": ["boom"]}
 
         monkeypatch.setattr(
-            "cobre_bridge.cobre.compat._installed_cobre_python_version",
-            lambda: MIN_COBRE_VERSION,
+            "novomodelo_bridge.novomodelo.compat._installed_novomodelo_python_version",
+            lambda: MIN_NOVOMODELO_VERSION,
         )
-        self._inject_cobre_io(monkeypatch, MagicMock(side_effect=_fake_validate))
+        self._inject_novomodelo_io(monkeypatch, MagicMock(side_effect=_fake_validate))
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
-            patch("cobre_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf",
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
                 side_effect=_fake_import,
             ),
         ):
@@ -2248,7 +2262,7 @@ class TestCliInProcess:
     ) -> None:
         """``--dry-run`` skips the boundary FCF import and notes it on stderr,
         even when the deck declares cut files."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2264,11 +2278,11 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf"
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf"
             ) as mock_import,
         ):
             code, _stdout, stderr = self._invoke_main(
@@ -2290,8 +2304,8 @@ class TestCliInProcess:
         This test fails against the pre-sink CLI (no ``dx.collect()``
         wrapping ``import_boundary_fcf``), proving the previously deferred gap
         is closed."""
-        from cobre_bridge.core import diagnostics as dx
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2314,12 +2328,14 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
-            patch("cobre_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf",
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
                 side_effect=_fake_import,
             ),
         ):
@@ -2349,8 +2365,8 @@ class TestCliInProcess:
         diagnostic's title renders on stderr (the Rich panel), and the
         existing happy-path boundary-FCF confirmation still holds (no
         double-render, no exit-code change)."""
-        from cobre_bridge.core import diagnostics as dx
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2373,12 +2389,14 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
-            patch("cobre_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf",
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
                 side_effect=_fake_import,
             ),
         ):
@@ -2395,7 +2413,7 @@ class TestCliInProcess:
         assert code == 0
         assert "GNL anticipated ring carries a per-patamar sum" in stderr
         # The boundary-FCF confirmation still surfaces (happy-path intact).
-        assert f"cobre run {dst}" in stderr
+        assert f"novomodelo run {dst}" in stderr
         assert "--output" not in stderr
 
     def test_convert_decomp_boundary_fcf_importer_diagnostics_reach_sidecar(
@@ -2408,8 +2426,8 @@ class TestCliInProcess:
         the ``--json`` stdout verdict. This test fails against the pre-fix
         CLI, where the sidecar is written BEFORE the boundary-FCF block runs
         and therefore only ever contains ``report.diagnostics``."""
-        from cobre_bridge.core import diagnostics as dx
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
         dst = tmp_path / "dst"
@@ -2433,12 +2451,14 @@ class TestCliInProcess:
 
         with (
             patch(
-                "cobre_bridge.decomp.pipeline.convert_decomp_case",
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
                 return_value=fake_report,
             ),
-            patch("cobre_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"),
             patch(
-                "cobre_bridge.decomp.fcf.importer.import_boundary_fcf",
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
                 side_effect=_fake_import,
             ),
         ):
@@ -2466,8 +2486,8 @@ class TestCliInProcess:
         """Guard: a ``convert decomp --diagnostics-json --no-fcf`` sidecar is
         exactly ``report.diagnostics`` — deferring the sidecar write past the
         (here, skipped) boundary-FCF block must not regress the contract."""
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 
         src = _make_fake_decomp_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -2491,7 +2511,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             return_value=fake_report,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -2521,9 +2541,9 @@ class TestConversionDiagnosticsRendering:
     ) -> tuple[int, str, str]:
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
         exit_code = 0
@@ -2535,8 +2555,12 @@ class TestConversionDiagnosticsRendering:
         return exit_code, stdout_buf.getvalue(), stderr_buf.getvalue()
 
     def _report_with_gtmin(self):
-        from cobre_bridge.core.conversion import ConversionReport
-        from cobre_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+        from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.diagnostics import (
+            Diagnostic,
+            DiagnosticTable,
+            Severity,
+        )
 
         diag = Diagnostic(
             code="thermal-gtmin-above-capacity",
@@ -2558,7 +2582,7 @@ class TestConversionDiagnosticsRendering:
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=self._report_with_gtmin(),
         ):
             code, stdout, stderr = self._invoke_main(
@@ -2578,7 +2602,7 @@ class TestConversionDiagnosticsRendering:
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=self._report_with_gtmin(),
         ):
             code, stdout, stderr = self._invoke_main(
@@ -2595,7 +2619,7 @@ class TestConversionDiagnosticsRendering:
         dst = tmp_path / "dst"
         json_path = tmp_path / "diag.json"
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=self._report_with_gtmin(),
         ):
             code, _stdout, _stderr = self._invoke_main(

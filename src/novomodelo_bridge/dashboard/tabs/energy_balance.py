@@ -23,13 +23,17 @@ import plotly.graph_objects as go
 import polars as pl
 from plotly.subplots import make_subplots
 
-from cobre_bridge.dashboard.chart_helpers import (
+from novomodelo_bridge.dashboard.chart_helpers import (
     add_mean_p50_band,
     compute_percentiles,
     make_chart_card,
 )
-from cobre_bridge.dashboard.data import _compute_lp_load, _stage_avg_mw, entity_name
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.dashboard.data import (
+    _compute_lp_load,
+    _stage_avg_mw,
+    entity_name,
+)
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
     json_for_script,
@@ -37,22 +41,22 @@ from cobre_bridge.ui.html.document import (
     metrics_grid,
     section_title,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS as _LEGEND,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     MARGIN_DEFAULTS as _MARGIN,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     apply_stage_date_axis,
     apply_standard_layout,
     stage_x_dates,
     stage_x_labels,
 )
-from cobre_bridge.ui.theme import BUS_COLORS, COLORS, GENERATION_COLORS
+from novomodelo_bridge.ui.theme import BUS_COLORS, COLORS, GENERATION_COLORS
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 # ---------------------------------------------------------------------------
 # Module constants
@@ -158,7 +162,7 @@ def _build_metrics_row(data: DashboardData) -> str:
     (m3/s), Curtailment GWh.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         An HTML string containing the section title and metrics grid.
@@ -230,7 +234,7 @@ def _chart_gen_mix_hero(data: DashboardData) -> go.Figure:
     the LP load filter instead of a hardcoded bus list.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         A :class:`plotly.graph_objects.Figure`.
@@ -323,7 +327,7 @@ def _chart_gen_by_bus(data: DashboardData) -> go.Figure:
     independent across buses.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         A :class:`plotly.graph_objects.Figure` with one subplot row per bus.
@@ -535,7 +539,7 @@ def _render_deficit_excess(data: DashboardData) -> str:
     converted to stage-average MW by dividing by stage hours.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         An HTML string: a ``collapsible_section`` wrapping a ``chart_grid``
@@ -649,7 +653,7 @@ def _render_reservoir_storage(data: DashboardData) -> str:
     non-fictitious bus that has hydros.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         An HTML string: a ``collapsible_section`` wrapping a ``chart_grid``
@@ -872,7 +876,7 @@ def _aggregate_hydro_column(
     When *block_filter* is given (default 0), filters the LazyFrame to that
     block — appropriate for stage-level columns like ``stored_energy_*_mwh``.
     Returns an empty DataFrame when the column is absent (older simulation
-    outputs without the cobre HEAD energy columns).
+    outputs without the novomodelo HEAD energy columns).
     """
     try:
         lf = data.hydros_lf
@@ -990,7 +994,7 @@ def _energy_quantiles_fig(
 def _render_stored_energy(data: DashboardData) -> str:
     """Stored energy (EARM) section.
 
-    Uses cobre HEAD's ``stored_energy_final_mwh`` column (per (stage, block,
+    Uses novomodelo HEAD's ``stored_energy_final_mwh`` column (per (stage, block,
     hydro)). For each (scenario, stage) sums across all hydros at block_id=0,
     converts MWh→GWh, and renders a p10/p50/p90 band. Optionally a per-bus
     breakdown chart alongside.
@@ -1147,7 +1151,7 @@ def _chart_curtailment_by_source(data: DashboardData) -> go.Figure | None:
     zero, or the result DataFrame is empty.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData`
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData`
             instance.  Uses ``data.ncs_lf`` and ``data.names``.
 
     Returns:
@@ -1213,7 +1217,7 @@ def _render_ncs_curtailment(data: DashboardData) -> str:
     zero or the ``curtailment_mwh`` column is absent.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         An HTML string: a ``collapsible_section`` wrapping a ``chart_grid``
@@ -1392,7 +1396,7 @@ def _build_hero_data(
     deterministic (not scenario-dependent) and stored as a single array.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         A 2-tuple of:
@@ -1552,13 +1556,13 @@ def _build_hero_section(data: DashboardData) -> str:
     empty).
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         HTML string with the selector, chart div, and inline JS.
     """
-    from cobre_bridge.dashboard.chart_helpers import make_chart_card
-    from cobre_bridge.ui.html.document import chart_grid
+    from novomodelo_bridge.dashboard.chart_helpers import make_chart_card
+    from novomodelo_bridge.ui.html.document import chart_grid
 
     hero_data, xlabels = _build_hero_data(data)
 
@@ -1705,7 +1709,7 @@ def render(data: DashboardData) -> str:
          collapsed by default.
 
     Args:
-        data: Full :class:`~cobre_bridge.dashboard.data.DashboardData` instance.
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
     Returns:
         An HTML string ready to be inserted into the tab content area.
@@ -1753,11 +1757,11 @@ def render(data: DashboardData) -> str:
     # Section E — reservoir storage (collapsible, default collapsed)
     storage_html = _render_reservoir_storage(data)
 
-    # Section G — stored energy (EARM), new cobre HEAD columns; renders empty
+    # Section G — stored energy (EARM), new novomodelo HEAD columns; renders empty
     # string when the simulation output lacks the energy columns.
     earm_html = _render_stored_energy(data)
 
-    # Section H — natural inflow energy (ENA), new cobre HEAD column.
+    # Section H — natural inflow energy (ENA), new novomodelo HEAD column.
     ena_html = _render_inflow_energy(data)
 
     # Section F — NCS & curtailment (collapsible, default collapsed)

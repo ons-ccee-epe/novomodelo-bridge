@@ -1,37 +1,37 @@
-"""System spillage energy chart (MWmes): source-model vs Cobre aggregate."""
+"""System spillage energy chart (MWmes): source-model vs Novomodelo aggregate."""
 
 from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.ui.html.plotly import LEGEND_DEFAULTS as _LEGEND
-from cobre_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
-from cobre_bridge.ui.html.plotly import facet_grid
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.ui.html.plotly import LEGEND_DEFAULTS as _LEGEND
+from novomodelo_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
+from novomodelo_bridge.ui.html.plotly import facet_grid
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
 def system_spillage_energy_chart(
     results: list[ResultComparison],
-    cobre_spill_energy: pl.DataFrame,
+    novomodelo_spill_energy: pl.DataFrame,
     reference_label: str = "NEWAVE",
 ) -> str:
     """Three-panel chart of system spillage in MWmes.
 
     Each panel pairs a source-model trace (``VERTOT`` / ``VERTcont`` / ``VERTfio``)
-    against the matching Cobre aggregate (``total_mw`` / ``reservoir_mw`` /
+    against the matching Novomodelo aggregate (``total_mw`` / ``reservoir_mw`` /
     ``rorov_mw``).  Both axes are stage-average MW (MWmes).
     """
     nw_rows = [r for r in results if r.entity_type == "system_spillage"]
-    if not nw_rows and cobre_spill_energy.is_empty():
+    if not nw_rows and novomodelo_spill_energy.is_empty():
         return "<p>No system spillage data available.</p>"
 
-    nw_lookup, cb_lookup = analyze.spillage_lookups(results, cobre_spill_energy)
+    nw_lookup, cb_lookup = analyze.spillage_lookups(results, novomodelo_spill_energy)
 
     panels: list[tuple[str, str, str]] = [
         ("Total (VERTOT)", "spill_energy_total_mw", "VERTOT"),
@@ -98,10 +98,10 @@ def system_spillage_energy_chart(
             {
                 "x": all_stages,
                 "y": cb_y,
-                "name": "Cobre",
+                "name": "Novomodelo",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
                 "xaxis": xa,
                 "yaxis": ya,
                 "legendgroup": "cb",

@@ -1,7 +1,7 @@
 """Tests for the DECOMP FPHA converter (``decomp/fpha.py``).
 
 Tier-1: synthetic ``EffectiveCadastro`` / ``DecompIdMap`` / polinjus doubles,
-no real deck. Covers the fitting window (a cobre-bridge parameter), eligibility,
+no real deck. Covers the fitting window (a novomodelo-bridge parameter), eligibility,
 turbine efficiency, the VHA geometry table, and the tailrace-curves wrapper.
 """
 
@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro, MachineSet
-from cobre_bridge.decomp.converters.fpha import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro, MachineSet
+from novomodelo_bridge.decomp.converters.fpha import (
     FPHA_VOLUME_WINDOW_FRACTION,
     convert_hydro_geometry,
     convert_tailrace_curves,
@@ -23,7 +23,7 @@ from cobre_bridge.decomp.converters.fpha import (
     is_fpha_eligible,
     turbine_efficiency,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.conftest import make_decomp_case
 
 
@@ -163,7 +163,7 @@ def test_is_fpha_eligible_false_for_ac_vazefe_zero() -> None:
 
 
 def test_is_fpha_eligible_true_when_capacity_positive_at_any_stage() -> None:
-    # cobre fits against the max-over-stages envelope hydros.json declares.
+    # novomodelo fits against the max-over-stages envelope hydros.json declares.
     eff = _effective_with_machine_set(
         (MachineSet(0, 50.0, 100.0), MachineSet(2, 50.0, 100.0))
     )

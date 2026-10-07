@@ -29,16 +29,16 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _INVARIANT_RTOL = 1e-9
 
@@ -200,6 +200,6 @@ def convert_load_factors(
         )
 
     return {
-        "$schema": cobre_schemas.schema_url_for("scenarios/load_factors.json"),
+        "$schema": novomodelo_schemas.schema_url_for("scenarios/load_factors.json"),
         "load_factors": entries,
     }

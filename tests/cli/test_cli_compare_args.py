@@ -4,7 +4,7 @@ Locks in two things: `_compare_newave` / `_compare_decomp` build a typed
 `CompareArgs` instead of a duck-typed `SimpleNamespace`, and
 `_resolve_compare_settings` returns a resolved copy instead of mutating its
 (frozen) input. Drives the precedence logic directly with a patched
-`load_config`, so nothing reads real config/env state. Imports no cobre.
+`load_config`, so nothing reads real config/env state. Imports no novomodelo.
 """
 
 from __future__ import annotations
@@ -18,14 +18,14 @@ from unittest.mock import patch
 
 import pytest
 
-from cobre_bridge.cli.args import CompareArgs
-from cobre_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, BridgeConfig
+from novomodelo_bridge.cli.args import CompareArgs
+from novomodelo_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, BridgeConfig
 
-# `cobre_bridge.cli`'s D5 __init__ re-exports `app` (the Typer instance) from
+# `novomodelo_bridge.cli`'s D5 __init__ re-exports `app` (the Typer instance) from
 # a same-named submodule, shadowing a plain `import ... as` target the same
 # way `cli.app` would -- importlib.import_module resolves the submodule
 # instead.
-cli = importlib.import_module("cobre_bridge.cli.compare")
+cli = importlib.import_module("novomodelo_bridge.cli.compare")
 
 
 def _make_args(
@@ -36,7 +36,7 @@ def _make_args(
 ) -> CompareArgs:
     return CompareArgs(
         source_dir=Path("source"),
-        cobre_output_dir=Path("cobre"),
+        novomodelo_output_dir=Path("novomodelo"),
         tolerance=tolerance,
         format=fmt,
         out_dir=out_dir,
@@ -172,11 +172,11 @@ class TestResolveCompareSettings:
         fmt: list[str] | None,
         out_dir: Path | None,
     ) -> CompareArgs:
-        from cobre_bridge.cli.args import CompareArgs
+        from novomodelo_bridge.cli.args import CompareArgs
 
         return CompareArgs(
             source_dir=Path("source"),
-            cobre_output_dir=Path("cobre_output"),
+            novomodelo_output_dir=Path("novomodelo_output"),
             tolerance=tolerance,
             format=fmt,
             out_dir=out_dir,
@@ -203,7 +203,7 @@ class TestResolveCompareSettings:
         """
         import importlib
 
-        cli = importlib.import_module("cobre_bridge.cli.compare")
+        cli = importlib.import_module("novomodelo_bridge.cli.compare")
 
         args = cls._make_args(tolerance=tolerance, fmt=fmt, out_dir=out_dir)
         with patch.object(cli, "load_config", return_value=config):
@@ -212,7 +212,7 @@ class TestResolveCompareSettings:
 
     def test_flag_or_env_value_wins_over_config(self) -> None:
         """A non-None ``args`` value (flag or env) is kept, ignoring config."""
-        from cobre_bridge.cli.config import BridgeConfig
+        from novomodelo_bridge.cli.config import BridgeConfig
 
         config = BridgeConfig(
             results_tolerance=5e-4,
@@ -237,7 +237,7 @@ class TestResolveCompareSettings:
 
     def test_config_fills_when_flag_and_env_are_none(self) -> None:
         """With ``args`` all None, the config-file values fill every field."""
-        from cobre_bridge.cli.config import BridgeConfig
+        from novomodelo_bridge.cli.config import BridgeConfig
 
         config = BridgeConfig(
             results_tolerance=5e-4,
@@ -257,7 +257,7 @@ class TestResolveCompareSettings:
 
     def test_builtin_default_when_config_empty(self) -> None:
         """An empty config falls through to the built-in tolerance default."""
-        from cobre_bridge.cli.config import (
+        from novomodelo_bridge.cli.config import (
             RESULTS_TOLERANCE_DEFAULT,
             BridgeConfig,
         )
@@ -275,10 +275,10 @@ class TestResolveCompareSettings:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Each config-load warning is surfaced on stderr, never on stdout."""
-        from cobre_bridge.cli.config import BridgeConfig
+        from novomodelo_bridge.cli.config import BridgeConfig
 
         config = BridgeConfig(
-            warnings=("Ignoring malformed config file cobre-bridge.toml: bad",),
+            warnings=("Ignoring malformed config file novomodelo-bridge.toml: bad",),
         )
         self._resolve(config, tolerance=None, fmt=None, out_dir=None)
 

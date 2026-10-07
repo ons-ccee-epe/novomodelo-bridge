@@ -1,4 +1,4 @@
-"""Tests for :mod:`cobre_bridge.comparators.manifest`."""
+"""Tests for :mod:`novomodelo_bridge.comparators.manifest`."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-import cobre_bridge
-from cobre_bridge.comparators.manifest import ComparisonManifest
-from cobre_bridge.core.git import git_sha
+import novomodelo_bridge
+from novomodelo_bridge.comparators.manifest import ComparisonManifest
+from novomodelo_bridge.core.git import git_sha
 
 
 def _in_git_checkout() -> bool:
@@ -33,10 +33,10 @@ def test_create_sets_bridge_version_and_timestamp() -> None:
 
     assert manifest.command == "compare newave"
     assert manifest.source_dir == "nw"
-    assert manifest.cobre_output_dir == "cb"
+    assert manifest.novomodelo_output_dir == "cb"
     assert manifest.tolerance == 1e-2
-    assert manifest.bridge_version == cobre_bridge.__version__
-    assert manifest.cobre_version is None
+    assert manifest.bridge_version == novomodelo_bridge.__version__
+    assert manifest.novomodelo_version is None
     assert manifest.newave_version is None
     assert manifest.artifacts == []
     assert manifest.top_divergences == []
@@ -77,12 +77,12 @@ def test_create_passes_through_optional_versions() -> None:
         Path("nw"),
         Path("cb"),
         0.05,
-        cobre_version="1.2.3",
+        novomodelo_version="1.2.3",
         newave_version="28.0",
     )
 
     assert manifest.command == "compare bounds"
-    assert manifest.cobre_version == "1.2.3"
+    assert manifest.novomodelo_version == "1.2.3"
     assert manifest.newave_version == "28.0"
 
 
@@ -125,7 +125,7 @@ def test_git_sha_uses_bridge_repo_not_cwd(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``git_sha`` must resolve the bridge repo, not the caller's cwd."""
-    bridge_dir = Path(cobre_bridge.__file__).resolve().parent
+    bridge_dir = Path(novomodelo_bridge.__file__).resolve().parent
     expected = subprocess.run(
         ["git", "-C", str(bridge_dir), "rev-parse", "--short", "HEAD"],
         capture_output=True,
@@ -146,7 +146,7 @@ def test_manifest_json_roundtrip(tmp_path: Path) -> None:
         Path("nw"),
         Path("cb"),
         1e-2,
-        cobre_version="1.2.3",
+        novomodelo_version="1.2.3",
         newave_version="28.0",
     )
     manifest.artifacts = ["report.html", "dataset.parquet"]
@@ -183,7 +183,7 @@ def _base_manifest_data() -> dict[str, object]:
     return {
         "command": "compare newave",
         "source_dir": "nw",
-        "cobre_output_dir": "cb",
+        "novomodelo_output_dir": "cb",
         "tolerance": 1e-2,
         "bridge_version": "0.1.0",
         "git_sha": "abc1234",
@@ -222,7 +222,7 @@ def test_from_json_missing_optional_fields_uses_defaults(tmp_path: Path) -> None
 
     assert manifest.artifacts == []
     assert manifest.top_divergences == []
-    assert manifest.cobre_version is None
+    assert manifest.novomodelo_version is None
     assert manifest.newave_version is None
     assert manifest.input_files == []
     assert manifest.diagnostics_summary == {}

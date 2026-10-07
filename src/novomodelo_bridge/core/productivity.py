@@ -37,16 +37,16 @@ _LOG = logging.getLogger(__name__)
 
 # --- FPHA turbine efficiency ------------------------------------------------
 #
-# cobre's FPHA production function is ``phi = K · eta · q · h_net`` (MW), with ``K = g /
+# novomodelo's FPHA production function is ``phi = K · eta · q · h_net`` (MW), with ``K = g /
 # 1000`` and ``eta`` the dimensionless turbine efficiency in (0, 1]. The source model
 # instead carries the *specific* productivity ``rho_esp`` (MW/((m³/s)·m)), which already
-# folds in ``K · eta``. So the efficiency cobre needs is ``eta = rho_esp / K`` — the
-# value that makes cobre's ``phi`` reproduce the source model's ``rho_esp · q · h_liq``.
+# folds in ``K · eta``. So the efficiency novomodelo needs is ``eta = rho_esp / K`` — the
+# value that makes novomodelo's ``phi`` reproduce the source model's ``rho_esp · q · h_liq``.
 _GRAVITY_MW_FACTOR = 9.81e-3
 
 
 def fpha_efficiency(rho_esp: float, name: str) -> float:
-    """Dimensionless turbine efficiency ``eta = rho_esp / K`` for cobre's FPHA.
+    """Dimensionless turbine efficiency ``eta = rho_esp / K`` for novomodelo's FPHA.
 
     Clamped to ``1.0`` if the source ``rho_esp`` implies ``eta > 1`` (unphysical
     in the input data), with a warning.

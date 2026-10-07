@@ -1,6 +1,6 @@
 """Conversion pipeline: orchestrates entity and temporal/stochastic converters.
 
-Reads a source-model case directory and writes a complete Cobre case directory.
+Reads a source-model case directory and writes a complete Novomodelo case directory.
 """
 
 from __future__ import annotations
@@ -11,28 +11,28 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from cobre_bridge.cobre import scalar_parameters as scalar_params_conv
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.cobre.case_writer import CaseWriter
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core import emission_checks
-from cobre_bridge.core.bound_merge import merge_bound_tables
-from cobre_bridge.core.conversion import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core import emission_checks
+from novomodelo_bridge.core.bound_merge import merge_bound_tables
+from novomodelo_bridge.core.conversion import (
     ClearedArtifacts,
     ConversionReport,
     clear_dst_contents,
 )
-from cobre_bridge.core.generic_constraint_builder import ConstraintIdAllocator
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters import constraints as constraints_conv
-from cobre_bridge.newave.converters import hydro as hydro_conv
-from cobre_bridge.newave.converters import inflow_windows
-from cobre_bridge.newave.converters import initial_conditions as ic_conv
-from cobre_bridge.newave.converters import network as network_conv
-from cobre_bridge.newave.converters import stochastic as stochastic_conv
-from cobre_bridge.newave.converters import tailrace as tailrace_conv
-from cobre_bridge.newave.converters import temporal as temporal_conv
-from cobre_bridge.newave.converters import thermal as thermal_conv
+from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters import constraints as constraints_conv
+from novomodelo_bridge.newave.converters import hydro as hydro_conv
+from novomodelo_bridge.newave.converters import inflow_windows
+from novomodelo_bridge.newave.converters import initial_conditions as ic_conv
+from novomodelo_bridge.newave.converters import network as network_conv
+from novomodelo_bridge.newave.converters import stochastic as stochastic_conv
+from novomodelo_bridge.newave.converters import tailrace as tailrace_conv
+from novomodelo_bridge.newave.converters import temporal as temporal_conv
+from novomodelo_bridge.newave.converters import thermal as thermal_conv
+from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def convert_newave_case(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
 ) -> ConversionReport:
-    """Convert a source-model case directory to a Cobre case directory.
+    """Convert a source-model case directory to a Novomodelo case directory.
 
     Parameters
     ----------
@@ -182,7 +182,7 @@ def convert_newave_case(
         Path to the source model case directory.  Must exist and contain all required
         the source model input files.
     dst:
-        Path to the output Cobre case directory.  Must not exist or must be
+        Path to the output Novomodelo case directory.  Must not exist or must be
         empty (call site is responsible for enforcing the --force contract
         before calling this function).
     dry_run:
@@ -204,7 +204,7 @@ def convert_newave_case(
         is missing.
     """
     collector = dx.WarningCollector()
-    pkg_logger = logging.getLogger("cobre_bridge")
+    pkg_logger = logging.getLogger("novomodelo_bridge")
     pkg_logger.addHandler(collector)
     try:
         # Structured diagnostics emitted by converters land in ``collected``; any
@@ -402,9 +402,9 @@ def _convert_newave_case_impl(
         hydros_dict, hydro_bounds_table
     )
 
-    # Post-emission self-checks: mirror cheap cobre load invariants
+    # Post-emission self-checks: mirror cheap novomodelo load invariants
     # (rules 43, 41, 36, and the block_id-range rule) over the in-memory
-    # artifacts before anything is written. See cobre_bridge.core.emission_checks
+    # artifacts before anything is written. See novomodelo_bridge.core.emission_checks
     # for the rule scope.
     bound_families = [
         emission_checks.BoundFamily("Hydro", "hydro_id", hydro_bounds_table),
@@ -441,7 +441,7 @@ def _convert_newave_case_impl(
     writer.write_json("system/hydro_production_models.json", production_models_dict)
 
     # Declare per-hydro @rho_eq_h{id} / @rho_acum_h{id} computed parameters for
-    # every hydro in the case. cobre rejects any @name token that has not been
+    # every hydro in the case. novomodelo rejects any @name token that has not been
     # declared, so we always emit the file so handwritten or generated
     # constraint expressions can reference any per-hydro productivity. The
     # ids set is the union of the VminOP-referenced ids (covers the values we
@@ -536,7 +536,7 @@ def _convert_newave_case_impl(
 
     if all_constraints:
         merged_dict = {
-            "$schema": cobre_schemas.schema_url_for(
+            "$schema": novomodelo_schemas.schema_url_for(
                 "constraints/generic_constraints.json"
             ),
             "constraints": all_constraints,

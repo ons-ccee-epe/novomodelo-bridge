@@ -1,12 +1,12 @@
 """Turn a resolved electrical restriction's surviving bucket-A terms into a
-cobre expression string.
+novomodelo expression string.
 
 ``libs_electrical.assemble_bound`` folds a restriction's bucket-B/-C terms
-into a numeric bound and returns its surviving bucket-A (cobre decision)
-terms as a sign-canonical :class:`~cobre_bridge.decomp.converters.libs_electrical.
-AssembledBound` — a source-model :class:`~cobre_bridge.decomp.
-libs_electrical.ParsedTerm` sequence, not yet a cobre token. This module
-owns that last mile: :func:`_cobre_token` maps one such term to its cobre
+into a numeric bound and returns its surviving bucket-A (novomodelo decision)
+terms as a sign-canonical :class:`~novomodelo_bridge.decomp.converters.libs_electrical.
+AssembledBound` — a source-model :class:`~novomodelo_bridge.decomp.
+libs_electrical.ParsedTerm` sequence, not yet a novomodelo token. This module
+owns that last mile: :func:`_novomodelo_token` maps one such term to its novomodelo
 ``VariableRef`` string (spec §2), and :func:`build_electrical_expression`
 joins a whole :class:`AssembledBound`'s terms into one expression via
 ``constraints._format_expression`` — the same coefficient-formatting rules
@@ -14,21 +14,21 @@ the E1–E7 emitter already uses.
 
 This mirrors the codebase's existing read/emit split
 (``constraint_registers.py`` reads/classifies, ``constraints.py`` emits):
-``libs_electrical.py`` stays cobre-agnostic (its ``ParsedTerm``s carry the
+``libs_electrical.py`` stays novomodelo-agnostic (its ``ParsedTerm``s carry the
 source model's own token vocabulary — ``ger_usih``, ``ener_interc``, …),
-and this module is where that vocabulary turns into cobre's.
+and this module is where that vocabulary turns into novomodelo's.
 
 :func:`emit_libs_electrical_generics` is the other half of that
 last mile: for each restriction, it drives ``active_cells``/``assemble_bound``
 over every active ``(stage, block)`` cell, renders the cell-invariant
 expression once via :func:`build_electrical_expression`, and synthesizes a
-per-restriction :class:`~cobre_bridge.decomp.constraint_registers.
+per-restriction :class:`~novomodelo_bridge.decomp.constraint_registers.
 ConstraintRecord` that feeds the **existing** E1–E7
-:class:`~cobre_bridge.core.generic_constraint_builder.GenericConstraintBuilder` —
+:class:`~novomodelo_bridge.core.generic_constraint_builder.GenericConstraintBuilder` —
 never a new emitter. The pipeline wiring that builds *id_map*/*ncs_id_by_pee_code*/
 *conjh_bus_by_code_group*/*line_map* from a real deck lives in the pipeline
 caller — this module only ever consumes those maps, never
-builds them (except :mod:`cobre_bridge.decomp.converters.ncs`'s own
+builds them (except :mod:`novomodelo_bridge.decomp.converters.ncs`'s own
 ``build_pee_ncs_id_map``, which lives next to the ``ncs_id`` assignment it
 mirrors).
 """
@@ -38,18 +38,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.generic_constraint_builder import (
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
 )
-from cobre_bridge.decomp.constraint_registers import ConstraintRecord, StageBounds
-from cobre_bridge.decomp.converters.constraints import (
+from novomodelo_bridge.decomp.constraint_registers import ConstraintRecord, StageBounds
+from novomodelo_bridge.decomp.converters.constraints import (
     _format_expression,
     _hydro_generation_token,
     slots_from_record,
 )
-from cobre_bridge.decomp.converters.libs_electrical import (
+from novomodelo_bridge.decomp.converters.libs_electrical import (
     UnrecognizedElectricalToken,
     active_cells,
     assemble_bound,
@@ -58,8 +58,8 @@ from cobre_bridge.decomp.converters.libs_electrical import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from cobre_bridge.decomp.converters.constraints import GenericConstraintResult
-    from cobre_bridge.decomp.converters.libs_electrical import (
+    from novomodelo_bridge.decomp.converters.constraints import GenericConstraintResult
+    from novomodelo_bridge.decomp.converters.libs_electrical import (
         AssembledBound,
         AvailablePower,
         DataContext,
@@ -67,8 +67,8 @@ if TYPE_CHECKING:
         LibsElectricalModel,
         ParsedTerm,
     )
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
 def _emit_bucket_a_unresolved(term: ParsedTerm, *, map_name: str) -> None:
@@ -98,7 +98,7 @@ def _emit_ener_comerc_deferred(term: ParsedTerm) -> None:
     """Emit the shared ``decomp-electrical-ener-comerc-deferred`` WARNING.
 
     ``ener_comerc`` (bilateral commercial energy) does not appear on the
-    target deck (spec §2) and has no cobre ``VariableRef`` counterpart yet;
+    target deck (spec §2) and has no novomodelo ``VariableRef`` counterpart yet;
     a restriction carrying one is skipped rather than guessed at.
     """
     emit(
@@ -151,7 +151,7 @@ def _resolve_interc_bus(code: int, id_map: DecompIdMap) -> int:
     Returns ``id_map.bus_id(code)`` when *code* is a declared SB submarket
     code; otherwise returns ``id_map.transhipment_bus_id``. The IV
     transshipment bus is the ONLY converter-created bus without an SB code
-    (:class:`~cobre_bridge.decomp.id_map.DecompIdMap`'s own invariant), so an
+    (:class:`~novomodelo_bridge.decomp.id_map.DecompIdMap`'s own invariant), so an
     operand code absent from ``bus_codes`` can only name it — never a
     hardcoded code value.
 
@@ -165,19 +165,19 @@ def _resolve_interc_bus(code: int, id_map: DecompIdMap) -> int:
     return id_map.transhipment_bus_id
 
 
-def _cobre_token(
+def _novomodelo_token(
     term: ParsedTerm,
     id_map: DecompIdMap,
     ncs_id_by_pee_code: Mapping[int, int],
     conjh_bus_by_code_group: Mapping[tuple[int, int], int],
     line_map: Mapping[tuple[int, int], int],
 ) -> str | None:
-    """The cobre ``VariableRef`` expression token for one bucket-A term (spec §2).
+    """The novomodelo ``VariableRef`` expression token for one bucket-A term (spec §2).
 
     - ``ger_usih(h)`` -> ``hydro_generation(id_map.hydro_id(h))``.
     - ``ger_usit(t)`` -> ``thermal_generation(id_map.thermal_id(t))``.
     - ``ger_pee(p)`` -> ``non_controllable_generation(ncs_id_by_pee_code[p])``
-      — *p* is the source model's ``codigo_pee``, never a cobre ncs id
+      — *p* is the source model's ``codigo_pee``, never a novomodelo ncs id
       directly; it always goes through *ncs_id_by_pee_code*.
     - ``ger_conjh(x, y)`` -> ``hydro_generation(id_map.hydro_id(x),
       bus=conjh_bus_by_code_group[(x, y)])`` — the frequency-split
@@ -193,7 +193,7 @@ def _cobre_token(
     - ``ener_comerc(c)`` -> not on the target deck; always ``None`` (deferred).
 
     Returns ``None`` — after emitting one ``Severity.WARNING``
-    :class:`~cobre_bridge.core.diagnostics.Diagnostic` — when *term*'s plant,
+    :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` — when *term*'s plant,
     thermal, park, bus, or line is absent from its map (a caught
     ``KeyError``, never propagated) or when *term* is ``ener_comerc``.
 
@@ -201,7 +201,7 @@ def _cobre_token(
     ------
     ValueError
         When ``term.token`` is not one of the six bucket-A tokens — a
-        caller-contract violation, since :class:`~cobre_bridge.decomp.
+        caller-contract violation, since :class:`~novomodelo_bridge.decomp.
         libs_electrical.AssembledBound.terms` only ever carries bucket-A
         terms.
     """
@@ -263,7 +263,7 @@ def _cobre_token(
         _emit_ener_comerc_deferred(term)
         return None
 
-    raise ValueError(f"_cobre_token: unrecognized bucket-A token {term.token!r}")
+    raise ValueError(f"_novomodelo_token: unrecognized bucket-A token {term.token!r}")
 
 
 def build_electrical_expression(
@@ -273,21 +273,21 @@ def build_electrical_expression(
     conjh_bus_by_code_group: Mapping[tuple[int, int], int],
     line_map: Mapping[tuple[int, int], int],
 ) -> str | None:
-    """Render *assembled*'s sign-canonical bucket-A terms into one cobre
+    """Render *assembled*'s sign-canonical bucket-A terms into one novomodelo
     expression string (spec §4).
 
-    Maps every term via :func:`_cobre_token` to ``(term.coefficient,
+    Maps every term via :func:`_novomodelo_token` to ``(term.coefficient,
     token)`` and joins the result with ``constraints._format_expression``
     (the same coefficient-formatting rules — unit coefficients render bare,
     fractional ones as ``{coeff} * {token}`` — the E1–E7 emitter already
-    uses). Any single unresolved token (:func:`_cobre_token` returning
+    uses). Any single unresolved token (:func:`_novomodelo_token` returning
     ``None``, having already emitted its own WARNING) drops the **whole**
     expression — ``None``, skip-not-partial — never a partial string built
     from only the resolvable terms.
     """
     resolved: list[tuple[float, str]] = []
     for term in assembled.terms:
-        token = _cobre_token(
+        token = _novomodelo_token(
             term, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map
         )
         if token is None:
@@ -304,9 +304,9 @@ def build_electrical_expression(
 @dataclass(frozen=True)
 class LibsElectricalResult:
     """The outcome of emitting every resolved electrical restriction as one
-    cobre generic constraint (spec §5).
+    novomodelo generic constraint (spec §5).
 
-    ``generic`` is the surviving :class:`~cobre_bridge.decomp.converters.constraints.
+    ``generic`` is the surviving :class:`~novomodelo_bridge.decomp.converters.constraints.
     GenericConstraintResult` (``None`` when no restriction survives).
     ``converted_codes`` is every restriction code that was emitted.
     ``deferred`` maps each drop reason to the restriction codes dropped for
@@ -318,7 +318,7 @@ class LibsElectricalResult:
     resolve a bucket-A decision term; already WARNED), and
     ``"unrecognized-token"`` (the restriction's formula references a
     well-formed but undeclared identifier —
-    :class:`~cobre_bridge.decomp.converters.libs_electrical.UnrecognizedElectricalToken`,
+    :class:`~novomodelo_bridge.decomp.converters.libs_electrical.UnrecognizedElectricalToken`,
     already WARNED). All four keys are always present, empty
     when nothing was dropped for that reason — this is the census data
     the census diagnostic renders.
@@ -393,7 +393,7 @@ def emit_libs_electrical_generics(
     big_m: float,
     allocator: ConstraintIdAllocator | None = None,
 ) -> LibsElectricalResult:
-    """Emit every resolved electrical restriction as one cobre generic
+    """Emit every resolved electrical restriction as one novomodelo generic
     constraint, feeding the **existing** E1–E7 ``GenericConstraintBuilder`` —
     never a new emitter (spec §5).
 
@@ -410,14 +410,14 @@ def emit_libs_electrical_generics(
       returning ``None``, already WARNED) drops the **whole** restriction —
       ``deferred["unresolved-bucket-bc"]`` — skip-not-partial.
     - :func:`build_electrical_expression` renders one cell's
-      surviving terms into the cobre expression string exactly once, since
+      surviving terms into the novomodelo expression string exactly once, since
       the structural expression is cell-invariant by construction; every
       other active cell's terms are asserted equal to it — a mismatch is a
       resolver bug and raises ``ValueError`` naming the restriction (fail
       loud, never silently pick one). An unresolved bucket-A token (already
       WARNED) drops the whole restriction — ``deferred["unresolved-bucket-a"]``.
     - A well-formed but undeclared identifier anywhere in the restriction's
-      (expanded) formula OR its activation rule (:class:`~cobre_bridge.
+      (expanded) formula OR its activation rule (:class:`~novomodelo_bridge.
       decomp.converters.libs_electrical.UnrecognizedElectricalToken`, raised from
       inside ``active_cells``'s, ``assemble_bound``'s, or
       ``build_electrical_expression``'s own ``parse_linear_expression``
@@ -427,7 +427,7 @@ def emit_libs_electrical_generics(
       this subclass) — including ``active_cells``' dangling-``HABILITA``
       guard — is NOT caught here and still propagates, fail-loud.
     - The surviving expression and per-active-cell bound values feed a
-      synthesized :class:`~cobre_bridge.decomp.constraint_registers.
+      synthesized :class:`~novomodelo_bridge.decomp.constraint_registers.
       ConstraintRecord` (``family="LIBS_ELEC"``, ``per_block=True``,
       ``terms=()`` — ``slots_from_record`` reads only ``record.bounds``/
       ``record.per_block``), named ``LIBS_ELEC_{code}``.

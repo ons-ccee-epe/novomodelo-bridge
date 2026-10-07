@@ -1,13 +1,13 @@
-"""Unit tests for the typed-failure model (``cobre_bridge.core.errors``)."""
+"""Unit tests for the typed-failure model (``novomodelo_bridge.core.errors``)."""
 
 from __future__ import annotations
 
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.core.errors import (
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import (
     BridgeError,
-    CobreOutputError,
-    CobrePartitionMissingError,
     FieldParseError,
+    NovomodeloOutputError,
+    NovomodeloPartitionMissingError,
     SourceFileError,
     diagnostic_from_exception,
 )
@@ -23,8 +23,8 @@ class TestExceptionHierarchy:
         assert exc.field == "caso.dat"
         assert str(exc) == "caso.dat not found"
 
-    def test_cobre_partition_missing_error_is_bridge_error(self) -> None:
-        exc = CobrePartitionMissingError("partition not found", path="/out/sim/x")
+    def test_novomodelo_partition_missing_error_is_bridge_error(self) -> None:
+        exc = NovomodeloPartitionMissingError("partition not found", path="/out/sim/x")
         assert isinstance(exc, BridgeError)
         assert exc.path == "/out/sim/x"
         assert str(exc) == "partition not found"
@@ -76,27 +76,27 @@ class TestDiagnosticFromException:
         assert not any(note.startswith("file:") for note in diag.notes)
         assert not any(note.startswith("row:") for note in diag.notes)
 
-    def test_cobre_output_error_category(self) -> None:
-        exc = CobreOutputError("bad parquet", path="/out/bounds.parquet")
+    def test_novomodelo_output_error_category(self) -> None:
+        exc = NovomodeloOutputError("bad parquet", path="/out/bounds.parquet")
         diag = diagnostic_from_exception(exc, context="Comparison")
-        assert diag.code == "cobre-output-unreadable"
+        assert diag.code == "novomodelo-output-unreadable"
         assert diag.category == "Comparison failure"
         assert "file: /out/bounds.parquet" in diag.notes
 
     def test_category_and_title_follow_the_failing_operation(self) -> None:
-        exc = CobreOutputError("no simulation output found")
+        exc = NovomodeloOutputError("no simulation output found")
         diag = diagnostic_from_exception(exc, context="Dashboard")
         assert diag.category == "Dashboard failure"
         assert diag.title == "Dashboard failed"
 
-    def test_cobre_partition_missing_error_category(self) -> None:
-        exc = CobrePartitionMissingError(
-            "Cobre output partition not found: /out/simulation/hydro_bus_generation. "
-            "cobre >= 0.13.0",
+    def test_novomodelo_partition_missing_error_category(self) -> None:
+        exc = NovomodeloPartitionMissingError(
+            "Novomodelo output partition not found: /out/simulation/hydro_bus_generation. "
+            "novomodelo >= 0.13.0",
             path="/out/simulation/hydro_bus_generation",
         )
         diag = diagnostic_from_exception(exc, context="Comparison")
-        assert diag.code == "cobre-partition-missing"
+        assert diag.code == "novomodelo-partition-missing"
         assert diag.category == "Comparison failure"
         assert "file: /out/simulation/hydro_bus_generation" in diag.notes
 
@@ -107,9 +107,9 @@ def test_no_source_string_carries_the_remediation_arrow() -> None:
     import ast
     from pathlib import Path
 
-    import cobre_bridge
+    import novomodelo_bridge
 
-    package = Path(cobre_bridge.__file__).parent
+    package = Path(novomodelo_bridge.__file__).parent
     offenders = [
         f"{path.relative_to(package)}:{node.lineno}"
         for path in sorted(package.rglob("*.py"))

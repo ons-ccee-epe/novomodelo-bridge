@@ -1,4 +1,4 @@
-"""Shared chart builder helpers for the Cobre dashboard.
+"""Shared chart builder helpers for the Novomodelo dashboard.
 
 Provides reusable functions for building Plotly traces that follow the v2
 dashboard convention: every line chart shows a mean solid line, a p50/median
@@ -13,21 +13,21 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 
-from cobre_bridge.cobre.cost_categories import (
+from novomodelo_bridge.novomodelo.cost_categories import (
     AGGREGATE_COST_COLUMNS,
     COST_PARTITION_COLUMNS,
 )
-from cobre_bridge.ui.html.document import wrap_chart
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.document import wrap_chart
+from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS as _LEGEND,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     MARGIN_DEFAULTS as _MARGIN,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     add_mean_p50_band as add_mean_p50_band,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     fig_to_html,
 )
 
@@ -41,7 +41,7 @@ try:
 except ImportError:  # pragma: no cover
     pl = None  # type: ignore[assignment]
 
-#: Mapping from logical cost group name to known Cobre cost component columns.
+#: Mapping from logical cost group name to known Novomodelo cost component columns.
 #: The ``"Other"`` key is intentionally absent — it is computed dynamically in
 #: :func:`group_costs` as all columns not claimed by the explicit groups.
 COST_GROUPS: dict[str, list[str]] = {
@@ -216,9 +216,9 @@ def make_chart_card(
     """Wrap a Plotly figure in a standard ``.chart-card`` HTML fragment.
 
     Applies default layout (template, margins, legend position) from
-    :func:`~cobre_bridge.ui.html.plotly.fig_to_html`, sets the figure
+    :func:`~novomodelo_bridge.ui.html.plotly.fig_to_html`, sets the figure
     height, and embeds the result inside the ``.chart-card`` div with an
-    expand button (via :func:`~cobre_bridge.ui.html.document.wrap_chart`).
+    expand button (via :func:`~novomodelo_bridge.ui.html.document.wrap_chart`).
 
     The output does **not** include a ``<script src="plotly.js">`` tag —
     callers are responsible for including Plotly exactly once in the outer
@@ -270,10 +270,10 @@ def compute_npv_costs(
 ) -> pd.DataFrame:
     """Apply per-stage NPV discount factors to cost component columns.
 
-    Uses the ``discount_factor`` column written by cobre in
+    Uses the ``discount_factor`` column written by novomodelo in
     ``simulation/costs/`` (the cumulative discount factor ``D_t`` that
     maps undiscounted stage-*t* costs to present value at stage 0).
-    Cobre's simulation extraction stores raw per-stage component costs
+    Novomodelo's simulation extraction stores raw per-stage component costs
     (``thermal_cost``, ``deficit_cost``, …) in undiscounted units; this
     helper multiplies each component by ``D_t`` to produce present-value
     costs. The stage aggregates (``total_cost``, ``immediate_cost``,
@@ -284,7 +284,7 @@ def compute_npv_costs(
             one or more numeric cost component columns.
         discount_rate: Unused. Retained so existing call sites do not break
             while the helper transitions off ad-hoc rate-based discounting.
-        stage_start: Unused. Cobre's ``discount_factor`` column is already
+        stage_start: Unused. Novomodelo's ``discount_factor`` column is already
             anchored at ``D_0 = 1.0``.
 
     Returns:
@@ -429,7 +429,7 @@ def chart_cost_bar(summary_df: pd.DataFrame) -> go.Figure:
     Args:
         summary_df: DataFrame with columns
             ``["group", "mean", "p5", "p95", ...]`` as returned by
-            :func:`~cobre_bridge.dashboard.chart_helpers.compute_cost_summary`.
+            :func:`~novomodelo_bridge.dashboard.chart_helpers.compute_cost_summary`.
 
     Returns:
         A :class:`plotly.graph_objects.Figure`.
@@ -498,7 +498,7 @@ def build_cost_table(summary_df: pd.DataFrame) -> str:
     Args:
         summary_df: DataFrame with columns
             ``["group", "mean", "std", "p10", "p90", "pct"]`` as returned
-            by :func:`~cobre_bridge.dashboard.chart_helpers.compute_cost_summary`.
+            by :func:`~novomodelo_bridge.dashboard.chart_helpers.compute_cost_summary`.
 
     Returns:
         An HTML string containing a complete ``<table>`` element, or a

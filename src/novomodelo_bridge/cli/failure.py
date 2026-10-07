@@ -8,14 +8,14 @@ from typing import TYPE_CHECKING, NoReturn
 
 import typer
 
-from cobre_bridge.cli.verdict import build_verdict
-from cobre_bridge.core.errors import diagnostic_from_exception
-from cobre_bridge.ui.console import render_diagnostics
+from novomodelo_bridge.cli.verdict import build_verdict
+from novomodelo_bridge.core.errors import diagnostic_from_exception
+from novomodelo_bridge.ui.console import render_diagnostics
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from cobre_bridge.cli.args import CommonArgs
+    from novomodelo_bridge.cli.args import CommonArgs
 
 
 def _emit_convert_json(document: dict[str, object]) -> None:

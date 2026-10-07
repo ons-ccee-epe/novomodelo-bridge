@@ -1,16 +1,16 @@
-"""Public registry mapping each Cobre case output file to its ``$schema`` URL.
+"""Public registry mapping each Novomodelo case output file to its ``$schema`` URL.
 
 Every ``$schema`` value emitted by either conversion track reads
 :func:`schema_url_for`, keyed by the case-relative output path, so both
 tracks share one canonical source instead of duplicating per-module
-constants. ``tests/cobre/test_cobre_schemas.py`` pins the registry's shape and its
+constants. ``tests/novomodelo/test_novomodelo_schemas.py`` pins the registry's shape and its
 16-entry coverage.
 """
 
 from __future__ import annotations
 
 _SCHEMA_BASE = (
-    "https://raw.githubusercontent.com/cobre-rs/cobre/refs/heads/main/schemas"
+    "https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas"
 )
 
 

@@ -1,7 +1,7 @@
 """Tests for the production-function (FPHA) comparison data layer.
 
 Covers the two source-model readers (``read_fpha_planes`` / ``read_fpha_grid``),
-the Cobre reader (``read_cobre_fpha_planes``), the envelope evaluator
+the Novomodelo reader (``read_novomodelo_fpha_planes``), the envelope evaluator
 (``fpha.dense_grid``), and the comparison builder (``build_fpha_comparison``).
 """
 
@@ -15,11 +15,14 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from cobre_bridge.cobre.readers import read_cobre_fpha_planes
-from cobre_bridge.comparators.analyze import build_fpha_comparison
-from cobre_bridge.comparators.fpha import dense_grid
-from cobre_bridge.comparators.newave.alignment import HydroEntity
-from cobre_bridge.comparators.newave.readers import read_fpha_grid, read_fpha_planes
+from novomodelo_bridge.comparators.analyze import build_fpha_comparison
+from novomodelo_bridge.comparators.fpha import dense_grid
+from novomodelo_bridge.comparators.newave.alignment import HydroEntity
+from novomodelo_bridge.comparators.newave.readers import (
+    read_fpha_grid,
+    read_fpha_planes,
+)
+from novomodelo_bridge.novomodelo.readers import read_novomodelo_fpha_planes
 
 # --------------------------------------------------------------------------- #
 # Readers — absence gate                                                       #
@@ -34,8 +37,8 @@ def test_read_fpha_grid_returns_none_when_absent(tmp_path: Path) -> None:
     assert read_fpha_grid(tmp_path) is None
 
 
-def test_read_cobre_fpha_planes_returns_none_when_absent(tmp_path: Path) -> None:
-    assert read_cobre_fpha_planes(tmp_path) is None
+def test_read_novomodelo_fpha_planes_returns_none_when_absent(tmp_path: Path) -> None:
+    assert read_novomodelo_fpha_planes(tmp_path) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -227,11 +230,11 @@ def _cb_planes(rows: list[dict[str, Any]]) -> pl.DataFrame:
 
 
 _METRIC_COLUMNS = [
-    "cobre_id",
+    "novomodelo_id",
     "plant_name",
     "stage",
     "n_planes_newave",
-    "n_planes_cobre",
+    "n_planes_novomodelo",
     "n_v",
     "nmae",
     "bias",
@@ -247,7 +250,7 @@ def test_build_fpha_comparison_returns_empty_when_no_planes() -> None:
     assert spill.is_empty()
     assert metrics.columns == _METRIC_COLUMNS
     assert surface.columns == [
-        "cobre_id",
+        "novomodelo_id",
         "plant_name",
         "stage",
         "v_hm3",
@@ -256,7 +259,7 @@ def test_build_fpha_comparison_returns_empty_when_no_planes() -> None:
         "gh_mw",
     ]
     assert spill.columns == [
-        "cobre_id",
+        "novomodelo_id",
         "plant_name",
         "stage",
         "s_m3s",
@@ -316,7 +319,7 @@ def test_build_fpha_comparison_run_of_river_collapses_volume_axis() -> None:
             }
         ]
     )
-    hydros = [HydroEntity(newave_code=10, cobre_id=0, name="ROR")]
+    hydros = [HydroEntity(newave_code=10, novomodelo_id=0, name="ROR")]
 
     metrics, surface, spill = build_fpha_comparison(nw, grid, cb, hydros)
 
@@ -326,13 +329,13 @@ def test_build_fpha_comparison_run_of_river_collapses_volume_axis() -> None:
     assert row["n_v"] == 1
     # Volume axis collapses to a single point for run-of-river.
     assert surface.filter(pl.col("source") == "newave")["v_hm3"].n_unique() == 1
-    assert sorted(surface["source"].unique().to_list()) == ["cobre", "newave"]
+    assert sorted(surface["source"].unique().to_list()) == ["novomodelo", "newave"]
     assert not spill.is_empty()
 
 
 def test_build_fpha_comparison_reconciles_useful_vs_absolute_volume() -> None:
     # Reservoir: source model GH = 0.1*(V-10) + 0.5*Q (useful volume);
-    # the equivalent Cobre plane on absolute volume is -1.0 + 0.1*V + 0.5*Q.
+    # the equivalent Novomodelo plane on absolute volume is -1.0 + 0.1*V + 0.5*Q.
     # If the offset handling is right, the two surfaces coincide exactly.
     nw = _nw_planes(
         [
@@ -383,7 +386,7 @@ def test_build_fpha_comparison_reconciles_useful_vs_absolute_volume() -> None:
             }
         ]
     )
-    hydros = [HydroEntity(newave_code=20, cobre_id=3, name="RES")]
+    hydros = [HydroEntity(newave_code=20, novomodelo_id=3, name="RES")]
 
     metrics, surface, _ = build_fpha_comparison(nw, grid, cb, hydros)
 
@@ -392,7 +395,7 @@ def test_build_fpha_comparison_reconciles_useful_vs_absolute_volume() -> None:
     assert row["nmae"] == pytest.approx(0.0, abs=1e-9)
     assert row["bias"] == pytest.approx(0.0, abs=1e-9)
     # Sampled at the fitting grid: n_v=3 volumes x n_q=5 turbined points per source.
-    assert surface.filter(pl.col("source") == "cobre").height == 15
+    assert surface.filter(pl.col("source") == "novomodelo").height == 15
 
 
 def test_build_fpha_comparison_skips_plant_absent_on_one_side() -> None:
@@ -428,7 +431,7 @@ def test_build_fpha_comparison_skips_plant_absent_on_one_side() -> None:
             }
         ]
     )
-    # Cobre has a different hydro (stage 0, id 7) — no overlap with code 10 -> id 0.
+    # Novomodelo has a different hydro (stage 0, id 7) — no overlap with code 10 -> id 0.
     cb = _cb_planes(
         [
             {
@@ -446,7 +449,7 @@ def test_build_fpha_comparison_skips_plant_absent_on_one_side() -> None:
             }
         ]
     )
-    hydros = [HydroEntity(newave_code=10, cobre_id=0, name="ROR")]
+    hydros = [HydroEntity(newave_code=10, novomodelo_id=0, name="ROR")]
 
     metrics, surface, spill = build_fpha_comparison(nw, grid, cb, hydros)
     assert metrics.is_empty()
@@ -463,7 +466,7 @@ def _surface_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
     return pl.DataFrame(
         rows,
         schema={
-            "cobre_id": pl.Int64,
+            "novomodelo_id": pl.Int64,
             "plant_name": pl.Utf8,
             "stage": pl.Int64,
             "v_hm3": pl.Float64,
@@ -478,7 +481,7 @@ def _spill_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
     return pl.DataFrame(
         rows,
         schema={
-            "cobre_id": pl.Int64,
+            "novomodelo_id": pl.Int64,
             "plant_name": pl.Utf8,
             "stage": pl.Int64,
             "s_m3s": pl.Float64,
@@ -489,15 +492,15 @@ def _spill_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
 
 
 def test_fpha_metrics_table_sorts_and_tints_worst() -> None:
-    from cobre_bridge.comparators.charts import fpha_metrics_table
+    from novomodelo_bridge.comparators.charts import fpha_metrics_table
 
     metrics = pl.DataFrame(
         {
-            "cobre_id": [0, 1],
+            "novomodelo_id": [0, 1],
             "plant_name": ["GOOD", "BADPLANT"],
             "stage": [0, 0],
             "n_planes_newave": [4, 11],
-            "n_planes_cobre": [3, 6],
+            "n_planes_novomodelo": [3, 6],
             "n_v": [1, 5],
             "nmae": [0.001, 0.12],
             "bias": [0.001, -0.10],
@@ -515,20 +518,20 @@ def test_fpha_metrics_table_sorts_and_tints_worst() -> None:
 
 
 def test_fpha_metrics_table_empty_message() -> None:
-    from cobre_bridge.comparators.charts import fpha_metrics_table
+    from novomodelo_bridge.comparators.charts import fpha_metrics_table
 
     out = fpha_metrics_table(pl.DataFrame())
     assert "No production-function (FPHA) data" in out
 
 
 def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
-    from cobre_bridge.comparators.charts import fpha_detail_chart
+    from novomodelo_bridge.comparators.charts import fpha_detail_chart
 
     # Reservoir: 2 volumes x 2 turbined points, both sources (v-major order).
     surface = _surface_frame(
         [
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 10.0,
@@ -537,7 +540,7 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
                 "gh_mw": 0.0,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 10.0,
@@ -546,7 +549,7 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
                 "gh_mw": 2.5,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 20.0,
@@ -555,7 +558,7 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
                 "gh_mw": 1.0,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 20.0,
@@ -564,39 +567,39 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
                 "gh_mw": 3.5,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 10.0,
                 "q_m3s": 0.0,
-                "source": "cobre",
+                "source": "novomodelo",
                 "gh_mw": 0.0,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 10.0,
                 "q_m3s": 5.0,
-                "source": "cobre",
+                "source": "novomodelo",
                 "gh_mw": 2.6,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 20.0,
                 "q_m3s": 0.0,
-                "source": "cobre",
+                "source": "novomodelo",
                 "gh_mw": 1.1,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "v_hm3": 20.0,
                 "q_m3s": 5.0,
-                "source": "cobre",
+                "source": "novomodelo",
                 "gh_mw": 3.6,
             },
         ]
@@ -604,7 +607,7 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
     spill = _spill_frame(
         [
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "s_m3s": 0.0,
@@ -612,7 +615,7 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
                 "gh_mw": 3.5,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "s_m3s": 10.0,
@@ -620,19 +623,19 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
                 "gh_mw": 3.0,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "s_m3s": 0.0,
-                "source": "cobre",
+                "source": "novomodelo",
                 "gh_mw": 3.6,
             },
             {
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "plant_name": "RES",
                 "stage": 0,
                 "s_m3s": 10.0,
-                "source": "cobre",
+                "source": "novomodelo",
                 "gh_mw": 3.0,
             },
         ]
@@ -649,7 +652,7 @@ def test_fpha_detail_chart_reservoir_embeds_3d_surfaces() -> None:
 
 
 def test_fpha_detail_chart_empty_message() -> None:
-    from cobre_bridge.comparators.charts import fpha_detail_chart
+    from novomodelo_bridge.comparators.charts import fpha_detail_chart
 
     out = fpha_detail_chart(_surface_frame([]), _spill_frame([]))
     assert "No production-function (FPHA) data" in out

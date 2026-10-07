@@ -1,12 +1,12 @@
-"""Generic constraint LHS evaluation from the source model and Cobre simulation outputs.
+"""Generic constraint LHS evaluation from the source model and Novomodelo simulation outputs.
 
-Reads the converted Cobre case's ``constraints/generic_constraints.json``
+Reads the converted Novomodelo case's ``constraints/generic_constraints.json``
 and ``constraints/generic_constraint_bounds.parquet`` and evaluates each
 constraint's LHS using both:
 
 - the source model outputs — ``MEDIAS-USIH.CSV`` (``GHIDUH``, ``VARMUH`` per plant
   per stage) and ``int*.out`` (per-line per-stage interchange).
-- Cobre simulation outputs — per-(scenario, stage, block) hydro and
+- Novomodelo simulation outputs — per-(scenario, stage, block) hydro and
   exchange data, collapsed to one value per (constraint, stage) by
   averaging across scenarios and blocks.
 
@@ -24,18 +24,18 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from cobre_bridge.cobre.constraint_expr import (
+from novomodelo_bridge.comparators.constraints import per_stage_bounds
+from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
+from novomodelo_bridge.novomodelo.constraint_expr import (
     load_rho_acum_overrides,
     parse_expression,
     resolve_param_to_column,
     scales_storage_by_rho_acum,
 )
-from cobre_bridge.cobre.readers import scan_simulation_entity
-from cobre_bridge.comparators.constraints import per_stage_bounds
-from cobre_bridge.comparators.newave.alignment import EntityAlignment
+from novomodelo_bridge.novomodelo.readers import scan_simulation_entity
 
 if TYPE_CHECKING:
-    from cobre_bridge.newave.id_map import NewaveIdMap
+    from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ def evaluate_lhs_newave(
 ) -> pl.DataFrame:
     """Evaluate each constraint's LHS from the source model simulation outputs.
 
-    The constraint expressions reference Cobre entity IDs. We translate via ``id_map``
-    (hydro Cobre id → the source model code) and ``alignment.lines`` (Cobre line id →
+    The constraint expressions reference Novomodelo entity IDs. We translate via ``id_map``
+    (hydro Novomodelo id → the source model code) and ``alignment.lines`` (Novomodelo line id →
     the source model submarket pair) before looking values up in the source model data.
 
     The source model outputs are stage-level (block-collapsed) — MEDIAS values are
@@ -64,25 +64,25 @@ def evaluate_lhs_newave(
     constraints:
         Constraint dicts from ``generic_constraints.json``.
     nw_hydro_df:
-        Output of :func:`cobre_bridge.comparators.newave.readers.read_medias_hydro`.
+        Output of :func:`novomodelo_bridge.comparators.newave.readers.read_medias_hydro`.
         Columns ``newave_code`` (Int64), ``stage`` (Int64, 1-based as in
         MEDIAS — Sep-start studies use 9 for the first stage),
         ``variable`` (Utf8), ``value`` (Float64).
     nw_line_means:
         Output of
-        :func:`cobre_bridge.comparators.newave.readers.read_nwlistop_intercambio`.
-        One row per directional pair × stage.  We map each Cobre line to
+        :func:`novomodelo_bridge.comparators.newave.readers.read_nwlistop_intercambio`.
+        One row per directional pair × stage.  We map each Novomodelo line to
         the matching directional row via the alignment's ``newave_de`` /
         ``newave_para`` fields (respecting the ``reversed`` flag for
         sign).
     alignment:
-        Pre-built entity alignment.  Provides Cobre-line → (newave_de,
+        Pre-built entity alignment.  Provides Novomodelo-line → (newave_de,
         newave_para) mappings and the ``reversed`` flag.
     id_map:
-        Used to translate Cobre hydro IDs back to the source model plant codes.
+        Used to translate Novomodelo hydro IDs back to the source model plant codes.
     nw_offset:
         MEDIAS stage offset (e.g. 9 for a September-start study).  Used to convert the
-        source model 1-based MEDIAS stages to Cobre 0-based.
+        source model 1-based MEDIAS stages to Novomodelo 0-based.
 
     Returns
     -------
@@ -101,40 +101,40 @@ def evaluate_lhs_newave(
             }
         )
 
-    # --- Build hydro generation lookup: (cobre_hydro_id, stage_0based) -> MW
+    # --- Build hydro generation lookup: (novomodelo_hydro_id, stage_0based) -> MW
     hydro_gen: dict[tuple[int, int], float] = {}
     if not nw_hydro_df.is_empty():
         ghiduh = nw_hydro_df.filter(pl.col("variable") == "GHIDUH")
         for row in ghiduh.iter_rows(named=True):
             nw_code = int(row["newave_code"])
             try:
-                cobre_id = id_map.hydro_id(nw_code)
+                novomodelo_id = id_map.hydro_id(nw_code)
             except KeyError:
                 # Skip plants that are not in the LP (e.g. FICT, NE/NC).
                 continue
             stage_0based = int(row["stage"]) - nw_offset
             if stage_0based < 0:
                 continue
-            hydro_gen[(cobre_id, stage_0based)] = float(row["value"])
+            hydro_gen[(novomodelo_id, stage_0based)] = float(row["value"])
 
-    # --- Build hydro storage lookup: (cobre_hydro_id, stage_0based) -> hm3
+    # --- Build hydro storage lookup: (novomodelo_hydro_id, stage_0based) -> hm3
     hydro_storage: dict[tuple[int, int], float] = {}
     if not nw_hydro_df.is_empty():
         varmuh = nw_hydro_df.filter(pl.col("variable") == "VARMUH")
         for row in varmuh.iter_rows(named=True):
             nw_code = int(row["newave_code"])
             try:
-                cobre_id = id_map.hydro_id(nw_code)
+                novomodelo_id = id_map.hydro_id(nw_code)
             except KeyError:
                 continue
             stage_0based = int(row["stage"]) - nw_offset
             if stage_0based < 0:
                 continue
-            hydro_storage[(cobre_id, stage_0based)] = float(row["value"])
+            hydro_storage[(novomodelo_id, stage_0based)] = float(row["value"])
 
-    # --- Build line exchange lookup: (cobre_line_id, stage_0based) -> MW Aligned via
-    # EntityAlignment.lines: each Cobre line records the source model directional pair
-    # (newave_de → newave_para), which matches the Cobre (source, target) orientation by
+    # --- Build line exchange lookup: (novomodelo_line_id, stage_0based) -> MW Aligned via
+    # EntityAlignment.lines: each Novomodelo line records the source model directional pair
+    # (newave_de → newave_para), which matches the Novomodelo (source, target) orientation by
     # construction.  NWLISTOP rows for the opposite (para, de) ordering carry the
     # opposite sign, so they are negated.
     line_flow: dict[tuple[int, int], float] = {}
@@ -160,12 +160,12 @@ def evaluate_lhs_newave(
                 continue
             for (de_k, para_k, s), val in nw_by_pair.items():
                 if de_k == de and para_k == para:
-                    line_flow[(line.cobre_line_id, s)] = val
+                    line_flow[(line.novomodelo_line_id, s)] = val
                 elif de_k == para and para_k == de:
                     # Reversed-ordering NWLISTOP row supplies the opposite sign
                     # of what our alignment expects.  Only fill if the
                     # canonical-direction row hasn't already populated this slot.
-                    line_flow.setdefault((line.cobre_line_id, s), -val)
+                    line_flow.setdefault((line.novomodelo_line_id, s), -val)
 
     # --- Per-constraint LHS evaluation ---
     rows: list[dict] = []
@@ -218,7 +218,7 @@ def evaluate_lhs_newave(
                     stage_complete = False
                     break
                 # @rho_eq / @rho_acum parameters scale the coefficient at solve time in
-                # Cobre.  We don't have the source-model-side productivity per (hydro,
+                # Novomodelo.  We don't have the source-model-side productivity per (hydro,
                 # stage) handy here, so skip constraints with such parameters by
                 # treating them as missing on this side — the chart will simply lack a
                 # The source model trace.  This affects VminOP only; RE/AGRINT never
@@ -260,7 +260,7 @@ def evaluate_lhs_newave(
 #
 # VminOP (security-curve) constraints bound *stored energy*: their expression is ``Σ
 # @rho_acum_h{id} * hydro_storage(id) >= bound``.  The generic LHS evaluator above
-# resolves ``@rho_acum`` to cobre's *default* point productivity
+# resolves ``@rho_acum`` to novomodelo's *default* point productivity
 # ``accumulated_productivity_mw_per_m3s`` (MW/(m³/s)), which is the energy-per-volume
 # coefficient over-scaled by the hm³↔(m³/s)·month factor (≈ 2.628) relative to the
 # *override* the LP actually uses (energy-scaled, MWmonth/hm³).  That makes the raw
@@ -268,12 +268,12 @@ def evaluate_lhs_newave(
 # re-expresses VminOP rows as **useful stored energy
 # in MWmonth** so they line up with the source model's per-REE ``EARMF`` (MEDIAS-REE):
 #
-# cobre LHS  = Σ override_ρ_acum(stage) · (storage_final − Vmin)   [useful] The source
+# novomodelo LHS  = Σ override_ρ_acum(stage) · (storage_final − Vmin)   [useful] The source
 # model LHS = EARMF for the constraint's REE                       [useful] bound      =
 # stored-bound − dead-energy (= pct · useful EARMX)    [useful]
 #
 # where dead-energy = Σ override_ρ_acum(stage) · Vmin removes the absolute-vs-
-# relative-to-minimum offset (cobre stores absolute volume; the source model EARM is
+# relative-to-minimum offset (novomodelo stores absolute volume; the source model EARM is
 # relative to the minimum operative volume).  RE / AGRINT rows are untouched.
 _GC_SCHEMA = {
     "constraint_id": pl.Int32,
@@ -282,9 +282,9 @@ _GC_SCHEMA = {
 }
 
 
-def _load_hydro_min_storage(cobre_case_dir: Path) -> dict[int, float]:
+def _load_hydro_min_storage(novomodelo_case_dir: Path) -> dict[int, float]:
     """Load minimum operative storage (hm³) per hydro id from ``hydros.json``."""
-    path = cobre_case_dir / "system" / "hydros.json"
+    path = novomodelo_case_dir / "system" / "hydros.json"
     out: dict[int, float] = {}
     if not path.exists():
         return out
@@ -306,8 +306,8 @@ def apply_vminop_useful_energy(
     gc_bounds: pl.DataFrame,
     gc_lhs_nw: pl.DataFrame,
     gc_lhs_cb: pl.DataFrame,
-    cobre_case_dir: Path,
-    cobre_output_dir: Path,
+    novomodelo_case_dir: Path,
+    novomodelo_output_dir: Path,
     nw_hydro: pl.DataFrame,
     id_map: NewaveIdMap,
     nw_offset: int,
@@ -317,12 +317,12 @@ def apply_vminop_useful_energy(
     Rewrites the VminOP entries of ``(gc_bounds, gc_lhs_nw, gc_lhs_cb)`` so the
     Constraints tab compares like-for-like useful stored energy:
 
-    - cobre LHS  = Σ override ρ_acum(stage) · (storage_final − Vmin)
+    - novomodelo LHS  = Σ override ρ_acum(stage) · (storage_final − Vmin)
     - the source model LHS = Σ override ρ_acum(stage) · VARMUH(plant, stage)
     - bound      = original stored-bound − dead-volume energy (= pct · useful)
 
     The source model LHS uses the per-plant ``VARMUH`` (useful stored volume above the
-    minimum, MEDIAS-USIH) weighted by the *same* per-stage ρ_acum override as the cobre
+    minimum, MEDIAS-USIH) weighted by the *same* per-stage ρ_acum override as the novomodelo
     LHS and the bound — i.e. the **linear** stored energy that source-model's
     security-curve constraint actually binds on.  This is deliberately **not** the
     per-REE ``EARMF`` (MEDIAS-REE), which the source model reports as the *nonlinear*
@@ -342,9 +342,9 @@ def apply_vminop_useful_energy(
     if not vminop:
         return gc_bounds, gc_lhs_nw, gc_lhs_cb
 
-    rho = load_rho_acum_overrides(cobre_case_dir)
-    vmin = _load_hydro_min_storage(cobre_case_dir)
-    hydros_lf = scan_simulation_entity(cobre_output_dir, "hydros")
+    rho = load_rho_acum_overrides(novomodelo_case_dir)
+    vmin = _load_hydro_min_storage(novomodelo_case_dir)
+    hydros_lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
     if not rho or not vmin or hydros_lf is None:
         _LOG.warning(
             "VminOP useful-energy rewrite skipped (missing ρ_acum/Vmin/sim data)."
@@ -363,19 +363,19 @@ def apply_vminop_useful_energy(
     }
 
     # The source model per-plant useful stored volume (VARMUH, hm³ above Vmin), keyed by
-    # cobre hydro id and 0-based stage — the linear-energy counterpart of the cobre
+    # novomodelo hydro id and 0-based stage — the linear-energy counterpart of the novomodelo
     # ``storage_final − Vmin`` term.
     varmuh: dict[tuple[int, int], float] = {}
     if not nw_hydro.is_empty():
         for r in nw_hydro.filter(pl.col("variable") == "VARMUH").iter_rows(named=True):
             try:
-                cobre_id = id_map.hydro_id(int(r["newave_code"]))
+                novomodelo_id = id_map.hydro_id(int(r["newave_code"]))
             except KeyError:
                 continue
             stage_0based = int(r["stage"]) - nw_offset
             if stage_0based < 0:
                 continue
-            varmuh[(cobre_id, stage_0based)] = float(r["value"])
+            varmuh[(novomodelo_id, stage_0based)] = float(r["value"])
 
     bounds_by_cs = per_stage_bounds(gc_bounds)
     cb_rows: list[dict] = []
@@ -423,7 +423,7 @@ def apply_vminop_useful_energy(
 
     vminop_ids = [int(c["id"]) for c in vminop]
 
-    # Replace cobre VminOP LHS rows with the useful-energy values.
+    # Replace novomodelo VminOP LHS rows with the useful-energy values.
     cb_keep = (
         gc_lhs_cb.filter(~pl.col("constraint_id").is_in(vminop_ids))
         if not gc_lhs_cb.is_empty()

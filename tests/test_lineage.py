@@ -42,8 +42,8 @@ def _leaf_paths(obj: object, prefix: str = "") -> set[str]:
 @pytest.fixture(scope="session")
 def converted(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     """Both mini decks converted once per session (the boundary import is a CLI step, so none runs here)."""
-    from cobre_bridge.decomp.pipeline import convert_decomp_case
-    from cobre_bridge.newave.pipeline import convert_newave_case
+    from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+    from novomodelo_bridge.newave.pipeline import convert_newave_case
 
     decks = Path(__file__).parent / "decks"
     out = {t: tmp_path_factory.mktemp(f"lineage_{t}") for t in _TRACKS}

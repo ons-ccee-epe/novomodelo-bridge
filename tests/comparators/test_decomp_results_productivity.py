@@ -12,14 +12,14 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.decomp.results import (
     _PRODUCTIVITY_TURBINED_EPS,
     _AlignedDecompFrames,
     _hydro_productivity_results,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
@@ -31,7 +31,7 @@ class TestHydroProductivityResults:
     """``_hydro_productivity_results`` derives per-(plant, stage) realized
     productivity = generation / turbined from the E1 hydro
     ``ResultComparison`` rows, mirroring
-    ``cobre_bridge.comparators.newave.results``'s own ``_compare_hydros``
+    ``novomodelo_bridge.comparators.newave.results``'s own ``_compare_hydros``
     productivity derivation (same ratio, same zero-guard)."""
 
     @staticmethod
@@ -42,7 +42,7 @@ class TestHydroProductivityResults:
         cb_gen: float,
         cb_turb: float,
         code: int = 10,
-        cobre_id: int = 0,
+        novomodelo_id: int = 0,
         stage: int = 0,
         name: str = "ALPHA",
     ) -> list[ResultComparison]:
@@ -53,11 +53,11 @@ class TestHydroProductivityResults:
                 entity_type="hydro",
                 entity_name=name,
                 newave_code=code,
-                cobre_id=cobre_id,
+                novomodelo_id=novomodelo_id,
                 stage=stage,
                 variable="generation_mw",
                 newave_value=nw_gen,
-                cobre_value=cb_gen,
+                novomodelo_value=cb_gen,
                 abs_diff=abs(nw_gen - cb_gen),
                 rel_diff=None,
             ),
@@ -65,11 +65,11 @@ class TestHydroProductivityResults:
                 entity_type="hydro",
                 entity_name=name,
                 newave_code=code,
-                cobre_id=cobre_id,
+                novomodelo_id=novomodelo_id,
                 stage=stage,
                 variable="turbined_m3s",
                 newave_value=nw_turb,
-                cobre_value=cb_turb,
+                novomodelo_value=cb_turb,
                 abs_diff=abs(nw_turb - cb_turb),
                 rel_diff=None,
             ),
@@ -86,7 +86,7 @@ class TestHydroProductivityResults:
         assert row.entity_type == "hydro"
         assert row.variable == "productivity_mw_per_m3s"
         assert row.newave_value == pytest.approx(2.0)
-        assert row.cobre_value == pytest.approx(2.0)
+        assert row.novomodelo_value == pytest.approx(2.0)
 
     def test_zero_guard_drops_the_row_when_source_turbined_is_zero(self) -> None:
         """vazao_turbinada_m3s=0 -> no non-null newave_value -- the row
@@ -95,7 +95,7 @@ class TestHydroProductivityResults:
 
         assert _hydro_productivity_results(rows) == []
 
-    def test_zero_guard_drops_the_row_when_cobre_turbined_is_zero(self) -> None:
+    def test_zero_guard_drops_the_row_when_novomodelo_turbined_is_zero(self) -> None:
         """Either side's turbined flow at zero drops the row -- not just the
         source model's."""
         rows = self._hydro_pair(nw_gen=100.0, nw_turb=50.0, cb_gen=90.0, cb_turb=0.0)
@@ -123,11 +123,11 @@ class TestHydroProductivityResults:
                 entity_type="hydro",
                 entity_name="ALPHA",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=90.0,
+                novomodelo_value=90.0,
                 abs_diff=10.0,
                 rel_diff=0.1,
             )
@@ -141,11 +141,11 @@ class TestHydroProductivityResults:
                 entity_type="thermal",
                 entity_name="GAS_A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=90.0,
+                novomodelo_value=90.0,
                 abs_diff=10.0,
                 rel_diff=0.1,
             )
@@ -160,7 +160,7 @@ class TestHydroProductivityResults:
             cb_gen=90.0,
             cb_turb=45.0,
             code=20,
-            cobre_id=1,
+            novomodelo_id=1,
             stage=1,
             name="BETA",
         ) + self._hydro_pair(
@@ -169,7 +169,7 @@ class TestHydroProductivityResults:
             cb_gen=55.0,
             cb_turb=25.0,
             code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             name="ALPHA",
         )
@@ -195,7 +195,7 @@ def _productivity_aligned_fixture() -> _AlignedDecompFrames:
             "volume_util_final_hm3": [500.0, 300.0],
         }
     )
-    cobre_hydro = pl.DataFrame(
+    novomodelo_hydro = pl.DataFrame(
         {
             "entity_id": [0, 1],
             "stage_id": [0, 0],
@@ -209,7 +209,7 @@ def _productivity_aligned_fixture() -> _AlignedDecompFrames:
     return dataclasses.replace(
         _aligned_fixture(),
         source_hydro=source_hydro,
-        cobre_hydro=cobre_hydro,
+        novomodelo_hydro=novomodelo_hydro,
         hydro_names={0: "ALPHA", 1: "BETA"},
     )
 
@@ -232,10 +232,10 @@ class TestBuildDecompDatasetProductivity:
         assert set(per_stage.columns) == {
             "plant_name",
             "newave_code",
-            "cobre_id",
+            "novomodelo_id",
             "stage",
             "newave_value",
-            "cobre_value",
+            "novomodelo_value",
         }
 
     def test_ratio_math_matches_dec_oper_usih_generation_over_turbined(
@@ -250,7 +250,7 @@ class TestBuildDecompDatasetProductivity:
         per_stage = dataset.render.productivity_per_stage
         alpha = per_stage.filter(pl.col("newave_code") == 10)
         assert alpha["newave_value"].to_list() == [pytest.approx(2.0)]
-        assert alpha["cobre_value"].to_list() == [pytest.approx(2.1)]
+        assert alpha["novomodelo_value"].to_list() == [pytest.approx(2.1)]
 
     def test_zero_turbined_plant_emits_no_non_null_newave_value(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

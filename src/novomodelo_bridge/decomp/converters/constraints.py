@@ -4,12 +4,12 @@ The special-constraint reader (``constraint_registers.py``) splits every
 special constraint into ones that lower to a plain entity bound
 (``single_term_bounds.py``) and everything else — multi-term participation,
 an unbounded variable (spillage, diversion, pumping), a non-unit
-coefficient, or a whole-cascade energy sum — which needs cobre's
+coefficient, or a whole-cascade energy sum — which needs novomodelo's
 **generic** constraint wire format instead: a flat ``expression`` string, a
 ``slack{enabled, penalty}`` pair, and a companion per-
-``(constraint_id, stage_id, block_id)`` bounds table carrying cobre's F3
+``(constraint_id, stage_id, block_id)`` bounds table carrying novomodelo's F3
 sense-free interval endpoints (``bound_lower``/``bound_upper`` — see
-:mod:`cobre_bridge.core.generic_constraint_format`) instead of a ``sense``/
+:mod:`novomodelo_bridge.core.generic_constraint_format`) instead of a ``sense``/
 ``bound`` pair.
 
 This module stands up that shared scaffolding: the per-term expression-token
@@ -17,14 +17,14 @@ dispatch (``_variable_token``), the ``FI``-interchange line resolver
 (``build_fi_line_map``/``resolve_fi_term``), the coefficient-string formatter
 (``_format_expression``), the ``BIG_M`` slack-penalty helper, and
 ``slots_from_record`` (the per-record (stage, block) slot enumeration feeding
-the shared :class:`~cobre_bridge.core.generic_constraint_builder.
+the shared :class:`~novomodelo_bridge.core.generic_constraint_builder.
 GenericConstraintBuilder`), plus the multi-term ``RE`` emitter
 (``emit_re_generics``) and the ``RHQ``/``RHV`` emitter (
 ``emit_rhq_rhv_generics``) built on top of it. This module mirrors — but
 never imports — the sibling ``converters/constraints.py`` emitter's
 ``_parse_formula`` pattern; both tracks share one
 ``GenericConstraintBuilder``/``GenericConstraintResult``
-(:mod:`cobre_bridge.core.generic_constraint_builder`).
+(:mod:`novomodelo_bridge.core.generic_constraint_builder`).
 
 GNL pre-processing (feature spec section 2.1/G4 -- abating commanded
 generation, aborting on uncommanded) is out of scope here: ``emit_re_generics``
@@ -34,7 +34,7 @@ outside ``id_map.thermal_codes`` (an anticipation-track/GNL thermal), with a
 
 ``RHV``'s volume tipos (``VDEF``/``VDES``/``VBOM``) are deferred rather than
 lowered: their hm³→flow conversion needs a per-stage coefficient (block
-hours vary per stage) that a stage-invariant cobre expression cannot carry,
+hours vary per stage) that a stage-invariant novomodelo expression cannot carry,
 so ``emit_rhq_rhv_generics`` detects one and skips the constraint with a
 ``WARNING`` instead of guessing a coefficient (see the E5 scalar-parameter
 plumbing).
@@ -56,38 +56,38 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, NamedTuple
 
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.generic_constraint_builder import (
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
     GenericConstraintResult,
     is_bounded,
 )
-from cobre_bridge.core.productivity import (
+from novomodelo_bridge.core.productivity import (
     compute_productivity,
     integrated_productivity,
 )
-from cobre_bridge.decomp.constraint_registers import StageBounds
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.decomp.constraint_registers import StageBounds
+from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
     is_reservoir,
 )
-from cobre_bridge.decomp.converters.hydro import _downstream_operated
-from cobre_bridge.decomp.converters.scalar_parameters import rho_acum_name
+from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.converters.scalar_parameters import rho_acum_name
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from cobre_bridge.core.generic_constraint_builder import Slot
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.constraint_registers import (
+    from novomodelo_bridge.core.generic_constraint_builder import Slot
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.constraint_registers import (
         ConstraintCensus,
         ConstraintRecord,
         ConstraintTerm,
     )
-    from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
 #: The source model's ``num_max_iteracoes``-style deficit multiplier: the
@@ -108,7 +108,7 @@ def big_m_penalty(max_deficit: float) -> float:
 
 
 def _hydro_generation_token(hydro_id: int, bus_id: int | None = None) -> str:
-    """The cobre ``hydro_generation`` token, optionally split by frequency bus.
+    """The novomodelo ``hydro_generation`` token, optionally split by frequency bus.
 
     ``bus_id`` selects the v0.14 frequency-split generation selector
     (``hydro_generation(id, bus=bus_id)``); omitted, it is the plant's whole
@@ -121,7 +121,7 @@ def _hydro_generation_token(hydro_id: int, bus_id: int | None = None) -> str:
 
 
 #: Flow/volume/generation variables that map straight through
-#: ``id_map.hydro_id`` to a single-argument cobre hydro token. Kept explicit
+#: ``id_map.hydro_id`` to a single-argument novomodelo hydro token. Kept explicit
 #: and symmetric with the reader's ``constraint_registers._BOUNDS_AXIS`` and
 #: ``single_term_bounds._HQ_AXIS_BY_VARIABLE`` variable taxonomies.
 _HYDRO_TOKEN_FN: dict[str, str] = {
@@ -147,7 +147,7 @@ def _variable_token(
     id_map: DecompIdMap,
     pumping_station_ids: Mapping[int, int],
 ) -> str:
-    """The cobre expression token for one constraint term.
+    """The novomodelo expression token for one constraint term.
 
     Dispatches on ``term.variable``: ``generation``/``thermal_generation``
     map to the whole-plant generation tokens; ``QDEF``/``QTUR``/``QVER``/
@@ -233,7 +233,7 @@ def _emit_fi_no_line(term: ConstraintTerm, *, reason: str) -> None:
             title="FI interchange term has no matching line",
             summary=(
                 f"RE constraint FI interchange term ({term.submarket_de!r} -> "
-                f"{term.submarket_para!r}) could not be resolved to a cobre "
+                f"{term.submarket_para!r}) could not be resolved to a novomodelo "
                 f"line: {reason}."
             ),
             remediation=(
@@ -249,9 +249,9 @@ def resolve_fi_term(
     id_map: DecompIdMap,
     line_map: Mapping[tuple[int, int], int],
 ) -> str | None:
-    """Resolve one ``FI`` interchange term to a directional cobre line token.
+    """Resolve one ``FI`` interchange term to a directional novomodelo line token.
 
-    cobre has no submarket-pair variable, only per-line directional
+    novomodelo has no submarket-pair variable, only per-line directional
     ``line_direct(id)``/``line_reverse(id)`` variables, so — mirroring the
     source model precedent's ``ener_interc`` resolution
     (``converters/constraints.py::_parse_formula``) — the term's direction is
@@ -300,7 +300,7 @@ def resolve_fi_term(
 
 
 def _format_expression(terms: Sequence[tuple[float, str]]) -> str | None:
-    """Join ``(coefficient, token)`` pairs into a cobre expression string.
+    """Join ``(coefficient, token)`` pairs into a novomodelo expression string.
 
     Mirrors ``converters/constraints.py::_parse_formula``'s coefficient-
     formatting rules: a unit (``|coeff| == 1.0``) term is the bare token
@@ -335,7 +335,7 @@ def slots_from_record(
     beyond the stage's real block count is dropped, never emitted as an
     orphan row); for a stage-level record (``record.per_block is False``),
     one slot per declared stage with ``block_id=None``. Feeds
-    :meth:`~cobre_bridge.core.generic_constraint_builder.GenericConstraintBuilder.add`,
+    :meth:`~novomodelo_bridge.core.generic_constraint_builder.GenericConstraintBuilder.add`,
     which itself filters to slots bounded on either side.
     """
     slots: list[Slot] = []
@@ -469,7 +469,7 @@ def emit_re_generics(
 
     Iterates ``census.to_generic`` filtered to ``record.family == "RE"``,
     resolves each record's terms via :func:`_resolve_re_terms`, and feeds a
-    :class:`~cobre_bridge.core.generic_constraint_builder.GenericConstraintBuilder`;
+    :class:`~novomodelo_bridge.core.generic_constraint_builder.GenericConstraintBuilder`;
     a record whose terms cannot all be resolved is dropped entirely
     (skip-not-partial, one diagnostic per skipped constraint — see
     :func:`_resolve_re_terms`). Single-hydro-generation RE records never
@@ -508,7 +508,7 @@ def emit_re_generics(
 
 #: RHV ``CV.tipo`` volume variables whose hm³→flow conversion needs a
 #: per-stage coefficient (block hours vary per stage) that a stage-invariant
-#: cobre expression cannot carry — deferred to the E5 scalar-parameter
+#: novomodelo expression cannot carry — deferred to the E5 scalar-parameter
 #: plumbing rather than emitted with a guessed coefficient.
 _RHV_VOLUME_TIPOS = frozenset({"VDEF", "VDES", "VBOM"})
 
@@ -598,7 +598,7 @@ def _emit_rhv_volume_tipo_deferred(record: ConstraintRecord, tipo: str) -> None:
                 f"HV constraint {record.constraint_id} carries a {tipo} "
                 "volume term; its hm3-to-flow form needs a per-stage "
                 "coefficient (block hours vary per stage) that a "
-                "stage-invariant cobre expression cannot carry, so the "
+                "stage-invariant novomodelo expression cannot carry, so the "
                 "constraint is skipped rather than emitted with a guessed "
                 "coefficient."
             ),
@@ -614,7 +614,7 @@ def _emit_rhv_volume_tipo_deferred(record: ConstraintRecord, tipo: str) -> None:
 def _offset_if_bounded(value: float | None, offset: float) -> float | None:
     """Add *offset* to *value* iff it is a real bound; otherwise pass it through.
 
-    Mirrors :func:`~cobre_bridge.core.generic_constraint_builder.is_bounded`'s
+    Mirrors :func:`~novomodelo_bridge.core.generic_constraint_builder.is_bounded`'s
     sentinel check, phrased so mypy narrows *value* to ``float`` on the
     addition: a ``None`` or ``±1e21`` side never gets an offset added to it.
     """
@@ -642,7 +642,7 @@ def _resolve_hv_varm(
     declared stage, ``offset = sum(cᵢ * effective_storage_range(effective,
     codeᵢ, stage)[0] for term i)``, added to whichever side of the record's
     stage-level ``StageBounds`` is actually bounded
-    (:func:`~cobre_bridge.core.generic_constraint_builder.is_bounded`) —
+    (:func:`~novomodelo_bridge.core.generic_constraint_builder.is_bounded`) —
     a ``±1e21``/``None`` side is left untouched, never offset. *calendar* is
     accepted for signature symmetry with the per-block resolvers (mirroring
     ``single_term_bounds._hv_storage_contributions``); ``VARM`` is
@@ -777,7 +777,7 @@ class RheResult(NamedTuple):
     """Result of :func:`emit_rhe_generics`.
 
     ``result`` is the usual :class:`GenericConstraintResult` (``None`` when
-    no RHE constraint survives). ``rho_acum_overrides`` maps every cobre
+    no RHE constraint survives). ``rho_acum_overrides`` maps every novomodelo
     hydro id *actually referenced* by a surviving RHE expression to its
     per-stage integrated ρ_acum in MWmês/hm³ — the override contract
     ``decomp.converters.scalar_parameters.build_decomp_scalar_parameters`` consumes so
@@ -792,7 +792,7 @@ class RheResult(NamedTuple):
 def _is_stored_energy_reservoir(effective: EffectiveCadastro, code: int) -> bool:
     """True iff DECOMP counts plant *code*'s storage in a REE's stored energy.
 
-    A reservoir under the DECOMP predicate (:func:`~cobre_bridge.decomp.
+    A reservoir under the DECOMP predicate (:func:`~novomodelo_bridge.decomp.
     converters.cadastro.is_reservoir`: ``"M"`` or ``"S"``) with usable
     storage (``volume_maximo > volume_minimo``), read off the *base*
     cadastro. Run-of-river (``"D"``) plants are excluded even when their
@@ -833,15 +833,15 @@ def _per_stage_own_integrated_rho(
     Builds a per-stage ``hidr``-shaped row from *effective* — copying
     ``effective.base.loc[code]`` and overwriting the five
     ``a{i}_volume_cota`` coefficients
-    (:meth:`~cobre_bridge.decomp.converters.cadastro.effective.
+    (:meth:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     EffectiveCadastro.cota_polynomial`)
     and ``canal_fuga_medio``/``volume_minimo``/``volume_maximo``/
-    ``volume_referencia`` (:meth:`~cobre_bridge.decomp.converters.cadastro.
+    ``volume_referencia`` (:meth:`~novomodelo_bridge.decomp.converters.cadastro.
     effective.EffectiveCadastro.value`) — then evaluates the volume-integrated
-    EARM ρ (:func:`~cobre_bridge.core.productivity.integrated_productivity`)
+    EARM ρ (:func:`~novomodelo_bridge.core.productivity.integrated_productivity`)
     for a DECOMP reservoir (``"M"`` or ``"S"``) or the point ρ at
     ``volume_referencia``
-    (:func:`~cobre_bridge.core.productivity.compute_productivity`) for a
+    (:func:`~novomodelo_bridge.core.productivity.compute_productivity`) for a
     run-of-river ``"D"`` plant. This deliberately differs from the source
     model's ``stored_energy_productivity``, which integrates only ``"M"``.
     A plant with no per-stage override on any of these falls through to the
@@ -879,7 +879,7 @@ def _per_stage_rho_acum_energy(
     For each stage, builds the stage-representative operated-cascade
     topology (``_downstream_operated(effective, code, operated,
     stage_index=...)``, imported from
-    :mod:`cobre_bridge.decomp.converters.hydro`) and
+    :mod:`novomodelo_bridge.decomp.converters.hydro`) and
     topologically accumulates ``acc[code] = own[code][s] + (acc[downstream]
     if downstream is not None else 0.0)`` — a memoized DAG walk mirroring
     the source model's ``_cascade_sum``/``compute_per_stage_acc_productivities`` —
@@ -1031,8 +1031,8 @@ def emit_rhe_generics(
     0) when omitted; the pipeline threads one shared instance across every
     emitter. Returns :class:`RheResult`: ``result`` is ``builder.result()``
     (``None`` when no RHE constraint survives); ``rho_acum_overrides`` maps
-    every referenced cobre hydro id to its per-stage ρ_acum (MWmês/hm³) —
-    unreferenced hydros keep cobre's ``computed`` default, mirroring the
+    every referenced novomodelo hydro id to its per-stage ρ_acum (MWmês/hm³) —
+    unreferenced hydros keep novomodelo's ``computed`` default, mirroring the
     source model's emitter ``all_referenced_ids`` gate.
     """
     calendar = case.calendar

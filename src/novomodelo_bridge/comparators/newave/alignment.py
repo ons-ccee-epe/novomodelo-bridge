@@ -1,4 +1,4 @@
-"""Entity alignment between the source model codes and Cobre IDs.
+"""Entity alignment between the source model codes and Novomodelo IDs.
 
 Builds aligned entity pairs for hydros, thermals, and exchange lines
 using the same NewaveIdMap that the converter produces, plus the parsed
@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from cobre_bridge.newave.case import NewaveCase
-    from cobre_bridge.newave.id_map import NewaveIdMap
+    from novomodelo_bridge.newave.case import NewaveCase
+    from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 _LOG = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class HydroEntity:
     """Aligned hydro plant pair."""
 
     newave_code: int
-    cobre_id: int
+    novomodelo_id: int
     name: str
 
 
@@ -32,7 +32,7 @@ class ThermalEntity:
     """Aligned thermal plant pair."""
 
     newave_code: int
-    cobre_id: int
+    novomodelo_id: int
     name: str
 
 
@@ -41,18 +41,18 @@ class LineEntity:
     """Aligned exchange line pair.
 
     The source model models exchange as bidirectional flow between subsystem pairs.
-    Cobre models each normalized pair as a single line where positive flow goes from
+    Novomodelo models each normalized pair as a single line where positive flow goes from
     source_bus to target_bus.
 
-    ``newave_de`` / ``newave_para`` are the source model subsystem codes of the Cobre
-    line's ``source_bus_id`` / ``target_bus_id``, so the Cobre orientation ``(source,
+    ``newave_de`` / ``newave_para`` are the source model subsystem codes of the Novomodelo
+    line's ``source_bus_id`` / ``target_bus_id``, so the Novomodelo orientation ``(source,
     target)`` always corresponds to the source model ``(de, para)`` by construction.
     The source model result files (NWLISTOP) may list a pair in either ``(de, para)`` or
     ``(para, de)`` order; that file-ordering is handled where the rows are read
     (sign-flipped on the reverse-ordered match), not here.
     """
 
-    cobre_line_id: int
+    novomodelo_line_id: int
     name: str
     source_bus_id: int
     target_bus_id: int
@@ -62,7 +62,7 @@ class LineEntity:
 
 @dataclass
 class EntityAlignment:
-    """Complete entity alignment between the source model and Cobre."""
+    """Complete entity alignment between the source model and Novomodelo."""
 
     hydros: list[HydroEntity] = field(default_factory=list)
     thermals: list[ThermalEntity] = field(default_factory=list)
@@ -114,7 +114,7 @@ def build_entity_alignment(
     case:
         Parsed the source model case.
     lines_json:
-        The ``lines`` list from the converted Cobre ``lines.json``.
+        The ``lines`` list from the converted Novomodelo ``lines.json``.
     """
     hydro_names, thermal_names, subsystem_names = read_reference_names(case)
 
@@ -122,7 +122,7 @@ def build_entity_alignment(
 
     for nw_code in id_map.all_hydro_codes:
         try:
-            cobre_id = id_map.hydro_id(nw_code)
+            novomodelo_id = id_map.hydro_id(nw_code)
         except KeyError:
             continue
 
@@ -130,14 +130,14 @@ def build_entity_alignment(
         alignment.hydros.append(
             HydroEntity(
                 newave_code=nw_code,
-                cobre_id=cobre_id,
+                novomodelo_id=novomodelo_id,
                 name=name,
             )
         )
 
     for nw_code in id_map.all_thermal_codes:
         try:
-            cobre_id = id_map.thermal_id(nw_code)
+            novomodelo_id = id_map.thermal_id(nw_code)
         except KeyError:
             continue
 
@@ -145,7 +145,7 @@ def build_entity_alignment(
         alignment.thermals.append(
             ThermalEntity(
                 newave_code=nw_code,
-                cobre_id=cobre_id,
+                novomodelo_id=novomodelo_id,
                 name=name,
             )
         )
@@ -170,7 +170,7 @@ def build_entity_alignment(
 
         alignment.lines.append(
             LineEntity(
-                cobre_line_id=line_id,
+                novomodelo_line_id=line_id,
                 name=line_name,
                 source_bus_id=src_bus,
                 target_bus_id=tgt_bus,

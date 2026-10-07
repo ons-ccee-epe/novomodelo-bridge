@@ -5,7 +5,7 @@ parsing layer on top. Converters used to take ``NewaveFiles`` and each re-parse 
 files they needed, so a single conversion re-read ``dger.dat`` ~26×, ``confhd.dat``
 ~27×, ``hidr.dat`` ~18×, and so on.
 
-:class:`NewaveCase` wraps a :class:`~cobre_bridge.newave.files.NewaveFiles` and
+:class:`NewaveCase` wraps a :class:`~novomodelo_bridge.newave.files.NewaveFiles` and
 exposes one :func:`functools.cached_property` per input file. The first access
 parses via the matching ``inewave`` reader; every later access is free. Required
 files return the reader; optional files return ``Reader | None`` (``None`` when
@@ -57,14 +57,14 @@ from inewave.newave import (
     VolrefSaz,
 )
 
-from cobre_bridge.newave.files import NewaveFiles
-from cobre_bridge.newave.switches import DgerSwitches
+from novomodelo_bridge.newave.files import NewaveFiles
+from novomodelo_bridge.newave.switches import DgerSwitches
 
 if TYPE_CHECKING:
     import pandas as pd
 
-    from cobre_bridge.newave.horizon import StudyHorizon
-    from cobre_bridge.newave.id_map import NewaveIdMap
+    from novomodelo_bridge.newave.horizon import StudyHorizon
+    from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 
 @dataclass
@@ -203,8 +203,8 @@ class NewaveCase:
         """Downstream-level curve families (``polinjus``), or ``None`` if absent.
 
         The ``inewave.libs.UsinasHidreletricas`` reader exposes the tailrace
-        ``h_jus(q_jus)`` families consumed by cobre's FPHA production model — see
-        :func:`cobre_bridge.newave.converters.tailrace.convert_tailrace_curves`.
+        ``h_jus(q_jus)`` families consumed by novomodelo's FPHA production model — see
+        :func:`novomodelo_bridge.newave.converters.tailrace.convert_tailrace_curves`.
         """
         path = self.files.polinjus
         if path is None:
@@ -238,13 +238,13 @@ class NewaveCase:
         ``StudyHorizon`` is a frozen dataclass, so the cached instance is safe to
         share across the converters that size their per-stage tables against it.
         """
-        from cobre_bridge.newave.horizon import study_horizon
+        from novomodelo_bridge.newave.horizon import study_horizon
 
         return study_horizon(self.dger)
 
     @property
     def active_hydros(self) -> pd.DataFrame:
-        """The existing hydro rows that enter the Cobre LP.
+        """The existing hydro rows that enter the Novomodelo LP.
 
         The canonical "active hydro" set (``plants.active_hydros``): existing
         non-fictitious plants, plus any orphaned FICT reservoir kept as a
@@ -255,7 +255,7 @@ class NewaveCase:
         per access (not cached) — it's a cheap filter and callers may hold their own
         view, so a shared cached DataFrame could alias.
         """
-        from cobre_bridge.newave.plants import active_hydros
+        from novomodelo_bridge.newave.plants import active_hydros
 
         return active_hydros(
             self.confhd.usinas,
@@ -266,7 +266,7 @@ class NewaveCase:
     @property
     def active_hydro_codes(self) -> list[int]:
         """``codigo_usina`` of the active hydros (in confhd declaration order)."""
-        from cobre_bridge.newave.plants import active_hydro_codes
+        from novomodelo_bridge.newave.plants import active_hydro_codes
 
         return active_hydro_codes(
             self.confhd.usinas,
@@ -276,7 +276,7 @@ class NewaveCase:
 
     @cached_property
     def id_map(self) -> NewaveIdMap:
-        """The canonical the source model→Cobre :class:`NewaveIdMap` for this case.
+        """The canonical the source model→Novomodelo :class:`NewaveIdMap` for this case.
 
         Built from the cached ``confhd``/``conft``/``sistema``/``ree``/``hidr``
         readers, so it reuses parses already done rather than re-reading the files
@@ -288,7 +288,7 @@ class NewaveCase:
         path-only ``build_id_map`` keeps the in-service-only enumeration
         (``exph=None``).
         """
-        from cobre_bridge.newave.id_map import build_id_map_from_readers
+        from novomodelo_bridge.newave.id_map import build_id_map_from_readers
 
         return build_id_map_from_readers(
             self.confhd,

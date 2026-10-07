@@ -1,14 +1,14 @@
 """Shared generic-constraint builder + id allocator for both conversion tracks.
 
 The NEWAVE track (``newave/converters/constraints.py``) and the DECOMP track
-(``decomp/converters/constraints.py``) each assemble cobre F3 generic constraints
+(``decomp/converters/constraints.py``) each assemble novomodelo F3 generic constraints
 (``generic_constraint_format.py``'s sense-free interval shape). This module is
 the single model-agnostic home both tracks use for that stateful assembly —
 :class:`ConstraintIdAllocator`, :class:`GenericConstraintBuilder`,
 :class:`GenericConstraintResult`, :data:`GENERIC_BOUNDS_SCHEMA`, and the F3
 slot/sentinel helpers (:data:`UNBOUNDED`, :func:`is_bounded`,
 :func:`slot_endpoints`) — built on the pure mapping leaf
-:mod:`cobre_bridge.core.generic_constraint_format`.
+:mod:`novomodelo_bridge.core.generic_constraint_format`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import NamedTuple
 
 import pyarrow as pa
 
-from cobre_bridge.core.generic_constraint_format import (
+from novomodelo_bridge.core.generic_constraint_format import (
     GENERIC_BOUNDS_COLUMNS,
     sense_to_interval,
 )
@@ -51,8 +51,8 @@ class GenericConstraintResult(NamedTuple):
     """Result of a generic-constraint emitter.
 
     ``constraints`` is the list of constraint dicts (``{"id", "name",
-    "description", "expression", "slack"}`` — cobre's F3 sense-free shape,
-    see :mod:`cobre_bridge.core.generic_constraint_format`); ``bounds`` is the
+    "description", "expression", "slack"}`` — novomodelo's F3 sense-free shape,
+    see :mod:`novomodelo_bridge.core.generic_constraint_format`); ``bounds`` is the
     per-``(constraint_id, stage_id, block_id)`` bounds table honouring
     :data:`GENERIC_BOUNDS_SCHEMA` (nullable ``bound_lower``/``bound_upper``
     endpoints, no single ``bound``).
@@ -63,7 +63,7 @@ class GenericConstraintResult(NamedTuple):
 
 
 #: Schema for the generic-constraint bounds table (F3 shape: see
-#: :data:`~cobre_bridge.core.generic_constraint_format.GENERIC_BOUNDS_COLUMNS`).
+#: :data:`~novomodelo_bridge.core.generic_constraint_format.GENERIC_BOUNDS_COLUMNS`).
 #: ``block_id`` is nullable: ``None`` means "all blocks" (a stage-level
 #: constraint, or a per-block one whose bound applies uniformly).
 #: ``bound_lower``/``bound_upper`` are both nullable; the null-pattern
@@ -193,7 +193,7 @@ class GenericConstraintBuilder:
 
         Filters *slots* to those bounded on either side; adds nothing (not
         even an id) when none are bounded — mirroring the "no orphan
-        constraint" gate a cobre constraint with no companion bound row would
+        constraint" gate a novomodelo constraint with no companion bound row would
         violate. Otherwise emits one constraint plus one bound row per
         bounded slot, in order, and returns the constraint's id.
         """

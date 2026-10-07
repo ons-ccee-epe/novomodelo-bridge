@@ -1,4 +1,4 @@
-# Linhagem de dados da conversão DECOMP → Cobre.
+# Linhagem de dados da conversão DECOMP → Novomodelo.
 #
 # Fonte única de docs/decomp-data-map.md (gerado por scripts/gen-lineage-docs.py;
 # nunca edite a página). Um [[output]] por arquivo escrito, um [[output.field]] por
@@ -17,7 +17,7 @@ track = "decomp"
 path = "config.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/config.py"
+module = "src/novomodelo_bridge/decomp/converters/config.py"
 reads = [
   { file = "dadger", register = "GP" },
   { file = "dadger", register = "NI" },
@@ -58,7 +58,7 @@ summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de it
   path = "training.scenario_source.seed"
   from = []
   status = "constant"
-  how = "Sempre `0`. Com todas as classes externas e seleção enumerada nada é sorteado; o campo é exigido pelo esquema do Cobre e o valor é inerte."
+  how = "Sempre `0`. Com todas as classes externas e seleção enumerada nada é sorteado; o campo é exigido pelo esquema do Novomodelo e o valor é inerte."
 
   [[output.field]]
   path = "training.selection.method"
@@ -75,7 +75,7 @@ summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de it
   [[output.field]]
   path = "training.stopping_rules[].relative_tolerance"
   from = [ { file = "dadger", register = "GP", item = "gap" } ]
-  how = "O critério de convergência `GP` do deck, usado como gap relativo (`Zsup/Zinf - 1 <= GP`). O Cobre acrescenta por conta própria uma regra de estagnação de limites."
+  how = "O critério de convergência `GP` do deck, usado como gap relativo (`Zsup/Zinf - 1 <= GP`). O Novomodelo acrescenta por conta própria uma regra de estagnação de limites."
 
   [[output.field]]
   path = "training.stopping_rules[].limit"
@@ -89,7 +89,7 @@ summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de it
 path = "stages.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/temporal.py"
+module = "src/novomodelo_bridge/decomp/temporal.py"
 reads = [
   { file = "dadger", register = "DT" },
   { file = "dadger", register = "DP" },
@@ -254,7 +254,7 @@ summary = "Calendário operativo semanal a partir de `DT` e das durações de pa
 path = "penalties.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/config.py"
+module = "src/novomodelo_bridge/decomp/converters/config.py"
 reads = [
   { file = "dadger", register = "CD" },
   { file = "dadger", register = "SB" },
@@ -374,7 +374,7 @@ summary = "Custo de déficit de `CD` e micro-penalidades fixas do modelo de orig
 path = "initial_conditions.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/hydro/entity.py"
+module = "src/novomodelo_bridge/decomp/converters/hydro/entity.py"
 reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
@@ -441,7 +441,7 @@ summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em 
 path = "system/buses.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/network.py"
+module = "src/novomodelo_bridge/decomp/converters/network.py"
 reads = [
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CD" },
@@ -487,7 +487,7 @@ summary = "Uma barra por submercado de `SB` (inclusive o fictício), mais uma ba
 path = "system/lines.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/network.py"
+module = "src/novomodelo_bridge/decomp/converters/network.py"
 reads = [
   { file = "dadger", register = "IA" },
   { file = "dadger", register = "RI" },
@@ -498,7 +498,7 @@ reads = [
   { file = "dadger", register = "DT" },
   { file = "hidr" },
 ]
-summary = "Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Um deck sem `IA` ainda gera o arquivo com lista vazia (TRACKED COBRE-GAP C4)."
+summary = "Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Um deck sem `IA` ainda gera o arquivo com lista vazia (TRACKED NOVOMODELO-GAP C4)."
 
   [[output.field]]
   path = "lines[].id"
@@ -545,7 +545,7 @@ summary = "Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) 
 path = "system/thermals.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/thermal.py"
+module = "src/novomodelo_bridge/decomp/converters/thermal.py"
 reads = [
   { file = "dadger", register = "CT" },
   { file = "dadger", register = "SB" },
@@ -624,7 +624,7 @@ summary = "Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1
 path = "system/pumping_stations.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/network.py"
+module = "src/novomodelo_bridge/decomp/converters/network.py"
 reads = [
   { file = "dadger", register = "UE" },
   { file = "dadger", register = "SB" },
@@ -689,7 +689,7 @@ summary = "Uma estação de bombeamento por registro `UE` (1:1); a água é elev
 path = "system/non_controllable_sources.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/ncs.py"
+module = "src/novomodelo_bridge/decomp/converters/ncs.py"
 reads = [
   { file = "dadger", register = "PQ" },
   { file = "dadger", register = "SB" },
@@ -742,7 +742,7 @@ summary = "Uma fonte não controlável por série `PQ` (par submercado + nome), 
 path = "constraints/generic_parameters.json"
 kind = "json"
 when = "somente quando alguma restrição de energia armazenada `HE`/`CM` (RHE) sobrevive como restrição genérica e referencia ao menos um reservatório"
-module = "src/cobre_bridge/decomp/converters/scalar_parameters.py"
+module = "src/novomodelo_bridge/decomp/converters/scalar_parameters.py"
 reads = [
   { file = "dadger", register = "HE" },
   { file = "dadger", register = "CM" },
@@ -754,7 +754,7 @@ reads = [
   { file = "dadger", register = "DT" },
   { file = "hidr" },
 ]
-summary = "Declara, para cada usina operada, os parâmetros `@rho_eq_h{id}` e `@rho_acum_h{id}` usados em expressões de restrições genéricas; o `rho_acum` das usinas referenciadas por uma RHE recebe valores por estágio (produtibilidade acumulada integrada no volume, convenção de energia armazenada do DECOMP), os demais ficam calculados pelo Cobre."
+summary = "Declara, para cada usina operada, os parâmetros `@rho_eq_h{id}` e `@rho_acum_h{id}` usados em expressões de restrições genéricas; o `rho_acum` das usinas referenciadas por uma RHE recebe valores por estágio (produtibilidade acumulada integrada no volume, convenção de energia armazenada do DECOMP), os demais ficam calculados pelo Novomodelo."
 
   [[output.field]]
   path = "scalar_parameters[].id"
@@ -798,7 +798,7 @@ summary = "Declara, para cada usina operada, os parâmetros `@rho_eq_h{id}` e `@
 path = "constraints/line_bounds.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/converters/network.py"
+module = "src/novomodelo_bridge/decomp/converters/network.py"
 reads = [
   { file = "dadger", register = "IA" },
   { file = "dadger", register = "RI" },
@@ -846,7 +846,7 @@ summary = "Limites de intercâmbio por linha e estágio a partir de `IA` (estág
 path = "constraints/thermal_bounds.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/converters/thermal.py"
+module = "src/novomodelo_bridge/decomp/converters/thermal.py"
 reads = [
   { file = "dadger", register = "CT" },
   { file = "dadger", register = "RE" },
@@ -892,7 +892,7 @@ summary = "Limites de geração e CVU de cada térmica de `CT` em cada estágio 
   [[output.field]]
   path = "cost_per_mwh"
   from = [ { file = "dadger", register = "CT", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" } ]
-  how = "CVU do estágio ponderado pelas horas de patamar (`cvu_k`, em branco lido como 0), sempre em uma linha de `block_id` nulo; nulo nas linhas por patamar, pois o custo não é elegível a patamar no Cobre."
+  how = "CVU do estágio ponderado pelas horas de patamar (`cvu_k`, em branco lido como 0), sempre em uma linha de `block_id` nulo; nulo nas linhas por patamar, pois o custo não é elegível a patamar no Novomodelo."
 
 # ---------------------------------------------------------------------------
 # constraints/pumping_bounds.parquet
@@ -901,7 +901,7 @@ summary = "Limites de geração e CVU de cada térmica de `CT` em cada estágio 
 path = "constraints/pumping_bounds.parquet"
 kind = "parquet"
 when = "somente quando alguma restrição hidráulica `HQ` de termo único `QBOM` (coeficiente ±1 em `CQ`) limita uma estação de bombeamento declarada em `UE`"
-module = "src/cobre_bridge/decomp/converters/single_term_bounds.py"
+module = "src/novomodelo_bridge/decomp/converters/single_term_bounds.py"
 reads = [
   { file = "dadger", register = "HQ" },
   { file = "dadger", register = "LQ" },
@@ -950,7 +950,7 @@ summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundo
 path = "post_study_stages.json"
 kind = "json"
 when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`"
-module = "src/cobre_bridge/decomp/converters/anticipated.py"
+module = "src/novomodelo_bridge/decomp/converters/anticipated.py"
 reads = [
   { file = "dadgnl", register = "TG" },
   { file = "dadgnl", register = "GL" },
@@ -1011,7 +1011,7 @@ summary = "Calendário pós-estudo na grade semanal (sábados): preenche as sema
 path = "system/energy_contracts.json"
 kind = "json"
 when = "somente quando `dadger` declara ao menos um contrato `CI`/`CE` real (linha com nome ou com algum limite não nulo)"
-module = "src/cobre_bridge/decomp/converters/contracts.py"
+module = "src/novomodelo_bridge/decomp/converters/contracts.py"
 reads = [
   { file = "dadger", register = "CI" },
   { file = "dadger", register = "CE" },
@@ -1021,7 +1021,7 @@ reads = [
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
 ]
-summary = "Contratos de importação (`CI`) e exportação (`CE`) de energia com os valores do estágio 1; uma linha sem nome e com todos os limites nulos é um placeholder e é ignorada. O `fator_perdas` não tem contraparte no Cobre e gera apenas um aviso."
+summary = "Contratos de importação (`CI`) e exportação (`CE`) de energia com os valores do estágio 1; uma linha sem nome e com todos os limites nulos é um placeholder e é ignorada. O `fator_perdas` não tem contraparte no Novomodelo e gera apenas um aviso."
 
   [[output.field]]
   path = "contracts[].id"
@@ -1073,7 +1073,7 @@ summary = "Contratos de importação (`CI`) e exportação (`CE`) de energia com
 path = "constraints/contract_bounds.parquet"
 kind = "parquet"
 when = "somente quando `dadger` declara ao menos um contrato `CI`/`CE` real (tabela não vazia)"
-module = "src/cobre_bridge/decomp/converters/contracts.py"
+module = "src/novomodelo_bridge/decomp/converters/contracts.py"
 reads = [
   { file = "dadger", register = "CI" },
   { file = "dadger", register = "CE" },
@@ -1126,7 +1126,7 @@ summary = "Limites e preço de cada contrato por estágio (estágios não declar
 path = "system/hydros.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/hydro/entity.py"
+module = "src/novomodelo_bridge/decomp/converters/hydro/entity.py"
 reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
@@ -1141,7 +1141,7 @@ reads = [
   { file = "dadger", register = "CQ" },
   { file = "hidr" },
 ]
-summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` preenchido), ordenada pelo id Cobre; o cadastro vem do `hidr.dat` com as modificações `AC` já resolvidas por estágio, e o bloco `diversion` é acoplado só depois da resolução dos limites."
+summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` preenchido), ordenada pelo id Novomodelo; o cadastro vem do `hidr.dat` com as modificações `AC` já resolvidas por estágio, e o bloco `diversion` é acoplado só depois da resolução dos limites."
 
   [[output.field]]
   path = "hydros[].id"
@@ -1171,7 +1171,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "AC", item = "NUMJUS" },
     { file = "dadger", register = "UH", item = "codigo_usina" },
   ]
-  how = "Id Cobre da primeira usina operada encontrada descendo a cascata pela jusante efetiva (`codigo_usina_jusante`, sobrescrito por `AC NUMJUS`) do estágio inicial; usinas não operadas no caminho são atravessadas e o código 0 (foz) resulta em nulo. Um `AC NUMJUS` que varia ao longo do horizonte gera aviso e só o vínculo do estágio inicial é usado."
+  how = "Id Novomodelo da primeira usina operada encontrada descendo a cascata pela jusante efetiva (`codigo_usina_jusante`, sobrescrito por `AC NUMJUS`) do estágio inicial; usinas não operadas no caminho são atravessadas e o código 0 (foz) resulta em nulo. Um `AC NUMJUS` que varia ao longo do horizonte gera aviso e só o vínculo do estágio inicial é usado."
 
   [[output.field]]
   path = "hydros[].reservoir.min_storage_hm3"
@@ -1351,7 +1351,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "hidr", item = "produtibilidade_especifica" },
     { file = "dadger", register = "AC", item = "PROESP" },
   ]
-  how = "Produtibilidade específica efetiva do estágio inicial (`AC PROESP` aplicado), em MW/(m³/s)/m, copiada sem conversão; o Cobre deriva ρ_eq dela na FPHA computada."
+  how = "Produtibilidade específica efetiva do estágio inicial (`AC PROESP` aplicado), em MW/(m³/s)/m, copiada sem conversão; o Novomodelo deriva ρ_eq dela na FPHA computada."
 
   [[output.field]]
   path = "hydros[].efficiency.type"
@@ -1383,7 +1383,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "hidr", item = "canal_fuga_medio" },
     { file = "dadger", register = "AC", item = "JUSMED" },
   ]
-  how = "Lista com um único coeficiente: o nível médio do canal de fuga efetivo (`AC JUSMED` aplicado) do estágio inicial, em metros. É o nível de jusante de reserva que o Cobre usa quando a usina não tem família em `system/tailrace_curves.parquet`."
+  how = "Lista com um único coeficiente: o nível médio do canal de fuga efetivo (`AC JUSMED` aplicado) do estágio inicial, em metros. É o nível de jusante de reserva que o Novomodelo usa quando a usina não tem família em `system/tailrace_curves.parquet`."
 
   [[output.field]]
   path = "hydros[].hydraulic_losses.type"
@@ -1393,7 +1393,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "hidr", item = "perdas" },
     { file = "dadger", register = "AC", item = "PERHID" },
   ]
-  how = "`factor` quando `tipo_perda` = 1 e a perda efetiva (`AC PERHID` aplicado) é positiva; `constant` quando `tipo_perda` = 2 e a perda é positiva; nos demais casos `factor` com valor 0.0, porque o Cobre exige o bloco em toda usina FPHA."
+  how = "`factor` quando `tipo_perda` = 1 e a perda efetiva (`AC PERHID` aplicado) é positiva; `constant` quando `tipo_perda` = 2 e a perda é positiva; nos demais casos `factor` com valor 0.0, porque o Novomodelo exige o bloco em toda usina FPHA."
 
   [[output.field]]
   path = "hydros[].hydraulic_losses.value"
@@ -1422,7 +1422,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "UH", item = "evaporacao" },
     { file = "hidr", item = "evaporacao_JAN..evaporacao_DEZ" },
   ]
-  how = "Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Cobre os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido."
+  how = "Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido."
 
   [[output.field]]
   path = "hydros[].diversion.downstream_id"
@@ -1435,7 +1435,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "CQ", item = "codigo_usina" },
     { file = "dadger", register = "CQ", item = "tipo" },
   ]
-  how = "Id Cobre da usina que recebe a água desviada: o `codigo_usina_jusante` do primeiro `AC DESVIO` em vigor ou, na falta dele, o `desvio` do `hidr.dat`. Um piso de desvio sem canal resolúvel (limite ausente ou receptora não operada) gera aviso e o bloco fica nulo; uma usina com desvio mas sem piso nem canal de base fica com `diversion` nulo."
+  how = "Id Novomodelo da usina que recebe a água desviada: o `codigo_usina_jusante` do primeiro `AC DESVIO` em vigor ou, na falta dele, o `desvio` do `hidr.dat`. Um piso de desvio sem canal resolúvel (limite ausente ou receptora não operada) gera aviso e o bloco fica nulo; uma usina com desvio mas sem piso nem canal de base fica com `diversion` nulo."
 
   [[output.field]]
   path = "hydros[].diversion.max_flow_m3s"
@@ -1450,7 +1450,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
 path = "system/hydro_production_models.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/hydro/productivity.py"
+module = "src/novomodelo_bridge/decomp/converters/hydro/productivity.py"
 reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
@@ -1460,13 +1460,13 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "hidr" },
 ]
-summary = "Uma entrada por usina operada com um único intervalo de estágios cobrindo todo o horizonte; as usinas elegíveis recebem a FPHA computada pelo Cobre ajustada em torno do volume inicial, as demais produtibilidade constante."
+summary = "Uma entrada por usina operada com um único intervalo de estágios cobrindo todo o horizonte; as usinas elegíveis recebem a FPHA computada pelo Novomodelo ajustada em torno do volume inicial, as demais produtibilidade constante."
 
   [[output.field]]
   path = "production_models[].hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina, na mesma ordem de `system/hydros.json`."
+  how = "Id Novomodelo da usina, na mesma ordem de `system/hydros.json`."
 
   [[output.field]]
   path = "production_models[].selection_mode"
@@ -1502,7 +1502,7 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
   when = "somente para usinas com modelo `fpha`"
   from = []
   status = "constant"
-  how = "Sempre `computed`: o Cobre ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`; os registros `FP` do DECOMP não são lidos."
+  how = "Sempre `computed`: o Novomodelo ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`; os registros `FP` do DECOMP não são lidos."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3"
@@ -1516,7 +1516,7 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_referencia" },
   ]
-  how = "max(V_min, V_ini − 0,10 × (V_max − V_min)), com V_ini o volume inicial da usina em hm³ e [V_min, V_max] a faixa efetiva do estágio inicial. A meia-largura de 10 % do volume útil é um parâmetro de modelagem do cobre-bridge; fio d'água colapsa para o volume de referência."
+  how = "max(V_min, V_ini − 0,10 × (V_max − V_min)), com V_ini o volume inicial da usina em hm³ e [V_min, V_max] a faixa efetiva do estágio inicial. A meia-largura de 10 % do volume útil é um parâmetro de modelagem do novomodelo-bridge; fio d'água colapsa para o volume de referência."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3"
@@ -1550,7 +1550,7 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
 path = "system/hydro_geometry.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/converters/fpha.py"
+module = "src/novomodelo_bridge/decomp/converters/fpha.py"
 reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
@@ -1566,7 +1566,7 @@ summary = "Curva volume → cota → área amostrada em 100 pontos por usina ope
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina; usinas com polinômio cota-volume identicamente nulo não têm linhas."
+  how = "Id Novomodelo da usina; usinas com polinômio cota-volume identicamente nulo não têm linhas."
 
   [[output.field]]
   path = "volume_hm3"
@@ -1598,7 +1598,7 @@ summary = "Curva volume → cota → área amostrada em 100 pontos por usina ope
 path = "system/hydro_energy_productivity.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/converters/hydro/productivity.py"
+module = "src/novomodelo_bridge/decomp/converters/hydro/productivity.py"
 reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
@@ -1608,13 +1608,13 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "hidr" },
 ]
-summary = "Uma linha por usina operada com produtibilidade constante (as usinas FPHA são omitidas, pois o Cobre calcula o ρ_eq delas); valor único para todo o horizonte, ancorado no volume inicial."
+summary = "Uma linha por usina operada com produtibilidade constante (as usinas FPHA são omitidas, pois o Novomodelo calcula o ρ_eq delas); valor único para todo o horizonte, ancorado no volume inicial."
 
   [[output.field]]
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina, só para as de `generation.model` = `constant_productivity`."
+  how = "Id Novomodelo da usina, só para as de `generation.model` = `constant_productivity`."
 
   [[output.field]]
   path = "stage_id"
@@ -1660,14 +1660,14 @@ summary = "Uma linha por usina operada com produtibilidade constante (as usinas 
 path = "system/tailrace_curves.parquet"
 kind = "parquet"
 when = "somente quando o deck traz `polinjus.csv` e ao menos um segmento de curva de jusante pertence a uma usina operada"
-module = "src/cobre_bridge/decomp/converters/fpha.py"
+module = "src/novomodelo_bridge/decomp/converters/fpha.py"
 reads = [
   { file = "polinjus" },
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CT" },
 ]
-summary = "Famílias de curvas de nível de jusante por usina (uma linha por segmento polinomial), copiadas do `polinjus.csv` para as usinas operadas e ordenadas por id Cobre, família e segmento; segmentos de usinas não operadas são descartados."
+summary = "Famílias de curvas de nível de jusante por usina (uma linha por segmento polinomial), copiadas do `polinjus.csv` para as usinas operadas e ordenadas por id Novomodelo, família e segmento; segmentos de usinas não operadas são descartados."
 
   [[output.field]]
   path = "hydro_id"
@@ -1676,7 +1676,7 @@ summary = "Famílias de curvas de nível de jusante por usina (uma linha por seg
     { file = "dadger", register = "UH", item = "codigo_usina" },
   ]
   status = "derived"
-  how = "Id Cobre da usina do segmento; códigos ausentes do conjunto operado são descartados."
+  how = "Id Novomodelo da usina do segmento; códigos ausentes do conjunto operado são descartados."
 
   [[output.field]]
   path = "family_id"
@@ -1734,7 +1734,7 @@ summary = "Famílias de curvas de nível de jusante por usina (uma linha por seg
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
 when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único ou canal de desvio de base)"
-module = "src/cobre_bridge/decomp/converters/bounds.py"
+module = "src/novomodelo_bridge/decomp/converters/bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
@@ -1764,7 +1764,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina; linhas ordenadas por usina, estágio e patamar."
+  how = "Id Novomodelo da usina; linhas ordenadas por usina, estágio e patamar."
 
   [[output.field]]
   path = "stage_id"
@@ -1831,7 +1831,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "CQ", item = "tipo" },
     { file = "dadger", register = "CQ", item = "coeficiente" },
   ]
-  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Cobre rejeita um teto acima da capacidade); um truncamento material gera aviso."
+  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso."
 
   [[output.field]]
   path = "min_generation_mw"
@@ -1955,7 +1955,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
 path = "constraints/hydro_unit_group_bounds.parquet"
 kind = "parquet"
 when = "somente quando algum grupo tem, em algum estágio, disponibilidade (MP × FD) ou engolimento corrigido pela queda abaixo do envelope declarado, ou quando Itaipu é operada com pisos `RI`"
-module = "src/cobre_bridge/decomp/group_bounds.py"
+module = "src/novomodelo_bridge/decomp/group_bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "SB" },
@@ -1974,7 +1974,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina."
+  how = "Id Novomodelo da usina."
 
   [[output.field]]
   path = "hydro_unit_group_id"
@@ -1983,7 +1983,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "FD", item = "frequencia" },
   ]
   status = "derived"
-  how = "Id do grupo dentro da usina: 0 para o grupo único; 0 (50 Hz) e 1 (60 Hz) para Itaipu, na ordem crescente das frequências de `MP`/`FD`. O Cobre casa a linha pelo id declarado, não pela posição."
+  how = "Id do grupo dentro da usina: 0 para o grupo único; 0 (50 Hz) e 1 (60 Hz) para Itaipu, na ordem crescente das frequências de `MP`/`FD`. O Novomodelo casa a linha pelo id declarado, não pela posição."
 
   [[output.field]]
   path = "stage_id"
@@ -2068,7 +2068,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
 path = "scenarios/inflow_seasonal_stats.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/scenarios.py"
+module = "src/novomodelo_bridge/decomp/scenarios.py"
 reads = [
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CT" },
@@ -2109,7 +2109,7 @@ summary = "Tabela identidade (média 0, desvio 1) por usina hidráulica e estág
 path = "scenarios/external_inflow_scenarios.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/scenarios.py"
+module = "src/novomodelo_bridge/decomp/scenarios.py"
 reads = [
   { file = "vazoes" },
   { file = "hidr" },
@@ -2160,7 +2160,7 @@ summary = "Árvore explícita de vazões incrementais por usina: o tronco determ
 path = "scenarios/load_seasonal_stats.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/load.py"
+module = "src/novomodelo_bridge/decomp/load.py"
 reads = [
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "SB" },
@@ -2207,7 +2207,7 @@ summary = "Uma linha por barra (inclusive a barra de transbordo `IV`) e estágio
 path = "scenarios/load_factors.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/load.py"
+module = "src/novomodelo_bridge/decomp/load.py"
 reads = [
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "SB" },
@@ -2253,7 +2253,7 @@ summary = "Perfil por patamar da carga de cada (barra, estágio) com carga posit
 path = "scenarios/non_controllable_stats.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/converters/ncs.py"
+module = "src/novomodelo_bridge/decomp/converters/ncs.py"
 reads = [
   { file = "dadger", register = "PQ" },
   { file = "dadger", register = "SB" },
@@ -2289,7 +2289,7 @@ summary = "Fração de disponibilidade por fonte não controlável (séries `PQ`
     { file = "dadger", register = "DP", item = "duracao" },
     { file = "renovaveis", item = "PEE-GER-PER-PAT-CEN · geracao" },
   ]
-  how = "Média do estágio ponderada pelas horas dos patamares dividida pela maior geração da série em todo o horizonte (o `max_generation_mw` da fonte); estágios não declarados herdam o anterior e o estágio 1 é obrigatório. Limitada a 1.0 pela tolerância do cobre; série de máximo zero lê 0. A geração `PEE` é lida do valor modal entre cenários, com aviso se divergirem."
+  how = "Média do estágio ponderada pelas horas dos patamares dividida pela maior geração da série em todo o horizonte (o `max_generation_mw` da fonte); estágios não declarados herdam o anterior e o estágio 1 é obrigatório. Limitada a 1.0 pela tolerância do novomodelo; série de máximo zero lê 0. A geração `PEE` é lida do valor modal entre cenários, com aviso se divergirem."
 
   [[output.field]]
   path = "std"
@@ -2304,7 +2304,7 @@ summary = "Fração de disponibilidade por fonte não controlável (séries `PQ`
 path = "scenarios/non_controllable_factors.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/decomp/converters/ncs.py"
+module = "src/novomodelo_bridge/decomp/converters/ncs.py"
 reads = [
   { file = "dadger", register = "PQ" },
   { file = "dadger", register = "SB" },
@@ -2345,7 +2345,7 @@ summary = "Perfil por patamar de cada fonte não controlável nos estágios de m
     { file = "dadger", register = "DP", item = "duracao" },
     { file = "renovaveis", item = "PEE-GER-PER-PAT-CEN · geracao" },
   ]
-  how = "`geracao_b / média do estágio` por patamar; a invariante `Σ_b fator_b·duracao_b = horas do estágio` é verificada. Um patamar de geração zero sob média positiva recebe 1e-9, porque o esquema do cobre exige fator > 0 (aviso com a contagem)."
+  how = "`geracao_b / média do estágio` por patamar; a invariante `Σ_b fator_b·duracao_b = horas do estágio` é verificada. Um patamar de geração zero sob média positiva recebe 1e-9, porque o esquema do novomodelo exige fator > 0 (aviso com a contagem)."
 
 # ---------------------------------------------------------------------------
 # scenarios/external_ncs_scenarios.parquet
@@ -2354,7 +2354,7 @@ summary = "Perfil por patamar de cada fonte não controlável nos estágios de m
 path = "scenarios/external_ncs_scenarios.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/scenarios.py"
+module = "src/novomodelo_bridge/decomp/scenarios.py"
 reads = [
   { file = "dadger", register = "PQ" },
   { file = "dadger", register = "SB" },
@@ -2405,7 +2405,7 @@ summary = "Disponibilidade determinística das fontes não controláveis replica
 path = "scenarios/external_load_scenarios.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/decomp/scenarios.py"
+module = "src/novomodelo_bridge/decomp/scenarios.py"
 reads = [
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "SB" },
@@ -2453,7 +2453,7 @@ summary = "Carga determinística replicada nas colunas de cenário da biblioteca
 path = "constraints/generic_constraints.json"
 kind = "json"
 when = "somente quando ao menos uma restrição especial (RE com vários termos, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
-module = "src/cobre_bridge/decomp/converters/constraints.py"
+module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CT" },
@@ -2578,7 +2578,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
 path = "constraints/generic_constraint_bounds.parquet"
 kind = "parquet"
 when = "somente quando ao menos uma restrição especial (RE com vários termos, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
-module = "src/cobre_bridge/decomp/converters/constraints.py"
+module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CT" },
@@ -2710,8 +2710,8 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
 [[output]]
 path = "boundary/"
 kind = "checkpoint"
-when = "escrito por padrão pela CLI após a conversão, quando o deck declara `cortesh.dat` e `cortes*.dat` (registro `FC` ou busca por nome) e o cobre-python instalado passa na sonda de escrita e releitura do checkpoint; `--no-fcf` e `--dry-run` pulam a importação, e um deck sem arquivos de cortes converte sem fronteira (nota informativa)"
-module = "src/cobre_bridge/decomp/fcf/importer.py"
+when = "escrito por padrão pela CLI após a conversão, quando o deck declara `cortesh.dat` e `cortes*.dat` (registro `FC` ou busca por nome) e o novomodelo-python instalado passa na sonda de escrita e releitura do checkpoint; `--no-fcf` e `--dry-run` pulam a importação, e um deck sem arquivos de cortes converte sem fronteira (nota informativa)"
+module = "src/novomodelo_bridge/decomp/fcf/importer.py"
 reads = [
   { file = "cortesh" },
   { file = "cortes" },
@@ -2731,7 +2731,7 @@ reads = [
   { file = "hidr" },
   { file = "mlt" },
 ]
-summary = "Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do cobre sobre uma cópia do caso para ler o manifesto de estados terminal, mapeia os termos de armazenamento por código de usina (replicando complexos `CX`), os termos de vazão defasada por profundidade de mês (com a média de longo termo de `mlt.dat`, incrementalizada pela cascata efetiva, dobrada no RHS) e os termos GNL do `dadgnl` no anel antecipado, e grava `boundary/{manifest.bin, cuts/, basis/}` via cobre-python. Reescreve `config.json` apontando `policy.boundary` (`path = \"boundary\"`, `source_stage`) para o checkpoint e, quando há `mlt.dat`, `initial_conditions.json` com as janelas `recent_observations` das observações mensais e semanais de `vazoes`; o caso deve ser executado com `cobre run <caso> --output <caso>`."
+summary = "Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal, mapeia os termos de armazenamento por código de usina (replicando complexos `CX`), os termos de vazão defasada por profundidade de mês (com a média de longo termo de `mlt.dat`, incrementalizada pela cascata efetiva, dobrada no RHS) e os termos GNL do `dadgnl` no anel antecipado, e grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python. Reescreve `config.json` apontando `policy.boundary` (`path = \"boundary\"`, `source_stage`) para o checkpoint e, quando há `mlt.dat`, `initial_conditions.json` com as janelas `recent_observations` das observações mensais e semanais de `vazoes`; o caso deve ser executado com `novomodelo run <caso> --output <caso>`."
 
 # ===== frag_H_dc_inventory =====
 # Fragment H — DECOMP source inventory: what the bridge does NOT convert.
@@ -2751,7 +2751,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "VI"
   status = "deferred"
-  note = "Tempo de viagem da água até a usina de jusante e defluências das semanas anteriores ao estudo. O conversor lê o registro e monta `travel_time_hours` e `initial_conditions.past_defluences`, mas a emissão está desligada por um defeito na geração de cortes com água em trânsito no cobre (gap rastreado C-travel-time): o `convert decomp` apenas avisa `deferred at this milestone: water travel time (VI present)`."
+  note = "Tempo de viagem da água até a usina de jusante e defluências das semanas anteriores ao estudo. O conversor lê o registro e monta `travel_time_hours` e `initial_conditions.past_defluences`, mas a emissão está desligada por um defeito na geração de cortes com água em trânsito no novomodelo (gap rastreado C-travel-time): o `convert decomp` apenas avisa `deferred at this milestone: water travel time (VI present)`."
 
   [[source.item]]
   register = "FE"
@@ -2801,7 +2801,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "AC"
   item = "JUSENA"
   status = "deferred"
-  note = "Alteração do índice de aproveitamento de jusante para o cálculo de energia armazenada e afluente. Lido pelo `check decomp`, sem consumidor: o Cobre não agrega energia por REE."
+  note = "Alteração do índice de aproveitamento de jusante para o cálculo de energia armazenada e afluente. Lido pelo `check decomp`, sem consumidor: o Novomodelo não agrega energia por REE."
 
   [[source.item]]
   register = "AC"
@@ -2825,13 +2825,13 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "AC"
   item = "VERTJU"
   status = "deferred"
-  note = "Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Cobre não modela essa influência na cota de jusante."
+  note = "Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante."
 
   [[source.item]]
   register = "CE"
   item = "fator_perdas"
   status = "deferred"
-  note = "Fator de perdas do contrato de exportação. Lido e ignorado com o diagnóstico `contract-loss-factor-unmapped`: `energy_contracts` do Cobre não tem campo equivalente e o fator não é dobrado no preço nem nos limites."
+  note = "Fator de perdas do contrato de exportação. Lido e ignorado com o diagnóstico `contract-loss-factor-unmapped`: `energy_contracts` do Novomodelo não tem campo equivalente e o fator não é dobrado no preço nem nos limites."
 
   [[source.item]]
   register = "CI"
@@ -2849,7 +2849,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "CV"
   item = "tipo (VDEF, VDES, VBOM)"
   status = "deferred"
-  note = "Tipos de volume de uma `HV` além de `VARM`. A forma hm³-para-vazão exige coeficiente por estágio (horas de patamar variam), que a expressão de restrição genérica do Cobre não carrega; a restrição é descartada com `decomp-rhv-volume-tipo-deferred`."
+  note = "Tipos de volume de uma `HV` além de `VARM`. A forma hm³-para-vazão exige coeficiente por estágio (horas de patamar variam), que a expressão de restrição genérica do Novomodelo não carrega; a restrição é descartada com `decomp-rhv-volume-tipo-deferred`."
 
   # --- unread fields of registers the bridge otherwise converts ---------------
 
@@ -2857,7 +2857,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "UH"
   item = "balanco_hidrico_patamar"
   status = "unread"
-  note = "Sinalizador de balanço hídrico por patamar. Não lido: o Cobre faz o balanço por estágio."
+  note = "Sinalizador de balanço hídrico por patamar. Não lido: o Novomodelo faz o balanço por estágio."
 
   [[source.item]]
   register = "UH"
@@ -2954,7 +2954,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "DA"
   status = "unread"
-  note = "Retiradas de água para outros usos (desvios) por UHE: usina de retirada, usina de retorno, vazão desviada, percentual de retorno e custo, por estágio. Não lido. Converter exige mapear a retirada para o canal de desvio da usina no Cobre e o retorno como afluência à usina de destino."
+  note = "Retiradas de água para outros usos (desvios) por UHE: usina de retirada, usina de retorno, vazão desviada, percentual de retorno e custo, por estágio. Não lido. Converter exige mapear a retirada para o canal de desvio da usina no Novomodelo e o retorno como afluência à usina de destino."
 
   [[source.item]]
   register = "EA"
@@ -2974,12 +2974,12 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "FP"
   status = "unread"
-  note = "Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Cobre ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela derivada do volume inicial e dos limites de armazenamento."
+  note = "Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela derivada do volume inicial e dos limites de armazenamento."
 
   [[source.item]]
   register = "IR"
   status = "unread"
-  note = "Opções de geração de relatórios de saída do DECOMP. Sem contrapartida no caso Cobre."
+  note = "Opções de geração de relatórios de saída do DECOMP. Sem contrapartida no caso Novomodelo."
 
   [[source.item]]
   register = "MT"
@@ -3004,7 +3004,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "QI"
   status = "unread"
-  note = "Tempo de viagem por usina usado no cálculo da ENA. Não lido: só afeta a agregação em energia, que o Cobre não faz."
+  note = "Tempo de viagem por usina usado no cálculo da ENA. Não lido: só afeta a agregação em energia, que o Novomodelo não faz."
 
   [[source.item]]
   register = "RT"
@@ -3019,7 +3019,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "VA"
   status = "unread"
-  note = "Posto cuja vazão influencia a cota de jusante de outra usina (fator de impacto incremental). Não lido: o Cobre não modela influência de vazão lateral na cota de jusante."
+  note = "Posto cuja vazão influencia a cota de jusante de outra usina (fator de impacto incremental). Não lido: o Novomodelo não modela influência de vazão lateral na cota de jusante."
 
   [[source.item]]
   register = "VL"
@@ -3110,12 +3110,12 @@ note = "Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As col
   [[source.item]]
   item = "volume_vertedouro, volume_desvio"
   status = "unread"
-  note = "Volumes de soleira do vertedouro e do canal de desvio. A tabela efetiva os carrega (com as alterações `AC VSVERT`/`VMDESV`), mas nenhum emissor os consome. Converter exige derivar deles um limite de vertimento/desvio por faixa de armazenamento, que o Cobre não modela."
+  note = "Volumes de soleira do vertedouro e do canal de desvio. A tabela efetiva os carrega (com as alterações `AC VSVERT`/`VMDESV`), mas nenhum emissor os consome. Converter exige derivar deles um limite de vertimento/desvio por faixa de armazenamento, que o Novomodelo não modela."
 
   [[source.item]]
   item = "fator_carga_maximo, fator_carga_minimo"
   status = "unread"
-  note = "Fatores de carga máximo e mínimo. Não lidos; o Cobre não limita o fator de carga."
+  note = "Fatores de carga máximo e mínimo. Não lidos; o Novomodelo não limita o fator de carga."
 
   [[source.item]]
   item = "teif, ip"
@@ -3130,7 +3130,7 @@ note = "Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As col
   [[source.item]]
   item = "influencia_vertimento_canal_fuga"
   status = "unread"
-  note = "Sinalizador de influência do vertimento no canal de fuga. Não lido: o Cobre não modela essa influência."
+  note = "Sinalizador de influência do vertimento no canal de fuga. Não lido: o Novomodelo não modela essa influência."
 
   [[source.item]]
   item = "empresa, observacao, data"
@@ -3174,7 +3174,7 @@ note = "Famílias de curvas de jusante das LIBs. O conversor lê o cadastro das 
   [[source.item]]
   item = "hidreletrica_curvajusante_afogamentoexplicito_padrao"
   status = "unread"
-  note = "Habilitação padrão do tratamento de afogamento explícito. Não lida: o Cobre escolhe a família pela defluência de jusante sem afogamento explícito."
+  note = "Habilitação padrão do tratamento de afogamento explícito. Não lida: o Novomodelo escolhe a família pela defluência de jusante sem afogamento explícito."
 
   [[source.item]]
   item = "hidreletrica_curvajusante_afogamentoexplicito_usina"
@@ -3196,7 +3196,7 @@ note = "Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro
   [[source.item]]
   item = "pee_pot_inst_per"
   status = "unread"
-  note = "Potência instalada do parque por período. Não lida: a fonte não controlável do Cobre não carrega capacidade instalada."
+  note = "Potência instalada do parque por período. Não lida: a fonte não controlável do Novomodelo não carrega capacidade instalada."
 
 # ---------------------------------------------------------------------------
 # lib_restricao-eletrica-especial.csv — variants not converted
@@ -3263,7 +3263,7 @@ note = "Cortes e mapa de cortes da própria FCF do DECOMP, gravados por uma exec
 file = "saidas_decomp"
 label = "arquivos de saída do DECOMP"
 status = "unread"
-note = "Resultados de uma execução do DECOMP (`relato.rvN`, `dec_oper_*.csv`, `dec_estatfpha.csv`, `sumario.rvN`, `inviab_unic.rvN`, entre outros). Não são entrada da conversão; `compare decomp` lê `relato.rvN`, as tabelas `dec_oper_*.csv` e `dec_estatfpha.csv` para confrontar com a saída do Cobre."
+note = "Resultados de uma execução do DECOMP (`relato.rvN`, `dec_oper_*.csv`, `dec_estatfpha.csv`, `sumario.rvN`, `inviab_unic.rvN`, entre outros). Não são entrada da conversão; `compare decomp` lê `relato.rvN`, as tabelas `dec_oper_*.csv` e `dec_estatfpha.csv` para confrontar com a saída do Novomodelo."
 
 [[source]]
 file = "caso"

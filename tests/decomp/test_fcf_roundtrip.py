@@ -3,23 +3,23 @@
 Proves the authored checkpoint's coefficients are value-faithful to the
 source cuts: this module independently parses a hand-authored
 ``BoundaryCuts``/``TerminalManifest``/``DecompIdMap``, writes and reloads it
-through ``synthetic_roundtrip`` (no deck, no cobre binary), and cross-
+through ``synthetic_roundtrip`` (no deck, no novomodelo binary), and cross-
 evaluates its cut coefficients against a *direct, independent* evaluation —
-never through :func:`cobre_bridge.decomp.fcf.mapper.map_boundary_cuts`, the
+never through :func:`novomodelo_bridge.decomp.fcf.mapper.map_boundary_cuts`, the
 mapper's own coefficient placement, which would make this a circular,
 Python-vs-Python check. It instead builds its own physical<->slot join from
 the *reloaded* ``entity_manifest`` — the ground truth for where the writer
 actually placed each mapped coefficient — via this module's own
-``_resolve``/``_theta_source``/``_theta_cobre`` oracle.
+``_resolve``/``_theta_source``/``_theta_novomodelo`` oracle.
 
 Agreement to f64 tolerance (``policy.fbs`` stores ``coefficients`` as
-``float64``, so authored values round-trip through cobre-io exactly) across
+``float64``, so authored values round-trip through novomodelo-io exactly) across
 both a direct coefficient comparison and a deterministic evaluation sweep
 catches a sign flip, a unit error, a lag off-by-one, or a dropped
-``cost_scale_factor`` marker (which makes cobre silently scale every value
+``cost_scale_factor`` marker (which makes novomodelo silently scale every value
 by 10⁶) in one test.
 
-Gated on ``@requires_cobre_python`` (cobre is import-able) stacked with
+Gated on ``@requires_novomodelo_python`` (novomodelo is import-able) stacked with
 ``@requires_writer_binding`` (the installed wheel actually exposes the
 ``write_policy_checkpoint`` binding this path calls — an older, importable
 wheel lacking it would otherwise fail at runtime with ``AttributeError``
@@ -36,10 +36,10 @@ from typing import Any
 
 import numpy as np
 
-from cobre_bridge.core.units import C_M3S2HM3, MONTH_HOURS
-from cobre_bridge.decomp.fcf.bootstrap import TerminalManifest
-from cobre_bridge.decomp.fcf.cortes import StageCutRecord
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.core.units import C_M3S2HM3, MONTH_HOURS
+from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
+from novomodelo_bridge.decomp.fcf.cortes import StageCutRecord
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests._fcf_fixtures import (
     make_boundary_cuts,
     make_cut_record,
@@ -48,9 +48,9 @@ from tests._fcf_fixtures import (
     make_slot,
     synthetic_roundtrip,
 )
-from tests.conftest import requires_cobre_python, requires_writer_binding
+from tests.conftest import requires_novomodelo_python, requires_writer_binding
 
-#: cobre `policy.fbs` entity_type codes (mirrors `fcf/mapper.py`'s private
+#: novomodelo `policy.fbs` entity_type codes (mirrors `fcf/mapper.py`'s private
 #: constants of the same name/value — re-declared here, never imported, so
 #: this oracle's slot lookup never depends on the mapper under test).
 _HYDRO_STORAGE = 0
@@ -75,8 +75,8 @@ class _PhysicalState:
 
     ``storage[plant_index]`` and ``inflow[(plant_index, depth)]`` are plain
     physical values — never a dense state-dimension vector until a caller
-    projects them onto the manifest's slot positions (``_theta_cobre``'s
-    ``x_cobre`` argument) or reads them off directly (``_theta_source``).
+    projects them onto the manifest's slot positions (``_theta_novomodelo``'s
+    ``x_novomodelo`` argument) or reads them off directly (``_theta_source``).
     A key absent from either mapping is implicitly 0.0.
     """
 
@@ -156,14 +156,14 @@ def _theta_source(
 ) -> float:
     """``max_k(rhs_k + pi_varm_k . storage + pi_qafl_k . inflow)`` over active
     source records, restricted to resolved plants and present lag slots —
-    the independent oracle AC 4 cross-evaluates against ``_theta_cobre``.
+    the independent oracle AC 4 cross-evaluates against ``_theta_novomodelo``.
 
     Terms are scaled per family to match the mapper's cost-unit conversion
-    (``fcf.mapper``), since the authored (reloaded) cut ``_theta_cobre`` reads
-    is in cobre cost units: the intercept and storage by ``cost_unit_hours``
+    (``fcf.mapper``), since the authored (reloaded) cut ``_theta_novomodelo`` reads
+    is in novomodelo cost units: the intercept and storage by ``cost_unit_hours``
     (the ``($·mês)/h -> $`` integration over the coupling stage's hours), and
     the inflow-lag additionally by ``C_M3S2HM3`` (the Hm³<-m³/s factor for
-    cobre's m³/s lag state). ``cost_unit_hours`` is the same value the mapper
+    novomodelo's m³/s lag state). ``cost_unit_hours`` is the same value the mapper
     was given (MONTH_HOURS for the synthetic fixtures below).
     """
     lag_factor = cost_unit_hours * C_M3S2HM3
@@ -194,9 +194,11 @@ def _theta_source(
     return best
 
 
-def _theta_cobre(cuts: Sequence[Mapping[str, Any]], x_cobre: Sequence[float]) -> float:
-    """``max_k(intercept_k + coefficients_k . x_cobre)`` over active reloaded
-    cuts — cobre's own ``Policy.evaluate`` semantics, computed directly from
+def _theta_novomodelo(
+    cuts: Sequence[Mapping[str, Any]], x_novomodelo: Sequence[float]
+) -> float:
+    """``max_k(intercept_k + coefficients_k . x_novomodelo)`` over active reloaded
+    cuts — novomodelo's own ``Policy.evaluate`` semantics, computed directly from
     the checkpoint the writer authored.
     """
     best = float("-inf")
@@ -204,7 +206,7 @@ def _theta_cobre(cuts: Sequence[Mapping[str, Any]], x_cobre: Sequence[float]) ->
         if not cut["is_active"]:
             continue
         value = float(cut["intercept"]) + sum(
-            c * x for c, x in zip(cut["coefficients"], x_cobre, strict=True)
+            c * x for c, x in zip(cut["coefficients"], x_novomodelo, strict=True)
         )
         if value > best:
             best = value
@@ -212,7 +214,7 @@ def _theta_cobre(cuts: Sequence[Mapping[str, Any]], x_cobre: Sequence[float]) ->
 
 
 # ---------------------------------------------------------------------------
-# Tier 2 — in-wheel synthetic round trip (no deck, no cobre binary).
+# Tier 2 — in-wheel synthetic round trip (no deck, no novomodelo binary).
 # ---------------------------------------------------------------------------
 
 
@@ -248,10 +250,10 @@ def _synthetic_two_plant_case() -> tuple[
     return plant_codes, id_map, manifest
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 @requires_writer_binding
 def test_synthetic_roundtrip_coefficient_identity(tmp_path: Path) -> None:
-    """AC 1/2 — coefficient identity, no deck and no cobre binary.
+    """AC 1/2 — coefficient identity, no deck and no novomodelo binary.
 
     Reuses this module's own ``_resolve`` oracle (never
     ``fcf.mapper.map_boundary_cuts``'s bookkeeping) against a hand-authored
@@ -300,7 +302,7 @@ def test_synthetic_roundtrip_coefficient_identity(tmp_path: Path) -> None:
     assert len(active_cuts) == 1
     cut = active_cuts[0]
     coefficients = cut["coefficients"]
-    # Authored values are the source terms scaled to cobre cost units by
+    # Authored values are the source terms scaled to novomodelo cost units by
     # MONTH_HOURS (fcf.mapper's ($·mês)/h -> $ conversion).
     assert math.isclose(
         cut["intercept"], active_record.rhs * MONTH_HOURS, rel_tol=1e-9, abs_tol=1e-6
@@ -325,13 +327,13 @@ def test_synthetic_roundtrip_coefficient_identity(tmp_path: Path) -> None:
             assert value == 0.0, f"unmapped slot {position} = {value!r}"
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 @requires_writer_binding
 def test_synthetic_roundtrip_theta_sweep(tmp_path: Path) -> None:
-    """AC 3 — ``theta_cobre(x) == theta_source(x)`` over >= 8 states, no deck
-    and no cobre binary.
+    """AC 3 — ``theta_novomodelo(x) == theta_source(x)`` over >= 8 states, no deck
+    and no novomodelo binary.
 
-    Reuses this module's own ``_theta_source``/``_theta_cobre`` oracle
+    Reuses this module's own ``_theta_source``/``_theta_novomodelo`` oracle
     against the same synthetic two-plant case, over the all-zero,
     per-plant-unit-storage, and ``rng(0)``-random states.
     """
@@ -390,34 +392,36 @@ def test_synthetic_roundtrip_theta_sweep(tmp_path: Path) -> None:
     assert len(states) >= 8
 
     for index, state in enumerate(states):
-        x_cobre = [0.0] * state_dimension
+        x_novomodelo = [0.0] * state_dimension
         for plant_index, (
             _hydro_id,
             storage_position,
             lag_positions,
         ) in resolved.items():
-            x_cobre[storage_position] = state.storage.get(plant_index, 0.0)
+            x_novomodelo[storage_position] = state.storage.get(plant_index, 0.0)
             for depth, lag_position in lag_positions.items():
-                x_cobre[lag_position] = state.inflow.get((plant_index, depth), 0.0)
+                x_novomodelo[lag_position] = state.inflow.get((plant_index, depth), 0.0)
 
-        theta_cobre = _theta_cobre(cuts_list, x_cobre)
+        theta_novomodelo = _theta_novomodelo(cuts_list, x_novomodelo)
         # Synthetic fixture used synthetic_roundtrip's default cost_unit_hours.
         theta_source = _theta_source(
             records, resolved, state, cost_unit_hours=MONTH_HOURS
         )
-        assert math.isclose(theta_cobre, theta_source, rel_tol=1e-9, abs_tol=1e-6), (
-            f"state {index}: theta_cobre={theta_cobre!r} != "
+        assert math.isclose(
+            theta_novomodelo, theta_source, rel_tol=1e-9, abs_tol=1e-6
+        ), (
+            f"state {index}: theta_novomodelo={theta_novomodelo!r} != "
             f"theta_source={theta_source!r}"
         )
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 @requires_writer_binding
 def test_synthetic_roundtrip_carries_slot_dates_and_priced_date(
     tmp_path: Path,
 ) -> None:
     """D5 — the write->load round trip carries the dated self-describing
-    schema, no deck and no cobre binary.
+    schema, no deck and no novomodelo binary.
 
     Authors a one-plant, one-cut synthetic checkpoint via
     `synthetic_roundtrip` and asserts the reloaded terminal

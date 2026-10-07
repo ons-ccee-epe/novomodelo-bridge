@@ -15,9 +15,9 @@ was verified to preserve the float ``repr`` byte-for-byte.
 
 Regeneration recipe (only when an intentional, reviewed output change is made)::
 
-    COBRE_BRIDGE_UPDATE_GOLDENS=1 .venv/bin/pytest tests/comparators/test_golden_dataset.py
+    NOVOMODELO_BRIDGE_UPDATE_GOLDENS=1 .venv/bin/pytest tests/comparators/test_golden_dataset.py
 
-When ``COBRE_BRIDGE_UPDATE_GOLDENS=1`` the tests WRITE the golden files and pass;
+When ``NOVOMODELO_BRIDGE_UPDATE_GOLDENS=1`` the tests WRITE the golden files and pass;
 otherwise they READ the goldens and assert equality. Goldens are NEVER silently
 overwritten on mismatch.
 """
@@ -29,9 +29,9 @@ from pathlib import Path
 
 import polars as pl
 
-from cobre_bridge.comparators import export
-from cobre_bridge.comparators.analyze import build_results_dataset
-from cobre_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators import export
+from novomodelo_bridge.comparators.analyze import build_results_dataset
+from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from tests.golden_utils import assert_frame_golden, assert_json_golden
 
 
@@ -42,11 +42,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),
@@ -54,11 +54,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="hydro",
             entity_name="TUCURUI",
             newave_code=20,
-            cobre_id=1,
+            novomodelo_id=1,
             stage=1,
             variable="generation_mw",
             newave_value=50.0,
-            cobre_value=40.0,
+            novomodelo_value=40.0,
             abs_diff=10.0,
             rel_diff=0.2,
         ),
@@ -66,11 +66,11 @@ def _make_results() -> list[ResultComparison]:
             entity_type="thermal",
             entity_name="ANGRA",
             newave_code=30,
-            cobre_id=2,
+            novomodelo_id=2,
             stage=0,
             variable="generation_mw",
             newave_value=0.0,
-            cobre_value=5.0,
+            novomodelo_value=5.0,
             abs_diff=5.0,
             rel_diff=None,
         ),
@@ -90,7 +90,7 @@ def _make_percentiles() -> PercentileData:
             }
         ),
         nw_costs={"deficit": 1.0},
-        cobre_costs={"deficit": 2.0},
+        novomodelo_costs={"deficit": 2.0},
         nw_bus_names={0: "SUDESTE"},
         nw_hydro_names={0: "ITAIPU", 1: "TUCURUI"},
     )
@@ -122,7 +122,7 @@ def test_golden_results_summary_json_on_disk(tmp_path: Path) -> None:
         dataset,
         command="compare newave",
         source_dir=Path("/fake/nw"),
-        cobre_output_dir=Path("/fake/cobre"),
+        novomodelo_output_dir=Path("/fake/novomodelo"),
         tolerance=1e-2,
         out_dir=tmp_path,
         formats=["json"],

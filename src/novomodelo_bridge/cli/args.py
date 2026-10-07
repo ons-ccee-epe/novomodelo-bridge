@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from cobre_bridge.ui.console import get_console
+from novomodelo_bridge.ui.console import get_console
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -58,7 +58,7 @@ class CompareArgs(CommonArgs):
     """
 
     source_dir: Path
-    cobre_output_dir: Path
+    novomodelo_output_dir: Path
     tolerance: float | None
     format: list[str] | None
     out_dir: Path | None

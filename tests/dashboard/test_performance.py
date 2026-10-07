@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.tabs.performance (the Performance tab)."""
+"""Unit tests for novomodelo_bridge.dashboard.tabs.performance (the Performance tab)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
-from cobre_bridge.dashboard.tabs.performance import (
+from novomodelo_bridge.dashboard.tabs.performance import (
     TAB_ID,
     TAB_LABEL,
     TAB_ORDER,
@@ -64,7 +64,7 @@ def _make_solver_df(
 
 
 def _make_timing(n: int = 5) -> pd.DataFrame:
-    """Synthetic timing DataFrame mirroring the cobre iteration_timing schema."""
+    """Synthetic timing DataFrame mirroring the novomodelo iteration_timing schema."""
     return pd.DataFrame(
         {
             "iteration": list(range(1, n + 1)),
@@ -90,7 +90,7 @@ def _make_timing(n: int = 5) -> pd.DataFrame:
 
 
 def _make_solver_train(n_stages: int = 4, n_iters: int = 3) -> pd.DataFrame:
-    """Synthetic solver_train DataFrame matching the current cobre schema."""
+    """Synthetic solver_train DataFrame matching the current novomodelo schema."""
     rows = []
     for it in range(1, n_iters + 1):
         for stage in range(0, n_stages):
@@ -563,7 +563,7 @@ def _make_solver_train_with_openings(
 
 def test_chart_backward_opening_0_solve_time_contains_both_series() -> None:
     """The per-stage opening-0 solve chart includes both cold and warm bars."""
-    from cobre_bridge.dashboard.tabs.performance_charts import (
+    from novomodelo_bridge.dashboard.tabs.performance_charts import (
         chart_backward_opening_0_solve_time,
     )
 
@@ -577,7 +577,7 @@ def test_chart_backward_opening_0_solve_time_contains_both_series() -> None:
 
 def test_chart_backward_opening_0_simplex_contains_both_series() -> None:
     """The per-stage opening-0 simplex chart includes both cold and warm bars."""
-    from cobre_bridge.dashboard.tabs.performance_charts import (
+    from novomodelo_bridge.dashboard.tabs.performance_charts import (
         chart_backward_opening_0_simplex,
     )
 
@@ -591,7 +591,7 @@ def test_chart_backward_opening_0_simplex_contains_both_series() -> None:
 
 def test_chart_backward_opening_0_share_reports_all_metrics() -> None:
     """The share chart reports LP solves, simplex iters, and solve time shares."""
-    from cobre_bridge.dashboard.tabs.performance_charts import (
+    from novomodelo_bridge.dashboard.tabs.performance_charts import (
         chart_backward_opening_0_share,
     )
 
@@ -607,7 +607,7 @@ def test_chart_backward_opening_0_share_reports_all_metrics() -> None:
 
 def test_chart_backward_opening_0_empty_solver_returns_fallback() -> None:
     """All three opening-0 charts return a fallback <p> when no data is present."""
-    from cobre_bridge.dashboard.tabs.performance_charts import (
+    from novomodelo_bridge.dashboard.tabs.performance_charts import (
         chart_backward_opening_0_share,
         chart_backward_opening_0_simplex,
         chart_backward_opening_0_solve_time,
@@ -626,7 +626,7 @@ def test_chart_backward_opening_0_empty_solver_returns_fallback() -> None:
 
 def test_opening_0_is_slower_than_rest_in_synthetic_data() -> None:
     """Smoke check: cold multiplier >1 leaves Opening 0 with higher mean than rest."""
-    from cobre_bridge.dashboard.tabs.performance_charts import (
+    from novomodelo_bridge.dashboard.tabs.performance_charts import (
         _backward_opening_0_split,
     )
 
@@ -701,7 +701,7 @@ class TestLightweightPayloads:
         return pd.DataFrame(rows)
 
     def test_per_opening_solve_time_box_carries_no_raw_points(self) -> None:
-        from cobre_bridge.dashboard.tabs.performance_charts import (
+        from novomodelo_bridge.dashboard.tabs.performance_charts import (
             chart_backward_per_opening_solve_time,
         )
 
@@ -721,7 +721,7 @@ class TestLightweightPayloads:
         assert '"y":[' not in html
 
     def test_per_opening_simplex_box_carries_no_raw_points(self) -> None:
-        from cobre_bridge.dashboard.tabs.performance_charts import (
+        from novomodelo_bridge.dashboard.tabs.performance_charts import (
             chart_backward_per_opening_simplex,
         )
 
@@ -733,7 +733,7 @@ class TestLightweightPayloads:
         assert '"y":[' not in html
 
     def test_cuts_vs_solve_time_uses_customdata_not_text(self) -> None:
-        from cobre_bridge.dashboard.tabs.performance_charts import (
+        from novomodelo_bridge.dashboard.tabs.performance_charts import (
             chart_cuts_vs_solve_time_scatter,
         )
 
@@ -761,7 +761,7 @@ class TestLightweightPayloads:
         """
         import re
 
-        from cobre_bridge.dashboard.tabs.performance_charts import (
+        from novomodelo_bridge.dashboard.tabs.performance_charts import (
             chart_cuts_vs_solve_time_scatter,
         )
 

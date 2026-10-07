@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from cobre_bridge.newave.plants import (
+from novomodelo_bridge.newave.plants import (
     active_hydro_codes,
     active_hydros,
     existing_hydros,

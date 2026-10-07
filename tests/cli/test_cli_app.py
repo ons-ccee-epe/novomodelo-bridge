@@ -15,14 +15,14 @@ class TestTyperApp:
     def _invoke(argv: list[str]):
         from typer.testing import CliRunner
 
-        from cobre_bridge.cli import app
+        from novomodelo_bridge.cli import app
 
         return CliRunner().invoke(app, argv)
 
     def test_version_exit_zero(self) -> None:
         result = self._invoke(["--version"])
         assert result.exit_code == 0
-        assert "cobre-bridge" in result.stdout
+        assert "novomodelo-bridge" in result.stdout
 
     def test_help_lists_subcommands(self, dumb_terminal: None) -> None:
         result = self._invoke(["--help"])
@@ -42,13 +42,13 @@ class TestTyperApp:
         assert self._invoke(["compare"]).exit_code == 2
 
     def test_convert_newave_happy_path(self, tmp_path: Path) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "out"
         report = ConversionReport(hydro_count=7, stage_count=12)
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case", return_value=report
+            "novomodelo_bridge.newave.pipeline.convert_newave_case", return_value=report
         ):
             result = self._invoke(["convert", "newave", str(src), str(dst)])
         assert result.exit_code == 0

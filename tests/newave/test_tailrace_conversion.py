@@ -8,8 +8,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from cobre_bridge.newave.converters.tailrace import convert_tailrace_curves
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.converters.tailrace import convert_tailrace_curves
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 
 class _FakePolinjus:
@@ -100,7 +100,7 @@ def test_returns_none_when_empty() -> None:
     assert convert_tailrace_curves(case, _id_map([10])) is None  # type: ignore[arg-type]
 
 
-def test_schema_matches_cobre_contract() -> None:
+def test_schema_matches_novomodelo_contract() -> None:
     families = pd.DataFrame(
         [{"codigo_usina": 10, "indice_familia": 1, "nivel_montante_referencia": 500.0}]
     )

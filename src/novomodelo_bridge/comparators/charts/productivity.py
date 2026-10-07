@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.charts._shared import _build_interactive_detail_html
-from cobre_bridge.comparators.html_report import COLOR_COBRE
-from cobre_bridge.ui.html.document import escape_text
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.charts._shared import _build_interactive_detail_html
+from novomodelo_bridge.comparators.html_report import COLOR_NOVOMODELO
+from novomodelo_bridge.ui.html.document import escape_text
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
-# kind -> (pmo column, cobre-bridge column, pmo label, cobre-bridge label). Each
+# kind -> (pmo column, novomodelo-bridge column, pmo label, novomodelo-bridge label). Each
 # productivity-comparison scatter is a *static* conversion-fidelity check: The source
-# model pmo.dat productivity against the value cobre-bridge computes from the same HIDR
+# model pmo.dat productivity against the value novomodelo-bridge computes from the same HIDR
 # cadastro inputs. Both sides live in the ``productivity_detail`` frame built in
 # results.py and should land on y = x.
 _PRODUCTIVITY_KINDS: dict[str, tuple[str, str, str, str]] = {
@@ -45,7 +45,7 @@ def productivity_comparison_scatter(
 ) -> str:
     """Static conversion-fidelity scatter for one productivity *kind*.
 
-    *kind* selects the (pmo, cobre-bridge) column pair from :data:`_PRODUCTIVITY_KINDS`:
+    *kind* selects the (pmo, novomodelo-bridge) column pair from :data:`_PRODUCTIVITY_KINDS`:
     ``"point"`` (pmo ``produtibilidade_altura_65`` vs ``compute_productivity``),
     ``"equivalent"`` (pmo ``produtibilidade_equivalente_volmin_volmax`` vs
     ``stored_energy_productivity``), ``"accumulated"`` (pmo
@@ -53,8 +53,8 @@ def productivity_comparison_scatter(
     value). Both sides are derived from the same the source model inputs, so the points
     should land on the ``y = x`` reference line — this validates the conversion rather
     than comparing against the per-stage simulation output. The source model pmo is on
-    x, cobre-bridge on y; rows where either side is null are skipped. Annotated with
-    mean & max relative error ``|cobre-bridge − pmo| / pmo`` and the number of plants
+    x, novomodelo-bridge on y; rows where either side is null are skipped. Annotated with
+    mean & max relative error ``|novomodelo-bridge − pmo| / pmo`` and the number of plants
     compared.
     """
     if kind not in _PRODUCTIVITY_KINDS:
@@ -84,9 +84,9 @@ def productivity_comparison_scatter(
             "name": "Plants",
             "type": "scatter",
             "mode": "markers",
-            "marker": {"color": COLOR_COBRE, "size": 8},
+            "marker": {"color": COLOR_NOVOMODELO, "size": 8},
             "hovertemplate": (
-                "%{text}<br>pmo: %{x:.4f}<br>cobre-bridge: %{y:.4f}<extra></extra>"
+                "%{text}<br>pmo: %{x:.4f}<br>novomodelo-bridge: %{y:.4f}<extra></extra>"
             ),
         },
         {
@@ -104,7 +104,7 @@ def productivity_comparison_scatter(
     layout = {
         "title": title or f"Static productivity: {nw_label} vs {cb_label}",
         "xaxis": {"title": f"{reference_label} pmo {nw_label}"},
-        "yaxis": {"title": f"cobre-bridge {cb_label}"},
+        "yaxis": {"title": f"novomodelo-bridge {cb_label}"},
         "annotations": [
             {
                 "xref": "paper",
@@ -141,23 +141,23 @@ def productivity_per_stage_chart(
     tracking the reservoir head reached each stage. Reuses the shared interactive
     per-plant widget (:func:`_build_interactive_detail_html` — the same JS ``<select>``
     dropdown the hydro/thermal detail tabs use), so every reservoir is selectable one at
-    a time (the source model vs Cobre) rather than a hand-picked subset. Consumes the
+    a time (the source model vs Novomodelo) rather than a hand-picked subset. Consumes the
     per-(plant, stage) frame from
-    :func:`cobre_bridge.comparators.analyze.productivity_per_stage_frame`.
+    :func:`novomodelo_bridge.comparators.analyze.productivity_per_stage_frame`.
     """
     var_key = "productivity_mw_per_m3s"
     if per_stage.is_empty():
         return "<p>No per-stage productivity data available.</p>"
 
     plants: dict[tuple[str, int], dict[int, tuple[float, float]]] = {}
-    cobre_ids: dict[tuple[str, int], int] = {}
+    novomodelo_ids: dict[tuple[str, int], int] = {}
     for row in per_stage.iter_rows(named=True):
         key = (row["plant_name"], row["newave_code"])
         plants.setdefault(key, {})[row["stage"]] = (
             row["newave_value"],
-            row["cobre_value"],
+            row["novomodelo_value"],
         )
-        cobre_ids[key] = row["cobre_id"]
+        novomodelo_ids[key] = row["novomodelo_id"]
 
     if not plants:
         return "<p>No per-stage productivity data available.</p>"
@@ -168,7 +168,7 @@ def productivity_per_stage_chart(
         js_plants[f"{code}_{name}"] = {
             "name": name,
             "code": code,
-            "cobre_id": cobre_ids[(name, code)],
+            "novomodelo_id": novomodelo_ids[(name, code)],
             f"{var_key}_stages": stages,
             f"{var_key}_nw": [stage_data[s][0] for s in stages],
             f"{var_key}_cb": [stage_data[s][1] for s in stages],
@@ -181,7 +181,7 @@ def productivity_per_stage_chart(
 
 
 def _prod_blocks_pct(nw: float | None, cb: float | None) -> float | None:
-    """Relative diff (Cobre − the source model)/the source model in %, or None when the
+    """Relative diff (Novomodelo − the source model)/the source model in %, or None when the
     source model ≈ 0."""
     if nw is None or cb is None or abs(nw) <= 1e-12:
         return None
@@ -189,14 +189,14 @@ def _prod_blocks_pct(nw: float | None, cb: float | None) -> float | None:
 
 
 def productivity_blocks_table(df: pl.DataFrame, reference_label: str = "NEWAVE") -> str:
-    """Grouped building-blocks table — per metric: The source model | Cobre | Δ%.
+    """Grouped building-blocks table — per metric: The source model | Novomodelo | Δ%.
 
     One row per aligned hydro. The columns are organised into metric groups (ρ_esp,
     tailwater, losses, vmin, vmax), each spanning three sub-columns — the source model,
-    Cobre, Δ% — via a two-level header (``colspan`` on the top row). Alternate metric
+    Novomodelo, Δ% — via a two-level header (``colspan`` on the top row). Alternate metric
     groups get a subtle background tint across both header and body cells and a stronger
     left border, so the 2-by-2 (3-by-3 with Δ%) pairing is visually unmistakable. Δ% =
-    (Cobre − the source model)/the source model (blank when the source model ≈ 0); cells
+    (Novomodelo − the source model)/the source model (blank when the source model ≈ 0); cells
     with ``|Δ%| > 1%`` are highlighted. Reuses the ``cost-breakdown-table`` styling.
     """
     if df.is_empty():
@@ -244,7 +244,7 @@ def productivity_blocks_table(df: pl.DataFrame, reference_label: str = "NEWAVE")
             f'<th class="{_cls(idx, sub_index=0)}" colspan="3">'
             f"{escape_text(label)}</th>"
         )
-        for j, sub in enumerate((reference_label, "Cobre", "Δ%")):
+        for j, sub in enumerate((reference_label, "Novomodelo", "Δ%")):
             sub_cells.append(f'<th class="{_cls(idx, sub_index=j)}">{sub}</th>')
     head = f"<thead><tr>{''.join(top_cells)}</tr><tr>{''.join(sub_cells)}</tr></thead>"
 
@@ -273,7 +273,7 @@ def productivity_blocks_table(df: pl.DataFrame, reference_label: str = "NEWAVE")
     caption = (
         "<caption>Productivity Building Blocks "
         '<span class="cb-caption-note">— columns are grouped per metric: '
-        f"{reference_label} vs Cobre vs Δ%</span></caption>"
+        f"{reference_label} vs Novomodelo vs Δ%</span></caption>"
     )
     return (
         '<table class="cost-breakdown-table prod-blocks-table">'

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from cobre_bridge.comparators.model import ResultsSummary
+from novomodelo_bridge.comparators.model import ResultsSummary
 
 
 def overview_metrics(
     summary: ResultsSummary,
     nw_costs: dict[str, float] | None = None,
-    cobre_costs: dict[str, float] | None = None,
+    novomodelo_costs: dict[str, float] | None = None,
     reference_label: str = "NEWAVE",
 ) -> str:
     """Headline KPI cards for the overview tab.
@@ -18,18 +18,18 @@ def overview_metrics(
     Total Comparisons / Entity Types / Variables triple was meta about
     the report itself and offered no operational insight.
     """
-    from cobre_bridge.comparators.html_report import (
+    from novomodelo_bridge.comparators.html_report import (
         metric_card,
         metrics_grid,
     )
-    from cobre_bridge.ui.theme import COMPARISON_COLORS
+    from novomodelo_bridge.ui.theme import COMPARISON_COLORS
 
     # Pull thermal-generation cost only (single-category NPV). The source model parcela
-    # "GERACAO TERMICA" vs Cobre ``thermal_cost`` + the GNL ``anticipated_thermal_cost``
+    # "GERACAO TERMICA" vs Novomodelo ``thermal_cost`` + the GNL ``anticipated_thermal_cost``
     # (matching the "Thermal Generation" ``_COST_MAP`` category; anticipated is 0 /
     # absent on non-GNL runs).
     nw_thermal = (nw_costs or {}).get("GERACAO TERMICA", 0.0)
-    _cb = cobre_costs or {}
+    _cb = novomodelo_costs or {}
     cb_thermal = _cb.get("thermal_cost", 0.0) + _cb.get("anticipated_thermal_cost", 0.0)
     diff = cb_thermal - nw_thermal
     pct = (diff / nw_thermal * 100.0) if abs(nw_thermal) > 1e-6 else float("nan")
@@ -42,7 +42,7 @@ def overview_metrics(
             return "—"
         return f"{v:+.1f}%"
 
-    # Color the Δ cards based on sign (Cobre overshoot = red, undershoot = green).
+    # Color the Δ cards based on sign (Novomodelo overshoot = red, undershoot = green).
     diff_color = (
         COMPARISON_COLORS.get("diff", "#DC4C4C")
         if diff > 0
@@ -57,12 +57,12 @@ def overview_metrics(
         ),
         metric_card(
             _bn(cb_thermal),
-            "Cobre Thermal Cost (10⁹ R$, NPV)",
-            color=COMPARISON_COLORS.get("cobre"),
+            "Novomodelo Thermal Cost (10⁹ R$, NPV)",
+            color=COMPARISON_COLORS.get("novomodelo"),
         ),
         metric_card(
             f"{diff / 1e9:+.3f}",
-            f"Δ Thermal Cost (Cobre − {reference_label}, 10⁹ R$)",
+            f"Δ Thermal Cost (Novomodelo − {reference_label}, 10⁹ R$)",
             color=diff_color,
         ),
         metric_card(

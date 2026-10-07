@@ -27,7 +27,7 @@ from datetime import date
 
 from inewave.newave import Dger
 
-from cobre_bridge.core.tolerances import BIG_M
+from novomodelo_bridge.core.tolerances import BIG_M
 
 # The source model tags post-study (static final period) seasonal data with year 9999.
 POST_STUDY_YEAR = 9999
@@ -102,7 +102,7 @@ def historical_start_date(dger: Dger) -> str:
     treated as in service since the start of the historical inflow record
     (``dger.ano_inicial_historico``), taken as January 1st of that year. Falls
     back to 1931 (the usual record start) when the field is absent, matching
-    ``newave.converters.temporal``. The date is a canonical-ordering key in Cobre, not a
+    ``newave.converters.temporal``. The date is a canonical-ordering key in Novomodelo, not a
     commissioning gate (that is ``entry_stage_id``/``exit_stage_id``), so a shared
     value orders these entities by id.
     """

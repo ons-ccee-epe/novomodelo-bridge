@@ -1,13 +1,13 @@
-"""Per-entity bound contribution model and the per-family cobre axis registry.
+"""Per-entity bound contribution model and the per-family novomodelo axis registry.
 
 Single-term special constraints and the existing minimum-outflow/thermal/head
-folds all land on the **same** per-entity bound parquet rows. cobre rejects two
+folds all land on the **same** per-entity bound parquet rows. novomodelo rejects two
 rows setting the same column for the same ``(entity, stage, block)`` and
 *replaces* (not merges) a base row with a per-block override, so the bridge
 must merge every contributor per axis into one consistent row set itself. This
 module lays the accumulator's foundation: a typed contribution record
 (:class:`BoundContribution`) and the static registry (:data:`AXES`) of which
-cobre bound axes exist per entity family — ``hydro``, ``thermal``,
+novomodelo bound axes exist per entity family — ``hydro``, ``thermal``,
 ``pumping``, ``line``, ``hydro_unit_group``, and ``contract`` — which are
 two-sided vs upper-only/lower-only, and which are block-eligible vs
 stage-level, and the per-group
@@ -15,17 +15,17 @@ stage-level, and the per-group
 contributions to one lower/upper pair.
 
 This module also resolves the grouped contributions into the two emit
-shapes cobre's replace-not-merge semantics require: :func:`resolve` groups
+shapes novomodelo's replace-not-merge semantics require: :func:`resolve` groups
 by ``(family, entity_id, stage_id, axis)`` and, per group, either intersects
 the base contributions into one all-blocks row or fully materializes one
 row per block (base contributions carried into every block) — never both.
 :func:`resolve` is generic across every registered family.
 
 Finally, :func:`build_bound_tables` fans the resolved rows out into the
-three widened parquet tables cobre reads (``hydro_bounds``,
+three widened parquet tables novomodelo reads (``hydro_bounds``,
 ``thermal_bounds``, ``pumping_bounds``): every axis resolved for the same
 ``(entity, stage, block)`` cell lands in that cell's **one** row, across
-different columns, because cobre rejects two rows for the same cell.
+different columns, because novomodelo rejects two rows for the same cell.
 ``line``, ``hydro_unit_group``, and ``contract`` rows resolve through the
 same :func:`resolve` primitive but fan into their own family-specific
 tables elsewhere — :func:`build_bound_tables` knows only the three families
@@ -41,8 +41,8 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pyarrow as pa
 
-from cobre_bridge.core.generic_constraint_builder import is_bounded
-from cobre_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.core.generic_constraint_builder import is_bounded
+from novomodelo_bridge.core.tolerances import relative_tolerance
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -55,8 +55,8 @@ class BoundContribution:
     ``family`` is one of the family strings :data:`AXES` keys on (``"hydro"``,
     ``"thermal"``, ``"pumping"``, ``"line"``, ``"hydro_unit_group"``,
     ``"contract"``); ``entity_id`` is the
-    cobre 0-based id; ``block_id`` is ``None`` for a base/all-blocks row or the
-    0-based block index for a per-block override; ``axis`` names the cobre
+    novomodelo 0-based id; ``block_id`` is ``None`` for a base/all-blocks row or the
+    0-based block index for a per-block override; ``axis`` names the novomodelo
     bound axis (a key alongside ``family`` into :data:`AXES`); ``contributor``
     is a diagnostic label identifying the source (e.g. ``"RQ"``, ``"RE_12"``,
     ``"HQ_164"``) for conflict reporting.
@@ -74,14 +74,14 @@ class BoundContribution:
 
 @dataclass(frozen=True)
 class AxisSpec:
-    """Static description of one cobre bound axis for one entity family.
+    """Static description of one novomodelo bound axis for one entity family.
 
-    ``lower_column``/``upper_column`` are the exact cobre parquet column names
+    ``lower_column``/``upper_column`` are the exact novomodelo parquet column names
     for that side, or ``None`` when the axis has no bound on that side — a
     one-sided axis, e.g. ``line``'s ``direct``/``reverse`` (upper-only) or
     ``hydro``'s ``water_withdrawal`` (lower-only); :func:`intersect` enforces
     the one-sided guard for every axis registered that way.
-    ``block_eligible`` is ``False`` for axes cobre rejects a ``block_id`` on
+    ``block_eligible`` is ``False`` for axes novomodelo rejects a ``block_id`` on
     (stage-level only, e.g. storage and water_withdrawal).
     """
 
@@ -91,11 +91,11 @@ class AxisSpec:
     block_eligible: bool
 
 
-#: The cobre bound axes this accumulator knows about, keyed by
+#: The novomodelo bound axes this accumulator knows about, keyed by
 #: ``(family, axis)``, across ``hydro``, ``thermal``, ``pumping``, ``line``,
-#: ``hydro_unit_group``, and ``contract``. Covers exactly the verified cobre
-#: axes — do not invent an axis cobre lacks (e.g. a single net-exchange axis
-#: for ``line``: cobre has no such column, only the two directional
+#: ``hydro_unit_group``, and ``contract``. Covers exactly the verified novomodelo
+#: axes — do not invent an axis novomodelo lacks (e.g. a single net-exchange axis
+#: for ``line``: novomodelo has no such column, only the two directional
 #: ``direct_mw``/``reverse_mw`` capacities registered below). A price/cost
 #: column (``contract``'s ``price_per_mwh``, ``thermal``'s
 #: ``cost_per_mwh``) is never registered here — it is not a bound, so it
@@ -210,7 +210,7 @@ def axis_spec(family: str, axis: str) -> AxisSpec:
     Raises
     ------
     ValueError
-        When ``(family, axis)`` is not a registered cobre bound axis; the
+        When ``(family, axis)`` is not a registered novomodelo bound axis; the
         message names the unknown pair.
     """
     try:
@@ -225,7 +225,7 @@ def _effective(value: float | None) -> float | None:
     """*value* as an effective bound, or ``None`` for "no bound on that side".
 
     ``None`` and a magnitude at or past
-    :data:`~cobre_bridge.core.generic_constraint_builder.UNBOUNDED` both mean
+    :data:`~novomodelo_bridge.core.generic_constraint_builder.UNBOUNDED` both mean
     unbounded (per :func:`is_bounded`). A genuine ``0.0`` is a real bound
     (e.g. a zeroed pumping minimum) and passes through unchanged.
     """
@@ -320,7 +320,7 @@ class ResolvedRow:
 def resolve(
     contribs: Sequence[BoundContribution], block_counts: Mapping[int, int]
 ) -> list[ResolvedRow]:
-    """Group *contribs* and resolve each group to cobre's two emit shapes.
+    """Group *contribs* and resolve each group to novomodelo's two emit shapes.
 
     Groups ``contribs`` by ``(family, entity_id, stage_id, axis)``. Per
     group, looks up the :class:`AxisSpec` and then either:
@@ -330,7 +330,7 @@ def resolve(
       range(block_counts[stage_id])``, :func:`intersect` is called on the
       group's base contributions (``block_id is None``) *together with*
       block ``b``'s contributions, emitting one :class:`ResolvedRow` per
-      block and no base row. This is the only way to honour cobre's
+      block and no base row. This is the only way to honour novomodelo's
       replace-not-merge column semantics without silently dropping a base
       contributor's bound on the blocks nobody overrides; or
     - **stays all-base**, when every contribution is base granularity:
@@ -426,12 +426,12 @@ def resolve(
     return rows
 
 
-#: The three cobre bound-table schemas this accumulator fans resolved rows
+#: The three novomodelo bound-table schemas this accumulator fans resolved rows
 #: into. Every non-key column is float64-nullable: a cell that resolves no
 #: contribution on some axis simply carries ``null`` there, distinct from a
 #: genuine ``0.0`` bound. ``HYDRO_BOUNDS_SCHEMA`` covers every hydro axis in
 #: :data:`AXES`, including the two-sided diversion and spillage axes that
-#: cobre's generic-constraint-authoring support added.
+#: novomodelo's generic-constraint-authoring support added.
 HYDRO_BOUNDS_SCHEMA = pa.schema(
     [
         pa.field("hydro_id", pa.int32(), nullable=False),
@@ -488,7 +488,7 @@ _FAMILY_ID_COLUMNS: Mapping[str, str] = {
 
 
 class BoundTables(NamedTuple):
-    """The three fanned-out cobre bound tables :func:`build_bound_tables` emits."""
+    """The three fanned-out novomodelo bound tables :func:`build_bound_tables` emits."""
 
     hydro: pa.Table
     thermal: pa.Table
@@ -505,7 +505,7 @@ def _empty(schema: pa.Schema) -> pa.Table:
 
 
 def build_bound_tables(rows: Sequence[ResolvedRow]) -> BoundTables:
-    """Fan *rows* out into the three per-family cobre bound tables.
+    """Fan *rows* out into the three per-family novomodelo bound tables.
 
     Groups ``rows`` by cell key ``(family, entity_id, stage_id, block_id)``.
     Every :class:`ResolvedRow` sharing a cell contributes its axis's
@@ -514,7 +514,7 @@ def build_bound_tables(rows: Sequence[ResolvedRow]) -> BoundTables:
     the cell's rows never touch stays ``None``. This is the fan-out that
     keeps two axes on the same ``(entity, stage, block)`` — e.g. an outflow
     bound and a turbined bound on the same plant/stage/block — from ever
-    becoming two parquet rows, which cobre rejects as a duplicate cell.
+    becoming two parquet rows, which novomodelo rejects as a duplicate cell.
 
     A family with no rows returns a 0-row table with the correct schema
     (see :func:`_empty`).

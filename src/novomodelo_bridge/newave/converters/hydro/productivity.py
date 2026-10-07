@@ -3,7 +3,7 @@ machinery, the production-model JSON, and the FPHA plane-reduction /
 computed-config helpers.
 
 All point / PRODT / integrated productivity math routes through the
-presentation-free :mod:`cobre_bridge.core.productivity` domain module; this module
+presentation-free :mod:`novomodelo_bridge.core.productivity` domain module; this module
 holds only the source-model-specific orchestration (temporal overrides,
 seasonal reference volumes, FICT-cascade fold-in) around that math.
 """
@@ -15,31 +15,31 @@ import logging
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.diagnostics import Diagnostic, Severity, emit
-from cobre_bridge.core.productivity import (
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.productivity import (
     compute_productivity,
     equivalent_productivity,
     integrated_productivity,
     stored_energy_productivity,
 )
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.hydro.geometry import (
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.hydro.geometry import (
     _read_volref_saz,
     _seasonal_reference_volume,
     fpha_eligible_codes,
 )
-from cobre_bridge.newave.converters.hydro.overrides import (
+from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
     _extract_temporal_overrides,
     _per_stage_drop_overrides,
 )
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 _LOG = logging.getLogger(__name__)
 
 # The point / PRODT / integrated productivity functions now live in the
-# presentation-free ``cobre_bridge.core.productivity`` domain module. These aliases
+# presentation-free ``novomodelo_bridge.core.productivity`` domain module. These aliases
 # keep hydro.py's many internal callers (and tests that import the private
 # names) working; external modules import the public names directly.
 _compute_productivity = compute_productivity
@@ -51,18 +51,18 @@ _stored_energy_productivity = stored_energy_productivity
 #
 # When the source model evaluates generation via FPHA (``dger.dat`` line 96,
 # ``funcao_producao_uhe == 0``; see :attr:`NewaveCase.fpha_enabled`), reservoir plants
-# are emitted with cobre's ``model: "fpha"`` so cobre fits the production function from
+# are emitted with novomodelo's ``model: "fpha"`` so novomodelo fits the production function from
 # the plant geometry + tailrace families instead of the bridge pre-baking a single
 # constant productivity.
 
-# The source model's tratamento-fpha distance method carries only a tolerance; cobre
+# The source model's tratamento-fpha distance method carries only a tolerance; novomodelo
 # also requires a sample count for the mean-squared-distance estimate. The source model
 # does not specify one, so we supply a reasonable default.
 _FPHA_DISTANCE_N_SAMPLES = 100
 
 
 def _parse_fpha_plane_reduction(case: NewaveCase) -> dict | None:
-    """Parse ``tratamento-fpha`` into a cobre ``fpha_plane_reduction`` block.
+    """Parse ``tratamento-fpha`` into a novomodelo ``fpha_plane_reduction`` block.
 
     The source model's treatment file carries one active line (``&``-prefixed lines are
     comments) selecting either the angle or the distance plane-reduction method::
@@ -205,8 +205,8 @@ def _fpha_computed_config(hreg: pd.Series) -> dict:
     - ``"D"`` / ``"S"`` (daily / run-of-river) → single-volume at
       ``volume_referencia`` (the reference operating volume).
 
-    Passing this as ``fitting_window`` makes cobre fit the same volume grid. Without it
-    cobre falls back to the full geometry span, which fits the "D" plants that carry a
+    Passing this as ``fitting_window`` makes novomodelo fit the same volume grid. Without it
+    novomodelo falls back to the full geometry span, which fits the "D" plants that carry a
     cadastro storage range (e.g. ITAIPU, JIRAU) as multi-volume even though the source
     model collapses them to a single volume.
     """
@@ -230,12 +230,12 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
       ``stage_ranges`` entry with ``model: "constant_productivity"`` and no
       numeric value; ``productivity_mw_per_m3s`` is supplied per-(hydro, stage)
       in ``hydro_energy_productivity.parquet`` (see
-      :func:`convert_hydro_energy_productivity`). Cross-file validation in cobre
+      :func:`convert_hydro_energy_productivity`). Cross-file validation in novomodelo
       rejects double-supply (JSON + parquet) and coverage gaps, so keeping
       productivity strictly in the parquet eliminates the conflict surface.
     - **FPHA reservoirs** (``dger`` ``funcao_producao_uhe == 0`` and the plant
       has storage swing — see :func:`fpha_eligible_codes`): ``model: "fpha"``
-      with ``fpha_config: {source: "computed"}``; cobre fits the production
+      with ``fpha_config: {source: "computed"}``; novomodelo fits the production
       function from geometry + tailrace families, so no parquet productivity is
       emitted for these plants.
 
@@ -244,9 +244,9 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     seasonal reference comes from ``volref_saz.dat``: a plant with a seasonal row is
     emitted in ``seasonal`` mode with one absolute ``reference_volume`` per season
     (``clamp(vmin + useful, vmin, vmax)``); a plant without one falls back to
-    ``percentile 0.65`` (= cobre's default, the source model's altura_65). This is
+    ``percentile 0.65`` (= novomodelo's default, the source model's altura_65). This is
     emitted for FPHA reservoirs **and** for any non-FPHA plant that has a seasonal row,
-    because cobre reads a plant's *downstream* ``reference_volume`` (via
+    because novomodelo reads a plant's *downstream* ``reference_volume`` (via
     ``downstream_id``) to set that plant's backwater — so each plant must be a correct
     reference for its upstream FPHA neighbour.
 
@@ -259,7 +259,7 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         Parsed the source model case.
     id_map:
         Pre-built entity ID map used to translate the source model plant codes to
-        0-based Cobre hydro IDs.
+        0-based Novomodelo hydro IDs.
 
     Returns
     -------
@@ -273,10 +273,10 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
     # Seasonal reference volumes (volref_saz.dat) drive the FPHA reference volume V_ref
     # — only relevant in FPHA cases. V_ref feeds both a plant's own rho_eq AND, via
-    # cobre's downstream lookup (`downstream_id`), the backwater / tailrace level of the
+    # novomodelo's downstream lookup (`downstream_id`), the backwater / tailrace level of the
     # plant ABOVE it. So we emit reference_volume for every plant that has a volref_saz
     # row (FPHA or not), so each plant is a correct backwater reference for its upstream
-    # FPHA neighbour. Plants without a row fall through to cobre's 0.65 default fraction
+    # FPHA neighbour. Plants without a row fall through to novomodelo's 0.65 default fraction
     # (= the source model's altura_65).
     seasonal_volref = _read_volref_saz(case) if case.fpha_enabled else {}
     # Load the cadastro whenever per-plant volume info is needed — for the FPHA
@@ -324,7 +324,7 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             )
         elif is_fpha:
             # FPHA reservoir with no seasonal reference: fall back to V_65 (percentile
-            # 0.65 = the source model's altura_65, and cobre's own default).
+            # 0.65 = the source model's altura_65, and novomodelo's own default).
             production_models.append(
                 {
                     "hydro_id": hydro_id,
@@ -358,7 +358,9 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     production_models.sort(key=lambda m: m["hydro_id"])
 
     result: dict = {
-        "$schema": cobre_schemas.schema_url_for("system/hydro_production_models.json")
+        "$schema": novomodelo_schemas.schema_url_for(
+            "system/hydro_production_models.json"
+        )
     }
     # File-level FPHA plane reduction (tratamento-fpha), applied to every FPHA
     # plant. Only meaningful when there is at least one FPHA plant.
@@ -439,7 +441,7 @@ def compute_per_stage_own_integrated_productivities(
         if any(o["type"] in ("CFUGA", "CMONT") for o in overrides)
     }
 
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     fict_cascade = resolve_cascade(confhd_df, cadastro)
 
@@ -553,12 +555,12 @@ def convert_hydro_energy_productivity(
     CFUGA/CMONT/seasonal overrides emit one ``stage_id = NULL`` default row;
     plants with overrides emit one row per study stage.
 
-    FPHA plants are **not** excluded: cobre's energy-conversion build derives
+    FPHA plants are **not** excluded: novomodelo's energy-conversion build derives
     their ρ_eq from this parquet override, because ``build_energy_and_templates``
     feeds the alternative "VHA geometry + ρ_esp" derivation path an *empty*
     geometry map — so the parquet override is the only working source. (The FPHA
-    production function φ itself is fit separately by cobre from geometry +
-    tailrace + efficiency.) Excluding FPHA plants makes cobre fail at load with
+    production function φ itself is fit separately by novomodelo from geometry +
+    tailrace + efficiency.) Excluding FPHA plants makes novomodelo fail at load with
     "FPHA hydro '…' cannot derive ρ_eq".
 
     ``reference_outflow_m3s`` and ``specific_productivity_mw_per_m3s_per_m`` are
@@ -584,13 +586,13 @@ def convert_hydro_energy_productivity(
     total_stages = _total_study_stages(case) if needs_per_stage else 0
 
     # FICT-cascade: when a real plant's energy-cascade traverses fictitious plants,
-    # fold those FICTs' ρ_eq into the upstream real plant's own ρ_eq so cobre's
+    # fold those FICTs' ρ_eq into the upstream real plant's own ρ_eq so novomodelo's
     # per-plant cascade sum (from ``hydro_energy_productivity.parquet`` plus the
     # rewired ``downstream_id``) reproduces the source model's
     # ``produtibilidade_acumulada_calculo_earm``.  FICT plants have ρ_esp = 0 in the
     # bundled cases, so this is numerically a no-op there — a structural fix, robust
     # to non-zero FICT productivities.
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     fict_cascade = resolve_cascade(confhd_df, cadastro)
 
@@ -660,11 +662,11 @@ def compute_per_stage_own_productivities(
 
     Used by the VminOP RHS calculation so that the absolute bound
     ``(pct/100) × useful + dead`` is computed with the **same** per-stage
-    ρ_acum that cobre uses to evaluate the LHS at solve time — otherwise
+    ρ_acum that novomodelo uses to evaluate the LHS at solve time — otherwise
     the constraint silently drifts at every stage where overrides apply
     or for any plant upstream of an overridden plant in the cascade.
 
-    Keys are the source model plant codes (not Cobre ids) since cascade traversal in
+    Keys are the source model plant codes (not Novomodelo ids) since cascade traversal in
     ``compute_accumulated_productivities`` works in the source-model-code space.
     """
     total_stages = _total_study_stages(case)
@@ -689,7 +691,7 @@ def compute_per_stage_own_productivities(
     # FICT-cascade fold-in: per-stage ρ_eq must already include any FICT
     # contribution so that the per-stage ρ_acum used by VminOP and EARM
     # accounting matches the topology rewired into ``hydros.json``.
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     fict_cascade = resolve_cascade(confhd_df, cadastro)
 
@@ -733,7 +735,7 @@ def compute_base_productivities(
 
     # FICT-cascade fold-in — keep this in lockstep with the other productivity
     # helpers so every downstream consumer sees the same effective ρ_eq.
-    from cobre_bridge.newave.converters.fict_cascade import resolve_cascade
+    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     fict_cascade = resolve_cascade(confhd_df, cadastro)
 

@@ -1,9 +1,9 @@
 ---
 paths:
-  - "src/cobre_bridge/**/*.py"
+  - "src/novomodelo_bridge/**/*.py"
 ---
 
-# Cobre-Bridge Conversion & CLI Contracts
+# Novomodelo-Bridge Conversion & CLI Contracts
 
 Repo-specific architectural contracts. Each is a contract, not a style
 preference — a plausible deviation ships wrong numbers, silent divergence
@@ -34,18 +34,18 @@ contracts** for the same operations:
   implementations that "agree except at the edges" is exactly the bug class
   `compare` exists to detect — in our own tool.
 
-## 2. TRACKED COBRE-GAP workarounds
+## 2. TRACKED NOVOMODELO-GAP workarounds
 
-Never silently adopt a bridge-side workaround for a cobre limitation:
+Never silently adopt a bridge-side workaround for a novomodelo limitation:
 
 1. Emit a log/diagnostic at the workaround site.
-2. Mark the site with a `TRACKED COBRE-GAP (Cn)` comment.
-3. Register the gap with its **removal condition** in cobre's
-   `conversion-found-improvements` registry (in the cobre repo).
+2. Mark the site with a `TRACKED NOVOMODELO-GAP (Cn)` comment.
+3. Register the gap with its **removal condition** in novomodelo's
+   `conversion-found-improvements` registry (in the novomodelo repo).
 
 These comments are **protected contracts** (`.claude/rules/comments.md` §4):
 never delete or reword one away in a cleanup pass. When the gap closes in
-cobre, the workaround and its comment leave together. Reference the registry
+novomodelo, the workaround and its comment leave together. Reference the registry
 by name, never by a machine-local path.
 
 ## 3. Source-model prose
@@ -72,7 +72,7 @@ pattern).
 - **Rich lives only in `ui/`.** No other module constructs a Console or
   imports Rich (TYPE_CHECKING imports excepted). Library code never calls
   `print()`/`sys.stdout.write` — user-facing rendering goes through
-  `cobre_bridge.ui.console`.
+  `novomodelo_bridge.ui.console`.
 - **Converters emit structured `Diagnostic` objects** (`diagnostics.emit()`),
   never pre-formatted warning strings — the Diagnostic keeps the entity names,
   stages, and values that the rendering layer turns into detail tables.
@@ -80,7 +80,7 @@ pattern).
   `_write_json`/`_write_parquet` gate that owns `dry_run`/`would_write`) —
   never a bare `json.dump`/`write_text` into the case dir that bypasses the
   dry-run contract.
-- **Reads of cobre output route through `cobre_readers`/`cobre_io`** — do not
+- **Reads of novomodelo output route through `novomodelo_readers`/`novomodelo_io`** — do not
   re-open `stages.json`/`lines.json`/parquet partitions with ad-hoc path
   logic; per-block quantities are always weighted by `stages.json`
   `blocks[].hours` through the shared weighting kernels.

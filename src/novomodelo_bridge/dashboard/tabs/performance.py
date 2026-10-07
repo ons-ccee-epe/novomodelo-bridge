@@ -1,4 +1,4 @@
-"""v2 Performance tab module for the Cobre dashboard.
+"""v2 Performance tab module for the Novomodelo dashboard.
 
 Displays run summary metrics (training time, simulation time, LP solve stats),
 training iteration breakdown charts, the full timing waterfall, and LP solver
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import plotly.graph_objects as go
 
-from cobre_bridge.dashboard.tabs.performance_charts import (
+from novomodelo_bridge.dashboard.tabs.performance_charts import (
     TOP_LEVEL_PHASE_COLUMNS,
     chart_active_cuts_growth_by_stage,
     chart_backward_load_balance_per_worker,
@@ -52,7 +52,7 @@ from cobre_bridge.dashboard.tabs.performance_charts import (
     chart_timing_waterfall,
     chart_worker_wall_time_distribution,
 )
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
     metric_card,
@@ -60,11 +60,11 @@ from cobre_bridge.ui.html.document import (
     section_title,
     wrap_chart,
 )
-from cobre_bridge.ui.html.plotly import fig_to_html
-from cobre_bridge.ui.theme import COLORS
+from novomodelo_bridge.ui.html.plotly import fig_to_html
+from novomodelo_bridge.ui.theme import COLORS
 
 if TYPE_CHECKING:
-    from cobre_bridge.dashboard.data import DashboardData
+    from novomodelo_bridge.dashboard.data import DashboardData
 
 # ---------------------------------------------------------------------------
 # Module constants

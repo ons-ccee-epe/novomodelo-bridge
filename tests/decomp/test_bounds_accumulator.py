@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from cobre_bridge.decomp.bounds_accumulator import (
+from novomodelo_bridge.decomp.bounds_accumulator import (
     AXES,
     AxisSpec,
     BoundContribution,
@@ -38,7 +38,7 @@ def test_storage_axis_is_stage_level() -> None:
 
 def test_diversion_axis_is_two_sided_block_eligible() -> None:
     """Diversion widened from upper-only to two-sided —
-    cobre's generic-constraint-authoring landed ``min_diversion_m3s``
+    novomodelo's generic-constraint-authoring landed ``min_diversion_m3s``
     alongside the pre-existing ``max_diversion_m3s``."""
     spec = axis_spec("hydro", "diversion")
     assert spec.lower_column == "min_diversion_m3s"
@@ -202,7 +202,7 @@ def test_intersect_tightest_pair() -> None:
 
 def test_effective_normalizes_unbounded_sentinel_to_none() -> None:
     """``_effective`` delegates to the shared
-    :func:`cobre_bridge.core.generic_constraint_builder.is_bounded` sentinel check
+    :func:`novomodelo_bridge.core.generic_constraint_builder.is_bounded` sentinel check
     (single source) — a magnitude at the sentinel normalizes to
     ``None``, while a genuine bound passes through unchanged."""
     assert _effective(1e21) is None

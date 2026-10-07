@@ -5,11 +5,11 @@ data flows from source files to output, how the package tree is layered, which
 direction imports may flow, and how the two conversion tracks mirror each
 other. Every structural claim below is enforced by a named test, so the page
 cannot drift far from the tree without a failing build. All paths are under
-`src/cobre_bridge/`.
+`src/novomodelo_bridge/`.
 
 ## A command, end to end
 
-`cobre-bridge convert newave SRC DST` crosses four layers, top to bottom:
+`novomodelo-bridge convert newave SRC DST` crosses four layers, top to bottom:
 
 1. **`cli/`** parses the command line into a frozen args dataclass
    (`cli/args.py`) and calls one handler per command (`cli/convert.py`,
@@ -27,9 +27,9 @@ cannot drift far from the tree without a failing build. All paths are under
    hierarchy, hydro physics and productivity, calendar and stage weighting,
    the generic-constraint builder, bound-table merging, and the emission
    self-checks run on output tables before they are written.
-4. **`cobre/`** is the Cobre side: `CaseWriter`, the single funnel every JSON
+4. **`novomodelo/`** is the Novomodelo side: `CaseWriter`, the single funnel every JSON
    and Parquet file passes through (it owns `--dry-run`); the `$schema` URL
-   registry; the minimum-cobre-version policy; and readers for Cobre's
+   registry; the minimum-novomodelo-version policy; and readers for Novomodelo's
    `output/` tree.
 
 Converters are functions from the parsed case to tables and dicts. They do
@@ -41,7 +41,7 @@ or serialises them into the `--json` verdict. Rich is imported nowhere else.
 
 `compare` has the same shape with `comparators/` in the track's place:
 readers for the source model (`comparators/newave/readers.py`,
-`comparators/decomp/readers.py`) and for Cobre (`cobre/readers.py`), an
+`comparators/decomp/readers.py`) and for Novomodelo (`novomodelo/readers.py`), an
 alignment step that reuses the track's id mapping, one `ComparisonDataset`
 model, exporters, and the HTML report assembled from `comparators/charts/`.
 `dashboard/` loads a solved case's `output/` into one `DashboardData` object
@@ -53,10 +53,10 @@ and renders one module per tab under `dashboard/tabs/`. Both reuse
 | Package       | Role                                                                                                                                                      |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `core`        | Shared foundation for both tracks: diagnostics, errors, units, physics, calendar, generic-constraint format and builder. Imports only itself.               |
-| `cobre`       | Cobre-side I/O: the case writer, the schema registry, version compatibility, output readers.                                                              |
+| `novomodelo`       | Novomodelo-side I/O: the case writer, the schema registry, version compatibility, output readers.                                                              |
 | `newave`      | The NEWAVE track: spine modules plus `converters/`.                                                                                                       |
 | `decomp`      | The DECOMP track: spine modules plus `converters/` and `fcf/` (boundary cost-to-go import).                                                               |
-| `comparators` | Source-vs-Cobre comparison, twin-tracked under `comparators/newave/` and `comparators/decomp/`, with shared chart code under `comparators/charts/`.       |
+| `comparators` | Source-vs-Novomodelo comparison, twin-tracked under `comparators/newave/` and `comparators/decomp/`, with shared chart code under `comparators/charts/`.       |
 | `ui`          | Rich terminal rendering (`ui/console.py`) and the HTML theme and document helpers (`ui/theme.py`, `ui/html/`). The only package that imports Rich.       |
 | `dashboard`   | The interactive Plotly dashboard: a data layer plus one module per tab.                                                                                  |
 | `cli`         | Typer wiring and the command handlers. Top of the stack; nothing imports it.                                                                             |
@@ -72,12 +72,12 @@ A package may import itself and the packages below it, never sideways or up:
 | Package       | May import                                                                          |
 | ------------- | ----------------------------------------------------------------------------------- |
 | `core`        | `core`                                                                              |
-| `cobre`       | `core`, `cobre`                                                                     |
-| `ui`          | `core`, `cobre`, `ui`                                                               |
-| `newave`      | `core`, `cobre`, `newave`                                                           |
-| `decomp`      | `core`, `cobre`, `decomp`                                                           |
-| `comparators` | `core`, `cobre`, `comparators`, plus `ui.theme` and `ui.html` (not the Rich console) |
-| `dashboard`   | `core`, `cobre`, `dashboard`, plus `ui.theme` and `ui.html`                         |
+| `novomodelo`       | `core`, `novomodelo`                                                                     |
+| `ui`          | `core`, `novomodelo`, `ui`                                                               |
+| `newave`      | `core`, `novomodelo`, `newave`                                                           |
+| `decomp`      | `core`, `novomodelo`, `decomp`                                                           |
+| `comparators` | `core`, `novomodelo`, `comparators`, plus `ui.theme` and `ui.html` (not the Rich console) |
+| `dashboard`   | `core`, `novomodelo`, `dashboard`, plus `ui.theme` and `ui.html`                         |
 | `cli`         | everything                                                                          |
 
 Two refinements: `comparators/newave/` may additionally import `newave`, and
@@ -116,7 +116,7 @@ tracks need one, it moves to `core/`.
 - **A new converter** is a module under a track's `converters/` that takes
   the parsed case and the id map and returns tables or dicts. Wire it into
   that track's `pipeline.py`, write its output through the `CaseWriter`, and
-  for a new output file register the `$schema` URL in `cobre/schemas.py`.
+  for a new output file register the `$schema` URL in `novomodelo/schemas.py`.
   Emit a `Diagnostic` for anything degraded. Describe the output's fields and
   their deck sources in the track's TOML under `docs/lineage/` and regenerate
   the data map; the lineage tests fail on an emitted field with no entry.
@@ -125,9 +125,9 @@ tracks need one, it moves to `core/`.
 - **A new CLI flag** is declared in `cli/app.py` on both tracks' commands,
   threaded through `cli/args.py`, and handled in the handler module.
   Regenerate `docs/cli.md` afterwards.
-- **A cobre limitation** the bridge has to work around is marked at the site
-  with a `TRACKED COBRE-GAP` comment, surfaced as a log line or diagnostic,
-  and recorded with its removal condition in the cobre repository. It is never
+- **A novomodelo limitation** the bridge has to work around is marked at the site
+  with a `TRACKED NOVOMODELO-GAP` comment, surfaced as a log line or diagnostic,
+  and recorded with its removal condition in the novomodelo repository. It is never
   adopted silently, and the comment is never removed in a cleanup pass.
 - **User-facing text** is self-contained: no repository paths, internal
   symbols, or build tooling in a CLI message, because most users have no

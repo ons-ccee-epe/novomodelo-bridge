@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cobre_bridge.decomp.converters.config import convert_config
+from novomodelo_bridge.decomp.converters.config import convert_config
 from tests.conftest import make_decomp_case
 
 
@@ -29,7 +29,7 @@ class _Dadger:
 class TestConvertConfigStateSpace:
     def test_convert_config_omits_state_space(self) -> None:
         # The inflow-lag depth is a property of the boundary policy, not the
-        # case inputs. With the boundary FCF deferred cobre resolves a zero
+        # case inputs. With the boundary FCF deferred novomodelo resolves a zero
         # depth, so no ``state_space`` block is emitted (reserving lag slots
         # would be dead state); the boundary-FCF importer patches the
         # cut-derived depth in only when a boundary is actually imported.
@@ -42,7 +42,7 @@ class TestConvertConfigStateSpace:
 
         # Training enumerates the explicit trunk-plus-fan node graph; every
         # stochastic class is external — inflow (the tree), load, and NCS.
-        # cobre's scheme-aware load membership admits a deterministic (std = 0)
+        # novomodelo's scheme-aware load membership admits a deterministic (std = 0)
         # external load class (it standardizes to eta = 0). The seed is a
         # schema-required inert placeholder fixed at 0 (external + enumerated
         # never samples).
@@ -60,8 +60,8 @@ class TestConvertConfigStateSpace:
             },
         }
         # Simulation is the exact weighted census over the branching graph
-        # (cobre 0.14+ wires it; the old C9 sampled fallback is retired). With
-        # no simulation.scenario_source, cobre inherits training's external one.
+        # (novomodelo 0.14+ wires it; the old C9 sampled fallback is retired). With
+        # no simulation.scenario_source, novomodelo inherits training's external one.
         expected_simulation = {
             "enabled": True,
             "selection": {"method": "enumerated"},

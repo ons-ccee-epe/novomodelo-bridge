@@ -4,7 +4,7 @@
 *useful* stored energy (MWmonth) so they compare like-for-like — all three on the
 **linear** stored-energy convention the security-curve constraint binds on:
 
-- cobre LHS  = Σ override ρ_acum(stage) · (storage_final − Vmin)
+- novomodelo LHS  = Σ override ρ_acum(stage) · (storage_final − Vmin)
 - the source model LHS = Σ override ρ_acum(stage) · VARMUH(plant, stage)   (MEDIAS-USIH)
 - bound      = original stored-bound − dead-energy (Σ ρ_acum · Vmin)
 
@@ -24,9 +24,9 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from cobre_bridge.cobre.constraint_expr import scales_storage_by_rho_acum
-from cobre_bridge.comparators.newave.constraints import apply_vminop_useful_energy
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.comparators.newave.constraints import apply_vminop_useful_energy
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo.constraint_expr import scales_storage_by_rho_acum
 
 _GC_SCHEMA = {
     "constraint_id": pl.Int32,
@@ -36,7 +36,7 @@ _GC_SCHEMA = {
 
 
 def _build_case(tmp_path: Path) -> tuple[Path, Path]:
-    """Create a minimal Cobre case: one hydro (id 0), Vmin=100, ρ_acum=2.
+    """Create a minimal Novomodelo case: one hydro (id 0), Vmin=100, ρ_acum=2.
 
     Storage trajectory: 600 hm³ at stage 0, 400 hm³ at stage 1.
     Returns ``(case_dir, output_dir)``.
@@ -122,7 +122,7 @@ def _bounds() -> pl.DataFrame:
 
 
 def _nw_hydro() -> pl.DataFrame:
-    # VARMUH (useful stored volume, hm³ above Vmin) for plant code 1 (→ cobre id 0) at
+    # VARMUH (useful stored volume, hm³ above Vmin) for plant code 1 (→ novomodelo id 0) at
     # MEDIAS stages 9 (=stage 0) and 10 (=stage 1).  With ρ_acum=2 the linear the source
     # model LHS is 2·475=950 and 2·290=580.
     return pl.DataFrame(
@@ -136,7 +136,7 @@ def _nw_hydro() -> pl.DataFrame:
 
 
 def _id_map() -> NewaveIdMap:
-    # The source model plant code 1 → cobre hydro id 0 (enumerate order).
+    # The source model plant code 1 → novomodelo hydro id 0 (enumerate order).
     return NewaveIdMap(subsystem_ids=[], hydro_codes=[1], thermal_codes=[])
 
 
@@ -156,7 +156,7 @@ def test_scales_storage_by_rho_acum_partitions_by_rho_acum() -> None:
     assert scales_storage_by_rho_acum(re_constraint) is False
 
 
-def test_cobre_lhs_is_useful_energy(tmp_path: Path) -> None:
+def test_novomodelo_lhs_is_useful_energy(tmp_path: Path) -> None:
     case, out = _build_case(tmp_path)
     nw_empty = pl.DataFrame(schema=_GC_SCHEMA)
     _, _, cb = apply_vminop_useful_energy(

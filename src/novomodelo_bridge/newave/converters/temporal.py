@@ -1,8 +1,8 @@
-"""Temporal data converter: maps the source model study horizon configuration to Cobre
+"""Temporal data converter: maps the source model study horizon configuration to Novomodelo
 JSON.
 
 Converts ``dger.dat`` and ``patamar.dat`` into the ``stages.json`` and
-``config.json`` formats expected by the Cobre solver.
+``config.json`` formats expected by the Novomodelo solver.
 """
 
 from __future__ import annotations
@@ -14,11 +14,14 @@ from datetime import date
 
 from inewave.newave import Dger
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.season_calendar import block_names, monthly_season_definitions
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.horizon import study_horizon
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.core.season_calendar import (
+    block_names,
+    monthly_season_definitions,
+)
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.horizon import study_horizon
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ def _month_hours(year: int, month: int) -> float:
 
 
 def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:  # noqa: ARG001
-    """Convert the source model temporal configuration to a Cobre ``stages.json`` dict.
+    """Convert the source model temporal configuration to a Novomodelo ``stages.json`` dict.
 
     Reads ``dger.dat`` and ``patamar.dat`` from *case* and produces a
     dict that conforms to ``stages.schema.json``.
@@ -335,7 +338,7 @@ def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:  # noqa: ARG0
     season_definitions: dict = monthly_season_definitions()
 
     result: dict = {
-        "$schema": cobre_schemas.schema_url_for("stages.json"),
+        "$schema": novomodelo_schemas.schema_url_for("stages.json"),
         "season_definitions": season_definitions,
         "policy_graph": policy_graph,
         "stages": stages,
@@ -363,7 +366,7 @@ def _is_deterministic_mode(
     When all five hold, the source model drops the stochastic machinery: training
     and simulation both replay the same single historical scenario and each stage
     samples residuals directly off the history instead of drawing from a synthetic
-    distribution.  Mirror the same configuration here so the converted cobre case
+    distribution.  Mirror the same configuration here so the converted novomodelo case
     reproduces the source model's behavior.
     """
     if (dger.num_forwards or 0) != 1:
@@ -385,7 +388,7 @@ def _historical_years_from_shist(
     case: NewaveCase,
     dger: Dger,
 ) -> list[int] | dict[str, int]:
-    """Build cobre's ``historical_years`` from ``shist.dat``.
+    """Build novomodelo's ``historical_years`` from ``shist.dat``.
 
     The source model's ``shist.dat`` controls which historical years drive the final
     simulation when ``dger.tipo_simulacao_final == 2``:
@@ -454,7 +457,7 @@ def _count_historical_years(
 
 
 def convert_config(case: NewaveCase) -> dict:
-    """Convert the source model training parameters to a Cobre ``config.json`` dict.
+    """Convert the source model training parameters to a Novomodelo ``config.json`` dict.
 
     Reads ``dger.dat`` from *case* and produces a dict that conforms
     to ``config.schema.json``.
@@ -478,7 +481,7 @@ def convert_config(case: NewaveCase) -> dict:
     num_openings: int = dger.num_aberturas or 1
 
     # consideracao_media_anual_afluencias (dger.dat line 83):
-    # 0 → classical PAR(p), maps to Cobre "pacf" 1, 2, 3 → PAR(p)-A variants; Cobre
+    # 0 → classical PAR(p), maps to Novomodelo "pacf" 1, 2, 3 → PAR(p)-A variants; Novomodelo
     # implements the exact PDDE form (the source model option 3) under "pacf_annual".
     consideracao_anual: int | None = dger.consideracao_media_anual_afluencias
     if consideracao_anual is None:
@@ -495,7 +498,7 @@ def convert_config(case: NewaveCase) -> dict:
         elif consideracao_anual in (1, 2):
             logger.warning(
                 "consideracao_media_anual_afluencias=%d (approximate PAR(p)-A) "
-                "mapped to Cobre 'pacf_annual', which implements only the exact "
+                "mapped to Novomodelo 'pacf_annual', which implements only the exact "
                 "12-axis variant (NEWAVE option 3).",
                 consideracao_anual,
             )
@@ -513,9 +516,9 @@ def convert_config(case: NewaveCase) -> dict:
 
     # impressao_estados_geracao_cortes (dger.dat line 90): when 0, the source model
     # writes the visited cut-generation states (the per-stage cortese*.dat files).
-    # Mirror that on the Cobre side via `exports.states` so the two models' visited
+    # Mirror that on the Novomodelo side via `exports.states` so the two models' visited
     # forward-pass trial points can be compared.  A None or non-zero value leaves the
-    # Cobre default (states export off).
+    # Novomodelo default (states export off).
     export_states: bool = dger.impressao_estados_geracao_cortes == 0
 
     # tipo_execucao: 0 = simulation only, 1 = training (+ simulation).
@@ -530,14 +533,14 @@ def convert_config(case: NewaveCase) -> dict:
 
     # -- Cut selection -- The source model's cut-selection knobs are independent for the
     # forward and backward passes (`selecao_de_cortes_forward` /
-    # `selecao_de_cortes_backward`); cobre's training pipeline applies a single toggle
+    # `selecao_de_cortes_backward`); novomodelo's training pipeline applies a single toggle
     # to both passes.  Mirror the union: cut selection is enabled if the source model
     # turned it on for at least one direction, and only disabled when both flags are 0.
     forward_sel: int = dger.selecao_de_cortes_forward or 0
     backward_sel: int = dger.selecao_de_cortes_backward or 0
     cut_selection_enabled: bool = (forward_sel == 1) or (backward_sel == 1)
 
-    # cobre's `training.cut_selection` keeps two always-on knobs at the top level plus a
+    # novomodelo's `training.cut_selection` keeps two always-on knobs at the top level plus a
     # tagged `selection` object that names the method and carries only that method's
     # parameters; omitting `selection` disables row selection. We mirror The source
     # model's limited-memory Level-1 selection with `method = "lml1"`. The new lml1 is
@@ -553,7 +556,7 @@ def convert_config(case: NewaveCase) -> dict:
     # -- Backward-pass scheduler --
     # Opt into ``by_node`` so each backward work unit is a (trial point, opening
     # block) pair rather than a whole trial point, with block size
-    # ceil(num_openings / 2).  This coincides with cobre's own per-node default but
+    # ceil(num_openings / 2).  This coincides with novomodelo's own per-node default but
     # pins the value taken from the source deck rather than relying on it.
     parallelism: dict = {
         "backward_scheduler": {
@@ -609,7 +612,7 @@ def convert_config(case: NewaveCase) -> dict:
             sim_source["historical_years"] = historical_years
             # In historical mode each scenario is one (start-year, member) tuple; the
             # number of scenarios is fully determined by the size of the historical
-            # pool.  Override num_series_sinteticas so the cobre case doesn't request
+            # pool.  Override num_series_sinteticas so the novomodelo case doesn't request
             # more scenarios than the source model generates.
             simulation_section["selection"]["num_scenarios"] = _count_historical_years(
                 historical_years
@@ -617,17 +620,17 @@ def convert_config(case: NewaveCase) -> dict:
         simulation_section["scenario_source"] = sim_source
 
     # Deterministic-mode workaround: force max_order = 0 so the LP carries
-    # no inflow-lag state.  Cobre's SDDP exhibits a negative-gap regression
+    # no inflow-lag state.  Novomodelo's SDDP exhibits a negative-gap regression
     # when ``max_par_order > 0`` is combined with the sparse cut mask (see
     # the per-hydro lag exclusion in ``StageIndexer::set_nonzero_mask``);
     # disabling lags is the only safe knob from the bridge side until the
-    # cobre-side fix lands.  Lag state has no informational value in a
+    # novomodelo-side fix lands.  Lag state has no informational value in a
     # deterministic case — every stage already sees a single fixed inflow
     # path — so this is a no-op for correctness on this run mode.
     if deterministic and max_order > 0:
         logger.info(
             "Deterministic mode: forcing estimation.max_order from %d to 0 "
-            "to avoid cobre SDDP negative-gap regression triggered by the "
+            "to avoid novomodelo SDDP negative-gap regression triggered by the "
             "sparse cut mask when inflow-lag state is present.",
             max_order,
         )
@@ -639,7 +642,7 @@ def convert_config(case: NewaveCase) -> dict:
         estimation["order_selection"] = order_selection
 
     config: dict = {
-        "$schema": cobre_schemas.schema_url_for("config.json"),
+        "$schema": novomodelo_schemas.schema_url_for("config.json"),
         "estimation": estimation,
         "training": training_section,
         "modeling": {

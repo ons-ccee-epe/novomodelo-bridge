@@ -1,4 +1,4 @@
-"""Command-line interface entry point for cobre-bridge."""
+"""Command-line interface entry point for novomodelo-bridge."""
 
 from __future__ import annotations
 
@@ -8,28 +8,32 @@ from typing import Annotated
 
 import typer
 
-from cobre_bridge import __version__
-from cobre_bridge.cli.args import (
+from novomodelo_bridge import __version__
+from novomodelo_bridge.cli.args import (
     CheckArgs,
     CompareArgs,
     ConvertArgs,
     DashboardArgs,
 )
-from cobre_bridge.cli.check import _run_check, _run_decomp_check
-from cobre_bridge.cli.compare import _run_decomp_comparison, _run_newave_comparison
-from cobre_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
-from cobre_bridge.cli.dashboard import _run_dashboard
+from novomodelo_bridge.cli.check import _run_check, _run_decomp_check
+from novomodelo_bridge.cli.compare import _run_decomp_comparison, _run_newave_comparison
+from novomodelo_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
+from novomodelo_bridge.cli.dashboard import _run_dashboard
 
 # noqa: F401 below -- re-exported so `cli._NULL_HANDLER` keeps resolving for the
 # ``test_configure_logging_levels`` import + the ``cli._configure_logging`` spy sites.
-from cobre_bridge.cli.logging_config import NULL_HANDLER as _NULL_HANDLER  # noqa: F401
-from cobre_bridge.cli.logging_config import configure_logging as _configure_logging
-from cobre_bridge.cli.logging_config import restore_log_file_handler
-from cobre_bridge.cli.validate import (
+from novomodelo_bridge.cli.logging_config import (
+    NULL_HANDLER as _NULL_HANDLER,  # noqa: F401
+)
+from novomodelo_bridge.cli.logging_config import configure_logging as _configure_logging
+from novomodelo_bridge.cli.logging_config import restore_log_file_handler
+from novomodelo_bridge.cli.validate import (
     _partition_validation_warnings as _partition_validation_warnings,
 )
-from cobre_bridge.cobre.compat import MIN_COBRE_VERSION as MIN_COBRE_VERSION
-from cobre_bridge.ui.console import print_status
+from novomodelo_bridge.novomodelo.compat import (
+    MIN_NOVOMODELO_VERSION as MIN_NOVOMODELO_VERSION,
+)
+from novomodelo_bridge.ui.console import print_status
 
 # ---------------------------------------------------------------------------
 # Typer application
@@ -72,11 +76,11 @@ _FormatOpt = Annotated[
     typer.Option(
         "--format",
         metavar="FORMAT",
-        envvar="COBRE_BRIDGE_FORMAT",
+        envvar="NOVOMODELO_BRIDGE_FORMAT",
         help=(
             "Output format(s): console,html,csv,parquet,json,all. "
             "Comma-separated and/or repeatable. Overridable via "
-            "COBRE_BRIDGE_FORMAT or cobre-bridge.toml. "
+            "NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. "
             "(default: console,parquet,json)"
         ),
     ),
@@ -85,11 +89,11 @@ _OutDirOpt = Annotated[
     Path | None,
     typer.Option(
         "--out-dir",
-        envvar="COBRE_BRIDGE_OUT_DIR",
+        envvar="NOVOMODELO_BRIDGE_OUT_DIR",
         help=(
-            "Directory for file artifacts. Overridable via COBRE_BRIDGE_OUT_DIR "
-            "or cobre-bridge.toml. "
-            "(default: <cobre_output_dir>/comparison_artifacts)."
+            "Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR "
+            "or novomodelo-bridge.toml. "
+            "(default: <novomodelo_output_dir>/comparison_artifacts)."
         ),
     ),
 ]
@@ -106,23 +110,25 @@ _JsonOpt = Annotated[
 _ToleranceOpt = Annotated[
     float | None,
     typer.Option(
-        envvar="COBRE_BRIDGE_RESULTS_TOLERANCE",
+        envvar="NOVOMODELO_BRIDGE_RESULTS_TOLERANCE",
         help=(
             "Relative tolerance for results comparison (default 1e-2; "
-            "overridable via COBRE_BRIDGE_RESULTS_TOLERANCE or cobre-bridge.toml)."
+            "overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml)."
         ),
     ),
 ]
 
 app = typer.Typer(
-    name="cobre-bridge",
-    help="Convert power system data to Cobre input format.",
+    name="novomodelo-bridge",
+    help="Convert power system data to Novomodelo input format.",
     no_args_is_help=True,
     rich_markup_mode="rich",
     add_completion=True,
 )
-convert_app = typer.Typer(help="Convert data from a source format to Cobre JSON.")
-compare_app = typer.Typer(help="Compare source model inputs/results against Cobre.")
+convert_app = typer.Typer(help="Convert data from a source format to Novomodelo JSON.")
+compare_app = typer.Typer(
+    help="Compare source model inputs/results against Novomodelo."
+)
 check_app = typer.Typer(help="Validate source-model inputs without converting.")
 app.add_typer(convert_app, name="convert")
 app.add_typer(compare_app, name="compare")
@@ -131,7 +137,7 @@ app.add_typer(check_app, name="check")
 
 def _version_callback(value: bool) -> None:
     if value:
-        print_status(f"cobre-bridge {__version__}")
+        print_status(f"novomodelo-bridge {__version__}")
         raise typer.Exit()
 
 
@@ -147,20 +153,20 @@ def _root(
         ),
     ] = False,
 ) -> None:
-    """Convert power system data to Cobre input format."""
+    """Convert power system data to Novomodelo input format."""
 
 
 @convert_app.command("newave")
 def _convert_newave(
     src: Annotated[Path, typer.Argument(help="Path to the NEWAVE case directory.")],
     dst: Annotated[
-        Path, typer.Argument(help="Path to the output Cobre case directory.")
+        Path, typer.Argument(help="Path to the output Novomodelo case directory.")
     ],
     validate: Annotated[
         bool,
         typer.Option(
             "--validate",
-            help="After conversion, validate the output with the cobre package.",
+            help="After conversion, validate the output with the novomodelo package.",
         ),
     ] = False,
     force: Annotated[
@@ -194,7 +200,7 @@ def _convert_newave(
     no_color: _NoColorOpt = False,
     quiet: _QuietOpt = False,
 ) -> None:
-    """Convert a NEWAVE case directory to a Cobre case directory."""
+    """Convert a NEWAVE case directory to a Novomodelo case directory."""
     _configure_logging(verbose, log_file)
     _run_newave_conversion(
         ConvertArgs(
@@ -217,7 +223,7 @@ def _convert_newave(
 def _convert_decomp(
     src: Annotated[Path, typer.Argument(help="Path to the DECOMP deck directory.")],
     dst: Annotated[
-        Path, typer.Argument(help="Path to the output Cobre case directory.")
+        Path, typer.Argument(help="Path to the output Novomodelo case directory.")
     ],
     force: Annotated[
         bool,
@@ -230,7 +236,7 @@ def _convert_decomp(
         bool,
         typer.Option(
             "--validate",
-            help="After conversion, validate the output with the cobre package.",
+            help="After conversion, validate the output with the novomodelo package.",
         ),
     ] = False,
     diagnostics_json: Annotated[
@@ -259,8 +265,8 @@ def _convert_decomp(
             help=(
                 "Skip importing the deck's boundary FCF. By default, when the "
                 "deck declares cortes/cortesh files (its FC records), they are "
-                "imported as a terminal-stage cobre policy checkpoint via an "
-                "in-process 1-iteration cobre pass (slow; requires cobre-python). "
+                "imported as a terminal-stage novomodelo policy checkpoint via an "
+                "in-process 1-iteration novomodelo pass (slow; requires novomodelo-python). "
                 "Pass this for a quick conversion without the terminal FCF. "
                 "The FCF is always skipped under --dry-run."
             ),
@@ -271,7 +277,7 @@ def _convert_decomp(
     no_color: _NoColorOpt = False,
     quiet: _QuietOpt = False,
 ) -> None:
-    """Convert a DECOMP deck revision to a Cobre case directory.
+    """Convert a DECOMP deck revision to a Novomodelo case directory.
 
     Deck features the conversion leaves out (``check decomp`` lists them per
     deck) are reported as warnings, never dropped silently. The boundary FCF is
@@ -306,8 +312,8 @@ def _compare_decomp(
             "result files, all directly in it)."
         ),
     ],
-    cobre_output_dir: Annotated[
-        Path, typer.Argument(help="Path to the Cobre output directory.")
+    novomodelo_output_dir: Annotated[
+        Path, typer.Argument(help="Path to the Novomodelo output directory.")
     ],
     tolerance: _ToleranceOpt = None,
     fmt: _FormatOpt = None,
@@ -318,12 +324,12 @@ def _compare_decomp(
     no_color: _NoColorOpt = False,
     quiet: _QuietOpt = False,
 ) -> None:
-    """Compare a DECOMP run's published operation against Cobre's simulation.
+    """Compare a DECOMP run's published operation against Novomodelo's simulation.
 
     Informational: always exits 0, reporting divergences without failing.
 
     Two caveats apply to the generated report. First, the Overview tab's NPV
-    cost cards compare DECOMP's undiscounted-nominal costs against Cobre's
+    cost cards compare DECOMP's undiscounted-nominal costs against Novomodelo's
     time-discounted costs: DECOMP's own cost report carries no per-stage
     discount factor, so none is fabricated on that side, and the two totals
     are not on the same time-value footing. Second, percentile bands are
@@ -335,7 +341,7 @@ def _compare_decomp(
     _run_decomp_comparison(
         CompareArgs(
             source_dir=decomp_dir,
-            cobre_output_dir=cobre_output_dir,
+            novomodelo_output_dir=novomodelo_output_dir,
             format=fmt,
             out_dir=out_dir,
             tolerance=tolerance,
@@ -357,8 +363,8 @@ def _compare_newave(
             "result files, all directly in it)."
         ),
     ],
-    cobre_output_dir: Annotated[
-        Path, typer.Argument(help="Path to the Cobre output directory.")
+    novomodelo_output_dir: Annotated[
+        Path, typer.Argument(help="Path to the Novomodelo output directory.")
     ],
     tolerance: _ToleranceOpt = None,
     fmt: _FormatOpt = None,
@@ -369,7 +375,7 @@ def _compare_newave(
     no_color: _NoColorOpt = False,
     quiet: _QuietOpt = False,
 ) -> None:
-    """Compare NEWAVE published results against Cobre simulation output.
+    """Compare NEWAVE published results against Novomodelo simulation output.
 
     Informational: always exits 0, reporting divergences without failing.
     """
@@ -377,7 +383,7 @@ def _compare_newave(
     _run_newave_comparison(
         CompareArgs(
             source_dir=newave_dir,
-            cobre_output_dir=cobre_output_dir,
+            novomodelo_output_dir=novomodelo_output_dir,
             tolerance=tolerance,
             format=fmt,
             out_dir=out_dir,
@@ -442,7 +448,9 @@ def _check_decomp(
 
 @app.command("dashboard")
 def _dashboard(
-    case_dir: Annotated[Path, typer.Argument(help="Path to the Cobre case directory.")],
+    case_dir: Annotated[
+        Path, typer.Argument(help="Path to the Novomodelo case directory.")
+    ],
     output: Annotated[
         Path | None,
         typer.Option(
@@ -467,7 +475,7 @@ def _dashboard(
     no_color: _NoColorOpt = False,
     quiet: _QuietOpt = False,
 ) -> None:
-    """Generate an interactive HTML dashboard from Cobre simulation results."""
+    """Generate an interactive HTML dashboard from Novomodelo simulation results."""
     _configure_logging(verbose, log_file)
     _run_dashboard(
         DashboardArgs(
@@ -486,11 +494,11 @@ def _dashboard(
 def main() -> None:
     """Console entry point: run the Typer app, restoring the logger afterwards.
 
-    The thin wrapper restores the ``cobre_bridge`` logger ``propagate`` flag that
+    The thin wrapper restores the ``novomodelo_bridge`` logger ``propagate`` flag that
     ``_configure_logging`` flips, and removes + closes any ``--log-file``
     ``FileHandler`` it attached, so a real CLI run never leaks logging state.
     """
-    pkg_logger = logging.getLogger("cobre_bridge")
+    pkg_logger = logging.getLogger("novomodelo_bridge")
     prior_propagate = pkg_logger.propagate
     try:
         app()

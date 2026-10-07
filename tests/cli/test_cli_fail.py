@@ -1,6 +1,6 @@
-"""Unit tests for the ``_fail`` CLI failure helper (``cobre_bridge.cli.failure``).
+"""Unit tests for the ``_fail`` CLI failure helper (``novomodelo_bridge.cli.failure``).
 
-Tier 1 — pure Python, imports no cobre. These tests call ``_fail`` directly to
+Tier 1 — pure Python, imports no novomodelo. These tests call ``_fail`` directly to
 isolate the helper's own envelope/rendering/exit-code contract from the CLI
 wiring around each early-exit call site; that wiring is covered separately by
 the fail-path subprocess tests (``test_cli_convert_failpaths.py``,
@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 import typer
 
-from cobre_bridge.cli.args import CompareArgs, ConvertArgs, DashboardArgs
-from cobre_bridge.cli.failure import _fail
-from cobre_bridge.cli.verdict import convert_summary
-from cobre_bridge.core.errors import SourceFileError
+from novomodelo_bridge.cli.args import CompareArgs, ConvertArgs, DashboardArgs
+from novomodelo_bridge.cli.failure import _fail
+from novomodelo_bridge.cli.verdict import convert_summary
+from novomodelo_bridge.core.errors import SourceFileError
 
 
 def _convert_args(*, json_output: bool) -> ConvertArgs:
@@ -58,7 +58,7 @@ def _compare_args(*, json_output: bool) -> CompareArgs:
         no_color=True,
         quiet=False,
         source_dir=Path("source"),
-        cobre_output_dir=Path("cobre"),
+        novomodelo_output_dir=Path("novomodelo"),
         tolerance=None,
         format=None,
         out_dir=None,

@@ -1,29 +1,29 @@
-"""Generic-constraint (RE, AGRINT, VminOP) chart: source-model vs Cobre LHS."""
+"""Generic-constraint (RE, AGRINT, VminOP) chart: source-model vs Novomodelo LHS."""
 
 from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators.constraints import ResolvedBound
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators.constraints import ResolvedBound
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.ui.html.plotly import facet_grid
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.ui.html.plotly import facet_grid
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
 def constraints_comparison_chart(
     constraints: list[dict],
     lhs_newave: pl.DataFrame,
-    lhs_cobre: pl.DataFrame,
+    lhs_novomodelo: pl.DataFrame,
     bound_by_constraint: dict[int, dict[int, ResolvedBound]],
     reference_label: str = "NEWAVE",
 ) -> str:
-    """Per-constraint small-multiples comparing the source model vs Cobre LHS vs bound.
+    """Per-constraint small-multiples comparing the source model vs Novomodelo LHS vs bound.
 
     One panel per constraint. Each panel shows the per-stage the source model LHS (mean
-    evaluated from MEDIAS-USIH / int*.out outputs), the Cobre LHS (mean across scenarios
+    evaluated from MEDIAS-USIH / int*.out outputs), the Novomodelo LHS (mean across scenarios
     and blocks from simulation parquet), and the constraint bound (dashed) overlaid as a
     horizontal-step series for every stage where the bound is defined. Constraints with
     no LHS data on either side are skipped silently.
@@ -32,12 +32,12 @@ def constraints_comparison_chart(
     ----------
     constraints:
         Constraint dicts loaded from ``generic_constraints.json``.
-    lhs_newave, lhs_cobre:
+    lhs_newave, lhs_novomodelo:
         DataFrames with columns ``constraint_id``, ``stage_id``,
         ``lhs_value``.
     bound_by_constraint:
         Output of
-        :func:`cobre_bridge.comparators.constraints.per_stage_bounds`
+        :func:`novomodelo_bridge.comparators.constraints.per_stage_bounds`
         — maps ``constraint_id`` to ``{stage_id: ResolvedBound}`` (the
         resolved limit value plus its derived shape label).
 
@@ -58,16 +58,16 @@ def constraints_comparison_chart(
             nw_by_cid.setdefault(int(r["constraint_id"]), {})[int(r["stage_id"])] = (
                 float(r["lhs_value"])
             )
-    if not lhs_cobre.is_empty():
-        for r in lhs_cobre.iter_rows(named=True):
+    if not lhs_novomodelo.is_empty():
+        for r in lhs_novomodelo.iter_rows(named=True):
             cb_by_cid.setdefault(int(r["constraint_id"]), {})[int(r["stage_id"])] = (
                 float(r["lhs_value"])
             )
 
-    # A source-model↔Cobre comparison needs the reference (source-model) LHS:
+    # A source-model↔Novomodelo comparison needs the reference (source-model) LHS:
     # facet only the constraints the reference side actually evaluated an LHS
-    # for. Constraints with a bound (or a Cobre-only LHS) but NO reference LHS
-    # — the cobre-only FI/QBOM terms, 52 of 76 on the mar-26 deck — have nothing
+    # for. Constraints with a bound (or a Novomodelo-only LHS) but NO reference LHS
+    # — the novomodelo-only FI/QBOM terms, 52 of 76 on the mar-26 deck — have nothing
     # to compare against, and faceting them wallpapered the tab with dozens of
     # reference-less panels (a 38-row grid). Dropping them keeps the grid a
     # readable size and every panel a genuine comparison.
@@ -114,7 +114,7 @@ def constraints_comparison_chart(
             "anchor": xa,
         }
 
-        # Union of stages with any data (the source model LHS, Cobre LHS, or bound).
+        # Union of stages with any data (the source model LHS, Novomodelo LHS, or bound).
         stages = sorted(
             set(nw_by_cid.get(cid, {}).keys())
             | set(cb_by_cid.get(cid, {}).keys())
@@ -146,7 +146,7 @@ def constraints_comparison_chart(
                 }
             )
 
-        # Cobre LHS line.
+        # Novomodelo LHS line.
         cb_x_present = [s for s, v in zip(stages, cb_y) if v is not None]
         cb_v_present = [v for v in cb_y if v is not None]
         if cb_x_present:
@@ -154,10 +154,10 @@ def constraints_comparison_chart(
                 {
                     "x": cb_x_present,
                     "y": cb_v_present,
-                    "name": "Cobre LHS (mean)",
+                    "name": "Novomodelo LHS (mean)",
                     "type": "scatter",
                     "mode": "lines",
-                    "line": {"color": COLOR_COBRE, "width": 2},
+                    "line": {"color": COLOR_NOVOMODELO, "width": 2},
                     "xaxis": xa,
                     "yaxis": ya,
                     "legendgroup": "cb",

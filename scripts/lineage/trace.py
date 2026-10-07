@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .model import REPO_ROOT, registers
 
-SRC = REPO_ROOT / "src" / "cobre_bridge"
+SRC = REPO_ROOT / "src" / "novomodelo_bridge"
 Token = tuple[str, str | None]
 
 # ``NewaveCase`` / ``DecompCase`` properties that are not deck files themselves
@@ -192,7 +192,7 @@ def trace(track: str) -> dict[str, set[Token]]:
     from the result (never mapped to an empty set).
     """
     pkg = _load(track)
-    pipeline = f"cobre_bridge.{track}.pipeline"
+    pipeline = f"novomodelo_bridge.{track}.pipeline"
     mod = pkg.modules[pipeline]
     producers: dict[str, set[tuple[str, str]] | None] = {}
 

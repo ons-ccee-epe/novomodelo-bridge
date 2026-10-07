@@ -8,7 +8,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from cobre_bridge.cobre.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 
 
 def test_write_json_appends_trailing_newline(tmp_path: Path) -> None:

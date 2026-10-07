@@ -6,7 +6,7 @@ variable count, and the single worst variable plus its sMAPE. It is the
 single-source-of-truth headline consumed by the compare console output: every
 number is read straight from ``dataset.summary`` rows, and NO statistic is
 recomputed here (no sMAPE, no tolerance re-application). The tolerance was
-already applied when the source-model-vs-Cobre summary was built upstream.
+already applied when the source-model-vs-Novomodelo summary was built upstream.
 
 It is a leaf: it imports nothing from the other comparators at runtime (the
 :class:`ComparisonDataset` type is referenced under ``TYPE_CHECKING`` only),
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from cobre_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
 
 
 @dataclass(frozen=True)

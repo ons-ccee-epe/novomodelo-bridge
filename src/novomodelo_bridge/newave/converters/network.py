@@ -1,4 +1,4 @@
-"""Network entity converter: maps the source model bus and line data to Cobre network
+"""Network entity converter: maps the source model bus and line data to Novomodelo network
 JSON."""
 
 from __future__ import annotations
@@ -10,12 +10,12 @@ from collections.abc import Mapping, Sequence
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.pandas_utils import is_na
-from cobre_bridge.core.penalties import PCORTEOL, PEXC, PINT, hydro_penalty_costs
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.horizon import POST_STUDY_YEAR, historical_start_date
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.core.pandas_utils import is_na
+from novomodelo_bridge.core.penalties import PCORTEOL, PEXC, PINT, hydro_penalty_costs
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, historical_start_date
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 _LOG = logging.getLogger(__name__)
 
@@ -27,23 +27,23 @@ _LOG = logging.getLogger(__name__)
 # "Penalidades
 # (Ex.: Penalid.dat)" and the internal-default tables on pages 87–88.
 #
-# Time-aspect summary (re-derived from cobre's SDDP LP builder, matrix.rs):
+# Time-aspect summary (re-derived from novomodelo's SDDP LP builder, matrix.rs):
 #
-# Every cobre penalty coefficient in penalties.json is multiplied by some
+# Every novomodelo penalty coefficient in penalties.json is multiplied by some
 # hours quantity before entering the LP objective. The variable it sits on
 # (MW, m³/s, or hm³) and the time multiplier (block_hours, total_stage_hours,
 # or none) together determine the unit the user-facing value must be in.
 # The pattern is "(penalty × hours) × variable_value = R$":
 #
 # Family A — Power columns (MW), per block. Variable carries MW for one block.
-#   Cobre: `objective[col] = penalty × block_hours`
+#   Novomodelo: `objective[col] = penalty × block_hours`
 #   Cost  = (penalty × block_h) × MW = penalty × MWh → penalty unit R$/MWh.
 #   Affected: bus.deficit_segments[].cost, bus.excess_cost, line.exchange_cost,
 # ncs.curtailment_cost, hydro.generation_violation_below_cost. → Conversion from the
 # source model R$/MWh: **direct** (no productivity factor).
 #
 # Family B — Flow columns (m³/s), per block. Variable carries m³/s for one block.
-#   Cobre: `objective[col] = penalty × block_hours`
+#   Novomodelo: `objective[col] = penalty × block_hours`
 # Cost  = (penalty × block_h) × m³/s.  For this to equal R$ the penalty must be R$/(m³/s
 # · h). The source model supplies R$/MWh; the per-flow-per-hour
 #   form requires multiplying by ρ [MW/(m³/s)]:
@@ -52,11 +52,11 @@ _LOG = logging.getLogger(__name__)
 #   hydro.outflow_violation_(below|above)_cost, hydro.turbined_violation_below_cost.
 #   → Conversion: **× ρ_avg** (`PROD_MEDIA_SIN`).
 #
-# Family C — Flow columns (m³/s), per stage. Same as B but cobre uses
+# Family C — Flow columns (m³/s), per stage. Same as B but novomodelo uses
 # `total_stage_hours` instead of `block_hours`.
 #   Affected: hydro.water_withdrawal_violation_(pos|neg)_cost,
 #   hydro.evaporation_violation_(pos|neg)_cost,
-# hydro.inflow_nonnegativity_cost. Cobre's docstring on evaporation_violation_cost says
+# hydro.inflow_nonnegativity_cost. Novomodelo's docstring on evaporation_violation_cost says
 # "$/mm" but the actual LP column (matrix.rs) reads f_evap_plus/minus as flow
 # rates in m³/s — same unit as withdrawal. The "_m3s" suffix in the simulation output
 # `evaporation_violation_pos_m3s` confirms this. → Conversion: **× ρ_max_acum**
@@ -64,13 +64,13 @@ _LOG = logging.getLogger(__name__)
 # ρ_avg** for the others.
 #
 # Family D — Volume columns (hm³), per stage. Variable carries hm³ once per stage.
-#   Cobre: `objective[col] = penalty` (no time multiplier).
+#   Novomodelo: `objective[col] = penalty` (no time multiplier).
 #   Cost  = penalty × hm³ = R$ → penalty unit R$/hm³.
 #   Affected: hydro.storage_violation_below_cost, hydro.filling_target_violation_cost
 #   (both currently NOT wired into the LP — slot is dormant).
 #   Conversion: 1 hm³ × ρ → MWh of energy-equivalent is `(1e6 m³ / 3600 s/h) × ρ`
 #   = 277.78 × ρ MWh (purely volumetric — 730h convention cancels). So
-#     cobre_coef [R$/hm³] = source_R$/MWh × ρ × HM3_TO_MWH_PER_RHO
+#     novomodelo_coef [R$/hm³] = source_R$/MWh × ρ × HM3_TO_MWH_PER_RHO
 #   with HM3_TO_MWH_PER_RHO = 1e6/3600 ≈ 277.78.
 #   Both slots are now DERIVED from the deficit cost via ρ_max_acum, not
 #   hard-coded: storage_violation_below_cost = 10 × MAX_CUSTO_DEFICIT × ρ_max_acum
@@ -79,22 +79,22 @@ _LOG = logging.getLogger(__name__)
 #   = 0.9 × MAX_CUSTO_DEFICIT × ρ_max_acum × HM3_TO_MWH_PER_RHO (a little below the
 #   deficit cost). Neither is a hard-coded placeholder any more.
 #
-# The source model's 730 h-per-month convention vs cobre's actual calendar block_hours
+# The source model's 730 h-per-month convention vs novomodelo's actual calendar block_hours
 # (672–744 h) introduces only a ±2% numerical drift in absolute LP cost for the Families
 # above — *because each is converted consistently*: flow/power penalties carry no
-# fixed-month factor (cobre integrates them with the real per-stage block_hours), and
+# fixed-month factor (novomodelo integrates them with the real per-stage block_hours), and
 # volume penalties carry no time multiplier (the 730 cancels in the pure-volumetric HM3
 # → MWh conversion). When that holds, all costs scale together and merit order is
 # preserved.
 #
-# ⚠️ CAVEAT — the assumption fails for any energy/STOCK quantity that cobre then
+# ⚠️ CAVEAT — the assumption fails for any energy/STOCK quantity that novomodelo then
 # prices *with* a `× block_hours` time multiplier. There the fixed 730 does NOT
-# cancel: the converted energy uses 730 while cobre integrates the slack with
+# cancel: the converted energy uses 730 while novomodelo integrates the slack with
 # the actual month hours, so the effective penalty drifts by block_hours/730 and
 # CAN flip merit order. This bit the VminOP generic constraint (security curve):
 # its LHS `Σ ρ_acum·storage` was left in ρ_acum·hm³ (≈ 2.628× the true MWmonth)
-# while cobre priced the slack `× block_hours`, pushing the effective curve
-# penalty above the deficit cost so cobre deficited instead of drawing down.
+# while novomodelo priced the slack `× block_hours`, pushing the effective curve
+# penalty above the deficit cost so novomodelo deficited instead of drawing down.
 # Fixed by converting ρ_acum to MWmonth/hm³ *per stage* — see
 # `converters/constraints.py:_vminop_energy_factor`. Any future LP constraint or
 # penalty on a stock (storage/energy) priced `× block_hours` must do the same.
@@ -116,7 +116,7 @@ _PINT_FICTITIOUS_DISCOUNT = 0.5
 
 # --- Soft fallback for ELETRI when PENALID is silent ----------------------- The source
 # model's behaviour when ELETRI is absent: use the constraint only in final simulation,
-# not in policy. Cobre can't represent that nuance, so we keep the slack enabled with a
+# not in policy. Novomodelo can't represent that nuance, so we keep the slack enabled with a
 # high penalty (10 × MAX_DEFICIT, matching The source model's evaporation/FPHA default
 # magnitude).
 _ELETRI_HIGH_MULT = 10.0
@@ -148,7 +148,7 @@ def _build_canonical_pair_to_line_id(
 
 
 def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
-    """Convert the source model subsystem data to a Cobre ``buses.json`` dict.
+    """Convert the source model subsystem data to a Novomodelo ``buses.json`` dict.
 
     Reads ``sistema.dat`` from *case*.  Each subsystem (including
     fictitious ones) becomes a bus.  Deficit segments are extracted from
@@ -210,7 +210,7 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             break
 
     # Buses model network subsystems, which have no commissioning date; treat them
-    # as in service since the historical record (Cobre uses the date only as a
+    # as in service since the historical record (Novomodelo uses the date only as a
     # canonical-ordering key, tiebroken by id).
     op_date = historical_start_date(case.dger)
 
@@ -242,7 +242,7 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     buses.sort(key=lambda b: b["id"])
 
     return {
-        "$schema": cobre_schemas.schema_url_for("system/buses.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/buses.json"),
         "buses": buses,
     }
 
@@ -255,9 +255,9 @@ def convert_bus_penalty_overrides(
 
     The source model fictitious submarkets (``custo_deficit.ficticio``) are pure
     transshipment nodes: no real load/generation, and the source model forbids energy
-    excess there.  Cobre has no hard per-bus "no excess" flag, so we override the
+    excess there.  Novomodelo has no hard per-bus "no excess" flag, so we override the
     per-bus ``excess_cost`` (sparse, per stage) to the deficit cost — symmetric
-    with unserved energy — without which Cobre dumps surplus energy at the
+    with unserved energy — without which Novomodelo dumps surplus energy at the
     fictitious node for ~free.
 
     Returns ``None`` when the case has no fictitious submarkets (no file
@@ -352,7 +352,7 @@ def _assign_flow_direction(
 
 
 def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
-    """Convert the source model interchange limits to a Cobre ``lines.json`` dict.
+    """Convert the source model interchange limits to a Novomodelo ``lines.json`` dict.
 
     Reads ``sistema.dat`` from *case*.  Each directional interchange
     pair becomes a line using the first study month's limits as static
@@ -370,7 +370,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
     if limites_df is None or limites_df.empty:
         return {
-            "$schema": cobre_schemas.schema_url_for("system/lines.json"),
+            "$schema": novomodelo_schemas.schema_url_for("system/lines.json"),
             "lines": [],
         }
 
@@ -429,7 +429,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     canonical_map = _build_canonical_pair_to_line_id(case)
 
     # Interconnections have no commissioning date; treat every line as in service
-    # since the historical record (Cobre uses the date only as a canonical-ordering
+    # since the historical record (Novomodelo uses the date only as a canonical-ordering
     # key, tiebroken by id).
     op_date = historical_start_date(dger)
 
@@ -456,7 +456,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         lines.append(line_entry)
 
     return {
-        "$schema": cobre_schemas.schema_url_for("system/lines.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/lines.json"),
         "lines": lines,
     }
 
@@ -542,26 +542,26 @@ def convert_penalties(
     max_accumulated_productivity: float | None = None,
     prod_media_sin: float | None = None,
 ) -> dict:
-    """Generate a Cobre ``penalties.json`` dict from the source model data.
+    """Generate a Novomodelo ``penalties.json`` dict from the source model data.
 
     Faithful to the source model User Manual v30 section 3.24:
 
     - Bus deficit segments come from ``sistema.custo_deficit`` directly
       (R$/MWh on both sides, no conversion).
-    - PENALID-sourced flow-domain penalties are converted to cobre's
+    - PENALID-sourced flow-domain penalties are converted to novomodelo's
       coefficient slot via ``× ρ`` (where ρ is ``PROD_MEDIA_SIN`` or
       ``MAX_PRODTACUM_SIN`` per source-model conversion table on page 87).
     - The micro-penalties (``pINT``, ``pEVERT``, ``pTURB``, ``pCORTEOL``,
       ``pEXC``, ``pCDESV``) are the source model's hard-coded internal defaults (page
-      88, current v30 values). They are written directly to cobre and preserve the
+      88, current v30 values). They are written directly to novomodelo and preserve the
       source model's merit order: exchange < spillage < FPHA < curtailment < excess.
     - Evaporation, storage-floor and filling-target slots without a PENALID
       source are DERIVED from the deficit cost via ``ρ_max_acum``: evaporation and
       storage at ``10 × MAX_CUSTO_DEFICIT × ρ_max_acum`` (the manual p.87 level;
       storage additionally ``× HM3_TO_MWH_PER_RHO`` for its R$/hm³ slot) and
       filling at ``0.9 × MAX_CUSTO_DEFICIT × ρ_max_acum × HM3_TO_MWH_PER_RHO``. The
-      storage and filling slots are dormant in cobre's LP today but emitted so the
-      file is ready when cobre wires them in.
+      storage and filling slots are dormant in novomodelo's LP today but emitted so the
+      file is ready when novomodelo wires them in.
 
     Parameters
     ----------
@@ -573,7 +573,7 @@ def convert_penalties(
     productivities:
         ``{hydro_id: own_productivity_mw_per_m3s}`` for each hydro. Required
         because productivity moved out of ``hydros.json:generation`` on
-        cobre HEAD.
+        novomodelo HEAD.
     max_accumulated_productivity:
         Optional ``MAX_PRODTACUM_SIN`` override. When omitted, defaults to
         ``max(productivities)`` — a coarse approximation; callers with
@@ -638,7 +638,7 @@ def convert_penalties(
     curtailment_cost = PCORTEOL
 
     return {
-        "$schema": cobre_schemas.schema_url_for("penalties.json"),
+        "$schema": novomodelo_schemas.schema_url_for("penalties.json"),
         "bus": {
             "deficit_segments": [
                 {
@@ -673,7 +673,7 @@ def convert_hydro_penalty_overrides(
     ``MAX_PRODTACUM_SIN``. Those constants are *not* fixed across the horizon:
     each plant's equivalent productivity tracks its seasonal reference volume
     (VOLREF_SAZ) and any CFUGA/CMONT tailrace/forebay overrides, so the SIN
-    mean / accumulated-max shift stage to stage. cobre-bridge already ships the
+    mean / accumulated-max shift stage to stage. novomodelo-bridge already ships the
     per-stage per-plant ρ in ``system/hydro_energy_productivity.parquet``; this
     override makes the **penalty** conversion use the same per-stage ρ, instead
     of a single static fleet mean — keeping the two coherent.
@@ -692,7 +692,7 @@ def convert_hydro_penalty_overrides(
         Parsed the source model case (re-reads ``sistema`` for the max deficit cost and
         PENALID for the violation-slack base rates).
     hydro_ids:
-        Every Cobre hydro id the SIN-uniform override must cover. Sorted
+        Every Novomodelo hydro id the SIN-uniform override must cover. Sorted
         ascending internally so output obeys the ``(hydro_id, stage_id)``
         ordering contract.
     base_hydro_penalties:
@@ -783,19 +783,19 @@ def convert_line_bounds(
     case: NewaveCase,
     id_map: NewaveIdMap,
 ) -> pa.Table:
-    """Convert the source model interchange limits to a Cobre ``line_bounds.parquet``
+    """Convert the source model interchange limits to a Novomodelo ``line_bounds.parquet``
     table, folding in the per-block exchange factors as absolute-MW override rows.
 
     Reads ``sistema.dat::limites_intercambio`` and ``dger.dat`` to produce one
     stage-level base row per (line, stage) with ``block_id = None`` and direct/
-    reverse MW bounds. Cobre rule 36 treats ``block_id = None`` as a key
+    reverse MW bounds. Novomodelo rule 36 treats ``block_id = None`` as a key
     distinct from ``Some(b)``, so this base row is load-bearing: without it, a
     stage whose blocks are all uniform would fall back to ``lines.json``'s
     declared (stage-0) capacity for every later stage. It also reads
     ``patamar.dat::intercambio_patamares`` — formerly emitted as a standalone
     per-block-factor JSON document, now deleted — and folds each per-block
     multiplicative factor into an absolute-MW override row, ``direct_mw =
-    base_direct_mw × direct_factor`` (and the reverse equivalent), per cobre
+    base_direct_mw × direct_factor`` (and the reverse equivalent), per novomodelo
     decision 10. A block row is emitted only where it differs
     from the base (i.e. the factor is not 1.0 for both directions); a
     line-stage whose blocks are all uniform gets no block rows, since the base
@@ -815,7 +815,7 @@ def convert_line_bounds(
     case:
         Parsed the source model case.
     id_map:
-        Entity ID map.  Used to resolve subsystem codes to Cobre bus IDs
+        Entity ID map.  Used to resolve subsystem codes to Novomodelo bus IDs
         (indirectly, via the same canonical-pair ordering used in
         ``convert_lines``).
 
@@ -896,7 +896,7 @@ def convert_line_bounds(
         k: v for k, (_, v) in last_year_per_key.items()
     }
 
-    # Per-block factors (cobre decision 10): fold
+    # Per-block factors (novomodelo decision 10): fold
     # ``patamar.dat::intercambio_patamares`` into per-block direct/reverse
     # multipliers, keyed like the base lookup above so block rows derive as
     # base × factor.
@@ -1015,7 +1015,7 @@ def convert_line_bounds(
             base_reverse = caps["reverse_mw"]
 
             # Stage-level base row (block_id = None) — kept unchanged and
-            # unconditionally, per cobre rule 36.
+            # unconditionally, per novomodelo rule 36.
             rows_line_id.append(line_id)
             rows_stage_id.append(stage_id)
             rows_direct.append(base_direct)
@@ -1043,7 +1043,7 @@ def convert_line_bounds(
 
     _LOG.info(
         "line_bounds: emitted %d per-block override row(s) folded from "
-        "patamar.dat exchange factors (cobre decision 10), alongside %d "
+        "patamar.dat exchange factors (novomodelo decision 10), alongside %d "
         "stage-level base row(s).",
         block_rows_emitted,
         len(rows_line_id) - block_rows_emitted,
@@ -1125,7 +1125,7 @@ def convert_non_controllable_sources(
     case: NewaveCase,
     id_map: NewaveIdMap,
 ) -> dict:
-    """Convert the source model non-simulated generation to a Cobre NCS entity JSON
+    """Convert the source model non-simulated generation to a Novomodelo NCS entity JSON
     dict.
 
     Reads ``sistema.dat::geracao_usinas_nao_simuladas``.  Each unique
@@ -1136,7 +1136,7 @@ def convert_non_controllable_sources(
     case:
         Parsed the source model case.
     id_map:
-        Entity ID map.  Used to resolve subsystem codes to 0-based Cobre bus
+        Entity ID map.  Used to resolve subsystem codes to 0-based Novomodelo bus
         IDs.
 
     Returns
@@ -1150,7 +1150,7 @@ def convert_non_controllable_sources(
 
     if df_ncs is None or df_ncs.empty:
         return {
-            "$schema": cobre_schemas.schema_url_for(
+            "$schema": novomodelo_schemas.schema_url_for(
                 "system/non_controllable_sources.json"
             ),
             "non_controllable_sources": [],
@@ -1171,7 +1171,7 @@ def convert_non_controllable_sources(
 
     # The source model carries no per-source commissioning date for the aggregated
     # non-controllable generation; treat every NCS as in service since the
-    # historical record (Cobre uses the date only as a canonical-ordering key,
+    # historical record (Novomodelo uses the date only as a canonical-ordering key,
     # tiebroken by id).
     op_date = historical_start_date(case.dger)
 
@@ -1213,7 +1213,7 @@ def convert_non_controllable_sources(
                 "max_generation_mw": max_gen,
                 # The source model pre-nets `geracao_usinas_nao_simuladas` from MERC
                 # before the dispatch LP runs, so the aggregate is implicitly must-run.
-                # Setting allow_curtailment=False instructs Cobre's LP to pin dispatch
+                # Setting allow_curtailment=False instructs Novomodelo's LP to pin dispatch
                 # to the realized availability for every scenario; otherwise the LP
                 # discovers that curtailing NCS is one of the cheapest slacks and
                 # produces a +15 % hydro / -23 % spillage divergence vs the source model
@@ -1224,7 +1224,9 @@ def convert_non_controllable_sources(
         ncs_id += 1
 
     return {
-        "$schema": cobre_schemas.schema_url_for("system/non_controllable_sources.json"),
+        "$schema": novomodelo_schemas.schema_url_for(
+            "system/non_controllable_sources.json"
+        ),
         "non_controllable_sources": ncs_list,
     }
 
@@ -1233,7 +1235,7 @@ def convert_ncs_factors(
     case: NewaveCase,
     id_map: NewaveIdMap,
 ) -> dict:
-    """Convert patamar.dat NCS block factors to a Cobre non_controllable_factors dict.
+    """Convert patamar.dat NCS block factors to a Novomodelo non_controllable_factors dict.
 
     Reads ``patamar.dat::usinas_nao_simuladas``.  NCS entity IDs are assigned
     using the same ``(codigo_submercado, indice_bloco)`` sorted grouping as
@@ -1256,7 +1258,7 @@ def convert_ncs_factors(
 
     if df is None or df.empty:
         return {
-            "$schema": cobre_schemas.schema_url_for(
+            "$schema": novomodelo_schemas.schema_url_for(
                 "scenarios/non_controllable_factors.json"
             ),
             "non_controllable_factors": [],
@@ -1280,7 +1282,7 @@ def convert_ncs_factors(
 
     if df.empty:
         return {
-            "$schema": cobre_schemas.schema_url_for(
+            "$schema": novomodelo_schemas.schema_url_for(
                 "scenarios/non_controllable_factors.json"
             ),
             "non_controllable_factors": [],
@@ -1291,7 +1293,7 @@ def convert_ncs_factors(
     # source 1 -> patamares 1..P, source 2 -> P+1..2P, etc. (P = number of load blocks).
     # The per-source block ordinal is therefore ``(patamar - 1) % P``, NOT ``patamar -
     # 1`` — using the raw index parks every source past the first on out-of-range
-    # blocks, flattening its per-block NCS profile (so Cobre could not reshape per-block
+    # blocks, flattening its per-block NCS profile (so Novomodelo could not reshape per-block
     # load the way the source model does, the so_se divergence).
     num_blocks = patamar_file.numero_patamares or 1
 
@@ -1364,7 +1366,7 @@ def convert_ncs_factors(
                 y += 1
 
     return {
-        "$schema": cobre_schemas.schema_url_for(
+        "$schema": novomodelo_schemas.schema_url_for(
             "scenarios/non_controllable_factors.json"
         ),
         "non_controllable_factors": results,

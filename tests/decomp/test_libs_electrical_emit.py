@@ -1,8 +1,8 @@
-"""Tests for the bucket-A -> cobre token map and the
+"""Tests for the bucket-A -> novomodelo token map and the
 E1-E7 ``GenericConstraintBuilder`` emit pipeline.
 
 Synthetic fixtures only, mirroring the ``test_libs_electrical`` module's own
-convention: no ``import cobre`` at module scope.
+convention: no ``import novomodelo`` at module scope.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.generic_constraint_builder import ConstraintIdAllocator
-from cobre_bridge.decomp.converters.libs_electrical import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.decomp.converters.libs_electrical import (
     AssembledBound,
     AvailablePower,
     DataContext,
@@ -28,45 +28,45 @@ from cobre_bridge.decomp.converters.libs_electrical import (
     ViolationTreatment,
     _UnresolvableBucketBTerm,
 )
-from cobre_bridge.decomp.converters.libs_electrical_emit import (
+from novomodelo_bridge.decomp.converters.libs_electrical_emit import (
     LibsElectricalResult,
-    _cobre_token,
+    _novomodelo_token,
     _resolve_interc_bus,
     build_electrical_expression,
     emit_libs_electrical_generics,
 )
-from cobre_bridge.decomp.converters.ncs import _pee_series, build_pee_ncs_id_map
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.converters.ncs import _pee_series, build_pee_ncs_id_map
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 # ---------------------------------------------------------------------------
-# _cobre_token — one bucket-A token kind at a time (spec §2)
+# _novomodelo_token — one bucket-A token kind at a time (spec §2)
 # ---------------------------------------------------------------------------
 
 
-def test_cobre_token_ger_usih_resolved() -> None:
+def test_novomodelo_token_ger_usih_resolved() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     term = ParsedTerm(coefficient=1.0, token="ger_usih", args=(66,))
-    assert _cobre_token(term, id_map, {}, {}, {}) == "hydro_generation(0)"
+    assert _novomodelo_token(term, id_map, {}, {}, {}) == "hydro_generation(0)"
 
 
-def test_cobre_token_ger_usit_resolved() -> None:
+def test_novomodelo_token_ger_usit_resolved() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), thermal_codes=(5,))
     term = ParsedTerm(coefficient=1.0, token="ger_usit", args=(5,))
-    assert _cobre_token(term, id_map, {}, {}, {}) == "thermal_generation(0)"
+    assert _novomodelo_token(term, id_map, {}, {}, {}) == "thermal_generation(0)"
 
 
-def test_cobre_token_ger_pee_resolved_via_map_not_code() -> None:
-    # Pitfall guard: codigo_pee (11) is NOT the cobre ncs id -- the token
+def test_novomodelo_token_ger_pee_resolved_via_map_not_code() -> None:
+    # Pitfall guard: codigo_pee (11) is NOT the novomodelo ncs id -- the token
     # must go through ncs_id_by_pee_code, never straight to args[0].
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="ger_pee", args=(11,))
-    result = _cobre_token(term, id_map, {11: 4}, {}, {})
+    result = _novomodelo_token(term, id_map, {11: 4}, {}, {})
     assert result == "non_controllable_generation(4)"
 
 
-def test_cobre_token_ger_conjh_frequency_split_bus() -> None:
+def test_novomodelo_token_ger_conjh_frequency_split_bus() -> None:
     # Itaipu (66,1) -> IV bus, (66,2) -> SE bus (spec §4e), both hitting the
     # same underlying hydro id.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
@@ -74,34 +74,34 @@ def test_cobre_token_ger_conjh_frequency_split_bus() -> None:
     iv_term = ParsedTerm(coefficient=1.0, token="ger_conjh", args=(66, 1))
     se_term = ParsedTerm(coefficient=1.0, token="ger_conjh", args=(66, 2))
     assert (
-        _cobre_token(iv_term, id_map, {}, conjh_bus_by_code_group, {})
+        _novomodelo_token(iv_term, id_map, {}, conjh_bus_by_code_group, {})
         == "hydro_generation(0, bus=3)"
     )
     assert (
-        _cobre_token(se_term, id_map, {}, conjh_bus_by_code_group, {})
+        _novomodelo_token(se_term, id_map, {}, conjh_bus_by_code_group, {})
         == "hydro_generation(0, bus=0)"
     )
 
 
-def test_cobre_token_ener_interc_direct_orientation() -> None:
+def test_novomodelo_token_ener_interc_direct_orientation() -> None:
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
     line_map = {(0, 1): 2}
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2))
-    assert _cobre_token(term, id_map, {}, {}, line_map) == "line_direct(2)"
+    assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_direct(2)"
 
 
-def test_cobre_token_ener_interc_reverse_orientation() -> None:
+def test_novomodelo_token_ener_interc_reverse_orientation() -> None:
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
     line_map = {(1, 0): 5}
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2))
-    assert _cobre_token(term, id_map, {}, {}, line_map) == "line_reverse(5)"
+    assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_reverse(5)"
 
 
-def test_cobre_token_ener_interc_no_line_warns_and_returns_none() -> None:
+def test_novomodelo_token_ener_interc_no_line_warns_and_returns_none() -> None:
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2))
     with dx.collect() as sink:
-        result = _cobre_token(term, id_map, {}, {}, {})
+        result = _novomodelo_token(term, id_map, {}, {}, {})
     assert result is None
     assert len(sink) == 1
     assert sink[0].severity is dx.Severity.WARNING
@@ -126,25 +126,25 @@ def test_resolve_interc_bus_unknown_code_returns_transhipment_bus_id() -> None:
     assert _resolve_interc_bus(-1, id_map) == 2
 
 
-def test_cobre_token_ener_interc_transshipment_operand_resolves_direct() -> None:
+def test_novomodelo_token_ener_interc_transshipment_operand_resolves_direct() -> None:
     # code 6 is NOT a declared SB code; with line_map holding the
-    # transshipment<->SE line, _cobre_token resolves it (not a drop).
+    # transshipment<->SE line, _novomodelo_token resolves it (not a drop).
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     line_map = {(id_map.transhipment_bus_id, 0): 7}
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(6, 1))
-    assert _cobre_token(term, id_map, {}, {}, line_map) == "line_direct(7)"
+    assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_direct(7)"
 
 
-def test_cobre_token_ener_interc_transshipment_operand_resolves_reverse() -> None:
+def test_novomodelo_token_ener_interc_transshipment_operand_resolves_reverse() -> None:
     # the reverse-argument-order call resolves the SAME line, with the
     # opposite orientation token.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     line_map = {(id_map.transhipment_bus_id, 0): 7}
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 6))
-    assert _cobre_token(term, id_map, {}, {}, line_map) == "line_reverse(7)"
+    assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_reverse(7)"
 
 
-def test_cobre_token_ener_interc_declared_codes_fallback_not_taken() -> None:
+def test_novomodelo_token_ener_interc_declared_codes_fallback_not_taken() -> None:
     # both operands are declared SB codes -- the transshipment fallback
     # must never be consulted, even with a decoy line keyed at the
     # transshipment bus that would resolve to a DIFFERENT line id if the
@@ -152,38 +152,40 @@ def test_cobre_token_ener_interc_declared_codes_fallback_not_taken() -> None:
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
     line_map = {(0, 1): 9, (id_map.transhipment_bus_id, 1): 99}
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2))
-    assert _cobre_token(term, id_map, {}, {}, line_map) == "line_direct(9)"
+    assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_direct(9)"
 
 
-def test_cobre_token_ener_interc_unknown_code_no_transshipment_line_drops() -> None:
+def test_novomodelo_token_ener_interc_unknown_code_no_transshipment_line_drops() -> (
+    None
+):
     # a non-SB code resolves to the transshipment bus, but line_map has
     # no line for that pair -- the fallback never fabricates a line; the
     # existing skip-not-partial drop still applies.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(6, 1))
     with dx.collect() as sink:
-        result = _cobre_token(term, id_map, {}, {}, {})
+        result = _novomodelo_token(term, id_map, {}, {}, {})
     assert result is None
     assert len(sink) == 1
     assert sink[0].severity is dx.Severity.WARNING
 
 
-def test_cobre_token_ener_comerc_deferred_warns_and_returns_none() -> None:
+def test_novomodelo_token_ener_comerc_deferred_warns_and_returns_none() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="ener_comerc", args=(1,))
     with dx.collect() as sink:
-        result = _cobre_token(term, id_map, {}, {}, {})
+        result = _novomodelo_token(term, id_map, {}, {}, {})
     assert result is None
     assert len(sink) == 1
     assert sink[0].severity is dx.Severity.WARNING
     assert "ener_comerc" in sink[0].summary
 
 
-def test_cobre_token_ger_usih_unresolved_warns_and_returns_none() -> None:
+def test_novomodelo_token_ger_usih_unresolved_warns_and_returns_none() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     term = ParsedTerm(coefficient=1.0, token="ger_usih", args=(999,))
     with dx.collect() as sink:
-        result = _cobre_token(term, id_map, {}, {}, {})
+        result = _novomodelo_token(term, id_map, {}, {}, {})
     assert result is None
     assert len(sink) == 1
     assert sink[0].severity is dx.Severity.WARNING
@@ -191,13 +193,13 @@ def test_cobre_token_ger_usih_unresolved_warns_and_returns_none() -> None:
     assert "999" in sink[0].summary
 
 
-def test_cobre_token_unrecognized_bucket_a_token_raises_value_error() -> None:
+def test_novomodelo_token_unrecognized_bucket_a_token_raises_value_error() -> None:
     # A caller-contract violation: AssembledBound.terms should never carry
     # anything but a bucket-A token.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="disp_usih", args=(1,))
     with pytest.raises(ValueError, match="disp_usih"):
-        _cobre_token(term, id_map, {}, {}, {})
+        _novomodelo_token(term, id_map, {}, {}, {})
 
 
 # ---------------------------------------------------------------------------
@@ -733,7 +735,7 @@ def test_emit_cell_inconsistent_terms_raises_value_error_naming_restriction() ->
         )
 
     with patch(
-        "cobre_bridge.decomp.converters.libs_electrical_emit.assemble_bound",
+        "novomodelo_bridge.decomp.converters.libs_electrical_emit.assemble_bound",
         side_effect=_stub_assemble_bound,
     ):
         with pytest.raises(ValueError, match="706"):
@@ -885,7 +887,7 @@ def test_emit_propagates_plain_value_error_not_unrecognized_token() -> None:
         raise ValueError("a genuine resolver bug, not an unrecognized token")
 
     with patch(
-        "cobre_bridge.decomp.converters.libs_electrical_emit.assemble_bound",
+        "novomodelo_bridge.decomp.converters.libs_electrical_emit.assemble_bound",
         side_effect=_stub_assemble_bound,
     ):
         with pytest.raises(ValueError, match="resolver bug") as exc_info:

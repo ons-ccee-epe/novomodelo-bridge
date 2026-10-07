@@ -7,7 +7,7 @@ energy-cascade routing.
 
 Fictitious plants are identified **structurally** (see
 :func:`plants.fictitious_codes`): zero productivity sharing a generating
-plant's posto.  Cobre-bridge filters them out of the LP, but it must preserve
+plant's posto.  Novomodelo-bridge filters them out of the LP, but it must preserve
 the cascade connectivity they provide so that:
 
 - Real-plant ``downstream_id`` in ``hydros.json`` points to the next
@@ -30,8 +30,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from cobre_bridge.core.productivity import compute_productivity
-from cobre_bridge.newave.plants import IN_SERVICE_STATUSES
+from novomodelo_bridge.core.productivity import compute_productivity
+from novomodelo_bridge.newave.plants import IN_SERVICE_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class FictCascadeResolution:
         path.
     fict_rho_sum:
         Cumulative ``ρ_eq`` of the fictitious plants in ``fict_chain``.  This must be
-        folded into the upstream real plant's effective ``ρ_eq`` so that cobre's cascade
+        folded into the upstream real plant's effective ``ρ_eq`` so that novomodelo's cascade
         sum reproduces the source model's ``produtibilidade_acumulada_calculo_earm``.
         Fictitious plants have ρ = 0 by definition, so this is zero in practice — kept
         for generality.
@@ -104,7 +104,7 @@ def resolve_cascade(
     filling_codes:
         Pre-computed set of ``NE``-with-filling plant codes (the single source
         of truth is :attr:`plants.filling_hydro_codes`).  Such plants are
-        admitted as real cobre nodes: the walker stops at them and upstream
+        admitted as real novomodelo nodes: the walker stops at them and upstream
         plants resolve their ``downstream_code`` to them.  Defaults to ``None``
         (treated as the empty set), which preserves byte-identical output for
         cases with no filling plant.
@@ -115,7 +115,7 @@ def resolve_cascade(
         One entry per real existing plant in ``confhd_df``.
     """
     if fictitious is None:
-        from cobre_bridge.newave.plants import fictitious_codes
+        from novomodelo_bridge.newave.plants import fictitious_codes
 
         fictitious = fictitious_codes(confhd_df, cadastro)
 
@@ -137,7 +137,7 @@ def resolve_cascade(
         status = str(row["usina_existente"]).strip()
         row_by_code[code] = row
         if code in filling_codes:
-            # ``NE``-with-filling plants are admitted as real cobre nodes: the
+            # ``NE``-with-filling plants are admitted as real novomodelo nodes: the
             # walker must stop at them and upstream plants resolve to them.
             # They are neither absent (topological pass-through) nor fictitious.
             real_codes.add(code)

@@ -2,7 +2,7 @@
 
 `convert newave`, `check newave`, and `compare newave` work on a NEWAVE case
 directory. This page describes what the converter reads, what it changes on
-the way to a Cobre case, and how to read a comparison. Flags and their help
+the way to a Novomodelo case, and how to read a comparison. Flags and their help
 text are in the [CLI reference](cli.md).
 
 ## Inputs
@@ -35,16 +35,16 @@ the converter does not convert yet, is the [NEWAVE data map](newave-data-map.md)
 
 ## What the converter changes
 
-Cobre's input format differs from NEWAVE's in ways the converter has to
+Novomodelo's input format differs from NEWAVE's in ways the converter has to
 resolve. Every step is deterministic: converting the same case twice produces
 the same output.
 
 - **Entity ids.** NEWAVE identifies plants, subsystems, and interchanges by
-  arbitrary 1-based codes; Cobre uses dense 0-based ids. The converter sorts
+  arbitrary 1-based codes; Novomodelo uses dense 0-based ids. The converter sorts
   the source codes and assigns 0-based ids in that order, consistently across
   every output file. `compare newave` rebuilds the same mapping from the
   source case, so results trace back to the source codes.
-- **Which plants exist.** A hydro becomes a Cobre entity when `confhd.dat`
+- **Which plants exist.** A hydro becomes a Novomodelo entity when `confhd.dat`
   marks it in service — either already operating (`EX`) or operating with an
   expansion still to come (`EE`). Plants that do not yet exist are left out,
   except a future plant whose `exph.dat` schedule has it filling its dead
@@ -68,7 +68,7 @@ the same output.
   seasonal values.
 - **Constraints.** The minimum-storage security curve (`curva.dat`), electric
   constraints (`restricao-eletrica.csv`), and interchange group limits
-  (`agrint.dat`) all become Cobre generic constraints: linear expressions over
+  (`agrint.dat`) all become Novomodelo generic constraints: linear expressions over
   storage, generation, and exchange variables with per-stage bounds. A term
   whose entity is absent from the converted case, such as an interchange line
   missing from a reduced system, is dropped with a diagnostic naming it.
@@ -76,7 +76,7 @@ the same output.
   or per-stage CVaR from `cvar.dat`. If `dger.dat` asks for CVaR and
   `cvar.dat` is absent, the converter falls back to expectation and says so.
 - **Penalties.** NEWAVE's flow-domain penalties (`penalid.dat`) are converted
-  to Cobre's cost basis with the same system-mean productivity NEWAVE applies,
+  to Novomodelo's cost basis with the same system-mean productivity NEWAVE applies,
   so a violation is priced the same way in both models.
 - **Stochastic data.** Historical inflows (`vazoes.dat`, `vazpast.dat`), load
   (`sistema.dat`, `c_adic.dat`), and block factors (`patamar.dat`) are written
@@ -88,10 +88,10 @@ dropped silently: `convert newave` renders diagnostics as grouped panels,
 
 ## Comparing results
 
-`compare newave NEWAVE_DIR COBRE_OUTPUT_DIR` needs, on the NEWAVE side, the
+`compare newave NEWAVE_DIR NOVOMODELO_OUTPUT_DIR` needs, on the NEWAVE side, the
 `MEDIAS-*.CSV` result files and `pmo.dat` directly in `NEWAVE_DIR`, and on the
-Cobre side the `output/` directory `cobre run` produced. It aligns entities
-through the conversion's id mapping, aggregates Cobre's scenarios to NEWAVE's
+Novomodelo side the `output/` directory `novomodelo run` produced. It aligns entities
+through the conversion's id mapping, aggregates Novomodelo's scenarios to NEWAVE's
 published level, and reports per-variable agreement as a symmetric percentage
 error and the share of points within tolerance. It also re-evaluates the
 converted generic constraints against both models' operation. With
@@ -104,7 +104,7 @@ comparable:
   the curve as a per-stage slack at the fixed cost and does not reproduce
   NEWAVE's iterative penalization mode.
 - NEWAVE's final simulation has preventive rationing enabled in `dger.dat`.
-  With it disabled, NEWAVE drains reservoirs to avoid deficit while Cobre
+  With it disabled, NEWAVE drains reservoirs to avoid deficit while Novomodelo
   follows the converted policy, and the two diverge by construction.
 - The hydro production function is linear (constant productivity). A
   head-dependent run is a different production model.

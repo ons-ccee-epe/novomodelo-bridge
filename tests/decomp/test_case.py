@@ -1,6 +1,6 @@
 """Tests for the DECOMP reader-context object (``decomp/case.py``).
 
-Tier 1 — imports no ``cobre``; a synthetic ``_FakeDadger`` stub stands in for
+Tier 1 — imports no ``novomodelo``; a synthetic ``_FakeDadger`` stub stands in for
 a parsed deck, and no test reads a deck under ``example/``.
 """
 
@@ -16,15 +16,19 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-import cobre_bridge.decomp.case as case_module
-import cobre_bridge.decomp.converters.fpha as fpha_module
-import cobre_bridge.decomp.temporal as temporal_module
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.id_map import DecompIdMap
+import novomodelo_bridge.decomp.case as case_module
+import novomodelo_bridge.decomp.converters.fpha as fpha_module
+import novomodelo_bridge.decomp.temporal as temporal_module
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.conftest import _FakeDadger, make_decomp_case, make_decomp_files
 
 _CASE_MODULE_PATH = (
-    Path(__file__).resolve().parents[2] / "src" / "cobre_bridge" / "decomp" / "case.py"
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "novomodelo_bridge"
+    / "decomp"
+    / "case.py"
 )
 #: Substrings that would reintroduce the pipeline<->case import cycle
 #: (or a converter-module coupling) if they appeared in a module-scope
@@ -148,7 +152,7 @@ class TestFromDirectory:
     ) -> None:
         known_files = make_decomp_files(tmp_path)
         monkeypatch.setattr(
-            "cobre_bridge.decomp.case.discover_decomp_files",
+            "novomodelo_bridge.decomp.case.discover_decomp_files",
             MagicMock(return_value=known_files),
         )
 
@@ -164,8 +168,8 @@ class TestImportCycleGuard:
             [
                 sys.executable,
                 "-c",
-                "import cobre_bridge.decomp.case; "
-                "import cobre_bridge.decomp.pipeline; "
+                "import novomodelo_bridge.decomp.case; "
+                "import novomodelo_bridge.decomp.pipeline; "
                 "print('ok')",
             ],
             capture_output=True,

@@ -1,6 +1,6 @@
 """Tier-1 tests for the shared generic-constraint builder + id allocator.
 
-Pure Python: no synthetic deck, no ``example/`` read, no ``import cobre``.
+Pure Python: no synthetic deck, no ``example/`` read, no ``import novomodelo``.
 Covers the ``GENERIC_BOUNDS_SCHEMA`` drift-guard invariant, every
 ``GenericConstraintBuilder`` method (``add``/``add_constraint``/
 ``add_bound_row``/``result``), and the seeded/threaded ``ConstraintIdAllocator``.
@@ -8,12 +8,12 @@ Covers the ``GENERIC_BOUNDS_SCHEMA`` drift-guard invariant, every
 
 from __future__ import annotations
 
-from cobre_bridge.core.generic_constraint_builder import (
+from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
     ConstraintIdAllocator,
     GenericConstraintBuilder,
 )
-from cobre_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
+from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
 
 
 def test_generic_bounds_schema_matches_shared_columns() -> None:

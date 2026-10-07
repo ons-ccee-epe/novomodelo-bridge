@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import polars as pl
 
-from cobre_bridge.comparators import analyze
-from cobre_bridge.comparators.charts._shared import _aggregate_percentile_traces
-from cobre_bridge.comparators.html_report import (
-    COLOR_COBRE,
+from novomodelo_bridge.comparators import analyze
+from novomodelo_bridge.comparators.charts._shared import _aggregate_percentile_traces
+from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
+    COLOR_NOVOMODELO,
 )
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
 def thermal_generation_chart(
@@ -42,10 +42,10 @@ def thermal_generation_chart(
             {
                 "x": stages,
                 "y": [cb_by_stage.get(s, 0) for s in stages],
-                "name": "Cobre Mean",
+                "name": "Novomodelo Mean",
                 "type": "scatter",
                 "mode": "lines",
-                "line": {"color": COLOR_COBRE, "width": 2},
+                "line": {"color": COLOR_NOVOMODELO, "width": 2},
             },
         ]
     )

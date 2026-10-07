@@ -9,17 +9,16 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from cobre_bridge.cobre.scalar_parameters import build_scalar_parameters
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity, finalize_diagnostics
-from cobre_bridge.core.generic_constraint_builder import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
+from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
     ConstraintIdAllocator,
 )
-from cobre_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
-from cobre_bridge.core.units import C_M3S2HM3
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.converters.constraints import (
+from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
+from novomodelo_bridge.core.units import C_M3S2HM3
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.constraints import (
     _curve_seasonalizes,
     _ElectricTermSkip,
     _is_stored_energy_reservoir,
@@ -33,7 +32,8 @@ from cobre_bridge.newave.converters.constraints import (
     convert_electric_constraints,
     convert_vminop_constraints,
 )
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo.scalar_parameters import build_scalar_parameters
 from tests.conftest import make_case, make_nw_files
 
 # The remediation/summary/title/notes strings constraints.py emits reach a
@@ -139,7 +139,7 @@ class TestStoredEnergyReservoirFilter:
 
 
 class TestNonFixaPenalizationWarning:
-    """curva.dat TIPO DE PENALIZACAO = 0 (FIXA) matches cobre-bridge's VminOP
+    """curva.dat TIPO DE PENALIZACAO = 0 (FIXA) matches novomodelo-bridge's VminOP
     modelling and needs no warning; a non-FIXA (iterative/variable) penalization is
     not reproduced, so the conversion warns that a VminOP-penalty difference is
     expected."""
@@ -291,7 +291,7 @@ class TestIntegratedProductivity:
     """
 
     def test_closed_form_average_for_linear_polynomial(self) -> None:
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_integrated_productivity,
         )
 
@@ -303,7 +303,7 @@ class TestIntegratedProductivity:
         assert result == pytest.approx(0.01 * (300.0 + 0.1 * 550.0 - 200.0))
 
     def test_canal_fuga_override(self) -> None:
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_integrated_productivity,
         )
 
@@ -315,7 +315,7 @@ class TestIntegratedProductivity:
         assert result == pytest.approx(0.01 * (355.0 - 180.0))
 
     def test_cmont_override_collapses_to_constant_drop(self) -> None:
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_integrated_productivity,
         )
 
@@ -326,7 +326,7 @@ class TestIntegratedProductivity:
         assert result == pytest.approx(0.01 * (360.0 - 200.0))
 
     def test_run_of_river_uses_point_value(self) -> None:
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_integrated_productivity,
         )
 
@@ -341,7 +341,7 @@ class TestIntegratedProductivity:
         """For h(V) = a0 + a1·V + a2·V² the integrated average over
         [vmin, vmax] is a0 + a1·(vmin+vmax)/2 + a2·(vmax³−vmin³)/(3·(vmax−vmin)).
         Verify the closed-form matches that formula on a quadratic case."""
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_integrated_productivity,
         )
 
@@ -443,7 +443,7 @@ class TestPerStageAccumulatedProductivities:
     def test_no_overrides_yields_flat_lists(self) -> None:
         """Without CFUGA/CMONT inputs every plant has a constant ρ_acum across
         stages."""
-        from cobre_bridge.newave.converters.constraints import (
+        from novomodelo_bridge.newave.converters.constraints import (
             compute_per_stage_acc_productivities,
         )
 
@@ -465,7 +465,7 @@ class TestPerStageAccumulatedProductivities:
         """A CFUGA-style change in plant 3's own ρ_eq at stage 1 shifts every
         upstream plant's ρ_acum from that stage on. Stage 0 stays unchanged.
         """
-        from cobre_bridge.newave.converters.constraints import (
+        from novomodelo_bridge.newave.converters.constraints import (
             compute_per_stage_acc_productivities,
         )
 
@@ -485,7 +485,7 @@ class TestPerStageAccumulatedProductivities:
 
     def test_sibling_branch_unaffected_by_override(self) -> None:
         """Sibling branches stay untouched when a leaf in another branch shifts."""
-        from cobre_bridge.newave.converters.constraints import (
+        from novomodelo_bridge.newave.converters.constraints import (
             compute_per_stage_acc_productivities,
         )
 
@@ -521,7 +521,7 @@ class TestConvertVminopConstraints:
 
     def test_returns_none_when_curva_aversao_zero(self, tmp_path) -> None:
         """dger.dat curva_aversao=0 means the source model disabled the risk-aversion
-        curve; cobre-bridge must skip VminOP constraints even when curva.dat is present
+        curve; novomodelo-bridge must skip VminOP constraints even when curva.dat is present
         on disk."""
         mock_dger = MagicMock()
         mock_dger.curva_aversao = 0
@@ -781,7 +781,7 @@ class TestParseFormula:
         assert skipped[0].raw == "1"
 
     def test_ener_interc_no_line_recorded(self) -> None:
-        """An interchange pair with no matching cobre line is dropped and
+        """An interchange pair with no matching novomodelo line is dropped and
         recorded as ``no-line``, naming both subsystems."""
         id_map = self._id_map()
         line_map = self._line_map()
@@ -1426,7 +1426,7 @@ class TestConvertAgrintConstraints:
         fake_line_map = {(1, 3): 0}
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value=fake_line_map,
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1436,7 +1436,7 @@ class TestConvertAgrintConstraints:
         assert len(constraints) == 2
 
     def test_constraint_has_no_sense_key(self, tmp_path: Path) -> None:
-        """AGRINT constraint objects have exactly cobre's F3 sense-free keys."""
+        """AGRINT constraint objects have exactly novomodelo's F3 sense-free keys."""
         agrint_path = tmp_path / "agrint.dat"
         agrint_path.write_text(_AGRINT_CONTENT, encoding="latin-1")
         (tmp_path / "dger.dat").touch()
@@ -1447,7 +1447,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1469,7 +1469,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 3): 0},
         ):
             result_0 = convert_agrint_constraints(case, id_map)
@@ -1494,7 +1494,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1536,7 +1536,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1592,7 +1592,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3, 11], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 11): 3, (3, 11): 4},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1628,7 +1628,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1679,7 +1679,7 @@ class TestConvertAgrintConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 3): 0},
         ):
             with dx.collect() as collected:
@@ -1727,7 +1727,7 @@ class TestNewaveCrossEmitterAllocatorContiguity:
 
         allocator = ConstraintIdAllocator()
         with patch(
-            "cobre_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
             return_value={(1, 3): 0},
         ):
             electric_result = convert_electric_constraints(
@@ -1751,7 +1751,7 @@ class TestConstraintResultTypes:
     """The constraint converters return named tuples (named + index access)."""
 
     def test_vminop_result_named_and_tuple_access(self) -> None:
-        from cobre_bridge.newave.converters.constraints import VminopResult
+        from novomodelo_bridge.newave.converters.constraints import VminopResult
 
         bounds = pa.table({"constraint_id": [0]})
         r = VminopResult({"constraints": [1, 2]}, bounds, [3, 4], {5: [1.0]})
@@ -1767,7 +1767,9 @@ class TestConstraintResultTypes:
         assert ids == [3, 4]
 
     def test_generic_constraint_result_named_and_tuple_access(self) -> None:
-        from cobre_bridge.newave.converters.constraints import GenericConstraintResult
+        from novomodelo_bridge.newave.converters.constraints import (
+            GenericConstraintResult,
+        )
 
         bounds = pa.table({"constraint_id": [0]})
         r = GenericConstraintResult([{"id": 0}], bounds)
@@ -1782,9 +1784,9 @@ class TestVminopEnergyFactor:
     stage's *real* month length, not the source model's fixed 730 h.
 
     Regression for the security-curve bug: leaving the VminOP LHS in
-    ρ_acum·hm³ (≈ 2.628× true MWmonth) while cobre prices the slack
+    ρ_acum·hm³ (≈ 2.628× true MWmonth) while novomodelo prices the slack
     ``× block_hours`` made the effective curve-violation penalty exceed the
-    deficit cost, so cobre deficited instead of drawing reservoirs down.
+    deficit cost, so novomodelo deficited instead of drawing reservoirs down.
     """
 
     def test_factor_matches_real_month_hours(self) -> None:

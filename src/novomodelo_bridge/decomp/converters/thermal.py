@@ -4,11 +4,11 @@
 (``cvu``), availability (``disponibilidade``) and inflexibility
 (``inflexibilidade``), sparsely by stage (later stages inherit the last
 declared record). ``convert_thermal_bounds`` returns a pair: the
-``min``/``max_generation_mw`` bound contributions (:class:`~cobre_bridge.
+``min``/``max_generation_mw`` bound contributions (:class:`~novomodelo_bridge.
 decomp.bounds_accumulator.BoundContribution`) the accumulator later resolves,
 and a ``cost_per_mwh`` side-table — cost is not a registered bound axis (it
 has no column in ``bounds_accumulator.THERMAL_BOUNDS_SCHEMA``) and is not
-block-eligible (cobre rule 37), so it never travels as a contribution and
+block-eligible (novomodelo rule 37), so it never travels as a contribution and
 rides alongside for the pipeline to rejoin after ``build_bound_tables``.
 
 Per ``(thermal, stage)``, the generation bound contributes **either** one
@@ -17,7 +17,7 @@ stage-level (``block_id = None``) contribution carrying the hours-weighted
 ``inflexibilidade`` values are block-uniform — **or** one contribution per
 block (``block_id = 0..n-1``, no base) carrying each block's own exact
 ``min``/``max`` — when they are not. Never both: the accumulator's
-``resolve()`` does not replicate cobre's replace-not-merge column semantics,
+``resolve()`` does not replicate novomodelo's replace-not-merge column semantics,
 so a base contribution left alongside per-block ones would be folded into
 every block's intersection instead of being shadowed by them. The cost
 side-table is unaffected by this split — it always carries one
@@ -35,18 +35,18 @@ from typing import TYPE_CHECKING, NamedTuple
 import pandas as pd
 import pyarrow as pa
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.decomp.bounds_accumulator import BoundContribution
-from cobre_bridge.decomp.temporal import hours_weighted as _hours_weighted
+from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
+from novomodelo_bridge.decomp.temporal import hours_weighted as _hours_weighted
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from idecomp.decomp import Dadger
 
-    from cobre_bridge.decomp.case import DecompCase
-    from cobre_bridge.decomp.id_map import DecompIdMap
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
 def dense_stage_records(
@@ -153,7 +153,7 @@ def convert_thermals(
             }
         )
     return {
-        "$schema": cobre_schemas.schema_url_for("system/thermals.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/thermals.json"),
         "thermals": thermals,
     }
 

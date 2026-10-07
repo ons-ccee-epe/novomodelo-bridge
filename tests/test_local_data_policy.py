@@ -1,7 +1,7 @@
 """Local-data policy: no test depends on files outside the repository.
 
 The suite once carried tests guarded on real decks under the gitignored
-``example/`` tree and on a sibling cobre checkout under the developer's home
+``example/`` tree and on a sibling novomodelo checkout under the developer's home
 directory. Those ran on one machine at best and skipped everywhere else, which
 reads as coverage while guarding nothing. The policy now is that every test
 runs from the repository alone: real-format data lives as small excerpts under
