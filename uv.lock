@@ -272,7 +272,7 @@ requires-dist = [
     { name = "idecomp", specifier = ">=1.14.2" },
     { name = "inewave", specifier = ">=1.16.1" },
     { name = "jsonschema", marker = "extra == 'dev'" },
-    { name = "novomodelo-python", git = "https://github.com/ons-ccee-epe/novomodelo?subdirectory=crates%2Fnovomodelo-python&rev=65094cad6c0bf5d57e0e041ce203687092385813" },
+    { name = "novomodelo-python", git = "https://github.com/ons-ccee-epe/novomodelo?subdirectory=crates%2Fnovomodelo-python&rev=1358aea2116d64bee44c108543cd3efb618005bf" },
     { name = "pandas", specifier = ">=3.0.6" },
     { name = "plotly", specifier = ">=7.1.0" },
     { name = "polars", specifier = ">=1.44.2" },
@@ -289,7 +289,7 @@ provides-extras = ["dev"]
 [[package]]
 name = "novomodelo-python"
 version = "0.18.0"
-source = { git = "https://github.com/ons-ccee-epe/novomodelo?subdirectory=crates%2Fnovomodelo-python&rev=65094cad6c0bf5d57e0e041ce203687092385813#65094cad6c0bf5d57e0e041ce203687092385813" }
+source = { git = "https://github.com/ons-ccee-epe/novomodelo?subdirectory=crates%2Fnovomodelo-python&rev=1358aea2116d64bee44c108543cd3efb618005bf#1358aea2116d64bee44c108543cd3efb618005bf" }
 
 [[package]]
 name = "numpy"
