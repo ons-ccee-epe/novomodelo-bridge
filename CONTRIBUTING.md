@@ -9,15 +9,18 @@ and quality gates are organised, and lists the conventions CI enforces. Read
 ```bash
 git clone https://github.com/ons-ccee-epe/novomodelo-bridge.git
 cd novomodelo-bridge
-uv sync --extra dev             # or: python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+uv sync --extra dev
 uv run novomodelo-bridge --version
 ```
 
 `uv.lock` is committed, so `uv sync` reproduces the CI environment.
-`novomodelo-python` is a core dependency with prebuilt wheels for a fixed set of
-platforms; on a platform without one the sync stops at that package. You can
-still work on the pure-Python parts: install the remaining dependencies by
-hand and run the tier-1 tests described below, which never import novomodelo.
+`novomodelo-python` is a core dependency that uv builds from the commit of the
+novomodelo repository that `[tool.uv.sources]` in `pyproject.toml` pins, so the
+sync needs a Rust toolchain (1.88 or newer) and read access to that repository.
+Use uv: pip does not read the pin and would look for `novomodelo-python` on
+PyPI. Without the bindings you can still work on the pure-Python parts: install
+the remaining dependencies by hand and run the tier-1 tests described below,
+which never import novomodelo.
 
 Install the pre-commit hook to run the same lint and gate steps as CI before
 each commit:
@@ -142,9 +145,11 @@ on them, and they are the canonical statements for humans too. In short:
 A bridge release `X.Y.Z` pairs with novomodelo `X.Y.Z`.
 
 1. Bump `version` in `pyproject.toml`. When the novomodelo pairing moves, bump the
-   exact `novomodelo-python` pin and `MIN_NOVOMODELO_VERSION`
-   (`src/novomodelo_bridge/novomodelo/compat.py`) together and refresh `uv.lock`;
+   exact `novomodelo-python` pin, `MIN_NOVOMODELO_VERSION`
+   (`src/novomodelo_bridge/novomodelo/compat.py`) and the core commit in
+   `[tool.uv.sources]` together and refresh `uv.lock`;
    `tests/test_packaging.py` fails if they differ.
 2. Move the `Unreleased` entries in `CHANGELOG.md` under the new version.
-3. Tag `vX.Y.Z` and push the tag. `.github/workflows/release.yml` builds,
-   runs the suite, and publishes to PyPI through trusted publishing.
+3. Tag `vX.Y.Z` and push the tag; users install that tag from git (see the
+   README). Nothing is published to PyPI under this name, so
+   `.github/workflows/release.yml` stays disabled.

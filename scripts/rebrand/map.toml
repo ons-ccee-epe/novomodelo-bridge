@@ -28,6 +28,11 @@ keep_files = [
   "scripts/rebrand/*",
 ]
 
+# The fork's credit to cobre-bridge, which names it on purpose.
+[[keep_span]]
+files = ["README.md"]
+pattern = '(?s)## Origin and credits\n.*?(?=\n## )'
+
 [[rule]]
 # The key Cobre 0.17 and earlier wrote; the readers' fallback and its fixtures.
 pattern = '''(?<=["'])cobre_version(?=["'])'''

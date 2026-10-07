@@ -15,21 +15,23 @@ It is a command-line tool. A session typically goes:
 
 ## Installation
 
+Nothing is published to PyPI under this name. Install the CLI with uv from a
+tagged release of this repository:
+
 ```bash
-uv tool install novomodelo-bridge    # isolated, on-PATH CLI (recommended)
-pipx install novomodelo-bridge       # alternative
-pip install novomodelo-bridge        # into the current environment
+uv tool install git+https://github.com/ons-ccee-epe/novomodelo-bridge@v0.18.0
 ```
 
-Requires Python 3.12 or newer. The install pulls in `novomodelo-python`, Novomodelo's
-Python bindings, so `convert --validate`, `compare`, and the DECOMP boundary
-cost-to-go import work without further setup. `novomodelo-python` ships prebuilt
-wheels for common platforms; if pip reports that none matches yours, see the
-[novomodelo repository](https://github.com/ons-ccee-epe/novomodelo) for build options.
+Requires Python 3.12 or newer, and a Rust toolchain (1.88 or newer): the
+install builds `novomodelo-python`, Novomodelo's Python bindings, from the commit
+of the [novomodelo repository](https://github.com/ons-ccee-epe/novomodelo) that
+this bridge pins, so `convert --validate`, `compare`, and the DECOMP boundary
+cost-to-go import work without further setup. pip and pipx do not read that
+pin; they would look for `novomodelo-python` on PyPI instead.
 
-The `novomodelo` solver itself is a separate install (`cargo install novomodelo-cli`;
-see the novomodelo README). novomodelo-bridge does not need it to convert or compare.
-You need it to solve the converted case between those two steps.
+The `novomodelo` solver itself is a separate install, built from the novomodelo
+repository (see its README). novomodelo-bridge does not need it to convert or
+compare. You need it to solve the converted case between those two steps.
 
 ### Versions
 
@@ -158,6 +160,18 @@ environment > file > built-in default.
 - [Architecture](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/architecture.md): how the code is organised, for contributors.
 - [Contributing](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/CONTRIBUTING.md): development setup, tests, quality gates, releasing.
 - [Changelog](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/CHANGELOG.md).
+
+## Origin and credits
+
+novomodelo-bridge is developed by Operador Nacional do Sistema Elétrico - ONS,
+Câmara de Comercialização de Energia Elétrica - CCEE and Empresa de Pesquisa
+Energética - EPE, with other contributors, as a fork of
+[cobre-bridge](https://github.com/cobre-rs/cobre-bridge). The fork was created
+from the cobre-bridge v0.18.0 release (commit `8ca8e38`, tagged `fork-point` in
+this repository); every commit up to and including it is cobre-bridge's and is
+preserved unchanged here. Changes taken from cobre-bridge after that release
+carry an `Upstream-Commit:` trailer. Issue and PR numbers (`#NN`) in commit
+messages before the fork refer to <https://github.com/cobre-rs/cobre-bridge>.
 
 ## License
 
