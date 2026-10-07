@@ -29,33 +29,63 @@ jobs:
       - run: python3 scripts/ci/check_no_plan_leaks.py
       - run: python3 scripts/ci/check_comment_refs.py
       - run: python3 scripts/ci/check_doc_paths.py
+      # The rename guard is the core repository's tool, run with this
+      # repository's map, at the core commit the bindings are pinned to.
+      - name: Find the pinned core commit
+        id: core
+        run: >-
+          python3 -c 'import tomllib;
+          s = tomllib.load(open("pyproject.toml", "rb"))["tool"]["uv"]["sources"]["novomodelo-python"];
+          print("ref=" + (s.get("rev") or s["tag"]))' >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: ons-ccee-epe/novomodelo
+          ref: ${{ steps.core.outputs.ref }}
+          token: ${{ secrets.NOVOMODELO_CORE_TOKEN }}
+          path: .core
+          sparse-checkout: scripts/rebrand
+      - name: Check for leftovers of the rename
+        run: python3 .core/scripts/rebrand/rebrand.py check --root . --map scripts/rebrand/map.toml
 
   test:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # A cold cache builds novomodelo-python (Rust) from the pinned core commit.
+    timeout-minutes: 45
     strategy:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
+          version: "0.12.18"
           python-version: ${{ matrix.python-version }}
-      # novomodelo-python is a core runtime dependency, so `.[dev]` pulls it on
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      # novomodelo-python comes from the private core repository through the
+      # git source in pyproject.toml, which only uv reads.
+      - name: Let git read the core repository
+        run: git config --global url."https://x-access-token:${{ secrets.NOVOMODELO_CORE_TOKEN }}@github.com/ons-ccee-epe/novomodelo".insteadOf "https://github.com/ons-ccee-epe/novomodelo"
+      # novomodelo-python is a core runtime dependency, so the sync pulls it on
       # every Python in the matrix — the tier-2 (`requires_novomodelo_python`)
-      # boundary-FCF tests now run on all jobs, not just the primary one.
-      - run: pip install -e ".[dev]"
-      - run: pytest --tb=short
+      # boundary-FCF tests run on all jobs, not just the primary one.
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync pytest --tb=short
 
   coverage:
     name: coverage (reader/align layer floor)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
+          version: "0.12.18"
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
-      - run: pytest --cov --cov-report=term-missing
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Let git read the core repository
+        run: git config --global url."https://x-access-token:${{ secrets.NOVOMODELO_CORE_TOKEN }}@github.com/ons-ccee-epe/novomodelo".insteadOf "https://github.com/ons-ccee-epe/novomodelo"
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync pytest --cov --cov-report=term-missing
