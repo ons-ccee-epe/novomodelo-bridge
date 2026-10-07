@@ -1,0 +1,65 @@
+# The bridge's name map, read by the rebrand tool of the core repository:
+#   python3 <core>/scripts/rebrand/rebrand.py paths|tokens|check \
+#       --root . --map scripts/rebrand/map.toml
+# The rule semantics are documented in the core repository's map.
+
+[name]
+from = "cobre"
+forms = { cobre = "novomodelo", Cobre = "Novomodelo", COBRE = "NOVOMODELO" }
+adjacent_ok = [
+  # CamelCase identifiers: TestReadCobreLines, TestEvaluateLhsCobre.
+  '[a-z]Cobre(?![a-z])',
+  # Test names spelling CobreReadError in lowercase.
+  'cobrereaderror',
+  # A regex word boundary in scripts/ci/check_comment_refs.py.
+  '\\bcobre',
+]
+
+[paths]
+keep = []
+
+[content]
+keep_files = [
+  "LICENSE",
+  "NOTICE",
+  "CHANGELOG.md",
+  # Pins Cobre's published wheels by URL and hash; regenerated with `uv lock`.
+  "uv.lock",
+  "scripts/rebrand/*",
+]
+
+[[rule]]
+# The key Cobre 0.17 and earlier wrote; the readers' fallback and its fixtures.
+pattern = '''(?<=["'])cobre_version(?=["'])'''
+keep = true
+
+[[rule]]
+pattern = 'raw\.githubusercontent\.com/cobre-rs/cobre/refs/heads/main/schemas/'
+to = 'raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/'
+
+# Repository paths match with or without a host, as in the core repository's map.
+[[rule]]
+pattern = 'cobre-rs/cobre(-bridge)?/(issues|pull)/[0-9]+'
+keep = true
+
+[[rule]]
+pattern = 'cobre-rs/cobre(-bridge)?/compare/'
+keep = true
+
+[[rule]]
+pattern = 'cobre-rs/cobre-bridge'
+to = 'ons-ccee-epe/novomodelo-bridge'
+
+[[rule]]
+pattern = 'cobre-rs/cobre(?![A-Za-z0-9_-])'
+to = 'ons-ccee-epe/novomodelo'
+
+# A placeholder until the fork's documentation domain exists; one substitution
+# of this host replaces it.
+[[rule]]
+pattern = 'docs\.cobre-rs\.dev'
+to = 'docs.novomodelo.invalid'
+
+[[rule]]
+pattern = 'cobre-rs'
+manual = "another reference to the upstream organization; decide per site"
