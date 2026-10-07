@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
+from typing import Any
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
@@ -70,6 +71,15 @@ def _lock_novomodelo_python_requirement() -> dict[str, str] | None:
     return None
 
 
+def _lock_package(name: str) -> dict[str, Any] | None:
+    """The `[[package]]` entry for `name` in uv.lock, or None if absent."""
+    data = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
+    for package in data["package"]:
+        if package.get("name") == name:
+            return package
+    return None
+
+
 def test_uv_lock_novomodelo_python_is_a_core_dependency() -> None:
     """uv.lock must record novomodelo-python as a core requirement — not gated
     behind an `extra` — so `uv sync` installs it by default, matching
@@ -83,19 +93,25 @@ def test_uv_lock_novomodelo_python_is_a_core_dependency() -> None:
     )
 
 
-def test_uv_lock_novomodelo_python_is_pinned_exactly_to_min_novomodelo_version() -> (
-    None
-):
-    """The uv.lock novomodelo-python specifier must be exactly MIN_NOVOMODELO_VERSION, so
-    a regenerated lock never resolves a release other than the paired one."""
+def test_uv_lock_resolves_novomodelo_python_at_min_novomodelo_version() -> None:
+    """uv.lock must resolve novomodelo-python to exactly MIN_NOVOMODELO_VERSION, built
+    from the core repository at one commit, so a regenerated lock never resolves a
+    release other than the paired one. The bindings come from a git source, so the
+    requirement itself carries no version specifier."""
     from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
 
-    req = _lock_novomodelo_python_requirement()
-    assert req is not None
-    specifier = req.get("specifier", "").replace(" ", "")
-    assert specifier == f"=={MIN_NOVOMODELO_VERSION}", (
-        f"uv.lock novomodelo-python specifier {specifier!r} must be exactly "
-        f"=={MIN_NOVOMODELO_VERSION}"
+    package = _lock_package("novomodelo-python")
+    assert package is not None, "novomodelo-python missing from uv.lock"
+    assert package.get("version") == MIN_NOVOMODELO_VERSION, (
+        f"uv.lock resolves novomodelo-python {package.get('version')!r}; it must be "
+        f"exactly {MIN_NOVOMODELO_VERSION}"
+    )
+    git = package.get("source", {}).get("git", "")
+    assert git.startswith("https://github.com/ons-ccee-epe/novomodelo?"), (
+        f"novomodelo-python must come from the core repository; uv.lock has {git!r}"
+    )
+    assert re.search(r"#[0-9a-f]{40}$", git), (
+        f"uv.lock must pin novomodelo-python to one commit; found {git!r}"
     )
 
 
@@ -105,11 +121,8 @@ _CI_WORKFLOW = (
 
 
 def _lock_package_version(name: str) -> str | None:
-    data = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
-    for package in data["package"]:
-        if package.get("name") == name:
-            return package.get("version")
-    return None
+    package = _lock_package(name)
+    return None if package is None else package.get("version")
 
 
 def test_ci_installs_the_ruff_version_uv_lock_pins() -> None:
