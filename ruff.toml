@@ -6,6 +6,10 @@ line-length = 88
 # its code (pair each with a rationale — .claude/rules/comments.md D3).
 select = ["E", "F", "I", "UP", "PGH"]
 
+[lint.pycodestyle]
+# The rename lengthens identifiers and strings; the formatter keeps 88.
+max-line-length = 110
+
 [lint.per-file-ignores]
 "**/dashboard/tabs/*.py" = ["E501"]
 "**/ui/html/css.py" = ["E501"]
