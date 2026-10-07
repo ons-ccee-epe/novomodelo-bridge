@@ -329,7 +329,7 @@ def test_build_fpha_comparison_run_of_river_collapses_volume_axis() -> None:
     assert row["n_v"] == 1
     # Volume axis collapses to a single point for run-of-river.
     assert surface.filter(pl.col("source") == "newave")["v_hm3"].n_unique() == 1
-    assert sorted(surface["source"].unique().to_list()) == ["novomodelo", "newave"]
+    assert sorted(surface["source"].unique().to_list()) == ["newave", "novomodelo"]
     assert not spill.is_empty()
 
 
