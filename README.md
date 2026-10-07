@@ -169,9 +169,7 @@ Energética - EPE, with other contributors, as a fork of
 [cobre-bridge](https://github.com/cobre-rs/cobre-bridge). The fork was created
 from the cobre-bridge v0.18.0 release (commit `8ca8e38`, tagged `fork-point` in
 this repository); every commit up to and including it is cobre-bridge's and is
-preserved unchanged here. Changes taken from cobre-bridge after that release
-carry an `Upstream-Commit:` trailer. Issue and PR numbers (`#NN`) in commit
-messages before the fork refer to <https://github.com/cobre-rs/cobre-bridge>.
+preserved unchanged here.
 
 ## License
 
