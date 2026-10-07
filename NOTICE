@@ -1,3 +1,24 @@
+novomodelo-bridge
+Copyright 2026 Operador Nacional do Sistema Elétrico - ONS,
+Câmara de Comercialização de Energia Elétrica - CCEE,
+Empresa de Pesquisa Energética - EPE and Contributors
+
+novomodelo-bridge is a fork of cobre-bridge
+(https://github.com/cobre-rs/cobre-bridge), created from the cobre-bridge
+v0.18.0 release. Since then it has been modified and maintained by
+Operador Nacional do Sistema Elétrico - ONS,
+Câmara de Comercialização de Energia Elétrica - CCEE,
+Empresa de Pesquisa Energética - EPE and other contributors, each of whom holds
+the copyright in the modifications they have made. Changes later taken from
+cobre-bridge remain the copyright of their authors and carry an
+"Upstream-Commit:" trailer. The git history of this repository records who
+changed what.
+
+--------------------------------------------------------------------------------
+The NOTICE of cobre-bridge follows, retained as required by Apache License 2.0
+§4(d).
+--------------------------------------------------------------------------------
+
 cobre-bridge — NEWAVE and DECOMP case conversion for Cobre
 Copyright 2026 Rogerio J. M. Alves and Cobre Contributors
 
