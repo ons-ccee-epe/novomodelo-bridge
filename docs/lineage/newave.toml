@@ -1,0 +1,3269 @@
+# Linhagem de dados da conversão NEWAVE → Novomodelo.
+#
+# Fonte única de docs/newave-data-map.md (gerado por scripts/gen-lineage-docs.py;
+# nunca edite a página). Um [[output]] por arquivo escrito, um [[output.field]] por
+# campo ou coluna, e [[source]] para o que o deck traz e o conversor ainda não lê ou
+# não converte. Chaves em inglês; prosa em pt-BR. Validado por tests/test_lineage.py.
+track = "newave"
+
+# ===== frag_A_nw_root_network =====
+# Fragmento A — NEWAVE: raiz do caso (config, stages, penalties, initial_conditions),
+# rede (buses, lines, non_controllable_sources), térmicas, parâmetros escalares e
+# as tabelas parquet de limites de intercâmbio, limites térmicos e sobrescritas de
+# penalidade. A chave `track` é escrita pelo montador.
+
+# =============================================================================
+# config.json
+# =============================================================================
+[[output]]
+path = "config.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/temporal.py"
+reads = [
+  { file = "dger" },
+  { file = "shist" },
+]
+summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos flags de `dger.dat`; `shist.dat` entra somente no modo determinístico e na simulação histórica."
+
+  [[output.field]]
+  path = "estimation.max_order"
+  from = [ { file = "dger", item = "ordem_maxima_parp" } ]
+  how = "Valor direto (6 quando ausente). No modo determinístico (`num_forwards` = 1, `num_aberturas` = 1, `tipo_simulacao_final` = 2 e `shist.dat` com `varredura` = 0 e um único ano) é forçado a 0 para não carregar estado de defasagem de afluência."
+
+  [[output.field]]
+  path = "estimation.order_selection"
+  from = [ { file = "dger", item = "consideracao_media_anual_afluencias" } ]
+  how = "0 → `pacf`; 1, 2 ou 3 → `pacf_annual` (o Novomodelo implementa a variante exata de 12 eixos, opção 3). Campo omitido quando o flag está ausente; no modo determinístico é `pacf`."
+
+  [[output.field]]
+  path = "exports.states"
+  from = [ { file = "dger", item = "impressao_estados_geracao_cortes" } ]
+  how = "`true` quando o flag vale 0 (NEWAVE grava os estados visitados na geração de cortes); qualquer outro valor mantém `false`."
+
+  [[output.field]]
+  path = "exports.stochastic"
+  from = []
+  status = "constant"
+  how = "Sempre `true`: a exportação do modelo estocástico é ligada para permitir a comparação das estatísticas de afluência."
+
+  [[output.field]]
+  path = "modeling.inflow_non_negativity.method"
+  from = []
+  status = "constant"
+  how = "Sempre `truncation_with_penalty`: a afluência incremental negativa é truncada e a folga penalizada por `hydro.inflow_nonnegativity_cost`."
+
+  [[output.field]]
+  path = "simulation.enabled"
+  from = [
+    { file = "dger", item = "tipo_execucao" },
+    { file = "dger", item = "tipo_simulacao_final" },
+  ]
+  how = "`true` quando `tipo_execucao` = 0 (somente simulação); caso contrário `true` se `tipo_simulacao_final` ≠ 0."
+
+  [[output.field]]
+  path = "simulation.selection.method"
+  from = []
+  status = "constant"
+  how = "Sempre `sampled`."
+
+  [[output.field]]
+  path = "simulation.selection.num_scenarios"
+  from = [
+    { file = "dger", item = "num_series_sinteticas" },
+    { file = "shist", item = "anos_inicio_simulacoes" },
+    { file = "shist", item = "ano_inicio_varredura" },
+  ]
+  how = "`num_series_sinteticas` (200 quando ausente). Na simulação histórica (`tipo_simulacao_final` = 2) é substituído pelo número de anos iniciais do `shist.dat`, pois cada cenário histórico é um ano de partida."
+
+  [[output.field]]
+  path = "simulation.scenario_source.seed"
+  from = []
+  status = "constant"
+  when = "somente quando a simulação está habilitada"
+  how = "Sempre 42; o NEWAVE não expõe semente equivalente."
+
+  [[output.field]]
+  path = "simulation.scenario_source.inflow.scheme"
+  from = [
+    { file = "dger", item = "tipo_simulacao_final" },
+    { file = "dger", item = "considera_reamostragem_cenarios" },
+  ]
+  when = "somente quando a simulação está habilitada"
+  how = "`tipo_simulacao_final` = 2 → `historical`; senão `considera_reamostragem_cenarios` = 1 → `out_of_sample`, caso contrário `in_sample`."
+
+  [[output.field]]
+  path = "simulation.scenario_source.historical_years"
+  from = [
+    { file = "shist", item = "varredura" },
+    { file = "shist", item = "anos_inicio_simulacoes" },
+    { file = "shist", item = "ano_inicio_varredura" },
+    { file = "dger", item = "ano_inicial_historico" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  when = "somente quando `tipo_simulacao_final` = 2 (simulação histórica)"
+  how = "`varredura` = 0 → lista explícita de `anos_inicio_simulacoes`; `varredura` = 1 → intervalo de `ano_inicio_varredura` até `ano_inicio_estudo` − (anos de estudo + pós-estudo). Sem `shist.dat`: intervalo de `ano_inicial_historico` + 1 até `ano_inicio_estudo` − 1."
+
+  [[output.field]]
+  path = "training.selection.method"
+  from = []
+  status = "constant"
+  how = "Sempre `sampled`."
+
+  [[output.field]]
+  path = "training.selection.forward_passes"
+  from = [ { file = "dger", item = "num_forwards" } ]
+  how = "Valor direto (1 quando ausente)."
+
+  [[output.field]]
+  path = "training.stopping_rules[].type"
+  from = []
+  status = "constant"
+  how = "Sempre `iteration_limit`, única regra de parada emitida; o NEWAVE não tem critério de gap equivalente exposto aqui."
+
+  [[output.field]]
+  path = "training.stopping_rules[].limit"
+  from = [ { file = "dger", item = "num_max_iteracoes" } ]
+  how = "Valor direto (200 quando ausente)."
+
+  [[output.field]]
+  path = "training.cut_selection.row_activity_tolerance"
+  from = []
+  status = "constant"
+  how = "Sempre 1e-6."
+
+  [[output.field]]
+  path = "training.cut_selection.selection.method"
+  from = []
+  status = "constant"
+  when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
+  how = "Sempre `lml1` (seleção Level-1 de memória limitada). O Novomodelo tem um único interruptor para os dois passos; a união dos flags do NEWAVE o liga."
+
+  [[output.field]]
+  path = "training.cut_selection.selection.check_frequency"
+  from = []
+  status = "constant"
+  when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
+  how = "Sempre 1. A janela de memória do NEWAVE não tem equivalente no `lml1` baseado em valor e é descartada."
+
+  [[output.field]]
+  path = "training.parallelism.backward_scheduler.method"
+  from = []
+  status = "constant"
+  how = "Sempre `by_node`: cada unidade de trabalho do backward é um par (ponto de tentativa, bloco de aberturas)."
+
+  [[output.field]]
+  path = "training.parallelism.backward_scheduler.block_size"
+  from = [ { file = "dger", item = "num_aberturas" } ]
+  status = "derived"
+  how = "`ceil(num_aberturas / 2)`; coincide com o padrão do Novomodelo, mas é fixado a partir do deck."
+
+  [[output.field]]
+  path = "training.scenario_source.seed"
+  from = []
+  status = "constant"
+  when = "somente quando `tipo_execucao` = 1 e (`considera_reamostragem_cenarios` = 1 ou modo determinístico)"
+  how = "Sempre 42."
+
+  [[output.field]]
+  path = "training.scenario_source.inflow.scheme"
+  from = [
+    { file = "dger", item = "considera_reamostragem_cenarios" },
+    { file = "dger", item = "num_forwards" },
+    { file = "dger", item = "num_aberturas" },
+    { file = "dger", item = "tipo_simulacao_final" },
+    { file = "shist", item = "varredura" },
+    { file = "shist", item = "anos_inicio_simulacoes" },
+  ]
+  when = "somente quando `tipo_execucao` = 1 e (`considera_reamostragem_cenarios` = 1 ou modo determinístico)"
+  how = "`out_of_sample` quando `considera_reamostragem_cenarios` = 1; `historical` no modo determinístico (treinamento reutiliza o único ano histórico da simulação)."
+
+  [[output.field]]
+  path = "training.scenario_source.historical_years"
+  from = [
+    { file = "shist", item = "varredura" },
+    { file = "shist", item = "anos_inicio_simulacoes" },
+    { file = "shist", item = "ano_inicio_varredura" },
+    { file = "dger", item = "ano_inicial_historico" },
+  ]
+  when = "somente no modo determinístico"
+  how = "Mesma resolução de `simulation.scenario_source.historical_years`; no modo determinístico resulta na lista de um único ano de `anos_inicio_simulacoes`."
+
+  [[output.field]]
+  path = "training.enabled"
+  from = [ { file = "dger", item = "tipo_execucao" } ]
+  when = "somente quando `tipo_execucao` = 0 (somente simulação)"
+  how = "Escrito como `false` apenas nesse caso; omitido (padrão `true`) quando `tipo_execucao` = 1."
+
+# =============================================================================
+# stages.json
+# =============================================================================
+[[output]]
+path = "stages.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/temporal.py"
+reads = [
+  { file = "dger" },
+  { file = "patamar" },
+  { file = "cvar" },
+  { file = "shist" },
+]
+summary = "Um estágio mensal por mês de estudo e de pós-estudo, com blocos (patamares) de `patamar.dat` e medida de risco de `dger.dat`/`cvar.dat`."
+
+  [[output.field]]
+  path = "season_definitions.cycle_type"
+  from = []
+  status = "constant"
+  how = "Sempre `monthly`: doze estações calendário."
+
+  [[output.field]]
+  path = "season_definitions.seasons[].id"
+  from = []
+  status = "constant"
+  how = "0 a 11 (janeiro = 0)."
+
+  [[output.field]]
+  path = "season_definitions.seasons[].month_start"
+  from = []
+  status = "constant"
+  how = "1 a 12, o mês calendário de cada estação."
+
+  [[output.field]]
+  path = "season_definitions.seasons[].label"
+  from = []
+  status = "constant"
+  how = "Nome do mês em inglês (`January` … `December`)."
+
+  [[output.field]]
+  path = "policy_graph.type"
+  from = []
+  status = "constant"
+  how = "Sempre `finite_horizon`."
+
+  [[output.field]]
+  path = "policy_graph.annual_discount_rate"
+  from = [ { file = "dger", item = "taxa_de_desconto" } ]
+  how = "Taxa anual em percentual dividida por 100 (0.0 quando ausente)."
+
+  [[output.field]]
+  path = "policy_graph.transitions[].source_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Uma transição por par de estágios consecutivos (0→1, 1→2, …) até o último estágio do pós-estudo."
+
+  [[output.field]]
+  path = "policy_graph.transitions[].target_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "`source_id` + 1."
+
+  [[output.field]]
+  path = "policy_graph.transitions[].probability"
+  from = []
+  status = "constant"
+  how = "Sempre 1.0: cadeia linear de estágios."
+
+  [[output.field]]
+  path = "stages[].id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "0-based, um por mês: o estudo vai de `mes_inicio_estudo` a dezembro de `ano_inicio_estudo` + `num_anos_estudo` − 1, seguido de `num_anos_pos_estudo` anos completos."
+
+  [[output.field]]
+  path = "stages[].start_date"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  how = "Primeiro dia do mês do estágio (ISO)."
+
+  [[output.field]]
+  path = "stages[].end_date"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  how = "Primeiro dia do mês seguinte (fim exclusivo)."
+
+  [[output.field]]
+  path = "stages[].season_id"
+  from = [ { file = "dger", item = "mes_inicio_estudo" } ]
+  status = "derived"
+  how = "Mês calendário do estágio − 1."
+
+  [[output.field]]
+  path = "stages[].blocks[].id"
+  from = [ { file = "patamar", item = "numero_patamares" } ]
+  status = "derived"
+  how = "Índice do patamar − 1, para cada um dos `numero_patamares` patamares."
+
+  [[output.field]]
+  path = "stages[].blocks[].name"
+  from = [ { file = "patamar", item = "numero_patamares" } ]
+  status = "derived"
+  how = "Nome canônico por quantidade de patamares: 1 → `SINGLE`; 2 → `HEAVY`, `LIGHT`; 3 → `HEAVY`, `MEDIUM`, `LIGHT`; outras → `BLOCK_i`."
+
+  [[output.field]]
+  path = "stages[].blocks[].hours"
+  from = [ { file = "patamar", item = "duracao_mensal_patamares · valor" } ]
+  how = "Fração de duração do patamar no (ano, mês) do estágio multiplicada pelas horas do mês calendário. Ano ausente usa o último ano do arquivo no mesmo mês; sem registro, fração igual 1/N com aviso."
+
+  [[output.field]]
+  path = "stages[].num_openings"
+  from = [ { file = "dger", item = "num_aberturas" } ]
+  how = "Valor direto (1 quando ausente), igual em todos os estágios."
+
+  [[output.field]]
+  path = "stages[].risk_measure"
+  from = [
+    { file = "dger", item = "cvar" },
+    { file = "cvar", item = "valores_constantes" },
+  ]
+  how = "`expectation` quando `cvar` = 0, quando `cvar.dat` está ausente ou no modo determinístico. Com `cvar` = 1 ou 2 e `cvar.dat` presente, vira o objeto `cvar` documentado nos campos `risk_measure.cvar.*`."
+
+  [[output.field]]
+  path = "stages[].risk_measure.cvar.alpha"
+  from = [
+    { file = "dger", item = "cvar" },
+    { file = "cvar", item = "valores_constantes" },
+    { file = "cvar", item = "alfa_variavel · valor" },
+  ]
+  when = "somente quando `cvar` = 1 ou 2 em `dger.dat` e `cvar.dat` está presente, fora do modo determinístico"
+  how = "`cvar` = 1: primeiro valor de `valores_constantes` / 100 em todos os estágios. `cvar` = 2: `alfa_variavel` do (ano, mês) do estágio / 100; valor 0 ou mês ausente recai no constante."
+
+  [[output.field]]
+  path = "stages[].risk_measure.cvar.lambda"
+  from = [
+    { file = "dger", item = "cvar" },
+    { file = "cvar", item = "valores_constantes" },
+    { file = "cvar", item = "lambda_variavel · valor" },
+  ]
+  when = "somente quando `cvar` = 1 ou 2 em `dger.dat` e `cvar.dat` está presente, fora do modo determinístico"
+  how = "`cvar` = 1: segundo valor de `valores_constantes` / 100. `cvar` = 2: `lambda_variavel` do (ano, mês) / 100, com o mesmo recuo ao constante."
+
+  [[output.field]]
+  path = "stages[].state_variables.storage"
+  from = []
+  status = "constant"
+  how = "Sempre `true`: o armazenamento é variável de estado em todo estágio."
+
+  [[output.field]]
+  path = "stages[].state_variables.inflow_lags"
+  from = [
+    { file = "dger", item = "num_forwards" },
+    { file = "dger", item = "num_aberturas" },
+    { file = "dger", item = "tipo_simulacao_final" },
+    { file = "shist", item = "varredura" },
+    { file = "shist", item = "anos_inicio_simulacoes" },
+  ]
+  how = "`true`, exceto no modo determinístico, em que as defasagens de afluência não acrescentam informação e são desligadas."
+
+  [[output.field]]
+  path = "stages[].sampling_method"
+  from = [
+    { file = "dger", item = "num_forwards" },
+    { file = "dger", item = "num_aberturas" },
+    { file = "dger", item = "tipo_simulacao_final" },
+    { file = "shist", item = "varredura" },
+    { file = "shist", item = "anos_inicio_simulacoes" },
+  ]
+  when = "somente no modo determinístico"
+  how = "`historical_residuals`: cada estágio amostra o resíduo diretamente do único cenário histórico."
+
+  [[output.field]]
+  path = "pre_study_stages[].id"
+  from = [ { file = "dger", item = "num_anos_pre_estudo" } ]
+  status = "derived"
+  when = "somente quando `num_anos_pre_estudo` > 0"
+  how = "Ids negativos −N … −1 para os N = 12 × `num_anos_pre_estudo` meses anteriores ao início do estudo."
+
+  [[output.field]]
+  path = "pre_study_stages[].start_date"
+  from = [
+    { file = "dger", item = "num_anos_pre_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `num_anos_pre_estudo` > 0"
+  how = "Primeiro dia de cada mês pré-estudo, andando para trás a partir do início do estudo."
+
+  [[output.field]]
+  path = "pre_study_stages[].end_date"
+  from = [
+    { file = "dger", item = "num_anos_pre_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `num_anos_pre_estudo` > 0"
+  how = "Primeiro dia do mês seguinte (fim exclusivo)."
+
+  [[output.field]]
+  path = "pre_study_stages[].season_id"
+  from = [ { file = "dger", item = "num_anos_pre_estudo" } ]
+  status = "derived"
+  when = "somente quando `num_anos_pre_estudo` > 0"
+  how = "Mês calendário − 1."
+
+# =============================================================================
+# penalties.json
+# =============================================================================
+[[output]]
+path = "penalties.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "penalid" },
+  { file = "hidr" },
+  { file = "confhd" },
+  { file = "modif" },
+  { file = "exph" },
+]
+summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalidades internas do NEWAVE (manual v30, §3.24) e penalidades de `penalid.dat` convertidas de R$/MWh para o domínio de vazão com as produtibilidades do SIN."
+
+  [[output.field]]
+  path = "bus.deficit_segments[].cost"
+  from = [ { file = "sistema", item = "custo_deficit · custo" } ]
+  how = "Custo do primeiro patamar de déficit do submercado de menor código, em R$/MWh, sem conversão. Um único segmento sem profundidade."
+
+  [[output.field]]
+  path = "bus.deficit_segments[].depth_mw"
+  from = []
+  status = "null"
+  how = "Sempre nulo: o segmento global é ilimitado; as profundidades por patamar ficam em `system/buses.json`."
+
+  [[output.field]]
+  path = "bus.excess_cost"
+  from = []
+  status = "constant"
+  how = "Sempre 0.000355 R$/MWh (pEXC, excesso de energia). Domínio de energia, sem fator de produtibilidade."
+
+  [[output.field]]
+  path = "line.exchange_cost"
+  from = []
+  status = "constant"
+  how = "Sempre 0.000273 R$/MWh (pINT, intercâmbio). Sem fator de produtibilidade."
+
+  [[output.field]]
+  path = "non_controllable_source.curtailment_cost"
+  from = []
+  status = "constant"
+  how = "Sempre 0.000344 R$/MWh (pCORTEOL, corte de geração não simulada). Sem fator de produtibilidade."
+
+  [[output.field]]
+  path = "hydro.spillage_cost"
+  from = [
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "hidr", item = "cadastro · volume_minimo" },
+    { file = "hidr", item = "cadastro · volume_maximo" },
+    { file = "hidr", item = "cadastro · canal_fuga_medio" },
+  ]
+  how = "0.000300 (pEVERT, coluna NEWAVE individualizado) × PROD_MEDIA_SIN, a média da produtibilidade equivalente volume mínimo→máximo (PRODT) sobre as usinas ativas, zeros incluídos. Resultado em R$/(m³/s·h)."
+
+  [[output.field]]
+  path = "hydro.turbined_cost"
+  from = [
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "hidr", item = "cadastro · volume_minimo" },
+    { file = "hidr", item = "cadastro · volume_maximo" },
+    { file = "hidr", item = "cadastro · canal_fuga_medio" },
+  ]
+  how = "0.000333 (pTURB) × PROD_MEDIA_SIN."
+
+  [[output.field]]
+  path = "hydro.diversion_cost"
+  from = [
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "hidr", item = "cadastro · volume_minimo" },
+    { file = "hidr", item = "cadastro · volume_maximo" },
+    { file = "hidr", item = "cadastro · canal_fuga_medio" },
+  ]
+  how = "0.000300 (pCDESV, volume desviado) × PROD_MEDIA_SIN."
+
+  [[output.field]]
+  path = "hydro.turbined_violation_below_cost"
+  from = [
+    { file = "penalid", item = "TURBMN · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  how = "TURBMN (primeiro valor não nulo de `penalid.dat`; sem registro, 10 × maior custo de déficit) × PROD_MEDIA_SIN."
+
+  [[output.field]]
+  path = "hydro.outflow_violation_below_cost"
+  from = [
+    { file = "penalid", item = "VAZMIN · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  how = "VAZMIN (sem registro, 10 × maior custo de déficit) × PROD_MEDIA_SIN."
+
+  [[output.field]]
+  path = "hydro.outflow_violation_above_cost"
+  from = [
+    { file = "penalid", item = "TURBMX · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  how = "TURBMX (sem registro, 10 × maior custo de déficit) × PROD_MEDIA_SIN."
+
+  [[output.field]]
+  path = "hydro.generation_violation_below_cost"
+  from = [
+    { file = "penalid", item = "GHMIN · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+  ]
+  how = "GHMIN (sem registro, 10 × maior custo de déficit), em R$/MWh sem fator de produtibilidade: a folga é no domínio de energia."
+
+  [[output.field]]
+  path = "hydro.water_withdrawal_violation_cost"
+  from = [
+    { file = "penalid", item = "DESVIO · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  how = "DESVIO (sem registro, 10 × maior custo de déficit) × MAX_PRODTACUM_SIN, a maior produtibilidade acumulada de cascata avaliada na altura máxima (volume útil integral), com a topologia de `codigo_usina_jusante`."
+
+  [[output.field]]
+  path = "hydro.evaporation_violation_cost"
+  from = [
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  how = "Sem variável em `penalid.dat`: 10 × maior custo de déficit × MAX_PRODTACUM_SIN (manual p.87, sem a divisão por C_M3S2HM3 porque a folga do Novomodelo é em m³/s)."
+
+  [[output.field]]
+  path = "hydro.inflow_nonnegativity_cost"
+  from = [
+    { file = "penalid", item = "DESVIO · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  how = "`water_withdrawal_violation_cost` + 1 R$/(m³/s), para que a folga de afluência nunca seja mais barata que a violação de desvio de água. Sem contrapartida no NEWAVE."
+
+  [[output.field]]
+  path = "hydro.storage_violation_below_cost"
+  from = [
+    { file = "penalid", item = "VOLMIN · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  how = "VOLMIN (sem registro, 10 × maior custo de déficit) × MAX_PRODTACUM_SIN × 1e6/3600 (≈ 277.78), convertendo para R$/hm³ pela equivalência volumétrica. Slot ainda não usado pelo LP do Novomodelo."
+
+  [[output.field]]
+  path = "hydro.filling_target_violation_cost"
+  from = [
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  how = "Sem variável em `penalid.dat`: 0.9 × maior custo de déficit × MAX_PRODTACUM_SIN × 1e6/3600, em R$/hm³. Slot ainda não usado pelo LP do Novomodelo."
+
+# =============================================================================
+# initial_conditions.json
+# =============================================================================
+[[output]]
+path = "initial_conditions.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/initial_conditions.py"
+reads = [
+  { file = "confhd" },
+  { file = "hidr" },
+  { file = "modif" },
+  { file = "exph" },
+  { file = "dger" },
+  { file = "adterm" },
+  { file = "patamar" },
+  { file = "term" },
+  { file = "conft" },
+  { file = "vazpast" },
+]
+summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto já enchido das usinas em enchimento, os despachos antecipados de `adterm.dat` e a tendência hidrológica de `vazpast.dat`."
+
+  [[output.field]]
+  path = "storage[].hydro_id"
+  from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo 0-based da usina ativa (`usina_existente` = EX ou EE, não fictícia), atribuído em ordem crescente de `codigo_usina`. Ordenado pelo id."
+
+  [[output.field]]
+  path = "storage[].value_hm3"
+  from = [
+    { file = "confhd", item = "usinas · volume_inicial_percentual" },
+    { file = "hidr", item = "cadastro · volume_minimo" },
+    { file = "hidr", item = "cadastro · volume_maximo" },
+    { file = "hidr", item = "cadastro · tipo_regulacao" },
+    { file = "hidr", item = "cadastro · volume_referencia" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+  ]
+  how = "Percentual (limitado a [0, 100]) do volume útil `volume_maximo` − `volume_minimo`, somado ao mínimo, após VOLMIN/VOLMAX permanentes de `modif.dat`. Usinas `tipo_regulacao` D e S ancoram em `volume_referencia`, como o colapso de fio d'água dos limites; sem `volume_referencia`, seguem o percentual."
+
+  [[output.field]]
+  path = "filling_storage"
+  from = [
+    { file = "confhd", item = "usinas · usina_existente" },
+    { file = "exph", item = "expansoes · data_inicio_enchimento" },
+  ]
+  how = "Lista vazia quando nenhuma usina NE de `confhd.dat` tem linha de enchimento de volume morto em `exph.dat`; caso contrário, ver os campos `filling_storage[].*`."
+
+  [[output.field]]
+  path = "filling_storage[].hydro_id"
+  from = [
+    { file = "confhd", item = "usinas · codigo_usina" },
+    { file = "confhd", item = "usinas · usina_existente" },
+    { file = "exph", item = "expansoes · data_inicio_enchimento" },
+  ]
+  status = "derived"
+  when = "somente para usinas NE com linha de enchimento (`data_inicio_enchimento` não nula) em `exph.dat`"
+  how = "Id Novomodelo da usina em enchimento; ela nunca aparece também em `storage`."
+
+  [[output.field]]
+  path = "filling_storage[].value_hm3"
+  from = [
+    { file = "exph", item = "expansoes · volume_morto" },
+    { file = "hidr", item = "cadastro · volume_minimo" },
+  ]
+  when = "somente para usinas NE com linha de enchimento em `exph.dat`"
+  how = "`volume_morto` (percentual, limitado a [0, 100]) / 100 × `volume_minimo`: a fração do volume morto já represada no início do enchimento."
+
+  [[output.field]]
+  path = "past_anticipated_commitments[].thermal_id"
+  from = [
+    { file = "dger", item = "despacho_antecipado_gnl" },
+    { file = "adterm", item = "despachos · codigo_usina" },
+  ]
+  status = "derived"
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Id Novomodelo da térmica de `conft.dat`; códigos ausentes do mapa são ignorados com aviso."
+
+  [[output.field]]
+  path = "past_anticipated_commitments[].start_date"
+  from = [
+    { file = "adterm", item = "despachos · lag" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Primeiro dia do mês de entrega: `lag` = 1 é o primeiro mês do estudo, `lag` = 2 o segundo, e assim por diante; uma janela por `lag` de 1 ao máximo da usina."
+
+  [[output.field]]
+  path = "past_anticipated_commitments[].end_date"
+  from = [
+    { file = "adterm", item = "despachos · lag" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Primeiro dia do mês seguinte à entrega (fim exclusivo)."
+
+  [[output.field]]
+  path = "past_anticipated_commitments[].value_mw"
+  from = [
+    { file = "adterm", item = "despachos · valor" },
+    { file = "adterm", item = "despachos · patamar" },
+    { file = "patamar", item = "duracao_mensal_patamares · valor" },
+    { file = "term", item = "usinas · potencia_instalada" },
+    { file = "term", item = "usinas · fator_capacidade_maximo" },
+    { file = "term", item = "usinas · geracao_minima" },
+  ]
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Média dos MW por patamar ponderada pela fração de duração do patamar no mês de entrega (preserva o MWh comprometido). Limitado ao par estático [`min_mw`, `max_mw`] da térmica — o envelope dos limites por estágio —, com aviso."
+
+  [[output.field]]
+  path = "recent_observations[].hydro_id"
+  from = [
+    { file = "vazpast", item = "tendencia · codigo_usina" },
+    { file = "confhd", item = "usinas · posto" },
+  ]
+  status = "derived"
+  when = "somente quando `vazpast.dat` está presente com dados de tendência"
+  how = "`codigo_usina` de `vazpast.dat` é o posto; mapeado ao id Novomodelo pela coluna `posto` de `confhd.dat`. Ordenado pelo id."
+
+  [[output.field]]
+  path = "recent_observations[].start_date"
+  from = [
+    { file = "vazpast", item = "tendencia · mes" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `vazpast.dat` está presente com dados de tendência"
+  how = "Primeiro dia de cada um dos 12 meses calendário anteriores ao início do estudo, do mais antigo ao mais recente; mês sem valor na tendência é omitido."
+
+  [[output.field]]
+  path = "recent_observations[].end_date"
+  from = [
+    { file = "vazpast", item = "tendencia · mes" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `vazpast.dat` está presente com dados de tendência"
+  how = "Primeiro dia do mês seguinte (fim exclusivo)."
+
+  [[output.field]]
+  path = "recent_observations[].value_m3s"
+  from = [
+    { file = "vazpast", item = "tendencia · valor" },
+    { file = "confhd", item = "usinas · posto" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  when = "somente quando `vazpast.dat` está presente com dados de tendência"
+  how = "Vazão natural do posto convertida em incremental subtraindo, mês a mês, a vazão natural dos postos imediatamente a montante na cascata de `codigo_usina_jusante`."
+
+# =============================================================================
+# system/buses.json
+# =============================================================================
+[[output]]
+path = "system/buses.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Uma barra por submercado de `sistema.dat` (fictícios incluídos), com os patamares de déficit."
+
+  [[output.field]]
+  path = "buses[].id"
+  from = [
+    { file = "sistema", item = "custo_deficit · codigo_submercado" },
+    { file = "ree", item = "rees · submercado" },
+  ]
+  status = "derived"
+  how = "Id 0-based em ordem crescente de `codigo_submercado`; códigos que só aparecem em `ree.dat` são acrescentados ao mapa. Lista ordenada pelo id."
+
+  [[output.field]]
+  path = "buses[].name"
+  from = [ { file = "sistema", item = "custo_deficit · nome_submercado" } ]
+  how = "Nome do submercado, sem espaços nas pontas."
+
+  [[output.field]]
+  path = "buses[].operational_start_date"
+  from = [ { file = "dger", item = "ano_inicial_historico" } ]
+  status = "derived"
+  how = "1º de janeiro de `ano_inicial_historico` (1931 quando ausente): submercados não têm data de entrada; o Novomodelo usa a data só como chave de ordenação."
+
+  [[output.field]]
+  path = "buses[].deficit_segments[].cost"
+  from = [
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "sistema", item = "custo_deficit · patamar_deficit" },
+  ]
+  how = "Um segmento por `patamar_deficit` com custo positivo, em ordem de patamar, R$/MWh direto. Submercado sem custo positivo (fictício) recebe um único segmento com o primeiro custo positivo do arquivo."
+
+  [[output.field]]
+  path = "buses[].deficit_segments[].depth_mw"
+  from = [ { file = "sistema", item = "custo_deficit · corte" } ]
+  how = "Profundidade `corte` do patamar; o último segmento de cada barra é sempre nulo (ilimitado)."
+
+# =============================================================================
+# system/lines.json
+# =============================================================================
+[[output]]
+path = "system/lines.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Uma linha por par não ordenado de submercados presente em `limites_intercambio`, com as capacidades do primeiro mês do estudo."
+
+  [[output.field]]
+  path = "lines[].id"
+  from = [
+    { file = "sistema", item = "limites_intercambio · submercado_de" },
+    { file = "sistema", item = "limites_intercambio · submercado_para" },
+  ]
+  status = "derived"
+  how = "Pares canônicos (menor código, maior código) coletados de todas as datas do arquivo, ordenados e numerados de 0; o mesmo mapa é usado em `constraints/line_bounds.parquet`."
+
+  [[output.field]]
+  path = "lines[].name"
+  from = [
+    { file = "sistema", item = "limites_intercambio · submercado_de" },
+    { file = "sistema", item = "limites_intercambio · submercado_para" },
+  ]
+  status = "derived"
+  how = "`{código origem}_{código destino}` com os códigos numéricos do par canônico."
+
+  [[output.field]]
+  path = "lines[].operational_start_date"
+  from = [ { file = "dger", item = "ano_inicial_historico" } ]
+  status = "derived"
+  how = "1º de janeiro de `ano_inicial_historico`, como nas barras."
+
+  [[output.field]]
+  path = "lines[].source_bus_id"
+  from = [ { file = "sistema", item = "limites_intercambio · submercado_de" } ]
+  status = "derived"
+  how = "Id Novomodelo do menor código do par."
+
+  [[output.field]]
+  path = "lines[].target_bus_id"
+  from = [ { file = "sistema", item = "limites_intercambio · submercado_para" } ]
+  status = "derived"
+  how = "Id Novomodelo do maior código do par."
+
+  [[output.field]]
+  path = "lines[].capacity.direct_mw"
+  from = [
+    { file = "sistema", item = "limites_intercambio · valor" },
+    { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  how = "Limite (MW) no sentido menor→maior código no mês de início do estudo (`sentido` 0 é de→para, 1 é para→de). Sem linha nessa data usa a primeira data com valor; par sem linha recebe 0."
+
+  [[output.field]]
+  path = "lines[].capacity.reverse_mw"
+  from = [
+    { file = "sistema", item = "limites_intercambio · valor" },
+    { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  how = "Limite (MW) no sentido maior→menor código, mesma regra de data."
+
+  [[output.field]]
+  path = "lines[].exchange_cost"
+  from = [ { file = "sistema", item = "custo_deficit · ficticio" } ]
+  how = "Presente só em linhas que tocam um submercado fictício: 0.000273 × 0.5, meia pINT, para que uma rota real→fictício→real custe o mesmo que o intercâmbio direto. Demais linhas usam o valor global de `penalties.json`."
+
+# =============================================================================
+# system/thermals.json
+# =============================================================================
+[[output]]
+path = "system/thermals.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/thermal.py"
+reads = [
+  { file = "conft" },
+  { file = "clast" },
+  { file = "term" },
+  { file = "expt" },
+  { file = "manutt" },
+  { file = "dger" },
+  { file = "adterm" },
+  { file = "patamar" },
+  { file = "sistema" },
+  { file = "ree" },
+]
+summary = "Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Novomodelo, com o par estático de geração — o envelope dos limites por estágio — e o custo do primeiro ano de `clast.dat`."
+
+  [[output.field]]
+  path = "thermals[].id"
+  from = [ { file = "conft", item = "usinas · codigo_usina" } ]
+  status = "derived"
+  how = "Id 0-based em ordem crescente de `codigo_usina`."
+
+  [[output.field]]
+  path = "thermals[].name"
+  from = [ { file = "conft", item = "usinas · nome_usina" } ]
+  how = "Nome sem espaços nas pontas."
+
+  [[output.field]]
+  path = "thermals[].operational_start_date"
+  from = [ { file = "dger", item = "ano_inicial_historico" } ]
+  status = "derived"
+  how = "1º de janeiro de `ano_inicial_historico`: o NEWAVE não tem data de entrada por térmica."
+
+  [[output.field]]
+  path = "thermals[].bus_id"
+  from = [ { file = "conft", item = "usinas · submercado" } ]
+  status = "derived"
+  how = "Id Novomodelo do submercado da usina."
+
+  [[output.field]]
+  path = "thermals[].cost_per_mwh"
+  from = [ { file = "clast", item = "usinas · valor (indice_ano_estudo = 1)" } ]
+  how = "Custo do primeiro ano de estudo; 0.0 para usina sem linha em `clast.dat`. Anos com custo diferente e as modificações datadas vão para `constraints/thermal_bounds.parquet`."
+
+  [[output.field]]
+  path = "thermals[].generation.min_mw"
+  from = [
+    { file = "term", item = "usinas · geracao_minima (mes 1 a 12)" },
+    { file = "term", item = "usinas · geracao_minima (mes = 13)" },
+    { file = "expt", item = "expansoes · tipo = GTMIN · modificacao" },
+    { file = "expt", item = "expansoes · data_inicio" },
+    { file = "expt", item = "expansoes · data_fim" },
+    { file = "conft", item = "usinas · usina_existente" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  how = "Menor mínimo do horizonte: o envelope de `min_generation_mw` de `constraints/thermal_bounds.parquet`, que detalha as fontes. Ler só a linha de cadastro do `term.dat` publicaria um par que contradiz a tabela por estágio, porque as janelas de `expt.dat`, o valor dos demais anos de `term.dat`, as manutenções e a regra de IP dos anos de manutenção entram apenas por ela. Usina que nenhuma fonte de capacidade descreve recebe 0."
+
+  [[output.field]]
+  path = "thermals[].generation.max_mw"
+  from = [
+    { file = "term", item = "usinas · potencia_instalada" },
+    { file = "term", item = "usinas · fator_capacidade_maximo" },
+    { file = "term", item = "usinas · teif" },
+    { file = "term", item = "usinas · indisponibilidade_programada" },
+    { file = "expt", item = "expansoes · tipo = POTEF · modificacao" },
+    { file = "expt", item = "expansoes · tipo = FCMAX · modificacao" },
+    { file = "expt", item = "expansoes · tipo = TEIFT · modificacao" },
+    { file = "expt", item = "expansoes · tipo = IPTER · modificacao" },
+    { file = "manutt", item = "manutencoes · potencia" },
+    { file = "conft", item = "usinas · usina_existente" },
+    { file = "dger", item = "num_anos_manutencao_utes" },
+  ]
+  how = "Maior máximo do horizonte: o envelope de `max_generation_mw` de `constraints/thermal_bounds.parquet`, que detalha as fontes — logo já com TEIF, IP e manutenção. Quando a geração mínima de cadastro supera o produto `potencia_instalada` × `fator_capacidade_maximo` / 100, o teto por estágio é elevado ao mínimo inflexível e o envelope herda essa ordenação, em vez de publicar o intervalo vazio que o Novomodelo rejeita (`max_mw` tem de ser ≥ `min_mw`). Usina que nenhuma fonte de capacidade descreve recebe 0."
+
+  [[output.field]]
+  path = "thermals[].anticipated_config"
+  from = [
+    { file = "dger", item = "despacho_antecipado_gnl" },
+    { file = "adterm", item = "despachos · codigo_usina" },
+  ]
+  how = "Nulo quando `despacho_antecipado_gnl` = 0, quando `adterm.dat` está ausente ou quando a usina não tem despacho nele; caso contrário o objeto `anticipated_config.lead_stages`."
+
+  [[output.field]]
+  path = "thermals[].anticipated_config.lead_stages"
+  from = [ { file = "adterm", item = "despachos · lag" } ]
+  when = "somente para térmicas com despacho em `adterm.dat` quando `despacho_antecipado_gnl` ≠ 0"
+  how = "Maior `lag` da usina, limitado ao número total de estágios (aviso quando truncado)."
+
+  [[output.field]]
+  path = "thermals[].entry_stage_id"
+  from = []
+  status = "null"
+  how = "Sempre nulo: térmicas do NEWAVE não entram dentro do horizonte; a expansão de `expt.dat` é expressa por limites por estágio."
+
+  [[output.field]]
+  path = "thermals[].exit_stage_id"
+  from = []
+  status = "null"
+  how = "Sempre nulo: térmicas do NEWAVE não saem dentro do horizonte."
+
+# =============================================================================
+# system/non_controllable_sources.json
+# =============================================================================
+[[output]]
+path = "system/non_controllable_sources.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Uma fonte não controlável por par (`codigo_submercado`, `indice_bloco`) da geração de usinas não simuladas de `sistema.dat` dentro do horizonte."
+
+  [[output.field]]
+  path = "non_controllable_sources[].id"
+  from = [
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · codigo_submercado" },
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · indice_bloco" },
+  ]
+  status = "derived"
+  how = "Grupos (`codigo_submercado`, `indice_bloco`) das linhas com data no horizonte de estudo/pós-estudo (ano 9999 incluído), ordenados e numerados de 0; grupo cujo submercado não está no mapa é pulado com aviso."
+
+  [[output.field]]
+  path = "non_controllable_sources[].name"
+  from = [
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · fonte" },
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · codigo_submercado" },
+  ]
+  status = "derived"
+  how = "`{fonte}_{codigo_submercado}`, com a primeira `fonte` não nula do grupo (`NCS` quando não há)."
+
+  [[output.field]]
+  path = "non_controllable_sources[].operational_start_date"
+  from = [ { file = "dger", item = "ano_inicial_historico" } ]
+  status = "derived"
+  how = "1º de janeiro de `ano_inicial_historico`, como nas barras."
+
+  [[output.field]]
+  path = "non_controllable_sources[].bus_id"
+  from = [ { file = "sistema", item = "geracao_usinas_nao_simuladas · codigo_submercado" } ]
+  status = "derived"
+  how = "Id Novomodelo do submercado do grupo."
+
+  [[output.field]]
+  path = "non_controllable_sources[].max_generation_mw"
+  from = [ { file = "sistema", item = "geracao_usinas_nao_simuladas · valor" } ]
+  how = "Maior `valor` não nulo do grupo dentro do horizonte; a disponibilidade por estágio (`valor` / máximo) vai para `scenarios/non_controllable_stats.parquet`."
+
+  [[output.field]]
+  path = "non_controllable_sources[].allow_curtailment"
+  from = []
+  status = "constant"
+  how = "Sempre `false`: o NEWAVE abate a geração não simulada do mercado antes do despacho, logo ela é obrigatória; permitir corte desviava o despacho hidráulico."
+
+# =============================================================================
+# constraints/generic_parameters.json
+# =============================================================================
+[[output]]
+path = "constraints/generic_parameters.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/novomodelo/scalar_parameters.py"
+reads = [
+  { file = "confhd" },
+  { file = "hidr" },
+  { file = "exph" },
+  { file = "modif" },
+  { file = "curva" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Declara `rho_eq_h{id}` e `rho_acum_h{id}` para toda usina hidráulica ativa; a produtibilidade acumulada vira `per_stage` nas usinas referenciadas pelas restrições VminOP de `curva.dat`."
+
+  [[output.field]]
+  path = "scalar_parameters[].id"
+  from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
+  status = "derived"
+  how = "Sequencial de 0, dois por usina (ρ_eq e depois ρ_acum), em ordem crescente de id Novomodelo."
+
+  [[output.field]]
+  path = "scalar_parameters[].name"
+  from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
+  status = "derived"
+  how = "`rho_eq_h{id}` e `rho_acum_h{id}` com o id Novomodelo da usina; são os tokens `@name` usados em `constraints/generic_constraints.json`."
+
+  [[output.field]]
+  path = "scalar_parameters[].kind"
+  from = [
+    { file = "curva", item = "curva_seguranca · codigo_ree" },
+    { file = "dger", item = "curva_aversao" },
+  ]
+  how = "`computed` para todo `rho_eq_h{id}` e, por padrão, para `rho_acum_h{id}`; `per_stage` no `rho_acum_h{id}` das usinas que entram numa expressão VminOP (`curva.dat` presente, `curva_aversao` ≠ 0)."
+
+  [[output.field]]
+  path = "scalar_parameters[].computed_spec.tag"
+  from = []
+  status = "constant"
+  how = "`equivalent_productivity` na entrada ρ_eq e `accumulated_productivity` na entrada ρ_acum; o Novomodelo calcula o valor a partir da geometria em tempo de solução."
+
+  [[output.field]]
+  path = "scalar_parameters[].computed_spec.hydro_id"
+  from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo da usina a que o parâmetro se refere."
+
+  [[output.field]]
+  path = "scalar_parameters[].values"
+  from = [
+    { file = "curva", item = "curva_seguranca · codigo_ree" },
+    { file = "confhd", item = "usinas · ree" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "hidr", item = "cadastro · a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "cadastro · canal_fuga_medio" },
+    { file = "hidr", item = "cadastro · perdas" },
+    { file = "hidr", item = "cadastro · tipo_perda" },
+    { file = "hidr", item = "cadastro · volume_minimo" },
+    { file = "hidr", item = "cadastro · volume_maximo" },
+    { file = "hidr", item = "cadastro · tipo_regulacao" },
+    { file = "modif", item = "CFUGA" },
+    { file = "modif", item = "CMONT" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  when = "somente nas entradas `rho_acum_h{id}` de usinas referenciadas por uma restrição VminOP"
+  how = "Pares [estágio, valor] com a produtibilidade acumulada de cascata na convenção de energia armazenada (média integrada da cota entre `volume_minimo` e `volume_maximo`, como o `produtibilidade_acumulada_calculo_earm` do pmo.dat), recalculada nos estágios com CFUGA/CMONT ativos. Dividida por 2.628 × horas do mês / 730 para ficar em MWmês/hm³ e casar com o lado direito da restrição."
+
+# =============================================================================
+# constraints/line_bounds.parquet
+# =============================================================================
+[[output]]
+path = "constraints/line_bounds.parquet"
+kind = "parquet"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "patamar" },
+  { file = "dger" },
+]
+summary = "Uma linha base por (linha, estágio) com os limites de intercâmbio do mês, mais uma linha por patamar onde o fator de `patamar.dat` difere de 1."
+
+  [[output.field]]
+  path = "line_id"
+  from = [
+    { file = "sistema", item = "limites_intercambio · submercado_de" },
+    { file = "sistema", item = "limites_intercambio · submercado_para" },
+  ]
+  status = "derived"
+  how = "Mesmo mapa de pares canônicos de `system/lines.json`."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Todo estágio do estudo e do pós-estudo, para toda linha."
+
+  [[output.field]]
+  path = "block_id"
+  from = [ { file = "patamar", item = "intercambio_patamares · patamar" } ]
+  how = "Nulo na linha base do estágio; `patamar` − 1 nas linhas de sobrescrita por patamar, emitidas só quando o fator direto ou reverso é diferente de 1.0."
+
+  [[output.field]]
+  path = "direct_mw"
+  from = [
+    { file = "sistema", item = "limites_intercambio · valor" },
+    { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "patamar", item = "intercambio_patamares · valor" },
+  ]
+  how = "Linha base: limite menor→maior código no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano."
+
+  [[output.field]]
+  path = "reverse_mw"
+  from = [
+    { file = "sistema", item = "limites_intercambio · valor" },
+    { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "patamar", item = "intercambio_patamares · valor" },
+  ]
+  how = "Mesma regra no sentido maior→menor código (fator de `intercambio_patamares` com de > para)."
+
+# =============================================================================
+# constraints/thermal_bounds.parquet
+# =============================================================================
+[[output]]
+path = "constraints/thermal_bounds.parquet"
+kind = "parquet"
+when = "somente quando os limites de alguma térmica variam entre estágios (e diferem, portanto, do envelope publicado em `system/thermals.json`), ou quando alguma térmica tem custo variável por ano de estudo ou modificação datada em `clast.dat`"
+module = "src/novomodelo_bridge/newave/converters/thermal.py"
+reads = [
+  { file = "conft" },
+  { file = "clast" },
+  { file = "term" },
+  { file = "expt" },
+  { file = "manutt" },
+  { file = "dger" },
+]
+summary = "Limites de geração por (térmica, estágio) seguindo a ordem do sintetizador do NEWAVE (IP, EXPT, disponibilidade POTEF/GTMIN, MANUTT), com sobrescrita de custo por estágio das térmicas de custo variável. Quando a tabela é emitida, toda térmica de `term.dat`, `expt.dat` ou `manutt.dat` recebe linhas; cada linha fica dentro do envelope de `system/thermals.json`."
+
+  [[output.field]]
+  path = "thermal_id"
+  from = [ { file = "conft", item = "usinas · codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo da térmica; códigos de `expt.dat`, `manutt.dat` ou `term.dat` ausentes de `conft.dat` são ignorados."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Todo estágio do estudo e do pós-estudo."
+
+  [[output.field]]
+  path = "min_generation_mw"
+  from = [
+    { file = "term", item = "usinas · geracao_minima (mes 1 a 12)" },
+    { file = "term", item = "usinas · geracao_minima (mes = 13)" },
+    { file = "expt", item = "expansoes · tipo = GTMIN · modificacao" },
+    { file = "expt", item = "expansoes · data_inicio" },
+    { file = "expt", item = "expansoes · data_fim" },
+    { file = "conft", item = "usinas · usina_existente" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  how = "`geracao_minima` de `term.dat` em dois regimes: nos estágios do primeiro ano de estudo (o ano de `ano_inicio_estudo`), a coluna do mês calendário do estágio; nos anos seguintes, inclusive o pós-estudo, o valor único dos demais anos (que a inewave entrega como `mes = 13`), independentemente de `num_anos_manutencao_utes`. Usina com esse valor em branco conserva a coluna do mês calendário nos anos seguintes. Em cima disso entram as janelas GTMIN de `expt.dat`. Para usina `EE` ou `NE` em `conft.dat`, o NEWAVE descarta o mínimo de cadastro: fora das janelas, e para usina sem nenhuma janela, vale 0. Usina `EX` conserva o valor do `term.dat` onde o `expt.dat` não declara nada. No pós-estudo congela na configuração do último estágio de estudo (ou do estágio final, para usina que só entra no pós-estudo)."
+
+  [[output.field]]
+  path = "max_generation_mw"
+  from = [
+    { file = "term", item = "usinas · potencia_instalada" },
+    { file = "term", item = "usinas · fator_capacidade_maximo" },
+    { file = "term", item = "usinas · teif" },
+    { file = "term", item = "usinas · indisponibilidade_programada" },
+    { file = "expt", item = "expansoes · tipo = POTEF · modificacao" },
+    { file = "expt", item = "expansoes · tipo = FCMAX · modificacao" },
+    { file = "expt", item = "expansoes · tipo = TEIFT · modificacao" },
+    { file = "expt", item = "expansoes · tipo = IPTER · modificacao" },
+    { file = "manutt", item = "manutencoes · data_inicio" },
+    { file = "manutt", item = "manutencoes · duracao" },
+    { file = "manutt", item = "manutencoes · potencia" },
+    { file = "conft", item = "usinas · usina_existente" },
+    { file = "dger", item = "num_anos_manutencao_utes" },
+  ]
+  how = "`potencia` × FCMAX/100 × (100 − IP)/100 × (100 − TEIF)/100, com POTEF/FCMAX/TEIFT/IPTER de `expt.dat` aplicados por janela. Para usina `EE` ou `NE` em `conft.dat`, o NEWAVE descarta a potência de cadastro: fora de toda janela POTEF, e sem nenhuma janela, a potência é 0; usina `EX` conserva a do `term.dat`. IP é zerado e a redução de `manutt.dat` (potência × fração do mês em manutenção) subtraída só nos estágios antes do fim de `num_anos_manutencao_utes`; se GTMIN excede a capacidade, o máximo é elevado ao mínimo com aviso."
+
+  [[output.field]]
+  path = "cost_per_mwh"
+  from = [
+    { file = "clast", item = "usinas · valor" },
+    { file = "clast", item = "usinas · indice_ano_estudo" },
+    { file = "clast", item = "modificacoes · custo" },
+    { file = "clast", item = "modificacoes · data_inicio" },
+    { file = "clast", item = "modificacoes · data_fim" },
+  ]
+  how = "Nulo para térmica de custo constante. Para as demais, o `valor` do ano de estudo do estágio, sobrescrito em ordem de arquivo pelas modificações cujo intervalo contém a data do estágio; o pós-estudo congela no custo do último estágio de estudo."
+
+# =============================================================================
+# constraints/penalty_overrides_bus.parquet
+# =============================================================================
+[[output]]
+path = "constraints/penalty_overrides_bus.parquet"
+kind = "parquet"
+when = "somente quando `sistema.dat` marca algum submercado como fictício (`ficticio`) e há custo de déficit positivo"
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Sobrescrita do custo de excesso nas barras fictícias em todo estágio, para proibir na prática o excesso de energia nesses nós de passagem."
+
+  [[output.field]]
+  path = "bus_id"
+  from = [
+    { file = "sistema", item = "custo_deficit · ficticio" },
+    { file = "sistema", item = "custo_deficit · codigo_submercado" },
+  ]
+  status = "derived"
+  how = "Id Novomodelo de cada submercado com `ficticio` verdadeiro, em ordem crescente de código."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Todo estágio do estudo e do pós-estudo, por barra fictícia."
+
+  [[output.field]]
+  path = "excess_cost"
+  from = [ { file = "sistema", item = "custo_deficit · custo" } ]
+  how = "Primeiro custo de déficit positivo do arquivo, o mesmo que `system/buses.json` atribui às barras fictícias, para que excesso e déficit custem o mesmo ali."
+
+# =============================================================================
+# constraints/penalty_overrides_hydro.parquet
+# =============================================================================
+[[output]]
+path = "constraints/penalty_overrides_hydro.parquet"
+kind = "parquet"
+when = "somente quando alguma usina ativa tem registro CFUGA ou CMONT em `modif.dat` que faça a PROD_MEDIA_SIN de algum estágio diferir da global; a tabela é esparsa e só carrega as colunas que diferem"
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "penalid" },
+  { file = "hidr" },
+  { file = "confhd" },
+  { file = "modif" },
+  { file = "exph" },
+  { file = "dger" },
+]
+summary = "Recalcula o bloco `hydro` de `penalties.json` com a PROD_MEDIA_SIN de cada estágio (uniforme para todas as usinas, como a constante única do NEWAVE) e emite só o que difere do valor global."
+
+  [[output.field]]
+  path = "hydro_id"
+  from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
+  status = "derived"
+  how = "Toda usina hidráulica ativa, em ordem crescente de id, repetida para cada estágio que difere."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Somente os estágios em que ao menos uma coluna difere do valor global."
+
+  [[output.field]]
+  path = "spillage_cost"
+  from = [
+    { file = "modif", item = "CFUGA" },
+    { file = "modif", item = "CMONT" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "0.000300 × PROD_MEDIA_SIN do estágio (PRODT média com o canal de fuga/cota de montante de CFUGA/CMONT vigentes)."
+
+  [[output.field]]
+  path = "turbined_cost"
+  from = [
+    { file = "modif", item = "CFUGA" },
+    { file = "modif", item = "CMONT" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "0.000333 × PROD_MEDIA_SIN do estágio."
+
+  [[output.field]]
+  path = "diversion_cost"
+  from = [
+    { file = "modif", item = "CFUGA" },
+    { file = "modif", item = "CMONT" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "0.000300 × PROD_MEDIA_SIN do estágio."
+
+  [[output.field]]
+  path = "turbined_violation_below_cost"
+  from = [
+    { file = "penalid", item = "TURBMN · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "modif", item = "CFUGA" },
+    { file = "modif", item = "CMONT" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "TURBMN (ou 10 × maior custo de déficit) × PROD_MEDIA_SIN do estágio."
+
+  [[output.field]]
+  path = "outflow_violation_below_cost"
+  from = [
+    { file = "penalid", item = "VAZMIN · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "modif", item = "CFUGA" },
+    { file = "modif", item = "CMONT" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "VAZMIN (ou 10 × maior custo de déficit) × PROD_MEDIA_SIN do estágio."
+
+  [[output.field]]
+  path = "outflow_violation_above_cost"
+  from = [
+    { file = "penalid", item = "TURBMX · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "modif", item = "CFUGA" },
+    { file = "modif", item = "CMONT" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "TURBMX (ou 10 × maior custo de déficit) × PROD_MEDIA_SIN do estágio."
+
+  [[output.field]]
+  path = "storage_violation_below_cost"
+  from = [
+    { file = "penalid", item = "VOLMIN · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "Mesma fórmula de `penalties.json` com a MAX_PRODTACUM_SIN do estágio. Como o pipeline mantém essa constante fixa em todo o horizonte, na prática a coluna nunca difere e não é emitida."
+
+  [[output.field]]
+  path = "evaporation_violation_cost"
+  from = [
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "10 × maior custo de déficit × MAX_PRODTACUM_SIN do estágio; constante no horizonte, logo na prática não emitida."
+
+  [[output.field]]
+  path = "water_withdrawal_violation_cost"
+  from = [
+    { file = "penalid", item = "DESVIO · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "DESVIO (ou 10 × maior custo de déficit) × MAX_PRODTACUM_SIN do estágio; constante no horizonte, logo na prática não emitida."
+
+  [[output.field]]
+  path = "inflow_nonnegativity_cost"
+  from = [
+    { file = "penalid", item = "DESVIO · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "`water_withdrawal_violation_cost` do estágio + 1; segue a constante MAX_PRODTACUM_SIN, logo na prática não emitida."
+
+# ===== frag_B_nw_hydro =====
+# Fragment B — NEWAVE hydro outputs (hydros.json, hydro_production_models.json,
+# hydro_geometry.parquet, hydro_energy_productivity.parquet, tailrace_curves.parquet,
+# constraints/hydro_bounds.parquet). The top-level `track` key is written by the assembler.
+
+# ---------------------------------------------------------------------------
+# system/hydros.json
+# ---------------------------------------------------------------------------
+[[output]]
+path = "system/hydros.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/hydro/entity.py"
+reads = [
+  { file = "hidr" },
+  { file = "confhd" },
+  { file = "ree" },
+  { file = "sistema" },
+  { file = "modif" },
+  { file = "exph" },
+  { file = "dger" },
+  { file = "volref_saz" },
+]
+summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX` ou `EE` — e não fictícias, mais usinas NE com enchimento de volume morto em `exph.dat`), com o cadastro de `hidr.dat` já corrigido pelos registros permanentes de `modif.dat`, ordenada pelo id Novomodelo."
+
+  [[output.field]]
+  path = "hydros[].id"
+  from = [
+    { file = "confhd", item = "codigo_usina" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "confhd", item = "posto" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "exph", item = "data_inicio_enchimento" },
+  ]
+  status = "derived"
+  how = "Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`."
+
+  [[output.field]]
+  path = "hydros[].name"
+  from = [ { file = "confhd", item = "nome_usina" } ]
+  how = "Nome da usina em `confhd.dat`, sem espaços nas extremidades."
+
+  [[output.field]]
+  path = "hydros[].operational_start_date"
+  from = [
+    { file = "dger", item = "ano_inicial_historico" },
+    { file = "exph", item = "data_inicio_enchimento" },
+    { file = "exph", item = "duracao_enchimento" },
+  ]
+  status = "derived"
+  how = "Usinas existentes: 1º de janeiro de `ano_inicial_historico` (1931 se ausente). Usina NE em enchimento: primeiro dia do mês em que o enchimento termina (`data_inicio_enchimento` mais `duracao_enchimento` meses). No Novomodelo é chave de ordenação, não porta de entrada em operação."
+
+  [[output.field]]
+  path = "hydros[].downstream_id"
+  from = [
+    { file = "confhd", item = "codigo_usina_jusante" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "confhd", item = "posto" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "exph", item = "data_inicio_enchimento" },
+  ]
+  status = "derived"
+  how = "Id Novomodelo da próxima usina real a jusante. A cadeia `codigo_usina_jusante` é percorrida de forma transparente através de usinas fictícias e NE/NC; quando o jusante é 0 mas uma usina fictícia compartilha o `posto` da usina, ela é tomada como elo implícito da cascata. Nulo quando a cascata termina no mar."
+
+  [[output.field]]
+  path = "hydros[].reservoir.min_storage_hm3"
+  from = [
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMIN · volume, unidade" },
+  ]
+  how = "`volume_minimo` do cadastro (sobrescrito pelo registro permanente `VOLMIN` de `modif.dat`, em hm³ com `unidade` = h ou, com `%`, como percentual do volume útil do cadastro). Usinas `tipo_regulacao` D e S recebem `volume_referencia`, colapsando a faixa útil a um ponto (faixa completa se ausente)."
+
+  [[output.field]]
+  path = "hydros[].reservoir.max_storage_hm3"
+  from = [
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMAX · volume, unidade" },
+    { file = "modif", item = "VOLMIN · volume" },
+  ]
+  how = "`volume_maximo` do cadastro (sobrescrito por `VOLMAX` de `modif.dat`, em hm³ com `unidade` = h ou, com `%`, como percentual do volume útil do cadastro). Usinas `D` e `S` recebem `volume_referencia` (faixa completa se ausente), pois o NEWAVE não acumula água entre estágios nessas usinas."
+
+  [[output.field]]
+  path = "hydros[].outflow.min_outflow_m3s"
+  from = [
+    { file = "dger", item = "desconsidera_vazao_minima" },
+    { file = "hidr", item = "vazao_minima_historica" },
+    { file = "modif", item = "VAZMIN · vazao" },
+  ]
+  how = "`vazao_minima_historica` (sobrescrita pelo registro permanente `VAZMIN` de `modif.dat`), ou 0 quando não positiva. Os registros temporais `VAZMINT` vão para `constraints/hydro_bounds.parquet`."
+
+  [[output.field]]
+  path = "hydros[].outflow.max_outflow_m3s"
+  from = []
+  status = "null"
+  how = "Sempre nulo: o NEWAVE não impõe vazão defluente máxima estática; o registro `VAZMAXT` de `modif.dat` não é convertido."
+
+  [[output.field]]
+  path = "hydros[].generation.model"
+  from = [
+    { file = "dger", item = "funcao_producao_uhe" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "exph", item = "data_entrada_operacao" },
+  ]
+  how = "`fpha` quando `funcao_producao_uhe = 0` e a usina tem polinômio cota-volume não nulo, produtibilidade específica positiva e engolimento e potência nominais (Σ máquinas × nominal por conjunto, após `MODIF NUMCNJ`/`NUMMAQ`, na configuração declarada — a final, para usina `EE` com entrada de máquinas em `exph.dat`) positivos; `constant_productivity` nos demais casos. Uma usina excluída só pela capacidade nula é listada em diagnóstico informativo."
+
+  [[output.field]]
+  path = "hydros[].generation.min_turbined_m3s"
+  from = []
+  status = "constant"
+  how = "Sempre 0.0: o NEWAVE não impõe turbinamento mínimo estático; `TURBMINT` por estágio vai para `constraints/hydro_bounds.parquet`."
+
+  [[output.field]]
+  path = "hydros[].generation.max_turbined_m3s"
+  from = [
+    { file = "hidr", item = "numero_conjuntos_maquinas" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "vazao_nominal_conjunto_1 … vazao_nominal_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "modif", item = "POTEFE · potencia, conjunto" },
+    { file = "hidr", item = "queda_nominal_conjunto_1 … queda_nominal_conjunto_5" },
+    { file = "hidr", item = "teif" },
+    { file = "hidr", item = "ip" },
+    { file = "hidr", item = "tipo_turbina" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "perdas" },
+    { file = "modif", item = "NUMCNJ · numero" },
+    { file = "modif", item = "NUMMAQ · numero_maquinas" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "modif", item = "CFUGA · nivel" },
+    { file = "modif", item = "CMONT · nivel" },
+    { file = "volref_saz", item = "valor" },
+    { file = "dger", item = "sazonaliza_cfuga_cmont" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "exph", item = "data_entrada_operacao" },
+    { file = "exph", item = "conjunto_maquina_entrada" },
+  ]
+  how = "Engolimento máximo na queda de operação: soma por conjunto de `n · vazao_nominal · (h_op / queda_nominal)^k` (k = 0,5 para Francis/Pelton, 0,2 para Kaplan), limitada por `potência instalada / (ρ_esp · h_op)` e multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. `h_op` é a queda líquida média entre `volume_minimo` e 65% do volume útil (regulação `M`) ou na cota de `volume_referencia` (`D`/`S`), descontados canal de fuga e perdas. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final, com todas as máquinas em operação; a rampa até ela vai para `hydro_bounds.parquet`. Para usina com `CFUGA`/`CMONT` ou linha em `volref_saz.dat`, o valor é elevado ao máximo dos limites por estágio emitidos em `hydro_bounds.parquet`, pois o Novomodelo não admite limite por estágio acima do declarado."
+
+  [[output.field]]
+  path = "hydros[].generation.min_generation_mw"
+  from = []
+  status = "constant"
+  how = "Sempre 0.0: a geração mínima por estágio de `ghmin.dat` é emitida em `constraints/hydro_bounds.parquet`."
+
+  [[output.field]]
+  path = "hydros[].generation.max_generation_mw"
+  from = [
+    { file = "hidr", item = "numero_conjuntos_maquinas" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "modif", item = "POTEFE · potencia, conjunto" },
+    { file = "modif", item = "NUMCNJ · numero" },
+    { file = "modif", item = "NUMMAQ · numero_maquinas" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "exph", item = "data_entrada_operacao" },
+    { file = "exph", item = "conjunto_maquina_entrada" },
+  ]
+  how = "Potência instalada nominal: soma por conjunto de `maquinas_conjunto · potencia_nominal_conjunto` (potência do conjunto sobrescrita pelo registro permanente `POTEFE` de `modif.dat`), sem desconto de `teif`/`ip` (o teto GHmax da FPHA do NEWAVE). Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final: a de `modif.dat` no início do estudo mais as máquinas que entram, até o total de `hidr.dat`."
+
+  [[output.field]]
+  path = "hydros[].unit_groups[].id"
+  from = []
+  status = "constant"
+  how = "Sempre 0: cada usina recebe um único grupo de unidades espelho."
+
+  [[output.field]]
+  path = "hydros[].unit_groups[].name"
+  from = [ { file = "confhd", item = "nome_usina" } ]
+  how = "Igual ao `name` da usina."
+
+  [[output.field]]
+  path = "hydros[].unit_groups[].bus_id"
+  from = [
+    { file = "confhd", item = "ree" },
+    { file = "ree", item = "codigo" },
+    { file = "ree", item = "submercado" },
+    { file = "sistema", item = "custo_deficit · codigo_submercado" },
+  ]
+  status = "derived"
+  how = "Id Novomodelo do submercado ao qual pertence o REE da usina (`ree` em `confhd.dat` → `submercado` em `ree.dat`). Os ids de barra seguem a ordem crescente dos códigos de submercado de `sistema.dat` e `ree.dat`."
+
+  [[output.field]]
+  path = "hydros[].unit_groups[].min_generation_mw"
+  from = []
+  status = "constant"
+  how = "Sempre 0.0: espelha `generation.min_generation_mw`."
+
+  [[output.field]]
+  path = "hydros[].unit_groups[].max_generation_mw"
+  from = [
+    { file = "hidr", item = "numero_conjuntos_maquinas" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "modif", item = "POTEFE · potencia, conjunto" },
+    { file = "modif", item = "NUMCNJ · numero" },
+    { file = "modif", item = "NUMMAQ · numero_maquinas" },
+  ]
+  how = "Espelha `generation.max_generation_mw` (grupo único, soma dos grupos igual ao envelope da usina)."
+
+  [[output.field]]
+  path = "hydros[].unit_groups[].min_turbined_m3s"
+  from = []
+  status = "constant"
+  how = "Sempre 0.0: espelha `generation.min_turbined_m3s`."
+
+  [[output.field]]
+  path = "hydros[].unit_groups[].max_turbined_m3s"
+  from = [
+    { file = "hidr", item = "numero_conjuntos_maquinas" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "vazao_nominal_conjunto_1 … vazao_nominal_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "modif", item = "POTEFE · potencia, conjunto" },
+    { file = "hidr", item = "queda_nominal_conjunto_1 … queda_nominal_conjunto_5" },
+    { file = "hidr", item = "teif" },
+    { file = "hidr", item = "ip" },
+    { file = "hidr", item = "tipo_turbina" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "modif", item = "CFUGA · nivel" },
+    { file = "modif", item = "CMONT · nivel" },
+    { file = "volref_saz", item = "valor" },
+  ]
+  how = "Espelha `generation.max_turbined_m3s`."
+
+  [[output.field]]
+  path = "hydros[].specific_productivity_mw_per_m3s_per_m"
+  from = [ { file = "hidr", item = "produtibilidade_especifica" } ]
+  how = "`produtibilidade_especifica` do cadastro, em MW/((m³/s)·m); nulo quando zero ou ausente."
+
+  [[output.field]]
+  path = "hydros[].evaporation"
+  from = [ { file = "hidr", item = "evaporacao_JAN … evaporacao_DEZ" } ]
+  how = "Nulo quando os doze coeficientes `evaporacao_*` do cadastro são zero; caso contrário, o bloco com `coefficients_mm` (e `reference_volumes_hm3` quando há referência sazonal)."
+
+  [[output.field]]
+  path = "hydros[].evaporation.coefficients_mm[]"
+  from = [ { file = "hidr", item = "evaporacao_JAN … evaporacao_DEZ" } ]
+  how = "Os doze coeficientes mensais de evaporação (mm), de janeiro a dezembro, tal como no cadastro."
+
+  [[output.field]]
+  path = "hydros[].evaporation.reference_volumes_hm3[]"
+  when = "somente quando a usina tem evaporação e uma linha não nula em `volref_saz.dat`"
+  from = [
+    { file = "volref_saz", item = "mes" },
+    { file = "volref_saz", item = "valor" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+  ]
+  how = "Doze volumes absolutos (hm³), um por mês civil: `volume_minimo + valor` (volume útil sazonal de `volref_saz.dat`; 0 para mês ausente, isto é, operar em `volume_minimo`), limitado ao intervalo [`min_storage_hm3`, `max_storage_hm3`]."
+
+  [[output.field]]
+  path = "hydros[].tailrace.type"
+  from = []
+  status = "constant"
+  how = "Sempre `polynomial`. O bloco `tailrace` só existe quando `canal_fuga_medio` é positivo; caso contrário é nulo."
+
+  [[output.field]]
+  path = "hydros[].tailrace.coefficients[]"
+  from = [ { file = "hidr", item = "canal_fuga_medio" } ]
+  how = "Polinômio de grau zero: o único coeficiente é `canal_fuga_medio` (m), o nível médio do canal de fuga que o Novomodelo subtrai da cota de montante ao derivar ρ_eq."
+
+  [[output.field]]
+  path = "hydros[].diversion"
+  from = []
+  status = "null"
+  how = "Sempre nulo: os desvios de água de `dsvagua.dat` são convertidos como retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`), não como canal de desvio."
+
+  [[output.field]]
+  path = "hydros[].filling"
+  from = [
+    { file = "exph", item = "data_inicio_enchimento" },
+    { file = "exph", item = "duracao_enchimento" },
+  ]
+  how = "Nulo para usinas existentes e para usina NE cujo `duracao_enchimento` é zero; usina NE admitida com enchimento de volume morto recebe o bloco com `start_stage_id` e `filling_min_rate_m3s`."
+
+  [[output.field]]
+  path = "hydros[].filling.start_stage_id"
+  when = "somente para usina NE com registro de enchimento em `exph.dat` e `duracao_enchimento` maior que zero"
+  from = [
+    { file = "exph", item = "data_inicio_enchimento" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  status = "derived"
+  how = "Estágio 0-based do mês de `data_inicio_enchimento`, limitado a 0 quando anterior ao início do estudo."
+
+  [[output.field]]
+  path = "hydros[].filling.filling_min_rate_m3s"
+  when = "somente para usina NE com registro de enchimento em `exph.dat` e `duracao_enchimento` maior que zero"
+  from = [
+    { file = "exph", item = "volume_morto" },
+    { file = "exph", item = "data_inicio_enchimento" },
+    { file = "exph", item = "duracao_enchimento" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  how = "Taxa constante (m³/s) que leva o armazenamento de `volume_morto` % de `min_storage_hm3` até `min_storage_hm3` ao longo da janela de enchimento: volume restante dividido pela soma, nos estágios da janela dentro do horizonte, do fator hm³ por (m³/s) de cada mês civil."
+
+  [[output.field]]
+  path = "hydros[].efficiency"
+  from = [
+    { file = "dger", item = "funcao_producao_uhe" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+  ]
+  how = "Nulo para usinas fora da FPHA (caso linear ou usina sem polinômio cota-volume / produtibilidade específica / capacidade nominal); para usinas `fpha`, o bloco com `type` e `value`."
+
+  [[output.field]]
+  path = "hydros[].efficiency.type"
+  from = []
+  status = "constant"
+  how = "Sempre `constant`."
+
+  [[output.field]]
+  path = "hydros[].efficiency.value"
+  from = [ { file = "hidr", item = "produtibilidade_especifica" } ]
+  how = "Rendimento adimensional da turbina `produtibilidade_especifica / 0,00981` (ρ_esp do NEWAVE já embute g/1000), limitado a 1,0 com aviso quando o cadastro implica valor maior."
+
+  [[output.field]]
+  path = "hydros[].hydraulic_losses"
+  from = [
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "perdas" },
+  ]
+  how = "Nulo quando `tipo_perda` não é 1 nem 2 ou `perdas` não é positivo; caso contrário, o bloco com `type` e `value` ou `value_m`."
+
+  [[output.field]]
+  path = "hydros[].hydraulic_losses.type"
+  from = [ { file = "hidr", item = "tipo_perda" } ]
+  how = "`factor` para `tipo_perda = 1` (perda percentual da queda bruta); `constant` para `tipo_perda = 2` (perda em metros)."
+
+  [[output.field]]
+  path = "hydros[].hydraulic_losses.value"
+  when = "somente quando `tipo_perda = 1`"
+  from = [ { file = "hidr", item = "perdas" } ]
+  how = "`perdas / 100`, fração da queda bruta perdida."
+
+  [[output.field]]
+  path = "hydros[].hydraulic_losses.value_m"
+  from = [ { file = "hidr", item = "perdas" } ]
+  how = "`perdas` em metros, quando `tipo_perda = 2`."
+
+  [[output.field]]
+  path = "hydros[].penalties"
+  from = []
+  status = "null"
+  how = "Sempre nulo: as penalidades de `penalid.dat` são convertidas uma única vez, com a produtibilidade média do SIN, para os valores globais de `penalties.json`, sem sobrescrita por usina."
+
+  [[output.field]]
+  path = "hydros[].entry_stage_id"
+  from = [
+    { file = "exph", item = "data_inicio_enchimento" },
+    { file = "exph", item = "duracao_enchimento" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  status = "derived"
+  how = "Nulo para usinas existentes. Usina NE em enchimento: estágio 0-based em que o enchimento termina (`data_inicio_enchimento` mais `duracao_enchimento` meses, nunca antes de `start_stage_id`), podendo cair além do horizonte."
+
+  [[output.field]]
+  path = "hydros[].exit_stage_id"
+  from = []
+  status = "null"
+  how = "Sempre nulo: usinas hidrelétricas do NEWAVE não saem de operação dentro do horizonte."
+
+# ---------------------------------------------------------------------------
+# system/hydro_production_models.json
+# ---------------------------------------------------------------------------
+[[output]]
+path = "system/hydro_production_models.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/hydro/productivity.py"
+reads = [
+  { file = "dger" },
+  { file = "hidr" },
+  { file = "modif" },
+  { file = "confhd" },
+  { file = "exph" },
+  { file = "volref_saz" },
+  { file = "tratamento_fpha" },
+]
+summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante) e o volume de referência; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`."
+
+  [[output.field]]
+  path = "production_models[].hydro_id"
+  from = [ { file = "confhd", item = "codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo da usina (mesma numeração de `hydros[].id`)."
+
+  [[output.field]]
+  path = "production_models[].selection_mode"
+  from = [
+    { file = "dger", item = "funcao_producao_uhe" },
+    { file = "volref_saz", item = "valor" },
+  ]
+  how = "`seasonal` quando o caso é FPHA (`funcao_producao_uhe = 0`) e a usina tem linha não nula em `volref_saz.dat` (FPHA ou não, pois o Novomodelo lê o volume de referência da usina de jusante para o remanso); `stage_ranges` nos demais casos."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].start_stage_id"
+  from = []
+  status = "constant"
+  how = "Sempre 0: uma única faixa cobre todo o horizonte."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].end_stage_id"
+  from = []
+  status = "null"
+  how = "Sempre nulo: a faixa única é aberta até o fim do horizonte."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].model"
+  from = [
+    { file = "dger", item = "funcao_producao_uhe" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+  ]
+  how = "`fpha` para usina elegível à FPHA (mesmo critério de `hydros[].generation.model`); `constant_productivity` caso contrário."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.source"
+  from = []
+  status = "constant"
+  how = "Sempre `computed`: o Novomodelo ajusta a FPHA a partir da geometria, das curvas de jusante e do rendimento. Presente só em faixas `fpha`."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMIN · volume" },
+  ]
+  how = "Limite inferior da janela de ajuste da FPHA: `volume_minimo` para regulação `M`; `volume_referencia` para `D`/`S` (ajuste em volume único, como o NEWAVE)."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMAX · volume" },
+  ]
+  how = "Limite superior da janela de ajuste: `volume_maximo` para regulação `M`; `volume_referencia` para `D`/`S`."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].reference_volume.percentile"
+  from = []
+  status = "constant"
+  how = "Sempre 0.65 (altura a 65% do volume útil, convenção do NEWAVE e padrão do Novomodelo). Presente só em faixas `fpha` de usina sem linha em `volref_saz.dat`."
+
+  [[output.field]]
+  path = "production_models[].default_model"
+  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
+  from = []
+  status = "constant"
+  how = "Sempre `constant_productivity`: as doze estações são listadas, logo o padrão nunca é consultado."
+
+  [[output.field]]
+  path = "production_models[].seasons[].season_id"
+  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
+  from = [ { file = "volref_saz", item = "mes" } ]
+  status = "derived"
+  how = "`mes − 1` (0 = janeiro), alinhado ao mapa de estações de `stages.json`."
+
+  [[output.field]]
+  path = "production_models[].seasons[].model"
+  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
+  from = [
+    { file = "dger", item = "funcao_producao_uhe" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+  ]
+  how = "`fpha` ou `constant_productivity`, igual em todas as estações, pelo critério de elegibilidade da usina."
+
+  [[output.field]]
+  path = "production_models[].seasons[].reference_volume.volume_hm3"
+  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
+  from = [
+    { file = "volref_saz", item = "valor" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+  ]
+  how = "Volume de referência absoluto do mês: `volume_minimo + valor` (volume útil sazonal; mês ausente ou zero significa operar em `volume_minimo`), limitado a [`volume_minimo`, `volume_maximo`]."
+
+  [[output.field]]
+  path = "production_models[].seasons[].fpha_config.source"
+  when = "somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`"
+  from = []
+  status = "constant"
+  how = "Sempre `computed`."
+
+  [[output.field]]
+  path = "production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3"
+  when = "somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMIN · volume" },
+  ]
+  how = "Igual a `stage_ranges[].fpha_config.fitting_window.volume_min_hm3`, repetido em cada estação."
+
+  [[output.field]]
+  path = "production_models[].seasons[].fpha_config.fitting_window.volume_max_hm3"
+  when = "somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMAX · volume" },
+  ]
+  how = "Igual a `stage_ranges[].fpha_config.fitting_window.volume_max_hm3`, repetido em cada estação."
+
+  [[output.field]]
+  path = "fpha_plane_reduction.method"
+  when = "somente em caso FPHA com ao menos uma usina `fpha` e `tratamento-fpha.csv` com linha de método ativa"
+  from = [ { file = "tratamento_fpha", item = "HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO / HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO" } ]
+  how = "`angle` para a linha `…-ANGULO-PADRAO`, `distance` para `…-DISTANCIA-PADRAO`; linhas iniciadas por `&` são comentários. Com mais de uma linha ativa, a primeira vale e um aviso é emitido."
+
+  [[output.field]]
+  path = "fpha_plane_reduction.tolerance_deg"
+  when = "somente quando o método ativo em `tratamento-fpha.csv` é o de ângulo"
+  from = [ { file = "tratamento_fpha", item = "HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO" } ]
+  how = "Tolerância angular (graus) lida após o `;` da linha."
+
+  [[output.field]]
+  path = "fpha_plane_reduction.tolerance_pct"
+  when = "somente quando o método ativo em `tratamento-fpha.csv` é o de distância"
+  from = [ { file = "tratamento_fpha", item = "HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO" } ]
+  how = "Tolerância de distância lida após o `;` da linha."
+
+  [[output.field]]
+  path = "fpha_plane_reduction.n_samples"
+  when = "somente quando o método ativo em `tratamento-fpha.csv` é o de distância"
+  from = []
+  status = "constant"
+  how = "Sempre 100: o NEWAVE não define o número de amostras da distância quadrática média exigido pelo Novomodelo, e a ponte fornece este padrão."
+
+# ---------------------------------------------------------------------------
+# system/hydro_geometry.parquet
+# ---------------------------------------------------------------------------
+[[output]]
+path = "system/hydro_geometry.parquet"
+kind = "parquet"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/hydro/geometry.py"
+reads = [
+  { file = "hidr" },
+  { file = "modif" },
+  { file = "confhd" },
+  { file = "exph" },
+]
+summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes entre `volume_minimo` e `volume_maximo` (um único ponto quando iguais); usinas com polinômio cota-volume nulo são omitidas com aviso."
+
+  [[output.field]]
+  path = "hydro_id"
+  from = [ { file = "confhd", item = "codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo da usina, repetido em cada ponto amostrado; a tabela é ordenada por usina e depois por volume."
+
+  [[output.field]]
+  path = "volume_hm3"
+  from = [
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+  ]
+  how = "Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto em `volume_minimo` quando a faixa é nula. Não aplica o colapso das usinas `D`/`S` feito em `hydros.json`."
+
+  [[output.field]]
+  path = "height_m"
+  from = [
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+  ]
+  how = "Cota de montante (m): polinômio `a0 + a1·V + a2·V² + a3·V³ + a4·V⁴` (coeficientes sobrescritos pelo registro permanente `VOLCOTA` de `modif.dat`) avaliado em cada volume, com valores negativos levados a 0."
+
+  [[output.field]]
+  path = "area_km2"
+  from = [
+    { file = "hidr", item = "a0_cota_area … a4_cota_area" },
+    { file = "modif", item = "COTAREA · coeficientes a0 a a4" },
+  ]
+  how = "Área do espelho d'água (km²): polinômio cota-área (coeficientes sobrescritos pelo registro permanente `COTAREA` de `modif.dat`) avaliado na cota calculada, com valores negativos levados a 0."
+
+# ---------------------------------------------------------------------------
+# system/hydro_energy_productivity.parquet
+# ---------------------------------------------------------------------------
+[[output]]
+path = "system/hydro_energy_productivity.parquet"
+kind = "parquet"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/hydro/productivity.py"
+reads = [
+  { file = "hidr" },
+  { file = "modif" },
+  { file = "confhd" },
+  { file = "exph" },
+  { file = "volref_saz" },
+  { file = "dger" },
+]
+summary = "Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fonte única do coeficiente `geração = ρ_eq · Q` (inclusive para usinas FPHA): uma linha padrão com `stage_id` nulo por usina sem variação temporal, ou uma linha por estágio para usina com `CFUGA`/`CMONT` em `modif.dat` ou linha em `volref_saz.dat`."
+
+  [[output.field]]
+  path = "hydro_id"
+  from = [ { file = "confhd", item = "codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo da usina."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "modif", item = "CFUGA · data_inicio" },
+    { file = "modif", item = "CMONT · data_inicio" },
+    { file = "volref_saz", item = "valor" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Nulo (valor padrão para todo o horizonte) quando a usina não tem `CFUGA`/`CMONT` nem linha não nula em `volref_saz.dat`; caso contrário, um estágio 0-based por mês do estudo e do pós-estudo."
+
+  [[output.field]]
+  path = "equivalent_productivity_mw_per_m3s"
+  from = [
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "perdas" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "modif", item = "CFUGA · nivel" },
+    { file = "modif", item = "CMONT · nivel" },
+    { file = "volref_saz", item = "valor" },
+    { file = "dger", item = "sazonaliza_cfuga_cmont" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+    { file = "confhd", item = "posto" },
+  ]
+  how = "`ρ_esp · (cota(V_ref) − canal de fuga − perdas)`, com V_ref = `volume_minimo` + 65% do volume útil para regulação `M` (altura 65 do NEWAVE) e `volume_referencia` para `D`/`S`. Por estágio, `CFUGA` substitui o canal de fuga e `CMONT` fixa a cota de montante (função degrau a partir de `data_inicio`, repetida sazonalmente após o último registro se `sazonaliza_cfuga_cmont = 1`), e a linha de `volref_saz.dat` fixa V_ref = `volume_minimo + valor` do mês civil. Soma-se a ρ_eq das usinas fictícias atravessadas na cascata (zero nos decks reais)."
+
+  [[output.field]]
+  path = "reference_outflow_m3s"
+  from = []
+  status = "null"
+  how = "Sempre nulo: o volume de referência é declarado em `system/hydro_production_models.json`, não por vazão de referência."
+
+  [[output.field]]
+  path = "specific_productivity_mw_per_m3s_per_m"
+  from = []
+  status = "null"
+  how = "Sempre nulo aqui: a produtibilidade específica é declarada em `hydros[].specific_productivity_mw_per_m3s_per_m`."
+
+# ---------------------------------------------------------------------------
+# system/tailrace_curves.parquet
+# ---------------------------------------------------------------------------
+[[output]]
+path = "system/tailrace_curves.parquet"
+kind = "parquet"
+when = "somente quando o caso traz `polinjus.csv` e ao menos um segmento pertence a uma usina convertida"
+module = "src/novomodelo_bridge/newave/converters/tailrace.py"
+reads = [
+  { file = "polinjus" },
+  { file = "confhd" },
+  { file = "hidr" },
+  { file = "exph" },
+]
+summary = "Famílias de curvas de nível de jusante (polinômios por partes na vazão defluente total) de `polinjus.csv`, uma linha por segmento, ordenadas por (`hydro_id`, `family_id`, `segment_id`); os índices 1-based do NEWAVE são mantidos e segmentos de usinas fora do mapa de ids (fictícias) são descartados."
+
+  [[output.field]]
+  path = "hydro_id"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo da usina correspondente ao `codigo_usina` do segmento."
+
+  [[output.field]]
+  path = "family_id"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · indice_familia" } ]
+  how = "`indice_familia` tal como no arquivo (1-based); o Novomodelo o trata como chave opaca de agrupamento por usina."
+
+  [[output.field]]
+  path = "downstream_reference_level_m"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE · nivel_montante_referencia" } ]
+  how = "Nível de referência da usina de jusante que identifica a família (`nivel_montante_referencia` do registro de família, associado ao segmento por `codigo_usina` e `indice_familia`); nulo quando o registro de família não existe."
+
+  [[output.field]]
+  path = "segment_id"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · indice_polinomio" } ]
+  how = "`indice_polinomio` tal como no arquivo (1-based)."
+
+  [[output.field]]
+  path = "outflow_min_m3s"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · limite_inferior_vazao_jusante" } ]
+  how = "Limite inferior de vazão defluente (m³/s) do segmento, sem transformação."
+
+  [[output.field]]
+  path = "outflow_max_m3s"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · limite_superior_vazao_jusante" } ]
+  how = "Limite superior de vazão defluente (m³/s) do segmento, sem transformação."
+
+  [[output.field]]
+  path = "coefficient_0"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a0" } ]
+  how = "`coeficiente_a0` do polinômio do segmento, sem transformação."
+
+  [[output.field]]
+  path = "coefficient_1"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a1" } ]
+  how = "`coeficiente_a1` do polinômio do segmento, sem transformação."
+
+  [[output.field]]
+  path = "coefficient_2"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a2" } ]
+  how = "`coeficiente_a2` do polinômio do segmento, sem transformação."
+
+  [[output.field]]
+  path = "coefficient_3"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a3" } ]
+  how = "`coeficiente_a3` do polinômio do segmento, sem transformação."
+
+  [[output.field]]
+  path = "coefficient_4"
+  from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a4" } ]
+  how = "`coeficiente_a4` do polinômio do segmento, sem transformação."
+
+# ---------------------------------------------------------------------------
+# constraints/hydro_bounds.parquet (conditional)
+# ---------------------------------------------------------------------------
+[[output]]
+path = "constraints/hydro_bounds.parquet"
+kind = "parquet"
+when = "somente quando ao menos uma fonte produz linhas: `dsvagua.dat` com desvios (e `outros_usos_da_agua` de `dger.dat` diferente de 0), registros temporais `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat`, ou usina com `CFUGA`/`CMONT`/linha em `volref_saz.dat`"
+module = "src/novomodelo_bridge/newave/converters/hydro/bounds.py"
+reads = [
+  { file = "dsvagua" },
+  { file = "dger" },
+  { file = "confhd" },
+  { file = "hidr" },
+  { file = "modif" },
+  { file = "ghmin" },
+  { file = "exph" },
+  { file = "volref_saz" },
+]
+summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`, resultado da junção externa de três tabelas: retirada de água (`dsvagua.dat`), limites temporais (`modif.dat`, `ghmin.dat`, rampa de máquinas de `exph.dat`) e turbinamento máximo corrigido pela queda por estágio (`CFUGA`/`CMONT`/`volref_saz.dat`). Colunas de máximo acima do valor declarado em `hydros.json` são limitadas ao declarado, com aviso. A coluna `max_generation_mw` só existe quando há usina NE em enchimento ou usina EE com entrada de máquinas."
+
+  [[output.field]]
+  path = "hydro_id"
+  from = [ { file = "confhd", item = "codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo da usina. Desvios de `dsvagua.dat` em usina NC são atribuídos à primeira usina existente a jusante na cadeia `codigo_usina_jusante`; desvios em usina fictícia são descartados."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+    { file = "dsvagua", item = "data" },
+    { file = "modif", item = "VMAXT · data_inicio" },
+    { file = "ghmin", item = "data" },
+    { file = "exph", item = "data_entrada_operacao" },
+  ]
+  status = "derived"
+  how = "Estágio 0-based contado a partir de `mes_inicio_estudo`/`ano_inicio_estudo`, cobrindo estudo e pós-estudo; cada fonte ocupa os estágios em que tem valor ativo e a junção mantém as linhas de qualquer uma delas."
+
+  [[output.field]]
+  path = "water_withdrawal_m3s"
+  from = [
+    { file = "dsvagua", item = "codigo_usina" },
+    { file = "dsvagua", item = "data" },
+    { file = "dsvagua", item = "valor" },
+    { file = "dger", item = "outros_usos_da_agua" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+  ]
+  how = "Retirada de água (m³/s) de `dsvagua.dat`: soma de `valor` por (`codigo_usina`, `data`) com o sinal invertido (no NEWAVE retirada é negativa). Ignorado quando `outros_usos_da_agua = 0`. Estágios de pós-estudo repetem o padrão mensal do último ano civil presente no arquivo para a usina. Nulo nas linhas vindas das demais fontes."
+
+  [[output.field]]
+  path = "min_storage_hm3"
+  from = [
+    { file = "modif", item = "VMINT · volume, unidade" },
+    { file = "modif", item = "VMINT · data_inicio" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "dger", item = "sazonaliza_vmint" },
+  ]
+  how = "Armazenamento mínimo (hm³) de `VMINT`: o `volume` em hm³ quando `unidade` = h ou, com `%`, `volume_minimo + (volume / 100) · volume útil`; função degrau a partir de `data_inicio` até o próximo registro; valor maior ou igual a 99990 restaura o padrão (linha sem valor). No pós-estudo repete o padrão mensal do último ano de estudo se `sazonaliza_vmint = 1`, senão congela o último estágio. Ignorado para usina sem volume útil."
+
+  [[output.field]]
+  path = "max_storage_hm3"
+  from = [
+    { file = "modif", item = "VMAXT · volume, unidade" },
+    { file = "modif", item = "VMAXT · data_inicio" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "dger", item = "sazonaliza_vmaxt" },
+  ]
+  how = "Armazenamento máximo (hm³) de `VMAXT` (volume de espera): o `volume` em hm³ quando `unidade` = h ou, com `%`, `volume_minimo + (volume / 100) · volume útil`; função degrau a partir de `data_inicio`; valor maior ou igual a 99990 restaura o padrão. No pós-estudo repete o padrão mensal do último ano de estudo se `sazonaliza_vmaxt = 1`, senão congela o último estágio."
+
+  [[output.field]]
+  path = "min_turbined_m3s"
+  from = [
+    { file = "dger", item = "restricao_turbinamento" },
+    { file = "modif", item = "TURBMINT · turbinamento" },
+    { file = "modif", item = "TURBMINT · data_inicio" },
+  ]
+  how = "Turbinamento mínimo (m³/s) de `TURBMINT`, valor absoluto em função degrau a partir de `data_inicio`; valor maior ou igual a 99990 (família 99999) restaura o padrão. No pós-estudo congela o último estágio de estudo."
+
+  [[output.field]]
+  path = "max_turbined_m3s"
+  from = [
+    { file = "dger", item = "restricao_turbinamento" },
+    { file = "modif", item = "TURBMAXT · turbinamento" },
+    { file = "modif", item = "TURBMAXT · data_inicio" },
+    { file = "modif", item = "CFUGA · nivel" },
+    { file = "modif", item = "CMONT · nivel" },
+    { file = "volref_saz", item = "valor" },
+    { file = "dger", item = "sazonaliza_cfuga_cmont" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "vazao_nominal_conjunto_1 … vazao_nominal_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "modif", item = "POTEFE · potencia, conjunto" },
+    { file = "hidr", item = "queda_nominal_conjunto_1 … queda_nominal_conjunto_5" },
+    { file = "hidr", item = "teif" },
+    { file = "hidr", item = "ip" },
+    { file = "hidr", item = "tipo_turbina" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "exph", item = "data_entrada_operacao" },
+    { file = "exph", item = "conjunto_maquina_entrada" },
+    { file = "exph", item = "data_inicio_enchimento" },
+    { file = "exph", item = "duracao_enchimento" },
+  ]
+  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o engolimento corrigido pela queda com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, o engolimento corrigido pela queda do estágio (`h = ρ_eq / ρ_esp`, com `CFUGA`/`CMONT` e `volref_saz.dat`), pela mesma fórmula de `hydros[].generation.max_turbined_m3s`, com as máquinas em operação no estágio para usina `EE`; usina `EE` sem queda por estágio recebe linha só nos estágios anteriores à entrada da última máquina de `exph.dat`, na mesma queda de referência do valor declarado. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+
+  [[output.field]]
+  path = "min_outflow_m3s"
+  from = [
+    { file = "dger", item = "desconsidera_vazao_minima" },
+    { file = "modif", item = "VAZMINT · vazao" },
+    { file = "modif", item = "VAZMINT · data_inicio" },
+    { file = "modif", item = "VAZMINT · periodo" },
+  ]
+  how = "Vazão defluente mínima (m³/s) de `VAZMINT`, valor absoluto em função degrau a partir de `data_inicio`; valor maior ou igual a 99990 (família 99999) restaura o padrão. Registros com ano `PRE` ou `POS` formam degraus sobre um ano que se repete: o valor `PRE` vigente no mês anterior ao início do estudo vale até o primeiro registro datado, e os degraus `POS` definem cada mês do pós-estudo. Sem `POS`, o pós-estudo congela o último estágio de estudo."
+
+  [[output.field]]
+  path = "min_generation_mw"
+  from = [
+    { file = "dger", item = "considera_ghmin" },
+    { file = "ghmin", item = "codigo_usina" },
+    { file = "ghmin", item = "data" },
+    { file = "ghmin", item = "patamar" },
+    { file = "ghmin", item = "geracao" },
+    { file = "exph", item = "data_inicio_enchimento" },
+  ]
+  how = "Geração mínima (MW) de `ghmin.dat`, somente linhas com `patamar = 0` (média dos patamares): função degrau a partir de `data` até o próximo registro; registros de ano 9999 valem para o mês civil correspondente no pós-estudo, e meses sem registro repetem o último ano de estudo. Linhas de rampa de usina NE em enchimento recebem 0."
+
+  [[output.field]]
+  path = "max_generation_mw"
+  when = "somente quando o caso tem usina NE com registro de enchimento ou usina EE com entrada de máquinas em `exph.dat` (a coluna é omitida nos demais casos)"
+  from = [
+    { file = "exph", item = "data_entrada_operacao" },
+    { file = "exph", item = "conjunto_maquina_entrada" },
+    { file = "exph", item = "data_inicio_enchimento" },
+    { file = "exph", item = "duracao_enchimento" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "modif", item = "POTEFE · potencia, conjunto" },
+    { file = "modif", item = "NUMCNJ · numero" },
+    { file = "modif", item = "NUMMAQ · numero_maquinas" },
+  ]
+  how = "Potência nominal (MW) das máquinas em operação em cada estágio anterior à entrada da última máquina: soma de `n_online · potencia_nominal_conjunto` por conjunto. Para usina NE, 0 antes do fim do enchimento; para usina EE, a configuração de `modif.dat` no início do estudo mais as máquinas de `exph.dat` já entradas, na mesma linha de qualquer limite de `modif.dat`/`ghmin.dat` do estágio. Nulo nas demais linhas de `modif.dat`/`ghmin.dat`. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+
+# ===== frag_C_nw_scenarios_constraints =====
+# Fragment C — NEWAVE: scenarios/* e constraints/generic_constraint*.
+# Sem a chave `track` (escrita pelo assembler).
+
+# ---------------------------------------------------------------------------
+# scenarios/inflow_history.parquet
+# ---------------------------------------------------------------------------
+[[output]]
+path = "scenarios/inflow_history.parquet"
+kind = "parquet"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/inflow_windows.py"
+reads = [
+  { file = "vazoes" },
+  { file = "confhd" },
+  { file = "dger" },
+  { file = "hidr" },
+  { file = "exph" },
+]
+summary = "Histórico de vazões incrementais mensais de `vazoes.dat`, uma linha por usina e mês-calendário, de janeiro do primeiro ano do histórico até o mês anterior ao início do estudo. A largura da matriz (320 ou 600 postos) não é declarada em nenhum lugar do deck e vem do tamanho do arquivo, descartada a largura cujo histórico, contado a partir de `ano_inicial_historico`, terminaria depois do ano de início do estudo; um tamanho que ainda sirva às duas larguras é lido como 320, com aviso."
+
+  [[output.field]]
+  path = "hydro_id"
+  from = [
+    { file = "confhd", item = "codigo_usina" },
+    { file = "confhd", item = "posto" },
+  ]
+  status = "derived"
+  how = "Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). A coluna de `vazoes.dat` é escolhida pelo `posto` da usina em `confhd.dat`; a série é emitida uma vez por posto, de modo que, se dois códigos ativos compartilham o posto, só o último na ordem de `confhd.dat` recebe linhas."
+
+  [[output.field]]
+  path = "start_date"
+  from = [ { file = "dger", item = "ano_inicial_historico" } ]
+  status = "derived"
+  how = "Primeiro dia do mês. A linha i de `vazoes.dat` é tomada como o mês i contado a partir de janeiro de `ano_inicial_historico`."
+
+  [[output.field]]
+  path = "end_date"
+  from = [ { file = "dger", item = "ano_inicial_historico" } ]
+  status = "derived"
+  how = "Primeiro dia do mês seguinte (janela semiaberta `[start_date, end_date)`)."
+
+  [[output.field]]
+  path = "value_m3s"
+  from = [
+    { file = "vazoes", item = "1..N (coluna por posto)" },
+    { file = "confhd", item = "posto" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  how = "Vazão incremental (m³/s): vazão natural do posto menos a soma das vazões naturais dos postos imediatamente a montante na cascata de `confhd.dat` (usinas NE/NC no caminho são atravessadas; usinas NE com enchimento em `exph.dat` contam como nó da cascata). A série é truncada no mês anterior ao início do estudo."
+
+# ---------------------------------------------------------------------------
+# scenarios/inflow_seasonal_stats.parquet
+# ---------------------------------------------------------------------------
+[[output]]
+path = "scenarios/inflow_seasonal_stats.parquet"
+kind = "parquet"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/stochastic.py"
+reads = [
+  { file = "vazoes" },
+  { file = "confhd" },
+  { file = "dger" },
+  { file = "hidr" },
+  { file = "exph" },
+]
+summary = "Média e desvio-padrão da vazão incremental histórica por usina e estágio, calculados por mês-calendário sobre `vazoes.dat`. A largura da matriz (320 ou 600 postos) não é declarada em nenhum lugar do deck e vem do tamanho do arquivo, descartada a largura cujo histórico, contado a partir de `ano_inicial_historico`, terminaria depois do ano de início do estudo; um tamanho que ainda sirva às duas larguras é lido como 320, com aviso."
+
+  [[output.field]]
+  path = "hydro_id"
+  from = [ { file = "confhd", item = "codigo_usina" } ]
+  status = "derived"
+  how = "Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). Toda usina ativa recebe uma linha por estágio."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Índice 0-based do estágio ao longo de todo o horizonte (estudo mais pós-estudo) definido em `dger.dat`; o estágio determina o mês-calendário usado na estatística."
+
+  [[output.field]]
+  path = "mean_m3s"
+  from = [
+    { file = "vazoes", item = "1..N (coluna por posto)" },
+    { file = "confhd", item = "posto" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+    { file = "dger", item = "ano_inicial_historico" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  how = "Média, ao longo dos anos do histórico (até o mês anterior ao início do estudo), da vazão incremental do posto da usina no mês-calendário do estágio. A vazão incremental é a natural menos as naturais dos postos imediatamente a montante em `confhd.dat`. Usina cujo posto não tem coluna em `vazoes.dat` recebe 0."
+
+  [[output.field]]
+  path = "std_m3s"
+  from = [
+    { file = "vazoes", item = "1..N (coluna por posto)" },
+    { file = "confhd", item = "posto" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+  ]
+  how = "Desvio-padrão amostral (n − 1) da mesma amostra de vazões incrementais do mês-calendário; 0 quando há uma única observação ou quando o posto não tem série."
+
+# ---------------------------------------------------------------------------
+# scenarios/load_seasonal_stats.parquet
+# ---------------------------------------------------------------------------
+[[output]]
+path = "scenarios/load_seasonal_stats.parquet"
+kind = "parquet"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/stochastic.py"
+reads = [
+  { file = "sistema" },
+  { file = "c_adic" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Mercado de energia por submercado e estágio (MWmédio) de `sistema.dat`, acrescido das cargas adicionais de `c_adic.dat`."
+
+  [[output.field]]
+  path = "bus_id"
+  from = [ { file = "sistema", item = "mercado_energia · codigo_submercado" } ]
+  status = "derived"
+  how = "Id Novomodelo 0-based do submercado (ordem crescente de `codigo_submercado`, incluindo submercados fictícios de `custo_deficit`). Submercados sem mercado em `sistema.dat` também recebem linhas."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Índice 0-based do estágio ao longo de todo o horizonte (estudo mais pós-estudo) de `dger.dat`."
+
+  [[output.field]]
+  path = "mean_mw"
+  from = [
+    { file = "dger", item = "considera_carga_adicional" },
+    { file = "sistema", item = "mercado_energia · valor" },
+    { file = "sistema", item = "mercado_energia · data" },
+    { file = "c_adic", item = "valor" },
+    { file = "c_adic", item = "data" },
+    { file = "c_adic", item = "codigo_submercado" },
+  ]
+  how = "Mercado do submercado no mês (MWmédio, já convertido pelo leitor) somado às cargas adicionais de `c_adic.dat` do mesmo submercado e mês, todas as razões. Pós-estudo: valor do ano 9999 de `sistema.dat` ou, na falta, o do último ano de estudo no mesmo mês-calendário, mais a parcela POS de `c_adic.dat`. Submercado sem mercado (fictício) recebe 0."
+
+  [[output.field]]
+  path = "std_mw"
+  from = []
+  status = "constant"
+  how = "Sempre 0.0: o mercado do NEWAVE é determinístico, sem dispersão por estágio."
+
+# ---------------------------------------------------------------------------
+# scenarios/load_factors.json
+# ---------------------------------------------------------------------------
+[[output]]
+path = "scenarios/load_factors.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/stochastic.py"
+reads = [
+  { file = "patamar" },
+  { file = "dger" },
+  { file = "sistema" },
+  { file = "ree" },
+]
+summary = "Fatores de carga por patamar (p.u.) de `patamar.dat`, uma entrada por submercado e estágio."
+
+  [[output.field]]
+  path = "load_factors[].bus_id"
+  from = [ { file = "patamar", item = "carga_patamares · codigo_submercado" } ]
+  status = "derived"
+  how = "Id Novomodelo 0-based do submercado (ordem crescente de `codigo_submercado`). Só os submercados presentes em `carga_patamares` recebem entradas."
+
+  [[output.field]]
+  path = "load_factors[].stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Índice 0-based do estágio ao longo de todo o horizonte (estudo mais pós-estudo) de `dger.dat`."
+
+  [[output.field]]
+  path = "load_factors[].block_factors[].block_id"
+  from = [
+    { file = "patamar", item = "carga_patamares · patamar" },
+    { file = "patamar", item = "numero_patamares" },
+  ]
+  status = "derived"
+  how = "Patamar 0-based. O índice `patamar` de `carga_patamares` é global (corrido entre submercados) e é normalizado módulo `numero_patamares` antes de subtrair 1."
+
+  [[output.field]]
+  path = "load_factors[].block_factors[].factor"
+  from = [
+    { file = "patamar", item = "carga_patamares · valor" },
+    { file = "patamar", item = "carga_patamares · data" },
+  ]
+  how = "Fator de carga (p.u.) do patamar no mês do estágio. No pós-estudo repete o último ano de estudo com dado no mesmo mês-calendário; 1.0 quando o mês ou patamar não tem registro."
+
+# ---------------------------------------------------------------------------
+# scenarios/non_controllable_factors.json
+# ---------------------------------------------------------------------------
+[[output]]
+path = "scenarios/non_controllable_factors.json"
+kind = "json"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "patamar" },
+  { file = "sistema" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Fatores por patamar (p.u.) da geração não simulada de `patamar.dat`, uma entrada por bloco de usinas não simuladas e estágio."
+
+  [[output.field]]
+  path = "non_controllable_factors[].ncs_id"
+  from = [
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · codigo_submercado" },
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · indice_bloco" },
+  ]
+  status = "derived"
+  how = "Id 0-based atribuído a cada par (`codigo_submercado`, `indice_bloco`) de `geracao_usinas_nao_simuladas` de `sistema.dat`, na ordem crescente do par, considerando só registros com data dentro do horizonte; o mesmo id de `system/non_controllable_sources.json`."
+
+  [[output.field]]
+  path = "non_controllable_factors[].stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Índice 0-based do estágio ao longo de todo o horizonte (estudo mais pós-estudo) de `dger.dat`."
+
+  [[output.field]]
+  path = "non_controllable_factors[].block_factors[].block_id"
+  from = [
+    { file = "patamar", item = "usinas_nao_simuladas · patamar" },
+    { file = "patamar", item = "numero_patamares" },
+  ]
+  status = "derived"
+  how = "Patamar 0-based. O índice `patamar` de `usinas_nao_simuladas` é global (corrido entre blocos) e é normalizado módulo `numero_patamares` antes de subtrair 1."
+
+  [[output.field]]
+  path = "non_controllable_factors[].block_factors[].factor"
+  from = [
+    { file = "patamar", item = "usinas_nao_simuladas · valor" },
+    { file = "patamar", item = "usinas_nao_simuladas · data" },
+    { file = "patamar", item = "usinas_nao_simuladas · codigo_submercado" },
+    { file = "patamar", item = "usinas_nao_simuladas · indice_bloco" },
+  ]
+  how = "Fator (p.u.) do patamar para o bloco no mês do estágio. No pós-estudo, e em meses de estudo sem registro, usa o último ano com dado no mesmo mês-calendário; 1.0 quando ausente. Piso de 1e-6."
+
+# ---------------------------------------------------------------------------
+# scenarios/non_controllable_stats.parquet
+# ---------------------------------------------------------------------------
+[[output]]
+path = "scenarios/non_controllable_stats.parquet"
+kind = "parquet"
+when = ""
+module = "src/novomodelo_bridge/newave/converters/network.py"
+reads = [
+  { file = "sistema" },
+  { file = "dger" },
+  { file = "ree" },
+]
+summary = "Disponibilidade da geração não simulada por bloco e estágio, como fração da geração máxima do bloco."
+
+  [[output.field]]
+  path = "ncs_id"
+  from = [
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · codigo_submercado" },
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · indice_bloco" },
+  ]
+  status = "derived"
+  how = "Id 0-based do par (`codigo_submercado`, `indice_bloco`), o mesmo de `system/non_controllable_sources.json`."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Índice 0-based do estágio ao longo de todo o horizonte de `dger.dat`. Estágios sem valor de geração (nem no mês nem no mesmo mês-calendário de outro ano) não geram linha."
+
+  [[output.field]]
+  path = "mean"
+  from = [
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · valor" },
+    { file = "sistema", item = "geracao_usinas_nao_simuladas · data" },
+  ]
+  how = "Razão entre a geração não simulada do bloco no mês (MWmédio) e o maior valor do bloco em todo o arquivo (o `max_generation_mw` da fonte), limitada a [0, 1]. Pós-estudo e meses sem registro: valor do último ano com dado no mesmo mês-calendário. 0 quando o máximo do bloco é 0."
+
+  [[output.field]]
+  path = "std"
+  from = []
+  status = "constant"
+  how = "Sempre 0.0: a geração não simulada do NEWAVE é determinística."
+
+# ---------------------------------------------------------------------------
+# constraints/generic_constraints.json  (condicional)
+# ---------------------------------------------------------------------------
+[[output]]
+path = "constraints/generic_constraints.json"
+kind = "json"
+when = "somente quando alguma família gera restrições: curva de segurança (`curva.dat` presente, `curva_aversao` de `dger.dat` diferente de 0 e ao menos um REE com reservatório de regularização mensal com volume útil), restrições elétricas (`restricao-eletrica.csv` apontado por `indices.csv`, ou `re.dat`, com ao menos um limite válido) ou agrupamentos de intercâmbio (`agrint.dat` com grupos e limites); cada família só é lida se o flag correspondente de `dger.dat` estiver ligado (`agrupamento_livre`, `restricoes_eletricas`, `restricoes_eletricas_especiais`)"
+module = "src/novomodelo_bridge/newave/converters/constraints.py"
+reads = [
+  { file = "curva" },
+  { file = "dger" },
+  { file = "confhd" },
+  { file = "hidr" },
+  { file = "modif" },
+  { file = "ree" },
+  { file = "exph" },
+  { file = "restricao_eletrica" },
+  { file = "re_dat" },
+  { file = "sistema" },
+  { file = "patamar" },
+  { file = "penalid" },
+  { file = "agrint" },
+]
+summary = "Restrições genéricas de três famílias concatenadas nesta ordem: curva de segurança (VminOP, uma por REE de `curva.dat`), restrições elétricas (`restricao-eletrica.csv` e `re.dat`) e agrupamentos de intercâmbio (`agrint.dat`). Os limites ficam em `constraints/generic_constraint_bounds.parquet`."
+
+  [[output.field]]
+  path = "constraints[].id"
+  from = [
+    { file = "curva", item = "curva_seguranca · codigo_ree" },
+    { file = "restricao_eletrica", item = "RE · cod_rest" },
+    { file = "re_dat", item = "usinas_conjuntos · conjunto" },
+    { file = "agrint", item = "agrupamentos · agrupamento" },
+  ]
+  status = "derived"
+  how = "Id 0-based contíguo, compartilhado pelas três famílias na ordem de emissão: uma restrição por REE da curva (ordem crescente de `codigo_ree`); para cada código de restrição elétrica (ordem crescente), uma restrição para o teto e, se houver piso, outra de mesmo nome; uma por grupo de `agrint.dat` (ordem crescente). Restrições sem nenhum limite não recebem id."
+
+  [[output.field]]
+  path = "constraints[].name"
+  from = [
+    { file = "ree", item = "nome" },
+    { file = "restricao_eletrica", item = "RE · cod_rest" },
+    { file = "re_dat", item = "usinas_conjuntos · conjunto" },
+    { file = "agrint", item = "agrupamentos · agrupamento" },
+  ]
+  status = "derived"
+  how = "`VminOP_<nome do REE>` (nome de `ree.dat`; o código quando ausente), `RE_<código>` ou `AGRINT_<grupo>`."
+
+  [[output.field]]
+  path = "constraints[].description"
+  from = [
+    { file = "curva", item = "curva_seguranca · codigo_ree" },
+    { file = "ree", item = "nome" },
+    { file = "restricao_eletrica", item = "RE · cod_rest" },
+    { file = "re_dat", item = "usinas_conjuntos · conjunto" },
+    { file = "agrint", item = "agrupamentos · agrupamento" },
+  ]
+  status = "derived"
+  how = "Texto fixo em inglês com o código da origem: energia armazenada mínima do REE (código e nome), restrição elétrica (código) ou grupo de intercâmbio (número)."
+
+  [[output.field]]
+  path = "constraints[].expression"
+  from = [
+    { file = "dger", item = "agrupamento_livre · restricoes_eletricas · restricoes_eletricas_especiais" },
+    { file = "confhd", item = "ree" },
+    { file = "confhd", item = "codigo_usina" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "restricao_eletrica", item = "RE · formula" },
+    { file = "re_dat", item = "usinas_conjuntos · codigo_usina" },
+    { file = "agrint", item = "agrupamentos · submercado_de" },
+    { file = "agrint", item = "agrupamentos · submercado_para" },
+    { file = "agrint", item = "agrupamentos · coeficiente" },
+    { file = "sistema", item = "limites_intercambio · submercado_de" },
+    { file = "sistema", item = "limites_intercambio · submercado_para" },
+  ]
+  how = "Curva de segurança: soma de `@rho_acum_h<id> * hydro_storage_final(<id>)` sobre as usinas do REE (`ree` de `confhd.dat`) que são reservatório de regularização mensal (`tipo_regulacao` M) com volume útil positivo (após VOLMAX/VOLMIN de `modif.dat`) e produtibilidade acumulada positiva. Restrição elétrica: termos `ger_usih(cod)` da fórmula viram `hydro_generation(id)` e `ener_interc(A, B)` viram `line_direct(id)` ou `line_reverse(id)` conforme A < B, com o coeficiente e o sinal preservados; termos com usina fora do caso ou par sem linha em `sistema.dat` são descartados. Restrição só em `re.dat`: soma de `hydro_generation` das usinas do conjunto. Agrupamento: soma ponderada por `coeficiente` de `line_direct`/`line_reverse` do par de submercados."
+
+  [[output.field]]
+  path = "constraints[].slack.enabled"
+  from = [
+    { file = "penalid", item = "ELETRI · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+  ]
+  status = "derived"
+  how = "Verdadeiro para a curva de segurança; para restrições elétricas, verdadeiro quando há penalidade ELETRI em `penalid.dat` ou, na falta, custo de déficit positivo em `sistema.dat`; falso para agrupamentos de intercâmbio (limite rígido)."
+
+  [[output.field]]
+  path = "constraints[].slack.penalty"
+  when = "somente quando `slack.enabled` é verdadeiro (curva de segurança e restrições elétricas)"
+  from = [
+    { file = "curva", item = "custos_penalidades · penalidade" },
+    { file = "penalid", item = "ELETRI · valor_R$_MWh" },
+    { file = "sistema", item = "custo_deficit · custo" },
+  ]
+  how = "Curva de segurança: `penalidade` do REE em `curva.dat` (R$/MWh); 1000.0 quando o REE não tem entrada ou o valor declarado não é positivo. Restrição elétrica: valor ELETRI de `penalid.dat` (primeiro patamar de penalidade) ou, na falta, 10 vezes o maior custo de déficit de `sistema.dat`."
+
+# ---------------------------------------------------------------------------
+# constraints/generic_constraint_bounds.parquet  (condicional)
+# ---------------------------------------------------------------------------
+[[output]]
+path = "constraints/generic_constraint_bounds.parquet"
+kind = "parquet"
+when = "escrito junto com `constraints/generic_constraints.json`, sob a mesma condição"
+module = "src/novomodelo_bridge/newave/converters/constraints.py"
+reads = [
+  { file = "curva" },
+  { file = "dger" },
+  { file = "confhd" },
+  { file = "hidr" },
+  { file = "modif" },
+  { file = "ree" },
+  { file = "exph" },
+  { file = "restricao_eletrica" },
+  { file = "re_dat" },
+  { file = "sistema" },
+  { file = "patamar" },
+  { file = "penalid" },
+  { file = "agrint" },
+]
+summary = "Limites por restrição, estágio e patamar das três famílias, concatenados na mesma ordem de `constraints/generic_constraints.json`. O sentido é dado pelo preenchimento: só `bound_lower` para maior-ou-igual, só `bound_upper` para menor-ou-igual."
+
+  [[output.field]]
+  path = "constraint_id"
+  from = [
+    { file = "curva", item = "curva_seguranca · codigo_ree" },
+    { file = "restricao_eletrica", item = "RE · cod_rest" },
+    { file = "re_dat", item = "usinas_conjuntos · conjunto" },
+    { file = "agrint", item = "agrupamentos · agrupamento" },
+  ]
+  status = "derived"
+  how = "O `id` da restrição em `constraints/generic_constraints.json`."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "curva", item = "curva_seguranca · data" },
+    { file = "curva", item = "configuracoes_penalizacao" },
+    { file = "restricao_eletrica", item = "RE-LIM-FORM-PER-PAT · PerIni" },
+    { file = "restricao_eletrica", item = "RE-LIM-FORM-PER-PAT · PerFin" },
+    { file = "restricao_eletrica", item = "RE-HORIZ-PER · PerIni" },
+    { file = "restricao_eletrica", item = "RE-HORIZ-PER · PerFin" },
+    { file = "re_dat", item = "restricoes · mes_inicio" },
+    { file = "re_dat", item = "restricoes · ano_inicio" },
+    { file = "re_dat", item = "restricoes · mes_fim" },
+    { file = "re_dat", item = "restricoes · ano_fim" },
+    { file = "ree", item = "mes_fim_individualizado" },
+    { file = "ree", item = "ano_fim_individualizado" },
+    { file = "agrint", item = "limites_agrupamentos · data_inicio" },
+    { file = "agrint", item = "limites_agrupamentos · data_fim" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Índice 0-based do estágio de `dger.dat`. Curva: estágio da `data` de cada registro; estágios de estudo sem registro e o pós-estudo repetem o último ano por mês-calendário quando o terceiro campo da linha de penalização de `curva.dat` é 1, senão o pós-estudo congela o percentual do último estágio de estudo. Elétricas: somente os estágios cobertos pela janela de vigência do próprio limite — `mes_inicio`/`ano_inicio` a `mes_fim`/`ano_fim` no `re.dat`, `PerIni`/`PerFin` do `RE-LIM-FORM-PER-PAT` interseccionado com o `RE-HORIZ-PER` no CSV; estágio fora de toda janela declarada não recebe limite. Os limites de `re.dat` valem só a partir do fim do período individualizado (`ree.dat`). Agrupamentos: estágios de estudo cobertos pelos limites (fim aberto vai até o fim do horizonte) e congelamento do último estágio de estudo no pós-estudo."
+
+  [[output.field]]
+  path = "block_id"
+  from = [
+    { file = "restricao_eletrica", item = "RE-LIM-FORM-PER-PAT · pat" },
+    { file = "re_dat", item = "restricoes · patamar" },
+    { file = "patamar", item = "numero_patamares" },
+  ]
+  status = "derived"
+  how = "Nulo para a curva de segurança (limite por estágio, todos os patamares). Elétricas: `pat` menos 1; `patamar` 0 de `re.dat` expande para todos os `numero_patamares` patamares. Agrupamentos: posição da coluna de limite na linha de `agrint.dat` (uma por patamar; colunas faltantes repetem a última)."
+
+  [[output.field]]
+  path = "bound_lower"
+  from = [
+    { file = "curva", item = "curva_seguranca · valor" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "a0_volume_cota..a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "perdas" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "CFUGA · nivel" },
+    { file = "modif", item = "CMONT · nivel" },
+    { file = "dger", item = "sazonaliza_cfuga_cmont" },
+    { file = "restricao_eletrica", item = "RE-LIM-FORM-PER-PAT · lim_inf" },
+  ]
+  how = "Curva de segurança: energia armazenada mínima do REE em MWmês, `valor` (%) aplicado ao volume útil de cada reservatório do REE mais a parcela do volume mínimo, ambos ponderados pela produtibilidade acumulada integrada da cascata (vol. mínimo ao máximo, com FICT dobradas na usina real a montante, e CFUGA/CMONT de `modif.dat` por estágio), convertida de MW/(m³/s)·hm³ para MWmês com as horas reais do mês do estágio. Elétricas: `lim_inf` de `restricao-eletrica.csv` quando maior que −1e29 (valores abaixo são ilimitados). Nulo para tetos elétricos, `re.dat` e agrupamentos."
+
+  [[output.field]]
+  path = "bound_upper"
+  from = [
+    { file = "restricao_eletrica", item = "RE-LIM-FORM-PER-PAT · lim_sup" },
+    { file = "re_dat", item = "restricoes · restricao" },
+    { file = "agrint", item = "limites_agrupamentos · valor" },
+  ]
+  how = "Elétricas: `lim_sup` de `restricao-eletrica.csv` (quando maior que −1e29) nos estágios individualizados; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos."
+
+# ===== frag_G_nw_inventory =====
+# Fragmento G — inventário de fontes NEWAVE: arquivos e registros/colunas que o
+# bridge NÃO converte. Itens convertidos são derivados dos fragmentos de campos e
+# não aparecem aqui.
+
+# ---------------------------------------------------------------------------
+# Arquivos de entrada que o bridge não resolve nem lê
+# ---------------------------------------------------------------------------
+
+[[source]]
+file = "saidas_newave"
+label = "arquivos de saída do NEWAVE"
+status = "unread"
+covers = ["pmo", "parp", "forward", "forwardh", "newdesp", "cortes", "cortesh", "cortes_pos_estudo", "cortesh_pos_estudo", "dados_simulacao_final"]
+note = "Entradas de `arquivos.dat` que são resultados de uma execução, não dados do caso: `pmo.dat`, `parp.dat`, `forward.dat`, `forwardh.dat`, `newdesp.dat`, `cortes.dat`, `cortesh.dat`, `cortes_pos_estudo`, `cortesh_pos_estudo` e `dados_simulacao_final`. A conversão não os consome; o comando de comparação de resultados lê `pmo.dat` e os CSV `MEDIAS-*` apenas para confrontar com a saída do Novomodelo."
+
+[[source]]
+file = "gtminpat"
+label = "gtminpat.dat"
+status = "unread"
+note = "Geração térmica mínima por patamar de carga (usina × mês × patamar). O bridge só lê o GTMIN mensal de `expt.dat`; converter exigiria emitir `min_generation_mw` por bloco em `constraints/thermal_bounds.parquet`, que hoje é por estágio."
+
+[[source]]
+file = "itaipu"
+label = "itaipu.dat"
+status = "unread"
+note = "Restrições operativas de Itaipu (parcelas 50 Hz/60 Hz e limites de intercâmbio associados). Ativado por `restricao_itaipu` em `dger.dat`; o bridge trata Itaipu como usina comum, sem partição de geração."
+
+[[source]]
+file = "perda"
+label = "perda.dat"
+status = "unread"
+note = "Fatores de perda na rede de transmissão por patamar. Ativado por `perdas_rede_transmissao` em `dger.dat`; o Novomodelo não modela perdas de intercâmbio e o bridge não emite nenhum equivalente."
+
+[[source]]
+file = "tecno"
+label = "tecno.dat"
+status = "unread"
+note = "Tecnologia e combustível das classes térmicas (base para emissões e gás). Sem uso: o Novomodelo não distingue tecnologia térmica."
+
+[[source]]
+file = "clasgas"
+label = "clasgas.dat"
+status = "unread"
+note = "Restrições de fornecimento de gás natural por classe térmica. Ativado por `restricoes_fornecimento_gas`; converter exigiria restrições genéricas sobre `thermal_generation` agrupadas por classe."
+
+[[source]]
+file = "gee"
+label = "gee.dat"
+status = "unread"
+note = "Limites de emissão de gases de efeito estufa por submercado ou SIN. Ativado por `restricoes_emissao_gee`; não há contraparte no Novomodelo."
+
+[[source]]
+file = "sar"
+label = "sar.dat"
+status = "unread"
+note = "Superfície de aversão a risco (SAR). Ativado por `sar` em `dger.dat`; o bridge só representa aversão a risco via CVaR (`cvar.dat`) e curva de segurança (`curva.dat`)."
+
+[[source]]
+file = "bid"
+label = "bid.dat"
+status = "unread"
+note = "Dados de ofertas (bid) de geração. Ativado por `bid` em `dger.dat`; sem uso no bridge."
+
+[[source]]
+file = "abertura"
+label = "abertura.dat"
+status = "unread"
+note = "Número de aberturas variável por período. O bridge lê apenas `num_aberturas` de `dger.dat` e escreve o mesmo `num_openings` em todos os estágios; converter exigiria mapear a tabela por período para `stages[].num_openings`."
+
+[[source]]
+file = "elnino"
+label = "elnino.dat"
+status = "unread"
+note = "Índices de El Niño para o modelo de afluências. Ativado por `el_nino` em `dger.dat`; o Novomodelo estima o PAR(p) sem covariáveis climáticas."
+
+[[source]]
+file = "ensoaux"
+label = "ensoaux.dat"
+status = "unread"
+note = "Dados auxiliares de ENSO. Ativado por `enso` em `dger.dat`; mesma situação de `elnino.dat`."
+
+[[source]]
+file = "eliminacao_cortes"
+label = "eliminacao-cortes.dat"
+status = "unread"
+note = "Parâmetros do algoritmo de eliminação de cortes de Benders. O bridge espelha apenas o liga/desliga da seleção de cortes (`selecao_de_cortes_*` de `dger.dat`) em `config.json`; os parâmetros finos ficam nos defaults do Novomodelo."
+
+[[source]]
+file = "volumes_referencia"
+label = "volumes-referencia.csv"
+status = "unread"
+note = "Arquivo LIBs apontado por `indices.csv` (chave `HIDRELETRICA-CADASTRO-RESERVATORIO`) com `VOLUME-REFERENCIAL-TIPO-PADRAO` e `CADH-VOL-REF-PER` (volume de referência por usina e período). O bridge deriva o volume de referência de `hidr.dat` (`volume_referencia`) e de `volref_saz.dat`; a chave não é seguida em `indices.csv`."
+
+# ---------------------------------------------------------------------------
+# Arquivos resolvidos: registros/colunas não convertidos
+# ---------------------------------------------------------------------------
+
+[[source]]
+file = "dger"
+note = "O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações, CVaR, curva de aversão, simulação final, reamostragem, seleção de cortes, GNL antecipado, FPHA, outros usos, sazonalização de VMAXT/VMINT/CFUGA-CMONT, estados dos cortes). Os demais flags são agrupados abaixo por tema."
+
+  [[source.item]]
+  item = "execução, impressão e memória (nome_caso, duracao_periodo, imprime_*, impressao_operacao/ena/convergencia/cortes_ativos_sim_final, gera_arquivo_cortes_unico, mantem_arquivos_*, alocacao_memoria_*, memoria_calculo_cortes, armazenamento_local_arquivos_temporarios, utiliza_gerenciamento_pls, comunicacao_dois_niveis, intervalo_para_gravar, tamanho_registro_arquivo_historico, consulta_fcf)"
+  status = "unread"
+  note = "Controles de relatório, disco e memória do executável NEWAVE. Não têm contraparte no caso Novomodelo."
+
+  [[source.item]]
+  item = "convergência e gestão de cortes (tolerancia, delta_zinf, delta_zsup, deltas_consecutivos, converge_no_zero, num_minimo_iteracoes, inicio_teste_convergencia, desconsidera_convergencia_estatistica, considera_zsup_min_convergencia, iteracao_para_simulacao_final, aproveitamento_bases_backward, janela_de_cortes, periodos_manutencao_cortes, eliminacao_cortes, fcf_pos_estudo, mes_inicio_pre_estudo)"
+  status = "unread"
+  note = "O bridge fixa apenas `iteration_limit` (de `num_max_iteracoes`) e o liga/desliga da seleção de cortes; critérios de parada por gap e janelas de cortes ficam nos defaults do Novomodelo. `num_anos_pre_estudo` é convertido em `pre_study_stages`, mas `mes_inicio_pre_estudo` não é lido."
+
+  [[source.item]]
+  item = "modelo estocástico de afluências (tipo_geracao_enas, matriz_correlacao_espacial, reducao_automatica_ordem, considera_tendencia_hidrologica_calculo_politica, considera_tendencia_hidrologica_sim_final, tipo_reamostragem_cenarios, passo_reamostragem_cenarios, momento_reamostragem, aberturas_variaveis, num_anos_pos_sim_final, agregacao_simulacao_final, simulacao_final_com_data, representacao_agregacao, el_nino, enso)"
+  status = "unread"
+  note = "O Novomodelo estima o PAR(p) a partir de `scenarios/inflow_history.parquet` com sua própria seleção de ordem (`estimation.order_selection`); só `ordem_maxima_parp`, `consideracao_media_anual_afluencias`, `num_series_sinteticas` e `considera_reamostragem_cenarios` são espelhados. A tendência hidrológica é sempre emitida (`recent_observations`) quando `vazpast.dat` existe, sem consultar os flags."
+
+  [[source.item]]
+  item = "flags de recursos não convertidos (restricao_defluencia, restricao_itaipu, restricoes_rhq, restricoes_rhv, restricao_lpp_*, restricoes_emissao_gee, restricoes_fornecimento_gas, sar, bid, modif_automatica_adterm, sazonaliza_vminp, canal_desvio, correcao_desvio)"
+  status = "unread"
+  note = "Ativam recursos que o conversor não converte (vazão máxima `VAZMAXT`, RHQ/RHV, LPP, SAR, GEE, gás, canal de desvio, ADTERM automático), logo não há o que ligar ou desligar. Os flags de `ghmin.dat`, `c_adic.dat`, `agrint.dat`, `re.dat`, `restricao-eletrica.csv`, vazão mínima e turbinamento são honrados: um arquivo presente com o flag desligado é ignorado e reportado (diagnóstico `dger-switch-off`); linha ausente conta como ligada."
+
+  [[source.item]]
+  item = "operação e penalidades internas (perdas_rede_transmissao, considera_geracao_eolica, penalidade_corte_geracao_eolica, estacoes_bombeamento, representacao_submotorizacao, calcula_volume_inicial, volume_inicial_subsistema, ordenacao_automatica, calcula_prodt_media_sin, racionamento_preventivo, primeira_profundidade_risco_deficit, segunda_profundidade_risco_deficit, equalizacao_penal_intercambio)"
+  status = "unread"
+  note = "As micro-penalidades de intercâmbio, vertimento, turbinamento, corte de eólica e excesso são escritas com os defaults internos do manual NEWAVE v30, não com o valor de `penalidade_corte_geracao_eolica`. O volume inicial vem de `confhd.dat` (`volume_inicial_percentual`); `calcula_volume_inicial`/`volume_inicial_subsistema` não são lidos."
+
+[[source]]
+file = "confhd"
+note = "Entram no caso as usinas em operação e não fictícias — `usina_existente` igual a `EX` ou a `EE` (existente em expansão) —, mais as usinas `NE` com registro de enchimento de volume morto em `exph.dat`. A usina `EE` opera desde o primeiro estágio e sua capacidade cresce conforme as máquinas de `exph.dat` entram."
+
+  [[source.item]]
+  item = "usinas fictícias (produtibilidade_especifica = 0 no mesmo posto de uma usina geradora)"
+  status = "deferred"
+  note = "Excluídas do mapa de ids com o diagnóstico `fictitious-plants-excluded`. São nós contábeis de cascata energética; o bridge preserva a topologia religando `downstream_id` à próxima usina real e somando a produtibilidade da cadeia fictícia à usina de montante."
+
+  [[source.item]]
+  item = "usinas NE sem registro de enchimento em exph.dat e usinas NC"
+  status = "unread"
+  note = "Não entram no LP; a cascata é religada através delas (log informativo apenas). Converter uma expansão sem enchimento exigiria `entry_stage_id` sem bloco `filling`."
+
+  [[source.item]]
+  item = "usina_modificada"
+  status = "unread"
+  note = "Indica se a usina tem registros em `modif.dat`; o bridge aplica os registros de `modif.dat` a toda usina cadastrada, sem consultar o flag."
+
+  [[source.item]]
+  item = "ano_inicio_historico · ano_fim_historico"
+  status = "unread"
+  note = "Janela do histórico de vazões por usina. O bridge usa o histórico completo de `vazoes.dat` desde `ano_inicial_historico` até o mês anterior ao início do estudo para todas as usinas."
+
+[[source]]
+file = "conft"
+
+  [[source.item]]
+  item = "usina_existente · classe"
+  status = "unread"
+  note = "Toda usina listada vira uma térmica do Novomodelo; o estado `EX`/`NE`/`EE` e a classe térmica não são consultados. A disponibilidade efetiva vem das janelas POTEF de `expt.dat`."
+
+[[source]]
+file = "sistema"
+
+  [[source.item]]
+  item = "numero_patamares_deficit"
+  status = "unread"
+  note = "Os segmentos de déficit são derivados das linhas de `custo_deficit` (`patamar_deficit`, `custo`, `corte`); a contagem declarada não é lida."
+
+  [[source.item]]
+  item = "limites_intercambio · flag"
+  status = "unread"
+  note = "Coluna de flag do bloco de limites de intercâmbio; o bridge usa apenas `submercado_de`, `submercado_para`, `sentido`, `data` e `valor`."
+
+[[source]]
+file = "clast"
+
+  [[source.item]]
+  item = "tipo_combustivel"
+  status = "unread"
+  note = "Combustível da classe térmica. O Novomodelo não distingue combustível; só o custo por ano de estudo e as modificações por data são convertidos."
+
+[[source]]
+file = "term"
+note = "Todas as colunas de `usinas` são lidas (potência, FCMAX, TEIF, IP, GTMIN por mês do primeiro ano de estudo e GTMIN dos demais anos). Para usina `EE` ou `NE` em `conft.dat`, o NEWAVE descarta o GTMIN de `term.dat` e só valem as janelas GTMIN de `expt.dat`."
+
+[[source]]
+file = "ree"
+
+  [[source.item]]
+  item = "remocao_ficticias"
+  status = "unread"
+  note = "Flag de remoção de usinas fictícias do REE; o bridge identifica as fictícias estruturalmente (posto compartilhado e ρ_esp = 0), sem consultar o flag."
+
+[[source]]
+file = "hidr"
+note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alimentam nenhuma saída."
+
+  [[source.item]]
+  item = "posto · submercado · codigo_usina_jusante (do cadastro)"
+  status = "unread"
+  note = "Posto, submercado e jusante são tomados de `confhd.dat` (jusante) e de `ree.dat` via o REE de `confhd.dat` (barra); as colunas homônimas do cadastro são ignoradas."
+
+  [[source.item]]
+  item = "numero_polinomios_jusante · a0..a4_jusante_1..6 · referencia_jusante_1..6"
+  status = "unread"
+  note = "Polinômios cota de jusante × defluência do cadastro. O bridge escreve `tailrace` como constante `canal_fuga_medio` em `hydros.json` e, quando há `polinjus.csv`, as famílias por partes em `system/tailrace_curves.parquet`; os polinômios do `hidr.dat` não são usados."
+
+  [[source.item]]
+  item = "influencia_vertimento_canal_fuga"
+  status = "unread"
+  note = "Flag de influência do vertimento no canal de fuga. O Novomodelo avalia as curvas de jusante sobre a defluência total; o flag não é consultado."
+
+  [[source.item]]
+  item = "fator_carga_maximo · fator_carga_minimo"
+  status = "unread"
+  note = "Fatores de carga da usina hidráulica; o limite de turbinamento vem do engolimento corrigido pela queda e o de geração da potência nominal dos conjuntos."
+
+  [[source.item]]
+  item = "volume_vertedouro · volume_desvio · cota_minima · cota_maxima · desvio"
+  status = "unread"
+  note = "Volumes de vertedouro e de desvio, cotas limite e o código de desvio. O Novomodelo não modela vertedouro nem canal de desvio (`diversion` é sempre nulo); as cotas são avaliadas pelo polinômio cota × volume."
+
+  [[source.item]]
+  item = "numero_unidades_base · representacao_conjunto · empresa · observacao · data"
+  status = "unread"
+  note = "Dados cadastrais sem contraparte: unidades-base para submotorização, forma de representação dos conjuntos, empresa proprietária e observações."
+
+[[source]]
+file = "modif"
+note = "Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio e `CFUGA`/`CMONT` alteram a produtibilidade por estágio."
+
+  [[source.item]]
+  item = "VMINP"
+  status = "deferred"
+  note = "Volume mínimo com penalidade (meta operativa suave por estágio). Reportado por `modif-permanent-override-unsupported` e ignorado; converter exigiria uma restrição genérica com folga sobre `hydro_storage_final` penalizada pelo custo VOLMIN de `penalid.dat`, honrando `sazonaliza_vminp`."
+
+  [[source.item]]
+  item = "VAZMAXT"
+  status = "deferred"
+  note = "Defluência máxima por período. Reportado por `modif-permanent-override-unsupported` e ignorado; o Novomodelo aceita `max_outflow_m3s`, mas o bridge escreve sempre nulo em `hydros.json` e não emite coluna correspondente em `constraints/hydro_bounds.parquet`."
+
+[[source]]
+file = "ghmin"
+
+  [[source.item]]
+  item = "linhas com patamar ≠ 0"
+  status = "unread"
+  note = "Só as linhas de patamar 0 (média dos patamares) alimentam `min_generation_mw` em `constraints/hydro_bounds.parquet`; valores por patamar de carga são descartados porque a tabela é por estágio, não por bloco."
+
+[[source]]
+file = "penalid"
+note = "O bridge toma, por variável, o primeiro valor `R$/MWh` não nulo do primeiro patamar de penalidade e o aplica ao SIN inteiro após multiplicar pela produtibilidade média ou máxima acumulada."
+
+  [[source.item]]
+  item = "codigo_ree_submercado"
+  status = "unread"
+  note = "Diferenciação da penalidade por REE ou submercado. O leitor por REE existe no código mas não é chamado; `penalties.json` recebe um único valor por variável."
+
+  [[source.item]]
+  item = "patamar_penalidade = 2"
+  status = "unread"
+  note = "Segundo patamar de penalidade (custo por violação adicional). O Novomodelo tem uma única folga linear por variável; só o primeiro patamar é lido."
+
+  [[source.item]]
+  item = "patamar_carga · valor_R$_hm3"
+  status = "unread"
+  note = "Penalidade específica por patamar de carga e o valor já convertido em R$/hm³. O bridge parte sempre de `valor_R$_MWh` e faz a própria conversão de unidades."
+
+  [[source.item]]
+  item = "variáveis além de DESVIO, VAZMIN, GHMIN, TURBMN, TURBMX, VOLMIN e ELETRI"
+  status = "unread"
+  note = "Qualquer outra variável presente (por exemplo penalidades de intercâmbio ou de excesso) é ignorada; essas micro-penalidades são escritas com os defaults internos do NEWAVE."
+
+[[source]]
+file = "vazpast"
+note = "Lido integralmente: as vazões naturais por posto são convertidas em incrementais e recortadas aos 12 meses anteriores ao início do estudo para `initial_conditions.recent_observations`."
+
+[[source]]
+file = "dsvagua"
+note = "Ignorado por inteiro quando `outros_usos_da_agua = 0` em `dger.dat`."
+
+  [[source.item]]
+  item = "considera_desvio_usina_NC"
+  status = "unread"
+  note = "Flag que decide se o desvio de uma usina `NC` é aplicado à usina existente a jusante. O bridge propaga sempre o desvio de uma usina fora do LP para a primeira usina existente a jusante, sem consultar o flag."
+
+  [[source.item]]
+  item = "comentario"
+  status = "unread"
+  note = "Texto livre da linha; sem contraparte."
+
+[[source]]
+file = "curva"
+note = "A curva de segurança vira uma restrição genérica `VminOP_<REE>` por REE com folga penalizada pelo custo de `custos_penalidades`."
+
+  [[source.item]]
+  item = "configuracoes_penalizacao · TIPO DE PENALIZACAO ≠ 0"
+  status = "deferred"
+  note = "Penalização iterativa/variável da curva (etapa 2). O bridge modela apenas a penalização FIXA e emite `vminop-penalization-not-fixa` quando o deck seleciona outro tipo; a diferença na penalidade de violação é esperada."
+
+  [[source.item]]
+  item = "configuracoes_penalizacao · MES PENALIZACAO"
+  status = "unread"
+  note = "Mês a partir do qual a penalização passa a valer. A restrição é emitida em todos os estágios cobertos pela curva; só o primeiro campo (tipo) e o terceiro (sazonalização no pós-estudo) são lidos."
+
+  [[source.item]]
+  item = "iteracao_a_partir_etapa2 · maximo_iteracoes_etapa2 · tolerancia_processo_etapa2 · impressao_relatorio_etapa2"
+  status = "unread"
+  note = "Parâmetros do processo iterativo da etapa 2 da curva; sem contraparte na penalização fixa."
+
+[[source]]
+file = "expt"
+note = "Os cinco tipos (`POTEF`, `FCMAX`, `TEIFT`, `GTMIN`, `IPTER`) são aplicados em `constraints/thermal_bounds.parquet` na ordem do arquivo; usinas presentes sem `POTEF` são tratadas como não instaladas (`thermal-expt-without-potef`). A coluna `nome_usina` não é lida."
+
+[[source]]
+file = "exph"
+note = "Só o registro de enchimento (`data_inicio_enchimento`, `duracao_enchimento`, `volume_morto`) e as datas de entrada de máquinas (`data_entrada_operacao`, `conjunto_maquina_entrada`) são lidos. A usina EE não traz registro de enchimento: apenas linhas de entrada de máquina."
+
+  [[source.item]]
+  item = "potencia_instalada · maquina_entrada"
+  status = "unread"
+  note = "Potência e número da máquina que entra. A rampa de capacidade é recalculada a partir dos conjuntos do `hidr.dat` (máquinas por conjunto, vazão e potência nominais), contando as máquinas por `conjunto_maquina_entrada`. Vale para a usina NE em enchimento e para a usina EE em expansão; nesta a contagem nunca passa do cadastro de `hidr.dat`."
+
+[[source]]
+file = "manutt"
+note = "Cada linha reduz a potência da usina proporcionalmente aos dias de sobreposição com o mês, somando unidades em manutenção simultânea; só até `num_anos_manutencao_utes`."
+
+  [[source.item]]
+  item = "codigo_empresa · nome_empresa · codigo_unidade · nome_usina"
+  status = "unread"
+  note = "Identificação da empresa e da unidade geradora; as reduções são somadas por usina sem distinguir a unidade."
+
+[[source]]
+file = "c_adic"
+
+  [[source.item]]
+  item = "razao · nome_submercado"
+  status = "unread"
+  note = "Motivo da carga adicional. Todas as razões do mesmo submercado e mês são somadas à carga em `scenarios/load_seasonal_stats.parquet`; a razão não é preservada."
+
+[[source]]
+file = "cvar"
+note = "Lido integralmente: `valores_constantes` para `cvar = 1` e `alfa_variavel`/`lambda_variavel` para `cvar = 2` em `dger.dat`; linhas do ano 9999 (pós-estudo) recaem nos valores constantes."
+
+[[source]]
+file = "agrint"
+note = "Lido por um parser próprio de texto, não pelo `inewave`. Limites pós-estudo do arquivo são ignorados: o bridge congela o último estágio de estudo, como o NEWAVE."
+
+  [[source.item]]
+  item = "limites_agrupamentos · comentario"
+  status = "unread"
+  note = "Descrição livre do limite; sem contraparte."
+
+[[source]]
+file = "re_dat"
+note = "Fornece o conjunto de usinas e os limites superiores das restrições elétricas no período pós-individualizado; limites inferiores só existem em `restricao-eletrica.csv`."
+
+  [[source.item]]
+  item = "restricoes · motivo"
+  status = "unread"
+  note = "Justificativa textual da restrição; sem contraparte."
+
+[[source]]
+file = "volref_saz"
+note = "Lido integralmente. Uma linha inteiramente zerada é tratada como ausência de referência sazonal (a usina recai em `volume_referencia`/altura 65%)."
+
+[[source]]
+file = "shist"
+note = "Lido integralmente. `varredura`, `ano_inicio_varredura` e `anos_inicio_simulacoes` definem `historical_years` e o modo determinístico em `config.json`."
+
+[[source]]
+file = "adterm"
+note = "Lido integralmente quando `despacho_antecipado_gnl ≠ 0`; despachos por patamar são ponderados pela duração dos patamares e lags além do horizonte são truncados com aviso."
+
+[[source]]
+file = "polinjus"
+note = "Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `HidreletricaCurvaJusantePolinomioPorPartesSegmento`) alimentam `system/tailrace_curves.parquet`."
+
+  [[source.item]]
+  item = "HidreletricaCurvaJusanteAfogamentoExplicitoPadrao · HidreletricaCurvaJusanteAfogamentoExplicitoUsina"
+  status = "unread"
+  note = "Flag de afogamento explícito do canal de fuga. O Novomodelo escolhe a família pelo nível de referência de jusante; o flag não é consultado."
+
+  [[source.item]]
+  item = "HidreletricaPerdaHidraulicaGrade · HidreletricaProdutibilidadeEspecificaGrade"
+  status = "unread"
+  note = "Grades de perda hidráulica e de produtibilidade específica por turbinamento. O bridge usa os valores constantes do `hidr.dat` (`perdas`, `tipo_perda`, `produtibilidade_especifica`)."
+
+  [[source.item]]
+  item = "VolumeReferencialPeriodo · VolumeReferencialTipoPadrao · EstacaoBombeamento*"
+  status = "unread"
+  note = "Volumes de referência por período e estações de bombeamento. O volume de referência vem de `hidr.dat`/`volref_saz.dat`; bombeamento não é modelado."
+
+[[source]]
+file = "tratamento_fpha"
+note = "Só a linha ativa terminada em `ANGULO-PADRAO` ou `DISTANCIA-PADRAO` vira `fpha_plane_reduction` em `system/hydro_production_models.json`; o número de amostras do método por distância é uma constante do bridge."
+
+  [[source.item]]
+  item = "linhas por usina (sufixo diferente de -PADRAO)"
+  status = "unread"
+  note = "Ajustes do método de redução de cortes por usina; o Novomodelo só aceita um método por caso."
+
+[[source]]
+file = "restricao_eletrica"
+note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por um parser próprio; as demais chaves de `indices.csv` não são seguidas."
+
+  [[source.item]]
+  item = "funções de fórmula além de ger_usih e ener_interc"
+  status = "unread"
+  note = "Só termos `ger_usih(usina)` e `ener_interc(de, para)` são traduzidos para `hydro_generation` e `line_direct`/`line_reverse`; qualquer outra função (térmica, eólica, carga) é descartada silenciosamente pelo parser de fórmula."
+
+  [[source.item]]
+  item = "registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*"
+  status = "unread"
+  note = "Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O parser ignora toda linha cujo primeiro campo não seja `RE`, `RE-HORIZ-PER` ou `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`."
+
+[[source]]
+file = "caso"
+status = "index"
+note = "Nomeia o arquivo de índice (`arquivos.dat` por padrão). Lido apenas para localizar os demais arquivos do caso."
+
+[[source]]
+file = "arquivos"
+status = "index"
+note = "Índice que nomeia cada arquivo de dados do caso. Lido apenas para localizar os demais arquivos; os nomes que aponta são resolvidos sem distinção de maiúsculas."
+
+[[source]]
+file = "indices"
+status = "index"
+note = "Índice dos arquivos LIBs. Lido apenas para localizar `restricao-eletrica.csv`."

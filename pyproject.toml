@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "novomodelo-bridge"
+version = "0.18.0"
+description = "Convert NEWAVE and DECOMP cases to Novomodelo input format and compare the results"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+dependencies = [
+    "idecomp>=1.14.2",
+    # 1.16.1: first to read modif.dat VAZMINT PRE/POS markers (1.16.0: modif.dat
+    # POTEFE/VOLCOTA/COTAREA and vazoes.dat at 600 postos).
+    "inewave>=1.16.1",
+    "pyarrow>=25.0.1",
+    "pandas>=3.0.6",
+    "plotly>=7.1.0",
+    "polars>=1.44.2",
+    "rich>=15.0.0",
+    "typer>=0.27.2",
+    # REQUIRED runtime dep, not an optional extra: `convert decomp` imports the
+    # boundary FCF by default and `convert --validate` / `compare` load novomodelo
+    # output, so `import novomodelo` must work out of the box. Pinned exactly to
+    # MIN_NOVOMODELO_VERSION in novomodelo/compat.py, which documents why.
+    "novomodelo-python==0.18.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.1",
+    "ty>=0.0.84",
+    "pytest-cov",
+    "ruff",
+    "jsonschema",
+]
+
+[project.scripts]
+novomodelo-bridge = "novomodelo_bridge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/novomodelo_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short --import-mode=importlib"
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = [
+    "novomodelo_bridge.comparators.model",
+    "novomodelo_bridge.comparators.constraints",
+    "novomodelo_bridge.comparators.newave.readers",
+    "novomodelo_bridge.comparators.newave.alignment",
+    "novomodelo_bridge.comparators.newave.constraints",
+]
+
+[tool.coverage.report]
+fail_under = 83
+# Ratchet: raise as coverage improves, never lower to dodge a regression — this is the combined aggregate over the 5 `source` modules above, not a per-module threshold.
+
+[tool.pyright]
+# Editor aid only — CI gates ruff (ruff.toml, whole tree) and the drift
+# checks that follow it in the lint job.
+# `ty` and pyright are local/editor aids only; neither is a CI step. Point
+# at the venv so the typed first-party deps (idecomp/inewave ship
+# py.typed) resolve instead of raising phantom missing-import errors.
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+# Type inference is off (pandas 3.x `Series | DataFrame` unions yield ~1000 false
+# positives on the bare-accessor idiom) but the high-value semantic checks stay:
+# missing imports are still errors; module-source and PEP 613 function-local type
+# aliases are silenced as benign so any remaining diagnostic is real signal.
+typeCheckingMode = "off"
+reportMissingImports = "error"
+reportMissingModuleSource = "none"
+reportInvalidTypeForm = "none"

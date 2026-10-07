@@ -1,0 +1,2038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Novomodelo vs NEWAVE Results Comparison</title>
+    <script src="https://cdn.plot.ly/plotly-3.6.0.min.js"></script>
+    <script>
+
+(function() {
+    // plotly.js 3.x dropped bare-string `title` support (layout, axis, scene
+    // axis, and colorbar titles all need {text: ...}); a raw-JS chart layout
+    // built here never passes through go.Figure's coercion, so a bare string
+    // reaching Plotly.newPlot/react is silently dropped at render instead of
+    // raising. Wrap both entry points so every current and future call site
+    // in data or layout is normalized without editing each one.
+    function normalizePlotlyTitles(node) {
+        if (Array.isArray(node)) {
+            node.forEach(normalizePlotlyTitles);
+            return node;
+        }
+        if (node && typeof node === 'object') {
+            if (typeof node.title === 'string') {
+                node.title = { text: node.title };
+            }
+            for (var key in node) {
+                if (Object.prototype.hasOwnProperty.call(node, key)) {
+                    normalizePlotlyTitles(node[key]);
+                }
+            }
+        }
+        return node;
+    }
+    var origNewPlot = Plotly.newPlot;
+    var origReact = Plotly.react;
+    Plotly.newPlot = function(div, data, layout, config) {
+        return origNewPlot.call(
+            this, div, normalizePlotlyTitles(data), normalizePlotlyTitles(layout), config
+        );
+    };
+    Plotly.react = function(div, data, layout, config) {
+        return origReact.call(
+            this, div, normalizePlotlyTitles(data), normalizePlotlyTitles(layout), config
+        );
+    };
+})();
+
+</script>
+    <style>
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'IBM Plex Sans', 'Inter', 'Segoe UI', system-ui, sans-serif; background: #F0EDE8; color: #374151; }
+
+header {
+    background: linear-gradient(135deg, #0F1419 0%, #1A2028 100%);
+    border-top: 3px solid #B87333;
+    color: white;
+    padding: 16px 32px;
+    font-size: 1.3rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+nav {
+    background: #1A2028;
+    padding: 0 24px;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+nav button {
+    background: none;
+    border: none;
+    color: #8B9298;
+    padding: 14px 20px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    transition: color 0.2s, border-color 0.2s;
+    letter-spacing: 0.3px;
+}
+
+nav button:hover { color: #E8E6E3; border-bottom-color: #B87333; }
+nav button.active { color: #B87333; border-bottom-color: #B87333; }
+
+main { padding: 24px 32px; max-width: 1800px; margin: 0 auto; }
+
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+.chart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.chart-grid-single {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.chart-card {
+    background: #FAFAF8;
+    border-radius: 8px;
+    padding: 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    overflow: hidden;
+    min-width: 0;
+}
+
+.chart-card .plotly-graph-div { width: 100% !important; }
+.chart-card .js-plotly-plot { width: 100% !important; }
+.chart-card .plot-container { width: 100% !important; }
+
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.metric-card {
+    background: #FAFAF8;
+    border-radius: 8px;
+    padding: 20px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #374151;
+    margin-bottom: 6px;
+}
+
+.metric-label {
+    font-size: 0.8rem;
+    color: #8B9298;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.section-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #374151;
+    margin: 24px 0 12px;
+    padding-left: 10px;
+    border-left: 4px solid #B87333;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.plant-selector {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.plant-selector label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #374151;
+}
+
+.plant-selector select {
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    min-width: 280px;
+    background: #FAFAF8;
+}
+
+.plant-info {
+    display: flex;
+    gap: 20px;
+    font-size: 0.82rem;
+    color: #8B9298;
+    flex-wrap: wrap;
+}
+
+.plant-info span { white-space: nowrap; }
+
+.chart-card {
+    transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.chart-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+}
+
+@media (max-width: 767px) {
+    .chart-grid {
+        grid-template-columns: 1fr;
+    }
+    .metrics-grid {
+        grid-template-columns: 1fr;
+    }
+    main {
+        padding: 12px;
+    }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+    .chart-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.tab-content-fade {
+    opacity: 0;
+    transition: opacity 0.15s ease-in;
+}
+
+.tab-content-fade.active {
+    opacity: 1;
+}
+
+.chart-card-expanded {
+    grid-column: 1 / -1;
+}
+
+nav { position: relative; }
+
+.tab-underline {
+    position: absolute;
+    bottom: 0;
+    height: 3px;
+    background: #B87333;
+    transition: transform 0.3s ease-out, width 0.3s ease-out;
+    pointer-events: none;
+}
+
+.chart-card { position: relative; }
+
+.expand-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+    transition: opacity 0.2s ease-out;
+    cursor: pointer;
+    background: none;
+    border: none;
+    color: #8B9298;
+    padding: 4px;
+    z-index: 10;
+    line-height: 0;
+}
+
+.chart-card:hover .expand-btn { opacity: 1; }
+
+.metric-delta {
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.metric-delta-up {
+    color: #4A8B6F;
+}
+
+.metric-delta-down {
+    color: #DC4C4C;
+}
+
+.metric-sparkline {
+    display: flex;
+    justify-content: center;
+    margin-top: 8px;
+}
+
+.cost-breakdown-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.85rem;
+    background: #FFFFFF;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+    font-variant-numeric: tabular-nums;
+}
+.cost-breakdown-table caption {
+    caption-side: top;
+    text-align: left;
+    padding: 12px 14px 8px 14px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #1F2937;
+    letter-spacing: 0.01em;
+}
+.cost-breakdown-table thead th {
+    background: #F3F4F6;
+    color: #4B5563;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    padding: 10px 14px;
+    border-bottom: 1px solid #E5E7EB;
+}
+.cost-breakdown-table tbody td {
+    padding: 8px 14px;
+    color: #1F2937;
+    border-bottom: 1px solid #F1F1EE;
+    transition: background-color 120ms ease;
+}
+.cost-breakdown-table tbody tr:nth-child(even) td {
+    background: #FBFBFA;
+}
+.cost-breakdown-table tbody tr:hover td {
+    background: #EFF6FF;
+}
+.cost-breakdown-table tbody tr:last-child td {
+    border-bottom: none;
+    border-top: 2px solid #374151;
+    background: #F9FAFB;
+    font-weight: 700;
+}
+.cost-breakdown-table tbody tr:last-child:hover td {
+    background: #F9FAFB;
+}
+.cost-breakdown-table .cb-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    margin-right: 0.6em;
+    vertical-align: middle;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+}
+.cost-breakdown-table .cb-num { text-align: right; }
+.cost-breakdown-table .cb-cat { text-align: left; }
+.cost-breakdown-table .cb-diff-pos { color: #DC2626; font-weight: 600; }
+.cost-breakdown-table .cb-diff-neg { color: #059669; font-weight: 600; }
+/* Productivity building-blocks table: per-metric column grouping cues. */
+.prod-blocks-table thead th { text-align: center; }
+.prod-blocks-table .cb-group-tint { background: #F1F5F9; }
+.prod-blocks-table thead .cb-group-tint { background: #E7EEF5; }
+.prod-blocks-table .cb-group-sep { border-left: 2px solid #94A3B8; }
+.prod-blocks-table tbody tr:nth-child(even) td.cb-group-tint { background: #E9EFF5; }
+.prod-blocks-table tbody tr:hover td.cb-group-tint { background: #E0EAF6; }
+.prod-blocks-table .cb-cat {
+    position: sticky;
+    left: 0;
+    background: #FFFFFF;
+    z-index: 1;
+}
+.prod-blocks-table .cb-caption-note {
+    font-weight: 400;
+    font-size: 0.8rem;
+    color: #6B7280;
+}
+
+    </style>
+</head>
+<body>
+    <header>Novomodelo vs NEWAVE Results Comparison</header>
+    <nav>
+        <button class="active" onclick="showTab('tab-overview', this)">Overview</button><button onclick="showTab('tab-system', this)">System</button><button onclick="showTab('tab-balance', this)">Energy Balance</button><button onclick="showTab('tab-network', this)">Network</button><button onclick="showTab('tab-constraints', this)">Constraints</button><button onclick="showTab('tab-hydro', this)">Hydro Operation</button><button onclick="showTab('tab-hydro-detail', this)">Hydro Details</button><button onclick="showTab('tab-thermal', this)">Thermal Operation</button><button onclick="showTab('tab-thermal-detail', this)">Thermal Details</button><button onclick="showTab('tab-productivity', this)">Productivity</button><button onclick="showTab('tab-performance', this)">Performance</button>
+    </nav>
+    <main>
+        <section id="tab-overview" class="tab-content active">
+<div class="metrics-grid"><div class="metric-card"><div class="metric-value">5</div><div class="metric-label">Comparisons</div></div><div class="metric-card"><div class="metric-value">4</div><div class="metric-label">Entity Types</div></div><div class="metric-card"><div class="metric-value">4</div><div class="metric-label">Variables</div></div></div>
+<div class="section-title">Cost Breakdown</div>
+<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No cost data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No cost data available.</p></div></div>
+<div class="section-title">Per-Stage Cost</div>
+<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No COPER data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No CUSTO_FUTURO data available.</p></div></div>
+<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No CTERM data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No COPER/CTERM data available.</p></div></div>
+<div class="section-title">Convergence</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No convergence data available.</p></div></div>
+</section><section id="tab-system" class="tab-content">
+<div class="section-title">Spot Price by Bus</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-b509029b"></div>
+<script>Plotly.newPlot('chart-b509029b', [{"x":[0],"y":[150.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2},"xaxis":"x","yaxis":"y","legendgroup":"nw","showlegend":true},{"x":[0],"y":[152.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2},"xaxis":"x","yaxis":"y","legendgroup":"cb","showlegend":true}], {"title":{"text":"CMO by Bus"},"xaxis":{"domain":[0.0,0.47],"title":{"text":"Stage"},"anchor":"y"},"yaxis":{"domain":[0.56,1.0],"title":{"text":"SE"},"anchor":"x"},"height":380,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div></div>
+<div class="section-title">Deficit</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No deficit_mw data available.</p></div></div>
+</section><section id="tab-balance" class="tab-content">
+<p>No energy balance data available.</p>
+
+</section><section id="tab-network" class="tab-content">
+<div class="section-title">Line Net Flow</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No line interchange data available.</p></div></div>
+</section><section id="tab-constraints" class="tab-content">
+<div class="section-title">Generic Constraints — LHS vs Bound</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No generic constraints defined.</p></div></div>
+</section><section id="tab-hydro" class="tab-content">
+<div class="section-title">Storage by Bus (hm³)</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro storage_final_hm3 data mapped to buses.</p></div></div>
+<div class="section-title">Hydro Generation by Bus (MW)</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro generation_mw data mapped to buses.</p></div></div>
+<div class="section-title">Spillage by Bus (m³/s)</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro spillage_m3s data.</p></div></div>
+<div class="section-title">Turbined by Bus (m³/s)</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro turbined_m3s data.</p></div></div>
+<div class="section-title">Inflow by Bus (m³/s)</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro inflow_m3s data.</p></div></div>
+<div class="section-title">Water Value by Bus (R$/hm³)</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro water_value_per_hm3 data.</p></div></div>
+<div class="section-title">Aggregate Energy Variables</div>
+<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No stored_energy_final_mwh data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No incremental_inflow_energy_mw data available.</p></div></div>
+<div class="section-title">System Totals (SIN)</div>
+<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-41f73909"></div>
+<script>Plotly.newPlot('chart-41f73909', [{"x":[1,1],"y":[5050.0,4100.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[1],"y":[4100.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[1],"y":[5050.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[1],"y":[4500.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[1],"y":[4510.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Total Storage (hm\u00b3)"},"xaxis":{"title":{"text":"Stage"}},"yaxis":{"title":{"text":"storage_final_hm3"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-a94f52ed"></div>
+<script>Plotly.newPlot('chart-a94f52ed', [{"x":[0,0],"y":[1400.0,1000.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[0],"y":[1000.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[1400.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[1200.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[0],"y":[1195.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Hydro Generation (MW)"},"xaxis":{"title":{"text":"Stage"}},"yaxis":{"title":{"text":"generation_mw"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro spillage_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro turbined_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro inflow_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro water_value_per_hm3 data.</p></div></div>
+<div class="section-title">Withdrawal Slack Pos (m³/s) by Bus</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No water_withdrawal_violation_neg_m3s data available.</p></div></div>
+<div class="section-title">Withdrawal Slack Neg (m³/s) by Bus</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No water_withdrawal_violation_pos_m3s data available.</p></div></div>
+<div class="section-title">Evaporation Slack Pos (m³/s) by Bus</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No evaporation_violation_pos_m3s data available.</p></div></div>
+<div class="section-title">Evaporation Slack Neg (m³/s) by Bus</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No evaporation_violation_neg_m3s data available.</p></div></div>
+<div class="section-title">Inflow Non-Negativity Slack (m³/s) by Bus</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No inflow_nonnegativity_slack_m3s data available.</p></div></div>
+<div class="section-title">Hydro Slacks (SIN)</div>
+<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No water_withdrawal_violation_neg_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No water_withdrawal_violation_pos_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No evaporation_violation_pos_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No evaporation_violation_neg_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No inflow_nonnegativity_slack_m3s data available.</p></div></div>
+</section><section id="tab-hydro-detail" class="tab-content">
+<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Hydro per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Storage (hm³)</th><th class="cb-num">Generation (MW)</th><th class="cb-num">Turbined (m³/s)</th><th class="cb-num">Productivity = Gen / Turbined (MW per m³/s)</th><th class="cb-num">Spillage (m³/s)</th><th class="cb-num">Total Outflow (m³/s)</th><th class="cb-num">Incremental Inflow (m³/s)</th><th class="cb-num">Total Inflow / QAFLUH (m³/s)</th><th class="cb-num">Evaporation (m³/s)</th><th class="cb-num">Water Withdrawal (m³/s)</th><th class="cb-num">Water Value (R$/hm³)</th></tr></thead><tbody><tr><td class="cb-cat">PLANT_A</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr></tbody></table></div>
+    <div class="plant-selector">
+        <label for="hydro-select">Hydro Plant:</label>
+        <select id="hydro-select"
+                onchange="updateHydroCharts()">
+            <option value="1_PLANT_A">PLANT_A (1)</option>
+        </select>
+        <div class="plant-info" id="hydro-info"></div>
+    </div>
+    <div class="chart-grid"><div class="chart-card"><div id="hydro-chart-storage-final-hm3" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-generation-mw" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-turbined-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-productivity-mw-per-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-spillage-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-outflow-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-inflow-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-total-inflow-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-evaporation-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-withdrawal-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-water-value-per-hm3" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-stored-energy-initial-mwh" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-stored-energy-final-mwh" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-incremental-inflow-energy-mw" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-water-withdrawal-violation-neg-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-water-withdrawal-violation-pos-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-inflow-nonnegativity-slack-m3s" style="width:100%;height:350px;"></div></div></div>
+    <script>
+    var hydroData = {"1_PLANT_A":{"name":"PLANT_A","code":1,"novomodelo_id":0,"storage_final_hm3_stages":[1],"storage_final_hm3_nw":[4500.0],"storage_final_hm3_cb":[4510.0],"generation_mw_stages":[0],"generation_mw_nw":[1200.0],"generation_mw_cb":[1195.0],"turbined_m3s_stages":[],"turbined_m3s_nw":[],"turbined_m3s_cb":[],"productivity_mw_per_m3s_stages":[],"productivity_mw_per_m3s_nw":[],"productivity_mw_per_m3s_cb":[],"spillage_m3s_stages":[],"spillage_m3s_nw":[],"spillage_m3s_cb":[],"outflow_m3s_stages":[],"outflow_m3s_nw":[],"outflow_m3s_cb":[],"inflow_m3s_stages":[],"inflow_m3s_nw":[],"inflow_m3s_cb":[],"total_inflow_m3s_stages":[],"total_inflow_m3s_nw":[],"total_inflow_m3s_cb":[],"evaporation_m3s_stages":[],"evaporation_m3s_nw":[],"evaporation_m3s_cb":[],"withdrawal_m3s_stages":[],"withdrawal_m3s_nw":[],"withdrawal_m3s_cb":[],"water_value_per_hm3_stages":[],"water_value_per_hm3_nw":[],"water_value_per_hm3_cb":[],"stored_energy_initial_mwh_stages":[],"stored_energy_initial_mwh_nw":[],"stored_energy_initial_mwh_cb":[],"stored_energy_final_mwh_stages":[],"stored_energy_final_mwh_nw":[],"stored_energy_final_mwh_cb":[],"incremental_inflow_energy_mw_stages":[],"incremental_inflow_energy_mw_nw":[],"incremental_inflow_energy_mw_cb":[],"water_withdrawal_violation_neg_m3s_stages":[],"water_withdrawal_violation_neg_m3s_nw":[],"water_withdrawal_violation_neg_m3s_cb":[],"water_withdrawal_violation_pos_m3s_stages":[],"water_withdrawal_violation_pos_m3s_nw":[],"water_withdrawal_violation_pos_m3s_cb":[],"inflow_nonnegativity_slack_m3s_stages":[],"inflow_nonnegativity_slack_m3s_nw":[],"inflow_nonnegativity_slack_m3s_cb":[],"storage_final_hm3_p10":[4100.0],"storage_final_hm3_p90":[5050.0],"generation_mw_p10":[1000.0],"generation_mw_p90":[1400.0]}};
+    function updateHydroCharts() {
+        var sel = document.getElementById('hydro-select');
+        var pid = sel.value;
+        var d = hydroData[pid];
+        if (!d) return;
+        document.getElementById('hydro-info').innerHTML =
+            '<span>Code: ' + d.code + '</span>';
+        
+        (function() {
+            var s = d['storage_final_hm3_stages'] || [];
+            var nw = d['storage_final_hm3_nw'] || [];
+            var cb = d['storage_final_hm3_cb'] || [];
+            var p10 = d['storage_final_hm3_p10'] || null;
+            var p90 = d['storage_final_hm3_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['storage_final_hm3_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['storage_final_hm3_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['storage_final_hm3_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-storage-final-hm3', traces, {
+                title: d.name + ' — Storage (hm³)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Storage (hm³)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['generation_mw_stages'] || [];
+            var nw = d['generation_mw_nw'] || [];
+            var cb = d['generation_mw_cb'] || [];
+            var p10 = d['generation_mw_p10'] || null;
+            var p90 = d['generation_mw_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['generation_mw_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['generation_mw_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['generation_mw_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-generation-mw', traces, {
+                title: d.name + ' — Generation (MW)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Generation (MW)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['turbined_m3s_stages'] || [];
+            var nw = d['turbined_m3s_nw'] || [];
+            var cb = d['turbined_m3s_cb'] || [];
+            var p10 = d['turbined_m3s_p10'] || null;
+            var p90 = d['turbined_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['turbined_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['turbined_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['turbined_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-turbined-m3s', traces, {
+                title: d.name + ' — Turbined (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Turbined (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['productivity_mw_per_m3s_stages'] || [];
+            var nw = d['productivity_mw_per_m3s_nw'] || [];
+            var cb = d['productivity_mw_per_m3s_cb'] || [];
+            var p10 = d['productivity_mw_per_m3s_p10'] || null;
+            var p90 = d['productivity_mw_per_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['productivity_mw_per_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['productivity_mw_per_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['productivity_mw_per_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-productivity-mw-per-m3s', traces, {
+                title: d.name + ' — Productivity = Gen / Turbined (MW per m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Productivity = Gen / Turbined (MW per m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['spillage_m3s_stages'] || [];
+            var nw = d['spillage_m3s_nw'] || [];
+            var cb = d['spillage_m3s_cb'] || [];
+            var p10 = d['spillage_m3s_p10'] || null;
+            var p90 = d['spillage_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['spillage_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['spillage_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['spillage_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-spillage-m3s', traces, {
+                title: d.name + ' — Spillage (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Spillage (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['outflow_m3s_stages'] || [];
+            var nw = d['outflow_m3s_nw'] || [];
+            var cb = d['outflow_m3s_cb'] || [];
+            var p10 = d['outflow_m3s_p10'] || null;
+            var p90 = d['outflow_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['outflow_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['outflow_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['outflow_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-outflow-m3s', traces, {
+                title: d.name + ' — Total Outflow (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Total Outflow (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['inflow_m3s_stages'] || [];
+            var nw = d['inflow_m3s_nw'] || [];
+            var cb = d['inflow_m3s_cb'] || [];
+            var p10 = d['inflow_m3s_p10'] || null;
+            var p90 = d['inflow_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['inflow_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['inflow_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['inflow_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-inflow-m3s', traces, {
+                title: d.name + ' — Incremental Inflow (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Incremental Inflow (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['total_inflow_m3s_stages'] || [];
+            var nw = d['total_inflow_m3s_nw'] || [];
+            var cb = d['total_inflow_m3s_cb'] || [];
+            var p10 = d['total_inflow_m3s_p10'] || null;
+            var p90 = d['total_inflow_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['total_inflow_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['total_inflow_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['total_inflow_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-total-inflow-m3s', traces, {
+                title: d.name + ' — Total Inflow / QAFLUH (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Total Inflow / QAFLUH (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['evaporation_m3s_stages'] || [];
+            var nw = d['evaporation_m3s_nw'] || [];
+            var cb = d['evaporation_m3s_cb'] || [];
+            var p10 = d['evaporation_m3s_p10'] || null;
+            var p90 = d['evaporation_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['evaporation_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['evaporation_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['evaporation_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-evaporation-m3s', traces, {
+                title: d.name + ' — Evaporation (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Evaporation (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['withdrawal_m3s_stages'] || [];
+            var nw = d['withdrawal_m3s_nw'] || [];
+            var cb = d['withdrawal_m3s_cb'] || [];
+            var p10 = d['withdrawal_m3s_p10'] || null;
+            var p90 = d['withdrawal_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['withdrawal_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['withdrawal_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['withdrawal_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-withdrawal-m3s', traces, {
+                title: d.name + ' — Water Withdrawal (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Water Withdrawal (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['water_value_per_hm3_stages'] || [];
+            var nw = d['water_value_per_hm3_nw'] || [];
+            var cb = d['water_value_per_hm3_cb'] || [];
+            var p10 = d['water_value_per_hm3_p10'] || null;
+            var p90 = d['water_value_per_hm3_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['water_value_per_hm3_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['water_value_per_hm3_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['water_value_per_hm3_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-water-value-per-hm3', traces, {
+                title: d.name + ' — Water Value (R$/hm³)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Water Value (R$/hm³)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['stored_energy_initial_mwh_stages'] || [];
+            var nw = d['stored_energy_initial_mwh_nw'] || [];
+            var cb = d['stored_energy_initial_mwh_cb'] || [];
+            var p10 = d['stored_energy_initial_mwh_p10'] || null;
+            var p90 = d['stored_energy_initial_mwh_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['stored_energy_initial_mwh_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['stored_energy_initial_mwh_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['stored_energy_initial_mwh_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-stored-energy-initial-mwh', traces, {
+                title: d.name + ' — Stored Energy Initial (MWh)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Stored Energy Initial (MWh)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['stored_energy_final_mwh_stages'] || [];
+            var nw = d['stored_energy_final_mwh_nw'] || [];
+            var cb = d['stored_energy_final_mwh_cb'] || [];
+            var p10 = d['stored_energy_final_mwh_p10'] || null;
+            var p90 = d['stored_energy_final_mwh_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['stored_energy_final_mwh_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['stored_energy_final_mwh_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['stored_energy_final_mwh_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-stored-energy-final-mwh', traces, {
+                title: d.name + ' — Stored Energy Final (MWh)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Stored Energy Final (MWh)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['incremental_inflow_energy_mw_stages'] || [];
+            var nw = d['incremental_inflow_energy_mw_nw'] || [];
+            var cb = d['incremental_inflow_energy_mw_cb'] || [];
+            var p10 = d['incremental_inflow_energy_mw_p10'] || null;
+            var p90 = d['incremental_inflow_energy_mw_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['incremental_inflow_energy_mw_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['incremental_inflow_energy_mw_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['incremental_inflow_energy_mw_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-incremental-inflow-energy-mw', traces, {
+                title: d.name + ' — Natural Inflow Energy (MW)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Natural Inflow Energy (MW)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['water_withdrawal_violation_neg_m3s_stages'] || [];
+            var nw = d['water_withdrawal_violation_neg_m3s_nw'] || [];
+            var cb = d['water_withdrawal_violation_neg_m3s_cb'] || [];
+            var p10 = d['water_withdrawal_violation_neg_m3s_p10'] || null;
+            var p90 = d['water_withdrawal_violation_neg_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['water_withdrawal_violation_neg_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['water_withdrawal_violation_neg_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['water_withdrawal_violation_neg_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-water-withdrawal-violation-neg-m3s', traces, {
+                title: d.name + ' — Withdrawal Slack Pos (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Withdrawal Slack Pos (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['water_withdrawal_violation_pos_m3s_stages'] || [];
+            var nw = d['water_withdrawal_violation_pos_m3s_nw'] || [];
+            var cb = d['water_withdrawal_violation_pos_m3s_cb'] || [];
+            var p10 = d['water_withdrawal_violation_pos_m3s_p10'] || null;
+            var p90 = d['water_withdrawal_violation_pos_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['water_withdrawal_violation_pos_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['water_withdrawal_violation_pos_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['water_withdrawal_violation_pos_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-water-withdrawal-violation-pos-m3s', traces, {
+                title: d.name + ' — Withdrawal Slack Neg (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Withdrawal Slack Neg (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+        (function() {
+            var s = d['inflow_nonnegativity_slack_m3s_stages'] || [];
+            var nw = d['inflow_nonnegativity_slack_m3s_nw'] || [];
+            var cb = d['inflow_nonnegativity_slack_m3s_cb'] || [];
+            var p10 = d['inflow_nonnegativity_slack_m3s_p10'] || null;
+            var p90 = d['inflow_nonnegativity_slack_m3s_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['inflow_nonnegativity_slack_m3s_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['inflow_nonnegativity_slack_m3s_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['inflow_nonnegativity_slack_m3s_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('hydro-chart-inflow-nonnegativity-slack-m3s', traces, {
+                title: d.name + ' — Inflow Non-Negativity Slack (m³/s)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Inflow Non-Negativity Slack (m³/s)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        var sel = document.getElementById('hydro-select');
+        if (sel && sel.options.length > 0) {
+            updateHydroCharts();
+        }
+    });
+    </script>
+    
+</section><section id="tab-thermal" class="tab-content">
+<div class="section-title">Thermal Generation Comparison</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-9701373f"></div>
+<script>Plotly.newPlot('chart-9701373f', [{"x":[0,0],"y":[350.0,250.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[0],"y":[250.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[350.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[300.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[0],"y":[298.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Thermal Generation"},"xaxis":{"title":{"text":"Stage"}},"yaxis":{"title":{"text":"MW"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div></div>
+</section><section id="tab-thermal-detail" class="tab-content">
+<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Thermal per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Generation (MW)</th></tr></thead><tbody><tr><td class="cb-cat">GAS_A</td><td class="cb-num cb-diff-neg">0.70%</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.70%</td></tr></tbody></table></div>
+    <div class="plant-selector">
+        <label for="thermal-select">Thermal Plant:</label>
+        <select id="thermal-select"
+                onchange="updateThermalCharts()">
+            <option value="10_GAS_A">GAS_A (10)</option>
+        </select>
+        <div class="plant-info" id="thermal-info"></div>
+    </div>
+    <div class="chart-grid-single"><div class="chart-card"><div id="thermal-chart-generation-mw" style="width:100%;height:350px;"></div></div></div>
+    <script>
+    var thermalData = {"10_GAS_A":{"name":"GAS_A","code":10,"novomodelo_id":0,"generation_mw_stages":[0],"generation_mw_nw":[300.0],"generation_mw_cb":[298.0],"generation_mw_p10":[250.0],"generation_mw_p90":[350.0]}};
+    function updateThermalCharts() {
+        var sel = document.getElementById('thermal-select');
+        var pid = sel.value;
+        var d = thermalData[pid];
+        if (!d) return;
+        document.getElementById('thermal-info').innerHTML =
+            '<span>Code: ' + d.code + '</span>';
+        
+        (function() {
+            var s = d['generation_mw_stages'] || [];
+            var nw = d['generation_mw_nw'] || [];
+            var cb = d['generation_mw_cb'] || [];
+            var p10 = d['generation_mw_p10'] || null;
+            var p90 = d['generation_mw_p90'] || null;
+            var traces = [];
+            if (p10 && p90 && p10.length > 0) {
+                traces.push({
+                    x: s.concat(s.slice().reverse()),
+                    y: p90.concat(p10.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(74,144,184,0.15)',
+                    line: {color: 'rgba(255,255,255,0)'},
+                    name: 'Novomodelo P10–P90',
+                    type: 'scatter',
+                    legendgroup: 'band',
+                    showlegend: true,
+                    // Skip hover on the wrap-around polygon — its y values
+                    // are the reversed-p10 closing edge and have no
+                    // meaning at the cursor x.  Real values come from
+                    // the visible p10 / p90 line traces below.
+                    hoverinfo: 'skip'
+                });
+                traces.push({
+                    x: s, y: p10,
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+                traces.push({
+                    x: s, y: p90,
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1, dash: 'dot'},
+                    legendgroup: 'band', showlegend: false
+                });
+            }
+            if (nw && nw.length > 0) {
+                traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
+                    mode: 'lines', line: {color: '#F5A623', width: 2}});
+            }
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
+                mode: 'lines', line: {color: '#4A90B8', width: 2}});
+            var maxCb = d['generation_mw_max_cb'];
+            if (maxCb && maxCb.length > 0) {
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
+                    type: 'scatter', mode: 'lines',
+                    line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
+            }
+            // Bound overlays (static from hydros.json, with per-stage
+            // overrides from hydro_bounds.parquet shadowing where present).
+            // Rendered in a muted grey so they sit behind the comparison
+            // traces without competing for attention.  ``connectgaps:false``
+            // ensures stages where the bound is structurally undefined
+            // produce a gap in the dashed line.
+            var bMin = d['generation_mw_bound_min'];
+            if (bMin && bMin.length > 0) {
+                traces.push({x: s, y: bMin, name: 'Lower bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            var bMax = d['generation_mw_bound_max'];
+            if (bMax && bMax.length > 0) {
+                traces.push({x: s, y: bMax, name: 'Upper bound',
+                    type: 'scatter', mode: 'lines', connectgaps: false,
+                    line: {color: '#888', width: 1.2, dash: 'dash'}});
+            }
+            Plotly.react('thermal-chart-generation-mw', traces, {
+                title: d.name + ' — Generation (MW)',
+                xaxis: {title: 'Stage'},
+                yaxis: {title: 'Generation (MW)'},
+                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                margin: {"l":60,"r":30,"t":60,"b":50},
+                template: 'plotly_white',
+                hovermode: 'x unified',
+                height: 350
+            }, {responsive: true});
+        })();
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        var sel = document.getElementById('thermal-select');
+        if (sel && sel.options.length > 0) {
+            updateThermalCharts();
+        }
+    });
+    </script>
+    
+</section><section id="tab-productivity" class="tab-content">
+<div class="section-title">Static productivity — pmo vs novomodelo-bridge conversion (point / equivalent / accumulated)</div>
+<p>No productivity data available.</p>
+</section><section id="tab-performance" class="tab-content">
+<div class="metrics-grid"><div class="metric-card" style="border-top: 4px solid #F5A623;"><div class="metric-value">—</div><div class="metric-label">NEWAVE Total Wall-Clock</div></div><div class="metric-card" style="border-top: 4px solid #F5A623;"><div class="metric-value">—</div><div class="metric-label">NEWAVE Policy Training</div></div><div class="metric-card" style="border-top: 4px solid #4A90B8;"><div class="metric-value">—</div><div class="metric-label">Novomodelo Training</div></div><div class="metric-card" style="border-top: 4px solid #4A8B6F;"><div class="metric-value">—</div><div class="metric-label">Speedup (NEWAVE policy ÷ Novomodelo training)</div></div></div>
+<div class="section-title">Time per Iteration</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No timing data available.</p></div></div>
+<div class="section-title">Forward / Backward Split</div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No forward/backward split available.</p></div></div>
+</section>
+    </main>
+    <script>
+
+document.addEventListener('DOMContentLoaded', function() {
+    var nav = document.querySelector('nav');
+    if (!nav) return;
+    var firstBtn = nav.querySelector('button');
+    if (!firstBtn) return;
+
+    var underline = document.createElement('span');
+    underline.className = 'tab-underline';
+    nav.appendChild(underline);
+
+    function positionUnderline(btn) {
+        underline.style.width = btn.offsetWidth + 'px';
+        underline.style.transform = 'translateX(' + btn.offsetLeft + 'px)';
+    }
+
+    positionUnderline(firstBtn);
+});
+
+function showTab(tabId, btn) {
+    var nav = document.querySelector('nav');
+    var underline = nav ? nav.querySelector('.tab-underline') : null;
+
+    var prevTab = document.querySelector('.tab-content.active');
+    if (prevTab) {
+        prevTab.querySelectorAll('.chart-card').forEach(function(card) {
+            card.classList.remove('card-enter');
+            card.style.animationDelay = '';
+        });
+        prevTab.querySelectorAll('.chart-card-expanded').forEach(function(card) {
+            card.classList.remove('chart-card-expanded');
+        });
+        prevTab.querySelectorAll('.collapsible-content').forEach(function(el) {
+            el.classList.remove('collapsed');
+        });
+        prevTab.querySelectorAll('.section-title[data-collapsible]').forEach(function(el) {
+            el.classList.remove('collapsed-title');
+            var chevron = el.querySelector('.chevron');
+            if (chevron) { chevron.classList.remove('rotated'); }
+        });
+    }
+
+    document.querySelectorAll('.tab-content').forEach(function(el) {
+        el.classList.remove('active', 'tab-content-fade');
+    });
+    document.querySelectorAll('nav button').forEach(function(el) {
+        el.classList.remove('active');
+    });
+
+    var activeTab = document.getElementById(tabId);
+    if (activeTab) {
+        activeTab.classList.add('active');
+        void activeTab.offsetWidth;  // Force reflow for fade animation
+        activeTab.classList.add('tab-content-fade');
+
+        var cards = activeTab.querySelectorAll('.chart-card');
+        cards.forEach(function(card) {
+            card.classList.remove('card-enter');
+            card.style.animationDelay = '';
+        });
+        void activeTab.offsetWidth;  // Reflow before re-adding classes
+        cards.forEach(function(card, i) {
+            card.style.animationDelay = (i * 50) + 'ms';
+            card.classList.add('card-enter');
+        });
+
+        activeTab.querySelectorAll('.collapsible-content').forEach(function(el) {
+            el.classList.remove('collapsed');
+        });
+        activeTab.querySelectorAll('.section-title[data-collapsible]').forEach(function(el) {
+            el.classList.remove('collapsed-title');
+            var chevron = el.querySelector('.chevron');
+            if (chevron) { chevron.classList.remove('rotated'); }
+        });
+    }
+    btn.classList.add('active');
+
+    if (underline) {
+        underline.style.width = btn.offsetWidth + 'px';
+        underline.style.transform = 'translateX(' + btn.offsetLeft + 'px)';
+    }
+
+    window.dispatchEvent(new Event('resize'));
+    setTimeout(function() {
+        var plots = activeTab.querySelectorAll('.js-plotly-plot');
+        plots.forEach(function(p) {
+            try { Plotly.Plots.resize(p); } catch(e) {}
+        });
+    }, 100);
+}
+
+document.addEventListener('click', function(e) {
+    var expandBtn = e.target.closest('.expand-btn');
+    if (!expandBtn) return;
+    var card = expandBtn.closest('.chart-card');
+    if (!card) return;
+    card.classList.toggle('chart-card-expanded');
+    setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 50);
+}, false);
+
+// Delegated collapsible section toggle: handles [data-collapsible] title clicks.
+document.addEventListener('click', function(e) {
+    var titleEl = e.target.closest('.section-title[data-collapsible]');
+    if (!titleEl) return;
+    var content = titleEl.nextElementSibling;
+    if (!content || !content.classList.contains('collapsible-content')) return;
+    content.classList.toggle('collapsed');
+    titleEl.classList.toggle('collapsed-title');
+    var chevron = titleEl.querySelector('.chevron');
+    if (chevron) { chevron.classList.toggle('rotated'); }
+}, false);
+
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        window.dispatchEvent(new Event('resize'));
+        document.querySelectorAll('.tab-content.active .js-plotly-plot').forEach(function(p) {
+            try { Plotly.Plots.resize(p); } catch(e) {}
+        });
+    }, 100);
+});
+
+    </script>
+</body>
+</html>

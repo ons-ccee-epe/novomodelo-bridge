@@ -1,0 +1,27 @@
+{
+  // Mirror of [tool.pyright] in pyproject.toml, for editors/tools that read
+  // pyrightconfig.json but not pyproject's [tool.pyright] table. Keep the two in
+  // sync; pyproject remains the documented home (see its comments for the full
+  // rationale). Pyright is an editor aid only — CI gates are ruff + the project's
+  // declared checker `ty`.
+  //
+  // venvPath/venv let Pyright resolve the typed first-party deps (idecomp/inewave
+  // ship py.typed); without it every `import idecomp...` raises a phantom
+  // reportMissingImports that buries real diagnostics.
+  "include": ["src", "tests"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  // typeCheckingMode "off" keeps the high-value semantic checks (unresolved
+  // imports, undefined names, syntax) while disabling type-inference rules —
+  // full inference over pandas 3.x `Series | DataFrame` unions produces ~1000
+  // false positives on the sanctioned bare-accessor idiom in this pipeline code.
+  "typeCheckingMode": "off",
+  // Keep unresolved-import reporting active even in "off" mode — a genuinely
+  // missing/typo'd import is exactly the diagnostic we DO want.
+  "reportMissingImports": "error",
+  "reportMissingModuleSource": "none",
+  // Function-local type aliases are valid at runtime but Pyright flags them under
+  // PEP 613; benign pedantry, silenced so any diagnostic that appears is real.
+  "reportInvalidTypeForm": "none"
+}

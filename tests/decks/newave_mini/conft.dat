@@ -1,0 +1,160 @@
+ NUM  NOME           SSIS  U.EXIS CLASSE
+ XXXX XXXXXXXXXXXX   XXXX     XX   XXXX
+    1 ANGRA 1           1     EE      1
+   13 ANGRA 2           1     EE     13
+  383 ATLANTICO         1     EE    383
+  211 BAIXADA FLU       1     EE    211
+  491 CAMPO GRANDE      1     NE    491
+  452 CELPAV IV         1     NE    452
+  459 COCAL NRD         1     NE    459
+  460 COCAL PPT         1     NE    460
+   97 CUBATAO           1     EE     97
+   12 CUIABA G CC       1     EE     12
+  153 DAIA              1     EE    153
+  464 GDE CUIABA        1     NE    464
+  465 GDE R BRANCO      1     NE    465
+  466 GDE SINOP B2      1     NE    466
+  137 GNA I             1     EE    137
+  238 GNA II            1     EE    238
+   63 IBIRITE           1     EE     63
+   54 JUIZ DE FORA      1     EE     54
+  245 KARKEY 013        1     EE    245
+  246 KARKEY 019        1     EE    246
+   15 LINHARES          1     EE     15
+  715 LORM 2LRC         1     EE    715
+  236 MARLIM AZUL       1     EE    236
+  110 N.PIRATINING      1     EE    110
+   60 NORTEFLU          1     EE     60
+  478 NORTEFLU IC       1     NE    478
+  479 NORTEFLU ID       1     NE    479
+  468 NOVA ERA          1     NE    468
+  229 ONCA PINTADA      1     EE    229
+  182 PALMEIRAS GO      1     EE    182
+  248 PAULINIA VER      1     EE    248
+  249 PORSUD I          1     EE    249
+  250 PORSUD II         1     EE    250
+  251 POVOACAO 1        1     EE    251
+  481 SAO MATEUS 1      1     NE    481
+  482 SAO MATEUS 2      1     NE    482
+   62 SEROPEDICA        1     EE     62
+    4 ST.CRUZ 34        1     EE      4
+   86 ST.CRUZ NOVA      1     EE     86
+  146 STA VITORIA       1     EE    146
+  786 STC NOVA LRC      1     EE    786
+  194 T. NORTE 2        1     EE    194
+   90 TERMOMACAE        1     EE     90
+   47 TERMORIO          1     EE     47
+   68 TRES LAGOAS       1     EE     68
+  511 TUPAN             1     NE    511
+   49 VIANA             1     EE     49
+  253 VIANA 1           1     EE    253
+  334 W. ARJONA         1     EE    334
+  490 W. ARJONA II      1     NE    490
+  108 XAVANTES          1     EE    108
+  308 XAVANTES BIO      1     NE    308
+   48 ARAUCARIA         2     EE     48
+  457 ARAUCARIA II      2     NE    457
+  254 B. BONITA I       2     EE    254
+  156 CANDIOTA 3        2     EE    156
+   64 CANOAS            2     EE     64
+   26 J.LACERDA A1      2     EE     26
+   27 J.LACERDA A2      2     EE     27
+   25 J.LACERDA B       2     EE     25
+   24 J.LACERDA C       2     EE     24
+  107 PAMPA SUL         2     EE    107
+  149 SAO SEPE          2     EE    149
+  258 TROMBUDO          2     NE    258
+  489 TROMBUDO II       2     NE    489
+   35 URUGUAIANA        2     EE     35
+  455 APOENA V2         3     NE    455
+  348 ASJA JABOATA      3     NE    348
+  349 ASJA JOAO PE      3     NE    349
+  458 BIRIBEIRA I       3     NE    458
+  235 CAMACARI MII      3     EE    235
+   52 CAMPINA GDE       3     EE     52
+  492 CORCOVADO 03      3     NE    492
+  461 CORCOVADO 04      3     NE    461
+  462 CORCOVADO 05      3     NE    462
+  463 CORCOVADO 06      3     NE    463
+  106 ERB CANDEIAS      3     EE    106
+  494 FREVO             3     NE    494
+   53 GLOBAL I          3     EE     53
+   55 GLOBAL II         3     EE     55
+  496 JANDAIA II        3     NE    496
+  497 JANDAIA III       3     NE    497
+  487 JOAO PESSOA       3     NE    487
+  498 MANGUABA I        3     NE    498
+  499 MANGUABA II       3     NE    499
+  500 MANGUABA III      3     NE    500
+  501 MANGUABA IV       3     NE    501
+  502 MANGUABA V        3     NE    502
+   57 MARACANAU I       3     EE     57
+  167 P. PECEM I        3     EE    167
+  163 P. PECEM II       3     EE    163
+  475 P. SERGIPE 2      3     NE    475
+  476 P. SERGIPE 3      3     NE    476
+  477 P. SERGIPE 5      3     NE    477
+  224 P. SERGIPE I      3     EE    224
+  162 PECEM II          3     EE    162
+   98 PERNAMBU_III      3     EE     98
+  444 PETROLI BIO       3     NE    444
+  144 PETROLINA         3     EE    144
+  469 PILAR             3     NE    469
+  504 PILAR I           3     NE    504
+  505 PILAR II          3     NE    505
+  470 PILAR III         3     NE    470
+  471 PILAR IV          3     NE    471
+  472 PILAR NOVA        3     NE    472
+  473 PILAR V           3     NE    473
+  151 POTIGUAR          3     EE    151
+  161 POTIGUAR III      3     EE    161
+  223 PROSPERI III      3     EE    223
+  347 PROSPERI IV       3     NE    347
+  241 PROSPERID II      3     EE    241
+  493 PROSPERID IV      3     NE    493
+  147 PROSPERIDADE      3     EE    147
+  483 SFE GUARANI       3     NE    483
+  170 SUAPE II          3     EE    170
+  510 SUAPE IV B        3     NE    510
+  484 TACAIMBO          3     NE    484
+  485 TACAIMBO 1        3     NE    485
+   43 TERMOBAHIA        3     EE     43
+  152 TERMOCABO         3     EE    152
+  358 TERMOCE OL        3     NE    358
+   58 TERMOCEARA        3     EE     58
+   67 TERMONE           3     EE     67
+  488 TERMONE II        3     NE    488
+   69 TERMOPB           3     EE     69
+   96 TERMOPE           3     EE     96
+   83 VALE DO ACU       3     EE     83
+  201 APARECIDA         4     EE    201
+  260 AZULAO            4     NE    260
+  262 AZULAO II         4     NE    262
+  322 BBF BALIZA        4     EE    322
+  323 BONFIM            4     EE    323
+  324 CANTA             4     EE    324
+   73 GERAMAR I         4     EE     73
+   70 GERAMAR II        4     EE     70
+  326 JAGUATIRI II      4     EE    326
+  204 JARAQUI           4     EE    204
+  327 M.CRISTO SUC      4     EE    327
+  264 MANAUS I          4     NE    264
+  212 MARANHAO III      4     EE    212
+   36 MARANHAO IV       4     EE     36
+   21 MARANHAO V        4     EE     21
+  140 MAUA 3            4     EE    140
+   46 N.VENECIA 2       4     EE     46
+  503 NT BARCAR II      4     NE    503
+  240 NT BARCARENA      4     NE    240
+  328 PALMAPLAN 2       4     EE    328
+  116 PARNAIBA IV       4     EE    116
+  239 PARNAIBA V        4     EE    239
+  329 PAU RAINHA        4     EE    329
+  205 PIRARUCU          4     EE    205
+  203 PORAQUE           4     EE    203
+  176 PORTO ITAQUI      4     EE    176
+  259 PORTOCEM I        4     NE    259
+  330 SANTA LUZ         4     EE    330
+  480 SANTANA C         4     NE    480
+  209 TAMBAQUI          4     EE    209
+  207 TUCUNARE          4     EE    207

@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.env
+.venv
+env/
+venv/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ruff
+.ruff_cache/
+
+# editors
+.idea/
+.vscode/
+*.swp
+
+# examples
+example/
+
+# Local .claude config is ignored, except the path-scoped quality rules,
+# which are tracked and shared with the team.
+.claude/*
+!.claude/rules/
+
+plans/
+CLAUDE.md.tmp
+.mypy_cache/

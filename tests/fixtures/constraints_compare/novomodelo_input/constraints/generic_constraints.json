@@ -1,0 +1,16 @@
+{
+  "constraints": [
+    {
+      "id": 0,
+      "name": "RE_generation_sum",
+      "expression": "hydro_generation(0) + hydro_generation(1)",
+      "description": "Electric restriction: sum of hydro generation"
+    },
+    {
+      "id": 1,
+      "name": "VminOP_hydro0",
+      "expression": "@rho_acum_h0 * hydro_storage(0)",
+      "description": "Security-curve stored-energy floor"
+    }
+  ]
+}

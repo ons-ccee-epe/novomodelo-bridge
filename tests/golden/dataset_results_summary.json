@@ -1,0 +1,1 @@
+[{"variable":"generation_mw","count":3,"mean_abs_diff":8.333333333333334,"max_abs_diff":10.0,"mean_smape":0.7724867724867724,"max_smape":2.0,"within_tol_rate":0.0,"correlation":0.9819805060619656}]
