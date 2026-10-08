@@ -14,6 +14,8 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-08
+
 ### Changed
 
 - **BREAKING:** the product is renamed. The CLI and the package are
