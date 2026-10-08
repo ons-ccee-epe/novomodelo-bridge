@@ -22,9 +22,6 @@ links are cobre-bridge's.
   `COBRE_BRIDGE_OUT_DIR` are now `NOVOMODELO_BRIDGE_OUT_DIR`, and the bridge
   converts cases for, and reads the outputs of, novomodelo 0.18.0 through
   `novomodelo-python`. Everything else behaves as in cobre-bridge 0.18.0.
-- `novomodelo-python` comes from the novomodelo repository at a pinned commit,
-  not from PyPI, so the bridge installs with uv from this repository (see the
-  README).
 
 # cobre-bridge history
 

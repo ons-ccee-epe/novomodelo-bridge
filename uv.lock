@@ -272,7 +272,7 @@ requires-dist = [
     { name = "idecomp", specifier = ">=1.14.2" },
     { name = "inewave", specifier = ">=1.16.1" },
     { name = "jsonschema", marker = "extra == 'dev'" },
-    { name = "novomodelo-python", git = "https://github.com/ons-ccee-epe/novomodelo?subdirectory=crates%2Fnovomodelo-python&rev=1358aea2116d64bee44c108543cd3efb618005bf" },
+    { name = "novomodelo-python", specifier = "==0.18.0" },
     { name = "pandas", specifier = ">=3.0.6" },
     { name = "plotly", specifier = ">=7.1.0" },
     { name = "polars", specifier = ">=1.44.2" },
@@ -289,7 +289,15 @@ provides-extras = ["dev"]
 [[package]]
 name = "novomodelo-python"
 version = "0.18.0"
-source = { git = "https://github.com/ons-ccee-epe/novomodelo?subdirectory=crates%2Fnovomodelo-python&rev=1358aea2116d64bee44c108543cd3efb618005bf#1358aea2116d64bee44c108543cd3efb618005bf" }
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/59/c0dbb6f4cba6ed82ff1e4f49a13ad64988f6577e3d299de74f84e61d6cea/novomodelo_python-0.18.0-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:bed1feeebfb804f51499fa5d348e06cc0ee9a7905398f1f542f54b54a0be5f0e", size = 8979992, upload-time = "2026-10-08T14:58:57.773Z" },
+    { url = "https://files.pythonhosted.org/packages/69/4f/7acc13e2abc560da398fb3d00df17486aac8440b92f1e3a728fa444ae90c/novomodelo_python-0.18.0-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:384187728a0b73443f30f03f9ea2b40d8b2cd9fd8cbbb85c8960d6e42b1b17b8", size = 8162365, upload-time = "2026-10-08T14:59:00.137Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/aa/8bef2a9128d02f0041acb8b7e2f0119396e37badcbe61a8a593bec1ae76c/novomodelo_python-0.18.0-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:0bb168f676b0c00ad7c4dac605aecba404ec89c53bdc00819d5f99904920facf", size = 9067899, upload-time = "2026-10-08T14:59:02.001Z" },
+    { url = "https://files.pythonhosted.org/packages/91/3c/facf099663a339410261ed669f99e35de5f602226277d49aa58007e2c802/novomodelo_python-0.18.0-cp312-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:c72696ead7ffa9d6db007327cd3034278b4141df0371a9e4628a35e510fba65b", size = 9718609, upload-time = "2026-10-08T14:59:03.973Z" },
+    { url = "https://files.pythonhosted.org/packages/09/39/8e15effbf2f515245a3e8d0dcb99363fbdc5b78903a28e674181214582f3/novomodelo_python-0.18.0-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:c9525b9fc49b9a6795ba886d0ac611debf7ca9bdef6b230e71864477e265a3dc", size = 16028066, upload-time = "2026-10-08T14:59:05.955Z" },
+    { url = "https://files.pythonhosted.org/packages/10/cc/f17902c4f8ace270384dfa38a83df9309b8fe946077255b6264e37522b21/novomodelo_python-0.18.0-cp312-abi3-win_amd64.whl", hash = "sha256:0e59281e448e74cea9445be8c27107bfd932daa6aeeadb61c4ba62285e93fec5", size = 8001510, upload-time = "2026-10-08T14:59:08.091Z" },
+]
 
 [[package]]
 name = "numpy"

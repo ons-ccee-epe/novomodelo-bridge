@@ -33,36 +33,29 @@ jobs:
   test:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    # A cold cache builds novomodelo-python (Rust) from the pinned core commit.
-    timeout-minutes: 45
+    timeout-minutes: 10
     strategy:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/setup-python@v5
         with:
-          version: "0.12.18"
           python-version: ${{ matrix.python-version }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      # novomodelo-python is a core runtime dependency, so the sync pulls it on
+      # novomodelo-python is a core runtime dependency, so `.[dev]` pulls it on
       # every Python in the matrix — the tier-2 (`requires_novomodelo_python`)
-      # boundary-FCF tests run on all jobs, not just the primary one.
-      - run: uv sync --locked --extra dev
-      - run: uv run --no-sync pytest --tb=short
+      # boundary-FCF tests now run on all jobs, not just the primary one.
+      - run: pip install -e ".[dev]"
+      - run: pytest --tb=short
 
   coverage:
     name: coverage (reader/align layer floor)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/setup-python@v5
         with:
-          version: "0.12.18"
           python-version: "3.13"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --locked --extra dev
-      - run: uv run --no-sync pytest --cov --cov-report=term-missing
+      - run: pip install -e ".[dev]"
+      - run: pytest --cov --cov-report=term-missing
