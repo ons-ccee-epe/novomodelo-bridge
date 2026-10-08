@@ -10,9 +10,9 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
 from tests.newave.conftest import (
     _ee_expansion_case,
@@ -156,7 +156,7 @@ def _cfuga_modif_mock(code: int, *, month: int, year: int, nivel: float) -> Magi
 class TestConvertHydrosMaxTurbinedEnvelope:
     """Declared ``max_turbined_m3s`` must rise to cover every
     per-stage head-corrected cap ``convert_turbined_bounds_head_corrected``
-    emits for that hydro (cobre rule 43), instead of staying pinned at the
+    emits for that hydro (novomodelo rule 43), instead of staying pinned at the
     single reference-head value it used to declare unconditionally.
 
     ``130.0961183125769`` (offset from the reference ``120.26013470805694``)
@@ -195,7 +195,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         """Sanity check on the fixture itself: the per-stage head-corrected cap
         this CFUGA override produces genuinely exceeds the reference-head
         value — otherwise the rest of this class would be exercising a no-op."""
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_max_turbined_head_corrected,
             convert_turbined_bounds_head_corrected,
         )
@@ -216,7 +216,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
 
     def test_declared_value_raised_to_per_stage_envelope(self, tmp_path: Path) -> None:
         """The declared value equals ``max(reference, per-stage max)``."""
-        from cobre_bridge.newave.converters.hydro import convert_hydros
+        from novomodelo_bridge.newave.converters.hydro import convert_hydros
 
         case = self._case_with_cfuga_on_usina_a(tmp_path)
         result = convert_hydros(case, self._make_id_map())
@@ -230,7 +230,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         """The mirror unit group still carries the SAME (now-raised)
         value as ``generation.max_turbined_m3s`` — rule 41's mirror invariant
         holds at the envelope value, not just at the un-raised reference."""
-        from cobre_bridge.newave.converters.hydro import convert_hydros
+        from novomodelo_bridge.newave.converters.hydro import convert_hydros
 
         case = self._case_with_cfuga_on_usina_a(tmp_path)
         result = convert_hydros(case, self._make_id_map())
@@ -246,7 +246,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         """USINA_B carries no CFUGA/CMONT/VOLREF_SAZ override, so it is
         absent from the envelope and keeps its un-raised reference-head value
         — the CFUGA override on its sibling USINA_A must not leak into it."""
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_max_turbined_head_corrected,
             convert_hydros,
         )
@@ -270,7 +270,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         declare exactly the reference-head value — the envelope lookup is a
         pure no-op when ``convert_turbined_bounds_head_corrected`` returns
         ``None``."""
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             _compute_max_turbined_head_corrected,
             convert_hydros,
         )
@@ -303,7 +303,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         isolate this: one has ``convert_hydros`` run against it FIRST, the
         other never sees ``convert_hydros`` at all, and the per-stage tables
         must still match row for row."""
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             convert_hydros,
             convert_turbined_bounds_head_corrected,
         )
@@ -344,10 +344,12 @@ class TestPerStageTurbinedEnvelopeHelper:
     class only checks the max-per-hydro-id aggregation contract."""
 
     def test_empty_dict_when_table_is_none(self) -> None:
-        from cobre_bridge.newave.converters.hydro import _per_stage_turbined_envelope
+        from novomodelo_bridge.newave.converters.hydro import (
+            _per_stage_turbined_envelope,
+        )
 
         with patch(
-            "cobre_bridge.newave.converters.hydro.bounds.convert_turbined_bounds_head_corrected",
+            "novomodelo_bridge.newave.converters.hydro.bounds.convert_turbined_bounds_head_corrected",
             return_value=None,
         ):
             envelope = _per_stage_turbined_envelope(MagicMock(), MagicMock())
@@ -355,7 +357,9 @@ class TestPerStageTurbinedEnvelopeHelper:
         assert envelope == {}
 
     def test_max_per_hydro_id_across_stages(self) -> None:
-        from cobre_bridge.newave.converters.hydro import _per_stage_turbined_envelope
+        from novomodelo_bridge.newave.converters.hydro import (
+            _per_stage_turbined_envelope,
+        )
 
         table = pa.table(
             {
@@ -367,7 +371,7 @@ class TestPerStageTurbinedEnvelopeHelper:
             }
         )
         with patch(
-            "cobre_bridge.newave.converters.hydro.bounds.convert_turbined_bounds_head_corrected",
+            "novomodelo_bridge.newave.converters.hydro.bounds.convert_turbined_bounds_head_corrected",
             return_value=table,
         ):
             envelope = _per_stage_turbined_envelope(MagicMock(), MagicMock())
@@ -395,7 +399,7 @@ class TestConvertStorageBoundsPostStudy:
         ghmin_present=False,
         **dger_flags,
     ):
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         # start_month=1, 1 study year → study_months=12 (Jan–Dec); 1 post-study
         # year → stages 12–23 (Jan–Dec again).
@@ -435,15 +439,15 @@ class TestConvertStorageBoundsPostStudy:
         )
         with (
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds.read_cadastro",
+                "novomodelo_bridge.newave.converters.hydro.bounds.read_cadastro",
                 return_value=cadastro,
             ),
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._extract_temporal_overrides",
+                "novomodelo_bridge.newave.converters.hydro.bounds._extract_temporal_overrides",
                 return_value={10: overrides},
             ),
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
+                "novomodelo_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
                 return_value={},
             ),
         ):
@@ -621,7 +625,7 @@ class TestConvertStorageBoundsMaxGenColumn:
 
     def _run_ex_only(self, tmp_path):
         """An EX-only case (no exph) with one GHMIN row, mirroring ``_run``."""
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         mock_dger = MagicMock()
         mock_dger.ano_inicio_estudo = 2024
@@ -654,11 +658,11 @@ class TestConvertStorageBoundsMaxGenColumn:
         )
         with (
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds.read_cadastro",
+                "novomodelo_bridge.newave.converters.hydro.bounds.read_cadastro",
                 return_value=cadastro,
             ),
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
+                "novomodelo_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
                 return_value={10: {0: 100.0}},
             ),
         ):
@@ -672,17 +676,17 @@ class TestConvertStorageBoundsMaxGenColumn:
         supplied. The non-empty ``filling_codes`` (309) is what gates the
         column on.
         """
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         case = _ne_filling_case(tmp_path)
         id_map = _ne_filling_id_map()
         with (
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds.read_cadastro",
+                "novomodelo_bridge.newave.converters.hydro.bounds.read_cadastro",
                 return_value=_make_ne_cadastro(),
             ),
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
+                "novomodelo_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
                 return_value={1: {0: 100.0}},
             ),
         ):
@@ -731,7 +735,7 @@ class TestConvertStorageBoundsRamp:
     generating units are online. The branch exports EXPLICIT 0/reduced caps over
     the full pre-operating window ``[0, full_online_sid)`` (clamped to the
     horizon) so the parquet carries the true 0→full profile for plottability;
-    this matches cobre's internal PreFilling/Filling forcing and leaves the
+    this matches novomodelo's internal PreFilling/Filling forcing and leaves the
     simulation unchanged. Under the Sep-2024 3-year horizon JURUENA's filling
     completes at ``entry_sid == 2`` and both units enter Jan 2025 (stage 4), so
     stages 0–3 have zero online machines (explicit ``0.0`` caps) and there is no
@@ -744,17 +748,17 @@ class TestConvertStorageBoundsRamp:
         ``_read_ghmin_per_stage`` is patched to ``{}`` so the table contains only
         the ramp rows (no GHMIN/MODIF rows to filter past).
         """
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         case = _ne_filling_case(tmp_path, duracao=duracao)
         id_map = _ne_filling_id_map()
         with (
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds.read_cadastro",
+                "novomodelo_bridge.newave.converters.hydro.bounds.read_cadastro",
                 return_value=_make_ne_cadastro(),
             ),
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
+                "novomodelo_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
                 return_value={},
             ),
         ):
@@ -813,7 +817,7 @@ class TestConvertStorageBoundsRamp:
         the horizon (no stage_id ≥ 3) and the clamp prevents the
         IndexError.
         """
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         case = _hydro_case(
             tmp_path,
@@ -827,11 +831,11 @@ class TestConvertStorageBoundsRamp:
         id_map = _ne_filling_id_map()
         with (
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds.read_cadastro",
+                "novomodelo_bridge.newave.converters.hydro.bounds.read_cadastro",
                 return_value=_make_ne_cadastro(),
             ),
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
+                "novomodelo_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
                 return_value={},
             ),
         ):
@@ -856,7 +860,7 @@ class TestConvertStorageBoundsRamp:
         caps: conjunto 1 = 2 units × (50 m³/s, 100 MW); conjunto 2 = 3 units ×
         (80 m³/s, 200 MW).
         """
-        from cobre_bridge.newave.converters.hydro import _reduced_caps
+        from novomodelo_bridge.newave.converters.hydro import _reduced_caps
 
         hreg = pd.Series(
             {
@@ -895,7 +899,7 @@ class TestConvertStorageBoundsRamp:
         raise ``TypeError`` in ``range(...)``). The remaining valid unit row still
         drives ``full_online_sid``, so JURUENA still emits its ramp rows.
         """
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         # JURUENA exph: schedule row + ONE malformed unit row (conjunto 1 set,
         # date NaT) ORDERED BEFORE the valid unit row (conjunto 1, Jan-2025 →
@@ -939,11 +943,11 @@ class TestConvertStorageBoundsRamp:
         id_map = _ne_filling_id_map()
         with (
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds.read_cadastro",
+                "novomodelo_bridge.newave.converters.hydro.bounds.read_cadastro",
                 return_value=_make_ne_cadastro(),
             ),
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
+                "novomodelo_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
                 return_value={},
             ),
         ):
@@ -966,19 +970,19 @@ class TestConvertStorageBoundsRamp:
         dropped: exactly one row remains at that key, with all caps ``0.0`` and a
         null ``min_generation`` ramp signature — the GHMIN minimum is gone.
         """
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         case = _ne_filling_case(tmp_path)
         id_map = _ne_filling_id_map()
         juruena_id = id_map.hydro_id(309)
         with (
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds.read_cadastro",
+                "novomodelo_bridge.newave.converters.hydro.bounds.read_cadastro",
                 return_value=_make_ne_cadastro(),
             ),
             # GHMIN for JURUENA (309) at stage 2 — inside the ramp window [2, 4).
             patch(
-                "cobre_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
+                "novomodelo_bridge.newave.converters.hydro.bounds._read_ghmin_per_stage",
                 return_value={309: {2: 123.0}},
             ),
         ):
@@ -1010,7 +1014,7 @@ class TestMergeHydroBoundsMaxGenColumn:
 
     def test_storage_side_max_generation_column_survives_full_join(self) -> None:
         """A storage-only max_generation_mw column appears in the merged table."""
-        from cobre_bridge.newave.pipeline import _merge_hydro_bounds
+        from novomodelo_bridge.newave.pipeline import _merge_hydro_bounds
 
         withdrawal = pa.table(
             {
@@ -1048,7 +1052,7 @@ class TestWaterWithdrawalConversion:
     """Unit tests for ``convert_water_withdrawal`` in ``hydro.py``."""
 
     def _make_id_map(self) -> NewaveIdMap:
-        """Two hydros: The source model codes 10 and 20 -> Cobre IDs 0 and 1."""
+        """Two hydros: The source model codes 10 and 20 -> Novomodelo IDs 0 and 1."""
         return NewaveIdMap(
             subsystem_ids=[1],
             hydro_codes=[10, 20],
@@ -1069,7 +1073,7 @@ class TestWaterWithdrawalConversion:
         """Two plants, three dates each: table has the three expected columns."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import convert_water_withdrawal
+        from novomodelo_bridge.newave.converters.hydro import convert_water_withdrawal
 
         rows = [
             {
@@ -1116,7 +1120,7 @@ class TestWaterWithdrawalConversion:
         """valor=-5.0 at 2020-02 -> water_withdrawal_m3s=5.0, stage_id=1."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import convert_water_withdrawal
+        from novomodelo_bridge.newave.converters.hydro import convert_water_withdrawal
 
         (tmp_path / "dsvagua.dat").touch()
         (tmp_path / "dger.dat").touch()
@@ -1154,7 +1158,7 @@ class TestWaterWithdrawalConversion:
         """Two rows with the same plant/date are summed then negated."""
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import convert_water_withdrawal
+        from novomodelo_bridge.newave.converters.hydro import convert_water_withdrawal
 
         (tmp_path / "dsvagua.dat").touch()
         (tmp_path / "dger.dat").touch()
@@ -1191,7 +1195,7 @@ class TestWaterWithdrawalConversion:
 
     def test_missing_dsvagua_file_returns_none(self, tmp_path: Path) -> None:
         """When dsvagua.dat is absent the converter returns None without error."""
-        from cobre_bridge.newave.converters.hydro import convert_water_withdrawal
+        from novomodelo_bridge.newave.converters.hydro import convert_water_withdrawal
 
         # dsvagua absent (path None) — the converter must return None before
         # touching dger.
@@ -1201,7 +1205,7 @@ class TestWaterWithdrawalConversion:
 
     def test_empty_desvios_returns_none(self, tmp_path: Path) -> None:
         """When desvios is None the converter returns None."""
-        from cobre_bridge.newave.converters.hydro import convert_water_withdrawal
+        from novomodelo_bridge.newave.converters.hydro import convert_water_withdrawal
 
         mock_dsvagua = MagicMock()
         mock_dsvagua.desvios = None
@@ -1223,7 +1227,7 @@ class TestWaterWithdrawalConversion:
         ignores ``dsvagua.dat`` regardless of its content, so the converter must not
         emit any water-withdrawal rows.
         """
-        from cobre_bridge.newave.converters.hydro import convert_water_withdrawal
+        from novomodelo_bridge.newave.converters.hydro import convert_water_withdrawal
 
         mock_dger = MagicMock()
         mock_dger.outros_usos_da_agua = 0
@@ -1254,7 +1258,7 @@ class TestWaterWithdrawalConversion:
         """
         import datetime
 
-        from cobre_bridge.newave.converters.hydro import convert_water_withdrawal
+        from novomodelo_bridge.newave.converters.hydro import convert_water_withdrawal
 
         (tmp_path / "dsvagua.dat").touch()
         (tmp_path / "dger.dat").touch()
@@ -1294,7 +1298,7 @@ class TestClampOutagePctDiagnostics:
     threaded accumulator)."""
 
     def test_value_within_range_emits_no_diagnostic(self) -> None:
-        from cobre_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
+        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
 
         with dx.collect() as collected:
             result = _clamp_outage_pct(50.0, "teif", "USINA_A")
@@ -1303,7 +1307,7 @@ class TestClampOutagePctDiagnostics:
         assert collected == []
 
     def test_above_100_emits_clamped_diagnostic(self) -> None:
-        from cobre_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
+        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
 
         with dx.collect() as collected:
             result = _clamp_outage_pct(150.0, "teif", "USINA_A")
@@ -1326,7 +1330,7 @@ class TestClampOutagePctDiagnostics:
         paths ``_clamp_outage_pct`` sits on — collapses to one diagnostic once
         ``finalize_diagnostics`` applies its ``(code, summary)`` de-dup (the
         raw ``collect()`` sink itself holds both emits verbatim)."""
-        from cobre_bridge.newave.converters.hydro.bounds import (
+        from novomodelo_bridge.newave.converters.hydro.bounds import (
             _compute_max_turbined_head_corrected,
             _compute_max_turbined_simple,
         )
@@ -1349,7 +1353,7 @@ class TestClampOutagePctDiagnostics:
     def test_different_fields_stay_distinct(self) -> None:
         """TEIF and IP both overshoot -> two DISTINCT diagnostics, not de-duped
         against each other (the summary differs by field)."""
-        from cobre_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
+        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
 
         with dx.collect() as collected:
             _clamp_outage_pct(150.0, "teif", "USINA_A")
@@ -1363,7 +1367,7 @@ class TestClampOutagePctDiagnostics:
         }
 
     def test_carries_no_legacy_warning_under_collect(self) -> None:
-        from cobre_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
+        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
 
         with dx.collect() as collected:
             _clamp_outage_pct(150.0, "teif", "USINA_A")
@@ -1375,7 +1379,7 @@ class TestClampOutagePctDiagnostics:
         record — the pre-migration caplog contract keeps working."""
         import logging
 
-        from cobre_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
+        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
 
         with caplog.at_level(logging.WARNING):
             result = _clamp_outage_pct(150.0, "teif", "USINA_A")
@@ -1406,14 +1410,14 @@ class TestExpansionRampBounds:
         return NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
 
     def _run(self, tmp_path) -> pd.DataFrame:
-        from cobre_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
         modif = MagicMock()
         modif.usina.return_value = []
         case = _ee_expansion_case(tmp_path, modif=modif)
         case.files = dataclasses.replace(case.files, modif=tmp_path / "modif.dat")
         with patch(
-            "cobre_bridge.newave.converters.hydro.bounds._extract_temporal_overrides",
+            "novomodelo_bridge.newave.converters.hydro.bounds._extract_temporal_overrides",
             return_value={1: self._VMINT, 2: self._VMINT},
         ):
             tbl = convert_storage_bounds(case, self._id_map())
@@ -1445,7 +1449,7 @@ class TestExpansionRampBounds:
         # Before the entry the cap equals what the plant declares with the
         # entering machines absent: the same head path as the declaration, so
         # the ramp neither diverges from it nor inflates it.
-        from cobre_bridge.newave.converters.hydro import (
+        from novomodelo_bridge.newave.converters.hydro import (
             convert_hydros,
             convert_turbined_bounds_head_corrected,
         )

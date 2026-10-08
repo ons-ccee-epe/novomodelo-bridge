@@ -1,4 +1,4 @@
-"""Unit tests for the cobre_bridge.ui package.
+"""Unit tests for the novomodelo_bridge.ui package.
 
 Covers all 5 modules: theme.py, plotly_helpers.py, css.py, js.py, html.py.
 Also verifies backward-compatible re-exports from comparators.html_report.
@@ -10,8 +10,12 @@ import plotly.graph_objects as go
 import pytest
 from plotly.offline import get_plotlyjs_version
 
-from cobre_bridge.ui.html.css import PLANT_EXPLORER_CSS, comparison_css, dashboard_css
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.ui.html.css import (
+    PLANT_EXPLORER_CSS,
+    comparison_css,
+    dashboard_css,
+)
+from novomodelo_bridge.ui.html.document import (
     build_html,
     chart_grid,
     collapsible_section,
@@ -21,19 +25,19 @@ from cobre_bridge.ui.html.document import (
     section_title,
     wrap_chart,
 )
-from cobre_bridge.ui.html.js import (
+from novomodelo_bridge.ui.html.js import (
     PLANT_EXPLORER_JS,
     PLOTLY_TITLE_SHIM_JS,
     TAB_SWITCH_JS,
 )
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS,
     MARGIN_DEFAULTS,
     fig_to_html,
     plotly_div,
     stage_x_labels,
 )
-from cobre_bridge.ui.theme import (
+from novomodelo_bridge.ui.theme import (
     BUS_COLORS,
     COLORS,
     COMPARISON_COLORS,
@@ -102,8 +106,8 @@ def test_theme_copper_accent_value() -> None:
 
 
 def test_theme_comparison_colors_keys() -> None:
-    """COMPARISON_COLORS must contain 'cobre', 'newave', 'diff', 'match'."""
-    assert set(COMPARISON_COLORS.keys()) == {"cobre", "newave", "diff", "match"}
+    """COMPARISON_COLORS must contain 'novomodelo', 'newave', 'diff', 'match'."""
+    assert set(COMPARISON_COLORS.keys()) == {"novomodelo", "newave", "diff", "match"}
 
 
 def test_legend_defaults_orientation() -> None:
@@ -391,11 +395,11 @@ def test_comparison_css_includes_enhanced_styles() -> None:
 
 def test_comparators_backward_compat() -> None:
     """All symbols re-exported from comparators.html_report must be importable."""
-    from cobre_bridge.comparators.html_report import (  # noqa: PLC0415
-        COLOR_COBRE,
+    from novomodelo_bridge.comparators.html_report import (  # noqa: PLC0415
         COLOR_DIFF,
         COLOR_MATCH,
         COLOR_NEWAVE,
+        COLOR_NOVOMODELO,
         CSS,
         JS,
         build_comparison_html,
@@ -408,7 +412,7 @@ def test_comparators_backward_compat() -> None:
 
     assert isinstance(CSS, str) and len(CSS) > 0
     assert isinstance(JS, str) and len(JS) > 0
-    assert COLOR_COBRE == COMPARISON_COLORS["cobre"]
+    assert COLOR_NOVOMODELO == COMPARISON_COLORS["novomodelo"]
     assert COLOR_NEWAVE == COMPARISON_COLORS["newave"]
     assert COLOR_DIFF == COMPARISON_COLORS["diff"]
     assert COLOR_MATCH == COMPARISON_COLORS["match"]
@@ -429,7 +433,7 @@ def test_build_comparison_html_head_includes_plotly_title_shim() -> None:
     it must land in ``<head>`` (via ``required_js``), not the end-of-body
     ``<script>`` (``JS``/``TAB_SWITCH_JS``), which executes too late.
     """
-    from cobre_bridge.comparators.html_report import build_comparison_html
+    from novomodelo_bridge.comparators.html_report import build_comparison_html
 
     html = build_comparison_html("Test", {"tab-overview": "<p>x</p>"})
 

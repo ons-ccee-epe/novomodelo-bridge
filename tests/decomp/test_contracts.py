@@ -12,10 +12,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.converters.contracts import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.contracts import (
     _CONTRACT_BOUNDS_SCHEMA,
     Contract,
     ContractStage,
@@ -25,16 +24,17 @@ from cobre_bridge.decomp.converters.contracts import (
     read_contracts,
     warn_nonnull_loss_factor,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage, build_operative_calendar
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from tests.conftest import make_decomp_case
 
-# Vendored from the cobre repository (``schemas/`` and the
-# ``d41-energy-contracts`` deterministic example) at the paired cobre release;
-# refresh both when MIN_COBRE_VERSION moves.
+# Vendored from the novomodelo repository (``schemas/`` and the
+# ``d41-energy-contracts`` deterministic example) at the paired novomodelo release;
+# refresh both when MIN_NOVOMODELO_VERSION moves.
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-_COBRE_SCHEMA = _FIXTURES / "cobre_schemas" / "energy_contracts.schema.json"
-_D41_DIR = _FIXTURES / "cobre_d41"
+_NOVOMODELO_SCHEMA = _FIXTURES / "novomodelo_schemas" / "energy_contracts.schema.json"
+_D41_DIR = _FIXTURES / "novomodelo_d41"
 _D41_REQUIRED_CONTRACT_KEYS = frozenset(
     {
         "id",
@@ -396,7 +396,7 @@ def test_convert_energy_contracts_validates_against_schema() -> None:
     case = _case(calendar)
     result = convert_energy_contracts(case, id_map, contracts=contracts)
 
-    schema = json.loads(_COBRE_SCHEMA.read_text(encoding="utf-8"))
+    schema = json.loads(_NOVOMODELO_SCHEMA.read_text(encoding="utf-8"))
     jsonschema.validate(result, schema)
 
 
@@ -408,7 +408,7 @@ def test_convert_energy_contracts_empty_is_total() -> None:
     result = convert_energy_contracts(case, id_map, contracts=[])
 
     assert result == {
-        "$schema": cobre_schemas.schema_url_for("system/energy_contracts.json"),
+        "$schema": novomodelo_schemas.schema_url_for("system/energy_contracts.json"),
         "contracts": [],
     }
 
@@ -778,7 +778,7 @@ def test_integrated_json_schema_and_parquet_roundtrip(tmp_path: Path) -> None:
     result = convert_energy_contracts(case, id_map, contracts=contracts)
     table = convert_contract_bounds(case, contracts=contracts)
 
-    schema = json.loads(_COBRE_SCHEMA.read_text(encoding="utf-8"))
+    schema = json.loads(_NOVOMODELO_SCHEMA.read_text(encoding="utf-8"))
     jsonschema.validate(result, schema)
 
     out = tmp_path / "contract_bounds.parquet"

@@ -1,4 +1,4 @@
-"""Tests for :mod:`cobre_bridge.cli.conversion_manifest`."""
+"""Tests for :mod:`novomodelo_bridge.cli.conversion_manifest`."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-import cobre_bridge
-from cobre_bridge.cli.conversion_manifest import ConversionManifest
-from cobre_bridge.cli.conversion_manifest import git_sha as conversion_git_sha
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
-from cobre_bridge.core.provenance import hash_input_files, summarize_diagnostics
+import novomodelo_bridge
+from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
+from novomodelo_bridge.cli.conversion_manifest import git_sha as conversion_git_sha
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.provenance import hash_input_files, summarize_diagnostics
 from tests.conftest import make_nw_files
 
 
@@ -101,7 +101,7 @@ def test_hash_input_files_hashes_decomp_files_and_skips_revision(
     """``hash_input_files`` also serves ``DecompFiles``: the ``revision`` str
     field and the absent optionals are skipped; the three required paths are
     hashed."""
-    from cobre_bridge.decomp.files import DecompFiles
+    from novomodelo_bridge.decomp.files import DecompFiles
 
     dadger_bytes = b"dadger-stub-\x00\x01"
     vazoes_bytes = b"vazoes-stub-\xff\xfe"
@@ -153,7 +153,7 @@ def test_create_sets_version_git_and_timestamp() -> None:
     assert manifest.command == "convert newave"
     assert manifest.source_dir == "src"
     assert manifest.output_dir == "dst"
-    assert manifest.bridge_version == cobre_bridge.__version__
+    assert manifest.bridge_version == novomodelo_bridge.__version__
     assert manifest.entity_counts == {"hydros": 2}
     assert manifest.diagnostics_summary == {"warning": 1}
 
@@ -288,15 +288,15 @@ def test_create_git_sha_in_repo() -> None:
 
 def test_git_sha_is_shared_not_duplicated() -> None:
     """Both manifests use the one shared git helper, never a duplicate."""
-    from cobre_bridge.comparators.manifest import git_sha as comparison_git_sha
-    from cobre_bridge.core.git import git_sha as shared_git_sha
+    from novomodelo_bridge.comparators.manifest import git_sha as comparison_git_sha
+    from novomodelo_bridge.core.git import git_sha as shared_git_sha
 
     assert conversion_git_sha is shared_git_sha
     assert comparison_git_sha is shared_git_sha
 
 
-def test_min_cobre_version_round_trip(tmp_path: Path) -> None:
-    """``min_cobre_version`` survives a ``to_json`` / ``from_json`` round trip."""
+def test_min_novomodelo_version_round_trip(tmp_path: Path) -> None:
+    """``min_novomodelo_version`` survives a ``to_json`` / ``from_json`` round trip."""
     manifest = ConversionManifest.create(
         "convert newave",
         tmp_path,
@@ -305,18 +305,18 @@ def test_min_cobre_version_round_trip(tmp_path: Path) -> None:
         input_files=[],
         diagnostics_summary={},
         diagnostics=[],
-        min_cobre_version="0.9.1",
+        min_novomodelo_version="0.9.1",
     )
 
     path = tmp_path / "conversion_manifest.json"
     manifest.to_json(path)
     restored = ConversionManifest.from_json(path)
 
-    assert restored.min_cobre_version == "0.9.1"
+    assert restored.min_novomodelo_version == "0.9.1"
 
 
-def test_min_cobre_version_defaults_none() -> None:
-    """``create`` without the kwarg leaves ``min_cobre_version`` ``None`` (EX-only)."""
+def test_min_novomodelo_version_defaults_none() -> None:
+    """``create`` without the kwarg leaves ``min_novomodelo_version`` ``None`` (EX-only)."""
     manifest = ConversionManifest.create(
         "convert newave",
         Path("src"),
@@ -327,20 +327,20 @@ def test_min_cobre_version_defaults_none() -> None:
         diagnostics=[],
     )
 
-    assert manifest.min_cobre_version is None
+    assert manifest.min_novomodelo_version is None
 
 
-def test_from_json_missing_min_cobre_version(tmp_path: Path) -> None:
-    """An older manifest lacking ``min_cobre_version`` reads back as ``None``.
+def test_from_json_missing_min_novomodelo_version(tmp_path: Path) -> None:
+    """An older manifest lacking ``min_novomodelo_version`` reads back as ``None``.
 
     Backward compatibility: a manifest written before the field existed loads
     without raising and defaults the field to ``None``.
     """
     data = _base_manifest_data()
-    assert "min_cobre_version" not in data
+    assert "min_novomodelo_version" not in data
     path = tmp_path / "conversion_manifest.json"
     path.write_text(json.dumps(data), encoding="utf-8")
 
     manifest = ConversionManifest.from_json(path)
 
-    assert manifest.min_cobre_version is None
+    assert manifest.min_novomodelo_version is None

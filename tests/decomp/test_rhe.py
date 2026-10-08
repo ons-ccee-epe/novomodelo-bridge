@@ -2,7 +2,7 @@
 
 Synthetic ``ConstraintRecord``/``ConstraintTerm``/``StageBounds``/
 ``EffectiveCadastro``/``DecompIdMap``/``OperativeStage`` only — no deck, no
-``example/`` read, no ``import cobre``. One test per acceptance criterion:
+``example/`` read, no ``import novomodelo``. One test per acceptance criterion:
 absolute (``tipo_limite=1``) round-trip, percentage (``tipo_limite=2``) RHS,
 two-reservoir cascade override, run-of-river exclusion, weekly-regulating
 (``"S"``) reservoir participation with the integrated ρ, no-storage
@@ -18,19 +18,19 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
     HeMeta,
     StageBounds,
 )
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-from cobre_bridge.decomp.converters.constraints import emit_rhe_generics
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.constraints import emit_rhe_generics
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 # ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ def _case(calendar: list[OperativeStage]) -> DecompCase:
 
 def _census(*records: ConstraintRecord):
     """A synthetic census whose generic slice is exactly *records*."""
-    from cobre_bridge.decomp.constraint_registers import ConstraintCensus
+    from novomodelo_bridge.decomp.constraint_registers import ConstraintCensus
 
     return ConstraintCensus(by_family={}, to_bounds=(), to_generic=tuple(records))
 

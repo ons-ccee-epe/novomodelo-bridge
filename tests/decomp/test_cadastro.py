@@ -1,6 +1,6 @@
 """Tests for the effective-cadastro forward-fill, container, and AC ingestion.
 
-Pins ``cobre_bridge.decomp.converters.cadastro.overrides._forward_fill_series``
+Pins ``novomodelo_bridge.decomp.converters.cadastro.overrides._forward_fill_series``
 (the pure per-``(plant, param)`` densification), ``EffectiveCadastro`` (the
 per-stage-effective view of the cadastro) against hand-built record lists,
 and ``_read_scalar_overrides`` (the scalar single-value ``AC`` ingestion)
@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 from idecomp.decomp.modelos.dadger import ACVAZMIN, ACVOLMAX, ACVOLMIN
 
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.decomp.converters.cadastro import (
     CadastroResolutionReport,
     EffectiveCadastro,
     OutOfHorizon,
@@ -24,7 +24,7 @@ from cobre_bridge.decomp.converters.cadastro import (
     _read_scalar_overrides,
     build_effective_cadastro,
 )
-from cobre_bridge.decomp.temporal import OperativeStage, build_operative_calendar
+from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 
 
 def _hidr_frame() -> pd.DataFrame:

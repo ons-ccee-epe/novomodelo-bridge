@@ -1,7 +1,7 @@
-"""Unit tests for ``cobre_bridge.decomp.converters.scalar_parameters``.
+"""Unit tests for ``novomodelo_bridge.decomp.converters.scalar_parameters``.
 
-Tier-1: pure Python, no ``example/`` deck, no ``import cobre``. Exercises the
-thin delegation to ``cobre.scalar_parameters.build_scalar_parameters``
+Tier-1: pure Python, no ``example/`` deck, no ``import novomodelo``. Exercises the
+thin delegation to ``novomodelo.scalar_parameters.build_scalar_parameters``
 and the ``constraints/generic_parameters.json`` write round-trip.
 """
 
@@ -10,14 +10,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cobre_bridge.cobre.case_writer import CaseWriter
-from cobre_bridge.cobre.scalar_parameters import (
-    build_scalar_parameters,
-)
-from cobre_bridge.decomp.converters.scalar_parameters import (
+from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     rho_acum_name,
     write_scalar_parameters,
+)
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.scalar_parameters import (
+    build_scalar_parameters,
 )
 
 

@@ -1,10 +1,10 @@
-"""Unit tests for the unified ``--json`` verdict envelope (``cobre_bridge.cli.verdict``)."""
+"""Unit tests for the unified ``--json`` verdict envelope (``novomodelo_bridge.cli.verdict``)."""
 
 from __future__ import annotations
 
 import pytest
 
-from cobre_bridge.cli.verdict import (
+from novomodelo_bridge.cli.verdict import (
     SCHEMA_VERSION,
     _coerce_unmapped_code,
     build_verdict,
@@ -14,8 +14,8 @@ from cobre_bridge.cli.verdict import (
     dashboard_summary,
     decomp_dataset_summary,
 )
-from cobre_bridge.comparators.verdict import CompareVerdict
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.comparators.verdict import CompareVerdict
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 from tests.conftest import _empty_fake_dataset, _fake_dataset
 
 

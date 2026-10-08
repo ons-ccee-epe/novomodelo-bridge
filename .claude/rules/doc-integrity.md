@@ -5,11 +5,11 @@ paths:
   - ".claude/rules/*.md"
 ---
 
-# Cobre-Bridge Prose Documentation Integrity Rules
+# Novomodelo-Bridge Prose Documentation Integrity Rules
 
 Governs every Markdown file that serves as a user-facing or agent-facing
 artifact: `CLAUDE.md`, `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`,
-`docs/**`, and `.claude/rules/*`. Port of cobre's doc-integrity rule; the code-comment
+`docs/**`, and `.claude/rules/*`. Port of novomodelo's doc-integrity rule; the code-comment
 counterpart is `.claude/rules/comments.md`.
 
 ## 1. Reader per doc
@@ -44,9 +44,9 @@ Bridge guards that pin literals so prose doesn't have to:
   `tests/test_lineage.py` (freshness, emission coverage against the mini
   decks, cited files and registers exist, code trace). The TOML is the one
   place a converted field's origin is stated; other docs point to the page.
-- `tests/test_packaging.py` holds the `pyproject.toml` `cobre-python` pin
-  equal to `MIN_COBRE_VERSION` — prose states the *rule* ("bridge X.Y.Z pairs
-  cobre X.Y.Z"), never a hand-copied version.
+- `tests/test_packaging.py` holds the `pyproject.toml` `novomodelo-python` pin
+  equal to `MIN_NOVOMODELO_VERSION` — prose states the *rule* ("bridge X.Y.Z pairs
+  novomodelo X.Y.Z"), never a hand-copied version.
 - Where no guard exists, state the invariant: "every command accepts `--json`"
   (a rule a test can enforce), not "all 7 commands" (a snapshot that rots).
 

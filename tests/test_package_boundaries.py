@@ -1,4 +1,4 @@
-"""Layout direction guard for `src/cobre_bridge`.
+"""Layout direction guard for `src/novomodelo_bridge`.
 
 A filesystem-driven ``ast`` walk enforcing five package-boundary rules:
 import direction (A), no private name crossing a package boundary (B), no
@@ -9,8 +9,8 @@ held empty as a steady-state regression tripwire, never widened;
 `__main__` reprints the live sets so any change is reviewed by diff, not
 by hand.
 
-Tier-1: pure ``ast``, ``sys`` and ``pathlib`` -- no ``cobre`` import -- so
-this collects and runs even in a cobre-free environment.
+Tier-1: pure ``ast``, ``sys`` and ``pathlib`` -- no ``novomodelo`` import -- so
+this collects and runs even in a novomodelo-free environment.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ import ast
 import sys
 from pathlib import Path
 
-_SRC = Path(__file__).resolve().parent.parent / "src" / "cobre_bridge"
+_SRC = Path(__file__).resolve().parent.parent / "src" / "novomodelo_bridge"
 
 _DIR_TO_PACKAGE: dict[str, str] = {
     "core": "core",
-    "cobre": "cobre",
+    "novomodelo": "novomodelo",
     "ui": "ui",
     "newave": "newave",
     "decomp": "decomp",
@@ -39,20 +39,22 @@ _SUBPACKAGE_REFINEMENTS: dict[tuple[str, str], str] = {
 }
 
 # AMENDMENT-1 (ratified): `ui.theme` is its own leaf column, importable by
-# every presentation-consuming package, forbidden to core/cobre/newave/decomp.
+# every presentation-consuming package, forbidden to core/novomodelo/newave/decomp.
 _ALLOWED: dict[str, frozenset[str]] = {
     "core": frozenset({"core"}),
-    "cobre": frozenset({"core", "cobre"}),
-    "ui": frozenset({"core", "cobre", "ui", "ui.theme"}),
+    "novomodelo": frozenset({"core", "novomodelo"}),
+    "ui": frozenset({"core", "novomodelo", "ui", "ui.theme"}),
     "ui.theme": frozenset({"core"}),
     "ui.html": frozenset({"core", "ui", "ui.theme", "ui.html"}),
-    "newave": frozenset({"core", "cobre", "newave"}),
-    "decomp": frozenset({"core", "cobre", "decomp"}),
-    "comparators": frozenset({"core", "cobre", "ui.theme", "ui.html", "comparators"}),
+    "newave": frozenset({"core", "novomodelo", "newave"}),
+    "decomp": frozenset({"core", "novomodelo", "decomp"}),
+    "comparators": frozenset(
+        {"core", "novomodelo", "ui.theme", "ui.html", "comparators"}
+    ),
     "comparators.newave": frozenset(
         {
             "core",
-            "cobre",
+            "novomodelo",
             "ui.theme",
             "ui.html",
             "newave",
@@ -63,7 +65,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "comparators.decomp": frozenset(
         {
             "core",
-            "cobre",
+            "novomodelo",
             "ui.theme",
             "ui.html",
             "decomp",
@@ -71,11 +73,11 @@ _ALLOWED: dict[str, frozenset[str]] = {
             "comparators.decomp",
         }
     ),
-    "dashboard": frozenset({"core", "cobre", "ui.theme", "ui.html", "dashboard"}),
+    "dashboard": frozenset({"core", "novomodelo", "ui.theme", "ui.html", "dashboard"}),
     "cli": frozenset(
         {
             "core",
-            "cobre",
+            "novomodelo",
             "ui",
             "ui.theme",
             "ui.html",
@@ -92,7 +94,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
 
 
 def _package_of(dotted: str) -> str:
-    """Resolve `dotted` (relative to `cobre_bridge`) to an `_ALLOWED` key.
+    """Resolve `dotted` (relative to `novomodelo_bridge`) to an `_ALLOWED` key.
 
     Filesystem-driven so it stays correct as modules move: a loose file (no
     matching directory) falls back to the exempt pseudo-package `"<root>"`
@@ -149,7 +151,7 @@ def _type_checking_node_ids(tree: ast.Module) -> set[int]:
 
 def _imports(path: Path) -> list[tuple[str, list[str], bool]]:
     """Return `(target_dotted, imported_names, in_type_checking)` triples
-    for every `cobre_bridge`-internal import in `path`.
+    for every `novomodelo_bridge`-internal import in `path`.
 
     Lazy (function-body) imports are runtime imports -- ``ast.walk`` already
     descends into them, which is deliberate.
@@ -162,17 +164,17 @@ def _imports(path: Path) -> list[tuple[str, list[str], bool]]:
         if isinstance(node, ast.ImportFrom):
             if node.module is None:
                 continue
-            if node.module == "cobre_bridge":
+            if node.module == "novomodelo_bridge":
                 for alias in node.names:
                     triples.append((alias.name, [alias.name], in_type_checking))
-            elif node.module.startswith("cobre_bridge."):
-                target = node.module.removeprefix("cobre_bridge.")
+            elif node.module.startswith("novomodelo_bridge."):
+                target = node.module.removeprefix("novomodelo_bridge.")
                 names = [alias.name for alias in node.names]
                 triples.append((target, names, in_type_checking))
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.startswith("cobre_bridge."):
-                    target = alias.name.removeprefix("cobre_bridge.")
+                if alias.name.startswith("novomodelo_bridge."):
+                    target = alias.name.removeprefix("novomodelo_bridge.")
                     triples.append((target, [], in_type_checking))
     return triples
 
@@ -187,7 +189,7 @@ def _find_root_modules() -> frozenset[str]:
 
 def _find_shadowed_modules() -> frozenset[str]:
     return frozenset(
-        "cobre_bridge." + _module_dotted(p)
+        "novomodelo_bridge." + _module_dotted(p)
         for p in _all_py_files()
         if p.name != "__init__.py" and p.stem in sys.stdlib_module_names
     )
@@ -331,7 +333,7 @@ def test_private_allowlist_has_no_stale_entries() -> None:
 
 
 def test_no_loose_root_modules() -> None:
-    """Every module at `src/cobre_bridge/*.py` belongs to a package,
+    """Every module at `src/novomodelo_bridge/*.py` belongs to a package,
     unless its stem is still on the pending list."""
     offenders = sorted(_find_root_modules() - _PENDING_ROOT_MODULES)
     assert offenders == []

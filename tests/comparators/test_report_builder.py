@@ -19,7 +19,7 @@ This module:
   captured before the reference_label change.
 * Proves every one of the ~70 sites was threaded (no site missed) by asserting
   that ``reference_label="DECOMP"`` leaves zero "NEWAVE" substrings in the
-  rendered HTML / printed terminal text, while the Cobre-side labels are
+  rendered HTML / printed terminal text, while the Novomodelo-side labels are
   unchanged.
 
 No real NEWAVE/DECOMP case data is read (Tier 1 — CI, no ``example/``); the
@@ -40,12 +40,12 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from cobre_bridge.comparators.analyze import build_results_dataset
-from cobre_bridge.comparators.dataset import ComparisonDataset
-from cobre_bridge.comparators.model import PercentileData, ResultComparison
-from cobre_bridge.comparators.report_builder import build_comparison_report
-from cobre_bridge.comparators.verdict import build_compare_verdict
-from cobre_bridge.ui.compare_summary import print_results_summary_from_dataset
+from novomodelo_bridge.comparators.analyze import build_results_dataset
+from novomodelo_bridge.comparators.dataset import ComparisonDataset
+from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.comparators.verdict import build_compare_verdict
+from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
 from tests.comparators.conftest import _extract_tab_content
 from tests.dashboard.test_chart_helpers import (
     _report_fixture_pct,
@@ -54,7 +54,7 @@ from tests.dashboard.test_chart_helpers import (
 from tests.golden_utils import assert_html_golden
 
 _NW_DIR = Path("/fake/nw")
-_COBRE_DIR = Path("/fake/cobre")
+_NOVOMODELO_DIR = Path("/fake/novomodelo")
 
 
 def _capture(func: Callable[..., None], *args: object, **kwargs: object) -> str:
@@ -101,7 +101,7 @@ def test_build_comparison_report_explicit_newave_label_matches_golden() -> None:
 # ---------------------------------------------------------------------------
 # DECOMP label: every reference-series trace name / chart title / report
 # title / prose string reads "DECOMP" and zero "NEWAVE" substrings remain,
-# proving no site was missed. The Cobre-side labels are unchanged.
+# proving no site was missed. The Novomodelo-side labels are unchanged.
 # ---------------------------------------------------------------------------
 
 
@@ -118,32 +118,32 @@ def test_build_comparison_report_decomp_label_has_no_newave_substring() -> None:
     assert "DECOMP" in html
 
 
-def test_build_comparison_report_decomp_label_cobre_side_unchanged() -> None:
-    """The Cobre-side series labels are untouched by the reference_label swap."""
+def test_build_comparison_report_decomp_label_novomodelo_side_unchanged() -> None:
+    """The Novomodelo-side series labels are untouched by the reference_label swap."""
     html_default = build_comparison_report(_build_dataset())
     html_decomp = build_comparison_report(_build_dataset(), reference_label="DECOMP")
 
-    assert "Cobre" in html_default
-    assert "Cobre" in html_decomp
-    # "Cobre Mean" is the most common reference-series-adjacent trace name;
+    assert "Novomodelo" in html_default
+    assert "Novomodelo" in html_decomp
+    # "Novomodelo Mean" is the most common reference-series-adjacent trace name;
     # confirm it is present verbatim (untouched) in both renders.
-    assert "Cobre Mean" in html_default
-    assert "Cobre Mean" in html_decomp
+    assert "Novomodelo Mean" in html_default
+    assert "Novomodelo Mean" in html_decomp
 
 
 def test_build_comparison_report_decomp_label_report_title() -> None:
     """The document title and report header read the DECOMP label."""
     html = build_comparison_report(_build_dataset(), reference_label="DECOMP")
 
-    assert "Cobre vs DECOMP Results Comparison" in html
-    assert "Cobre vs NEWAVE Results Comparison" not in html
+    assert "Novomodelo vs DECOMP Results Comparison" in html
+    assert "Novomodelo vs NEWAVE Results Comparison" not in html
 
 
 def test_build_comparison_report_default_label_report_title() -> None:
     """The document title and report header keep the NEWAVE label by default."""
     html = build_comparison_report(_build_dataset())
 
-    assert "Cobre vs NEWAVE Results Comparison" in html
+    assert "Novomodelo vs NEWAVE Results Comparison" in html
 
 
 # ---------------------------------------------------------------------------
@@ -159,13 +159,13 @@ def test_print_results_summary_default_label_unchanged() -> None:
         print_results_summary_from_dataset,
         dataset,
         _NW_DIR,
-        _COBRE_DIR,
+        _NOVOMODELO_DIR,
         verdict=build_compare_verdict(dataset),
     )
 
-    assert "Cobre vs NEWAVE Results Comparison" in text
+    assert "Novomodelo vs NEWAVE Results Comparison" in text
     assert f"NEWAVE case:  {_NW_DIR}" in text
-    assert f"Cobre output: {_COBRE_DIR}" in text
+    assert f"Novomodelo output: {_NOVOMODELO_DIR}" in text
 
 
 def test_print_results_summary_explicit_newave_label_matches_default() -> None:
@@ -177,14 +177,14 @@ def test_print_results_summary_explicit_newave_label_matches_default() -> None:
         print_results_summary_from_dataset,
         dataset,
         _NW_DIR,
-        _COBRE_DIR,
+        _NOVOMODELO_DIR,
         verdict=verdict,
     )
     text_explicit = _capture(
         print_results_summary_from_dataset,
         dataset,
         _NW_DIR,
-        _COBRE_DIR,
+        _NOVOMODELO_DIR,
         verdict=verdict,
         reference_label="NEWAVE",
     )
@@ -200,14 +200,14 @@ def test_print_results_summary_decomp_label_relabels_header() -> None:
         print_results_summary_from_dataset,
         dataset,
         _NW_DIR,
-        _COBRE_DIR,
+        _NOVOMODELO_DIR,
         verdict=build_compare_verdict(dataset),
         reference_label="DECOMP",
     )
 
-    assert "Cobre vs DECOMP Results Comparison" in text
+    assert "Novomodelo vs DECOMP Results Comparison" in text
     assert f"DECOMP case:  {_NW_DIR}" in text
-    assert f"Cobre output: {_COBRE_DIR}" in text
+    assert f"Novomodelo output: {_NOVOMODELO_DIR}" in text
     assert "NEWAVE" not in text
 
 
@@ -224,7 +224,7 @@ def test_print_results_summary_decomp_label_keeps_newave_dir_param_name() -> Non
         print_results_summary_from_dataset,
         dataset,
         newave_dir=_NW_DIR,
-        cobre_output_dir=_COBRE_DIR,
+        novomodelo_output_dir=_NOVOMODELO_DIR,
         verdict=build_compare_verdict(dataset),
         reference_label="DECOMP",
     )
@@ -240,9 +240,9 @@ def test_print_results_summary_decomp_label_keeps_newave_dir_param_name() -> Non
 def _patch_compare_context(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch the shared NEWAVE case/alignment loaders for the CLI.
 
-    ``read_cobre_lines`` is left unpatched: its consumer
+    ``read_novomodelo_lines`` is left unpatched: its consumer
     (``build_entity_alignment``) is mocked above, and the empty ``tmp_path``
-    cobre dir yields ``[]`` from the real reader anyway.
+    novomodelo dir yields ``[]`` from the real reader anyway.
     """
     from tests.conftest import make_nw_files
 
@@ -251,7 +251,7 @@ def _patch_compare_context(monkeypatch: pytest.MonkeyPatch) -> None:
     # ``dataclasses.fields``, which raises on a non-dataclass. The paths
     # need not exist: a missing file degrades to a ``None`` hash/size.
     monkeypatch.setattr(
-        "cobre_bridge.newave.case.NewaveCase.from_directory",
+        "novomodelo_bridge.newave.case.NewaveCase.from_directory",
         classmethod(
             lambda cls, _dir: MagicMock(
                 id_map=MagicMock(), files=make_nw_files(Path("nw"))
@@ -259,7 +259,7 @@ def _patch_compare_context(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+        "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
         lambda *a, **k: MagicMock(),
     )
 
@@ -271,11 +271,11 @@ def _one_row_results_dataset() -> ComparisonDataset:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),
@@ -284,21 +284,21 @@ def _one_row_results_dataset() -> ComparisonDataset:
 
 
 def _invoke_compare_newave(
-    argv_tail: list[str], monkeypatch: pytest.MonkeyPatch, cobre_dir: Path
+    argv_tail: list[str], monkeypatch: pytest.MonkeyPatch, novomodelo_dir: Path
 ) -> object:
     """Invoke ``compare newave`` through the real Typer app via ``CliRunner``."""
-    from cobre_bridge.cli import app
+    from novomodelo_bridge.cli import app
 
     _patch_compare_context(monkeypatch)
     monkeypatch.setattr(
-        "cobre_bridge.comparators.newave.results.compare_results",
+        "novomodelo_bridge.comparators.newave.results.compare_results",
         lambda **_k: _one_row_results_dataset(),
     )
     argv = [
         "compare",
         "newave",
-        str(cobre_dir.parent / "nw"),
-        str(cobre_dir),
+        str(novomodelo_dir.parent / "nw"),
+        str(novomodelo_dir),
         *argv_tail,
     ]
     return CliRunner().invoke(app, argv)
@@ -317,10 +317,10 @@ def test_compare_newave_no_color_summary_has_no_ansi_escapes(
     without it), so the test genuinely fails if the flag stops threading.
     """
     monkeypatch.delenv("NO_COLOR", raising=False)
-    cobre_dir_flagged = tmp_path / "cobre_no_color"
-    cobre_dir_flagged.mkdir()
-    cobre_dir_plain = tmp_path / "cobre_plain"
-    cobre_dir_plain.mkdir()
+    novomodelo_dir_flagged = tmp_path / "novomodelo_no_color"
+    novomodelo_dir_flagged.mkdir()
+    novomodelo_dir_plain = tmp_path / "novomodelo_plain"
+    novomodelo_dir_plain.mkdir()
 
     captured: list[Console] = []
     original: Callable[..., None] = print_results_summary_from_dataset
@@ -332,17 +332,17 @@ def test_compare_newave_no_color_summary_has_no_ansi_escapes(
         original(*args, **kwargs)
 
     monkeypatch.setattr(
-        "cobre_bridge.ui.compare_summary.print_results_summary_from_dataset", _spy
+        "novomodelo_bridge.ui.compare_summary.print_results_summary_from_dataset", _spy
     )
 
     no_color_result = _invoke_compare_newave(
-        ["--no-color"], monkeypatch, cobre_dir_flagged
+        ["--no-color"], monkeypatch, novomodelo_dir_flagged
     )
-    plain_result = _invoke_compare_newave([], monkeypatch, cobre_dir_plain)
+    plain_result = _invoke_compare_newave([], monkeypatch, novomodelo_dir_plain)
 
     assert no_color_result.exit_code == 0
     assert plain_result.exit_code == 0
-    assert "Cobre vs NEWAVE Results Comparison" in no_color_result.stdout
+    assert "Novomodelo vs NEWAVE Results Comparison" in no_color_result.stdout
     assert "\x1b[" not in no_color_result.stdout
     assert [c.no_color for c in captured] == [True, False]
 
@@ -351,15 +351,15 @@ def test_compare_newave_quiet_suppresses_summary_but_writes_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``--quiet`` suppresses the summary render; artifacts are still written."""
-    cobre_dir = tmp_path / "cobre"
-    cobre_dir.mkdir()
+    novomodelo_dir = tmp_path / "novomodelo"
+    novomodelo_dir.mkdir()
 
-    result = _invoke_compare_newave(["--quiet"], monkeypatch, cobre_dir)
+    result = _invoke_compare_newave(["--quiet"], monkeypatch, novomodelo_dir)
 
     assert result.exit_code == 0
-    assert "Cobre vs NEWAVE Results Comparison" not in result.stdout
+    assert "Novomodelo vs NEWAVE Results Comparison" not in result.stdout
     assert "generation_mw" not in result.stdout
-    artifacts_dir = cobre_dir / "comparison_artifacts"
+    artifacts_dir = novomodelo_dir / "comparison_artifacts"
     assert artifacts_dir.exists()
     assert any(artifacts_dir.iterdir())
 
@@ -374,22 +374,22 @@ class TestReportBuilderProductivityGateDecoupling:
 
     @staticmethod
     def _both_frames_dataset() -> ComparisonDataset:
-        from cobre_bridge.comparators.analyze import (
+        from novomodelo_bridge.comparators.analyze import (
             _PRODUCTIVITY_DETAIL_SCHEMA,
             build_results_dataset,
         )
-        from cobre_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.model import PercentileData
 
         results = [
             ResultComparison(
                 entity_type="hydro",
                 entity_name="ALPHA",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="productivity_mw_per_m3s",
                 newave_value=0.78,
-                cobre_value=0.80,
+                novomodelo_value=0.80,
                 abs_diff=0.02,
                 rel_diff=0.026,
             )
@@ -398,7 +398,7 @@ class TestReportBuilderProductivityGateDecoupling:
             {
                 "plant_name": ["ALPHA"],
                 "newave_code": [1],
-                "cobre_id": [0],
+                "novomodelo_id": [0],
                 "nw_altura_min": [0.69],
                 "nw_altura_65": [0.81],
                 "nw_altura_max": [0.85],
@@ -432,7 +432,7 @@ class TestReportBuilderProductivityGateDecoupling:
         productivity_tab = _extract_tab_content(html, "tab-productivity")
 
         static_idx = productivity_tab.index(
-            "Static productivity — pmo vs cobre-bridge conversion"
+            "Static productivity — pmo vs novomodelo-bridge conversion"
         )
         realized_idx = productivity_tab.index("Realized productivity across stages")
         blocks_idx = productivity_tab.index("Productivity Building Blocks")
@@ -445,8 +445,8 @@ class TestReportBuilderProductivityGateDecoupling:
         """The mirror case: ``prod_df`` non-empty, ``per_stage_df`` empty --
         the realized section must NOT render. Proves the two gates are
         independent, not still coupled to one another."""
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
 
         detail_only = self._both_frames_dataset()
         pct = PercentileData(productivity_detail=detail_only.render.productivity_detail)
@@ -465,19 +465,19 @@ class TestReportBuilderReeSectionByteIdentityGuard:
     "ree"`` rows exist, which a NEWAVE-shaped dataset never carries."""
 
     def test_newave_shaped_dataset_has_no_ree_section(self) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
 
         results = [
             ResultComparison(
                 entity_type="hydro",
                 entity_name="CAMARGOS",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=98.0,
+                novomodelo_value=98.0,
                 abs_diff=2.0,
                 rel_diff=0.02,
             ),
@@ -485,11 +485,11 @@ class TestReportBuilderReeSectionByteIdentityGuard:
                 entity_type="bus",
                 entity_name="SE",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="deficit_mw",
                 newave_value=0.0,
-                cobre_value=0.0,
+                novomodelo_value=0.0,
                 abs_diff=0.0,
                 rel_diff=None,
             ),

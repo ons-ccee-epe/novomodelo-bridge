@@ -1,17 +1,17 @@
 """Shared test helpers for building the source model case inputs without real file I/O.
 
-``make_nw_files`` constructs a :class:`~cobre_bridge.newave.files.NewaveFiles`
+``make_nw_files`` constructs a :class:`~novomodelo_bridge.newave.files.NewaveFiles`
 with paths under a tmp dir (no filesystem access). ``make_case`` wraps it in a
-:class:`~cobre_bridge.newave.case.NewaveCase` and pre-fills the requested cached reader
+:class:`~novomodelo_bridge.newave.case.NewaveCase` and pre-fills the requested cached reader
 slots, so a converter under test reads the supplied mock objects instead of
 parsing files. ``make_decomp_files``/``make_decomp_case`` are the DECOMP-track
-twins, wrapping a :class:`~cobre_bridge.decomp.case.DecompCase`.
+twins, wrapping a :class:`~novomodelo_bridge.decomp.case.DecompCase`.
 ``hydro_with_group`` builds a 0.13-shaped ``hydros.json`` hydro
 dict (no top-level ``bus_id``, one mirror ``unit_groups`` entry) for tests that
 hand-build a hydro fixture rather than calling a converter. ``_FakeDadger``
 is a decomp-side test double returning preset DataFrames for register
 accessors. These builders are referenced from two or more of
-``tests/{cli,cobre,comparators,dashboard,decomp,newave}/``; a builder used by
+``tests/{cli,novomodelo,comparators,dashboard,decomp,newave}/``; a builder used by
 only one of those directories lives in that directory's own ``conftest.py``
 instead (e.g. the hydro/thermal/network entity-conversion fixtures in
 ``tests/newave/conftest.py``). Import them with ``from tests.conftest import
@@ -32,63 +32,63 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
-from cobre_bridge.comparators.dataset import (
+from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
     TIDY_SCHEMA,
     ComparisonDataset,
 )
-from cobre_bridge.core.hydro_units import build_mirror_unit_group
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.files import DecompFiles
-from cobre_bridge.newave.case import NewaveCase
-from cobre_bridge.newave.files import NewaveFiles
+from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.files import NewaveFiles
 
-# Shared skip marker for tier-2 tests that need `cobre-python` (`import
-# cobre`). It is a core dev dependency (installed via `.[dev]`), so it is
+# Shared skip marker for tier-2 tests that need `novomodelo-python` (`import
+# novomodelo`). It is a core dev dependency (installed via `.[dev]`), so it is
 # present on every CI job; this ``skipif`` guards only a deliberately
-# cobre-free environment (e.g. a partial dev checkout). Use ``find_spec``
+# novomodelo-free environment (e.g. a partial dev checkout). Use ``find_spec``
 # (import-free) so this module stays importable there too. ``condition`` is
 # passed by keyword (rather than positionally) so ``.kwargs["condition"]`` is
 # introspectable.
-# Import via ``from tests.conftest import requires_cobre_python``.
-requires_cobre_python = pytest.mark.skipif(
-    condition=importlib.util.find_spec("cobre") is None,
+# Import via ``from tests.conftest import requires_novomodelo_python``.
+requires_novomodelo_python = pytest.mark.skipif(
+    condition=importlib.util.find_spec("novomodelo") is None,
     reason=(
-        "requires cobre-python, a core dev dependency; this environment is "
-        "missing it (a deliberately cobre-free checkout)"
+        "requires novomodelo-python, a core dev dependency; this environment is "
+        "missing it (a deliberately novomodelo-free checkout)"
     ),
 )
 
 
 def has_writer_binding() -> bool:
-    """Whether an installed cobre wheel exposes ``write_policy_checkpoint``.
+    """Whether an installed novomodelo wheel exposes ``write_policy_checkpoint``.
 
     Checked via ``importlib.util.find_spec`` before any import — the same
-    import-free-first convention as ``requires_cobre_python`` above — so
-    calling this (or importing this module) never requires cobre to be
-    installed. A cobre wheel older than the one that added the writer
+    import-free-first convention as ``requires_novomodelo_python`` above — so
+    calling this (or importing this module) never requires novomodelo to be
+    installed. A novomodelo wheel older than the one that added the writer
     binding is import-able (``find_spec`` succeeds) but lacks the attribute;
     ``requires_writer_binding`` below turns that case into a clean SKIP
     instead of a runtime ``AttributeError``.
     """
-    if importlib.util.find_spec("cobre") is None:
+    if importlib.util.find_spec("novomodelo") is None:
         return False
-    import cobre
+    import novomodelo
 
-    return hasattr(cobre, "write_policy_checkpoint")
+    return hasattr(novomodelo, "write_policy_checkpoint")
 
 
 # Additional skip marker for tier-2 tests whose path calls an in-wheel
-# binding newer than the mere import-ability ``requires_cobre_python``
-# checks. Stack this alongside ``requires_cobre_python`` on any test that
-# calls ``cobre.write_policy_checkpoint`` directly (or transitively via a
-# helper that does), so an old-but-importable cobre wheel skips cleanly
+# binding newer than the mere import-ability ``requires_novomodelo_python``
+# checks. Stack this alongside ``requires_novomodelo_python`` on any test that
+# calls ``novomodelo.write_policy_checkpoint`` directly (or transitively via a
+# helper that does), so an old-but-importable novomodelo wheel skips cleanly
 # rather than failing at runtime with ``AttributeError``.
 # Import via ``from tests.conftest import requires_writer_binding``.
 requires_writer_binding = pytest.mark.skipif(
     condition=not has_writer_binding(),
     reason=(
-        "requires a cobre-python wheel exposing the write_policy_checkpoint "
+        "requires a novomodelo-python wheel exposing the write_policy_checkpoint "
         "writer binding"
     ),
 )
@@ -100,7 +100,7 @@ def decomp_mini_deck() -> Path:
 
     A tier-2 end-to-end test converts this deck with the real
     ``convert_decomp_case`` and validates the result with the real
-    ``cobre.io.validate`` — see ``tests/decomp/test_convert_decomp_e2e.py``.
+    ``novomodelo.io.validate`` — see ``tests/decomp/test_convert_decomp_e2e.py``.
     """
     return Path(__file__).parent / "decks" / "decomp_mini"
 
@@ -111,7 +111,7 @@ def newave_mini_deck() -> Path:
 
     A tier-2 end-to-end test converts this deck with the real
     ``convert_newave_case`` and validates the result with the real
-    ``cobre.io.validate`` — see ``tests/newave/test_convert_newave_e2e.py``.
+    ``novomodelo.io.validate`` — see ``tests/newave/test_convert_newave_e2e.py``.
     """
     return Path(__file__).parent / "decks" / "newave_mini"
 
@@ -137,15 +137,15 @@ def dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _restore_cobre_bridge_logger() -> Iterator[None]:
-    """Snapshot/restore the ``cobre_bridge`` logger around every test.
+def _restore_novomodelo_bridge_logger() -> Iterator[None]:
+    """Snapshot/restore the ``novomodelo_bridge`` logger around every test.
 
     ``cli._configure_logging`` flips ``propagate``/level for a run, and the CLI's
     Typer ``CliRunner`` tests invoke the app directly (bypassing ``main``'s restore),
     so without this fixture that state would leak into a later ``caplog``-by-logger
     test in the same interpreter and silently swallow its records.
     """
-    pkg = logging.getLogger("cobre_bridge")
+    pkg = logging.getLogger("novomodelo_bridge")
     prior_propagate = pkg.propagate
     prior_level = pkg.level
     try:
@@ -294,12 +294,12 @@ def hydro_with_group(
 ) -> dict[str, Any]:
     """Build a 0.13-shaped ``hydros.json`` hydro dict for tests.
 
-    Matches the shape every converter now emits (cobre decisions 13/14 →
+    Matches the shape every converter now emits (novomodelo decisions 13/14 →
     §7.6, §7.8, via
-    :func:`cobre_bridge.core.hydro_units.build_mirror_unit_group`): no
+    :func:`novomodelo_bridge.core.hydro_units.build_mirror_unit_group`): no
     top-level ``bus_id`` and a single seven-field mirror ``unit_groups``
     entry whose four bounds equal this dict's own ``generation`` envelope
-    (cobre rule 41's mirror invariant).
+    (novomodelo rule 41's mirror invariant).
 
     Use this wherever a test needs "some hydro on bus N" rather than a
     real converter output — it replaces a hand-rolled seven-field group
@@ -308,7 +308,7 @@ def hydro_with_group(
     Parameters
     ----------
     hydro_id:
-        The Cobre 0-based hydro id.
+        The Novomodelo 0-based hydro id.
     bus_id:
         The plant's bus id (relocated into ``unit_groups[0].bus_id``; no
         longer emitted at the top level).
@@ -384,7 +384,7 @@ def _fake_dataset(*, all_within_tol: bool = False) -> ComparisonDataset:
                 "turbined_m3s",
                 "turbined_m3s",
             ],
-            "source": ["newave", "cobre", "newave", "cobre"],
+            "source": ["newave", "novomodelo", "newave", "novomodelo"],
             "value": [100.0, 100.0, 100.0, 100.0 if all_within_tol else 90.0],
         },
         schema=TIDY_SCHEMA,
@@ -420,7 +420,7 @@ def _empty_fake_dataset() -> ComparisonDataset:
 
 
 # ---------------------------------------------------------------------------
-# Canned pipeline-mock payloads shared by the cobre schema-registry and
+# Canned pipeline-mock payloads shared by the novomodelo schema-registry and
 # newave pipeline tests (via ``_all_converter_patches``).
 # ---------------------------------------------------------------------------
 
@@ -580,115 +580,115 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
     fake_case.id_map = fake_id_map
     return [
         patch(
-            "cobre_bridge.newave.pipeline.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.pipeline.NewaveCase.from_directory",
             return_value=fake_case,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.hydro_conv.convert_hydros",
+            "novomodelo_bridge.newave.pipeline.hydro_conv.convert_hydros",
             return_value=_FAKE_HYDROS,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.thermal_conv.convert_thermals",
+            "novomodelo_bridge.newave.pipeline.thermal_conv.convert_thermals",
             return_value=_FAKE_THERMALS,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.network_conv.convert_buses",
+            "novomodelo_bridge.newave.pipeline.network_conv.convert_buses",
             return_value=_FAKE_BUSES,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.network_conv.convert_lines",
+            "novomodelo_bridge.newave.pipeline.network_conv.convert_lines",
             return_value=_FAKE_LINES,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.network_conv.convert_penalties",
+            "novomodelo_bridge.newave.pipeline.network_conv.convert_penalties",
             return_value=_FAKE_PENALTIES,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.temporal_conv.convert_stages",
+            "novomodelo_bridge.newave.pipeline.temporal_conv.convert_stages",
             return_value=_FAKE_STAGES,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.temporal_conv.convert_config",
+            "novomodelo_bridge.newave.pipeline.temporal_conv.convert_config",
             return_value=_FAKE_CONFIG,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.ic_conv.convert_initial_conditions",
+            "novomodelo_bridge.newave.pipeline.ic_conv.convert_initial_conditions",
             return_value=_FAKE_IC,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.stochastic_conv.convert_inflow_stats",
+            "novomodelo_bridge.newave.pipeline.stochastic_conv.convert_inflow_stats",
             return_value=_FAKE_INFLOW_TABLE,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.stochastic_conv.convert_load_stats",
+            "novomodelo_bridge.newave.pipeline.stochastic_conv.convert_load_stats",
             return_value=_FAKE_LOAD_TABLE,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.inflow_windows.convert_recent_observation_windows",
+            "novomodelo_bridge.newave.pipeline.inflow_windows.convert_recent_observation_windows",
             return_value=[],
         ),
         patch(
-            "cobre_bridge.newave.pipeline.inflow_windows.convert_inflow_history_windows",
+            "novomodelo_bridge.newave.pipeline.inflow_windows.convert_inflow_history_windows",
             return_value=_FAKE_INFLOW_TABLE,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.hydro_conv.read_cadastro",
+            "novomodelo_bridge.newave.pipeline.hydro_conv.read_cadastro",
             return_value=MagicMock(),
         ),
         patch(
-            "cobre_bridge.newave.pipeline.hydro_conv.generate_hydro_geometry",
+            "novomodelo_bridge.newave.pipeline.hydro_conv.generate_hydro_geometry",
             return_value=_FAKE_INFLOW_TABLE,  # reuse any small pa.Table
         ),
         patch(
-            "cobre_bridge.newave.pipeline.constraints_conv.convert_vminop_constraints",
+            "novomodelo_bridge.newave.pipeline.constraints_conv.convert_vminop_constraints",
             return_value=None,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.constraints_conv.convert_electric_constraints",
+            "novomodelo_bridge.newave.pipeline.constraints_conv.convert_electric_constraints",
             return_value=None,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.constraints_conv.convert_agrint_constraints",
+            "novomodelo_bridge.newave.pipeline.constraints_conv.convert_agrint_constraints",
             return_value=None,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.stochastic_conv.convert_load_factors",
+            "novomodelo_bridge.newave.pipeline.stochastic_conv.convert_load_factors",
             return_value=_FAKE_LOAD_FACTORS,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.network_conv.convert_line_bounds",
+            "novomodelo_bridge.newave.pipeline.network_conv.convert_line_bounds",
             return_value=_FAKE_LINE_BOUNDS_TABLE,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.network_conv.convert_non_controllable_sources",
+            "novomodelo_bridge.newave.pipeline.network_conv.convert_non_controllable_sources",
             return_value=_FAKE_NCS,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.network_conv.convert_ncs_factors",
+            "novomodelo_bridge.newave.pipeline.network_conv.convert_ncs_factors",
             return_value=_FAKE_NCS_FACTORS,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.network_conv.convert_ncs_stats",
+            "novomodelo_bridge.newave.pipeline.network_conv.convert_ncs_stats",
             return_value=_FAKE_NCS_BOUNDS_TABLE,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.hydro_conv.convert_production_models",
+            "novomodelo_bridge.newave.pipeline.hydro_conv.convert_production_models",
             return_value={"production_models": []},
         ),
         patch(
-            "cobre_bridge.newave.pipeline.hydro_conv.compute_base_productivities",
+            "novomodelo_bridge.newave.pipeline.hydro_conv.compute_base_productivities",
             return_value={},
         ),
         patch(
-            "cobre_bridge.newave.pipeline.hydro_conv.convert_hydro_energy_productivity",
+            "novomodelo_bridge.newave.pipeline.hydro_conv.convert_hydro_energy_productivity",
             return_value=_FAKE_HYDRO_ENERGY_PRODUCTIVITY_TABLE,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.thermal_conv.convert_thermal_bounds",
+            "novomodelo_bridge.newave.pipeline.thermal_conv.convert_thermal_bounds",
             return_value=None,
         ),
         patch(
-            "cobre_bridge.newave.pipeline.hydro_conv.convert_storage_bounds",
+            "novomodelo_bridge.newave.pipeline.hydro_conv.convert_storage_bounds",
             return_value=None,
         ),
     ]

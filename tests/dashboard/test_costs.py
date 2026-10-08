@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.tabs.costs.
+"""Unit tests for novomodelo_bridge.dashboard.tabs.costs.
 
 Covers module constants, can_render, _compute_npv_metric, _build_metrics_row,
 and the full render() path including the empty-costs degradation branch.
@@ -15,8 +15,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import polars as pl
 
-import cobre_bridge.dashboard.tabs.costs as costs_mod
-from cobre_bridge.dashboard.tabs.costs import (
+import novomodelo_bridge.dashboard.tabs.costs as costs_mod
+from novomodelo_bridge.dashboard.tabs.costs import (
     _build_composition_data,
     _build_composition_section,
     _build_metrics_row,
@@ -147,7 +147,7 @@ def test_compute_npv_metric_undiscounted_returns_mean_per_scenario() -> None:
 
 
 def test_compute_npv_metric_discounted_less_than_undiscounted() -> None:
-    """When cobre's ``discount_factor`` column is <1 on later stages the NPV
+    """When novomodelo's ``discount_factor`` column is <1 on later stages the NPV
     is lower than the undiscounted per-scenario sum."""
     undiscounted = _compute_npv_metric(
         _make_mock_data(

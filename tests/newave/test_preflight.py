@@ -1,4 +1,4 @@
-"""Unit tests for the pure preflight validation engine (``cobre_bridge.newave.preflight``)."""
+"""Unit tests for the pure preflight validation engine (``novomodelo_bridge.newave.preflight``)."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.core.preflight import PreflightVerdict
-from cobre_bridge.newave import preflight
-from cobre_bridge.newave.files import NewaveFiles
-from cobre_bridge.newave.preflight import run_preflight
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.preflight import PreflightVerdict
+from novomodelo_bridge.newave import preflight
+from novomodelo_bridge.newave.files import NewaveFiles
+from novomodelo_bridge.newave.preflight import run_preflight
 from tests.conftest import make_nw_files
 
 # Optional field names derived the same way the module does, so the "all present"
@@ -127,7 +127,7 @@ class TestSwitchAdvisory:
     def _switches(self, **values: int):
         from unittest.mock import MagicMock
 
-        from cobre_bridge.newave.switches import DgerSwitches
+        from novomodelo_bridge.newave.switches import DgerSwitches
 
         dger = MagicMock()
         for field, value in values.items():

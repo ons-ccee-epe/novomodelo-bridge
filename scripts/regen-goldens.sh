@@ -7,7 +7,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 PYTEST="${PYTEST:-.venv/bin/pytest}"
 
 cd "$REPO_ROOT"
-COBRE_BRIDGE_UPDATE_GOLDENS=1 "$PYTEST" \
+NOVOMODELO_BRIDGE_UPDATE_GOLDENS=1 "$PYTEST" \
     tests/comparators/test_golden_dataset.py \
     tests/dashboard/test_chart_helpers.py \
     tests/comparators/test_report_builder.py \

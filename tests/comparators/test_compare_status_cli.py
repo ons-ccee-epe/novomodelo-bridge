@@ -16,14 +16,14 @@ import polars as pl
 import pytest
 from typer.testing import CliRunner
 
-from cobre_bridge.cli import app
-from cobre_bridge.comparators.analyze import build_results_dataset
-from cobre_bridge.comparators.dataset import (
+from novomodelo_bridge.cli import app
+from novomodelo_bridge.comparators.analyze import build_results_dataset
+from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
     TIDY_SCHEMA,
     ComparisonDataset,
 )
-from cobre_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 
 
 def _newave_dataset(*, all_within_tol: bool) -> ComparisonDataset:
@@ -32,11 +32,11 @@ def _newave_dataset(*, all_within_tol: bool) -> ComparisonDataset:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=100.0 if all_within_tol else 110.0,
+            novomodelo_value=100.0 if all_within_tol else 110.0,
             abs_diff=0.0 if all_within_tol else 10.0,
             rel_diff=0.0 if all_within_tol else 0.1,
         ),
@@ -58,7 +58,7 @@ def _decomp_dataset(*, all_within_tol: bool) -> ComparisonDataset:
             "stage": [0, 0],
             "block": [-1, -1],
             "variable": ["generation_mw", "generation_mw"],
-            "source": ["newave", "cobre"],
+            "source": ["newave", "novomodelo"],
             "value": [100.0, 100.0 if all_within_tol else 110.0],
         },
         schema=TIDY_SCHEMA,
@@ -99,7 +99,7 @@ def _patch_newave_context(monkeypatch: pytest.MonkeyPatch) -> None:
     # ``dataclasses.fields``, which raises on a non-dataclass. The paths
     # need not exist: a missing file degrades to a ``None`` hash/size.
     monkeypatch.setattr(
-        "cobre_bridge.newave.case.NewaveCase.from_directory",
+        "novomodelo_bridge.newave.case.NewaveCase.from_directory",
         classmethod(
             lambda cls, _dir: MagicMock(
                 id_map=MagicMock(), files=make_nw_files(Path("nw"))
@@ -107,10 +107,12 @@ def _patch_newave_context(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+        "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
         lambda *a, **k: MagicMock(),
     )
-    monkeypatch.setattr("cobre_bridge.cobre.readers.read_cobre_lines", lambda _dir: [])
+    monkeypatch.setattr(
+        "novomodelo_bridge.novomodelo.readers.read_novomodelo_lines", lambda _dir: []
+    )
 
 
 def _invoke_newave(
@@ -118,13 +120,13 @@ def _invoke_newave(
 ) -> Any:
     _patch_newave_context(monkeypatch)
     monkeypatch.setattr(
-        "cobre_bridge.comparators.newave.results.compare_results",
+        "novomodelo_bridge.comparators.newave.results.compare_results",
         lambda **_kwargs: dataset,
     )
-    cobre_dir = tmp_path / "cobre"
-    cobre_dir.mkdir()
+    novomodelo_dir = tmp_path / "novomodelo"
+    novomodelo_dir.mkdir()
     return CliRunner().invoke(
-        app, ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir), "--json"]
+        app, ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"]
     )
 
 
@@ -137,11 +139,11 @@ def _invoke_decomp(
     # ``build_decomp_dataset`` is mocked away; give it a real ``DecompFiles``
     # dataclass instead of trying to discover a deck under the fake ``tmp_path``.
     monkeypatch.setattr(
-        "cobre_bridge.decomp.case.DecompCase.from_directory",
+        "novomodelo_bridge.decomp.case.DecompCase.from_directory",
         classmethod(lambda cls, _dir: make_decomp_case(Path("decomp"))),
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.build_decomp_dataset",
+        "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
         lambda *_args, **_kwargs: dataset,
     )
     return CliRunner().invoke(

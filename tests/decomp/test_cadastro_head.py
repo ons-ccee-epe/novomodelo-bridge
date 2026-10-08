@@ -21,23 +21,23 @@ import pandas as pd
 import pytest
 from idecomp.decomp.modelos.dadger import ACCOTVOL, ACJUSMED, ACPERHID, ACPROESP
 
-from cobre_bridge.core.productivity import apply_hydraulic_loss, mean_cota
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.core.productivity import apply_hydraulic_loss, mean_cota
+from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     OutOfHorizon,
     _read_polynomial_overrides,
     build_effective_cadastro,
 )
-from cobre_bridge.decomp.converters.hydro import (
+from novomodelo_bridge.decomp.converters.hydro import (
     convert_energy_productivity,
     convert_hydro_group_availability,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 
 if TYPE_CHECKING:
-    from cobre_bridge.decomp.temporal import OperativeStage
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
 class _FakeDadger:
@@ -518,7 +518,7 @@ def test_all_zero_coeffs_plant_returns_zero_and_warns(
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
     effective = EffectiveCadastro(base=hidr, n_stages=1, stage_varying={})
 
-    with caplog.at_level(logging.WARNING, logger="cobre_bridge.core.productivity"):
+    with caplog.at_level(logging.WARNING, logger="novomodelo_bridge.core.productivity"):
         table = convert_energy_productivity(effective, id_map).to_pandas()
 
     assert table["equivalent_productivity_mw_per_m3s"].iloc[0] == 0.0

@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from cobre_bridge.comparators.dataset import (
+from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
     TIDY_SCHEMA,
     VALID_SOURCES,
@@ -18,7 +18,7 @@ from cobre_bridge.comparators.dataset import (
     _metadata_from_json,
     _metadata_to_json,
 )
-from cobre_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.comparators.model import ResultComparison
 from tests.golden_utils import _strip_chart_id
 
 if TYPE_CHECKING:
@@ -86,7 +86,7 @@ def test_tidy_schema_columns_order() -> None:
 
 def test_valid_sources_membership() -> None:
     """VALID_SOURCES holds exactly the documented literal source labels."""
-    assert VALID_SOURCES == frozenset({"newave", "cobre", "p10", "p50", "p90"})
+    assert VALID_SOURCES == frozenset({"newave", "novomodelo", "p10", "p50", "p90"})
 
 
 def test_empty_dataset_has_typed_frames() -> None:
@@ -142,7 +142,7 @@ def test_roundtrip_polars_metadata_frame(tmp_path: Path) -> None:
     """A ``pl.DataFrame`` stored in metadata survives the round-trip."""
     frame = pl.DataFrame({"line_id": [0, 1], "limit": [100.0, 200.0]})
     dataset = ComparisonDataset(
-        tidy=_one_row_tidy("cobre"),
+        tidy=_one_row_tidy("novomodelo"),
         summary=_small_summary(),
         metadata={"summary_counts_frame": frame},
     )
@@ -208,9 +208,9 @@ def test_frozenset_nested_in_metadata_value_raises(tmp_path: Path) -> None:
     dataset = ComparisonDataset(
         tidy=_one_row_tidy("newave"),
         summary=_small_summary(),
-        metadata={"cobre_hydro_meta": {0: {"bus_ids": frozenset({7})}}},
+        metadata={"novomodelo_hydro_meta": {0: {"bus_ids": frozenset({7})}}},
     )
-    with pytest.raises(TypeError, match="cobre_hydro_meta"):
+    with pytest.raises(TypeError, match="novomodelo_hydro_meta"):
         dataset.to_dir(tmp_path)
 
 
@@ -278,11 +278,11 @@ def _make_result_comparison() -> ResultComparison:
         entity_type="hydro",
         entity_name="ITAIPU",
         newave_code=10,
-        cobre_id=0,
+        novomodelo_id=0,
         stage=0,
         variable="generation_mw",
         newave_value=100.0,
-        cobre_value=110.0,
+        novomodelo_value=110.0,
         abs_diff=10.0,
         rel_diff=0.1,
     )
@@ -295,16 +295,16 @@ def _populated_render() -> RenderInputs:
     return RenderInputs(
         results=[_make_result_comparison()],
         nw_costs={"deficit": 1.0},
-        cobre_costs={"deficit": 2.0},
+        novomodelo_costs={"deficit": 2.0},
         nw_bus_names={0: "SUDESTE"},
-        cobre_bus_meta={0: {"name": "SUDESTE"}},
-        cobre_hydro_meta={0: {"name": "ITAIPU", "bus_ids": [0]}},
+        novomodelo_bus_meta={0: {"name": "SUDESTE"}},
+        novomodelo_hydro_meta={0: {"name": "ITAIPU", "bus_ids": [0]}},
         bus=pl.DataFrame({"entity_id": [0], "stage_id": [0]}),
         line_bounds=pl.DataFrame({"line_id": [0], "max_flow_mw": [100.0]}),
         gc_constraints=[{"id": 1, "name": "c1"}],
         nw_offset=1,
         nw_max_stage=5,
-        cobre_training_seconds=2.5,
+        novomodelo_training_seconds=2.5,
     )
 
 
@@ -326,7 +326,7 @@ def test_roundtrip_render_frame_fields_preserve_type_and_values(
 
 
 def test_roundtrip_render_int_keyed_dicts_restore_int_keys(tmp_path: Path) -> None:
-    """``nw_bus_names``/``cobre_bus_meta``/``cobre_hydro_meta`` keep ``int`` keys.
+    """``nw_bus_names``/``novomodelo_bus_meta``/``novomodelo_hydro_meta`` keep ``int`` keys.
 
     Unlike a generic ``metadata`` dict (whose non-string-key coercion on
     round-trip is accepted, see
@@ -343,8 +343,10 @@ def test_roundtrip_render_int_keyed_dicts_restore_int_keys(tmp_path: Path) -> No
     reloaded = ComparisonDataset.from_dir(dataset.to_dir(tmp_path)[0].parent)
 
     assert reloaded.render.nw_bus_names == {0: "SUDESTE"}
-    assert reloaded.render.cobre_bus_meta == {0: {"name": "SUDESTE"}}
-    assert reloaded.render.cobre_hydro_meta == {0: {"name": "ITAIPU", "bus_ids": [0]}}
+    assert reloaded.render.novomodelo_bus_meta == {0: {"name": "SUDESTE"}}
+    assert reloaded.render.novomodelo_hydro_meta == {
+        0: {"name": "ITAIPU", "bus_ids": [0]}
+    }
 
 
 def test_roundtrip_render_results_list_reconstructs_result_comparisons(
@@ -372,16 +374,16 @@ def test_roundtrip_render_scalars_and_list_fields(tmp_path: Path) -> None:
     reloaded = ComparisonDataset.from_dir(dataset.to_dir(tmp_path)[0].parent)
 
     assert reloaded.render.nw_costs == {"deficit": 1.0}
-    assert reloaded.render.cobre_costs == {"deficit": 2.0}
+    assert reloaded.render.novomodelo_costs == {"deficit": 2.0}
     assert reloaded.render.gc_constraints == [{"id": 1, "name": "c1"}]
     assert reloaded.render.nw_offset == 1
     assert reloaded.render.nw_max_stage == 5
-    assert reloaded.render.cobre_training_seconds == 2.5
+    assert reloaded.render.novomodelo_training_seconds == 2.5
 
 
 def test_render_from_json_malformed_result_record_raises() -> None:
     """A ``results`` record missing a ``ResultComparison`` field raises by key."""
-    from cobre_bridge.comparators.dataset import _render_from_json
+    from novomodelo_bridge.comparators.dataset import _render_from_json
 
     view = {"results": [{"entity_type": "hydro"}]}
     with pytest.raises(TypeError, match="results"):
@@ -396,7 +398,7 @@ def test_empty_render_reproduces_report_byte_identically(tmp_path: Path) -> None
     ``build_comparison_report`` call, regardless of round-tripping — see
     ``test_chart_helpers``'s own golden tests for the same normalization.
     """
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     dataset = ComparisonDataset(tidy=_one_row_tidy("newave"), summary=_small_summary())
     html_before = build_comparison_report(dataset)
@@ -414,7 +416,7 @@ def test_render_round_trip_reproduces_report_byte_identically(tmp_path: Path) ->
     Compared via :func:`_strip_chart_id` for the same reason as
     :func:`test_empty_render_reproduces_report_byte_identically`.
     """
-    from cobre_bridge.comparators.report_builder import build_comparison_report
+    from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
     dataset = ComparisonDataset(
         tidy=_one_row_tidy("newave"),

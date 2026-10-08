@@ -15,7 +15,7 @@ class TestCompareDatasetWiring:
 
     Patch the heavy readers (``NewaveCase``, alignment, ``compare_*``) so the real
     dataset build + ``write_artifacts`` + dataset-driven printers run without the source
-    model/Cobre I/O.
+    model/Novomodelo I/O.
     """
 
     def _invoke_main(
@@ -25,9 +25,9 @@ class TestCompareDatasetWiring:
     ) -> tuple[int, str, str]:
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -43,26 +43,26 @@ class TestCompareDatasetWiring:
 
     @staticmethod
     def _results() -> object:
-        from cobre_bridge.comparators.model import ResultComparison
+        from novomodelo_bridge.comparators.model import ResultComparison
 
         return [
             ResultComparison(
                 entity_type="hydro",
                 entity_name="ITAIPU",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=110.0,
+                novomodelo_value=110.0,
                 abs_diff=10.0,
                 rel_diff=0.1,
             ),
         ]
 
     def _patch_results(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
         from tests.conftest import make_nw_files
 
         # ``.files`` must be a real ``NewaveFiles`` dataclass (not a further
@@ -70,7 +70,7 @@ class TestCompareDatasetWiring:
         # ``dataclasses.fields``, which raises on a non-dataclass. The paths
         # need not exist: a missing file degrades to a ``None`` hash/size.
         monkeypatch.setattr(
-            "cobre_bridge.newave.case.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.case.NewaveCase.from_directory",
             classmethod(
                 lambda cls, _dir: MagicMock(
                     id_map=MagicMock(), files=make_nw_files(Path("nw"))
@@ -78,17 +78,17 @@ class TestCompareDatasetWiring:
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+            "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
             lambda *a, **k: MagicMock(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.cobre.readers.read_cobre_lines",
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_lines",
             lambda _dir: [],
         )
         # ``compare_results`` now returns the canonical ``ComparisonDataset``;
         # build it from the same fixture rows so the CLI path is exercised.
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             lambda **k: build_results_dataset(self._results(), PercentileData(), 1e-2),
         )
 
@@ -96,16 +96,16 @@ class TestCompareDatasetWiring:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
         assert code == 0
-        manifest_path = cobre_dir / "comparison_artifacts" / "comparison.json"
+        manifest_path = novomodelo_dir / "comparison_artifacts" / "comparison.json"
         assert manifest_path.exists()
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert manifest["command"] == "compare newave"
@@ -122,16 +122,16 @@ class TestCompareDatasetWiring:
         frame-wrapping serializer, which handles their non-JSON-native values.
         """
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
         assert code == 0
-        artifacts_dir = cobre_dir / "comparison_artifacts"
+        artifacts_dir = novomodelo_dir / "comparison_artifacts"
         assert (artifacts_dir / "comparison.json").exists()
         # to_dir round-trip artifacts prove metadata serialized cleanly.
         assert (artifacts_dir / "comparison.parquet").exists()
@@ -152,14 +152,14 @@ class TestCompareDatasetWiring:
             raise FileNotFoundError("caso.dat not found")
 
         monkeypatch.setattr(
-            "cobre_bridge.newave.case.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.case.NewaveCase.from_directory",
             classmethod(_raise_missing),
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, stderr = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -170,18 +170,18 @@ class TestCompareDatasetWiring:
     def test_compare_results_html_tabs_intact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.comparators.html_report import COMPARISON_TABS
+        from novomodelo_bridge.comparators.html_report import COMPARISON_TABS
 
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
             [
                 "compare",
                 "newave",
                 str(tmp_path / "nw"),
-                str(cobre_dir),
+                str(novomodelo_dir),
                 "--format",
                 "html",
             ],
@@ -189,7 +189,7 @@ class TestCompareDatasetWiring:
         )
 
         assert code == 0
-        report_path = cobre_dir / "comparison_artifacts" / "report.html"
+        report_path = novomodelo_dir / "comparison_artifacts" / "report.html"
         assert report_path.exists()
         html = report_path.read_text(encoding="utf-8")
         for tab_id, _label in COMPARISON_TABS:
@@ -200,16 +200,16 @@ class TestCompareDatasetWiring:
     ) -> None:
         """No ``--format``: default writes queryable artifacts, no HTML."""
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
         assert code == 0
-        artifacts_dir = cobre_dir / "comparison_artifacts"
+        artifacts_dir = novomodelo_dir / "comparison_artifacts"
         assert (artifacts_dir / "comparison.json").exists()
         assert (artifacts_dir / "comparison.parquet").exists()
         assert (artifacts_dir / "summary.json").exists()
@@ -220,15 +220,15 @@ class TestCompareDatasetWiring:
     ) -> None:
         """``--format console``: only the manifest is written (opt out of data)."""
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
             [
                 "compare",
                 "newave",
                 str(tmp_path / "nw"),
-                str(cobre_dir),
+                str(novomodelo_dir),
                 "--format",
                 "console",
             ],
@@ -236,7 +236,7 @@ class TestCompareDatasetWiring:
         )
 
         assert code == 0
-        artifacts_dir = cobre_dir / "comparison_artifacts"
+        artifacts_dir = novomodelo_dir / "comparison_artifacts"
         assert (artifacts_dir / "comparison.json").exists()
         assert not (artifacts_dir / "comparison.parquet").exists()
 
@@ -245,15 +245,15 @@ class TestCompareDatasetWiring:
     ) -> None:
         """``--format parquet,json``: queryable artifacts present, exit 0."""
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
             [
                 "compare",
                 "newave",
                 str(tmp_path / "nw"),
-                str(cobre_dir),
+                str(novomodelo_dir),
                 "--format",
                 "parquet,json",
             ],
@@ -261,7 +261,7 @@ class TestCompareDatasetWiring:
         )
 
         assert code == 0
-        artifacts_dir = cobre_dir / "comparison_artifacts"
+        artifacts_dir = novomodelo_dir / "comparison_artifacts"
         assert (artifacts_dir / "comparison.parquet").exists()
         assert (artifacts_dir / "summary.json").exists()
 
@@ -270,15 +270,15 @@ class TestCompareDatasetWiring:
     ) -> None:
         """``--format bogus``: stderr names the bad token, exit 2."""
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, stderr = self._invoke_main(
             [
                 "compare",
                 "newave",
                 str(tmp_path / "nw"),
-                str(cobre_dir),
+                str(novomodelo_dir),
                 "--format",
                 "bogus",
             ],
@@ -307,16 +307,18 @@ class TestCompareDatasetWiring:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._patch_results(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         def _boom(*_a: object, **_k: object) -> object:
             raise OSError("disk full")
 
-        monkeypatch.setattr("cobre_bridge.comparators.export.write_artifacts", _boom)
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.export.write_artifacts", _boom
+        )
 
         code, _, stderr = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -328,7 +330,7 @@ class TestCompareJson:
     """``compare bounds``/``compare results`` ``--json`` verdict.
 
     Patches the heavy readers (``NewaveCase``, alignment, ``compare_*``) so the
-    real dataset build + verdict derivation run without source-model/Cobre I/O,
+    real dataset build + verdict derivation run without source-model/Novomodelo I/O,
     then asserts the unified envelope on stdout, the exit-code contract, and the
     no-Rich-on-stdout property.
     """
@@ -343,9 +345,9 @@ class TestCompareJson:
     ) -> tuple[int, str, str]:
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -363,13 +365,13 @@ class TestCompareJson:
     def _results(*, within_tol: bool) -> object:
         """Build result rows that are fully within tol (matched) or divergent.
 
-        With ``within_tol`` the cobre value equals the newave value, so the
+        With ``within_tol`` the novomodelo value equals the newave value, so the
         derived ``within_tol_rate`` is ``1.0`` and ``all_within_tol`` is True.
-        Otherwise the cobre value diverges past the default ``1e-2`` tolerance.
+        Otherwise the novomodelo value diverges past the default ``1e-2`` tolerance.
         """
-        from cobre_bridge.comparators.model import ResultComparison
+        from novomodelo_bridge.comparators.model import ResultComparison
 
-        cobre_value = 100.0 if within_tol else 110.0
+        novomodelo_value = 100.0 if within_tol else 110.0
         abs_diff = 0.0 if within_tol else 10.0
         rel_diff = 0.0 if within_tol else 0.1
         return [
@@ -377,11 +379,11 @@ class TestCompareJson:
                 entity_type="hydro",
                 entity_name="ITAIPU",
                 newave_code=10,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="generation_mw",
                 newave_value=100.0,
-                cobre_value=cobre_value,
+                novomodelo_value=novomodelo_value,
                 abs_diff=abs_diff,
                 rel_diff=rel_diff,
             ),
@@ -396,7 +398,7 @@ class TestCompareJson:
         # ``dataclasses.fields``, which raises on a non-dataclass. The paths
         # need not exist: a missing file degrades to a ``None`` hash/size.
         monkeypatch.setattr(
-            "cobre_bridge.newave.case.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.case.NewaveCase.from_directory",
             classmethod(
                 lambda cls, _dir: MagicMock(
                     id_map=MagicMock(), files=make_nw_files(Path("nw"))
@@ -404,11 +406,11 @@ class TestCompareJson:
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+            "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
             lambda *a, **k: MagicMock(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.cobre.readers.read_cobre_lines",
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_lines",
             lambda _dir: [],
         )
 
@@ -418,12 +420,12 @@ class TestCompareJson:
         *,
         within_tol: bool,
     ) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
 
         self._patch_common(monkeypatch)
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             lambda **k: build_results_dataset(
                 self._results(within_tol=within_tol), PercentileData(), 1e-2
             ),
@@ -440,11 +442,11 @@ class TestCompareJson:
     ) -> None:
         """Divergent results → ``status="mismatch"`` but always exit 0."""
         self._patch_results(monkeypatch, within_tol=False)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir), "--json"],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"],
             monkeypatch,
         )
 
@@ -461,11 +463,11 @@ class TestCompareJson:
     ) -> None:
         """Fully-within-tol results → ``status="ok"`` and exit 0."""
         self._patch_results(monkeypatch, within_tol=True)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir), "--json"],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"],
             monkeypatch,
         )
 
@@ -475,26 +477,26 @@ class TestCompareJson:
         assert doc["summary"]["all_within_tol"] is True
         self._assert_no_rich_stdout(stdout)
 
-    def test_compare_results_json_cobre_read_error_exit_2_no_stdout(
+    def test_compare_results_json_novomodelo_read_error_exit_2_no_stdout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A CobreReadError exits 2 with stderr only — no stdout JSON."""
-        from cobre_bridge.cobre.readers import CobreReadError
+        """A NovomodeloReadError exits 2 with stderr only — no stdout JSON."""
+        from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
 
         self._patch_common(monkeypatch)
 
         def _raise(**_k: object) -> object:
-            raise CobreReadError("bad parquet")
+            raise NovomodeloReadError("bad parquet")
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             _raise,
         )
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir), "--json"],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"],
             monkeypatch,
         )
 
@@ -508,33 +510,33 @@ class TestCompareJson:
     def test_compare_results_partition_missing_exit_2_no_stdout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Regression: CobrePartitionMissingError (raised by
-        read_cobre_bus_aggregates against a pre-0.13 / 0.13-incomplete
+        """Regression: NovomodeloPartitionMissingError (raised by
+        read_novomodelo_bus_aggregates against a pre-0.13 / 0.13-incomplete
         output dir lacking simulation/hydro_bus_generation/) extends
-        BridgeError -- a hierarchy disjoint from CobreReadError
+        BridgeError -- a hierarchy disjoint from NovomodeloReadError
         (RuntimeError). The compare newave CLI handler must catch it too,
         rendering a clean ERROR line + exit 2, not an unhandled traceback.
         This drives the REAL reader against a genuinely 0.13-incomplete
         output dir (simulation/hydros/ present, simulation/
         hydro_bus_generation/ absent), so the exception message is
         production-generated, not hand-typed."""
-        from cobre_bridge.cobre.readers import read_cobre_bus_aggregates
+        from novomodelo_bridge.novomodelo.readers import read_novomodelo_bus_aggregates
 
         self._patch_common(monkeypatch)
 
-        cobre_dir = tmp_path / "cobre"
-        (cobre_dir / "simulation" / "hydros").mkdir(parents=True)
+        novomodelo_dir = tmp_path / "novomodelo"
+        (novomodelo_dir / "simulation" / "hydros").mkdir(parents=True)
 
         def _raise(**_k: object) -> object:
-            return read_cobre_bus_aggregates(cobre_dir)
+            return read_novomodelo_bus_aggregates(novomodelo_dir)
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results",
+            "novomodelo_bridge.comparators.newave.results.compare_results",
             _raise,
         )
 
         code, stdout, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir), "--json"],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"],
             monkeypatch,
         )
 
@@ -543,7 +545,7 @@ class TestCompareJson:
         assert doc["command"] == "compare newave"
         assert doc["status"] == "error"
         summary = doc["diagnostics"][0]["summary"]
-        assert str(cobre_dir / "simulation" / "hydro_bus_generation") in summary
+        assert str(novomodelo_dir / "simulation" / "hydro_bus_generation") in summary
         assert "0.13.0" in summary
 
 
@@ -555,7 +557,7 @@ class TestCompareConfigEnvPrecedence:
     wrappers so the resolved ``tolerance`` / ``out_dir`` / ``formats`` reaching
     them can be asserted. The cwd is an isolated tmp subdir and
     ``XDG_CONFIG_HOME`` / ``HOME`` point at empty tmp subdirs, so only the test's
-    own ``cobre-bridge.toml`` (when written) is seen.
+    own ``novomodelo-bridge.toml`` (when written) is seen.
     """
 
     def _invoke_main(
@@ -565,9 +567,9 @@ class TestCompareConfigEnvPrecedence:
     ) -> tuple[int, str, str]:
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -585,7 +587,7 @@ class TestCompareConfigEnvPrecedence:
     def _isolate_config_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         """Chdir to an empty workdir and point config discovery at empty dirs.
 
-        Returns the workdir (where a ``cobre-bridge.toml`` may be written). The
+        Returns the workdir (where a ``novomodelo-bridge.toml`` may be written). The
         XDG/HOME fallbacks are redirected to empty tmp subdirs so no real user
         config leaks into the resolution.
         """
@@ -601,7 +603,7 @@ class TestCompareConfigEnvPrecedence:
         return workdir
 
     def _stub_readers(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Stub the heavy source-model / Cobre readers shared by both commands."""
+        """Stub the heavy source-model / Novomodelo readers shared by both commands."""
         from tests.conftest import make_nw_files
 
         # ``.files`` must be a real ``NewaveFiles`` dataclass (not a further
@@ -609,7 +611,7 @@ class TestCompareConfigEnvPrecedence:
         # ``dataclasses.fields``, which raises on a non-dataclass. The paths
         # need not exist: a missing file degrades to a ``None`` hash/size.
         monkeypatch.setattr(
-            "cobre_bridge.newave.case.NewaveCase.from_directory",
+            "novomodelo_bridge.newave.case.NewaveCase.from_directory",
             classmethod(
                 lambda cls, _dir: MagicMock(
                     id_map=MagicMock(), files=make_nw_files(Path("nw"))
@@ -617,11 +619,11 @@ class TestCompareConfigEnvPrecedence:
             ),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.alignment.build_entity_alignment",
+            "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
             lambda *a, **k: MagicMock(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.cobre.readers.read_cobre_lines",
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_lines",
             lambda _dir: [],
         )
 
@@ -629,8 +631,8 @@ class TestCompareConfigEnvPrecedence:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> dict[str, object]:
         """Patch ``compare_results`` with a recorder; return the captured kwargs."""
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
 
         captured: dict[str, object] = {}
 
@@ -639,7 +641,7 @@ class TestCompareConfigEnvPrecedence:
             return build_results_dataset([], PercentileData(), 1e-2)
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.newave.results.compare_results", _recorder
+            "novomodelo_bridge.comparators.newave.results.compare_results", _recorder
         )
         return captured
 
@@ -651,7 +653,7 @@ class TestCompareConfigEnvPrecedence:
             captured.update(kwargs)
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.export.write_artifacts", _recorder
+            "novomodelo_bridge.comparators.export.write_artifacts", _recorder
         )
         return captured
 
@@ -662,16 +664,16 @@ class TestCompareConfigEnvPrecedence:
     ) -> None:
         """A ``[compare.results]`` tolerance reaches compare_results."""
         workdir = self._isolate_config_env(tmp_path, monkeypatch)
-        (workdir / "cobre-bridge.toml").write_text(
+        (workdir / "novomodelo-bridge.toml").write_text(
             "[compare.results]\ntolerance = 4e-2\n", encoding="utf-8"
         )
         self._stub_readers(monkeypatch)
         captured = self._capture_results_tolerance(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -685,17 +687,17 @@ class TestCompareConfigEnvPrecedence:
     ) -> None:
         """A ``[compare] out_dir`` flows to ``write_artifacts`` as a ``Path``."""
         workdir = self._isolate_config_env(tmp_path, monkeypatch)
-        (workdir / "cobre-bridge.toml").write_text(
+        (workdir / "novomodelo-bridge.toml").write_text(
             '[compare]\nout_dir = "art"\n', encoding="utf-8"
         )
         self._stub_readers(monkeypatch)
         self._capture_results_tolerance(monkeypatch)
         captured = self._capture_out_dir(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -705,20 +707,20 @@ class TestCompareConfigEnvPrecedence:
     def test_out_dir_env_beats_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``COBRE_BRIDGE_OUT_DIR`` overrides a ``[compare] out_dir`` config value."""
+        """``NOVOMODELO_BRIDGE_OUT_DIR`` overrides a ``[compare] out_dir`` config value."""
         workdir = self._isolate_config_env(tmp_path, monkeypatch)
-        (workdir / "cobre-bridge.toml").write_text(
+        (workdir / "novomodelo-bridge.toml").write_text(
             '[compare]\nout_dir = "art_cfg"\n', encoding="utf-8"
         )
-        monkeypatch.setenv("COBRE_BRIDGE_OUT_DIR", "art_env")
+        monkeypatch.setenv("NOVOMODELO_BRIDGE_OUT_DIR", "art_env")
         self._stub_readers(monkeypatch)
         self._capture_results_tolerance(monkeypatch)
         captured = self._capture_out_dir(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -728,7 +730,7 @@ class TestCompareConfigEnvPrecedence:
     def test_format_env_beats_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``COBRE_BRIDGE_FORMAT`` overrides a ``[compare] format`` config value.
+        """``NOVOMODELO_BRIDGE_FORMAT`` overrides a ``[compare] format`` config value.
 
         The config asks for ``console`` only (which writes no file artifacts);
         the env asks for ``parquet``. If the env wins, ``write_artifacts`` is
@@ -736,18 +738,18 @@ class TestCompareConfigEnvPrecedence:
         not be called at all.
         """
         workdir = self._isolate_config_env(tmp_path, monkeypatch)
-        (workdir / "cobre-bridge.toml").write_text(
+        (workdir / "novomodelo-bridge.toml").write_text(
             '[compare]\nformat = ["console"]\n', encoding="utf-8"
         )
-        monkeypatch.setenv("COBRE_BRIDGE_FORMAT", "parquet")
+        monkeypatch.setenv("NOVOMODELO_BRIDGE_FORMAT", "parquet")
         self._stub_readers(monkeypatch)
         self._capture_results_tolerance(monkeypatch)
         captured = self._capture_out_dir(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, _, _ = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
@@ -761,21 +763,21 @@ class TestCompareConfigEnvPrecedence:
     ) -> None:
         """A malformed config warns on stderr only and keeps the built-in default."""
         workdir = self._isolate_config_env(tmp_path, monkeypatch)
-        (workdir / "cobre-bridge.toml").write_text(
+        (workdir / "novomodelo-bridge.toml").write_text(
             "this is = not valid = toml\n", encoding="utf-8"
         )
         self._stub_readers(monkeypatch)
         captured = self._capture_results_tolerance(monkeypatch)
-        cobre_dir = tmp_path / "cobre"
-        cobre_dir.mkdir()
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
 
         code, stdout, stderr = self._invoke_main(
-            ["compare", "newave", str(tmp_path / "nw"), str(cobre_dir)],
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir)],
             monkeypatch,
         )
 
         # Not the config-error exit; the comparison still runs at the default.
         assert code == 0
         assert captured["tolerance"] == 1e-2
-        assert "cobre-bridge.toml" in stderr
-        assert "cobre-bridge.toml" not in stdout
+        assert "novomodelo-bridge.toml" in stderr
+        assert "novomodelo-bridge.toml" not in stdout

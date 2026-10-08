@@ -10,18 +10,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from cobre_bridge.decomp.fcf import capability
-from cobre_bridge.decomp.fcf.capability import (
+from novomodelo_bridge.decomp.fcf import capability
+from novomodelo_bridge.decomp.fcf.capability import (
     REMEDIATION,
     ensure_boundary_fcf_capability,
 )
-from tests.conftest import requires_cobre_python, requires_writer_binding
+from tests.conftest import requires_novomodelo_python, requires_writer_binding
 
 #: Every fact the remediation message must name: the dependency at fault, the
 #: install/upgrade fix, and the ``--no-fcf`` escape hatch. Shared by every
 #: "raises" test below.
 _REMEDIATION_MARKERS = (
-    "cobre-python",
+    "novomodelo-python",
     "pip install",
     "--no-fcf",
 )
@@ -62,8 +62,8 @@ def test_ensure_boundary_fcf_capability_raises_when_wheel_lacks_writer(
     `ensure_writer_binding` test convention) raises with the remediation
     text, chained from the underlying `AttributeError`.
     """
-    stub_cobre = SimpleNamespace()
-    monkeypatch.setitem(sys.modules, "cobre", stub_cobre)
+    stub_novomodelo = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
     with pytest.raises(RuntimeError) as exc_info:
         ensure_boundary_fcf_capability()
@@ -73,16 +73,16 @@ def test_ensure_boundary_fcf_capability_raises_when_wheel_lacks_writer(
     assert isinstance(exc_info.value.__cause__, AttributeError)
 
 
-def test_ensure_boundary_fcf_capability_raises_when_cobre_absent(
+def test_ensure_boundary_fcf_capability_raises_when_novomodelo_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 1 (variant) -- cobre entirely absent raises the same remediation,
+    """AC 1 (variant) -- novomodelo entirely absent raises the same remediation,
     chained from `ModuleNotFoundError`. Setting the `sys.modules` entry to
     `None` (rather than deleting it) forces the import to fail even in an
-    environment where cobre is genuinely installed, the same trick
+    environment where novomodelo is genuinely installed, the same trick
     `test_decomp_fcf_bootstrap.py` uses.
     """
-    monkeypatch.setitem(sys.modules, "cobre", None)
+    monkeypatch.setitem(sys.modules, "novomodelo", None)
 
     with pytest.raises(RuntimeError) as exc_info:
         ensure_boundary_fcf_capability()
@@ -97,7 +97,7 @@ def test_ensure_boundary_fcf_capability_raises_when_slot_interval_start_missing(
 ) -> None:
     """AC 3 -- a wheel that writes and reloads fine, and whose reloaded pool
     carries every self-describing field (`priced_state_date` included), but
-    whose reloaded terminal manifest slot lacks `interval_start` (a cobre that
+    whose reloaded terminal manifest slot lacks `interval_start` (a novomodelo that
     predates the dated per-slot schema) still raises -- proving the probe
     checks the slot-level date field, not merely the
     `write_policy_checkpoint` attribute.
@@ -121,11 +121,11 @@ def test_ensure_boundary_fcf_capability_raises_when_slot_interval_start_missing(
             }
         ]
     }
-    stub_cobre = SimpleNamespace(
+    stub_novomodelo = SimpleNamespace(
         write_policy_checkpoint=lambda *args, **kwargs: None,
         results=SimpleNamespace(load_policy=lambda *args, **kwargs: fake_policy),
     )
-    monkeypatch.setitem(sys.modules, "cobre", stub_cobre)
+    monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
     with pytest.raises(RuntimeError) as exc_info:
         ensure_boundary_fcf_capability()
@@ -140,7 +140,7 @@ def test_ensure_boundary_fcf_capability_raises_when_priced_state_date_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC 3 (pool-date variant) -- a wheel whose reloaded terminal pool omits
-    `priced_state_date` (a cobre that predates the dated self-describing
+    `priced_state_date` (a novomodelo that predates the dated self-describing
     checkpoint) still raises -- proving the probe checks the pool's date the
     boundary loader selects a source against, not merely the slot-level fields.
     """
@@ -163,11 +163,11 @@ def test_ensure_boundary_fcf_capability_raises_when_priced_state_date_missing(
             }
         ]
     }
-    stub_cobre = SimpleNamespace(
+    stub_novomodelo = SimpleNamespace(
         write_policy_checkpoint=lambda *args, **kwargs: None,
         results=SimpleNamespace(load_policy=lambda *args, **kwargs: fake_policy),
     )
-    monkeypatch.setitem(sys.modules, "cobre", stub_cobre)
+    monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
     with pytest.raises(RuntimeError) as exc_info:
         ensure_boundary_fcf_capability()
@@ -182,7 +182,7 @@ def test_ensure_boundary_fcf_capability_raises_when_season_manifest_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC 3 (metadata variant) -- a wheel whose reloaded pool and slot are fully
-    formed but whose reloaded metadata omits `season_manifest` (a cobre
+    formed but whose reloaded metadata omits `season_manifest` (a novomodelo
     predating the season-manifest round-trip) still raises -- proving the probe
     checks the study-global season descriptor the boundary loader's
     season-compatibility gate requires."""
@@ -207,11 +207,11 @@ def test_ensure_boundary_fcf_capability_raises_when_season_manifest_missing(
         ],
         "metadata": {},
     }
-    stub_cobre = SimpleNamespace(
+    stub_novomodelo = SimpleNamespace(
         write_policy_checkpoint=lambda *args, **kwargs: None,
         results=SimpleNamespace(load_policy=lambda *args, **kwargs: fake_policy),
     )
-    monkeypatch.setitem(sys.modules, "cobre", stub_cobre)
+    monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
     with pytest.raises(RuntimeError) as exc_info:
         ensure_boundary_fcf_capability()
@@ -247,11 +247,11 @@ def test_ensure_boundary_fcf_capability_raises_when_cost_scale_factor_missing(
             }
         ]
     }
-    stub_cobre = SimpleNamespace(
+    stub_novomodelo = SimpleNamespace(
         write_policy_checkpoint=lambda *args, **kwargs: None,
         results=SimpleNamespace(load_policy=lambda *args, **kwargs: fake_policy),
     )
-    monkeypatch.setitem(sys.modules, "cobre", stub_cobre)
+    monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
     with pytest.raises(RuntimeError) as exc_info:
         ensure_boundary_fcf_capability()
@@ -262,21 +262,21 @@ def test_ensure_boundary_fcf_capability_raises_when_cost_scale_factor_missing(
     assert "cost_scale_factor" in str(exc_info.value.__cause__)
 
 
-def test_capability_module_imports_with_cobre_absent(
+def test_capability_module_imports_with_novomodelo_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 4 -- no module-scope `import cobre`: forcing `import cobre` to
+    """AC 4 -- no module-scope `import novomodelo`: forcing `import novomodelo` to
     raise `ModuleNotFoundError` and reloading the already-imported module
     must not raise.
     """
-    monkeypatch.setitem(sys.modules, "cobre", None)
+    monkeypatch.setitem(sys.modules, "novomodelo", None)
 
     reloaded = importlib.reload(capability)
 
     assert hasattr(reloaded, "ensure_boundary_fcf_capability")
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 @requires_writer_binding
 def test_ensure_boundary_fcf_capability_passes_against_installed_wheel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -285,7 +285,7 @@ def test_ensure_boundary_fcf_capability_passes_against_installed_wheel(
     passes silently and writes only under a temporary directory: forcing
     `tempfile.gettempdir()` to resolve under `tmp_path` and asserting
     nothing is left behind afterward (the probe's own `TemporaryDirectory`
-    cleans itself up on exit). With `cobre-python` a core dependency this
+    cleans itself up on exit). With `novomodelo-python` a core dependency this
     runs on every CI job, proving the pinned/released wheel supports the
     boundary-FCF checkpoint format end to end.
     """

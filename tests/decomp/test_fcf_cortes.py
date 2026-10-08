@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pandas as pd  # type: ignore[import-untyped]  # pandas-stubs not installed
 import pytest
 
-from cobre_bridge.decomp.fcf.cortes import (
+from novomodelo_bridge.decomp.fcf.cortes import (
     BoundaryCuts,
     CortesHeader,
     CutFamilySummary,
@@ -143,7 +143,7 @@ def test_read_cortesh_synthetic_preserves_slot_order() -> None:
         )
 
     with patch(
-        "cobre_bridge.decomp.fcf.cortes.Cortesh.read",
+        "novomodelo_bridge.decomp.fcf.cortes.Cortesh.read",
         return_value=_FakeCortesh(),
     ):
         header = read_cortesh(Path("unused-cortesh.dat"))
@@ -204,7 +204,7 @@ def test_read_cortes_rejects_nonzero_sar(tmp_path: Path) -> None:
 
     with (
         patch(
-            "cobre_bridge.decomp.fcf.cortes.Cortes.from_cortesh",
+            "novomodelo_bridge.decomp.fcf.cortes.Cortes.from_cortesh",
             return_value=_FakeCortes(),
         ),
         pytest.raises(ValueError, match="SAR"),
@@ -266,7 +266,7 @@ def test_read_cortes_synthetic_records_and_trailer_stage(tmp_path: Path) -> None
         cortes = frame
 
     with patch(
-        "cobre_bridge.decomp.fcf.cortes.Cortes.from_cortesh",
+        "novomodelo_bridge.decomp.fcf.cortes.Cortes.from_cortesh",
         return_value=_FakeCortes(),
     ):
         boundary = read_cortes(cortes_path, _FakeCortesh(), boundary_stage=None)

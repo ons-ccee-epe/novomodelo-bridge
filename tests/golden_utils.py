@@ -1,7 +1,7 @@
 """Shared golden-file helpers for the ``tests/golden/`` snapshots.
 
 Regenerate goldens via ``scripts/regen-goldens.sh``
-(``COBRE_BRIDGE_UPDATE_GOLDENS=1``) -- never hand-edit a file under
+(``NOVOMODELO_BRIDGE_UPDATE_GOLDENS=1``) -- never hand-edit a file under
 ``tests/golden/``.
 """
 
@@ -20,7 +20,7 @@ _GOLDEN_DIR = Path(__file__).parent / "golden"
 
 def update_goldens() -> bool:
     """Return True when goldens should be (re)written rather than checked."""
-    return os.environ.get("COBRE_BRIDGE_UPDATE_GOLDENS") == "1"
+    return os.environ.get("NOVOMODELO_BRIDGE_UPDATE_GOLDENS") == "1"
 
 
 def _strip_chart_id(html: str) -> str:

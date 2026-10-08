@@ -11,7 +11,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.fpha import (
+from novomodelo_bridge.comparators.fpha import (
     FPHA_METRICS_SCHEMA,
     FPHA_SPILL_SCHEMA,
     FPHA_SURFACE_SCHEMA,
@@ -94,7 +94,7 @@ def _points(rows: list[dict[str, float]]) -> pl.DataFrame:
         rows,
         schema={
             "_point_id": pl.Int64,
-            "cobre_id": pl.Int64,
+            "novomodelo_id": pl.Int64,
             "stage": pl.Int64,
             "v_hm3": pl.Float64,
             "q_m3s": pl.Float64,
@@ -131,7 +131,7 @@ def test_point_cloud_takes_min_over_planes() -> None:
         [
             {
                 "_point_id": 0,
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "stage": 0,
                 "v_hm3": 0.0,
                 "q_m3s": 5.0,
@@ -139,7 +139,7 @@ def test_point_cloud_takes_min_over_planes() -> None:
             },
             {
                 "_point_id": 1,
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "stage": 0,
                 "v_hm3": 0.0,
                 "q_m3s": 20.0,
@@ -149,7 +149,7 @@ def test_point_cloud_takes_min_over_planes() -> None:
     )
 
     out = point_cloud(planes, points).sort("_point_id")
-    assert out["cobre_gh_mw"].to_list() == [5.0, 10.0]
+    assert out["novomodelo_gh_mw"].to_list() == [5.0, 10.0]
 
 
 def test_point_cloud_applies_volume_offset() -> None:
@@ -171,7 +171,7 @@ def test_point_cloud_applies_volume_offset() -> None:
         [
             {
                 "_point_id": 0,
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "stage": 0,
                 "v_hm3": 110.0,
                 "q_m3s": 0.0,
@@ -181,7 +181,7 @@ def test_point_cloud_applies_volume_offset() -> None:
     )
 
     out = point_cloud(planes, points, volume_offset=10.0)
-    assert out["cobre_gh_mw"].to_list() == pytest.approx([10.0])
+    assert out["novomodelo_gh_mw"].to_list() == pytest.approx([10.0])
 
 
 def test_point_cloud_default_volume_offset_is_zero() -> None:
@@ -204,7 +204,7 @@ def test_point_cloud_default_volume_offset_is_zero() -> None:
         [
             {
                 "_point_id": 0,
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "stage": 0,
                 "v_hm3": 110.0,
                 "q_m3s": 0.0,
@@ -214,7 +214,7 @@ def test_point_cloud_default_volume_offset_is_zero() -> None:
     )
 
     out = point_cloud(planes, points)
-    assert out["cobre_gh_mw"].to_list() == pytest.approx([11.0])
+    assert out["novomodelo_gh_mw"].to_list() == pytest.approx([11.0])
 
 
 def test_point_cloud_point_with_no_matching_plane_drops_out() -> None:
@@ -235,7 +235,7 @@ def test_point_cloud_point_with_no_matching_plane_drops_out() -> None:
         [
             {
                 "_point_id": 0,
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "stage": 0,
                 "v_hm3": 0.0,
                 "q_m3s": 0.0,
@@ -244,7 +244,7 @@ def test_point_cloud_point_with_no_matching_plane_drops_out() -> None:
             # No (hydro_id=1, stage_id=0) plane exists.
             {
                 "_point_id": 1,
-                "cobre_id": 1,
+                "novomodelo_id": 1,
                 "stage": 0,
                 "v_hm3": 0.0,
                 "q_m3s": 0.0,
@@ -275,7 +275,7 @@ def test_point_cloud_returns_empty_typed_frame_when_no_planes_match() -> None:
         [
             {
                 "_point_id": 0,
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "stage": 0,
                 "v_hm3": 0.0,
                 "q_m3s": 0.0,
@@ -286,7 +286,7 @@ def test_point_cloud_returns_empty_typed_frame_when_no_planes_match() -> None:
 
     out = point_cloud(planes, points)
     assert out.is_empty()
-    assert out.schema == {"_point_id": pl.Int64, "cobre_gh_mw": pl.Float64}
+    assert out.schema == {"_point_id": pl.Int64, "novomodelo_gh_mw": pl.Float64}
 
 
 # --------------------------------------------------------------------------- #
@@ -296,11 +296,11 @@ def test_point_cloud_returns_empty_typed_frame_when_no_planes_match() -> None:
 
 def test_fpha_metrics_schema_columns() -> None:
     assert list(FPHA_METRICS_SCHEMA) == [
-        "cobre_id",
+        "novomodelo_id",
         "plant_name",
         "stage",
         "n_planes_newave",
-        "n_planes_cobre",
+        "n_planes_novomodelo",
         "n_v",
         "nmae",
         "bias",
@@ -311,7 +311,7 @@ def test_fpha_metrics_schema_columns() -> None:
 
 def test_fpha_surface_schema_columns() -> None:
     assert list(FPHA_SURFACE_SCHEMA) == [
-        "cobre_id",
+        "novomodelo_id",
         "plant_name",
         "stage",
         "v_hm3",
@@ -323,7 +323,7 @@ def test_fpha_surface_schema_columns() -> None:
 
 def test_fpha_spill_schema_columns() -> None:
     assert list(FPHA_SPILL_SCHEMA) == [
-        "cobre_id",
+        "novomodelo_id",
         "plant_name",
         "stage",
         "s_m3s",

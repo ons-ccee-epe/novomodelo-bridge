@@ -114,7 +114,7 @@ def registry(track: str) -> dict[str, SourceFile]:
     and ``label_table_matches_files_dataclass`` reports any key mismatch.
     """
     if track == "newave":
-        from cobre_bridge.newave.files import NewaveFiles
+        from novomodelo_bridge.newave.files import NewaveFiles
 
         hints = get_type_hints(NewaveFiles)
         out = {
@@ -129,7 +129,7 @@ def registry(track: str) -> dict[str, SourceFile]:
         )
         return out
     if track == "decomp":
-        from cobre_bridge.decomp.files import DecompFiles
+        from novomodelo_bridge.decomp.files import DecompFiles
 
         hints = get_type_hints(DecompFiles)
         out = {
@@ -149,12 +149,12 @@ def registry(track: str) -> dict[str, SourceFile]:
 def label_table_matches_files_dataclass(track: str) -> list[str]:
     """Keys the label table and the files dataclass disagree on."""
     if track == "newave":
-        from cobre_bridge.newave.files import NewaveFiles
+        from novomodelo_bridge.newave.files import NewaveFiles
 
         expected = {f.name for f in dc_fields(NewaveFiles)} - {"directory"}
         known = set(_NEWAVE_LABELS)
     else:
-        from cobre_bridge.decomp.files import DecompFiles
+        from novomodelo_bridge.decomp.files import DecompFiles
 
         expected = {f.name for f in dc_fields(DecompFiles)} - {"revision"}
         known = set(_DECOMP_LABELS)

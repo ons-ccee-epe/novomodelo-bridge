@@ -9,11 +9,11 @@ tests in ``tests/decomp/test_fcf_roundtrip.py`` prove the mapper's
 storage/lag legs end to end via a synthetic ``map -> write -> load_policy``
 round trip cross-checked against a *non-circular* oracle; this module is the
 GNL ring's equivalent — deck-independent, tier-2 (needs the optional
-``cobre-python`` wheel and its writer binding, but no real deck and no real
+``novomodelo-python`` wheel and its writer binding, but no real deck and no real
 solver binary).
 
 The oracle here never calls
-:func:`cobre_bridge.decomp.fcf.mapper.map_boundary_cuts`'s private
+:func:`novomodelo_bridge.decomp.fcf.mapper.map_boundary_cuts`'s private
 ``col``/``_resolve_gnl_targets``/``_index_gnl_ring`` helpers — routing the
 oracle through the code under test would make this a circular,
 Python-vs-Python check. Instead it re-derives the flat ``pi_gnl`` column
@@ -31,8 +31,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from cobre_bridge.decomp.fcf.cortes import BoundaryCuts
-from cobre_bridge.decomp.fcf.mapper import GnlRingPlan, GnlThermalTarget
+from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
+from novomodelo_bridge.decomp.fcf.mapper import GnlRingPlan, GnlThermalTarget
 from tests._fcf_fixtures import (
     make_cortes_header,
     make_cut_record,
@@ -41,9 +41,9 @@ from tests._fcf_fixtures import (
     make_slot,
     synthetic_roundtrip,
 )
-from tests.conftest import requires_cobre_python, requires_writer_binding
+from tests.conftest import requires_novomodelo_python, requires_writer_binding
 
-#: cobre `policy.fbs` entity_type codes (mirrors `fcf/mapper.py`'s private
+#: novomodelo `policy.fbs` entity_type codes (mirrors `fcf/mapper.py`'s private
 #: constants of the same name/value — re-declared here, never imported, so
 #: this oracle's slot lookup never depends on the mapper under test).
 _HYDRO_STORAGE = 0
@@ -142,11 +142,11 @@ def _make_pi_gnl() -> tuple[float, ...]:
     return tuple(pi_gnl)
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 @requires_writer_binding
 def test_synthetic_gnl_roundtrip_coefficient_identity(tmp_path: Path) -> None:
     """AC 1/2/3 — the GNL ring's covered/non-covered/sentinel identity, no
-    deck and no cobre binary.
+    deck and no novomodelo binary.
 
     Maps a synthetic 3-slot `AnticipatedThermalState` ring (a thermal-94
     sentinel, a thermal-94 covered dated slot, and a thermal-95 non-covered

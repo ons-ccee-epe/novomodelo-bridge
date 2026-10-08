@@ -2,7 +2,7 @@
 
 CI-tier and deck-independent: every test drives a synthetic ``_StubDadgnl`` with
 hand-authored ``gl``/``tg``/``gs`` data (mirroring the real register shapes), so
-the suite needs no deck and no cobre binary. ``gl`` is a list of register stubs
+the suite needs no deck and no novomodelo binary. ``gl`` is a list of register stubs
 (the real ``gl(df=True)`` is unusable on ragged weekly blocks); ``tg``/``gs`` are
 DataFrames (their fixed shapes make ``df=True`` well-formed).
 """
@@ -17,8 +17,8 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.converters import anticipated
-from cobre_bridge.decomp.converters.anticipated import (
+from novomodelo_bridge.decomp.converters import anticipated
+from novomodelo_bridge.decomp.converters.anticipated import (
     GnlClassification,
     GnlCommitment,
     GnlCommitmentModel,
@@ -34,7 +34,7 @@ from cobre_bridge.decomp.converters.anticipated import (
     is_gnl_enabled,
     read_gnl_model,
 )
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
 class _GlReg:
@@ -328,12 +328,12 @@ def test_month_end_duration_hours_uses_month_last_day_not_next_month_start() -> 
     assert _month_end_duration_hours(date(2026, 2, 1)) == 648.0
 
 
-def test_build_post_study_calendar_matches_cobre_e2e_oracle() -> None:
+def test_build_post_study_calendar_matches_novomodelo_e2e_oracle() -> None:
     # class4_end = 2026-05-16 (both plants' shared já-comandada cutoff): a
     # 24 h stub + 2 operative weeks fill class-4 up to it, then one
     # class-3 stage per study stage (3 weekly mirrors + the trailing
     # monthly mirror, spanning to the end of ITS OWN calendar month, June)
-    # -- the exact 7-stage shape cobre's own post-study e2e fixture pins.
+    # -- the exact 7-stage shape novomodelo's own post-study e2e fixture pins.
     stages = _build_post_study_calendar(_STUDY_SPANS, date(2026, 5, 16))
 
     assert [(s["start_date"], s["duration_hours"]) for s in stages] == [
@@ -513,7 +513,7 @@ def test_convert_gnl_emitted_lead_reaches_each_plants_class4_end() -> None:
 
 def test_convert_gnl_left_boundary_tiles_the_h_derived_leading_stages() -> None:
     # The uncapped lead 1176 h exceeds the horizon (1152 h), so
-    # lead_delivery_stage_count = every study stage — cobre's
+    # lead_delivery_stage_count = every study stage — novomodelo's
     # check_commitment_coverage requires exactly these. Both plants tile all 4
     # (0 MW: no in-horizon gl commitment folds in), followed by each plant's
     # class-4 já-comandada run (asserted separately).
@@ -554,7 +554,7 @@ def test_convert_gnl_thermal_bounds_cover_only_class3_stages() -> None:
     # class-3 study-mirror starts on the 7-stage calendar, so stages 0-2
     # (the class-4 já-comandada fill) get no thermal_bounds row -- their
     # delivery is already fixed by past_anticipated_commitments -- while
-    # stages 3-6 (one per study stage) do, matching cobre's own post-study
+    # stages 3-6 (one per study stage) do, matching novomodelo's own post-study
     # e2e fixture.
     e = convert_gnl(
         _emit_model(), first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
@@ -679,7 +679,7 @@ def test_convert_gnl_warns_on_nonuniform_nl_lag(
         nl_lag_months={86: 2, 224: 3},  # differing lags
     )
     with caplog.at_level(
-        logging.WARNING, logger="cobre_bridge.decomp.converters.anticipated"
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
     ):
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
@@ -724,7 +724,7 @@ def test_convert_gnl_clamps_past_commitment_above_capability(
 ) -> None:
     # gl geracao and tg disponibilidade are independent; an in-study commitment
     # above the plant's max_mw is clamped into [min_mw, max_mw] (+ warned) so
-    # cobre's semantic validator (value_mw in [min, max]) never rejects it.
+    # novomodelo's semantic validator (value_mw in [min, max]) never rejects it.
     santa = _SANTA
     model = GnlCommitmentModel(
         tg=_TG,
@@ -738,7 +738,7 @@ def test_convert_gnl_clamps_past_commitment_above_capability(
         nl_lag_months={86: 2},
     )
     with caplog.at_level(
-        logging.WARNING, logger="cobre_bridge.decomp.converters.anticipated"
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
     ):
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
@@ -772,7 +772,7 @@ def test_convert_gnl_reads_tg_per_stage_like_ct(
         nl_lag_months={86: 2},
     )
     with caplog.at_level(
-        logging.WARNING, logger="cobre_bridge.decomp.converters.anticipated"
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
     ):
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
@@ -881,7 +881,7 @@ def test_convert_gnl_clamps_class4_commitment_above_capability(
         nl_lag_months={86: 2},
     )
     with caplog.at_level(
-        logging.WARNING, logger="cobre_bridge.decomp.converters.anticipated"
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
     ):
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR

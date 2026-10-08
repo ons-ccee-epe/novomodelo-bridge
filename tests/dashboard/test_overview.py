@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.tabs.overview.
+"""Unit tests for novomodelo_bridge.dashboard.tabs.overview.
 
 Covers module constants, can_render, helper functions, and the full
 render() path including the empty-costs degradation branch.
@@ -12,8 +12,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import polars as pl
 
-import cobre_bridge.dashboard.tabs.overview as overview_mod
-from cobre_bridge.dashboard.tabs.overview import (
+import novomodelo_bridge.dashboard.tabs.overview as overview_mod
+from novomodelo_bridge.dashboard.tabs.overview import (
     _chart_training_mini,
     _compute_gen_gwh,
     _format_duration,
@@ -77,7 +77,7 @@ def _make_training_metadata(
     """Build a training_metadata dict from legacy test parameters.
 
     The implementation reads from ``data.training_metadata`` using keys
-    ``cobre_version``, ``started_at``, ``duration_seconds``, and a nested
+    ``novomodelo_version``, ``started_at``, ``duration_seconds``, and a nested
     ``convergence`` sub-dict with ``termination_reason``.
 
     Legacy test helpers passed ``training_manifest`` and ``metadata``
@@ -466,7 +466,7 @@ def test_render_with_full_data_contains_required_substrings() -> None:
     # Patch _stage_avg_mw so it doesn't try to execute the LazyFrame
     stage_mw = {0: 100.0, 1: 110.0, 2: 105.0}
     with patch(
-        "cobre_bridge.dashboard.tabs.overview._stage_avg_mw",
+        "novomodelo_bridge.dashboard.tabs.overview._stage_avg_mw",
         return_value=stage_mw,
     ):
         html = render(data)
@@ -485,7 +485,7 @@ def test_render_termination_reason_appears_in_output() -> None:
         training_manifest={"termination_reason": "gap_tolerance"},
     )
     with patch(
-        "cobre_bridge.dashboard.tabs.overview._stage_avg_mw",
+        "novomodelo_bridge.dashboard.tabs.overview._stage_avg_mw",
         return_value={0: 100.0},
     ):
         html = render(data)
@@ -503,7 +503,7 @@ def test_render_with_empty_costs_does_not_raise_and_contains_placeholder() -> No
     data = _make_mock_data(costs=pd.DataFrame())
 
     with patch(
-        "cobre_bridge.dashboard.tabs.overview._stage_avg_mw",
+        "novomodelo_bridge.dashboard.tabs.overview._stage_avg_mw",
         return_value={0: 100.0},
     ):
         html = render(data)
@@ -516,7 +516,7 @@ def test_render_with_empty_conv_shows_no_convergence_placeholder() -> None:
     data = _make_mock_data(conv=pd.DataFrame())
 
     with patch(
-        "cobre_bridge.dashboard.tabs.overview._stage_avg_mw",
+        "novomodelo_bridge.dashboard.tabs.overview._stage_avg_mw",
         return_value={0: 100.0},
     ):
         html = render(data)

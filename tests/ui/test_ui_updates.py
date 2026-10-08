@@ -6,10 +6,10 @@ collapsible_section() default_collapsed parameter.
 
 from __future__ import annotations
 
-from cobre_bridge.ui.html.css import DASHBOARD_CSS
-from cobre_bridge.ui.html.document import collapsible_section
-from cobre_bridge.ui.html.js import SUB_TAB_JS
-from cobre_bridge.ui.theme import (
+from novomodelo_bridge.ui.html.css import DASHBOARD_CSS
+from novomodelo_bridge.ui.html.document import collapsible_section
+from novomodelo_bridge.ui.html.js import SUB_TAB_JS
+from novomodelo_bridge.ui.theme import (
     BAND_OPACITY,
     BOUND_LINE_COLOR,
     GENERATION_COLORS,
@@ -39,7 +39,7 @@ def test_generation_colors_values() -> None:
 
 def test_hydro_color_is_consistent_across_palettes() -> None:
     """The hydro entity must read identically wherever it is drawn (no collision)."""
-    from cobre_bridge.ui.theme import COLORS
+    from novomodelo_bridge.ui.theme import COLORS
 
     assert GENERATION_COLORS["hydro"] == COLORS["hydro"]
 

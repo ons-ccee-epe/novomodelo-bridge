@@ -5,7 +5,7 @@ Locks in the ``dashboard`` migration from ``SimpleNamespace`` to the typed
 ``_fail`` (a ``--json`` error envelope instead of empty stdout),
 the two human status lines are suppressed under ``--quiet`` while
 the dashboard file is still written, and ``--no-color`` reaches every
-console ``_run_dashboard`` builds. Imports no cobre; the dashboard build
+console ``_run_dashboard`` builds. Imports no novomodelo; the dashboard build
 itself is stubbed so no real case data is required.
 """
 
@@ -24,9 +24,9 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner, Result
 
-from cobre_bridge.cli import app
-from cobre_bridge.cli.args import DashboardArgs
-from cobre_bridge.cli.dashboard import _run_dashboard
+from novomodelo_bridge.cli import app
+from novomodelo_bridge.cli.args import DashboardArgs
+from novomodelo_bridge.cli.dashboard import _run_dashboard
 
 
 def _invoke(argv: list[str]) -> Result:
@@ -34,9 +34,9 @@ def _invoke(argv: list[str]) -> Result:
 
 
 def _run_cli_subprocess(*args: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the cobre-bridge entry point as a real subprocess."""
+    """Invoke the novomodelo-bridge entry point as a real subprocess."""
     return subprocess.run(
-        [sys.executable, "-m", "cobre_bridge.cli", *args],
+        [sys.executable, "-m", "novomodelo_bridge.cli", *args],
         capture_output=True,
         text=True,
     )
@@ -53,13 +53,13 @@ def _stub_build_dashboard(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub ``build_dashboard`` to write a tiny file at the output path.
 
     ``_run_dashboard`` imports ``build_dashboard`` lazily inside its own body,
-    so the patch target is the defining module, not ``cobre_bridge.cli.dashboard``.
+    so the patch target is the defining module, not ``novomodelo_bridge.cli.dashboard``.
     """
 
     def _fake_build(_case_dir: Path, output_path: Path) -> None:
         output_path.write_text("x", encoding="utf-8")
 
-    monkeypatch.setattr("cobre_bridge.dashboard.build_dashboard", _fake_build)
+    monkeypatch.setattr("novomodelo_bridge.dashboard.build_dashboard", _fake_build)
 
 
 def _spy_print_status(monkeypatch: pytest.MonkeyPatch) -> list[Console]:
@@ -73,7 +73,7 @@ def _spy_print_status(monkeypatch: pytest.MonkeyPatch) -> list[Console]:
     """
     import importlib
 
-    from cobre_bridge.cli.dashboard import print_status as original
+    from novomodelo_bridge.cli.dashboard import print_status as original
 
     captured: list[Console] = []
 
@@ -87,7 +87,7 @@ def _spy_print_status(monkeypatch: pytest.MonkeyPatch) -> list[Console]:
     # handler resolves the name off `cli.dashboard`'s own module globals, so a
     # spy set anywhere else (e.g. `cli.app`, which only re-imports the handler)
     # never intercepts the call.
-    cli_module = importlib.import_module("cobre_bridge.cli.dashboard")
+    cli_module = importlib.import_module("novomodelo_bridge.cli.dashboard")
     monkeypatch.setattr(cli_module, "print_status", _spy)
     return captured
 
@@ -195,10 +195,10 @@ class TestDashboardOpen:
     """``dashboard --open`` launches the written HTML in a browser.
 
     Runs ``dashboard`` in-process via ``cli.main`` with the real dashboard build
-    stubbed (``cobre_bridge.dashboard.build_dashboard``) so it only writes a tiny
+    stubbed (``novomodelo_bridge.dashboard.build_dashboard``) so it only writes a tiny
     file at the output path — enough for the ``output_path.stat()`` size line to
     succeed without building a real dashboard. ``webbrowser.open`` is patched at
-    its ``cobre_bridge.cli.dashboard`` import site so no actual browser is launched.
+    its ``novomodelo_bridge.cli.dashboard`` import site so no actual browser is launched.
     """
 
     def _invoke_main(
@@ -208,9 +208,9 @@ class TestDashboardOpen:
     ) -> tuple[int, str, str]:
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -242,7 +242,7 @@ class TestDashboardOpen:
         def _fake_build(_case_dir: Path, output_path: Path) -> None:
             output_path.write_text("x", encoding="utf-8")
 
-        monkeypatch.setattr("cobre_bridge.dashboard.build_dashboard", _fake_build)
+        monkeypatch.setattr("novomodelo_bridge.dashboard.build_dashboard", _fake_build)
 
     def test_dashboard_open_calls_webbrowser_with_file_uri(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -252,7 +252,7 @@ class TestDashboardOpen:
         expected_uri = (case_dir / "dashboard.html").resolve().as_uri()
 
         with patch(
-            "cobre_bridge.cli.dashboard.webbrowser.open", return_value=True
+            "novomodelo_bridge.cli.dashboard.webbrowser.open", return_value=True
         ) as mock_open:
             exit_code, _stdout, _stderr = self._invoke_main(
                 ["dashboard", str(case_dir), "--open"], monkeypatch
@@ -267,7 +267,7 @@ class TestDashboardOpen:
         case_dir = self._make_case_dir(tmp_path)
         self._stub_build_dashboard(monkeypatch)
 
-        with patch("cobre_bridge.cli.dashboard.webbrowser.open") as mock_open:
+        with patch("novomodelo_bridge.cli.dashboard.webbrowser.open") as mock_open:
             exit_code, _stdout, _stderr = self._invoke_main(
                 ["dashboard", str(case_dir)], monkeypatch
             )
@@ -282,7 +282,7 @@ class TestDashboardOpen:
         self._stub_build_dashboard(monkeypatch)
 
         with patch(
-            "cobre_bridge.cli.dashboard.webbrowser.open",
+            "novomodelo_bridge.cli.dashboard.webbrowser.open",
             side_effect=webbrowser.Error("no browser"),
         ):
             exit_code, _stdout, stderr = self._invoke_main(
@@ -298,7 +298,9 @@ class TestDashboardOpen:
         case_dir = self._make_case_dir(tmp_path)
         self._stub_build_dashboard(monkeypatch)
 
-        with patch("cobre_bridge.cli.dashboard.webbrowser.open", return_value=False):
+        with patch(
+            "novomodelo_bridge.cli.dashboard.webbrowser.open", return_value=False
+        ):
             exit_code, _stdout, stderr = self._invoke_main(
                 ["dashboard", str(case_dir), "--open"], monkeypatch
             )
@@ -325,9 +327,9 @@ class TestDashboardJson:
     ) -> tuple[int, str, str]:
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -355,7 +357,7 @@ class TestDashboardJson:
         def _fake_build(_case_dir: Path, output_path: Path) -> None:
             output_path.write_text("x", encoding="utf-8")
 
-        monkeypatch.setattr("cobre_bridge.dashboard.build_dashboard", _fake_build)
+        monkeypatch.setattr("novomodelo_bridge.dashboard.build_dashboard", _fake_build)
 
     def test_dashboard_json_success_shape_and_exit_0(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -424,7 +426,9 @@ class TestDashboardJson:
         case_dir = self._make_case_dir(tmp_path)
         self._stub_build_dashboard(monkeypatch)
 
-        with patch("cobre_bridge.cli.dashboard.webbrowser.open", return_value=False):
+        with patch(
+            "novomodelo_bridge.cli.dashboard.webbrowser.open", return_value=False
+        ):
             exit_code, stdout, stderr = self._invoke_main(
                 ["dashboard", str(case_dir), "--json", "--open"], monkeypatch
             )

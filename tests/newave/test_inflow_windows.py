@@ -1,4 +1,4 @@
-"""Tests for the windowed inflow emission module (Cobre >= 0.13 shapes)."""
+"""Tests for the windowed inflow emission module (Novomodelo >= 0.13 shapes)."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 
-from cobre_bridge.core.inflow_windows import (
+from novomodelo_bridge.core.inflow_windows import (
     format_observation_windows,
     month_window,
     previous_months,
 )
-from cobre_bridge.newave.converters.inflow_windows import (
+from novomodelo_bridge.newave.converters.inflow_windows import (
     INFLOW_HISTORY_WINDOW_SCHEMA,
     convert_inflow_history_windows,
     convert_recent_observation_windows,
 )
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
 
 # ---------------------------------------------------------------------------
@@ -178,13 +178,13 @@ class TestFormatObservationWindows:
 
 
 class TestConvertInflowHistoryWindows:
-    @patch("cobre_bridge.newave.converters.stochastic.Vazoes")
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
     def test_schema_is_the_windowed_layout(self, mock_vazoes_cls, tmp_path) -> None:
         mock_vazoes_cls.read.return_value = _make_vazoes_mock()
         table = convert_inflow_history_windows(_history_case(tmp_path), _ID_MAP)
         assert table.schema.equals(INFLOW_HISTORY_WINDOW_SCHEMA)
 
-    @patch("cobre_bridge.newave.converters.stochastic.Vazoes")
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
     def test_windows_are_calendar_months(self, mock_vazoes_cls, tmp_path) -> None:
         mock_vazoes_cls.read.return_value = _make_vazoes_mock()
         table = convert_inflow_history_windows(_history_case(tmp_path), _ID_MAP)
@@ -194,7 +194,7 @@ class TestConvertInflowHistoryWindows:
             assert row.start_date == start
             assert row.end_date == end
 
-    @patch("cobre_bridge.newave.converters.stochastic.Vazoes")
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
     def test_contiguous_per_hydro_and_truncated_before_study(
         self, mock_vazoes_cls, tmp_path
     ) -> None:
@@ -212,7 +212,7 @@ class TestConvertInflowHistoryWindows:
             ends = group["end_date"].tolist()
             assert starts[1:] == ends[:-1]
 
-    @patch("cobre_bridge.newave.converters.stochastic.Vazoes")
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
     def test_each_window_carries_its_month_of_record(
         self, mock_vazoes_cls, tmp_path
     ) -> None:

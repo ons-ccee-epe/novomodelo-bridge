@@ -2,7 +2,7 @@
 
 Synthetic ``_StubDadger``/``EffectiveCadastro``/``ConstraintCensus``/
 ``OperativeStage`` fixtures only — no deck, no ``example/`` read, no
-``import cobre`` (mirrors ``test_single_term_bounds.py``'s fixture
+``import novomodelo`` (mirrors ``test_single_term_bounds.py``'s fixture
 style). Covers:
 
 - ``convert_hydro_bounds``/``convert_storage_bounds`` return
@@ -33,34 +33,37 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.bounds_accumulator import (
+from novomodelo_bridge.decomp.bounds_accumulator import (
     BoundContribution,
     build_bound_tables,
     resolve,
 )
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
 )
-from cobre_bridge.decomp.converters.bounds import (
+from novomodelo_bridge.decomp.converters.bounds import (
     convert_hydro_bounds,
     convert_storage_bounds,
 )
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-from cobre_bridge.decomp.converters.network import (
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.network import (
     convert_pumping_stations,
     pumping_station_id_map,
 )
-from cobre_bridge.decomp.converters.single_term_bounds import (
+from novomodelo_bridge.decomp.converters.single_term_bounds import (
     single_term_bound_contributions,
 )
-from cobre_bridge.decomp.converters.thermal import ThermalBounds, convert_thermal_bounds
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.pipeline import _row_group_contributions
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.converters.thermal import (
+    ThermalBounds,
+    convert_thermal_bounds,
+)
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.pipeline import _row_group_contributions
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 
@@ -493,7 +496,7 @@ class TestWaterWithdrawalBaseOnlyAxis:
         irrigation withdrawal -- ``hydro_bounds`` returns unchanged."""
         import pyarrow as pa
 
-        from cobre_bridge.decomp.pipeline import _attach_water_withdrawal
+        from novomodelo_bridge.decomp.pipeline import _attach_water_withdrawal
 
         hydro_bounds = pa.table(
             {

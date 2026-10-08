@@ -1,7 +1,7 @@
 """Tier-1 tests for the RE/RHQ/RHV single-term bound producers.
 
 Synthetic ``ConstraintCensus``/``ConstraintRecord``/``StageBounds`` only — no
-deck, no ``example/`` read, no ``import cobre``. Covers the coefficient-sign
+deck, no ``example/`` read, no ``import novomodelo``. Covers the coefficient-sign
 side map, the per-block emission loop's block-count clamp, the "both sides
 absent" skip, the RHQ ``QDEF``/``QTUR``/``QDES``/``QVER`` axis lowering
 (including their coexistence on one plant and, for ``QDES``/``QVER``, the
@@ -19,23 +19,23 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
     lowers_to_bound,
 )
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-from cobre_bridge.decomp.converters.single_term_bounds import (
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.single_term_bounds import (
     HydroCapacities,
     single_term_bound_contributions,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 
@@ -220,7 +220,7 @@ def test_ft_thermal_single_block_generation_bound(
     id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
     """A single-term ``FT`` RE lowers to a ``family="thermal"`` contribution
-    on the cobre ``generation`` axis, resolved via ``id_map.thermal_id``
+    on the novomodelo ``generation`` axis, resolved via ``id_map.thermal_id``
     (M1)."""
     record = _ft_record(
         constraint_id=30,

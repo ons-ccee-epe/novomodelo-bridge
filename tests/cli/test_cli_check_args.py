@@ -1,10 +1,10 @@
 """Unit tests for the check-family CLI args migration.
 
-Tier 1 — pure Python, imports no cobre. Locks in the migration of
+Tier 1 — pure Python, imports no novomodelo. Locks in the migration of
 ``_run_check``/``_run_decomp_check`` from ``SimpleNamespace`` to the typed
 ``CheckArgs``, and the ``--no-color``-aware console split between the
 checklist (stdout) and diagnostics (stderr) it now threads through
-:func:`cobre_bridge.ui.console.render_checklist`.
+:func:`novomodelo_bridge.ui.console.render_checklist`.
 """
 
 from __future__ import annotations
@@ -20,11 +20,15 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner, Result
 
-from cobre_bridge.cli import app
-from cobre_bridge.cli.args import CheckArgs
-from cobre_bridge.cli.check import _run_check, _run_decomp_check
-from cobre_bridge.core.diagnostics import Diagnostic, Severity
-from cobre_bridge.core.preflight import CheckItem, PreflightResult, PreflightVerdict
+from novomodelo_bridge.cli import app
+from novomodelo_bridge.cli.args import CheckArgs
+from novomodelo_bridge.cli.check import _run_check, _run_decomp_check
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.preflight import (
+    CheckItem,
+    PreflightResult,
+    PreflightVerdict,
+)
 from tests.cli.conftest import _run_cli_subprocess
 from tests.conftest import _make_fake_newave_dir
 
@@ -44,7 +48,7 @@ def _spy_render_checklist(monkeypatch: pytest.MonkeyPatch) -> dict[str, Console]
     """
     import importlib
 
-    from cobre_bridge.cli.check import render_checklist as original
+    from novomodelo_bridge.cli.check import render_checklist as original
 
     captured: dict[str, Console] = {}
 
@@ -61,7 +65,7 @@ def _spy_render_checklist(monkeypatch: pytest.MonkeyPatch) -> dict[str, Console]
     # the handler resolves the name off `cli.check`'s own module globals, so a
     # spy set anywhere else (e.g. `cli.app`, which only re-imports the handler)
     # never intercepts the call.
-    cli_module = importlib.import_module("cobre_bridge.cli.check")
+    cli_module = importlib.import_module("novomodelo_bridge.cli.check")
     monkeypatch.setattr(cli_module, "render_checklist", _spy)
     return captured
 
@@ -113,7 +117,7 @@ class TestCheckNewaveJsonShape:
         self, tmp_path: Path
     ) -> None:
         with patch(
-            "cobre_bridge.newave.preflight.run_preflight",
+            "novomodelo_bridge.newave.preflight.run_preflight",
             return_value=_warnings_result(),
         ):
             result = _invoke(["check", "newave", str(tmp_path / "case"), "--json"])
@@ -140,7 +144,10 @@ class TestCheckNewaveSwitchAdvisoryJson:
     def test_switch_off_advisory_reaches_the_json_envelope_as_info(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.newave.switches import DgerSwitches, switch_off_diagnostic
+        from novomodelo_bridge.newave.switches import (
+            DgerSwitches,
+            switch_off_diagnostic,
+        )
 
         dger = MagicMock()
         dger.considera_ghmin = 0
@@ -158,7 +165,7 @@ class TestCheckNewaveSwitchAdvisoryJson:
             ],
         )
         with patch(
-            "cobre_bridge.newave.preflight.run_preflight", return_value=result_obj
+            "novomodelo_bridge.newave.preflight.run_preflight", return_value=result_obj
         ):
             result = _invoke(["check", "newave", str(tmp_path / "case"), "--json"])
 
@@ -179,7 +186,7 @@ class TestCheckNewaveNoColor:
         captured = _spy_render_checklist(monkeypatch)
 
         with patch(
-            "cobre_bridge.newave.preflight.run_preflight",
+            "novomodelo_bridge.newave.preflight.run_preflight",
             return_value=_warnings_result(),
         ):
             result = _invoke(["check", "newave", str(tmp_path / "case"), "--no-color"])
@@ -208,7 +215,7 @@ class TestCheckDecompJsonShape:
         self, tmp_path: Path
     ) -> None:
         with patch(
-            "cobre_bridge.decomp.preflight.run_decomp_preflight",
+            "novomodelo_bridge.decomp.preflight.run_decomp_preflight",
             return_value=_warnings_result(),
         ):
             result = _invoke(["check", "decomp", str(tmp_path / "case"), "--json"])
@@ -240,7 +247,7 @@ class TestCheckDecompNoColor:
         captured = _spy_render_checklist(monkeypatch)
 
         with patch(
-            "cobre_bridge.decomp.preflight.run_decomp_preflight",
+            "novomodelo_bridge.decomp.preflight.run_decomp_preflight",
             return_value=_warnings_result(),
         ):
             result = _invoke(["check", "decomp", str(tmp_path / "case"), "--no-color"])
@@ -271,9 +278,9 @@ class TestCheckCommand:
         """Run cli.main() in-process, capturing stdout/stderr and exit code."""
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -295,8 +302,8 @@ class TestCheckCommand:
         realistic payload; the verdict itself is taken verbatim by the handler and
         renderer (never recomputed from the checks/diagnostics here).
         """
-        from cobre_bridge.core.diagnostics import Diagnostic, Severity
-        from cobre_bridge.core.preflight import (
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+        from novomodelo_bridge.core.preflight import (
             CheckItem,
             PreflightResult,
             PreflightVerdict,
@@ -353,8 +360,8 @@ class TestCheckCommand:
 
     def test_check_verdict_shape(self) -> None:
         """The check ``summary`` helper feeds the unified envelope (checks nested)."""
-        from cobre_bridge.cli.verdict import build_verdict, check_summary
-        from cobre_bridge.core.preflight import PreflightVerdict
+        from novomodelo_bridge.cli.verdict import build_verdict, check_summary
+        from novomodelo_bridge.core.preflight import PreflightVerdict
 
         result = self._result(PreflightVerdict.WILL_NOT_CONVERT)
         summary = check_summary(
@@ -390,8 +397,8 @@ class TestCheckCommand:
 
     def test_verdict_to_exit_code_mapping(self) -> None:
         """The 0/1/2 mapping is exactly OK/WARNINGS/WILL_NOT_CONVERT (2 = severe)."""
-        from cobre_bridge.cli.check import _VERDICT_EXIT_CODE
-        from cobre_bridge.core.preflight import PreflightVerdict
+        from novomodelo_bridge.cli.check import _VERDICT_EXIT_CODE
+        from novomodelo_bridge.core.preflight import PreflightVerdict
 
         assert _VERDICT_EXIT_CODE == {
             PreflightVerdict.OK: 0,
@@ -404,10 +411,12 @@ class TestCheckCommand:
     def test_check_ok_exits_0(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core.preflight import PreflightVerdict
+        from novomodelo_bridge.core.preflight import PreflightVerdict
 
         result = self._result(PreflightVerdict.OK)
-        with patch("cobre_bridge.newave.preflight.run_preflight", return_value=result):
+        with patch(
+            "novomodelo_bridge.newave.preflight.run_preflight", return_value=result
+        ):
             code, stdout, _ = self._invoke_main(
                 ["check", "newave", str(tmp_path / "case")],
                 monkeypatch,
@@ -419,10 +428,12 @@ class TestCheckCommand:
     def test_check_warnings_exits_1(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core.preflight import PreflightVerdict
+        from novomodelo_bridge.core.preflight import PreflightVerdict
 
         result = self._result(PreflightVerdict.WARNINGS)
-        with patch("cobre_bridge.newave.preflight.run_preflight", return_value=result):
+        with patch(
+            "novomodelo_bridge.newave.preflight.run_preflight", return_value=result
+        ):
             code, stdout, _ = self._invoke_main(
                 ["check", "newave", str(tmp_path / "case")],
                 monkeypatch,
@@ -434,10 +445,12 @@ class TestCheckCommand:
     def test_check_will_not_convert_exits_2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core.preflight import PreflightVerdict
+        from novomodelo_bridge.core.preflight import PreflightVerdict
 
         result = self._result(PreflightVerdict.WILL_NOT_CONVERT)
-        with patch("cobre_bridge.newave.preflight.run_preflight", return_value=result):
+        with patch(
+            "novomodelo_bridge.newave.preflight.run_preflight", return_value=result
+        ):
             code, stdout, _ = self._invoke_main(
                 ["check", "newave", str(tmp_path / "case")],
                 monkeypatch,
@@ -450,10 +463,12 @@ class TestCheckCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--json`` on a WILL_NOT_CONVERT result emits JSON to stdout; exit 2."""
-        from cobre_bridge.core.preflight import PreflightVerdict
+        from novomodelo_bridge.core.preflight import PreflightVerdict
 
         result = self._result(PreflightVerdict.WILL_NOT_CONVERT)
-        with patch("cobre_bridge.newave.preflight.run_preflight", return_value=result):
+        with patch(
+            "novomodelo_bridge.newave.preflight.run_preflight", return_value=result
+        ):
             code, stdout, stderr = self._invoke_main(
                 ["check", "newave", str(tmp_path / "case"), "--json"],
                 monkeypatch,
@@ -482,13 +497,15 @@ class TestCheckCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``check`` must not write anything under the source directory."""
-        from cobre_bridge.core.preflight import PreflightVerdict
+        from novomodelo_bridge.core.preflight import PreflightVerdict
 
         src = _make_fake_newave_dir(tmp_path)
         before = sorted(p.name for p in src.iterdir())
 
         result = self._result(PreflightVerdict.OK)
-        with patch("cobre_bridge.newave.preflight.run_preflight", return_value=result):
+        with patch(
+            "novomodelo_bridge.newave.preflight.run_preflight", return_value=result
+        ):
             code, _, _ = self._invoke_main(
                 ["check", "newave", str(src)],
                 monkeypatch,

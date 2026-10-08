@@ -1,4 +1,4 @@
-# Linhagem de dados da conversão NEWAVE → Cobre.
+# Linhagem de dados da conversão NEWAVE → Novomodelo.
 #
 # Fonte única de docs/newave-data-map.md (gerado por scripts/gen-lineage-docs.py;
 # nunca edite a página). Um [[output]] por arquivo escrito, um [[output.field]] por
@@ -19,12 +19,12 @@ track = "newave"
 path = "config.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/temporal.py"
+module = "src/novomodelo_bridge/newave/converters/temporal.py"
 reads = [
   { file = "dger" },
   { file = "shist" },
 ]
-summary = "Parâmetros de treinamento e simulação do Cobre derivados dos flags de `dger.dat`; `shist.dat` entra somente no modo determinístico e na simulação histórica."
+summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos flags de `dger.dat`; `shist.dat` entra somente no modo determinístico e na simulação histórica."
 
   [[output.field]]
   path = "estimation.max_order"
@@ -34,7 +34,7 @@ summary = "Parâmetros de treinamento e simulação do Cobre derivados dos flags
   [[output.field]]
   path = "estimation.order_selection"
   from = [ { file = "dger", item = "consideracao_media_anual_afluencias" } ]
-  how = "0 → `pacf`; 1, 2 ou 3 → `pacf_annual` (o Cobre implementa a variante exata de 12 eixos, opção 3). Campo omitido quando o flag está ausente; no modo determinístico é `pacf`."
+  how = "0 → `pacf`; 1, 2 ou 3 → `pacf_annual` (o Novomodelo implementa a variante exata de 12 eixos, opção 3). Campo omitido quando o flag está ausente; no modo determinístico é `pacf`."
 
   [[output.field]]
   path = "exports.states"
@@ -137,7 +137,7 @@ summary = "Parâmetros de treinamento e simulação do Cobre derivados dos flags
   from = []
   status = "constant"
   when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
-  how = "Sempre `lml1` (seleção Level-1 de memória limitada). O Cobre tem um único interruptor para os dois passos; a união dos flags do NEWAVE o liga."
+  how = "Sempre `lml1` (seleção Level-1 de memória limitada). O Novomodelo tem um único interruptor para os dois passos; a união dos flags do NEWAVE o liga."
 
   [[output.field]]
   path = "training.cut_selection.selection.check_frequency"
@@ -156,7 +156,7 @@ summary = "Parâmetros de treinamento e simulação do Cobre derivados dos flags
   path = "training.parallelism.backward_scheduler.block_size"
   from = [ { file = "dger", item = "num_aberturas" } ]
   status = "derived"
-  how = "`ceil(num_aberturas / 2)`; coincide com o padrão do Cobre, mas é fixado a partir do deck."
+  how = "`ceil(num_aberturas / 2)`; coincide com o padrão do Novomodelo, mas é fixado a partir do deck."
 
   [[output.field]]
   path = "training.scenario_source.seed"
@@ -202,7 +202,7 @@ summary = "Parâmetros de treinamento e simulação do Cobre derivados dos flags
 path = "stages.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/temporal.py"
+module = "src/novomodelo_bridge/newave/converters/temporal.py"
 reads = [
   { file = "dger" },
   { file = "patamar" },
@@ -429,7 +429,7 @@ summary = "Um estágio mensal por mês de estudo e de pós-estudo, com blocos (p
 path = "penalties.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "penalid" },
@@ -551,7 +551,7 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
     { file = "hidr", item = "cadastro · produtibilidade_especifica" },
     { file = "confhd", item = "usinas · codigo_usina_jusante" },
   ]
-  how = "Sem variável em `penalid.dat`: 10 × maior custo de déficit × MAX_PRODTACUM_SIN (manual p.87, sem a divisão por C_M3S2HM3 porque a folga do Cobre é em m³/s)."
+  how = "Sem variável em `penalid.dat`: 10 × maior custo de déficit × MAX_PRODTACUM_SIN (manual p.87, sem a divisão por C_M3S2HM3 porque a folga do Novomodelo é em m³/s)."
 
   [[output.field]]
   path = "hydro.inflow_nonnegativity_cost"
@@ -570,7 +570,7 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
     { file = "hidr", item = "cadastro · produtibilidade_especifica" },
     { file = "confhd", item = "usinas · codigo_usina_jusante" },
   ]
-  how = "VOLMIN (sem registro, 10 × maior custo de déficit) × MAX_PRODTACUM_SIN × 1e6/3600 (≈ 277.78), convertendo para R$/hm³ pela equivalência volumétrica. Slot ainda não usado pelo LP do Cobre."
+  how = "VOLMIN (sem registro, 10 × maior custo de déficit) × MAX_PRODTACUM_SIN × 1e6/3600 (≈ 277.78), convertendo para R$/hm³ pela equivalência volumétrica. Slot ainda não usado pelo LP do Novomodelo."
 
   [[output.field]]
   path = "hydro.filling_target_violation_cost"
@@ -579,7 +579,7 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
     { file = "hidr", item = "cadastro · produtibilidade_especifica" },
     { file = "confhd", item = "usinas · codigo_usina_jusante" },
   ]
-  how = "Sem variável em `penalid.dat`: 0.9 × maior custo de déficit × MAX_PRODTACUM_SIN × 1e6/3600, em R$/hm³. Slot ainda não usado pelo LP do Cobre."
+  how = "Sem variável em `penalid.dat`: 0.9 × maior custo de déficit × MAX_PRODTACUM_SIN × 1e6/3600, em R$/hm³. Slot ainda não usado pelo LP do Novomodelo."
 
 # =============================================================================
 # initial_conditions.json
@@ -588,7 +588,7 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
 path = "initial_conditions.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/initial_conditions.py"
+module = "src/novomodelo_bridge/newave/converters/initial_conditions.py"
 reads = [
   { file = "confhd" },
   { file = "hidr" },
@@ -607,7 +607,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   path = "storage[].hydro_id"
   from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre 0-based da usina ativa (`usina_existente` = EX ou EE, não fictícia), atribuído em ordem crescente de `codigo_usina`. Ordenado pelo id."
+  how = "Id Novomodelo 0-based da usina ativa (`usina_existente` = EX ou EE, não fictícia), atribuído em ordem crescente de `codigo_usina`. Ordenado pelo id."
 
   [[output.field]]
   path = "storage[].value_hm3"
@@ -639,7 +639,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   ]
   status = "derived"
   when = "somente para usinas NE com linha de enchimento (`data_inicio_enchimento` não nula) em `exph.dat`"
-  how = "Id Cobre da usina em enchimento; ela nunca aparece também em `storage`."
+  how = "Id Novomodelo da usina em enchimento; ela nunca aparece também em `storage`."
 
   [[output.field]]
   path = "filling_storage[].value_hm3"
@@ -658,7 +658,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   ]
   status = "derived"
   when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
-  how = "Id Cobre da térmica de `conft.dat`; códigos ausentes do mapa são ignorados com aviso."
+  how = "Id Novomodelo da térmica de `conft.dat`; códigos ausentes do mapa são ignorados com aviso."
 
   [[output.field]]
   path = "past_anticipated_commitments[].start_date"
@@ -703,7 +703,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   ]
   status = "derived"
   when = "somente quando `vazpast.dat` está presente com dados de tendência"
-  how = "`codigo_usina` de `vazpast.dat` é o posto; mapeado ao id Cobre pela coluna `posto` de `confhd.dat`. Ordenado pelo id."
+  how = "`codigo_usina` de `vazpast.dat` é o posto; mapeado ao id Novomodelo pela coluna `posto` de `confhd.dat`. Ordenado pelo id."
 
   [[output.field]]
   path = "recent_observations[].start_date"
@@ -744,7 +744,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
 path = "system/buses.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "dger" },
@@ -770,7 +770,7 @@ summary = "Uma barra por submercado de `sistema.dat` (fictícios incluídos), co
   path = "buses[].operational_start_date"
   from = [ { file = "dger", item = "ano_inicial_historico" } ]
   status = "derived"
-  how = "1º de janeiro de `ano_inicial_historico` (1931 quando ausente): submercados não têm data de entrada; o Cobre usa a data só como chave de ordenação."
+  how = "1º de janeiro de `ano_inicial_historico` (1931 quando ausente): submercados não têm data de entrada; o Novomodelo usa a data só como chave de ordenação."
 
   [[output.field]]
   path = "buses[].deficit_segments[].cost"
@@ -792,7 +792,7 @@ summary = "Uma barra por submercado de `sistema.dat` (fictícios incluídos), co
 path = "system/lines.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "dger" },
@@ -828,13 +828,13 @@ summary = "Uma linha por par não ordenado de submercados presente em `limites_i
   path = "lines[].source_bus_id"
   from = [ { file = "sistema", item = "limites_intercambio · submercado_de" } ]
   status = "derived"
-  how = "Id Cobre do menor código do par."
+  how = "Id Novomodelo do menor código do par."
 
   [[output.field]]
   path = "lines[].target_bus_id"
   from = [ { file = "sistema", item = "limites_intercambio · submercado_para" } ]
   status = "derived"
-  how = "Id Cobre do maior código do par."
+  how = "Id Novomodelo do maior código do par."
 
   [[output.field]]
   path = "lines[].capacity.direct_mw"
@@ -868,7 +868,7 @@ summary = "Uma linha por par não ordenado de submercados presente em `limites_i
 path = "system/thermals.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/thermal.py"
+module = "src/novomodelo_bridge/newave/converters/thermal.py"
 reads = [
   { file = "conft" },
   { file = "clast" },
@@ -881,7 +881,7 @@ reads = [
   { file = "sistema" },
   { file = "ree" },
 ]
-summary = "Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Cobre, com o par estático de geração — o envelope dos limites por estágio — e o custo do primeiro ano de `clast.dat`."
+summary = "Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Novomodelo, com o par estático de geração — o envelope dos limites por estágio — e o custo do primeiro ano de `clast.dat`."
 
   [[output.field]]
   path = "thermals[].id"
@@ -904,7 +904,7 @@ summary = "Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Cobre
   path = "thermals[].bus_id"
   from = [ { file = "conft", item = "usinas · submercado" } ]
   status = "derived"
-  how = "Id Cobre do submercado da usina."
+  how = "Id Novomodelo do submercado da usina."
 
   [[output.field]]
   path = "thermals[].cost_per_mwh"
@@ -940,7 +940,7 @@ summary = "Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Cobre
     { file = "conft", item = "usinas · usina_existente" },
     { file = "dger", item = "num_anos_manutencao_utes" },
   ]
-  how = "Maior máximo do horizonte: o envelope de `max_generation_mw` de `constraints/thermal_bounds.parquet`, que detalha as fontes — logo já com TEIF, IP e manutenção. Quando a geração mínima de cadastro supera o produto `potencia_instalada` × `fator_capacidade_maximo` / 100, o teto por estágio é elevado ao mínimo inflexível e o envelope herda essa ordenação, em vez de publicar o intervalo vazio que o Cobre rejeita (`max_mw` tem de ser ≥ `min_mw`). Usina que nenhuma fonte de capacidade descreve recebe 0."
+  how = "Maior máximo do horizonte: o envelope de `max_generation_mw` de `constraints/thermal_bounds.parquet`, que detalha as fontes — logo já com TEIF, IP e manutenção. Quando a geração mínima de cadastro supera o produto `potencia_instalada` × `fator_capacidade_maximo` / 100, o teto por estágio é elevado ao mínimo inflexível e o envelope herda essa ordenação, em vez de publicar o intervalo vazio que o Novomodelo rejeita (`max_mw` tem de ser ≥ `min_mw`). Usina que nenhuma fonte de capacidade descreve recebe 0."
 
   [[output.field]]
   path = "thermals[].anticipated_config"
@@ -975,7 +975,7 @@ summary = "Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Cobre
 path = "system/non_controllable_sources.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "dger" },
@@ -1011,7 +1011,7 @@ summary = "Uma fonte não controlável por par (`codigo_submercado`, `indice_blo
   path = "non_controllable_sources[].bus_id"
   from = [ { file = "sistema", item = "geracao_usinas_nao_simuladas · codigo_submercado" } ]
   status = "derived"
-  how = "Id Cobre do submercado do grupo."
+  how = "Id Novomodelo do submercado do grupo."
 
   [[output.field]]
   path = "non_controllable_sources[].max_generation_mw"
@@ -1031,7 +1031,7 @@ summary = "Uma fonte não controlável por par (`codigo_submercado`, `indice_blo
 path = "constraints/generic_parameters.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/cobre/scalar_parameters.py"
+module = "src/novomodelo_bridge/novomodelo/scalar_parameters.py"
 reads = [
   { file = "confhd" },
   { file = "hidr" },
@@ -1047,13 +1047,13 @@ summary = "Declara `rho_eq_h{id}` e `rho_acum_h{id}` para toda usina hidráulica
   path = "scalar_parameters[].id"
   from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "Sequencial de 0, dois por usina (ρ_eq e depois ρ_acum), em ordem crescente de id Cobre."
+  how = "Sequencial de 0, dois por usina (ρ_eq e depois ρ_acum), em ordem crescente de id Novomodelo."
 
   [[output.field]]
   path = "scalar_parameters[].name"
   from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "`rho_eq_h{id}` e `rho_acum_h{id}` com o id Cobre da usina; são os tokens `@name` usados em `constraints/generic_constraints.json`."
+  how = "`rho_eq_h{id}` e `rho_acum_h{id}` com o id Novomodelo da usina; são os tokens `@name` usados em `constraints/generic_constraints.json`."
 
   [[output.field]]
   path = "scalar_parameters[].kind"
@@ -1067,13 +1067,13 @@ summary = "Declara `rho_eq_h{id}` e `rho_acum_h{id}` para toda usina hidráulica
   path = "scalar_parameters[].computed_spec.tag"
   from = []
   status = "constant"
-  how = "`equivalent_productivity` na entrada ρ_eq e `accumulated_productivity` na entrada ρ_acum; o Cobre calcula o valor a partir da geometria em tempo de solução."
+  how = "`equivalent_productivity` na entrada ρ_eq e `accumulated_productivity` na entrada ρ_acum; o Novomodelo calcula o valor a partir da geometria em tempo de solução."
 
   [[output.field]]
   path = "scalar_parameters[].computed_spec.hydro_id"
   from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina a que o parâmetro se refere."
+  how = "Id Novomodelo da usina a que o parâmetro se refere."
 
   [[output.field]]
   path = "scalar_parameters[].values"
@@ -1106,7 +1106,7 @@ summary = "Declara `rho_eq_h{id}` e `rho_acum_h{id}` para toda usina hidráulica
 path = "constraints/line_bounds.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "patamar" },
@@ -1164,7 +1164,7 @@ summary = "Uma linha base por (linha, estágio) com os limites de intercâmbio d
 path = "constraints/thermal_bounds.parquet"
 kind = "parquet"
 when = "somente quando os limites de alguma térmica variam entre estágios (e diferem, portanto, do envelope publicado em `system/thermals.json`), ou quando alguma térmica tem custo variável por ano de estudo ou modificação datada em `clast.dat`"
-module = "src/cobre_bridge/newave/converters/thermal.py"
+module = "src/novomodelo_bridge/newave/converters/thermal.py"
 reads = [
   { file = "conft" },
   { file = "clast" },
@@ -1179,7 +1179,7 @@ summary = "Limites de geração por (térmica, estágio) seguindo a ordem do sin
   path = "thermal_id"
   from = [ { file = "conft", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da térmica; códigos de `expt.dat`, `manutt.dat` ou `term.dat` ausentes de `conft.dat` são ignorados."
+  how = "Id Novomodelo da térmica; códigos de `expt.dat`, `manutt.dat` ou `term.dat` ausentes de `conft.dat` são ignorados."
 
   [[output.field]]
   path = "stage_id"
@@ -1243,7 +1243,7 @@ summary = "Limites de geração por (térmica, estágio) seguindo a ordem do sin
 path = "constraints/penalty_overrides_bus.parquet"
 kind = "parquet"
 when = "somente quando `sistema.dat` marca algum submercado como fictício (`ficticio`) e há custo de déficit positivo"
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "dger" },
@@ -1258,7 +1258,7 @@ summary = "Sobrescrita do custo de excesso nas barras fictícias em todo estági
     { file = "sistema", item = "custo_deficit · codigo_submercado" },
   ]
   status = "derived"
-  how = "Id Cobre de cada submercado com `ficticio` verdadeiro, em ordem crescente de código."
+  how = "Id Novomodelo de cada submercado com `ficticio` verdadeiro, em ordem crescente de código."
 
   [[output.field]]
   path = "stage_id"
@@ -1282,7 +1282,7 @@ summary = "Sobrescrita do custo de excesso nas barras fictícias em todo estági
 path = "constraints/penalty_overrides_hydro.parquet"
 kind = "parquet"
 when = "somente quando alguma usina ativa tem registro CFUGA ou CMONT em `modif.dat` que faça a PROD_MEDIA_SIN de algum estágio diferir da global; a tabela é esparsa e só carrega as colunas que diferem"
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "penalid" },
@@ -1427,7 +1427,7 @@ summary = "Recalcula o bloco `hydro` de `penalties.json` com a PROD_MEDIA_SIN de
 path = "system/hydros.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/hydro/entity.py"
+module = "src/novomodelo_bridge/newave/converters/hydro/entity.py"
 reads = [
   { file = "hidr" },
   { file = "confhd" },
@@ -1438,7 +1438,7 @@ reads = [
   { file = "dger" },
   { file = "volref_saz" },
 ]
-summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX` ou `EE` — e não fictícias, mais usinas NE com enchimento de volume morto em `exph.dat`), com o cadastro de `hidr.dat` já corrigido pelos registros permanentes de `modif.dat`, ordenada pelo id Cobre."
+summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX` ou `EE` — e não fictícias, mais usinas NE com enchimento de volume morto em `exph.dat`), com o cadastro de `hidr.dat` já corrigido pelos registros permanentes de `modif.dat`, ordenada pelo id Novomodelo."
 
   [[output.field]]
   path = "hydros[].id"
@@ -1465,7 +1465,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "exph", item = "duracao_enchimento" },
   ]
   status = "derived"
-  how = "Usinas existentes: 1º de janeiro de `ano_inicial_historico` (1931 se ausente). Usina NE em enchimento: primeiro dia do mês em que o enchimento termina (`data_inicio_enchimento` mais `duracao_enchimento` meses). No Cobre é chave de ordenação, não porta de entrada em operação."
+  how = "Usinas existentes: 1º de janeiro de `ano_inicial_historico` (1931 se ausente). Usina NE em enchimento: primeiro dia do mês em que o enchimento termina (`data_inicio_enchimento` mais `duracao_enchimento` meses). No Novomodelo é chave de ordenação, não porta de entrada em operação."
 
   [[output.field]]
   path = "hydros[].downstream_id"
@@ -1477,7 +1477,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "exph", item = "data_inicio_enchimento" },
   ]
   status = "derived"
-  how = "Id Cobre da próxima usina real a jusante. A cadeia `codigo_usina_jusante` é percorrida de forma transparente através de usinas fictícias e NE/NC; quando o jusante é 0 mas uma usina fictícia compartilha o `posto` da usina, ela é tomada como elo implícito da cascata. Nulo quando a cascata termina no mar."
+  how = "Id Novomodelo da próxima usina real a jusante. A cadeia `codigo_usina_jusante` é percorrida de forma transparente através de usinas fictícias e NE/NC; quando o jusante é 0 mas uma usina fictícia compartilha o `posto` da usina, ela é tomada como elo implícito da cascata. Nulo quando a cascata termina no mar."
 
   [[output.field]]
   path = "hydros[].reservoir.min_storage_hm3"
@@ -1567,7 +1567,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "exph", item = "data_entrada_operacao" },
     { file = "exph", item = "conjunto_maquina_entrada" },
   ]
-  how = "Engolimento máximo na queda de operação: soma por conjunto de `n · vazao_nominal · (h_op / queda_nominal)^k` (k = 0,5 para Francis/Pelton, 0,2 para Kaplan), limitada por `potência instalada / (ρ_esp · h_op)` e multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. `h_op` é a queda líquida média entre `volume_minimo` e 65% do volume útil (regulação `M`) ou na cota de `volume_referencia` (`D`/`S`), descontados canal de fuga e perdas. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final, com todas as máquinas em operação; a rampa até ela vai para `hydro_bounds.parquet`. Para usina com `CFUGA`/`CMONT` ou linha em `volref_saz.dat`, o valor é elevado ao máximo dos limites por estágio emitidos em `hydro_bounds.parquet`, pois o Cobre não admite limite por estágio acima do declarado."
+  how = "Engolimento máximo na queda de operação: soma por conjunto de `n · vazao_nominal · (h_op / queda_nominal)^k` (k = 0,5 para Francis/Pelton, 0,2 para Kaplan), limitada por `potência instalada / (ρ_esp · h_op)` e multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. `h_op` é a queda líquida média entre `volume_minimo` e 65% do volume útil (regulação `M`) ou na cota de `volume_referencia` (`D`/`S`), descontados canal de fuga e perdas. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final, com todas as máquinas em operação; a rampa até ela vai para `hydro_bounds.parquet`. Para usina com `CFUGA`/`CMONT` ou linha em `volref_saz.dat`, o valor é elevado ao máximo dos limites por estágio emitidos em `hydro_bounds.parquet`, pois o Novomodelo não admite limite por estágio acima do declarado."
 
   [[output.field]]
   path = "hydros[].generation.min_generation_mw"
@@ -1610,7 +1610,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "sistema", item = "custo_deficit · codigo_submercado" },
   ]
   status = "derived"
-  how = "Id Cobre do submercado ao qual pertence o REE da usina (`ree` em `confhd.dat` → `submercado` em `ree.dat`). Os ids de barra seguem a ordem crescente dos códigos de submercado de `sistema.dat` e `ree.dat`."
+  how = "Id Novomodelo do submercado ao qual pertence o REE da usina (`ree` em `confhd.dat` → `submercado` em `ree.dat`). Os ids de barra seguem a ordem crescente dos códigos de submercado de `sistema.dat` e `ree.dat`."
 
   [[output.field]]
   path = "hydros[].unit_groups[].min_generation_mw"
@@ -1693,7 +1693,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
   [[output.field]]
   path = "hydros[].tailrace.coefficients[]"
   from = [ { file = "hidr", item = "canal_fuga_medio" } ]
-  how = "Polinômio de grau zero: o único coeficiente é `canal_fuga_medio` (m), o nível médio do canal de fuga que o Cobre subtrai da cota de montante ao derivar ρ_eq."
+  how = "Polinômio de grau zero: o único coeficiente é `canal_fuga_medio` (m), o nível médio do canal de fuga que o Novomodelo subtrai da cota de montante ao derivar ρ_eq."
 
   [[output.field]]
   path = "hydros[].diversion"
@@ -1808,7 +1808,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
 path = "system/hydro_production_models.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/hydro/productivity.py"
+module = "src/novomodelo_bridge/newave/converters/hydro/productivity.py"
 reads = [
   { file = "dger" },
   { file = "hidr" },
@@ -1824,7 +1824,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   path = "production_models[].hydro_id"
   from = [ { file = "confhd", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina (mesma numeração de `hydros[].id`)."
+  how = "Id Novomodelo da usina (mesma numeração de `hydros[].id`)."
 
   [[output.field]]
   path = "production_models[].selection_mode"
@@ -1832,13 +1832,13 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
     { file = "dger", item = "funcao_producao_uhe" },
     { file = "volref_saz", item = "valor" },
   ]
-  how = "`seasonal` quando o caso é FPHA (`funcao_producao_uhe = 0`) e a usina tem linha não nula em `volref_saz.dat` (FPHA ou não, pois o Cobre lê o volume de referência da usina de jusante para o remanso); `stage_ranges` nos demais casos."
+  how = "`seasonal` quando o caso é FPHA (`funcao_producao_uhe = 0`) e a usina tem linha não nula em `volref_saz.dat` (FPHA ou não, pois o Novomodelo lê o volume de referência da usina de jusante para o remanso); `stage_ranges` nos demais casos."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].start_stage_id"
   from = []
   status = "constant"
-  how = "Sempre 0: uma única faixa cobre todo o horizonte."
+  how = "Sempre 0: uma única faixa novomodelo todo o horizonte."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].end_stage_id"
@@ -1860,7 +1860,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   path = "production_models[].stage_ranges[].fpha_config.source"
   from = []
   status = "constant"
-  how = "Sempre `computed`: o Cobre ajusta a FPHA a partir da geometria, das curvas de jusante e do rendimento. Presente só em faixas `fpha`."
+  how = "Sempre `computed`: o Novomodelo ajusta a FPHA a partir da geometria, das curvas de jusante e do rendimento. Presente só em faixas `fpha`."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3"
@@ -1886,7 +1886,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   path = "production_models[].stage_ranges[].reference_volume.percentile"
   from = []
   status = "constant"
-  how = "Sempre 0.65 (altura a 65% do volume útil, convenção do NEWAVE e padrão do Cobre). Presente só em faixas `fpha` de usina sem linha em `volref_saz.dat`."
+  how = "Sempre 0.65 (altura a 65% do volume útil, convenção do NEWAVE e padrão do Novomodelo). Presente só em faixas `fpha` de usina sem linha em `volref_saz.dat`."
 
   [[output.field]]
   path = "production_models[].default_model"
@@ -1977,7 +1977,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   when = "somente quando o método ativo em `tratamento-fpha.csv` é o de distância"
   from = []
   status = "constant"
-  how = "Sempre 100: o NEWAVE não define o número de amostras da distância quadrática média exigido pelo Cobre, e a ponte fornece este padrão."
+  how = "Sempre 100: o NEWAVE não define o número de amostras da distância quadrática média exigido pelo Novomodelo, e a ponte fornece este padrão."
 
 # ---------------------------------------------------------------------------
 # system/hydro_geometry.parquet
@@ -1986,7 +1986,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
 path = "system/hydro_geometry.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/newave/converters/hydro/geometry.py"
+module = "src/novomodelo_bridge/newave/converters/hydro/geometry.py"
 reads = [
   { file = "hidr" },
   { file = "modif" },
@@ -1999,7 +1999,7 @@ summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniform
   path = "hydro_id"
   from = [ { file = "confhd", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina, repetido em cada ponto amostrado; a tabela é ordenada por usina e depois por volume."
+  how = "Id Novomodelo da usina, repetido em cada ponto amostrado; a tabela é ordenada por usina e depois por volume."
 
   [[output.field]]
   path = "volume_hm3"
@@ -2034,7 +2034,7 @@ summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniform
 path = "system/hydro_energy_productivity.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/newave/converters/hydro/productivity.py"
+module = "src/novomodelo_bridge/newave/converters/hydro/productivity.py"
 reads = [
   { file = "hidr" },
   { file = "modif" },
@@ -2049,7 +2049,7 @@ summary = "Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fon
   path = "hydro_id"
   from = [ { file = "confhd", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina."
+  how = "Id Novomodelo da usina."
 
   [[output.field]]
   path = "stage_id"
@@ -2109,7 +2109,7 @@ summary = "Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fon
 path = "system/tailrace_curves.parquet"
 kind = "parquet"
 when = "somente quando o caso traz `polinjus.csv` e ao menos um segmento pertence a uma usina convertida"
-module = "src/cobre_bridge/newave/converters/tailrace.py"
+module = "src/novomodelo_bridge/newave/converters/tailrace.py"
 reads = [
   { file = "polinjus" },
   { file = "confhd" },
@@ -2122,12 +2122,12 @@ summary = "Famílias de curvas de nível de jusante (polinômios por partes na v
   path = "hydro_id"
   from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina correspondente ao `codigo_usina` do segmento."
+  how = "Id Novomodelo da usina correspondente ao `codigo_usina` do segmento."
 
   [[output.field]]
   path = "family_id"
   from = [ { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · indice_familia" } ]
-  how = "`indice_familia` tal como no arquivo (1-based); o Cobre o trata como chave opaca de agrupamento por usina."
+  how = "`indice_familia` tal como no arquivo (1-based); o Novomodelo o trata como chave opaca de agrupamento por usina."
 
   [[output.field]]
   path = "downstream_reference_level_m"
@@ -2181,7 +2181,7 @@ summary = "Famílias de curvas de nível de jusante (polinômios por partes na v
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
 when = "somente quando ao menos uma fonte produz linhas: `dsvagua.dat` com desvios (e `outros_usos_da_agua` de `dger.dat` diferente de 0), registros temporais `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat`, ou usina com `CFUGA`/`CMONT`/linha em `volref_saz.dat`"
-module = "src/cobre_bridge/newave/converters/hydro/bounds.py"
+module = "src/novomodelo_bridge/newave/converters/hydro/bounds.py"
 reads = [
   { file = "dsvagua" },
   { file = "dger" },
@@ -2198,7 +2198,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
   path = "hydro_id"
   from = [ { file = "confhd", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre da usina. Desvios de `dsvagua.dat` em usina NC são atribuídos à primeira usina existente a jusante na cadeia `codigo_usina_jusante`; desvios em usina fictícia são descartados."
+  how = "Id Novomodelo da usina. Desvios de `dsvagua.dat` em usina NC são atribuídos à primeira usina existente a jusante na cadeia `codigo_usina_jusante`; desvios em usina fictícia são descartados."
 
   [[output.field]]
   path = "stage_id"
@@ -2337,7 +2337,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 path = "scenarios/inflow_history.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/newave/converters/inflow_windows.py"
+module = "src/novomodelo_bridge/newave/converters/inflow_windows.py"
 reads = [
   { file = "vazoes" },
   { file = "confhd" },
@@ -2354,7 +2354,7 @@ summary = "Histórico de vazões incrementais mensais de `vazoes.dat`, uma linha
     { file = "confhd", item = "posto" },
   ]
   status = "derived"
-  how = "Id Cobre 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). A coluna de `vazoes.dat` é escolhida pelo `posto` da usina em `confhd.dat`; a série é emitida uma vez por posto, de modo que, se dois códigos ativos compartilham o posto, só o último na ordem de `confhd.dat` recebe linhas."
+  how = "Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). A coluna de `vazoes.dat` é escolhida pelo `posto` da usina em `confhd.dat`; a série é emitida uma vez por posto, de modo que, se dois códigos ativos compartilham o posto, só o último na ordem de `confhd.dat` recebe linhas."
 
   [[output.field]]
   path = "start_date"
@@ -2387,7 +2387,7 @@ summary = "Histórico de vazões incrementais mensais de `vazoes.dat`, uma linha
 path = "scenarios/inflow_seasonal_stats.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/newave/converters/stochastic.py"
+module = "src/novomodelo_bridge/newave/converters/stochastic.py"
 reads = [
   { file = "vazoes" },
   { file = "confhd" },
@@ -2401,7 +2401,7 @@ summary = "Média e desvio-padrão da vazão incremental histórica por usina e 
   path = "hydro_id"
   from = [ { file = "confhd", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Cobre 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). Toda usina ativa recebe uma linha por estágio."
+  how = "Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). Toda usina ativa recebe uma linha por estágio."
 
   [[output.field]]
   path = "stage_id"
@@ -2441,7 +2441,7 @@ summary = "Média e desvio-padrão da vazão incremental histórica por usina e 
 path = "scenarios/load_seasonal_stats.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/newave/converters/stochastic.py"
+module = "src/novomodelo_bridge/newave/converters/stochastic.py"
 reads = [
   { file = "sistema" },
   { file = "c_adic" },
@@ -2454,7 +2454,7 @@ summary = "Mercado de energia por submercado e estágio (MWmédio) de `sistema.d
   path = "bus_id"
   from = [ { file = "sistema", item = "mercado_energia · codigo_submercado" } ]
   status = "derived"
-  how = "Id Cobre 0-based do submercado (ordem crescente de `codigo_submercado`, incluindo submercados fictícios de `custo_deficit`). Submercados sem mercado em `sistema.dat` também recebem linhas."
+  how = "Id Novomodelo 0-based do submercado (ordem crescente de `codigo_submercado`, incluindo submercados fictícios de `custo_deficit`). Submercados sem mercado em `sistema.dat` também recebem linhas."
 
   [[output.field]]
   path = "stage_id"
@@ -2491,7 +2491,7 @@ summary = "Mercado de energia por submercado e estágio (MWmédio) de `sistema.d
 path = "scenarios/load_factors.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/stochastic.py"
+module = "src/novomodelo_bridge/newave/converters/stochastic.py"
 reads = [
   { file = "patamar" },
   { file = "dger" },
@@ -2504,7 +2504,7 @@ summary = "Fatores de carga por patamar (p.u.) de `patamar.dat`, uma entrada por
   path = "load_factors[].bus_id"
   from = [ { file = "patamar", item = "carga_patamares · codigo_submercado" } ]
   status = "derived"
-  how = "Id Cobre 0-based do submercado (ordem crescente de `codigo_submercado`). Só os submercados presentes em `carga_patamares` recebem entradas."
+  how = "Id Novomodelo 0-based do submercado (ordem crescente de `codigo_submercado`). Só os submercados presentes em `carga_patamares` recebem entradas."
 
   [[output.field]]
   path = "load_factors[].stage_id"
@@ -2540,7 +2540,7 @@ summary = "Fatores de carga por patamar (p.u.) de `patamar.dat`, uma entrada por
 path = "scenarios/non_controllable_factors.json"
 kind = "json"
 when = ""
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "patamar" },
   { file = "sistema" },
@@ -2594,7 +2594,7 @@ summary = "Fatores por patamar (p.u.) da geração não simulada de `patamar.dat
 path = "scenarios/non_controllable_stats.parquet"
 kind = "parquet"
 when = ""
-module = "src/cobre_bridge/newave/converters/network.py"
+module = "src/novomodelo_bridge/newave/converters/network.py"
 reads = [
   { file = "sistema" },
   { file = "dger" },
@@ -2642,7 +2642,7 @@ summary = "Disponibilidade da geração não simulada por bloco e estágio, como
 path = "constraints/generic_constraints.json"
 kind = "json"
 when = "somente quando alguma família gera restrições: curva de segurança (`curva.dat` presente, `curva_aversao` de `dger.dat` diferente de 0 e ao menos um REE com reservatório de regularização mensal com volume útil), restrições elétricas (`restricao-eletrica.csv` apontado por `indices.csv`, ou `re.dat`, com ao menos um limite válido) ou agrupamentos de intercâmbio (`agrint.dat` com grupos e limites); cada família só é lida se o flag correspondente de `dger.dat` estiver ligado (`agrupamento_livre`, `restricoes_eletricas`, `restricoes_eletricas_especiais`)"
-module = "src/cobre_bridge/newave/converters/constraints.py"
+module = "src/novomodelo_bridge/newave/converters/constraints.py"
 reads = [
   { file = "curva" },
   { file = "dger" },
@@ -2742,7 +2742,7 @@ summary = "Restrições genéricas de três famílias concatenadas nesta ordem: 
 path = "constraints/generic_constraint_bounds.parquet"
 kind = "parquet"
 when = "escrito junto com `constraints/generic_constraints.json`, sob a mesma condição"
-module = "src/cobre_bridge/newave/converters/constraints.py"
+module = "src/novomodelo_bridge/newave/converters/constraints.py"
 reads = [
   { file = "curva" },
   { file = "dger" },
@@ -2852,7 +2852,7 @@ file = "saidas_newave"
 label = "arquivos de saída do NEWAVE"
 status = "unread"
 covers = ["pmo", "parp", "forward", "forwardh", "newdesp", "cortes", "cortesh", "cortes_pos_estudo", "cortesh_pos_estudo", "dados_simulacao_final"]
-note = "Entradas de `arquivos.dat` que são resultados de uma execução, não dados do caso: `pmo.dat`, `parp.dat`, `forward.dat`, `forwardh.dat`, `newdesp.dat`, `cortes.dat`, `cortesh.dat`, `cortes_pos_estudo`, `cortesh_pos_estudo` e `dados_simulacao_final`. A conversão não os consome; o comando de comparação de resultados lê `pmo.dat` e os CSV `MEDIAS-*` apenas para confrontar com a saída do Cobre."
+note = "Entradas de `arquivos.dat` que são resultados de uma execução, não dados do caso: `pmo.dat`, `parp.dat`, `forward.dat`, `forwardh.dat`, `newdesp.dat`, `cortes.dat`, `cortesh.dat`, `cortes_pos_estudo`, `cortesh_pos_estudo` e `dados_simulacao_final`. A conversão não os consome; o comando de comparação de resultados lê `pmo.dat` e os CSV `MEDIAS-*` apenas para confrontar com a saída do Novomodelo."
 
 [[source]]
 file = "gtminpat"
@@ -2870,13 +2870,13 @@ note = "Restrições operativas de Itaipu (parcelas 50 Hz/60 Hz e limites de int
 file = "perda"
 label = "perda.dat"
 status = "unread"
-note = "Fatores de perda na rede de transmissão por patamar. Ativado por `perdas_rede_transmissao` em `dger.dat`; o Cobre não modela perdas de intercâmbio e o bridge não emite nenhum equivalente."
+note = "Fatores de perda na rede de transmissão por patamar. Ativado por `perdas_rede_transmissao` em `dger.dat`; o Novomodelo não modela perdas de intercâmbio e o bridge não emite nenhum equivalente."
 
 [[source]]
 file = "tecno"
 label = "tecno.dat"
 status = "unread"
-note = "Tecnologia e combustível das classes térmicas (base para emissões e gás). Sem uso: o Cobre não distingue tecnologia térmica."
+note = "Tecnologia e combustível das classes térmicas (base para emissões e gás). Sem uso: o Novomodelo não distingue tecnologia térmica."
 
 [[source]]
 file = "clasgas"
@@ -2888,7 +2888,7 @@ note = "Restrições de fornecimento de gás natural por classe térmica. Ativad
 file = "gee"
 label = "gee.dat"
 status = "unread"
-note = "Limites de emissão de gases de efeito estufa por submercado ou SIN. Ativado por `restricoes_emissao_gee`; não há contraparte no Cobre."
+note = "Limites de emissão de gases de efeito estufa por submercado ou SIN. Ativado por `restricoes_emissao_gee`; não há contraparte no Novomodelo."
 
 [[source]]
 file = "sar"
@@ -2912,7 +2912,7 @@ note = "Número de aberturas variável por período. O bridge lê apenas `num_ab
 file = "elnino"
 label = "elnino.dat"
 status = "unread"
-note = "Índices de El Niño para o modelo de afluências. Ativado por `el_nino` em `dger.dat`; o Cobre estima o PAR(p) sem covariáveis climáticas."
+note = "Índices de El Niño para o modelo de afluências. Ativado por `el_nino` em `dger.dat`; o Novomodelo estima o PAR(p) sem covariáveis climáticas."
 
 [[source]]
 file = "ensoaux"
@@ -2924,7 +2924,7 @@ note = "Dados auxiliares de ENSO. Ativado por `enso` em `dger.dat`; mesma situa�
 file = "eliminacao_cortes"
 label = "eliminacao-cortes.dat"
 status = "unread"
-note = "Parâmetros do algoritmo de eliminação de cortes de Benders. O bridge espelha apenas o liga/desliga da seleção de cortes (`selecao_de_cortes_*` de `dger.dat`) em `config.json`; os parâmetros finos ficam nos defaults do Cobre."
+note = "Parâmetros do algoritmo de eliminação de cortes de Benders. O bridge espelha apenas o liga/desliga da seleção de cortes (`selecao_de_cortes_*` de `dger.dat`) em `config.json`; os parâmetros finos ficam nos defaults do Novomodelo."
 
 [[source]]
 file = "volumes_referencia"
@@ -2943,17 +2943,17 @@ note = "O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, ite
   [[source.item]]
   item = "execução, impressão e memória (nome_caso, duracao_periodo, imprime_*, impressao_operacao/ena/convergencia/cortes_ativos_sim_final, gera_arquivo_cortes_unico, mantem_arquivos_*, alocacao_memoria_*, memoria_calculo_cortes, armazenamento_local_arquivos_temporarios, utiliza_gerenciamento_pls, comunicacao_dois_niveis, intervalo_para_gravar, tamanho_registro_arquivo_historico, consulta_fcf)"
   status = "unread"
-  note = "Controles de relatório, disco e memória do executável NEWAVE. Não têm contraparte no caso Cobre."
+  note = "Controles de relatório, disco e memória do executável NEWAVE. Não têm contraparte no caso Novomodelo."
 
   [[source.item]]
   item = "convergência e gestão de cortes (tolerancia, delta_zinf, delta_zsup, deltas_consecutivos, converge_no_zero, num_minimo_iteracoes, inicio_teste_convergencia, desconsidera_convergencia_estatistica, considera_zsup_min_convergencia, iteracao_para_simulacao_final, aproveitamento_bases_backward, janela_de_cortes, periodos_manutencao_cortes, eliminacao_cortes, fcf_pos_estudo, mes_inicio_pre_estudo)"
   status = "unread"
-  note = "O bridge fixa apenas `iteration_limit` (de `num_max_iteracoes`) e o liga/desliga da seleção de cortes; critérios de parada por gap e janelas de cortes ficam nos defaults do Cobre. `num_anos_pre_estudo` é convertido em `pre_study_stages`, mas `mes_inicio_pre_estudo` não é lido."
+  note = "O bridge fixa apenas `iteration_limit` (de `num_max_iteracoes`) e o liga/desliga da seleção de cortes; critérios de parada por gap e janelas de cortes ficam nos defaults do Novomodelo. `num_anos_pre_estudo` é convertido em `pre_study_stages`, mas `mes_inicio_pre_estudo` não é lido."
 
   [[source.item]]
   item = "modelo estocástico de afluências (tipo_geracao_enas, matriz_correlacao_espacial, reducao_automatica_ordem, considera_tendencia_hidrologica_calculo_politica, considera_tendencia_hidrologica_sim_final, tipo_reamostragem_cenarios, passo_reamostragem_cenarios, momento_reamostragem, aberturas_variaveis, num_anos_pos_sim_final, agregacao_simulacao_final, simulacao_final_com_data, representacao_agregacao, el_nino, enso)"
   status = "unread"
-  note = "O Cobre estima o PAR(p) a partir de `scenarios/inflow_history.parquet` com sua própria seleção de ordem (`estimation.order_selection`); só `ordem_maxima_parp`, `consideracao_media_anual_afluencias`, `num_series_sinteticas` e `considera_reamostragem_cenarios` são espelhados. A tendência hidrológica é sempre emitida (`recent_observations`) quando `vazpast.dat` existe, sem consultar os flags."
+  note = "O Novomodelo estima o PAR(p) a partir de `scenarios/inflow_history.parquet` com sua própria seleção de ordem (`estimation.order_selection`); só `ordem_maxima_parp`, `consideracao_media_anual_afluencias`, `num_series_sinteticas` e `considera_reamostragem_cenarios` são espelhados. A tendência hidrológica é sempre emitida (`recent_observations`) quando `vazpast.dat` existe, sem consultar os flags."
 
   [[source.item]]
   item = "flags de recursos não convertidos (restricao_defluencia, restricao_itaipu, restricoes_rhq, restricoes_rhv, restricao_lpp_*, restricoes_emissao_gee, restricoes_fornecimento_gas, sar, bid, modif_automatica_adterm, sazonaliza_vminp, canal_desvio, correcao_desvio)"
@@ -2995,7 +2995,7 @@ file = "conft"
   [[source.item]]
   item = "usina_existente · classe"
   status = "unread"
-  note = "Toda usina listada vira uma térmica do Cobre; o estado `EX`/`NE`/`EE` e a classe térmica não são consultados. A disponibilidade efetiva vem das janelas POTEF de `expt.dat`."
+  note = "Toda usina listada vira uma térmica do Novomodelo; o estado `EX`/`NE`/`EE` e a classe térmica não são consultados. A disponibilidade efetiva vem das janelas POTEF de `expt.dat`."
 
 [[source]]
 file = "sistema"
@@ -3016,7 +3016,7 @@ file = "clast"
   [[source.item]]
   item = "tipo_combustivel"
   status = "unread"
-  note = "Combustível da classe térmica. O Cobre não distingue combustível; só o custo por ano de estudo e as modificações por data são convertidos."
+  note = "Combustível da classe térmica. O Novomodelo não distingue combustível; só o custo por ano de estudo e as modificações por data são convertidos."
 
 [[source]]
 file = "term"
@@ -3047,7 +3047,7 @@ note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo n
   [[source.item]]
   item = "influencia_vertimento_canal_fuga"
   status = "unread"
-  note = "Flag de influência do vertimento no canal de fuga. O Cobre avalia as curvas de jusante sobre a defluência total; o flag não é consultado."
+  note = "Flag de influência do vertimento no canal de fuga. O Novomodelo avalia as curvas de jusante sobre a defluência total; o flag não é consultado."
 
   [[source.item]]
   item = "fator_carga_maximo · fator_carga_minimo"
@@ -3057,7 +3057,7 @@ note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo n
   [[source.item]]
   item = "volume_vertedouro · volume_desvio · cota_minima · cota_maxima · desvio"
   status = "unread"
-  note = "Volumes de vertedouro e de desvio, cotas limite e o código de desvio. O Cobre não modela vertedouro nem canal de desvio (`diversion` é sempre nulo); as cotas são avaliadas pelo polinômio cota × volume."
+  note = "Volumes de vertedouro e de desvio, cotas limite e o código de desvio. O Novomodelo não modela vertedouro nem canal de desvio (`diversion` é sempre nulo); as cotas são avaliadas pelo polinômio cota × volume."
 
   [[source.item]]
   item = "numero_unidades_base · representacao_conjunto · empresa · observacao · data"
@@ -3076,7 +3076,7 @@ note = "Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, 
   [[source.item]]
   item = "VAZMAXT"
   status = "deferred"
-  note = "Defluência máxima por período. Reportado por `modif-permanent-override-unsupported` e ignorado; o Cobre aceita `max_outflow_m3s`, mas o bridge escreve sempre nulo em `hydros.json` e não emite coluna correspondente em `constraints/hydro_bounds.parquet`."
+  note = "Defluência máxima por período. Reportado por `modif-permanent-override-unsupported` e ignorado; o Novomodelo aceita `max_outflow_m3s`, mas o bridge escreve sempre nulo em `hydros.json` e não emite coluna correspondente em `constraints/hydro_bounds.parquet`."
 
 [[source]]
 file = "ghmin"
@@ -3098,7 +3098,7 @@ note = "O bridge toma, por variável, o primeiro valor `R$/MWh` não nulo do pri
   [[source.item]]
   item = "patamar_penalidade = 2"
   status = "unread"
-  note = "Segundo patamar de penalidade (custo por violação adicional). O Cobre tem uma única folga linear por variável; só o primeiro patamar é lido."
+  note = "Segundo patamar de penalidade (custo por violação adicional). O Novomodelo tem uma única folga linear por variável; só o primeiro patamar é lido."
 
   [[source.item]]
   item = "patamar_carga · valor_R$_hm3"
@@ -3218,7 +3218,7 @@ note = "Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `Hidr
   [[source.item]]
   item = "HidreletricaCurvaJusanteAfogamentoExplicitoPadrao · HidreletricaCurvaJusanteAfogamentoExplicitoUsina"
   status = "unread"
-  note = "Flag de afogamento explícito do canal de fuga. O Cobre escolhe a família pelo nível de referência de jusante; o flag não é consultado."
+  note = "Flag de afogamento explícito do canal de fuga. O Novomodelo escolhe a família pelo nível de referência de jusante; o flag não é consultado."
 
   [[source.item]]
   item = "HidreletricaPerdaHidraulicaGrade · HidreletricaProdutibilidadeEspecificaGrade"
@@ -3237,7 +3237,7 @@ note = "Só a linha ativa terminada em `ANGULO-PADRAO` ou `DISTANCIA-PADRAO` vir
   [[source.item]]
   item = "linhas por usina (sufixo diferente de -PADRAO)"
   status = "unread"
-  note = "Ajustes do método de redução de cortes por usina; o Cobre só aceita um método por caso."
+  note = "Ajustes do método de redução de cortes por usina; o Novomodelo só aceita um método por caso."
 
 [[source]]
 file = "restricao_eletrica"

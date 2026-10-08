@@ -6,9 +6,9 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 # The title/summary/remediation/notes strings geometry.py emits reach a
 # pip-installed user with no repo checkout — none may leak a repo-internal
@@ -68,7 +68,7 @@ class TestGenerateHydroGeometry:
 
     def test_produces_100_rows_per_plant(self) -> None:
         """A reservoir plant yields exactly 100 rows in the output table."""
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro()
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
@@ -78,15 +78,15 @@ class TestGenerateHydroGeometry:
         assert isinstance(table, pa.Table)
         assert len(table) == 101
 
-        cobre_id_1 = id_map.hydro_id(1)
-        cobre_id_2 = id_map.hydro_id(2)
+        novomodelo_id_1 = id_map.hydro_id(1)
+        novomodelo_id_2 = id_map.hydro_id(2)
         ids = table.column("hydro_id").to_pylist()
-        assert ids.count(cobre_id_1) == 100
-        assert ids.count(cobre_id_2) == 1
+        assert ids.count(novomodelo_id_1) == 100
+        assert ids.count(novomodelo_id_2) == 1
 
     def test_run_of_river_emits_single_point(self) -> None:
         """Plant with vol_min == vol_max produces one geometry row."""
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro()
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[2], thermal_codes=[])
@@ -96,7 +96,7 @@ class TestGenerateHydroGeometry:
 
     def test_correct_schema(self) -> None:
         """Output table has the required schema with correct column types."""
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro()
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
@@ -111,7 +111,7 @@ class TestGenerateHydroGeometry:
         """Schema is preserved when written and read back as Parquet."""
         import pyarrow.parquet as pq
 
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro()
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
@@ -131,7 +131,7 @@ class TestGenerateHydroGeometry:
         """The 100 volume points are uniformly distributed on [vol_min, vol_max]."""
         import numpy as np
 
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro()
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
@@ -145,7 +145,7 @@ class TestGenerateHydroGeometry:
         """Heights and areas match the expected polynomial values."""
         import numpy as np
 
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro()
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
@@ -165,7 +165,7 @@ class TestGenerateHydroGeometry:
 
     def test_skips_all_zero_volume_cota(self) -> None:
         """Plant with all-zero volume_cota coefficients is skipped (no rows emitted)."""
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         # Build a cadastro with all-zero volume_cota for plant 1.
         cadastro = _make_geometry_cadastro().copy()
@@ -179,7 +179,7 @@ class TestGenerateHydroGeometry:
 
     def test_negative_values_clamped_to_zero(self) -> None:
         """Negative polynomial outputs are clamped to 0.0."""
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         # volume_cota: h(v) = -1000 + v  (negative at low volumes)
         # cota_area:   A(h) = -1000 + h  (negative at low heights)
@@ -209,7 +209,7 @@ class TestGenerateHydroGeometryDiagnostics:
 
     def test_skips_emit_one_table_distinguishing_both_causes(self) -> None:
         """Both skip causes fold into one ``hydro-geometry-skipped`` table."""
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro().copy()
         for i in range(5):
@@ -242,7 +242,7 @@ class TestGenerateHydroGeometryDiagnostics:
         _assert_no_repo_internal_leaks(collected)
 
     def test_no_skips_emits_no_diagnostic(self) -> None:
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro()
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
@@ -253,7 +253,7 @@ class TestGenerateHydroGeometryDiagnostics:
         assert collected == []
 
     def test_skips_carry_no_legacy_warning_under_collect(self) -> None:
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro().copy()
         for i in range(5):
@@ -270,7 +270,7 @@ class TestGenerateHydroGeometryDiagnostics:
         record — the pre-migration caplog contract keeps working."""
         import logging
 
-        from cobre_bridge.newave.converters.hydro import generate_hydro_geometry
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
 
         cadastro = _make_geometry_cadastro().copy()
         for i in range(5):

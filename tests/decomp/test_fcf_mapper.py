@@ -8,17 +8,17 @@ from pathlib import Path
 
 import pytest
 
-from cobre_bridge.core.units import C_M3S2HM3, MONTH_HOURS
-from cobre_bridge.decomp.fcf.bootstrap import TerminalManifest
-from cobre_bridge.decomp.fcf.cortes import BoundaryCuts
-from cobre_bridge.decomp.fcf.mapper import (
+from novomodelo_bridge.core.units import C_M3S2HM3, MONTH_HOURS
+from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
+from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
+from novomodelo_bridge.decomp.fcf.mapper import (
     DroppedTerm,
     GnlRingPlan,
     GnlThermalTarget,
     _resolve_gnl_targets,
     map_boundary_cuts,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests._fcf_fixtures import (
     make_boundary_cuts,
     make_cortes_header,
@@ -28,10 +28,10 @@ from tests._fcf_fixtures import (
     make_slot,
     synthetic_roundtrip,
 )
-from tests.conftest import requires_cobre_python
+from tests.conftest import requires_novomodelo_python
 
 # Inflow-lag (pi_qafl) coefficients take an extra × C_M3S2HM3 beyond MONTH_HOURS
-# (cobre's inflow-lag state is m³/s, not Hm³); storage/rhs take × MONTH_HOURS.
+# (novomodelo's inflow-lag state is m³/s, not Hm³); storage/rhs take × MONTH_HOURS.
 _LAG_FACTOR = MONTH_HOURS * C_M3S2HM3
 
 # `_make_gnl_ring_fixture` always builds an `n_patamares=3` header; a uniform
@@ -40,7 +40,7 @@ _LAG_FACTOR = MONTH_HOURS * C_M3S2HM3
 # `test_map_gnl_uniform_blocks_is_sum_over_n_patamares`).
 _UNIFORM_GNL_BLOCK_HOURS = (MONTH_HOURS / 3, MONTH_HOURS / 3, MONTH_HOURS / 3)
 
-# cobre `policy.fbs` entity_type codes — a stable external contract, restated
+# novomodelo `policy.fbs` entity_type codes — a stable external contract, restated
 # locally rather than importing the mapper module's private constants.
 _HYDRO_STORAGE = 0
 _HYDRO_INFLOW_LAG = 1
@@ -83,7 +83,7 @@ def test_map_storage_places_pi_varm_at_hydro_slots() -> None:
     assert len(result.cuts) == 1
     mapped = result.cuts[0]
     assert len(mapped.coefficients) == manifest.state_dimension
-    # Storage coefficients and the intercept are scaled to cobre cost units
+    # Storage coefficients and the intercept are scaled to novomodelo cost units
     # by MONTH_HOURS (the source's ($·mês)/h -> $ conversion); zero slots stay 0.
     assert mapped.coefficients[0] == pytest.approx(3.0 * MONTH_HOURS)
     assert mapped.coefficients[1] == pytest.approx(5.0 * MONTH_HOURS)
@@ -195,7 +195,7 @@ def test_map_inflow_lag_means_none_is_noop() -> None:
 def test_map_inflow_lag_means_only_folds_placed_lags() -> None:
     # A plant with a storage slot but NO inflow-lag slots in the manifest has no
     # lag coefficient placed, so its mean must not fold — the fold can never
-    # reference a term cobre will not apply. Plant 10 (hydro_id 0) carries the
+    # reference a term novomodelo will not apply. Plant 10 (hydro_id 0) carries the
     # full 12-slot lag family; plant 20 (hydro_id 1) has storage only.
     id_map = make_id_map((10, 20))
     manifest = make_manifest(
@@ -371,10 +371,10 @@ def test_map_rejects_out_of_range_lag_slot() -> None:
         )
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 def test_synthetic_roundtrip_preserves_coeffs(tmp_path: Path) -> None:
     """The mapper's storage + lag-depth-1 placement survives a real
-    map -> write -> load_policy round trip, with no deck and no cobre
+    map -> write -> load_policy round trip, with no deck and no novomodelo
     binary — the reloaded cut's intercept and leading coefficients match
     the synthetic source record verbatim.
     """
@@ -474,7 +474,7 @@ def test_map_gnl_covered_lane_populated_uncovered_lane_dropped() -> None:
     is an in-study delivery (before `post_horizon_start`), non-covered, and
     is dropped, staying at `0.0`, with a `GnlDroppedTerm` naming the
     in-study committed window that actually prices it. No class-4
-    já-comandada slot exists in the fixture at all — cobre excises it from
+    já-comandada slot exists in the fixture at all — novomodelo excises it from
     the ring entirely, so there is nothing to drop for it.
     """
     pi_gnl = _gnl_row(24, {1: 0.1, 3: 0.2, 5: 0.3, 12: 1.0, 14: 2.0, 16: 4.0})
@@ -518,7 +518,7 @@ def test_map_gnl_covered_lane_populated_uncovered_lane_dropped() -> None:
 
 def test_resolve_gnl_targets_docstring_keys_on_interval_start() -> None:
     """AC 4 — the docstring keys the covered/non-covered split on the slot's
-    ``interval_start`` (cobre's day-accurate delivery-stage start), not the
+    ``interval_start`` (novomodelo's day-accurate delivery-stage start), not the
     retired single ``delivery_date`` or the K=0-lead-lane framing
     (source-text check)."""
     docstring = _resolve_gnl_targets.__doc__
@@ -766,7 +766,7 @@ def test_map_gnl_requires_block_hours_when_placing() -> None:
 
 def test_map_no_lag_slots_emits_keyed_inflow_lag_coefficients() -> None:
     # A DECOMP manifest carries no HydroInflowLag slots; with inflow_lag_depth=N
-    # the mapper emits the lag terms keyed by hydro (for cobre's writer to
+    # the mapper emits the lag terms keyed by hydro (for novomodelo's writer to
     # reserve + place) rather than into the storage-only coefficient vector, and
     # still folds the seasonal mean into the intercept.
     id_map = make_id_map((10,))

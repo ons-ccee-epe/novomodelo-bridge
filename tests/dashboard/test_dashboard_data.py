@@ -1,7 +1,7 @@
 """Tests for the scenario-tree unweighted-averages diagnostic (DASH-03).
 
 Covers ``load_temporal_context``'s ``dashboard-unweighted-tree-averages``
-emission/silence (tier-1, no ``cobre`` import, no ``example/`` deck) and its
+emission/silence (tier-1, no ``novomodelo`` import, no ``example/`` deck) and its
 surfacing through the ``dashboard`` CLI command's diagnostics sink.
 """
 
@@ -21,15 +21,15 @@ import pyarrow.parquet as pq
 import pytest
 from typer.testing import CliRunner
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.dashboard.data import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.dashboard.data import (
     DashboardData,
     _load_policy_metadata,
     load_temporal_context,
 )
 from tests.conftest import (
     hydro_with_group,
-    requires_cobre_python,
+    requires_novomodelo_python,
     requires_writer_binding,
 )
 
@@ -51,7 +51,7 @@ _REPO_INTERNAL_LEAKS = (
     "epic-",
     "policy_graph",
     "stages.json",
-    "cobre_bridge",
+    "novomodelo_bridge",
 )
 
 
@@ -111,7 +111,7 @@ class TestLoadTemporalContextAbsentLinesJson:
     """``lines.json`` degrades to an empty line set, not a crash.
 
     Before this read was routed through
-    ``cobre_readers.read_cobre_lines``, an absent ``system/lines.json``
+    ``novomodelo_readers.read_novomodelo_lines``, an absent ``system/lines.json``
     crashed ``load_temporal_context`` with an unguarded ``json.load`` on a
     missing path -- the one sanctioned behaviour change the reader-failure
     contract makes (an input that previously had no valid output)."""
@@ -212,7 +212,7 @@ class TestTreeAveragesDiagnosticMessageHygiene:
 
 
 def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
-    """A complete, self-contained Cobre case directory ``build_dashboard()`` can
+    """A complete, self-contained Novomodelo case directory ``build_dashboard()`` can
     render end-to-end (mirrors ``TestDashboardIntegration.case_dir``, proven
     against the real ``build_dashboard()`` pipeline). *tree* adds a non-empty
     ``policy_graph.nodes`` list.
@@ -498,7 +498,7 @@ class TestDashboardCliSurfacesTreeAveragesDiagnostic:
 
     @staticmethod
     def _invoke(argv: list[str]) -> Any:
-        from cobre_bridge.cli import app
+        from novomodelo_bridge.cli import app
 
         return CliRunner().invoke(app, argv)
 
@@ -536,7 +536,7 @@ class TestDashboardCliSurfacesTreeAveragesDiagnostic:
 def test_build_full_case_fixture_is_valid(tmp_path: Path, tree: bool) -> None:
     """Guards the fixture itself: ``build_dashboard()`` must complete without
     raising regardless of the ``tree`` flag, independent of the CLI layer."""
-    from cobre_bridge.dashboard import build_dashboard
+    from novomodelo_bridge.dashboard import build_dashboard
 
     case_dir = _build_full_case(tmp_path, tree=tree)
     output_path = tmp_path / "dashboard.html"
@@ -731,7 +731,7 @@ class TestLoadStochasticDataPartialDirectory:
         assert data.stochastic_available is True
 
     def test_stochastic_tab_renders_on_partial_directory(self, tmp_path: Path) -> None:
-        from cobre_bridge.dashboard.tabs import stochastic
+        from novomodelo_bridge.dashboard.tabs import stochastic
 
         case_dir = _build_full_case(tmp_path, tree=False)
         _add_partial_stochastic_dir(case_dir)
@@ -750,9 +750,9 @@ class TestLoadStochasticDataPartialDirectory:
 
 
 class TestLoadPolicyMetadataAbsent:
-    """An absent ``output/policy`` degrades to ``{}`` with no cobre import."""
+    """An absent ``output/policy`` degrades to ``{}`` with no novomodelo import."""
 
-    def test_absent_policy_dir_returns_empty_without_importing_cobre(
+    def test_absent_policy_dir_returns_empty_without_importing_novomodelo(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         case_dir = tmp_path / "case"
@@ -761,9 +761,9 @@ class TestLoadPolicyMetadataAbsent:
         real_import = builtins.__import__
 
         def _guarded_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "cobre":
+            if name == "novomodelo":
                 raise AssertionError(
-                    "cobre must not be imported when output/policy is absent"
+                    "novomodelo must not be imported when output/policy is absent"
                 )
             return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
 
@@ -773,10 +773,10 @@ class TestLoadPolicyMetadataAbsent:
 
 
 class TestLoadPolicyMetadataFailureDegrades:
-    """A failing ``cobre.results.load_policy`` degrades to ``{}`` + one warning.
+    """A failing ``novomodelo.results.load_policy`` degrades to ``{}`` + one warning.
 
-    Stubs ``sys.modules['cobre']`` (the ``fcf/bootstrap.py`` test convention)
-    so this exercises the failure path without a real cobre install or a
+    Stubs ``sys.modules['novomodelo']`` (the ``fcf/bootstrap.py`` test convention)
+    so this exercises the failure path without a real novomodelo install or a
     real checkpoint on disk.
     """
 
@@ -792,12 +792,14 @@ class TestLoadPolicyMetadataFailureDegrades:
         def _raise_load_policy(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("checkpoint format not recognized")
 
-        stub_cobre = SimpleNamespace(
+        stub_novomodelo = SimpleNamespace(
             results=SimpleNamespace(load_policy=_raise_load_policy)
         )
-        monkeypatch.setitem(sys.modules, "cobre", stub_cobre)
+        monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
-        with caplog.at_level(logging.WARNING, logger="cobre_bridge.dashboard.data"):
+        with caplog.at_level(
+            logging.WARNING, logger="novomodelo_bridge.dashboard.data"
+        ):
             result = _load_policy_metadata(case_dir)
 
         assert result == {}
@@ -819,19 +821,21 @@ class TestLoadPolicyMetadataFailureDegrades:
         def _load_malformed(*_args: object, **_kwargs: object) -> dict:
             return {"stage_cuts": [{"stage_id": 0, "state_dimension": None}]}
 
-        stub_cobre = SimpleNamespace(
+        stub_novomodelo = SimpleNamespace(
             results=SimpleNamespace(load_policy=_load_malformed)
         )
-        monkeypatch.setitem(sys.modules, "cobre", stub_cobre)
+        monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
-        with caplog.at_level(logging.WARNING, logger="cobre_bridge.dashboard.data"):
+        with caplog.at_level(
+            logging.WARNING, logger="novomodelo_bridge.dashboard.data"
+        ):
             result = _load_policy_metadata(case_dir)
 
         assert result == {}
         assert any("output/policy" in record.message for record in caplog.records)
 
 
-@requires_cobre_python
+@requires_novomodelo_python
 @requires_writer_binding
 class TestLoadPolicyMetadataHappyPath:
     """A real ``write_policy_checkpoint`` output yields the terminal
@@ -846,9 +850,9 @@ class TestLoadPolicyMetadataHappyPath:
     def test_state_dimension_extracted_from_real_checkpoint(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.decomp.fcf.bootstrap import TerminalManifest
-        from cobre_bridge.decomp.fcf.mapper import MappedCut, MappingResult
-        from cobre_bridge.decomp.fcf.writer import (
+        from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
+        from novomodelo_bridge.decomp.fcf.mapper import MappedCut, MappingResult
+        from novomodelo_bridge.decomp.fcf.writer import (
             build_metadata,
             build_stage_cuts_payload,
             write_boundary_checkpoint,

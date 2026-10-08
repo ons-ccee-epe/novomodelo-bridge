@@ -1,4 +1,4 @@
-"""Unit tests for ``cobre_bridge.decomp.group_bounds`` and the
+"""Unit tests for ``novomodelo_bridge.decomp.group_bounds`` and the
 ``BoundFamily.group_column`` extension.
 
 ``hydro_unit_group_bounds`` is a genuinely new table with no deck fixture to
@@ -15,20 +15,20 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.core.emission_checks import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.emission_checks import (
     BoundFamily,
     check_bound_block_id_range,
     check_bound_row_uniqueness,
 )
-from cobre_bridge.decomp.group_bounds import (
+from novomodelo_bridge.decomp.group_bounds import (
     _HYDRO_UNIT_GROUP_BOUNDS_SCHEMA,
     GroupBoundEntry,
     _empty,
     convert_hydro_unit_group_bounds,
 )
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 
 

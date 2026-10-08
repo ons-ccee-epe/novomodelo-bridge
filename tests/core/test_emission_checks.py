@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.core.emission_checks.
+"""Unit tests for novomodelo_bridge.core.emission_checks.
 
 Each rule gets a positive test (synthetic violation caught) and a negative
 test (the legal shape passes), run against hand-built artifacts — this module
@@ -10,9 +10,9 @@ from __future__ import annotations
 import pyarrow as pa
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.core.emission_checks import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.emission_checks import (
     BoundFamily,
     EmissionCheckError,
     check_block_id_not_on_anticipated_thermal,
@@ -217,7 +217,7 @@ def _hydro_with_envelope(
 class TestClampHydroBoundsToDeclared:
     """``clamp_hydro_bounds_to_declared`` ceils/floors each per-stage MAX bound
     into the plant's declared envelope and WARNs about what it clamped, so
-    cobre rule 43 (and its outflow analogue) holds without raising the
+    novomodelo rule 43 (and its outflow analogue) holds without raising the
     declaration to fit a per-stage override."""
 
     def test_turbined_above_declared_max_is_clamped_and_warned(self) -> None:
@@ -366,7 +366,7 @@ class TestUnitGroupEnvelope:
         assert by_column["max_generation_mw"][3] == 60.0
 
     def test_value_inside_relative_tolerance_passes(self) -> None:
-        """Rule 41's tolerance mirrors cobre's ENVELOPE_TOLERANCE = 1e-9 * max(|v|, 1.0)."""
+        """Rule 41's tolerance mirrors novomodelo's ENVELOPE_TOLERANCE = 1e-9 * max(|v|, 1.0)."""
         declared = 100.0
         tolerance = 1e-9 * max(abs(declared), 1.0)
         hydros = _hydros(

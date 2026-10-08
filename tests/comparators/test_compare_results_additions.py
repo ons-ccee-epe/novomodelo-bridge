@@ -1,7 +1,7 @@
 """Unit tests for the operative-data additions to ``compare results``.
 
 Covers per-plant extras + bounds, system spillage in MWmes, and line interchange
-comparison — without spinning up a real Cobre or the source model
+comparison — without spinning up a real Novomodelo or the source model
 case.
 """
 
@@ -10,9 +10,9 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.model import ResultComparison
-from cobre_bridge.comparators.newave.alignment import EntityAlignment, LineEntity
-from cobre_bridge.comparators.newave.results import (
+from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.comparators.newave.alignment import EntityAlignment, LineEntity
+from novomodelo_bridge.comparators.newave.results import (
     _build_gen_max_overlay,
     _compare_lines,
     _compare_system_spillage,
@@ -33,7 +33,7 @@ class TestCompareSystemSpillage:
                 "value": [1000.0, 800.0, 200.0],
             }
         )
-        cobre_spill = pl.DataFrame(
+        novomodelo_spill = pl.DataFrame(
             {
                 "stage_id": [0],
                 "total_mw": [950.0],
@@ -41,7 +41,7 @@ class TestCompareSystemSpillage:
                 "rorov_mw": [150.0],
             }
         )
-        out = _compare_system_spillage(nw_sin, cobre_spill)
+        out = _compare_system_spillage(nw_sin, novomodelo_spill)
         variables = {r.variable for r in out}
         assert variables == {
             "spill_energy_total_mw",
@@ -52,7 +52,7 @@ class TestCompareSystemSpillage:
         assert all(r.stage == 0 for r in out)
         total = next(r for r in out if r.variable == "spill_energy_total_mw")
         assert total.newave_value == 1000.0
-        assert total.cobre_value == 950.0
+        assert total.novomodelo_value == 950.0
         assert total.abs_diff == pytest.approx(50.0)
 
     def test_empty_inputs_return_no_rows(self) -> None:
@@ -64,7 +64,7 @@ class TestCompareSystemSpillage:
                 "value": pl.Float64,
             }
         )
-        empty_cobre = pl.DataFrame(
+        empty_novomodelo = pl.DataFrame(
             schema={
                 "stage_id": pl.Int64,
                 "total_mw": pl.Float64,
@@ -72,7 +72,7 @@ class TestCompareSystemSpillage:
                 "rorov_mw": pl.Float64,
             }
         )
-        assert _compare_system_spillage(empty_sin, empty_cobre) == []
+        assert _compare_system_spillage(empty_sin, empty_novomodelo) == []
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ class TestCompareSystemSpillage:
 
 
 class TestGenMaxOverlay:
-    def test_joins_source_model_ghmax_with_cobre_lp_max(self) -> None:
+    def test_joins_source_model_ghmax_with_novomodelo_lp_max(self) -> None:
         nw_hydro = pl.DataFrame(
             {
                 "newave_code": [1, 1, 2],
@@ -90,28 +90,30 @@ class TestGenMaxOverlay:
                 "value": [500.0, 480.0, 200.0],
             }
         )
-        cobre_lp = pl.DataFrame(
+        novomodelo_lp = pl.DataFrame(
             {
                 "entity_id": [0, 0, 1],
                 "stage_id": [0, 1, 0],
-                "cobre_lp_gen_max_mw": [510.0, 490.0, 205.0],
+                "novomodelo_lp_gen_max_mw": [510.0, 490.0, 205.0],
             }
         )
         nw_names = {1: "PLANT_A", 2: "PLANT_B"}
-        cobre_meta = {0: {"name": "Plant_A"}, 1: {"name": "Plant_B"}}
-        out = _build_gen_max_overlay(nw_hydro, cobre_lp, nw_names, cobre_meta, 9)
+        novomodelo_meta = {0: {"name": "Plant_A"}, 1: {"name": "Plant_B"}}
+        out = _build_gen_max_overlay(
+            nw_hydro, novomodelo_lp, nw_names, novomodelo_meta, 9
+        )
         assert {
             "entity_id",
             "stage_id",
             "nw_ghmax_fphc_mw",
-            "cobre_lp_gen_max_mw",
+            "novomodelo_lp_gen_max_mw",
         } <= set(out.columns)
         # Verify Plant_A stage 0 row carries both sides.
         row = out.filter((pl.col("entity_id") == 0) & (pl.col("stage_id") == 0)).row(
             0, named=True
         )
         assert row["nw_ghmax_fphc_mw"] == 500.0
-        assert row["cobre_lp_gen_max_mw"] == 510.0
+        assert row["novomodelo_lp_gen_max_mw"] == 510.0
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +134,7 @@ class TestCompareLines:
                 "value": [100.0, -50.0, 25.0],
             }
         )
-        cobre_line = pl.DataFrame(
+        novomodelo_line = pl.DataFrame(
             {
                 "entity_id": [0, 0],
                 "stage_id": [0, 1],
@@ -142,7 +144,7 @@ class TestCompareLines:
         alignment = EntityAlignment(
             lines=[
                 LineEntity(
-                    cobre_line_id=0,
+                    novomodelo_line_id=0,
                     name="SE-S",
                     source_bus_id=0,
                     target_bus_id=1,
@@ -151,7 +153,7 @@ class TestCompareLines:
                 ),
             ],
         )
-        out = _compare_lines(nw_intercambio, cobre_line, alignment, nw_offset=9)
+        out = _compare_lines(nw_intercambio, novomodelo_line, alignment, nw_offset=9)
         assert len(out) == 2
         assert all(r.entity_type == "line" for r in out)
         assert all(r.variable == "net_flow_mw" for r in out)
@@ -178,7 +180,7 @@ class TestCompareLines:
                 "value": [0.0, 0.0, 100.0],
             }
         )
-        cobre_line = pl.DataFrame(
+        novomodelo_line = pl.DataFrame(
             {
                 "entity_id": [0],
                 "stage_id": [0],
@@ -188,7 +190,7 @@ class TestCompareLines:
         alignment = EntityAlignment(
             lines=[
                 LineEntity(
-                    cobre_line_id=0,
+                    novomodelo_line_id=0,
                     name="SE-S",
                     source_bus_id=0,
                     target_bus_id=1,
@@ -197,7 +199,7 @@ class TestCompareLines:
                 ),
             ],
         )
-        out = _compare_lines(nw_intercambio, cobre_line, alignment, nw_offset=9)
+        out = _compare_lines(nw_intercambio, novomodelo_line, alignment, nw_offset=9)
         assert len(out) == 1
         assert out[0].stage == 0
         assert out[0].newave_value == 100.0
@@ -210,9 +212,9 @@ class TestCompareLines:
 
 class TestHtmlReportNewSections:
     def test_renders_new_tab_and_sections(self) -> None:
-        from cobre_bridge.comparators.analyze import build_results_dataset
-        from cobre_bridge.comparators.model import PercentileData
-        from cobre_bridge.comparators.report_builder import (
+        from novomodelo_bridge.comparators.analyze import build_results_dataset
+        from novomodelo_bridge.comparators.model import PercentileData
+        from novomodelo_bridge.comparators.report_builder import (
             build_comparison_report,
         )
 
@@ -221,11 +223,11 @@ class TestHtmlReportNewSections:
                 entity_type="hydro",
                 entity_name="PLANT_A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="evaporation_m3s",
                 newave_value=5.0,
-                cobre_value=4.8,
+                novomodelo_value=4.8,
                 abs_diff=0.2,
                 rel_diff=0.04,
             ),
@@ -233,11 +235,11 @@ class TestHtmlReportNewSections:
                 entity_type="hydro",
                 entity_name="PLANT_A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="total_inflow_m3s",
                 newave_value=200.0,
-                cobre_value=195.0,
+                novomodelo_value=195.0,
                 abs_diff=5.0,
                 rel_diff=0.025,
             ),
@@ -245,11 +247,11 @@ class TestHtmlReportNewSections:
                 entity_type="hydro",
                 entity_name="PLANT_A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="outflow_m3s",
                 newave_value=180.0,
-                cobre_value=178.0,
+                novomodelo_value=178.0,
                 abs_diff=2.0,
                 rel_diff=0.011,
             ),
@@ -257,11 +259,11 @@ class TestHtmlReportNewSections:
                 entity_type="hydro",
                 entity_name="PLANT_A",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="withdrawal_m3s",
                 newave_value=10.0,
-                cobre_value=10.0,
+                novomodelo_value=10.0,
                 abs_diff=0.0,
                 rel_diff=0.0,
             ),
@@ -269,11 +271,11 @@ class TestHtmlReportNewSections:
                 entity_type="line",
                 entity_name="SE-S",
                 newave_code=1,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="net_flow_mw",
                 newave_value=100.0,
-                cobre_value=99.0,
+                novomodelo_value=99.0,
                 abs_diff=1.0,
                 rel_diff=0.01,
             ),
@@ -281,17 +283,17 @@ class TestHtmlReportNewSections:
                 entity_type="system_spillage",
                 entity_name="SIN",
                 newave_code=0,
-                cobre_id=0,
+                novomodelo_id=0,
                 stage=0,
                 variable="spill_energy_total_mw",
                 newave_value=1000.0,
-                cobre_value=950.0,
+                novomodelo_value=950.0,
                 abs_diff=50.0,
                 rel_diff=0.05,
             ),
         ]
         pctiles = PercentileData(
-            cobre_spillage_energy=pl.DataFrame(
+            novomodelo_spillage_energy=pl.DataFrame(
                 {
                     "stage_id": [0],
                     "total_mw": [950.0],

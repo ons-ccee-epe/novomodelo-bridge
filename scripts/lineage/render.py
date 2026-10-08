@@ -90,7 +90,7 @@ def _cell(text: str) -> str:
 
 
 def _schema_url(path: str) -> str | None:
-    from cobre_bridge.cobre.schemas import SCHEMA_URLS
+    from novomodelo_bridge.novomodelo.schemas import SCHEMA_URLS
 
     return SCHEMA_URLS.get(path)
 
@@ -163,9 +163,9 @@ class _Page:
             f"<!-- Gerado por scripts/gen-lineage-docs.py a partir de "
             f"docs/lineage/{self.track}.toml. Não edite à mão. -->",
             "",
-            f"# Mapa de dados: {name} → Cobre",
+            f"# Mapa de dados: {name} → Novomodelo",
             "",
-            f"Esta página mostra de onde vem cada arquivo e cada campo do caso Cobre "
+            f"Esta página mostra de onde vem cada arquivo e cada campo do caso Novomodelo "
             f"que `{command}` escreve: qual arquivo do deck {name}, qual registro ou "
             f"coluna, e que transformação é aplicada no caminho. Ela também lista o "
             f"que o conversor ainda não converte, para que o trabalho pendente fique "
@@ -183,7 +183,7 @@ class _Page:
             "coluna Transformação diz o que o conversor faz com o valor. *Derivado* "
             "marca um valor de escrituração (ids, datas, ordem) calculado a partir do "
             "deck; *constante* um valor fixo que o conversor sempre escreve; *sempre "
-            "nulo* um campo do Cobre que ainda não recebe informação do deck.",
+            "nulo* um campo do Novomodelo que ainda não recebe informação do deck.",
             "",
         )
         if self.track == "decomp":
@@ -396,7 +396,7 @@ class _Page:
             if f.status == "null"
         ]
         if nulls:
-            self.emit("### Campos do Cobre sem origem no deck", "")
+            self.emit("### Campos do Novomodelo sem origem no deck", "")
             for out, f in nulls:
                 self.emit(f"- `{out.path}` › `{f.path}` — {_cell(f.how)}")
             self.emit("")

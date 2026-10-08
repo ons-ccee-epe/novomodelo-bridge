@@ -2,7 +2,7 @@
 
 Synthetic ``ConstraintTerm``/``ConstraintRecord``/``StageBounds``/
 ``DecompIdMap``/``OperativeStage``/``EffectiveCadastro`` only — no deck, no
-``example/`` read, no ``import cobre``. Covers every ``_variable_token``
+``example/`` read, no ``import novomodelo``. Covers every ``_variable_token``
 branch (including the ``bus=`` selector and the fail-loud raises), the
 ``FI``-interchange line resolver (``build_fi_line_map``/``resolve_fi_term``,
 direct/reverse/no-line/unknown-name), the ``_format_expression``
@@ -24,17 +24,17 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.core import diagnostics as dx
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
 )
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-from cobre_bridge.decomp.converters.constraints import (
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.constraints import (
     _format_expression,
     _hydro_generation_token,
     _variable_token,
@@ -45,8 +45,8 @@ from cobre_bridge.decomp.converters.constraints import (
     resolve_fi_term,
     slots_from_record,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 

@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import json
 
-from cobre_bridge.ui.html.document import (
+from novomodelo_bridge.ui.html.document import (
     build_html,
     escape_attr,
     escape_text,
     json_for_script,
 )
-from cobre_bridge.ui.html.plotly import plotly_div
+from novomodelo_bridge.ui.html.plotly import plotly_div
 
 _ATTACK = "</script><img src=x onerror=alert(1)>"
 

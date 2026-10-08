@@ -18,27 +18,27 @@ from idecomp.decomp.modelos.dadger import (
     ACVOLMIN,
 )
 
-from cobre_bridge.core.diagnostics import Severity
-from cobre_bridge.core.errors import FieldParseError
-from cobre_bridge.core.preflight import (
+from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightVerdict,
     optional_input_advisory,
 )
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.decomp.constraint_registers import (
     detect_libs_electrical,
     detect_unreadable_electrical,
     read_constraints,
 )
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.decomp.converters.cadastro import (
     _SCALAR_AC_SPECS,
     APPLIED_AC_CLASSES,
     UNINGESTABLE_AC_CLASSES,
     CadastroResolutionReport,
     OutOfHorizon,
 )
-from cobre_bridge.decomp.files import DecompFiles
-from cobre_bridge.decomp.preflight import (
+from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.decomp.preflight import (
     _ALL_AC_CLASSES,
     _ac_coverage,
     _load_factor_check,
@@ -102,7 +102,7 @@ class TestIdMapReconcile:
         with ExitStack() as stack:
             stack.enter_context(
                 patch(
-                    "cobre_bridge.decomp.preflight.discover_decomp_files",
+                    "novomodelo_bridge.decomp.preflight.discover_decomp_files",
                     return_value=files,
                 )
             )
@@ -114,7 +114,7 @@ class TestIdMapReconcile:
             )
             stack.enter_context(
                 patch(
-                    "cobre_bridge.decomp.id_map.DecompIdMap.from_dadger",
+                    "novomodelo_bridge.decomp.id_map.DecompIdMap.from_dadger",
                     side_effect=error,
                 )
             )
@@ -145,7 +145,7 @@ class TestIdMapReconcile:
 
 class TestOptionalInputAdvisory:
     """DECOMP adopts the shared
-    :func:`cobre_bridge.core.preflight.optional_input_advisory` helper for all six
+    :func:`novomodelo_bridge.core.preflight.optional_input_advisory` helper for all six
     optional ``DecompFiles`` fields, in place of the old two-field hard-coded
     loop.
     """

@@ -8,12 +8,15 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.dataset import (
+from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
     TIDY_SCHEMA,
     ComparisonDataset,
 )
-from cobre_bridge.comparators.export import _read_cobre_version, write_artifacts
+from novomodelo_bridge.comparators.export import (
+    _read_novomodelo_version,
+    write_artifacts,
+)
 
 
 def _make_dataset() -> ComparisonDataset:
@@ -27,7 +30,7 @@ def _make_dataset() -> ComparisonDataset:
             "stage": [1, 1],
             "block": [-1, -1],
             "variable": ["storage", "storage"],
-            "source": ["newave", "cobre"],
+            "source": ["newave", "novomodelo"],
             "value": [100.0, 95.0],
         },
         schema=TIDY_SCHEMA,
@@ -50,11 +53,11 @@ def _make_dataset() -> ComparisonDataset:
             {
                 "entity_type": "hydro",
                 "entity_name": "ITAIPU",
-                "cobre_id": 0,
+                "novomodelo_id": 0,
                 "stage": 1,
                 "variable": "storage",
                 "newave_value": 100.0,
-                "cobre_value": 95.0,
+                "novomodelo_value": 95.0,
                 "abs_diff": 5.0,
                 "rel_diff": 0.05,
             }
@@ -75,7 +78,7 @@ def test_write_artifacts_emits_expected_files(tmp_path: Path) -> None:
         dataset,
         command="compare newave",
         source_dir=nw,
-        cobre_output_dir=cb,
+        novomodelo_output_dir=cb,
         tolerance=1e-2,
         out_dir=out,
         formats=["parquet", "json"],
@@ -96,7 +99,7 @@ def test_manifest_lists_emitted_artifacts(tmp_path: Path) -> None:
         dataset,
         command="compare newave",
         source_dir=tmp_path / "newave",
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1e-2,
         out_dir=out,
         formats=["parquet", "json"],
@@ -129,7 +132,7 @@ def test_manifest_carries_source_dir_input_files_and_diagnostics(
         dataset,
         command="compare newave",
         source_dir=nw,
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1e-2,
         out_dir=out,
         formats=["json"],
@@ -152,52 +155,52 @@ def test_unknown_format_raises_valueerror(tmp_path: Path) -> None:
             dataset,
             command="compare newave",
             source_dir=tmp_path / "newave",
-            cobre_output_dir=tmp_path / "output",
+            novomodelo_output_dir=tmp_path / "output",
             tolerance=1e-2,
             out_dir=tmp_path / "artifacts",
             formats=["xml"],
         )
 
 
-def test_read_cobre_version_missing_returns_none(tmp_path: Path) -> None:
-    cobre_output_dir = tmp_path / "output"
-    cobre_output_dir.mkdir()
+def test_read_novomodelo_version_missing_returns_none(tmp_path: Path) -> None:
+    novomodelo_output_dir = tmp_path / "output"
+    novomodelo_output_dir.mkdir()
 
-    assert _read_cobre_version(cobre_output_dir) is None
+    assert _read_novomodelo_version(novomodelo_output_dir) is None
 
 
-def test_read_cobre_version_reads_version(tmp_path: Path) -> None:
+def test_read_novomodelo_version_reads_version(tmp_path: Path) -> None:
     case_dir = tmp_path / "case"
-    cobre_output_dir = case_dir / "output"
-    training_dir = cobre_output_dir / "training"
+    novomodelo_output_dir = case_dir / "output"
+    training_dir = novomodelo_output_dir / "training"
     training_dir.mkdir(parents=True)
     (training_dir / "metadata.json").write_text(
-        json.dumps({"software": "cobre", "software_version": "0.7.0"}),
+        json.dumps({"software": "novomodelo", "software_version": "0.7.0"}),
         encoding="utf-8",
     )
 
-    assert _read_cobre_version(cobre_output_dir) == "0.7.0"
+    assert _read_novomodelo_version(novomodelo_output_dir) == "0.7.0"
 
 
-def test_read_cobre_version_reads_the_pre_software_key(tmp_path: Path) -> None:
+def test_read_novomodelo_version_reads_the_pre_software_key(tmp_path: Path) -> None:
     case_dir = tmp_path / "case"
-    cobre_output_dir = case_dir / "output"
-    training_dir = cobre_output_dir / "training"
+    novomodelo_output_dir = case_dir / "output"
+    training_dir = novomodelo_output_dir / "training"
     training_dir.mkdir(parents=True)
     (training_dir / "metadata.json").write_text(
         json.dumps({"cobre_version": "0.6.0"}), encoding="utf-8"
     )
 
-    assert _read_cobre_version(cobre_output_dir) == "0.6.0"
+    assert _read_novomodelo_version(novomodelo_output_dir) == "0.6.0"
 
 
-def test_read_cobre_version_malformed_json_returns_none(tmp_path: Path) -> None:
-    cobre_output_dir = tmp_path / "output"
-    training_dir = cobre_output_dir / "training"
+def test_read_novomodelo_version_malformed_json_returns_none(tmp_path: Path) -> None:
+    novomodelo_output_dir = tmp_path / "output"
+    training_dir = novomodelo_output_dir / "training"
     training_dir.mkdir(parents=True)
     (training_dir / "metadata.json").write_text("{ not json", encoding="utf-8")
 
-    assert _read_cobre_version(cobre_output_dir) is None
+    assert _read_novomodelo_version(novomodelo_output_dir) is None
 
 
 def test_write_artifacts_csv_format(tmp_path: Path) -> None:
@@ -208,7 +211,7 @@ def test_write_artifacts_csv_format(tmp_path: Path) -> None:
         dataset,
         command="compare bounds",
         source_dir=tmp_path / "newave",
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1.0,
         out_dir=out,
         formats=["csv"],
@@ -229,7 +232,7 @@ def test_write_artifacts_roundtrip_reload(tmp_path: Path) -> None:
         dataset,
         command="compare newave",
         source_dir=tmp_path / "newave",
-        cobre_output_dir=tmp_path / "output",
+        novomodelo_output_dir=tmp_path / "output",
         tolerance=1e-2,
         out_dir=out,
         formats=["parquet", "json"],

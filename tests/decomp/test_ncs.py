@@ -8,14 +8,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.converters.ncs import (
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.ncs import (
     convert_ncs_factors,
     convert_ncs_stats,
     convert_non_controllable_sources,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 
 _ID_MAP = DecompIdMap(
@@ -165,7 +165,7 @@ def test_pee_series_deterministic_typo_uses_modal_value(
     on, and never resolved to the outlier."""
     import logging
 
-    from cobre_bridge.decomp.converters.ncs import _pee_series
+    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad = pd.DataFrame([{"codigo_pee": 9, "nome_pee": "PARK9"}])
     subm = pd.DataFrame([{"codigo_pee": 9, "codigo_submercado": 1}])
@@ -186,7 +186,9 @@ def test_pee_series_deterministic_typo_uses_modal_value(
             )
     renov = _StubRenovaveis(cad, subm, pd.DataFrame(ger_rows))
 
-    with caplog.at_level(logging.WARNING, logger="cobre_bridge.decomp.converters.ncs"):
+    with caplog.at_level(
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.ncs"
+    ):
         series = _pee_series(renov, _ID_MAP, _calendar(), 0)
 
     assert len(series) == 1

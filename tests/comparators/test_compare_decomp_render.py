@@ -2,9 +2,9 @@
 
 Point ``compare decomp`` at the same ``print_results_summary_from_dataset``
 renderer ``compare newave`` uses (``reference_label="DECOMP"``), console-
-threaded and ``--quiet``-gated. Tier 1 -- pure Python, no ``cobre`` import, no
+threaded and ``--quiet``-gated. Tier 1 -- pure Python, no ``novomodelo`` import, no
 ``example/`` deck: the dataset build is stubbed via the same
-``cobre_bridge.comparators.decomp.results.build_decomp_dataset`` monkeypatch
+``novomodelo_bridge.comparators.decomp.results.build_decomp_dataset`` monkeypatch
 seam ``TestCompareDecompCommand`` below and ``TestCompareDiagnosticsWiring``
 (``tests/comparators/test_compare.py``) already use.
 """
@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from typer.testing import CliRunner
 
-from cobre_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError
 from tests.conftest import _empty_fake_dataset, _fake_dataset
 
 if TYPE_CHECKING:
-    from cobre_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
 
 
 def _two_variable_dataset() -> ComparisonDataset:
@@ -30,19 +30,19 @@ def _two_variable_dataset() -> ComparisonDataset:
     ``analyze.build_results_dataset`` assembly kernel (as
     ``build_decomp_dataset`` does), so ``footer_counts`` metadata and the
     per-variable ``summary`` rows the renderer reads are both populated."""
-    from cobre_bridge.comparators.analyze import build_results_dataset
-    from cobre_bridge.comparators.model import PercentileData, ResultComparison
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 
     results = [
         ResultComparison(
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            cobre_value=110.0,
+            novomodelo_value=110.0,
             abs_diff=10.0,
             rel_diff=0.1,
         ),
@@ -50,11 +50,11 @@ def _two_variable_dataset() -> ComparisonDataset:
             entity_type="hydro",
             entity_name="ITAIPU",
             newave_code=10,
-            cobre_id=0,
+            novomodelo_id=0,
             stage=0,
             variable="turbined_m3s",
             newave_value=200.0,
-            cobre_value=180.0,
+            novomodelo_value=180.0,
             abs_diff=20.0,
             rel_diff=0.1,
         ),
@@ -67,18 +67,18 @@ def _two_variable_dataset() -> ComparisonDataset:
 def _invoke(argv_tail: list[str], monkeypatch: pytest.MonkeyPatch, deck: Path) -> Any:
     """Invoke ``compare decomp`` through the real Typer app via ``CliRunner``,
     with the dataset build stubbed at its public entry point."""
-    from cobre_bridge.cli import app
+    from novomodelo_bridge.cli import app
     from tests.conftest import make_decomp_case
 
     # ``DecompCase.from_directory`` is re-invoked (for manifest hashing) after
     # ``build_decomp_dataset`` is mocked away; give it a real ``DecompFiles``
     # dataclass instead of trying to discover a deck under the fake ``deck`` dir.
     monkeypatch.setattr(
-        "cobre_bridge.decomp.case.DecompCase.from_directory",
+        "novomodelo_bridge.decomp.case.DecompCase.from_directory",
         classmethod(lambda cls, _dir: make_decomp_case(Path("decomp"))),
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.build_decomp_dataset",
+        "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
         lambda *_args, **_kwargs: _two_variable_dataset(),
     )
     argv = ["compare", "decomp", str(deck), str(deck), *argv_tail]
@@ -93,7 +93,7 @@ def test_compare_decomp_renders_the_full_shared_table(
     result = _invoke([], monkeypatch, tmp_path)
 
     assert result.exit_code == 0
-    assert "Cobre vs DECOMP Results Comparison" in result.stdout
+    assert "Novomodelo vs DECOMP Results Comparison" in result.stdout
     assert "generation_mw" in result.stdout
     assert "turbined_m3s" in result.stdout
 
@@ -105,7 +105,7 @@ def test_compare_decomp_quiet_suppresses_header_and_table(
     result = _invoke(["--quiet"], monkeypatch, tmp_path)
 
     assert result.exit_code == 0
-    assert "Cobre vs DECOMP Results Comparison" not in result.stdout
+    assert "Novomodelo vs DECOMP Results Comparison" not in result.stdout
     assert "generation_mw" not in result.stdout
     assert "turbined_m3s" not in result.stdout
 
@@ -120,7 +120,7 @@ def test_compare_decomp_json_emits_one_verdict_and_suppresses_the_table(
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["command"] == "compare decomp"
-    assert "Cobre vs DECOMP Results Comparison" not in result.stdout
+    assert "Novomodelo vs DECOMP Results Comparison" not in result.stdout
 
 
 class TestCompareDecompCommand:
@@ -134,7 +134,7 @@ class TestCompareDecompCommand:
     ) -> Any:
         from typer.testing import CliRunner
 
-        from cobre_bridge.cli import app
+        from novomodelo_bridge.cli import app
         from tests.conftest import make_decomp_case
 
         # ``DecompCase.from_directory`` is re-invoked (for manifest hashing)
@@ -142,12 +142,12 @@ class TestCompareDecompCommand:
         # ``DecompFiles`` dataclass instead of trying to discover a deck under
         # the fake ``tmp_path``.
         monkeypatch.setattr(
-            "cobre_bridge.decomp.case.DecompCase.from_directory",
+            "novomodelo_bridge.decomp.case.DecompCase.from_directory",
             classmethod(lambda cls, _dir: make_decomp_case(Path("decomp"))),
         )
         resolved_dataset = dataset if dataset is not None else _fake_dataset()
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset",
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
             lambda *_args, **_kwargs: resolved_dataset,
         )
         return CliRunner().invoke(app, argv)
@@ -274,10 +274,10 @@ class TestCompareDecompCommand:
 
         from typer.testing import CliRunner
 
-        from cobre_bridge.cli import app
+        from novomodelo_bridge.cli import app
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset", _boom
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset", _boom
         )
         result = CliRunner().invoke(
             app, ["compare", "decomp", str(tmp_path), str(tmp_path)]
@@ -300,10 +300,10 @@ class TestCompareDecompCommand:
 
         from typer.testing import CliRunner
 
-        from cobre_bridge.cli import app
+        from novomodelo_bridge.cli import app
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset", _boom
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset", _boom
         )
         result = CliRunner().invoke(
             app, ["compare", "decomp", str(tmp_path), str(tmp_path)]
@@ -313,26 +313,27 @@ class TestCompareDecompCommand:
     def test_writes_artifacts_to_the_default_out_dir(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        cobre_output_dir = tmp_path / "cobre"
+        novomodelo_output_dir = tmp_path / "novomodelo"
         result = self._invoke(
-            ["compare", "decomp", str(tmp_path), str(cobre_output_dir)], monkeypatch
+            ["compare", "decomp", str(tmp_path), str(novomodelo_output_dir)],
+            monkeypatch,
         )
         assert result.exit_code == 0
-        artifacts = cobre_output_dir / "comparison_artifacts"
+        artifacts = novomodelo_output_dir / "comparison_artifacts"
         assert (artifacts / "comparison.parquet").exists()
         assert (artifacts / "comparison.json").exists()
 
     def test_format_and_out_dir_flags_with_json_keep_stdout_pure(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        cobre_output_dir = tmp_path / "cobre"
+        novomodelo_output_dir = tmp_path / "novomodelo"
         other = tmp_path / "other"
         result = self._invoke(
             [
                 "compare",
                 "decomp",
                 str(tmp_path),
-                str(cobre_output_dir),
+                str(novomodelo_output_dir),
                 "--format",
                 "json",
                 "--out-dir",
@@ -404,31 +405,31 @@ class TestCompareDecompCommand:
     def test_partition_missing_output_exits_two(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Regression: CobrePartitionMissingError extends
-        BridgeError, a hierarchy disjoint from CobreReadError (RuntimeError)
+        """Regression: NovomodeloPartitionMissingError extends
+        BridgeError, a hierarchy disjoint from NovomodeloReadError (RuntimeError)
         and FileNotFoundError/ValueError. The compare decomp CLI handler
         must catch it too -- a clean ERROR line + exit 2, not an unhandled
         traceback -- mirroring the compare newave fix and this class's own
-        CobreReadError-analogue test above."""
-        from cobre_bridge.core.errors import CobrePartitionMissingError
+        NovomodeloReadError-analogue test above."""
+        from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
 
-        sim_dir = tmp_path / "cobre" / "simulation" / "hydro_bus_generation"
+        sim_dir = tmp_path / "novomodelo" / "simulation" / "hydro_bus_generation"
 
         def _boom(*_args: object, **_kwargs: object) -> ComparisonDataset:
-            raise CobrePartitionMissingError(
-                f"Cobre output partition not found: {sim_dir}. The "
-                "hydro_bus_generation partition is produced by cobre "
-                ">= 0.13.0; this output directory may predate that cobre "
+            raise NovomodeloPartitionMissingError(
+                f"Novomodelo output partition not found: {sim_dir}. The "
+                "hydro_bus_generation partition is produced by novomodelo "
+                ">= 0.13.0; this output directory may predate that novomodelo "
                 "version.",
                 path=str(sim_dir),
             )
 
         from typer.testing import CliRunner
 
-        from cobre_bridge.cli import app
+        from novomodelo_bridge.cli import app
 
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.build_decomp_dataset", _boom
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset", _boom
         )
         result = CliRunner().invoke(
             app, ["compare", "decomp", str(tmp_path), str(tmp_path)]
@@ -437,6 +438,6 @@ class TestCompareDecompCommand:
         # path, not an unhandled exception caught by CliRunner's default
         # catch_exceptions=True (which would report exit_code == 1).
         assert result.exit_code == 2
-        assert "Cobre output partition not found" in result.stderr
+        assert "Novomodelo output partition not found" in result.stderr
         assert "hydro_bus_generation" in result.stderr
         assert "0.13.0" in result.stderr

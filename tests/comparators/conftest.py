@@ -11,8 +11,8 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.decomp.results import _AlignedDecompFrames
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.comparators.decomp.results import _AlignedDecompFrames
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.conftest import _FakeDadger, make_decomp_case
 
 
@@ -33,7 +33,7 @@ def _patch_shared_case(
     """
     fake_dadger = _FakeDadger() if dadger is None else dadger
     monkeypatch.setattr(
-        "cobre_bridge.decomp.case.DecompCase.from_directory",
+        "novomodelo_bridge.decomp.case.DecompCase.from_directory",
         lambda directory: make_decomp_case(
             directory, dadger=fake_dadger, id_map=id_map
         ),
@@ -44,7 +44,7 @@ def _patch_aligned_frames(
     monkeypatch: pytest.MonkeyPatch, aligned: _AlignedDecompFrames
 ) -> None:
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results._read_aligned_frames",
+        "novomodelo_bridge.comparators.decomp.results._read_aligned_frames",
         lambda *_args, **_kwargs: aligned,
     )
     # The shared ``DecompCase`` build now runs unconditionally at
@@ -55,17 +55,17 @@ def _patch_aligned_frames(
     # wins).
     _patch_shared_case(monkeypatch, id_map=DecompIdMap(bus_codes=(), bus_names=()))
     # ``build_decomp_dataset`` also calls
-    # ``read_cobre_bus_aggregates`` directly (outside ``_read_aligned_frames``).
-    # Unlike the other cobre readers it does NOT degrade to empty on a missing
-    # case -- it raises ``CobrePartitionMissingError`` for the pre-0.13
+    # ``read_novomodelo_bus_aggregates`` directly (outside ``_read_aligned_frames``).
+    # Unlike the other novomodelo readers it does NOT degrade to empty on a missing
+    # case -- it raises ``NovomodeloPartitionMissingError`` for the pre-0.13
     # ``hydro_bus_generation`` partition, which a bare ``tmp_path`` always
     # trips. Stub it here too, so every fixture that does not care about
     # the Energy Balance metadata (the vast majority) keeps working
     # against a bare ``tmp_path``; tests that DO care override this again
     # afterwards (monkeypatch's last ``setattr`` wins).
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers."
-        "read_cobre_bus_aggregates",
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_bus_aggregates",
         lambda *_args, **_kwargs: pl.DataFrame(),
     )
     # ``build_decomp_dataset`` also calls ``_cost_frames`` directly
@@ -77,27 +77,27 @@ def _patch_aligned_frames(
     # ``tmp_path``; tests that DO care override this again afterwards
     # (monkeypatch's last ``setattr`` wins).
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results._cost_frames",
+        "novomodelo_bridge.comparators.decomp.results._cost_frames",
         lambda *_args, **_kwargs: ({}, pl.DataFrame()),
     )
     # ``build_decomp_dataset`` also calls
-    # ``read_cobre_hydro_bus_labels`` directly (outside ``_read_aligned_frames``).
-    # Like ``read_cobre_bus_aggregates`` above, it reads the
+    # ``read_novomodelo_hydro_bus_labels`` directly (outside ``_read_aligned_frames``).
+    # Like ``read_novomodelo_bus_aggregates`` above, it reads the
     # ``simulation/hydro_bus_generation/`` partition and RAISES
-    # ``CobrePartitionMissingError`` on a bare ``tmp_path`` instead of
+    # ``NovomodeloPartitionMissingError`` on a bare ``tmp_path`` instead of
     # degrading to empty. Stub it here too, so every fixture that does not
     # care about the hydro metadata keeps working against a bare
     # ``tmp_path``; tests that DO care override this again afterwards
     # (monkeypatch's last ``setattr`` wins).
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers."
-        "read_cobre_hydro_bus_labels",
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_hydro_bus_labels",
         lambda *_args, **_kwargs: {},
     )
 
 
 def _aligned_fixture() -> _AlignedDecompFrames:
-    """One hydro plant, one thermal plant, one bus -- already aligned to Cobre
+    """One hydro plant, one thermal plant, one bus -- already aligned to Novomodelo
     ids/stages, matching the shape :func:`_read_aligned_frames` returns."""
     source_hydro = pl.DataFrame(
         {
@@ -111,7 +111,7 @@ def _aligned_fixture() -> _AlignedDecompFrames:
             "volume_util_final_hm3": [500.0, 300.0],
         }
     )
-    cobre_hydro = pl.DataFrame(
+    novomodelo_hydro = pl.DataFrame(
         {
             "entity_id": [0, 1],
             "stage_id": [0, 0],
@@ -130,7 +130,7 @@ def _aligned_fixture() -> _AlignedDecompFrames:
             "geracao_MW": [30.0],
         }
     )
-    cobre_thermal = pl.DataFrame(
+    novomodelo_thermal = pl.DataFrame(
         {"entity_id": [0], "stage_id": [0], "generation_mw": [28.0]}
     )
     source_bus = pl.DataFrame(
@@ -142,16 +142,16 @@ def _aligned_fixture() -> _AlignedDecompFrames:
             "cmo": [45.0],
         }
     )
-    cobre_bus = pl.DataFrame(
+    novomodelo_bus = pl.DataFrame(
         {"entity_id": [0], "stage_id": [0], "deficit_mw": [0.0], "spot_price": [44.0]}
     )
     return _AlignedDecompFrames(
         source_hydro=source_hydro,
         source_thermal=source_thermal,
         source_bus=source_bus,
-        cobre_hydro=cobre_hydro,
-        cobre_thermal=cobre_thermal,
-        cobre_bus=cobre_bus,
+        novomodelo_hydro=novomodelo_hydro,
+        novomodelo_thermal=novomodelo_thermal,
+        novomodelo_bus=novomodelo_bus,
         hydro_names={0: "A", 1: "B"},
         thermal_names={0: "T"},
         bus_names={0: "SE"},
@@ -161,7 +161,7 @@ def _aligned_fixture() -> _AlignedDecompFrames:
 
 def _balance_fixture() -> _AlignedDecompFrames:
     """``_aligned_fixture`` extended with the Energy Balance
-    reference frames, keyed to the same bus (cobre id 0, name "SE")."""
+    reference frames, keyed to the same bus (novomodelo id 0, name "SE")."""
     nw_market = pl.DataFrame(
         {
             "newave_code": [0, 0, 0],
@@ -192,7 +192,7 @@ def _balance_fixture() -> _AlignedDecompFrames:
 
 
 def _ree_id_map() -> DecompIdMap:
-    """Two hydro plants (codes 10, 20 -> cobre ids 0, 1) -- matches
+    """Two hydro plants (codes 10, 20 -> novomodelo ids 0, 1) -- matches
     ``_aligned_fixture``'s own hydro codes/ids so the same
     ``_patch_aligned_frames`` fixture can back both the E1 result rows and
     the REE rollup in the same ``build_decomp_dataset`` test."""
@@ -217,8 +217,8 @@ def _ree_membership_fixture() -> pl.DataFrame:
 def _ree_dec_oper_ree_fixture() -> pl.DataFrame:
     """One REE (100), stage 1 (1-based), two nodes -- scenario-mean
     ``ena_MWmes=145.0``, ``earm_final_MWmes=1010.0``, deliberately offset from
-    the Cobre-side fixture's ``150.0`` / ``1000.0`` (see
-    :func:`_ree_cobre_hydro_fixture`) so the per-variable diff is
+    the Novomodelo-side fixture's ``150.0`` / ``1000.0`` (see
+    :func:`_ree_novomodelo_hydro_fixture`) so the per-variable diff is
     hand-checkable rather than trivially zero."""
     return pl.DataFrame(
         {
@@ -240,13 +240,13 @@ def _ree_dec_oper_ree_fixture() -> pl.DataFrame:
 
 
 def _ree_aligned_fixture() -> _AlignedDecompFrames:
-    """``_aligned_fixture()`` with its ``cobre_hydro`` extended to carry the
-    ENA/EARM columns :func:`_cobre_ree_sums` reads -- the base fixture is
+    """``_aligned_fixture()`` with its ``novomodelo_hydro`` extended to carry the
+    ENA/EARM columns :func:`_novomodelo_ree_sums` reads -- the base fixture is
     trimmed to only the columns E1's ``_HYDRO_VARIABLES`` needs."""
     base = _aligned_fixture()
     return dataclasses.replace(
         base,
-        cobre_hydro=base.cobre_hydro.with_columns(
+        novomodelo_hydro=base.novomodelo_hydro.with_columns(
             pl.Series("incremental_inflow_energy_mw", [90.0, 60.0]),
             pl.Series("stored_energy_final_mwh", [400000.0, 330000.0]),
         ),
@@ -257,11 +257,11 @@ def _patch_ree_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     """Wire ``read_relato_membership``/``read_dec_oper_ree`` -- outside
     ``_read_aligned_frames`` -- to the fixtures above."""
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.read_relato_membership",
+        "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
         lambda *_a, **_k: _ree_membership_fixture(),
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.read_dec_oper_ree",
+        "novomodelo_bridge.comparators.decomp.results.read_dec_oper_ree",
         lambda *_a, **_k: _ree_dec_oper_ree_fixture(),
     )
 
@@ -286,7 +286,7 @@ def _write_generic_constraints_case(
 ) -> Path:
     """Write ``constraints/generic_constraints.json`` +
     ``constraints/generic_constraint_bounds.parquet`` under *case_dir* and
-    return the Cobre output dir (``case_dir/output``) `case_dir_for`
+    return the Novomodelo output dir (``case_dir/output``) `case_dir_for`
     resolves back to *case_dir* from -- mirrors `_write_lines_json`."""
     constraints_dir = case_dir / "constraints"
     constraints_dir.mkdir(parents=True, exist_ok=True)

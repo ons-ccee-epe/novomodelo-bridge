@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cobre_bridge.dashboard.tabs.stochastic import (
+from novomodelo_bridge.dashboard.tabs.stochastic import (
     _aggregate_by_bus,
     _aggregate_system,
     _chart_ar_order_distribution,
@@ -34,7 +34,7 @@ from cobre_bridge.dashboard.tabs.stochastic import (
     can_render,
     render,
 )
-from cobre_bridge.ui.html.css import dashboard_css
+from novomodelo_bridge.ui.html.css import dashboard_css
 
 # ---------------------------------------------------------------------------
 # Fixtures / factories

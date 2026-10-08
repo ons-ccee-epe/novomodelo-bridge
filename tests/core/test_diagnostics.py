@@ -1,10 +1,10 @@
-"""Unit tests for the structured-diagnostics model (``cobre_bridge.core.diagnostics``)."""
+"""Unit tests for the structured-diagnostics model (``novomodelo_bridge.core.diagnostics``)."""
 
 from __future__ import annotations
 
 import logging
 
-from cobre_bridge.core.diagnostics import (
+from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
@@ -58,18 +58,18 @@ class TestCollectAndEmit:
         assert [d.severity for d in sink] == [Severity.WARNING, Severity.INFO]
 
     def test_emit_inside_collect_does_not_log(self, caplog) -> None:
-        logger = logging.getLogger("cobre_bridge.newave.converters.fake")
+        logger = logging.getLogger("novomodelo_bridge.newave.converters.fake")
         with caplog.at_level(
-            logging.INFO, logger="cobre_bridge.newave.converters.fake"
+            logging.INFO, logger="novomodelo_bridge.newave.converters.fake"
         ):
             with collect():
                 emit(self._diag(), logger=logger)
         assert caplog.records == []
 
     def test_emit_without_sink_logs_on_caller_logger(self, caplog) -> None:
-        logger = logging.getLogger("cobre_bridge.newave.converters.fake")
+        logger = logging.getLogger("novomodelo_bridge.newave.converters.fake")
         with caplog.at_level(
-            logging.WARNING, logger="cobre_bridge.newave.converters.fake"
+            logging.WARNING, logger="novomodelo_bridge.newave.converters.fake"
         ):
             emit(self._diag(), logger=logger)
         assert "something happened" in caplog.text
@@ -123,7 +123,7 @@ class TestToDict:
 
 class TestWarningCollector:
     def test_captures_warning_and_above(self) -> None:
-        logger = logging.getLogger("cobre_bridge.core.diagnostics.fake")
+        logger = logging.getLogger("novomodelo_bridge.core.diagnostics.fake")
         collector = WarningCollector()
         logger.addHandler(collector)
         try:
@@ -134,7 +134,7 @@ class TestWarningCollector:
         assert collector.messages == ["degraded input A", "degraded input B"]
 
     def test_ignores_info_and_below(self) -> None:
-        logger = logging.getLogger("cobre_bridge.core.diagnostics.fake2")
+        logger = logging.getLogger("novomodelo_bridge.core.diagnostics.fake2")
         logger.setLevel(logging.DEBUG)
         collector = WarningCollector()
         logger.addHandler(collector)

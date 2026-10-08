@@ -1,7 +1,7 @@
 """Tests for the ``VI`` water travel-time converter (``decomp/travel_time.py``).
 
 Tier-1 only: synthetic ``Dadger``/``EffectiveCadastro`` doubles, no real deck.
-Covers the ``VI`` reader, the ``past_defluences`` window tiling (cobre coverage
+Covers the ``VI`` reader, the ``past_defluences`` window tiling (novomodelo coverage
 rule 5 / no-future-dating rule 5b), and the operated/downstream filtering.
 """
 
@@ -11,13 +11,13 @@ from datetime import date
 
 import pandas as pd
 
-from cobre_bridge.decomp.converters.travel_time import (
+from novomodelo_bridge.decomp.converters.travel_time import (
     TravelTime,
     _defluence_windows,
     convert_travel_time,
     read_travel_times,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _START = date(2026, 3, 14)  # a Saturday; 168 h (one operative week) per prior window
 
@@ -191,7 +191,7 @@ def test_convert_travel_time_emits_hours_and_past_defluences() -> None:
     )
 
     assert hours == {156: 360.0, 162: 360.0}
-    # Three windows per VI plant, keyed by the plant's cobre id.
+    # Three windows per VI plant, keyed by the plant's novomodelo id.
     id156, id162 = id_map.hydro_id(156), id_map.hydro_id(162)
     assert [d["hydro_id"] for d in defluences] == [
         id156,

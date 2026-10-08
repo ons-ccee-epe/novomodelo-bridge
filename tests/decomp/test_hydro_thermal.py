@@ -9,9 +9,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.case import DecompCase
-from cobre_bridge.decomp.converters.cadastro import EffectiveCadastro
-from cobre_bridge.decomp.converters.hydro import (
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.hydro import (
     _build_split_unit_groups,
     _evaporation_coefficients_mm,
     _evaporation_flag_codes,
@@ -20,12 +20,12 @@ from cobre_bridge.decomp.converters.hydro import (
     convert_initial_storage,
     convert_production_models,
 )
-from cobre_bridge.decomp.converters.thermal import (
+from novomodelo_bridge.decomp.converters.thermal import (
     convert_thermal_bounds,
     convert_thermals,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 
 _EVAPORATION_COLUMNS = (
@@ -57,7 +57,7 @@ def _evaporation_hidr(rows: dict[int, list[float]]) -> pd.DataFrame:
 
 
 class TestEvaporationEmission:
-    """Reservoir-evaporation conversion (C11 fixed in cobre 0.14): the per-plant
+    """Reservoir-evaporation conversion (C11 fixed in novomodelo 0.14): the per-plant
     UH ``evaporacao`` flag switches it on; the 12 monthly mm rates come from
     ``hidr.dat`` in calendar order (Jan..Dec)."""
 
@@ -337,7 +337,7 @@ class TestConvertHydros:
     def test_registry_entries_and_cascade_skip(self, caplog) -> None:
         hidr = _hidr_frame()
         with caplog.at_level(
-            logging.WARNING, logger="cobre_bridge.decomp.converters.hydro.entity"
+            logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
         ):
             doc = convert_hydros(
                 _case(_StubDadger(uh=_uh_frame()), hidr),
@@ -371,11 +371,11 @@ class TestConvertHydros:
         assert "99" in caplog.text
 
     def test_unit_groups_present_and_mirror_generation(self, caplog) -> None:
-        """Every hydro carries exactly one mirror unit group (cobre rule 41)
+        """Every hydro carries exactly one mirror unit group (novomodelo rule 41)
         and no top-level ``bus_id`` (removed field)."""
         hidr = _hidr_frame()
         with caplog.at_level(
-            logging.WARNING, logger="cobre_bridge.decomp.converters.hydro.entity"
+            logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
         ):
             doc = convert_hydros(
                 _case(_StubDadger(uh=_uh_frame()), hidr),
@@ -520,11 +520,11 @@ def test_deferred_note_excludes_head_productivity(caplog) -> None:
     travel time, ``COTVAZ``/``COTARE``/``COFEVA``) and now points at
     ``check decomp`` for their per-deck coverage.
     """
-    import cobre_bridge.decomp.converters.hydro as hydro_module
+    import novomodelo_bridge.decomp.converters.hydro as hydro_module
 
     hidr = _hidr_frame()
     with caplog.at_level(
-        logging.WARNING, logger="cobre_bridge.decomp.converters.hydro.entity"
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
     ):
         convert_hydros(
             _case(_StubDadger(uh=_uh_frame()), hidr),

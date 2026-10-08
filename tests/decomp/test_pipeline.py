@@ -17,36 +17,42 @@ import pyarrow.parquet as pq
 import pytest
 from typer.testing import CliRunner
 
-from cobre_bridge.cli import app
-from cobre_bridge.cobre import schemas as cobre_schemas
-from cobre_bridge.core.diagnostics import Diagnostic
-from cobre_bridge.decomp.bounds_accumulator import BoundContribution
-from cobre_bridge.decomp.constraint_registers import (
+from novomodelo_bridge.cli import app
+from novomodelo_bridge.core.diagnostics import Diagnostic
+from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
+from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
     HeMeta,
     StageBounds,
 )
-from cobre_bridge.decomp.converters.anticipated import GnlEmission
-from cobre_bridge.decomp.converters.cadastro import DiversionChannel, EffectiveCadastro
-from cobre_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
-from cobre_bridge.decomp.converters.single_term_bounds import HydroCapacities
-from cobre_bridge.decomp.converters.thermal import _THERMAL_COST_SCHEMA, ThermalBounds
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.pipeline import (
+from novomodelo_bridge.decomp.converters.anticipated import GnlEmission
+from novomodelo_bridge.decomp.converters.cadastro import (
+    DiversionChannel,
+    EffectiveCadastro,
+)
+from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
+from novomodelo_bridge.decomp.converters.single_term_bounds import HydroCapacities
+from novomodelo_bridge.decomp.converters.thermal import (
+    _THERMAL_COST_SCHEMA,
+    ThermalBounds,
+)
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.pipeline import (
     ConversionReport,
     _base_diversion_channels,
     _diversion_channels,
 )
-from cobre_bridge.decomp.scenarios import (
+from novomodelo_bridge.decomp.scenarios import (
     convert_external_inflows,
     convert_inflow_stats_identity,
     convert_scenario_probabilities,
     deterministic_external_scenarios,
     terminal_fan_probabilities,
 )
-from cobre_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from tests.conftest import make_decomp_case
 
 _ID_MAP = DecompIdMap(
@@ -200,7 +206,7 @@ class TestScenarioEmitters:
 
 class TestPipeline:
     def test_missing_deck_raises(self, tmp_path: Path) -> None:
-        from cobre_bridge.decomp.pipeline import convert_decomp_case
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 
         with pytest.raises(FileNotFoundError, match="caso.dat"):
             convert_decomp_case(tmp_path, tmp_path / "out")
@@ -208,8 +214,8 @@ class TestPipeline:
     def test_discover_decomp_files_no_caso_raises_source_file_error(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.core.errors import SourceFileError
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.core.errors import SourceFileError
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         with pytest.raises(SourceFileError) as excinfo:
             discover_decomp_files(tmp_path)
@@ -223,8 +229,8 @@ class TestPipeline:
     def test_discover_decomp_files_no_dadger_raises_source_file_error(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.core.errors import SourceFileError
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.core.errors import SourceFileError
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         (tmp_path / "caso.dat").write_text("rv0\n", encoding="latin-1")
 
@@ -244,7 +250,7 @@ class TestPhaseLabels:
     ``CONVERSION_PHASE_LABELS``/``on_phase`` wiring."""
 
     def test_decomp_conversion_phase_labels_is_the_expected_tuple(self) -> None:
-        from cobre_bridge.decomp.pipeline import DECOMP_CONVERSION_PHASE_LABELS
+        from novomodelo_bridge.decomp.pipeline import DECOMP_CONVERSION_PHASE_LABELS
 
         assert DECOMP_CONVERSION_PHASE_LABELS == (
             "Discovering deck",
@@ -264,7 +270,7 @@ class TestDecompCaseArtifacts:
     which reads ``config``/``initial_conditions``) depend on."""
 
     def test_field_contract(self) -> None:
-        from cobre_bridge.decomp.pipeline import DecompCaseArtifacts
+        from novomodelo_bridge.decomp.pipeline import DecompCaseArtifacts
 
         field_names = {f.name for f in dataclasses.fields(DecompCaseArtifacts)}
         assert {
@@ -338,11 +344,11 @@ class TestEmissionCheckWiring:
         ``emission_checks.run_and_gate`` call ``_convert_decomp_case_impl``
         now makes, over a synthetic in-memory bounds table
         carrying one duplicate ``(hydro_id, stage_id, block_id, column)`` row
-        (cobre rule 36, ``check_bound_row_uniqueness``) — the gate must raise
+        (novomodelo rule 36, ``check_bound_row_uniqueness``) — the gate must raise
         ``EmissionCheckError``, and that exception must still satisfy
         ``isinstance(exc, ValueError)`` for any existing
         ``pytest.raises(ValueError)`` call site."""
-        from cobre_bridge.core import emission_checks
+        from novomodelo_bridge.core import emission_checks
 
         hydro_bounds = pa.table(
             {
@@ -370,9 +376,9 @@ class TestEmissionCheckWiring:
         verdict via ``cli.app._convert_status`` — the single function both
         pipelines' convert verdicts key off, not a bare inspection of
         the diagnostic."""
-        from cobre_bridge.cli.verdict import _convert_status
-        from cobre_bridge.core import diagnostics as dx
-        from cobre_bridge.core.emission_checks import check_hydro_bounds_no_raising
+        from novomodelo_bridge.cli.verdict import _convert_status
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.emission_checks import check_hydro_bounds_no_raising
 
         hydros = {
             "hydros": [
@@ -419,7 +425,7 @@ class TestBoundAccumulatorWiring:
         entity-bounds combine this test guards against."""
         import inspect
 
-        from cobre_bridge.decomp import pipeline
+        from novomodelo_bridge.decomp import pipeline
 
         source = inspect.getsource(pipeline)
         assert source.count("concat_tables") == 1
@@ -438,7 +444,9 @@ class TestBoundAccumulatorWiring:
 class TestCli:
     def test_convert_decomp_invokes_pipeline(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        with patch("cobre_bridge.decomp.pipeline.convert_decomp_case") as mock_convert:
+        with patch(
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case"
+        ) as mock_convert:
             result = runner.invoke(
                 app,
                 # --no-fcf: the empty tmp_path is not a discoverable deck, and
@@ -460,7 +468,7 @@ class TestCli:
     def test_convert_decomp_failure_exits_one(self, tmp_path: Path) -> None:
         runner = CliRunner()
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             side_effect=FileNotFoundError("caso.dat not found"),
         ):
             result = runner.invoke(
@@ -477,7 +485,7 @@ class TestCli:
         no dedicated CLI branch is needed."""
         runner = CliRunner()
         with patch(
-            "cobre_bridge.decomp.pipeline.convert_decomp_case",
+            "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
             side_effect=ValueError(
                 "DECOMP conversion failed 1 post-emission self-check error(s)"
             ),
@@ -685,8 +693,8 @@ def _run_cadastro_pipeline(
     a caller recover the ``convert_gnl`` mock (and thus its call args) after
     the patched run — populated only alongside *gnl_emission*.
     """
-    from cobre_bridge.decomp.files import DecompFiles
-    from cobre_bridge.decomp.pipeline import convert_decomp_case
+    from novomodelo_bridge.decomp.files import DecompFiles
+    from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 
     files = DecompFiles(
         revision="rv0",
@@ -760,59 +768,63 @@ def _run_cadastro_pipeline(
     ]
 
     patches: dict[str, object] = {
-        "cobre_bridge.decomp.pipeline.DecompCase.from_directory": case,
-        "cobre_bridge.decomp.pipeline.Vazoes.read": object(),
-        "cobre_bridge.decomp.pipeline.scenarios_conv.terminal_fan_probabilities": [1.0],
-        "cobre_bridge.decomp.pipeline.config_conv.convert_config": {},
-        "cobre_bridge.decomp.pipeline.network_conv._bus_deficit_costs": {},
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline.DecompCase.from_directory": case,
+        "novomodelo_bridge.decomp.pipeline.Vazoes.read": object(),
+        "novomodelo_bridge.decomp.pipeline.scenarios_conv.terminal_fan_probabilities": [
+            1.0
+        ],
+        "novomodelo_bridge.decomp.pipeline.config_conv.convert_config": {},
+        "novomodelo_bridge.decomp.pipeline.network_conv._bus_deficit_costs": {},
+        "novomodelo_bridge.decomp.pipeline"
         ".hydro_conv.convert_energy_productivity": productivity_table,
-        "cobre_bridge.decomp.pipeline.network_conv.convert_buses": {"buses": []},
-        "cobre_bridge.decomp.pipeline.network_conv.convert_lines": (
+        "novomodelo_bridge.decomp.pipeline.network_conv.convert_buses": {"buses": []},
+        "novomodelo_bridge.decomp.pipeline.network_conv.convert_lines": (
             {"lines": []},
             _LINE_BOUNDS_SCHEMA.empty_table(),
         ),
-        "cobre_bridge.decomp.pipeline.network_conv.convert_pumping_stations": {
+        "novomodelo_bridge.decomp.pipeline.network_conv.convert_pumping_stations": {
             "pumping_stations": []
         },
-        "cobre_bridge.decomp.pipeline.thermal_conv.convert_thermals": {"thermals": []},
-        "cobre_bridge.decomp.pipeline.ncs_conv.convert_non_controllable_sources": {
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.convert_thermals": {
+            "thermals": []
+        },
+        "novomodelo_bridge.decomp.pipeline.ncs_conv.convert_non_controllable_sources": {
             "non_controllable_sources": []
         },
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline"
         ".scenarios_conv.convert_external_inflows": external_inflow_table,
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline"
         ".scenarios_conv.convert_recent_observation_windows": [],
-        "cobre_bridge.decomp.pipeline.load_conv.convert_load_stats": load_stats_table,
-        "cobre_bridge.decomp.pipeline.load_conv.convert_load_factors": {},
-        "cobre_bridge.decomp.pipeline.ncs_conv.convert_ncs_stats": ncs_stats_table,
-        "cobre_bridge.decomp.pipeline.ncs_conv.convert_ncs_factors": {},
-        "cobre_bridge.decomp.pipeline.thermal_conv.convert_thermal_bounds": (
+        "novomodelo_bridge.decomp.pipeline.load_conv.convert_load_stats": load_stats_table,
+        "novomodelo_bridge.decomp.pipeline.load_conv.convert_load_factors": {},
+        "novomodelo_bridge.decomp.pipeline.ncs_conv.convert_ncs_stats": ncs_stats_table,
+        "novomodelo_bridge.decomp.pipeline.ncs_conv.convert_ncs_factors": {},
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.convert_thermal_bounds": (
             ThermalBounds(generation=[], cost=_THERMAL_COST_SCHEMA.empty_table())
         ),
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline"
         ".bounds_conv.convert_hydro_bounds": baseline_hydro_bounds,
-        "cobre_bridge.decomp.pipeline.hydro_conv.convert_hydro_group_availability": {},
-        "cobre_bridge.decomp.pipeline.contracts_conv.read_contracts": [],
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.convert_hydro_group_availability": {},
+        "novomodelo_bridge.decomp.pipeline.contracts_conv.read_contracts": [],
         # The mock deck (_CadastroDadger) exposes no
         # RE/HQ/HV/UE accessors, so the special-constraint census and the
         # pumping id map must be patched too — the bound-combine
         # logic is under test, not the special-constraint reader or the
         # pumping id map (both out of scope, exercised elsewhere).
-        "cobre_bridge.decomp.pipeline.constraint_registers.read_constraints": (
+        "novomodelo_bridge.decomp.pipeline.constraint_registers.read_constraints": (
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
         ),
-        "cobre_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
+        "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
         # The mock deck exposes no real files (DecompCase.from_directory
         # is patched wholesale above, so no real file I/O happens anywhere in this
         # fixture) — the E1 detection helpers read the raw deck files directly, so
         # they must be patched here too, the same way the special-constraint
         # reader above is.
-        "cobre_bridge.decomp.pipeline"
+        "novomodelo_bridge.decomp.pipeline"
         ".constraint_registers.detect_unreadable_electrical": list(
             unreadable_electrical
         ),
-        "cobre_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
+        "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
             libs_electrical
         ),
     }
@@ -824,13 +836,13 @@ def _run_cadastro_pipeline(
         # *return value* into the written case files is under test here.
         # ``case.dadgnl`` is already the non-None sentinel set above, so only
         # its downstream decode (read_gnl_model) needs patching here.
-        patches["cobre_bridge.decomp.pipeline.anticipated_conv.read_gnl_model"] = (
+        patches["novomodelo_bridge.decomp.pipeline.anticipated_conv.read_gnl_model"] = (
             object()
         )
-        patches["cobre_bridge.decomp.pipeline.anticipated_conv.convert_gnl"] = (
+        patches["novomodelo_bridge.decomp.pipeline.anticipated_conv.convert_gnl"] = (
             gnl_emission
         )
-        patches["cobre_bridge.decomp.pipeline.thermal_conv.convert_thermals"] = {
+        patches["novomodelo_bridge.decomp.pipeline.thermal_conv.convert_thermals"] = {
             "thermals": [{"id": 0}]
         }
     with ExitStack() as stack:
@@ -839,7 +851,9 @@ def _run_cadastro_pipeline(
             entered[target] = stack.enter_context(patch(target, return_value=value))
         if convert_gnl_mock_out is not None:
             convert_gnl_mock_out.append(
-                entered["cobre_bridge.decomp.pipeline.anticipated_conv.convert_gnl"]
+                entered[
+                    "novomodelo_bridge.decomp.pipeline.anticipated_conv.convert_gnl"
+                ]
             )
         dst = tmp_path / "case"
         report = convert_decomp_case(Path("unused-src"), dst, dry_run=dry_run)
@@ -980,7 +994,7 @@ class TestGnlWiring:
         """The summary log names only the emitted GNL thermal count -- no
         "future anticipated deliver(y/ies)" clause (the retired free lane)
         and no "post-horizon deliver(y/ies)" wording (an older phrasing)."""
-        with caplog.at_level(logging.INFO, logger="cobre_bridge.decomp.pipeline"):
+        with caplog.at_level(logging.INFO, logger="novomodelo_bridge.decomp.pipeline"):
             _run_cadastro_pipeline(
                 tmp_path, ac_volmax_frame=None, gnl_emission=_POPULATED_GNL_EMISSION
             )
@@ -1037,7 +1051,9 @@ class TestCadastroPipelineWiring:
 
         doc = json.loads((dst / "initial_conditions.json").read_text())
         assert next(iter(doc)) == "$schema"
-        assert doc["$schema"] == cobre_schemas.schema_url_for("initial_conditions.json")
+        assert doc["$schema"] == novomodelo_schemas.schema_url_for(
+            "initial_conditions.json"
+        )
 
     def test_temporal_override_adds_storage_rows_and_raises_the_entity_envelope(
         self, tmp_path: Path
@@ -1092,7 +1108,7 @@ class TestCadastroPipelineWiring:
         ``dx.collect()``, so this reads the diagnostics via
         ``_run_cadastro_pipeline``'s ``diagnostics_out`` rather than an outer
         ``dx.collect()`` (which would be shadowed and see nothing)."""
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         ac_volmax_frame = pd.DataFrame(
             [
@@ -1224,12 +1240,12 @@ class TestGenericConstraintWiring:
     """The E4/E5 generic-constraint emitters wired
     into ``convert_decomp_case`` over one shared 0-based id allocator.
     Tier-1 synthetic only — the ``_run_cadastro_pipeline`` mock deck,
-    extended with a ``to_generic`` census; no real deck, no ``import cobre``.
+    extended with a ``to_generic`` census; no real deck, no ``import novomodelo``.
     """
 
     def test_ids_are_dense_and_unique_across_the_emitters(self, tmp_path: Path) -> None:
         """RE (one upper-only id) -> the combined RHQ/RHV emitter (one
-        genuinely two-sided HQ id under cobre's F3 interval model + one
+        genuinely two-sided HQ id under novomodelo's F3 interval model + one
         lower-only HV id) -> RHE (one id) share a single running allocator,
         so the 4 emitted ids form a gap-free ``range(4)`` with no
         collision, regardless of which emitter produced which id."""
@@ -1331,7 +1347,7 @@ class TestGenericConstraintWiring:
         ``dx.collect()``, so this reads the diagnostics via
         ``_run_cadastro_pipeline``'s ``diagnostics_out`` rather than an outer
         ``dx.collect()`` (which would be shadowed and see nothing)."""
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         fe_diagnostic = dx.Diagnostic(
             code="decomp-fe-participation-unreadable",
@@ -1375,7 +1391,7 @@ class TestGenericConstraintWiring:
         self, tmp_path: Path
     ) -> None:
         """``generic_constraint_bounds.parquet`` compresses with zstd
-        (cobre C3: snappy unsupported), and ``generic_constraints.json``'s
+        (novomodelo C3: snappy unsupported), and ``generic_constraints.json``'s
         envelope key + ``$schema`` match the registry entry the source
         model's own generic-constraints writer (``converters/constraints.py``)
         also reads, confirmed by loading both."""
@@ -1391,7 +1407,7 @@ class TestGenericConstraintWiring:
                 assert row_group.column(column_index).compression == "ZSTD"
 
         doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
-        assert doc["$schema"] == cobre_schemas.schema_url_for(
+        assert doc["$schema"] == novomodelo_schemas.schema_url_for(
             "constraints/generic_constraints.json"
         )
         assert set(doc) == {"$schema", "constraints"}
@@ -1443,7 +1459,7 @@ class TestDryRun:
         """A mid-conversion failure on a real run removes the known outputs
         already written before the raise, so a plain (no ``--force``) retry
         is not refused as "destination not empty"."""
-        from cobre_bridge.decomp import pipeline as decomp_pipeline
+        from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
         dst = tmp_path / "case"
 
@@ -1477,7 +1493,7 @@ class TestDryRun:
         the failure-clearing behavior under ``dry_run`` that it actually
         targets; see ``test_real_run_against_populated_dst_refuses_without_clearing``
         for the refusal-guard behavior on its own."""
-        from cobre_bridge.decomp import pipeline as decomp_pipeline
+        from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
         dst = tmp_path / "case"
         dst.mkdir()
@@ -1504,7 +1520,7 @@ class TestDryRun:
         the previous case's full artifact set first, so a conditional
         artifact the new run does not reproduce (``post_study_stages.json``,
         ``boundary/``) cannot survive on top of the fresh case."""
-        from cobre_bridge.decomp import pipeline as decomp_pipeline
+        from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
         dst = tmp_path / "case"
         dst.mkdir()
@@ -1530,7 +1546,7 @@ class TestDryRun:
     ) -> None:
         """``--force --dry-run`` over the same populated ``dst`` must not
         pre-clear: a dry run never mutates ``dst``."""
-        from cobre_bridge.decomp import pipeline as decomp_pipeline
+        from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
         dst = tmp_path / "case"
         dst.mkdir()
@@ -1563,7 +1579,7 @@ class TestDryRun:
         real guard (no mocking of ``_convert_decomp_case_impl``), since a
         guard living inside the mocked-out implementation would not be
         caught by a test that replaces it with a fake."""
-        from cobre_bridge.decomp.pipeline import convert_decomp_case
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 
         dst = tmp_path / "case"
         dst.mkdir()
@@ -1580,8 +1596,8 @@ class TestDryRun:
     ) -> None:
         """The DECOMP set clears the shared artifacts plus its own root-level
         ``post_study_stages.json`` and ``boundary/`` tree."""
-        from cobre_bridge.core.conversion import clear_dst_contents
-        from cobre_bridge.decomp.pipeline import DECOMP_CLEARED_ARTIFACTS
+        from novomodelo_bridge.core.conversion import clear_dst_contents
+        from novomodelo_bridge.decomp.pipeline import DECOMP_CLEARED_ARTIFACTS
 
         dst = tmp_path / "dst"
         dst.mkdir()
@@ -1607,8 +1623,8 @@ class TestDryRun:
     ) -> None:
         """Regression: the NEWAVE set does not name
         DECOMP-only artifacts, so they survive a NEWAVE-set clear."""
-        from cobre_bridge.core.conversion import clear_dst_contents
-        from cobre_bridge.newave.pipeline import NEWAVE_CLEARED_ARTIFACTS
+        from novomodelo_bridge.core.conversion import clear_dst_contents
+        from novomodelo_bridge.newave.pipeline import NEWAVE_CLEARED_ARTIFACTS
 
         dst = tmp_path / "dst"
         dst.mkdir()
@@ -1627,14 +1643,16 @@ class TestDryRun:
         assert not config.exists()
 
 
-_READ_TRAVEL_TIMES = "cobre_bridge.decomp.pipeline.travel_time_conv.read_travel_times"
+_READ_TRAVEL_TIMES = (
+    "novomodelo_bridge.decomp.pipeline.travel_time_conv.read_travel_times"
+)
 
 
 class TestDeferralWarning:
     """The flat ``deferred at this milestone`` warning now names ONLY water
     travel time, and only when the deck actually carries a ``VI`` register.
     Boundary FCF is imported by default, reservoir evaporation is converted
-    (cobre >= 0.14's C11 fix), and windowed inflow inputs do not apply to the
+    (novomodelo >= 0.14's C11 fix), and windowed inflow inputs do not apply to the
     external explicit tree the DECOMP path emits — so none of those are
     deferred, and a deck with no travel time emits no deferral warning at all.
     """
@@ -1644,7 +1662,9 @@ class TestDeferralWarning:
     ) -> None:
         """The mock deck carries no VI travel-time register, so nothing is
         deferred and no ``deferred at this milestone`` warning is emitted."""
-        with caplog.at_level(logging.WARNING, logger="cobre_bridge.decomp.pipeline"):
+        with caplog.at_level(
+            logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
+        ):
             _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
 
         assert not [
@@ -1658,7 +1678,9 @@ class TestDeferralWarning:
         time alone — never boundary FCF, windowed inflow inputs, GNL
         anticipation, or reservoir evaporation (all emitted, not deferred)."""
         with (
-            caplog.at_level(logging.WARNING, logger="cobre_bridge.decomp.pipeline"),
+            caplog.at_level(
+                logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
+            ),
             patch(_READ_TRAVEL_TIMES, return_value={1: 24.0}),
         ):
             _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
@@ -1685,7 +1707,7 @@ class TestDeferralWarning:
         ``dx.collect()``, so the diagnostics half reads
         ``_run_cadastro_pipeline``'s ``diagnostics_out`` rather than an outer
         ``dx.collect()`` (which would be shadowed and see nothing)."""
-        from cobre_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core import diagnostics as dx
 
         fe_diagnostic = dx.Diagnostic(
             code="decomp-fe-participation-unreadable",
@@ -1711,7 +1733,9 @@ class TestDeferralWarning:
 
         collected: list[dx.Diagnostic] = []
         with (
-            caplog.at_level(logging.WARNING, logger="cobre_bridge.decomp.pipeline"),
+            caplog.at_level(
+                logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
+            ),
             patch(_READ_TRAVEL_TIMES, return_value={1: 24.0}),
         ):
             _run_cadastro_pipeline(
@@ -1740,7 +1764,7 @@ class TestDeferralWarning:
 
 class TestDiversionChannels:
     """``_diversion_channels`` couples a positive QDES diversion floor to the
-    source-model diversion channel cobre requires for it (BILLINGS/PIMENTAL in
+    source-model diversion channel novomodelo requires for it (BILLINGS/PIMENTAL in
     the real decks)."""
 
     @staticmethod
@@ -1824,7 +1848,7 @@ class TestDiversionChannels:
 
 class TestBaseDiversionChannels:
     """``_base_diversion_channels`` models the BASE ``desvio`` diversions that
-    carry no QDES flow bound (e.g. MOXOTO -> P.AFONSO 4): without them cobre pins
+    carry no QDES flow bound (e.g. MOXOTO -> P.AFONSO 4): without them novomodelo pins
     the diversion column to ``[0, 0]`` and the downstream plant is stranded."""
 
     @staticmethod
@@ -1942,7 +1966,7 @@ class TestDiscoverDecompFilesBoundaryFcf:
         (deck_dir / "hidr.dat").write_text("", encoding="latin-1")
 
     def test_cortesh_and_cortes_resolved_when_present(self, tmp_path: Path) -> None:
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         self._minimal_deck(tmp_path)
         (tmp_path / "cortesh.dat").write_text("", encoding="latin-1")
@@ -1954,7 +1978,7 @@ class TestDiscoverDecompFilesBoundaryFcf:
         assert files.cortes == tmp_path / "cortes-004.dat"
 
     def test_cortesh_and_cortes_none_when_absent(self, tmp_path: Path) -> None:
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         self._minimal_deck(tmp_path)
 
@@ -1966,7 +1990,7 @@ class TestDiscoverDecompFilesBoundaryFcf:
     def test_cortes_prefers_single_stage_export_over_consolidated_archive(
         self, tmp_path: Path
     ) -> None:
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         self._minimal_deck(tmp_path)
         (tmp_path / "cortesh.dat").write_text("", encoding="latin-1")
@@ -1983,7 +2007,7 @@ class TestDiscoverDecompFilesBoundaryFcf:
         """The ``FC`` record's own ``caminho`` may be a relative path
         pointing outside the deck directory (e.g. a shared upstream run
         directory); the glob idiom alone could never find it there."""
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         deck_dir = tmp_path / "deck"
         deck_dir.mkdir()
@@ -2007,7 +2031,7 @@ class TestDiscoverDecompFilesBoundaryFcf:
         """A malformed/stale ``FC`` record (naming a file that does not
         exist) must never raise -- discovery falls through to the deck-local
         glob idiom instead."""
-        from cobre_bridge.decomp.files import discover_decomp_files
+        from novomodelo_bridge.decomp.files import discover_decomp_files
 
         self._minimal_deck(
             tmp_path,
@@ -2023,7 +2047,7 @@ class TestDiscoverDecompFilesBoundaryFcf:
     def test_decomp_files_still_constructs_without_the_new_fields(self) -> None:
         """Every pre-existing ``DecompFiles(...)`` call site keeps
         constructing unchanged -- both new fields default to ``None``."""
-        from cobre_bridge.decomp.files import DecompFiles
+        from novomodelo_bridge.decomp.files import DecompFiles
 
         files = DecompFiles(
             revision="rv0",

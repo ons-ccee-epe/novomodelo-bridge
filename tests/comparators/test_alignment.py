@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from cobre_bridge.comparators.newave.alignment import (
+from novomodelo_bridge.comparators.newave.alignment import (
     build_entity_alignment,
     read_reference_names,
 )
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case
 
 
@@ -128,16 +128,16 @@ class TestBuildEntityAlignment:
 
         alignment = build_entity_alignment(id_map, case, lines_json)
 
-        assert {(h.newave_code, h.cobre_id, h.name) for h in alignment.hydros} == {
+        assert {(h.newave_code, h.novomodelo_id, h.name) for h in alignment.hydros} == {
             (10, 0, "HYDRO A"),
             (20, 1, "HYDRO B"),
         }
-        assert {(t.newave_code, t.cobre_id, t.name) for t in alignment.thermals} == {
-            (100, 0, "THERM A")
-        }
+        assert {
+            (t.newave_code, t.novomodelo_id, t.name) for t in alignment.thermals
+        } == {(100, 0, "THERM A")}
         assert len(alignment.lines) == 1
         line = alignment.lines[0]
-        assert line.cobre_line_id == 0
+        assert line.novomodelo_line_id == 0
         assert line.newave_de == 1
         assert line.newave_para == 2
 

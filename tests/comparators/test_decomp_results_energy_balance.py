@@ -1,7 +1,7 @@
 """Energy Balance tab tests for ``comparators.decomp.results``.
 
 Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-the System tab's cobre bus percentile metadata and the Energy
+the System tab's novomodelo bus percentile metadata and the Energy
 Balance frames feeding ``build_decomp_dataset``. The remaining concern bands
 (network, costs, performance, hydro/thermal detail, productivity, FPHA, REE,
 evaporation, constraints, CLI) stay in the mega file pending their own carve.
@@ -14,13 +14,13 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.charts import _BALANCE_VARS
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.charts import _BALANCE_VARS
+from novomodelo_bridge.comparators.decomp.results import (
     _energy_balance_frames,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.report_builder import build_comparison_report
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
     _balance_fixture,
@@ -29,7 +29,7 @@ from tests.comparators.conftest import (
 
 
 class TestSystemTabMetadata:
-    """The System tab's cobre bus percentile band + the
+    """The System tab's novomodelo bus percentile band + the
     exclusion of the transhipment bus from ``results`` bus rows."""
 
     def _bus_percentiles(self) -> pl.DataFrame:
@@ -51,8 +51,8 @@ class TestSystemTabMetadata:
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_bus_percentiles",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_bus_percentiles",
             lambda *_args, **_kwargs: self._bus_percentiles(),
         )
 
@@ -70,11 +70,11 @@ class TestSystemTabMetadata:
             "deficit_mw_p90",
         }.issubset(set(bus_pct.columns))
 
-    def test_bus_percentiles_stay_empty_when_cobre_output_lacks_them(
+    def test_bus_percentiles_stay_empty_when_novomodelo_output_lacks_them(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """No percentile mock: ``tmp_path`` has no ``simulation/buses``
-        partition, so ``read_cobre_bus_percentiles`` degrades to its own
+        partition, so ``read_novomodelo_bus_percentiles`` degrades to its own
         empty-frame default and the dataset must not fabricate a band."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
 
@@ -89,8 +89,8 @@ class TestSystemTabMetadata:
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_bus_percentiles",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_bus_percentiles",
             lambda *_args, **_kwargs: self._bus_percentiles(),
         )
         dataset = build_decomp_dataset(tmp_path, tmp_path)
@@ -153,7 +153,7 @@ class TestEnergyBalanceFrames:
 
     def _patch_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_sist",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_args, **_kwargs: _dec_oper_sist_frame(),
         )
 
@@ -173,7 +173,7 @@ class TestEnergyBalanceFrames:
         assert emitted == {"GHTOT", "GTERM", "DEFT"}
         assert "EXCESSO" not in emitted
 
-    def test_ghtot_gterm_deft_values_use_the_mapped_cobre_bus_id(
+    def test_ghtot_gterm_deft_values_use_the_mapped_novomodelo_bus_id(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         self._patch_source(monkeypatch)
@@ -186,12 +186,12 @@ class TestEnergyBalanceFrames:
             (row["newave_code"], row["variable"]): row["value"]
             for row in nw_market.iter_rows(named=True)
         }
-        # Submarket 1 -> cobre bus 0: hydro gen averaged over the two nodes
+        # Submarket 1 -> novomodelo bus 0: hydro gen averaged over the two nodes
         # ((600+620)/2), GTERM = live (200) + anticipated (50).
         assert by_bus[(0, "GHTOT")] == pytest.approx(610.0)
         assert by_bus[(0, "GTERM")] == pytest.approx(250.0)
         assert by_bus[(0, "DEFT")] == pytest.approx(0.0)
-        # Submarket 2 -> cobre bus 1.
+        # Submarket 2 -> novomodelo bus 1.
         assert by_bus[(1, "GHTOT")] == pytest.approx(300.0)
         assert by_bus[(1, "GTERM")] == pytest.approx(100.0)
         assert by_bus[(1, "DEFT")] == pytest.approx(0.0)
@@ -246,7 +246,7 @@ class TestEnergyBalanceFrames:
     ) -> None:
         """The converter-created transhipment bus has no ``codigo_submercado``
         of its own -- ``bus_codes`` (``{code: id_map.bus_id(code) for code in
-        id_map.bus_codes}``) only ever holds Cobre ids in
+        id_map.bus_codes}``) only ever holds Novomodelo ids in
         ``range(len(bus_codes))``, one short of ``transhipment_bus_id`` -- so
         it structurally cannot appear in ``newave_code``. Regression guard,
         mirroring ``TestBusSideExcludesTranshipment``."""
@@ -263,7 +263,7 @@ class TestEnergyBalanceFrames:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.read_dec_oper_sist",
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_args, **_kwargs: pl.DataFrame(),
         )
 
@@ -277,8 +277,8 @@ class TestEnergyBalanceFrames:
 
 
 def _bus_aggregates_fixture() -> pl.DataFrame:
-    """Per-bus Cobre percentile aggregates for all five ``_BALANCE_VARS``
-    quantities -- the shape :func:`cobre_readers.read_cobre_bus_aggregates`
+    """Per-bus Novomodelo percentile aggregates for all five ``_BALANCE_VARS``
+    quantities -- the shape :func:`novomodelo_readers.read_novomodelo_bus_aggregates`
     returns."""
     return pl.DataFrame(
         {
@@ -303,7 +303,7 @@ def _bus_aggregates_fixture() -> pl.DataFrame:
     )
 
 
-def _cobre_hydro_means_fixture() -> pl.DataFrame:
+def _novomodelo_hydro_means_fixture() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "entity_id": [0],
@@ -321,19 +321,19 @@ class TestBuildDecompDatasetEnergyBalance:
     def _patch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_aligned_frames(monkeypatch, _balance_fixture())
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_bus_aggregates",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_bus_aggregates",
             lambda *_args, **_kwargs: _bus_aggregates_fixture(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_bus_metadata",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_bus_metadata",
             lambda *_args, **_kwargs: {0: {"name": "SE"}},
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_hydro_means",
-            lambda *_args, **_kwargs: _cobre_hydro_means_fixture(),
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_hydro_means",
+            lambda *_args, **_kwargs: _novomodelo_hydro_means_fixture(),
         )
 
     def test_metadata_keys_are_present_and_typed(
@@ -347,14 +347,14 @@ class TestBuildDecompDatasetEnergyBalance:
             "nw_market",
             "nw_net_load",
             "bus_aggregates",
-            "cobre_hydro_means",
+            "novomodelo_hydro_means",
             "nw_sin",
         ):
             value = getattr(dataset.render, key)
             assert isinstance(value, pl.DataFrame)
             assert not value.is_empty()
-        assert isinstance(dataset.render.cobre_bus_meta, dict)
-        assert dataset.render.cobre_bus_meta
+        assert isinstance(dataset.render.novomodelo_bus_meta, dict)
+        assert dataset.render.novomodelo_bus_meta
         # D-STAGE-OFFSET: fixed at 1 for DECOMP's 1-based estagio.
         assert dataset.render.nw_offset == 1
 
@@ -383,13 +383,13 @@ class TestBuildDecompDatasetEnergyBalance:
         assert earmf == pytest.approx([7000.0])
         assert ena == pytest.approx([1600.0])
 
-    def test_excess_panel_renders_cobre_only_with_no_fabricated_newave_row(
+    def test_excess_panel_renders_novomodelo_only_with_no_fabricated_newave_row(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """DECOMP has no energy-excess quantity (see
         ``_energy_balance_frames``'s docstring): EXCESSO must never appear in
         ``nw_market`` (no dead row), while the tab's Excess panel still
-        renders using Cobre data alone."""
+        renders using Novomodelo data alone."""
         self._patch(monkeypatch)
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)

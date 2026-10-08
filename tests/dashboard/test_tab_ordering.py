@@ -7,7 +7,7 @@ assert on those constants directly (no parallel ordering table to drift).
 
 from __future__ import annotations
 
-from cobre_bridge.dashboard.tabs import TAB_MODULES, stochastic, training
+from novomodelo_bridge.dashboard.tabs import TAB_MODULES, stochastic, training
 
 
 def test_stochastic_before_training() -> None:

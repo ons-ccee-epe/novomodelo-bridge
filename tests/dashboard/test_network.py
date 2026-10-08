@@ -1,4 +1,4 @@
-"""Unit tests for cobre_bridge.dashboard.tabs.network.
+"""Unit tests for novomodelo_bridge.dashboard.tabs.network.
 
 Covers module constants, can_render, build_line_explorer, build_heatmap,
 build_bus_balance, and the render() guard path.
@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 import pandas as pd
 import polars as pl
 
-import cobre_bridge.dashboard.tabs.network as network_mod
-from cobre_bridge.dashboard.tabs.network import (
+import novomodelo_bridge.dashboard.tabs.network as network_mod
+from novomodelo_bridge.dashboard.tabs.network import (
     TAB_ID,
     TAB_LABEL,
     TAB_ORDER,

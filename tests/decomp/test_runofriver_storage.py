@@ -6,7 +6,7 @@ accumulate water across stages. Before this fix, every storage consumer
 (the entity ``reservoir`` block, the per-stage storage-bounds emitter, the
 initial-storage %) fed the ``hidr`` registry's ``(volume_minimo,
 volume_maximo)`` band straight through for a ``D`` plant, emitting phantom
-weekly storage the plant does not have. :func:`~cobre_bridge.decomp.
+weekly storage the plant does not have. :func:`~novomodelo_bridge.decomp.
 cadastro.effective_storage_range` collapses that band to a single point
 (``volume_referencia``) for a ``D`` plant only; every storage consumer now
 routes through it, while productivity keeps reading the full range.
@@ -24,19 +24,19 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from cobre_bridge.decomp.converters.bounds import convert_storage_bounds
-from cobre_bridge.decomp.converters.cadastro import (
+from novomodelo_bridge.decomp.converters.bounds import convert_storage_bounds
+from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     effective_storage_range,
     storage_envelope,
 )
-from cobre_bridge.decomp.converters.hydro import (
+from novomodelo_bridge.decomp.converters.hydro import (
     convert_energy_productivity,
     convert_hydros,
     convert_initial_storage,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
-from cobre_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 
@@ -306,7 +306,7 @@ def test_collapse_diagnostic_counts_d_plants(caplog: pytest.LogCaptureFixture) -
         calendar=_calendar(1),
     )
     with caplog.at_level(
-        logging.INFO, logger="cobre_bridge.decomp.converters.hydro.entity"
+        logging.INFO, logger="novomodelo_bridge.decomp.converters.hydro.entity"
     ):
         convert_hydros(case, id_map, effective=effective)
 

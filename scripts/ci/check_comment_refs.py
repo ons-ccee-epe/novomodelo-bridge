@@ -3,24 +3,24 @@
 
 Enforces `.claude/rules/comments.md` N3: a comment or docstring in src/ or
 tests/ must reference only things that cannot rot for a reader — a symbol, a
-named test, or a stable external anchor (the cobre book, a schema name, a
+named test, or a stable external anchor (the novomodelo book, a schema name, a
 published reference manual `§`). Everything below rots.
 
 HARD (exit 1):
-  * source-file line references — this repo's ``file.py:NNN`` and cobre's
+  * source-file line references — this repo's ``file.py:NNN`` and novomodelo's
     ``file.rs:NNN`` / ``file.rs ~NN`` alike (drift on every edit above the
     line). A ``file.rs::symbol`` anchor is durable and deliberately allowed.
   * the literal token ``MEMORY.md`` (agent memory, unresolvable for readers),
   * ``.claude/`` paths outside ``.claude/rules/`` (private tooling; the
     ``.claude/rules/*`` contract-mirror class is allowed),
   * machine-local ``~/git/...`` paths and gitignored ``plans/...`` paths,
-  * repo-relative paths into the cobre source tree (``crates/...``,
-    ``cobre-io/src/...``): a pip reader has no cobre checkout — cite the cobre
-    symbol or the cobre book instead,
+  * repo-relative paths into the novomodelo source tree (``crates/...``,
+    ``novomodelo-io/src/...``): a pip reader has no novomodelo checkout — cite the novomodelo
+    symbol or the novomodelo book instead,
   * the bridge's own design-doc section refs (``design §5``): those docs live
     in gitignored ``plans/`` — inline the durable content or name a shipped
     ``docs/`` path,
-  * a repo-relative ``src/cobre_bridge/...`` or ``tests/...`` ``.py`` path that
+  * a repo-relative ``src/novomodelo_bridge/...`` or ``tests/...`` ``.py`` path that
     no longer resolves — a sibling-test / module pointer that rotted when the
     file moved. Repoint it to the live path or (better) name the symbol/test.
 
@@ -39,19 +39,19 @@ from _scan import REPO_ROOT, SRC_ROOT, TESTS_ROOT, iter_prose, iter_py_files, re
 
 HARD_PATTERNS = [
     # Source-file line references drift on every edit above the line — this
-    # repo's .py and cobre's .rs alike. A ``file.rs::symbol`` anchor carries no
+    # repo's .py and novomodelo's .rs alike. A ``file.rs::symbol`` anchor carries no
     # digit after the colons, so it is deliberately not matched.
     ("source-line-ref", re.compile(r"\b[A-Za-z0-9_./-]+\.(?:py|rs)\s*[:~]\s*[0-9]+")),
     ("memory-md", re.compile(r"MEMORY\.md")),
     ("claude-path", re.compile(r"\.claude/(?!rules/)[A-Za-z0-9_./-]+")),
     ("machine-local", re.compile(r"~/git/[A-Za-z0-9_./-]+")),
     ("plans-path", re.compile(r"(?<![\w/-])plans/[A-Za-z0-9_./-]+")),
-    # Repo-relative paths into the cobre source tree: unresolvable for a pip or
+    # Repo-relative paths into the novomodelo source tree: unresolvable for a pip or
     # GitHub reader of this package.
     (
         "cross-repo-path",
         re.compile(
-            r"\b(?:cobre/)?crates/[\w./-]+|\bcobre-(?:io|sddp|core|python)/src/[\w./-]+"
+            r"\b(?:novomodelo/)?crates/[\w./-]+|\bnovomodelo-(?:io|sddp|core|python)/src/[\w./-]+"
         ),
     ),
     # The bridge's own design docs live in gitignored plans/; a bare "design §N"
@@ -62,7 +62,7 @@ HARD_PATTERNS = [
 # A repo-relative source/test .py path cited in prose. The match stops at
 # ``.py`` (``:`` and ``::`` are not in the class), so a ``…py::symbol`` or
 # ``…py:NNN`` suffix is dropped before the existence check.
-_REPO_PY_PATH = re.compile(r"\b(?:src/cobre_bridge|tests)/[\w./-]+\.py\b")
+_REPO_PY_PATH = re.compile(r"\b(?:src/novomodelo_bridge|tests)/[\w./-]+\.py\b")
 
 
 def _stale_path_hits(line: str, where: str) -> list[str]:

@@ -7,7 +7,7 @@ import re
 import pandas as pd
 import plotly.graph_objects as go
 
-from cobre_bridge.ui.html.plotly import (
+from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS,
     MARGIN_DEFAULTS,
     _normalize_plotly_titles,
@@ -17,7 +17,7 @@ from cobre_bridge.ui.html.plotly import (
     plotly_div,
     render_figure,
 )
-from cobre_bridge.ui.theme import BAND_FILL, BAND_LINE
+from novomodelo_bridge.ui.theme import BAND_FILL, BAND_LINE
 
 
 def _normalise_ids(s: str) -> str:

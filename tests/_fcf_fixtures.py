@@ -1,45 +1,53 @@
 """Shared synthetic builders for the boundary-cut import tests.
 
 Every deck-independent FCF test needs the same synthetic building blocks: a
-:class:`~cobre_bridge.decomp.fcf.cortes.CortesHeader`,
-:class:`~cobre_bridge.decomp.fcf.cortes.StageCutRecord`,
-:class:`~cobre_bridge.decomp.fcf.cortes.BoundaryCuts`, a
-:class:`~cobre_bridge.decomp.fcf.bootstrap.TerminalManifest` (with
+:class:`~novomodelo_bridge.decomp.fcf.cortes.CortesHeader`,
+:class:`~novomodelo_bridge.decomp.fcf.cortes.StageCutRecord`,
+:class:`~novomodelo_bridge.decomp.fcf.cortes.BoundaryCuts`, a
+:class:`~novomodelo_bridge.decomp.fcf.bootstrap.TerminalManifest` (with
 correctly-shaped slot dicts), a
-:class:`~cobre_bridge.decomp.fcf.mapper.MappedCut`, and a minimal
-:class:`~cobre_bridge.decomp.id_map.DecompIdMap` — plus, for the tier-2
+:class:`~novomodelo_bridge.decomp.fcf.mapper.MappedCut`, and a minimal
+:class:`~novomodelo_bridge.decomp.id_map.DecompIdMap` — plus, for the tier-2
 round-trip, :func:`synthetic_roundtrip`, which runs
 ``map_boundary_cuts -> build_stage_cuts_payload -> build_metadata ->
-write_boundary_checkpoint -> cobre.results.load_policy`` end to end.
+write_boundary_checkpoint -> novomodelo.results.load_policy`` end to end.
 
 These are plain functions, not pytest fixtures — mirrors
 ``tests/conftest.py``'s "plain builder functions imported by name"
 convention (``make_case``, ``make_nw_files``, ``hydro_with_group``). Import
 them with ``from tests._fcf_fixtures import ...``.
 
-The module imports cleanly with cobre absent: every top-level import here
-touches only cobre-free symbols (``fcf/bootstrap.py``, ``fcf/cortes.py``,
-``fcf/mapper.py``, ``fcf/writer.py``, and ``id_map.py`` all import cobre only
+The module imports cleanly with novomodelo absent: every top-level import here
+touches only novomodelo-free symbols (``fcf/bootstrap.py``, ``fcf/cortes.py``,
+``fcf/mapper.py``, ``fcf/writer.py``, and ``id_map.py`` all import novomodelo only
 inside function bodies, never at module scope). :func:`synthetic_roundtrip`
-is the only function in this module that touches cobre, and it does so via a
-call-site ``import cobre`` inside the function — it must only be called from
-a ``@requires_cobre_python``-guarded test.
+is the only function in this module that touches novomodelo, and it does so via a
+call-site ``import novomodelo`` inside the function — it must only be called from
+a ``@requires_novomodelo_python``-guarded test.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from cobre_bridge.core.units import MONTH_HOURS
-from cobre_bridge.decomp.fcf.bootstrap import TerminalManifest
-from cobre_bridge.decomp.fcf.cortes import BoundaryCuts, CortesHeader, StageCutRecord
-from cobre_bridge.decomp.fcf.mapper import GnlRingPlan, MappedCut, map_boundary_cuts
-from cobre_bridge.decomp.fcf.writer import (
+from novomodelo_bridge.core.units import MONTH_HOURS
+from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
+from novomodelo_bridge.decomp.fcf.cortes import (
+    BoundaryCuts,
+    CortesHeader,
+    StageCutRecord,
+)
+from novomodelo_bridge.decomp.fcf.mapper import (
+    GnlRingPlan,
+    MappedCut,
+    map_boundary_cuts,
+)
+from novomodelo_bridge.decomp.fcf.writer import (
     build_metadata,
     build_stage_cuts_payload,
     write_boundary_checkpoint,
 )
-from cobre_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -122,7 +130,7 @@ def _next_month_anchor(yyyymmdd: int) -> int:
     """The `YYYYMM01` of the month after `yyyymmdd`'s — a valid interval end
     strictly after any `interval_start` inside that month.
 
-    Mirrors cobre's own `[stage.start_date, stage.end_date)` interval dating,
+    Mirrors novomodelo's own `[stage.start_date, stage.end_date)` interval dating,
     whose exclusive `end_date` for a monthly delivery stage is the next
     month's first day.
     """
@@ -150,9 +158,9 @@ def make_slot(
     is the slot's delivery-stage start day, the per-slot date field the GNL
     ring placement (`fcf/mapper.py`) keys covered/non-covered lanes off.
     `interval_end` defaults to the next-month anchor when `interval_start` is
-    live and left unset — cobre's checkpoint writer rejects a live
+    live and left unset — novomodelo's checkpoint writer rejects a live
     `interval_start` with no paired `interval_end` — and to the sentinel
-    otherwise. The default `-2147483648` is `i32::MIN`, cobre's
+    otherwise. The default `-2147483648` is `i32::MIN`, novomodelo's
     `ENTITY_SLOT_DATE_SENTINEL` for "no date" — the same value
     `write_policy_checkpoint` itself defaults to when a slot omits the key.
     """
@@ -172,7 +180,7 @@ def make_slot(
     }
 
 
-#: The absent season descriptor (cobre's `SEASON_CYCLE_CODE_ABSENT` == 255,
+#: The absent season descriptor (novomodelo's `SEASON_CYCLE_CODE_ABSENT` == 255,
 #: no seasons, no hydros) — the seasonless-study default for a synthetic
 #: manifest; a seasonless loading study never fires the season gate.
 _ABSENT_SEASON_MANIFEST: dict[str, object] = {
@@ -259,14 +267,14 @@ def synthetic_roundtrip(
     coupling_block_hours: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """Map, write, and reload a synthetic boundary checkpoint; no deck, no
-    cobre binary.
+    novomodelo binary.
 
     Runs `map_boundary_cuts -> build_stage_cuts_payload -> build_metadata ->
-    write_boundary_checkpoint -> cobre.results.load_policy` against
-    `boundary_dir`, then returns the reloaded policy dict verbatim. `cobre`
+    write_boundary_checkpoint -> novomodelo.results.load_policy` against
+    `boundary_dir`, then returns the reloaded policy dict verbatim. `novomodelo`
     is imported lazily, inside this function body, so the rest of the
-    module stays importable without the cobre-python wheel — only
-    call this from a `@requires_cobre_python`-guarded test. `gnl_plan`
+    module stays importable without the novomodelo-python wheel — only
+    call this from a `@requires_novomodelo_python`-guarded test. `gnl_plan`
     defaults to `None`, forwarded verbatim to `map_boundary_cuts`, so every
     existing caller keeps leaving the GNL ring at `0.0` unchanged; pass it to
     exercise a populated ring. `coupling_block_hours` defaults to `None`; when
@@ -283,7 +291,7 @@ def synthetic_roundtrip(
         Propagated verbatim from `map_boundary_cuts` / `build_stage_cuts_payload`
         / `build_metadata` / `write_boundary_checkpoint`.
     """
-    import cobre
+    import novomodelo
 
     if coupling_block_hours is None and gnl_plan is not None:
         n_patamares = cuts.header.n_patamares
@@ -321,6 +329,6 @@ def synthetic_roundtrip(
     )
     write_boundary_checkpoint(boundary_dir, stage_cuts_payload, metadata)
 
-    return cobre.results.load_policy(
+    return novomodelo.results.load_policy(
         boundary_dir.parent, policy_subdir=boundary_dir.name
     )

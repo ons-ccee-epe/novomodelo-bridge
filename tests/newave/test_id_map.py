@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from cobre_bridge.newave.files import NewaveFiles
-from cobre_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.newave.files import NewaveFiles
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case
 from tests.newave.conftest import (
     _hydro_case,
@@ -90,7 +90,7 @@ class TestNewaveIdMap:
         assert id_map.bus_id(4) == 3
 
     def test_hydro_id_remapping_sorts_by_code(self) -> None:
-        # Hydro Cobre IDs follow ascending codigo_usina (hidr.dat registry order),
+        # Hydro Novomodelo IDs follow ascending codigo_usina (hidr.dat registry order),
         # not the order the codes are passed in.
         id_map = NewaveIdMap(
             subsystem_ids=[],
@@ -120,8 +120,8 @@ class TestNewaveIdMap:
         with pytest.raises(KeyError):
             id_map.thermal_id(99)
 
-    def test_all_hydro_codes_in_cobre_id_order(self) -> None:
-        # Cobre-ID order is ascending codigo_usina, regardless of input order.
+    def test_all_hydro_codes_in_novomodelo_id_order(self) -> None:
+        # Novomodelo-ID order is ascending codigo_usina, regardless of input order.
         id_map = NewaveIdMap(
             subsystem_ids=[], hydro_codes=[30, 10, 20], thermal_codes=[]
         )
@@ -159,9 +159,9 @@ class TestCrossReferenceConsistency:
             nw_files, conft=conft, clast=clast, term=term, dger=_make_thermal_dger()
         )
 
-        from cobre_bridge.newave.converters.hydro import convert_hydros
-        from cobre_bridge.newave.converters.network import convert_buses
-        from cobre_bridge.newave.converters.thermal import convert_thermals
+        from novomodelo_bridge.newave.converters.hydro import convert_hydros
+        from novomodelo_bridge.newave.converters.network import convert_buses
+        from novomodelo_bridge.newave.converters.thermal import convert_thermals
 
         # Use a shared id_map that covers both subsystems and all plants.
         id_map = NewaveIdMap(
@@ -192,7 +192,7 @@ class TestCrossReferenceConsistency:
 
     def test_downstream_ids_are_valid(self, tmp_path) -> None:
         case = _hydro_case(tmp_path)
-        from cobre_bridge.newave.converters.hydro import convert_hydros
+        from novomodelo_bridge.newave.converters.hydro import convert_hydros
 
         id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
         result = convert_hydros(case, id_map)
@@ -283,7 +283,7 @@ class TestBuildIdMap:
         mock_ree.rees = None
         mock_ree_cls.read.return_value = mock_ree
 
-        from cobre_bridge.newave.id_map import build_id_map
+        from novomodelo_bridge.newave.id_map import build_id_map
 
         id_map = build_id_map(_make_nw_files(tmp_path))
 
@@ -356,7 +356,7 @@ class TestBuildIdMap:
         mock_ree.rees = None
         mock_ree_cls.read.return_value = mock_ree
 
-        from cobre_bridge.newave.id_map import build_id_map
+        from novomodelo_bridge.newave.id_map import build_id_map
 
         id_map = build_id_map(_make_nw_files(tmp_path))
         assert len(id_map.all_hydro_codes) == n_real
@@ -396,7 +396,7 @@ class TestBuildIdMap:
         mock_ree.rees = None
         mock_ree_cls.read.return_value = mock_ree
 
-        from cobre_bridge.newave.id_map import build_id_map
+        from novomodelo_bridge.newave.id_map import build_id_map
 
         id_map = build_id_map(_make_nw_files(tmp_path))
 

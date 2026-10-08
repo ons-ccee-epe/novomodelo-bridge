@@ -24,7 +24,7 @@ from idecomp.decomp import (
     Relato,
 )
 
-from cobre_bridge.comparators.decomp.readers import (
+from novomodelo_bridge.comparators.decomp.readers import (
     _read_dec_oper,
     _read_relato_table,
     _resolve_relato,
@@ -46,7 +46,7 @@ from cobre_bridge.comparators.decomp.readers import (
     read_relato_expected_cost,
     read_relato_membership,
 )
-from cobre_bridge.comparators.decomp.results import reconcile_kdollars_to_reais
+from novomodelo_bridge.comparators.decomp.results import reconcile_kdollars_to_reais
 
 # Real-format DECOMP result files (a few KB each) vendored from the
 # sintetizador-decomp project's test mocks, so the readers are exercised

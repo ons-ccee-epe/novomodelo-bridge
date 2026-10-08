@@ -1,4 +1,4 @@
-<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Hydro per-plant max relative difference (|Cobre − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Storage (hm³)</th><th class="cb-num">Generation (MW)</th><th class="cb-num">Turbined (m³/s)</th><th class="cb-num">Productivity = Gen / Turbined (MW per m³/s)</th><th class="cb-num">Spillage (m³/s)</th><th class="cb-num">Total Outflow (m³/s)</th><th class="cb-num">Incremental Inflow (m³/s)</th><th class="cb-num">Total Inflow / QAFLUH (m³/s)</th><th class="cb-num">Evaporation (m³/s)</th><th class="cb-num">Water Withdrawal (m³/s)</th><th class="cb-num">Water Value (R$/hm³)</th></tr></thead><tbody><tr><td class="cb-cat">PLANT_A</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr></tbody></table></div>
+<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Hydro per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Storage (hm³)</th><th class="cb-num">Generation (MW)</th><th class="cb-num">Turbined (m³/s)</th><th class="cb-num">Productivity = Gen / Turbined (MW per m³/s)</th><th class="cb-num">Spillage (m³/s)</th><th class="cb-num">Total Outflow (m³/s)</th><th class="cb-num">Incremental Inflow (m³/s)</th><th class="cb-num">Total Inflow / QAFLUH (m³/s)</th><th class="cb-num">Evaporation (m³/s)</th><th class="cb-num">Water Withdrawal (m³/s)</th><th class="cb-num">Water Value (R$/hm³)</th></tr></thead><tbody><tr><td class="cb-cat">PLANT_A</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr></tbody></table></div>
     <div class="plant-selector">
         <label for="hydro-select">Hydro Plant:</label>
         <select id="hydro-select"
@@ -9,7 +9,7 @@
     </div>
     <div class="chart-grid"><div class="chart-card"><div id="hydro-chart-storage-final-hm3" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-generation-mw" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-turbined-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-productivity-mw-per-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-spillage-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-outflow-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-inflow-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-total-inflow-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-evaporation-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-withdrawal-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-water-value-per-hm3" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-stored-energy-initial-mwh" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-stored-energy-final-mwh" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-incremental-inflow-energy-mw" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-water-withdrawal-violation-neg-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-water-withdrawal-violation-pos-m3s" style="width:100%;height:350px;"></div></div><div class="chart-card"><div id="hydro-chart-inflow-nonnegativity-slack-m3s" style="width:100%;height:350px;"></div></div></div>
     <script>
-    var hydroData = {"1_PLANT_A":{"name":"PLANT_A","code":1,"cobre_id":0,"storage_final_hm3_stages":[1],"storage_final_hm3_nw":[4500.0],"storage_final_hm3_cb":[4510.0],"generation_mw_stages":[0],"generation_mw_nw":[1200.0],"generation_mw_cb":[1195.0],"turbined_m3s_stages":[],"turbined_m3s_nw":[],"turbined_m3s_cb":[],"productivity_mw_per_m3s_stages":[],"productivity_mw_per_m3s_nw":[],"productivity_mw_per_m3s_cb":[],"spillage_m3s_stages":[],"spillage_m3s_nw":[],"spillage_m3s_cb":[],"outflow_m3s_stages":[],"outflow_m3s_nw":[],"outflow_m3s_cb":[],"inflow_m3s_stages":[],"inflow_m3s_nw":[],"inflow_m3s_cb":[],"total_inflow_m3s_stages":[],"total_inflow_m3s_nw":[],"total_inflow_m3s_cb":[],"evaporation_m3s_stages":[],"evaporation_m3s_nw":[],"evaporation_m3s_cb":[],"withdrawal_m3s_stages":[],"withdrawal_m3s_nw":[],"withdrawal_m3s_cb":[],"water_value_per_hm3_stages":[],"water_value_per_hm3_nw":[],"water_value_per_hm3_cb":[],"stored_energy_initial_mwh_stages":[],"stored_energy_initial_mwh_nw":[],"stored_energy_initial_mwh_cb":[],"stored_energy_final_mwh_stages":[],"stored_energy_final_mwh_nw":[],"stored_energy_final_mwh_cb":[],"incremental_inflow_energy_mw_stages":[],"incremental_inflow_energy_mw_nw":[],"incremental_inflow_energy_mw_cb":[],"water_withdrawal_violation_neg_m3s_stages":[],"water_withdrawal_violation_neg_m3s_nw":[],"water_withdrawal_violation_neg_m3s_cb":[],"water_withdrawal_violation_pos_m3s_stages":[],"water_withdrawal_violation_pos_m3s_nw":[],"water_withdrawal_violation_pos_m3s_cb":[],"inflow_nonnegativity_slack_m3s_stages":[],"inflow_nonnegativity_slack_m3s_nw":[],"inflow_nonnegativity_slack_m3s_cb":[],"storage_final_hm3_p10":[4100.0],"storage_final_hm3_p90":[5050.0],"generation_mw_p10":[1000.0],"generation_mw_p90":[1400.0]}};
+    var hydroData = {"1_PLANT_A":{"name":"PLANT_A","code":1,"novomodelo_id":0,"storage_final_hm3_stages":[1],"storage_final_hm3_nw":[4500.0],"storage_final_hm3_cb":[4510.0],"generation_mw_stages":[0],"generation_mw_nw":[1200.0],"generation_mw_cb":[1195.0],"turbined_m3s_stages":[],"turbined_m3s_nw":[],"turbined_m3s_cb":[],"productivity_mw_per_m3s_stages":[],"productivity_mw_per_m3s_nw":[],"productivity_mw_per_m3s_cb":[],"spillage_m3s_stages":[],"spillage_m3s_nw":[],"spillage_m3s_cb":[],"outflow_m3s_stages":[],"outflow_m3s_nw":[],"outflow_m3s_cb":[],"inflow_m3s_stages":[],"inflow_m3s_nw":[],"inflow_m3s_cb":[],"total_inflow_m3s_stages":[],"total_inflow_m3s_nw":[],"total_inflow_m3s_cb":[],"evaporation_m3s_stages":[],"evaporation_m3s_nw":[],"evaporation_m3s_cb":[],"withdrawal_m3s_stages":[],"withdrawal_m3s_nw":[],"withdrawal_m3s_cb":[],"water_value_per_hm3_stages":[],"water_value_per_hm3_nw":[],"water_value_per_hm3_cb":[],"stored_energy_initial_mwh_stages":[],"stored_energy_initial_mwh_nw":[],"stored_energy_initial_mwh_cb":[],"stored_energy_final_mwh_stages":[],"stored_energy_final_mwh_nw":[],"stored_energy_final_mwh_cb":[],"incremental_inflow_energy_mw_stages":[],"incremental_inflow_energy_mw_nw":[],"incremental_inflow_energy_mw_cb":[],"water_withdrawal_violation_neg_m3s_stages":[],"water_withdrawal_violation_neg_m3s_nw":[],"water_withdrawal_violation_neg_m3s_cb":[],"water_withdrawal_violation_pos_m3s_stages":[],"water_withdrawal_violation_pos_m3s_nw":[],"water_withdrawal_violation_pos_m3s_cb":[],"inflow_nonnegativity_slack_m3s_stages":[],"inflow_nonnegativity_slack_m3s_nw":[],"inflow_nonnegativity_slack_m3s_cb":[],"storage_final_hm3_p10":[4100.0],"storage_final_hm3_p90":[5050.0],"generation_mw_p10":[1000.0],"generation_mw_p90":[1400.0]}};
     function updateHydroCharts() {
         var sel = document.getElementById('hydro-select');
         var pid = sel.value;
@@ -32,7 +32,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -44,13 +44,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -59,11 +59,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['storage_final_hm3_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -110,7 +110,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -122,13 +122,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -137,11 +137,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['generation_mw_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -188,7 +188,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -200,13 +200,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -215,11 +215,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['turbined_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -266,7 +266,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -278,13 +278,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -293,11 +293,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['productivity_mw_per_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -344,7 +344,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -356,13 +356,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -371,11 +371,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['spillage_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -422,7 +422,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -434,13 +434,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -449,11 +449,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['outflow_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -500,7 +500,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -512,13 +512,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -527,11 +527,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['inflow_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -578,7 +578,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -590,13 +590,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -605,11 +605,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['total_inflow_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -656,7 +656,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -668,13 +668,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -683,11 +683,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['evaporation_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -734,7 +734,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -746,13 +746,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -761,11 +761,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['withdrawal_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -812,7 +812,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -824,13 +824,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -839,11 +839,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['water_value_per_hm3_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -890,7 +890,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -902,13 +902,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -917,11 +917,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['stored_energy_initial_mwh_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -968,7 +968,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -980,13 +980,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -995,11 +995,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['stored_energy_final_mwh_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -1046,7 +1046,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -1058,13 +1058,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -1073,11 +1073,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['incremental_inflow_energy_mw_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -1124,7 +1124,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -1136,13 +1136,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -1151,11 +1151,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['water_withdrawal_violation_neg_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -1202,7 +1202,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -1214,13 +1214,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -1229,11 +1229,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['water_withdrawal_violation_pos_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }
@@ -1280,7 +1280,7 @@
                     fill: 'toself',
                     fillcolor: 'rgba(74,144,184,0.15)',
                     line: {color: 'rgba(255,255,255,0)'},
-                    name: 'Cobre P10–P90',
+                    name: 'Novomodelo P10–P90',
                     type: 'scatter',
                     legendgroup: 'band',
                     showlegend: true,
@@ -1292,13 +1292,13 @@
                 });
                 traces.push({
                     x: s, y: p10,
-                    name: 'Cobre P10', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P10', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
                 traces.push({
                     x: s, y: p90,
-                    name: 'Cobre P90', type: 'scatter', mode: 'lines',
+                    name: 'Novomodelo P90', type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1, dash: 'dot'},
                     legendgroup: 'band', showlegend: false
                 });
@@ -1307,11 +1307,11 @@
                 traces.push({x: s, y: nw, name: 'NEWAVE', type: 'scatter',
                     mode: 'lines', line: {color: '#F5A623', width: 2}});
             }
-            traces.push({x: s, y: cb, name: 'Cobre Mean', type: 'scatter',
+            traces.push({x: s, y: cb, name: 'Novomodelo Mean', type: 'scatter',
                 mode: 'lines', line: {color: '#4A90B8', width: 2}});
             var maxCb = d['inflow_nonnegativity_slack_m3s_max_cb'];
             if (maxCb && maxCb.length > 0) {
-                traces.push({x: s, y: maxCb, name: 'Cobre LP gen_max',
+                traces.push({x: s, y: maxCb, name: 'Novomodelo LP gen_max',
                     type: 'scatter', mode: 'lines',
                     line: {color: '#4A90B8', width: 1.5, dash: 'dash'}});
             }

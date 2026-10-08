@@ -5,7 +5,7 @@ The check_*.py gates are a ratchet: they stop new drift but do not rank the
 debt that already exists. This report joins the signals the repo already has
 into one ranked "where to act first" table.
 
-Signals per production source file (src/cobre_bridge/**/*.py):
+Signals per production source file (src/novomodelo_bridge/**/*.py):
 
   churn        — commits touching the file within CHURN_SINCE (default
                  "12 months ago"); the dominant hotspot signal.
@@ -55,8 +55,8 @@ def churn_map() -> Counter[str]:
             "--name-only",
             "--pretty=format:",
             "--",
-            "src/cobre_bridge/*.py",
-            "src/cobre_bridge/**/*.py",
+            "src/novomodelo_bridge/*.py",
+            "src/novomodelo_bridge/**/*.py",
         ],
         cwd=REPO_ROOT,
         capture_output=True,

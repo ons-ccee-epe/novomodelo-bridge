@@ -3,20 +3,20 @@ paths:
   - "tests/**/*.py"
 ---
 
-# Cobre-Bridge Testing Rules
+# Novomodelo-Bridge Testing Rules
 
 The standing contract for how this repo is tested. Generic Python testing
 style lives in the global Python rules; these are the bridge-specific rules.
 
 ## The 2-tier convention (load-bearing — CI depends on it)
 
-- **Tier 1 — pure Python.** Imports no `cobre`. Runs on every CI job. No
-  module at any tier may `import cobre` at module scope — the suite must
-  *collect* cleanly in a cobre-free environment.
-- **Tier 2 — needs `cobre-python`** (a required runtime dep) but no solver
-  binary. Guarded by `tests.conftest.requires_cobre_python`
+- **Tier 1 — pure Python.** Imports no `novomodelo`. Runs on every CI job. No
+  module at any tier may `import novomodelo` at module scope — the suite must
+  *collect* cleanly in a novomodelo-free environment.
+- **Tier 2 — needs `novomodelo-python`** (a required runtime dep) but no solver
+  binary. Guarded by `tests.conftest.requires_novomodelo_python`
   (`find_spec`-based) and, where relevant, `requires_writer_binding`; any
-  `import cobre` lives inside the guarded test/helper body.
+  `import novomodelo` lives inside the guarded test/helper body.
 
 ## Local-data policy (enforced by `tests/test_local_data_policy.py`)
 
@@ -30,7 +30,7 @@ Every test runs from the repository alone:
   `tests/fixtures/` (result-file heads, a schema, one example case — a few KB
   each); synthetic decks live under `tests/decks/`. Name the excerpt's origin
   in the module docstring.
-- **A check that genuinely needs a whole deck, a solved cobre case, or the
+- **A check that genuinely needs a whole deck, a solved novomodelo case, or the
   solver binary** is written up in `docs/real-deck-checks.md` (what it
   verified, what it needs) instead of being kept as a skipped test.
 
@@ -56,7 +56,7 @@ Every test runs from the repository alone:
 - **CliRunner + Rich:** Typer help/rendering tests run under a dumb terminal
   (`TERM=dumb` fixture) — Rich box-drawing output differs across CI terminals
   and versions.
-- **Logger state:** an autouse fixture snapshots/restores the `cobre_bridge`
+- **Logger state:** an autouse fixture snapshots/restores the `novomodelo_bridge`
   logger so a CliRunner invocation cannot leak logging state into a later
   `caplog` test — new tests that reconfigure logging must go through it.
 

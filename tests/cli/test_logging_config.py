@@ -35,9 +35,9 @@ class TestVerbosityAndLogFile:
         """
         import io
 
-        from cobre_bridge import cli
+        from novomodelo_bridge import cli
 
-        monkeypatch.setattr(sys, "argv", ["cobre-bridge", *argv])
+        monkeypatch.setattr(sys, "argv", ["novomodelo-bridge", *argv])
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -56,14 +56,14 @@ class TestVerbosityAndLogFile:
     @staticmethod
     def _file_handlers() -> list[logging.FileHandler]:
         """Return the ``FileHandler``s currently attached to the package logger."""
-        pkg = logging.getLogger("cobre_bridge")
+        pkg = logging.getLogger("novomodelo_bridge")
         return [h for h in pkg.handlers if isinstance(h, logging.FileHandler)]
 
     def test_configure_logging_levels(self) -> None:
         """The count maps 0 → warnings-only, 1 → INFO, 2 → DEBUG."""
-        from cobre_bridge.cli.app import _NULL_HANDLER, _configure_logging
+        from novomodelo_bridge.cli.app import _NULL_HANDLER, _configure_logging
 
-        pkg = logging.getLogger("cobre_bridge")
+        pkg = logging.getLogger("novomodelo_bridge")
 
         _configure_logging(2, None)
         assert pkg.getEffectiveLevel() == logging.DEBUG
@@ -79,20 +79,20 @@ class TestVerbosityAndLogFile:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``--log-file`` writes the full DEBUG trace; the handler is gone after."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         log_path = tmp_path / "run.log"
 
         def _fake_convert(*_args: object, **_kwargs: object) -> ConversionReport:
-            logging.getLogger("cobre_bridge.newave.pipeline").debug(
+            logging.getLogger("novomodelo_bridge.newave.pipeline").debug(
                 "converting widgets"
             )
             return ConversionReport(hydro_count=1, stage_count=12)
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             side_effect=_fake_convert,
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -103,20 +103,20 @@ class TestVerbosityAndLogFile:
         assert code == 0
         assert log_path.exists()
         contents = log_path.read_text(encoding="utf-8")
-        assert "DEBUG cobre_bridge.newave.pipeline: converting widgets" in contents
+        assert "DEBUG novomodelo_bridge.newave.pipeline: converting widgets" in contents
         # The FileHandler was removed + closed in main()'s finally.
         assert self._file_handlers() == []
 
     def test_log_file_creates_missing_parent_directories(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         log_path = tmp_path / "logs" / "nested" / "run.log"
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=ConversionReport(hydro_count=1, stage_count=12),
         ):
             code, _stdout, _stderr = self._invoke_main(
@@ -163,13 +163,13 @@ class TestVerbosityAndLogFile:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Two ``--log-file`` runs leave zero ``FileHandler``s (no leak)."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         report = ConversionReport(hydro_count=1, stage_count=12)
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=report,
         ):
             for run in ("a", "b"):
@@ -196,8 +196,8 @@ class TestVerbosityAndLogFile:
         Spies on ``ui.console._progress_enabled`` to assert it is consulted with
         ``verbose=False`` (progress NOT suppressed) and returns ``True``.
         """
-        from cobre_bridge import ui
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge import ui
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -216,7 +216,8 @@ class TestVerbosityAndLogFile:
 
         with (
             patch(
-                "cobre_bridge.newave.pipeline.convert_newave_case", return_value=report
+                "novomodelo_bridge.newave.pipeline.convert_newave_case",
+                return_value=report,
             ),
             patch.object(ui.console, "_progress_enabled", _spy),
         ):
@@ -243,9 +244,9 @@ class TestVerbosityAndLogFile:
         """
         import importlib
 
-        from cobre_bridge import ui
+        from novomodelo_bridge import ui
 
-        cli = importlib.import_module("cobre_bridge.cli.app")
+        cli = importlib.import_module("novomodelo_bridge.cli.app")
 
         case_dir = tmp_path / "case"
         (case_dir / "output" / "simulation").mkdir(parents=True)
@@ -253,7 +254,7 @@ class TestVerbosityAndLogFile:
         def _fake_build(_case_dir: Path, output_path: Path) -> None:
             output_path.write_text("x", encoding="utf-8")
 
-        monkeypatch.setattr("cobre_bridge.dashboard.build_dashboard", _fake_build)
+        monkeypatch.setattr("novomodelo_bridge.dashboard.build_dashboard", _fake_build)
 
         real_configure = cli._configure_logging
         configure_calls: list[int] = []
@@ -289,14 +290,14 @@ class TestVerbosityAndLogFile:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Smoke: ``-vv`` is accepted on the real CLI and exits cleanly (code 0)."""
-        from cobre_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         report = ConversionReport(hydro_count=1, stage_count=12)
 
         with patch(
-            "cobre_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
             return_value=report,
         ):
             code, stdout, _stderr = self._invoke_main(

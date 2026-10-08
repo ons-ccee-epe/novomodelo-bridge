@@ -15,13 +15,13 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cobre_bridge.comparators.charts import hydro_slack_aggregate_chart
-from cobre_bridge.comparators.dataset import _metadata_to_json
-from cobre_bridge.comparators.decomp.results import (
+from novomodelo_bridge.comparators.charts import hydro_slack_aggregate_chart
+from novomodelo_bridge.comparators.dataset import _metadata_to_json
+from novomodelo_bridge.comparators.decomp.results import (
     _merge_hydro_bus_ids,
     build_decomp_dataset,
 )
-from cobre_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
@@ -30,7 +30,7 @@ from tests.comparators.conftest import (
 
 
 def _hydro_percentiles_fixture() -> pl.DataFrame:
-    """Cobre p10/p50/p90 for the two ``_aligned_fixture`` hydro entities."""
+    """Novomodelo p10/p50/p90 for the two ``_aligned_fixture`` hydro entities."""
     return pl.DataFrame(
         {
             "entity_id": [0, 1],
@@ -75,27 +75,27 @@ def _patch_hydro_detail_readers(
     bus_labels: dict[int, frozenset[int]] | None = None,
     per_stage_bounds: pl.DataFrame | None = None,
 ) -> None:
-    """Stub the four cobre readers, each defaulting to empty --
-    matching how a Cobre run with no hydro percentile/metadata output
+    """Stub the four novomodelo readers, each defaulting to empty --
+    matching how a Novomodelo run with no hydro percentile/metadata output
     (e.g. the deterministic 2-node tree) degrades in production."""
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers."
-        "read_cobre_hydro_percentiles",
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_hydro_percentiles",
         lambda *_a, **_k: pl.DataFrame() if percentiles is None else percentiles,
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers."
-        "read_cobre_hydro_metadata",
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_hydro_metadata",
         lambda *_a, **_k: {} if metadata is None else metadata,
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers."
-        "read_cobre_hydro_bus_labels",
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_hydro_bus_labels",
         lambda *_a, **_k: {} if bus_labels is None else bus_labels,
     )
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers."
-        "read_cobre_hydro_per_stage_bounds",
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_hydro_per_stage_bounds",
         lambda *_a, **_k: (
             pl.DataFrame() if per_stage_bounds is None else per_stage_bounds
         ),
@@ -123,7 +123,7 @@ class TestMergeHydroBusIds:
 
         # Regression: a frozenset here raised ``TypeError`` in
         # ``_metadata_to_json`` at compare-artifact export time.
-        _metadata_to_json({"cobre_hydro_meta": merged})
+        _metadata_to_json({"novomodelo_hydro_meta": merged})
 
     def test_does_not_mutate_the_inputs(self) -> None:
         meta = {0: {"name": "A"}}
@@ -146,8 +146,8 @@ class TestMergeHydroBusIds:
 
 class TestBuildDecompDatasetHydroDetail:
     """The Hydro Operation + Hydro Plant Details tabs' four
-    remaining ``PercentileData`` fields (``hydro``, ``cobre_hydro_meta``,
-    ``cobre_hydro_per_stage_bounds``, ``nw_hydro_slacks``)."""
+    remaining ``PercentileData`` fields (``hydro``, ``novomodelo_hydro_meta``,
+    ``novomodelo_hydro_per_stage_bounds``, ``nw_hydro_slacks``)."""
 
     def test_hydro_percentiles_populate_metadata_when_present(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -165,11 +165,11 @@ class TestBuildDecompDatasetHydroDetail:
         assert "generation_mw_p50" in hydro_pct.columns
         assert "storage_final_hm3_p50" in hydro_pct.columns
 
-    def test_hydro_percentiles_stay_empty_when_cobre_output_lacks_them(
+    def test_hydro_percentiles_stay_empty_when_novomodelo_output_lacks_them(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """No percentile mock (deterministic-tree low-N, master-plan caveat
-        1): ``read_cobre_hydro_percentiles`` degrades to its own empty-frame
+        1): ``read_novomodelo_hydro_percentiles`` degrades to its own empty-frame
         default and the dataset must not fabricate a spread."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_hydro_detail_readers(monkeypatch)
@@ -180,7 +180,7 @@ class TestBuildDecompDatasetHydroDetail:
         assert isinstance(hydro_pct, pl.DataFrame)
         assert hydro_pct.is_empty()
 
-    def test_cobre_hydro_meta_entries_carry_bus_ids(
+    def test_novomodelo_hydro_meta_entries_carry_bus_ids(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
@@ -192,16 +192,16 @@ class TestBuildDecompDatasetHydroDetail:
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
-        cobre_hydro_meta = dataset.render.cobre_hydro_meta
-        assert set(cobre_hydro_meta) == {0, 1}
-        for entry in cobre_hydro_meta.values():
+        novomodelo_hydro_meta = dataset.render.novomodelo_hydro_meta
+        assert set(novomodelo_hydro_meta) == {0, 1}
+        for entry in novomodelo_hydro_meta.values():
             assert "bus_ids" in entry
-        assert cobre_hydro_meta[0]["bus_ids"] == [0]
-        assert cobre_hydro_meta[1]["bus_ids"] == [0]
-        # Plant physics from ``read_cobre_hydro_metadata`` survive the merge.
-        assert cobre_hydro_meta[0]["name"] == "A"
+        assert novomodelo_hydro_meta[0]["bus_ids"] == [0]
+        assert novomodelo_hydro_meta[1]["bus_ids"] == [0]
+        # Plant physics from ``read_novomodelo_hydro_metadata`` survive the merge.
+        assert novomodelo_hydro_meta[0]["name"] == "A"
 
-    def test_cobre_hydro_meta_bus_ids_empty_when_plant_has_no_label(
+    def test_novomodelo_hydro_meta_bus_ids_empty_when_plant_has_no_label(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
@@ -211,9 +211,9 @@ class TestBuildDecompDatasetHydroDetail:
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
-        cobre_hydro_meta = dataset.render.cobre_hydro_meta
-        assert cobre_hydro_meta[0]["bus_ids"] == []
-        assert cobre_hydro_meta[1]["bus_ids"] == []
+        novomodelo_hydro_meta = dataset.render.novomodelo_hydro_meta
+        assert novomodelo_hydro_meta[0]["bus_ids"] == []
+        assert novomodelo_hydro_meta[1]["bus_ids"] == []
 
     def test_hydro_per_stage_bounds_populate_metadata_verbatim(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -225,7 +225,7 @@ class TestBuildDecompDatasetHydroDetail:
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
-        bounds = dataset.render.cobre_hydro_per_stage_bounds
+        bounds = dataset.render.novomodelo_hydro_per_stage_bounds
         assert bounds["max_storage_hm3"].to_list() == [1000.0, 600.0]
 
     def test_nw_hydro_slacks_is_empty_decomp_has_no_slack_table(
@@ -251,8 +251,8 @@ class TestBuildDecompDatasetHydroDetail:
             per_stage_bounds=_hydro_per_stage_bounds_fixture(),
         )
         monkeypatch.setattr(
-            "cobre_bridge.comparators.decomp.results.cobre_readers."
-            "read_cobre_bus_metadata",
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_bus_metadata",
             lambda *_a, **_k: {0: {"name": "SUDESTE"}},
         )
 
@@ -268,7 +268,7 @@ class TestBuildDecompDatasetHydroDetail:
     def test_both_hydro_tabs_render_without_exception_when_percentiles_absent(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """No cobre hydro percentiles/metadata/bus-labels at all -- both tabs
+        """No novomodelo hydro percentiles/metadata/bus-labels at all -- both tabs
         must degrade gracefully (fallback panels), never raise."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_hydro_detail_readers(monkeypatch)
@@ -279,12 +279,12 @@ class TestBuildDecompDatasetHydroDetail:
         assert "Storage by Bus (hm³)" in html
         assert 'id="tab-hydro-detail"' in html
 
-    def test_sin_slack_charts_render_cobre_only_no_newave_trace(self) -> None:
+    def test_sin_slack_charts_render_novomodelo_only_no_newave_trace(self) -> None:
         """``nw_hydro_slacks`` empty (or ``None``) -> the SIN-total slack
-        chart renders the Cobre Mean trace with no ``NEWAVE`` trace -- the
+        chart renders the Novomodelo Mean trace with no ``NEWAVE`` trace -- the
         documented ``has_newave=False`` degrade path -- exercised directly
         on the shared, unmodified chart function."""
-        cobre_hydro = pl.DataFrame(
+        novomodelo_hydro = pl.DataFrame(
             {
                 "entity_id": [0],
                 "stage_id": [0],
@@ -293,18 +293,18 @@ class TestBuildDecompDatasetHydroDetail:
         )
 
         html = hydro_slack_aggregate_chart(
-            cobre_hydro,
+            novomodelo_hydro,
             None,
             "water_withdrawal_violation_neg_m3s",
             "Withdrawal Slack Pos (m³/s)",
         )
 
-        assert '"name":"Cobre Mean"' in html
+        assert '"name":"Novomodelo Mean"' in html
         assert '"name":"NEWAVE"' not in html
 
 
 def _thermal_percentiles_fixture() -> pl.DataFrame:
-    """Cobre p10/p50/p90 for the one ``_aligned_fixture`` thermal entity."""
+    """Novomodelo p10/p50/p90 for the one ``_aligned_fixture`` thermal entity."""
     return pl.DataFrame(
         {
             "entity_id": [0],
@@ -319,12 +319,12 @@ def _thermal_percentiles_fixture() -> pl.DataFrame:
 def _patch_thermal_percentiles(
     monkeypatch: pytest.MonkeyPatch, percentiles: pl.DataFrame | None = None
 ) -> None:
-    """Stub the cobre thermal-percentile reader -- defaults to
-    empty, matching how a Cobre run with no thermal percentile output
+    """Stub the novomodelo thermal-percentile reader -- defaults to
+    empty, matching how a Novomodelo run with no thermal percentile output
     (e.g. the deterministic 2-node tree) degrades in production."""
     monkeypatch.setattr(
-        "cobre_bridge.comparators.decomp.results.cobre_readers."
-        "read_cobre_thermal_percentiles",
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_thermal_percentiles",
         lambda *_a, **_k: pl.DataFrame() if percentiles is None else percentiles,
     )
 
@@ -349,11 +349,11 @@ class TestBuildDecompDatasetThermalDetail:
         assert "generation_mw_p50" in thermal_pct.columns
         assert "generation_mw_p90" in thermal_pct.columns
 
-    def test_thermal_percentiles_stay_empty_when_cobre_output_lacks_them(
+    def test_thermal_percentiles_stay_empty_when_novomodelo_output_lacks_them(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """No percentile mock (deterministic-tree low-N, master-plan caveat
-        1): ``read_cobre_thermal_percentiles`` degrades to its own
+        1): ``read_novomodelo_thermal_percentiles`` degrades to its own
         empty-frame default and the dataset must not fabricate a spread."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_thermal_percentiles(monkeypatch)
@@ -376,7 +376,7 @@ class TestBuildDecompDatasetThermalDetail:
         thermal_rows = dataset.tidy.filter(pl.col("entity_type") == "thermal")
         assert not thermal_rows.is_empty()
         assert set(thermal_rows["variable"].to_list()) == {"generation_mw"}
-        assert set(thermal_rows["source"].to_list()) == {"newave", "cobre"}
+        assert set(thermal_rows["source"].to_list()) == {"newave", "novomodelo"}
 
     def test_thermal_operation_and_detail_tabs_render_with_metadata_present(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -395,8 +395,8 @@ class TestBuildDecompDatasetThermalDetail:
     def test_both_thermal_tabs_render_without_exception_when_percentiles_absent(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """No cobre thermal percentiles at all -- both tabs must degrade
-        gracefully (Cobre-only band suppressed), never raise."""
+        """No novomodelo thermal percentiles at all -- both tabs must degrade
+        gracefully (Novomodelo-only band suppressed), never raise."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_thermal_percentiles(monkeypatch)
 
