@@ -46,10 +46,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
-      # novomodelo-python comes from the private core repository through the
-      # git source in pyproject.toml, which only uv reads.
-      - name: Let git read the core repository
-        run: git config --global url."https://x-access-token:${{ secrets.NOVOMODELO_CORE_TOKEN }}@github.com/ons-ccee-epe/novomodelo".insteadOf "https://github.com/ons-ccee-epe/novomodelo"
       # novomodelo-python is a core runtime dependency, so the sync pulls it on
       # every Python in the matrix — the tier-2 (`requires_novomodelo_python`)
       # boundary-FCF tests run on all jobs, not just the primary one.
@@ -68,7 +64,5 @@ jobs:
           python-version: "3.13"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Let git read the core repository
-        run: git config --global url."https://x-access-token:${{ secrets.NOVOMODELO_CORE_TOKEN }}@github.com/ons-ccee-epe/novomodelo".insteadOf "https://github.com/ons-ccee-epe/novomodelo"
       - run: uv sync --locked --extra dev
       - run: uv run --no-sync pytest --cov --cov-report=term-missing
