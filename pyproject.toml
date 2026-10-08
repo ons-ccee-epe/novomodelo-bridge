@@ -39,11 +39,6 @@ dev = [
 [project.scripts]
 novomodelo-bridge = "novomodelo_bridge.cli:main"
 
-[tool.uv.sources]
-# Nothing is published to PyPI under the fork's names: the bindings come from
-# the core repository, pinned to one commit.
-novomodelo-python = { git = "https://github.com/ons-ccee-epe/novomodelo", rev = "1358aea2116d64bee44c108543cd3efb618005bf", subdirectory = "crates/novomodelo-python" }
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/novomodelo_bridge"]
 

@@ -15,19 +15,17 @@ It is a command-line tool. A session typically goes:
 
 ## Installation
 
-Nothing is published to PyPI under this name. Install the CLI with uv from a
-tagged release of this repository:
-
 ```bash
-uv tool install git+https://github.com/ons-ccee-epe/novomodelo-bridge@v0.18.0
+uv tool install novomodelo-bridge    # isolated, on-PATH CLI (recommended)
+pipx install novomodelo-bridge       # alternative
+pip install novomodelo-bridge        # into the current environment
 ```
 
-Requires Python 3.12 or newer, and a Rust toolchain (1.88 or newer): the
-install builds `novomodelo-python`, Novomodelo's Python bindings, from the commit
-of the [novomodelo repository](https://github.com/ons-ccee-epe/novomodelo) that
-this bridge pins, so `convert --validate`, `compare`, and the DECOMP boundary
-cost-to-go import work without further setup. pip and pipx do not read that
-pin; they would look for `novomodelo-python` on PyPI instead.
+Requires Python 3.12 or newer. The install pulls in `novomodelo-python`, Novomodelo's
+Python bindings, so `convert --validate`, `compare`, and the DECOMP boundary
+cost-to-go import work without further setup. `novomodelo-python` ships prebuilt
+wheels for common platforms; if pip reports that none matches yours, see the
+[novomodelo repository](https://github.com/ons-ccee-epe/novomodelo) for build options.
 
 The `novomodelo` solver itself is a separate install, built from the novomodelo
 repository (see its README). novomodelo-bridge does not need it to convert or
