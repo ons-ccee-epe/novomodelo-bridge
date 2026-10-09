@@ -158,10 +158,14 @@ def read_mapcut(path: Path) -> MapcutContents:
         else ()
     )
 
-    # Reg 9 and 10 records
+    # Reg 7/8: travel-time records (skipped, but we need to account for them)
+    # There are n_utv * n_estagios * (max_lag + 1) travel-time records
+    travel_time_record_count = n_utv * numero_estagios * (max_lag + 1)
+
+    # Reg 9 and 10 records start after travel-time records
     gnl_indices = []
     cost_records = []
-    record_idx = 20
+    record_idx = 20 + travel_time_record_count
 
     # First pass: identify record types
     for stage in range(numero_estagios):
