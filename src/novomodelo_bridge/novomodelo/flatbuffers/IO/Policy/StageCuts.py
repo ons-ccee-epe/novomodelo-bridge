@@ -73,7 +73,7 @@ class StageCuts(object):
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
             x = self._tab.Indirect(x)
-            from Novomodelo.IO.Policy.AffinePiece import AffinePiece
+            from novomodelo_bridge.novomodelo.flatbuffers.IO.Policy.AffinePiece import AffinePiece
             obj = AffinePiece()
             obj.Init(self._tab.Bytes, x)
             return obj
@@ -135,7 +135,7 @@ class StageCuts(object):
             x = self._tab.Vector(o)
             x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
             x = self._tab.Indirect(x)
-            from Novomodelo.IO.Policy.EntitySlot import EntitySlot
+            from novomodelo_bridge.novomodelo.flatbuffers.IO.Policy.EntitySlot import EntitySlot
             obj = EntitySlot()
             obj.Init(self._tab.Bytes, x)
             return obj
