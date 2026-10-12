@@ -636,39 +636,16 @@ def load_simulation_data(case_dir: Path) -> SimulationData:
     buses_lf = scan_entity(case_dir, "buses")
     exchanges_lf = scan_entity(case_dir, "exchanges")
 
-    inflow_lags_dir = case_dir / "output" / "simulation" / "inflow_lags"
-    if inflow_lags_dir.exists():
-        inflow_lags_lf = pl.scan_parquet(
-            str(inflow_lags_dir / "**" / "*.parquet"), hive_partitioning=True
-        )
-    else:
-        inflow_lags_lf = pl.LazyFrame()
+    inflow_lags_lf = scan_entity(case_dir, "inflow_lags")
 
-    # Costs is stage-level only (~236 K rows total), collect to pandas for
-    # chart_cost_* functions. Empty when the case is training-only.
-    costs_dir = case_dir / "output" / "simulation" / "costs"
-    if costs_dir.exists() and any(costs_dir.rglob("*.parquet")):
-        costs = (
-            pl.scan_parquet(str(costs_dir / "**" / "*.parquet"), hive_partitioning=True)
-            .collect(engine="streaming")
-            .to_pandas()
-        )
-    else:
-        costs = pd.DataFrame()
-
-    # violations/generic: collect to pandas once (needed by
-    # build_constraints_summary_table).
-    gc_viol_dir = case_dir / "output" / "simulation" / "violations" / "generic"
-    if gc_viol_dir.exists():
-        gc_violations = (
-            pl.scan_parquet(
-                str(gc_viol_dir / "**" / "*.parquet"), hive_partitioning=True
-            )
-            .collect(engine="streaming")
-            .to_pandas()
-        )
-    else:
-        gc_violations = pd.DataFrame()
+    # Collected eagerly: stage-level only, and the chart_cost_* functions and
+    # build_constraints_summary_table consume pandas.
+    costs = scan_entity(case_dir, "costs").collect(engine="streaming").to_pandas()
+    gc_violations = (
+        scan_entity(case_dir, "violations/generic")
+        .collect(engine="streaming")
+        .to_pandas()
+    )
 
     return SimulationData(
         hydros_lf=hydros_lf,
@@ -813,6 +790,15 @@ def _normalize_output_columns(df: pd.DataFrame) -> pd.DataFrame:
         if src in df.columns and dst not in df.columns
     }
     return df.rename(columns=rename) if rename else df
+
+
+def load_training_convergence(case_dir: Path) -> pd.DataFrame:
+    """Load ``output/training/convergence.parquet``; empty when absent, as in a
+    run that skipped training and simulated from a stored policy."""
+    path = case_dir / "output" / "training" / "convergence.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    return _normalize_output_columns(pq.read_table(path).to_pandas())
 
 
 def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerformance:
@@ -1080,6 +1066,17 @@ def load_generic_constraints(case_dir: Path) -> GenericConstraintData:
     return GenericConstraintData(constraints=constraints, bounds=bounds)
 
 
+def _phase_note(training_available: bool, simulation_available: bool) -> str:
+    """Log suffix naming the phase a case lacks; empty when it has both."""
+    if not training_available and not simulation_available:
+        return " (no training or simulation output)"
+    if not simulation_available:
+        return " (training-only; no simulation)"
+    if not training_available:
+        return " (simulation-only; no training)"
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # DashboardData dataclass
 # ---------------------------------------------------------------------------
@@ -1101,9 +1098,12 @@ class DashboardData:
     case_dir: Path
     case_name: str
 
-    # Training — small single-file parquet loaded eagerly as pandas.
+    # Training — small single-file parquet loaded eagerly as pandas; empty
+    # when the run skipped training.
     conv: pd.DataFrame
 
+    # True when ``conv`` has rows. When ``False`` the training tab is hidden.
+    training_available: bool
     # True when ``output/simulation/costs/`` contains parquet files. When
     # ``False`` the simulation-dependent tabs (overview, energy balance,
     # costs, plants, network, constraints) are hidden.
@@ -1131,18 +1131,13 @@ class DashboardData:
         Thin orchestrator: each cohesive section is read by a dedicated
         ``load_*`` loader returning a sub-struct, which :class:`DashboardData`
         holds directly (see the flat-field ``@property`` shims below). Raises
-        ``FileNotFoundError`` if required files (convergence.parquet,
-        stages.json) are missing; optional files fall back to empty
-        DataFrames / empty dicts inside each loader.
+        ``FileNotFoundError`` if ``stages.json`` is missing; every other file
+        is optional and falls back to an empty DataFrame / dict inside its
+        loader, so a training-only and a simulation-only case both load.
         """
         logger.info("Loading dashboard data from %s", case_dir)
 
-        # Training convergence is required and feeds the timing wall-time fix.
-        conv = _normalize_output_columns(
-            pq.read_table(
-                case_dir / "output" / "training" / "convergence.parquet"
-            ).to_pandas()
-        )
+        conv = load_training_convergence(case_dir)
 
         temporal = load_temporal_context(case_dir)
         entities = load_entity_metadata(case_dir)
@@ -1154,6 +1149,7 @@ class DashboardData:
         gc = load_generic_constraints(case_dir)
 
         case_name = case_dir.resolve().name
+        training_available = not conv.empty
         costs = simulation.costs
         simulation_available = not costs.empty
         if simulation_available:
@@ -1167,7 +1163,7 @@ class DashboardData:
             n_scenarios,
             n_stages,
             len(entities.stage_labels),
-            "" if simulation_available else " (training-only; no simulation)",
+            _phase_note(training_available, simulation_available),
         )
 
         # Filter simulation solver to actual scenario count from metadata,
@@ -1186,6 +1182,7 @@ class DashboardData:
             case_dir=case_dir,
             case_name=case_name,
             conv=conv,
+            training_available=training_available,
             simulation_available=simulation_available,
             n_scenarios=n_scenarios,
             n_stages=n_stages,
@@ -1356,6 +1353,13 @@ class DashboardData:
     @property
     def simulation_metadata(self) -> dict:
         return self.metadata.simulation
+
+    @property
+    def run_metadata(self) -> dict:
+        """Metadata of the run's first phase: training, or simulation when the
+        run skipped training. Both carry ``software_version``, ``started_at``
+        and ``duration_seconds``."""
+        return self.metadata.training or self.metadata.simulation
 
     @property
     def policy_metadata(self) -> dict:

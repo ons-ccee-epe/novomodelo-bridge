@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`dashboard` builds for a case run with the simulation disabled.** cobre
+  creates the `output/simulation/` directories even when it does not
+  simulate, and the dashboard failed on the empty inflow-lag and
+  generic-violation directories instead of treating the case as
+  training-only.
+- **`dashboard` builds for a simulation-only case.** A run with training
+  disabled, simulating from a stored policy, writes no
+  `output/training/convergence.parquet`, which the dashboard required. Such a
+  case now gets no Training tab, its Overview takes the version, run date and
+  duration from the simulation metadata, and its Performance tab leaves out
+  the training sections and cards. A training-only case likewise gets no
+  Simulation section or cards in the Performance tab.
+- **Overview quick-look links highlight the tab they open.** They addressed
+  the navigation buttons by position, so the wrong button was highlighted
+  whenever the set of tabs differed from the one the positions assumed, as
+  it does when the Stochastic Model tab is present.
+
 ## [0.18.0] - 2026-10-07
 
 Pairs the bridge with the **cobre 0.18.0** release and pins `cobre-python` to
