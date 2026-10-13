@@ -46,9 +46,9 @@ Bridge guards that pin literals so prose doesn't have to:
   `tests/test_lineage.py` (freshness, emission coverage against the mini
   decks, cited files and registers exist, code trace). The TOML is the one
   place a converted field's origin is stated; other docs point to the page.
-- `tests/test_packaging.py` pins the `MIN_NOVOMODELO_VERSION` ↔ `pyproject.toml`
-  lockstep — prose states the *rule* ("bridge X.Y.Z pairs novomodelo X.Y.Z"), never
-  a hand-copied version floor.
+- `tests/test_packaging.py` holds the `pyproject.toml` `novomodelo-python` pin
+  equal to `MIN_NOVOMODELO_VERSION` — prose states the *rule* ("bridge X.Y.Z pairs
+  novomodelo X.Y.Z"), never a hand-copied version.
 - Where no guard exists, state the invariant: "every command accepts `--json`"
   (a rule a test can enforce), not "all 7 commands" (a snapshot that rots).
 

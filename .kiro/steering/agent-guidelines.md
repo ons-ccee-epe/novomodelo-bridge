@@ -86,5 +86,5 @@ novomodelo before comparing so an existing run's `output/` is not clobbered.
 
 A local novomodelo checkout, when present, is the reference for the input contract
 (serde structs and schemas); a bridge release `X.Y.Z` pairs with novomodelo
-`X.Y.Z`, and the `novomodelo-python` floor in `pyproject.toml` moves in lockstep
-with `MIN_NOVOMODELO_VERSION`.
+`X.Y.Z`, and the `novomodelo-python` pin in `pyproject.toml` is exactly
+`MIN_NOVOMODELO_VERSION`.
