@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
-"""Project the Claude rule set onto Kiro steering files.
+"""Project the `.claude/` rule set (single source of truth) onto Kiro's
+`.kiro/steering/*.md`, translating the front-matter dialect.
 
-The `.claude/` tree is the single source of truth for agent rules. Kiro reads
-`.kiro/steering/*.md` instead, with a different front-matter dialect, so this
-generator translates each Claude rule file into its Kiro steering equivalent.
+  CLAUDE.md                -> 00-hard-rules.md      (always)
+  .claude/rules/<name>.md  -> <name>.md             (fileMatch via paths, else always)
+  .claude/architecture-rules.md -> architecture-rules.md (manual)
 
-Source -> generated mapping:
-  CLAUDE.md                 -> .kiro/steering/00-hard-rules.md     (inclusion: always)
-  .claude/rules/<name>.md   -> .kiro/steering/<name>.md           (inclusion: fileMatch | always)
-  .claude/architecture-rules.md -> .kiro/steering/architecture-rules.md (inclusion: manual)
-
-Front-matter translation:
-  Claude `paths: [glob, ...]`  ->  Kiro `inclusion: fileMatch` + `fileMatchPattern: '<glob>'`
-  (no `paths:` key)            ->  Kiro `inclusion: always`
-
-Run it to (re)write the steering files after editing any `.claude/` rule.
+Run after editing any `.claude/` rule.
 """
 
 from __future__ import annotations
@@ -22,26 +14,19 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-# Generated-file banner tells a human reader where to edit instead — the Kiro
-# steering files are generated, so edits belong in the .claude/ source.
 BANNER = (
     "<!-- GENERATED FILE — DO NOT EDIT.\n"
     "     Source of truth: {source}\n"
     "     Regenerate: python scripts/gen/sync-kiro-steering.py -->\n"
 )
 
-# Default name the CLAUDE.md projection takes in .kiro/steering/. The novomodelo repo
-# uses this; novomodelo-bridge's established steering calls it agent-guidelines.md,
-# so the name is overridable via --hard-rules-name.
+# Overridable via --hard-rules-name (novomodelo-bridge uses agent-guidelines.md).
 DEFAULT_HARD_RULES_NAME = "00-hard-rules.md"
 
 
 def build_overrides(hard_rules_name: str) -> dict[str, tuple[str, str]]:
-    """Source -> (steering filename, forced inclusion) overrides.
-
-    Rule files not listed here are mapped by their path front-matter (fileMatch)
-    or default to `always` when they carry no `paths:` key.
-    """
+    """Source -> (steering filename, forced inclusion). Unlisted rules map by
+    their `paths:` front-matter, else default to `always`."""
     return {
         "CLAUDE.md": (hard_rules_name, "always"),
         ".claude/architecture-rules.md": ("architecture-rules.md", "manual"),
@@ -53,7 +38,7 @@ def repo_root() -> Path:
 
 
 def parse_front_matter(text: str) -> tuple[dict, str]:
-    """Return (front_matter_dict, body). Only the keys this tool needs are parsed."""
+    """Return (front_matter, body); not a full YAML parser."""
     if not text.startswith("---"):
         return {}, text
     end = text.find("\n---", 3)
@@ -100,8 +85,7 @@ def kiro_front_matter(source_rel: str, claude_fm: dict, overrides: dict) -> str:
         return "---\ninclusion: manual\n---\n"
 
     if paths:
-        # Kiro's fileMatchPattern takes one pattern; join multiple globs with the
-        # brace-alternation form Kiro accepts, else emit the single glob.
+        # fileMatchPattern takes one pattern; brace-join multiple globs.
         pattern = paths[0] if len(paths) == 1 else "{" + ",".join(paths) + "}"
         return f"---\ninclusion: fileMatch\nfileMatchPattern: '{pattern}'\n---\n"
     return "---\ninclusion: always\n---\n"
