@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,7 +13,7 @@ from novomodelo_bridge.core import diagnostics as dx
 
 @dataclass
 class ConversionReport:
-    """Summary of a completed the source-model-to-Novomodelo conversion."""
+    """Summary of a completed conversion to a Novomodelo case."""
 
     hydro_count: int = 0
     thermal_count: int = 0
@@ -19,14 +21,14 @@ class ConversionReport:
     line_count: int = 0
     stage_count: int = 0
     #: Structured findings (rich tables, severities, remediation) for the CLI to
-    #: render. Populated by :func:`convert_newave_case`.
+    #: render. Populated by :func:`run_conversion`.
     diagnostics: list[dx.Diagnostic] = field(default_factory=list)
     #: Flat WARNING-severity summary strings, kept for backward-compatible consumers
     #: (derived from :attr:`diagnostics`).
     warnings: list[str] = field(default_factory=list)
     #: Absolute output paths the conversion produced (real run) or would produce
     #: (dry run), in write order. Optional Parquet tables that were skipped are
-    #: absent. Populated by :func:`_convert_newave_case_impl`.
+    #: absent. Populated by each track's conversion.
     would_write_paths: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -64,3 +66,50 @@ def clear_dst_contents(dst: Path, artifacts: ClearedArtifacts) -> None:
         path = dst / filename
         if path.exists():
             path.unlink()
+
+
+def run_conversion(
+    convert: Callable[[], ConversionReport],
+    dst: Path,
+    artifacts: ClearedArtifacts,
+    *,
+    dry_run: bool,
+) -> ConversionReport:
+    """Run one track's *convert* and return its report with every finding in it.
+
+    Structured diagnostics and the residual ``logger.warning`` strings under
+    the package logger are both captured, then combined by
+    :func:`~novomodelo_bridge.core.diagnostics.finalize_diagnostics`.
+
+    On a failure, *artifacts* are removed from *dst* unless *dry_run*, the
+    below-``ERROR`` findings collected so far are emitted on the caller's sink
+    (an early warning such as a tab in a fixed-column file often explains the
+    failure), and the exception propagates.
+    """
+    collector = dx.WarningCollector()
+    pkg_logger = logging.getLogger("novomodelo_bridge")
+    pkg_logger.addHandler(collector)
+    try:
+        with dx.collect() as collected:
+            report = convert()
+    except BaseException:
+        # The write phase is a sequence of independent file writes with no
+        # rollback, so a failure partway through leaves a subset of the outputs
+        # behind; clear them so a half-written case is never mistaken for a
+        # complete one and a plain re-run is not refused as "destination not
+        # empty". A dry run wrote nothing, and dst may be a populated directory
+        # the user never asked to clear.
+        if not dry_run:
+            clear_dst_contents(dst, artifacts)
+        # ERROR findings are left out: the exception they raised repeats them.
+        for diagnostic in dx.finalize_diagnostics(collected, collector.messages):
+            if diagnostic.severity is not dx.Severity.ERROR:
+                dx.emit(diagnostic)
+        raise
+    finally:
+        pkg_logger.removeHandler(collector)
+    report.diagnostics = dx.finalize_diagnostics(collected, collector.messages)
+    report.warnings = [
+        d.summary for d in report.diagnostics if d.severity is dx.Severity.WARNING
+    ]
+    return report

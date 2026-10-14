@@ -21,8 +21,8 @@ boundary FCF an earlier bridge imported must be converted again.
 ### Added
 
 - **`check` and `convert` warn about tabs in fixed-column inputs**, on both
-  tracks. The NEWAVE text inputs and DECOMP's `dadger`/`dadgnl` are read by
-  column position, so a tab where the layout expects spaces shifts the fields
+  tracks. The NEWAVE text files `arquivos.dat` names and DECOMP's
+  `dadger`/`dadgnl` are read by column position, so a tab where the layout expects spaces shifts the fields
   after it; a DECOMP register line that starts with a tab is not read at all.
   The warning names each file and its lines (DECOMP comment lines are
   skipped), and a `check` that finds one reports ready with warnings.

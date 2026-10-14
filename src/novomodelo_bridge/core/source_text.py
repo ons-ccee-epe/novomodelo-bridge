@@ -8,7 +8,7 @@ record at all.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 from novomodelo_bridge.core.diagnostics import (
@@ -19,38 +19,16 @@ from novomodelo_bridge.core.diagnostics import (
 )
 
 
-def tab_lines(
+def tab_character_diagnostic(
     paths: Sequence[Path], *, comment_prefix: str | None = None
-) -> dict[Path, list[int]]:
-    """The 1-based numbers of the lines that contain a tab, per file that has any.
+) -> Diagnostic | None:
+    """WARNING naming every line of *paths* that holds a tab, or ``None``.
 
     Args:
-        comment_prefix: lines starting with it are skipped, as free text the
-            readers ignore.
+        comment_prefix: lines opening with it, after any indentation, are
+            skipped as free text the readers ignore.
     """
-    prefix = comment_prefix.encode() if comment_prefix is not None else None
-    found: dict[Path, list[int]] = {}
-    for path in paths:
-        try:
-            lines = path.read_bytes().split(b"\n")
-        except OSError:
-            # An unreadable file fails the conversion's own read with a better
-            # message; this advisory has nothing to add.
-            continue
-        numbers = [
-            number
-            for number, line in enumerate(lines, start=1)
-            if b"\t" in line and not (prefix is not None and line.startswith(prefix))
-        ]
-        if numbers:
-            found[path] = numbers
-    return found
-
-
-def tab_character_diagnostic(
-    found: Mapping[Path, Sequence[int]],
-) -> Diagnostic | None:
-    """WARNING naming every line in *found* (from :func:`tab_lines`), or ``None``."""
+    found = _tab_lines(paths, comment_prefix=comment_prefix)
     if not found:
         return None
     return Diagnostic(
@@ -61,7 +39,7 @@ def tab_character_diagnostic(
         summary=(
             f"{len(found)} input file(s) contain tab characters. These files are "
             "read by fixed columns, so a tab shifts every field after it on its "
-            "line, and the line reads with wrong or missing values."
+            "line, and a data line can read with wrong or missing values."
         ),
         table=DiagnosticTable(
             columns=["file", "lines"],
@@ -74,3 +52,27 @@ def tab_character_diagnostic(
             "their columns."
         ),
     )
+
+
+def _tab_lines(
+    paths: Sequence[Path], *, comment_prefix: str | None
+) -> dict[Path, list[int]]:
+    """The 1-based numbers of the lines that contain a tab, per file that has any."""
+    prefix = comment_prefix.encode() if comment_prefix is not None else None
+    found: dict[Path, list[int]] = {}
+    for path in paths:
+        try:
+            lines = path.read_bytes().split(b"\n")
+        except OSError:
+            # An unreadable file fails the conversion's own read with a better
+            # message; this advisory has nothing to add.
+            continue
+        numbers = [
+            number
+            for number, line in enumerate(lines, start=1)
+            if b"\t" in line
+            and not (prefix is not None and line.lstrip().startswith(prefix))
+        ]
+        if numbers:
+            found[path] = numbers
+    return found

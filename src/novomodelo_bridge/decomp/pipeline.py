@@ -27,9 +27,10 @@ from novomodelo_bridge.core.conversion import (
     ClearedArtifacts,
     ConversionReport,
     clear_dst_contents,
+    run_conversion,
 )
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
-from novomodelo_bridge.core.source_text import tab_character_diagnostic, tab_lines
+from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.decomp import (
     bounds_accumulator,
     constraint_registers,
@@ -769,11 +770,11 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     probabilities, and the annual discount rate.
     """
     case = DecompCase.from_directory(src)
-    tab_diagnostic = tab_character_diagnostic(
-        tab_lines(case.files.fixed_column_files, comment_prefix=REGISTER_COMMENT_PREFIX)
+    tabs = tab_character_diagnostic(
+        case.files.fixed_column_files, comment_prefix=REGISTER_COMMENT_PREFIX
     )
-    if tab_diagnostic is not None:
-        dx.emit(tab_diagnostic)
+    if tabs is not None:
+        dx.emit(tabs)
     id_map = case.id_map
     dadger = case.dadger
     calendar = case.calendar
@@ -1804,12 +1805,9 @@ def convert_decomp_case(
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
 
-    Mirrors the NEWAVE twin ``convert_newave_case``'s return contract: wraps
-    the conversion in a top-level :func:`novomodelo_bridge.core.diagnostics.collect`
-    sink and a package-logger ``dx.WarningCollector`` so every structured
-    ``dx.emit`` finding *and* every residual ``logger.warning`` string is
-    captured, then returns them as one de-duplicated
-    :class:`~novomodelo_bridge.core.conversion.ConversionReport`.
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`, as
+    the NEWAVE twin ``convert_newave_case`` does: a failure clears the written
+    outputs and forwards the warnings found before it.
 
     Parameters
     ----------
@@ -1845,11 +1843,9 @@ def convert_decomp_case(
     FileExistsError
         If *dst* already exists, is non-empty, and ``force`` is not set.
     """
-    # This refusal must run before the clearing try/except below: it is a
-    # "do not touch dst" guard, not a mid-write failure, so it must never
-    # reach ``clear_dst_contents`` and delete a pre-existing, unrelated case
-    # (mirrors the source model's own NEWAVE-twin ordering, which performs
-    # this check ahead of its own write/clear try block).
+    # This refusal must run before ``run_conversion``: it is a "do not touch
+    # dst" guard, not a mid-write failure, so it must never reach the failure
+    # rollback and delete a pre-existing, unrelated case.
     if dst.exists() and any(dst.iterdir()):
         if not force:
             raise FileExistsError(
@@ -1862,47 +1858,19 @@ def convert_decomp_case(
         if not dry_run:
             clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
 
-    collector = dx.WarningCollector()
-    pkg_logger = logging.getLogger("novomodelo_bridge")
-    pkg_logger.addHandler(collector)
-    try:
-        # Structured diagnostics emitted by converters (and the inner
-        # emission-self-check re-emit loop below) land in ``collected``; any
-        # remaining ``logger.warning`` strings (the deferral warning, the
-        # topology non-itemized warning) are picked up by ``collector`` and
-        # bridged below, so every warning still surfaces.
-        with dx.collect() as collected:
-            report = _convert_decomp_case_impl(
-                src,
-                dst,
-                force=force,
-                on_phase=on_phase,
-                dry_run=dry_run,
-                fcf_inputs_out=fcf_inputs_out,
-            )
-    except BaseException:
-        # The write phase is a sequence of independent file writes with no
-        # rollback, so a failure partway through can leave a subset of the
-        # output files behind. Remove the known pipeline outputs so a
-        # half-written case is never mistaken for a complete one and a plain
-        # (no --force) re-run is not refused as "destination not empty".
-        # Skipped under a dry run: nothing was written, and dst may be a
-        # pre-existing populated directory the user never asked to clear.
-        if not dry_run:
-            clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
-        # Hand what was found before the failure to the caller's sink: a
-        # warning raised early (a tab in a fixed-column file) often explains it.
-        for diagnostic in dx.finalize_diagnostics(collected, collector.messages):
-            dx.emit(diagnostic)
-        raise
-    finally:
-        pkg_logger.removeHandler(collector)
-    report.diagnostics = dx.finalize_diagnostics(collected, collector.messages)
-    # Backward-compatible flat WARNING strings derived from the diagnostics.
-    report.warnings = [
-        d.summary for d in report.diagnostics if d.severity is dx.Severity.WARNING
-    ]
-    return report
+    return run_conversion(
+        lambda: _convert_decomp_case_impl(
+            src,
+            dst,
+            force=force,
+            on_phase=on_phase,
+            dry_run=dry_run,
+            fcf_inputs_out=fcf_inputs_out,
+        ),
+        dst,
+        DECOMP_CLEARED_ARTIFACTS,
+        dry_run=dry_run,
+    )
 
 
 def _convert_decomp_case_impl(

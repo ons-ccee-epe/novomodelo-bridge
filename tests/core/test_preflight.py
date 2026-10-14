@@ -8,13 +8,13 @@ from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.preflight import tab_character_advisory
 
 
-def test_tab_character_advisory_names_the_files_and_warns(tmp_path: Path) -> None:
+def test_tab_character_advisory_with_a_tab_passes_and_warns(tmp_path: Path) -> None:
     clast = tmp_path / "clast.dat"
     clast.write_text("    1 A\n\t2 B\n")
 
     checks, diagnostics = tab_character_advisory([clast, tmp_path / "term.dat"])
 
-    assert [(c.passed, c.detail) for c in checks] == [(True, "found in clast.dat")]
+    assert [(c.passed, c.detail) for c in checks] == [(True, "found; see the warning")]
     assert [(d.code, d.severity) for d in diagnostics] == [
         ("source-tab-character", Severity.WARNING)
     ]
