@@ -59,7 +59,9 @@ boundary FCF an earlier bridge imported must be converted again.
   are shifted, for example by a tab in place of spaces, reads with its dates
   or cost missing, and the conversion stopped with an internal date-comparison
   error. It now fails with a source-field error that names the plant or cost
-  modification, the field that could not be read and the entry number.
+  modification, the field that could not be read and the entry number. Records
+  the conversion does not use, such as a cost for a year after the study
+  horizon or a plant the case does not convert, are still ignored.
 - **`dashboard` builds for a case run with the simulation disabled.**
   novomodelo creates the `output/simulation/` directories even when it does not
   simulate, and the dashboard failed on the empty inflow-lag and

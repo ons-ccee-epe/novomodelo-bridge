@@ -82,6 +82,33 @@ class TestConvertThermals:
         assert excinfo.value.field == field
         assert excinfo.value.path == str(case.files.clast)
 
+    def test_blank_cost_the_conversion_never_reads_is_no_error(self, tmp_path) -> None:
+        """A later study year, or a plant that is not converted, may be blank."""
+        from novomodelo_bridge.newave.converters.thermal import (
+            convert_thermal_bounds,
+            convert_thermals,
+        )
+
+        conft, clast, term = _thermal_readers()
+        unread = pd.DataFrame(
+            {
+                "codigo_usina": [10, 99],
+                "nome_usina": ["TERMO_A", "RETIRED"],
+                "tipo_combustivel": ["GAS", "GAS"],
+                "indice_ano_estudo": [3, 1],
+                "valor": [float("nan"), float("nan")],
+            }
+        )
+        clast.usinas = pd.concat([clast.usinas, unread], ignore_index=True)
+        case = make_case(
+            tmp_path, conft=conft, clast=clast, term=term, dger=_make_thermal_dger()
+        )
+
+        thermals = convert_thermals(case, self._make_id_map())["thermals"]
+        convert_thermal_bounds(case, self._make_id_map())
+
+        assert [t["cost_per_mwh"] for t in thermals] == [50.0, 80.0, 200.0]
+
     def test_cost_per_mwh_scalar(self, tmp_path) -> None:
         conft, clast, term = _thermal_readers()
         case = make_case(
@@ -490,6 +517,27 @@ class TestConvertThermalBoundsClastModificacoes:
         with pytest.raises(FieldParseError, match="modification 2") as excinfo:
             convert_thermal_bounds(case, self._make_id_map())
         assert (excinfo.value.field, excinfo.value.row) == (field, 2)
+
+    def test_unreadable_modificacao_of_a_plant_not_converted_is_skipped(
+        self, tmp_path
+    ) -> None:
+        from novomodelo_bridge.newave.converters.thermal import convert_thermal_bounds
+
+        conft, clast, term = _thermal_readers()
+        clast.modificacoes = pd.DataFrame(
+            {
+                "codigo_usina": [99.0],
+                "nome_usina": ["RETIRED"],
+                "data_inicio": [pd.NaT],
+                "data_fim": [pd.NaT],
+                "custo": [float("nan")],
+            }
+        )
+        case = make_case(
+            tmp_path, conft=conft, clast=clast, term=term, dger=self._make_dger()
+        )
+
+        assert convert_thermal_bounds(case, self._make_id_map()) is None
 
     def test_tab_shifted_modificacao_line_raises_field_parse_error(
         self, tmp_path
