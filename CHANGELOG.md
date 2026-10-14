@@ -14,6 +14,23 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+Pairs the bridge with the **novomodelo 0.18.1** release. novomodelo loads a
+policy checkpoint only in the version that wrote it, so a DECOMP case whose
+boundary FCF an earlier bridge imported must be converted again.
+
+### Changed
+
+- **`novomodelo-python` is pinned to 0.18.1**, and `MIN_NOVOMODELO_VERSION`
+  moves with it.
+- **NEWAVE comparisons can show negative novomodelo inflows.** From 0.18.1,
+  novomodelo's truncation methods keep the PAR inflow raw: `inflow_m3s`,
+  `incremental_inflow_m3s` and `incremental_inflow_energy_mw` report the raw
+  draw, which can be negative, and `inflow_nonnegativity_slack_m3s` reports the
+  correction that lifts it to zero in the water balance. `compare newave`
+  compares the values novomodelo reports, so where the correction acts, the
+  incremental inflow, the total inflow and the natural inflow energy are lower
+  than under 0.18.0.
+
 ## [0.18.0] - 2026-10-08
 
 ### Changed
