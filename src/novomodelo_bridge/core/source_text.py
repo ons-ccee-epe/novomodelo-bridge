@@ -1,10 +1,4 @@
-"""The tab-character check on the source decks' fixed-column text files.
-
-The source-model readers slice each line at fixed columns, so a tab counts as
-one column where the layout expects several spaces: the fields after it shift,
-and the line reads with wrong or missing values, or is not recognised as a
-record at all.
-"""
+"""The tab-character check on the source decks' fixed-column text files."""
 
 from __future__ import annotations
 
@@ -64,8 +58,7 @@ def _tab_lines(
         try:
             lines = path.read_bytes().split(b"\n")
         except OSError:
-            # An unreadable file fails the conversion's own read with a better
-            # message; this advisory has nothing to add.
+            # The conversion's own read reports an unreadable file better.
             continue
         numbers = [
             number

@@ -83,7 +83,6 @@ class TestConvertThermals:
         assert excinfo.value.path == str(case.files.clast)
 
     def test_blank_cost_the_conversion_never_reads_is_no_error(self, tmp_path) -> None:
-        """A later study year, or a plant that is not converted, may be blank."""
         from novomodelo_bridge.newave.converters.thermal import (
             convert_thermal_bounds,
             convert_thermals,
@@ -542,9 +541,8 @@ class TestConvertThermalBoundsClastModificacoes:
     def test_tab_shifted_modificacao_line_raises_field_parse_error(
         self, tmp_path
     ) -> None:
-        """A tab in place of the leading spaces shifts the fixed columns, so the
-        reader returns the line with its dates unread; the conversion names the
-        entry instead of failing on a missing date deep in the stage loop."""
+        """A tab shifts the fixed columns, so the reader returns the line with
+        its dates unread."""
         from inewave.newave import Clast
 
         from novomodelo_bridge.core.errors import FieldParseError

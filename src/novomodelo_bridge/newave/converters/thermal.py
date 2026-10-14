@@ -839,9 +839,8 @@ def convert_thermal_bounds(
         if len(set(year_costs)) > 1:
             cost_varies.add(code)
 
-    # Each override replaces the year-indexed cost for the stages whose
-    # first-of-month date falls in [start, end]; a plant with any override is
-    # cost-varying even when its year-indexed costs are uniform.
+    # A plant with any override is cost-varying even when its year-indexed
+    # costs are uniform.
     modif_by_code = _clast_cost_modifications(case, converted)
     cost_varies.update(modif_by_code)
 

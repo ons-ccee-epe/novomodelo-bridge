@@ -94,11 +94,7 @@ def _format_time(seconds: float) -> str:
 
 
 def _build_metrics_row(data: DashboardData) -> str:
-    """Build the run-summary metric cards from timing and solver DataFrames.
-
-    A phase the case did not run contributes no cards; the two totals span
-    whichever phases ran.
-    """
+    """Build the run-summary metric cards from timing and solver DataFrames."""
     # ------------------------------------------------------------------
     # Training time: prefer wall-clock from metadata, fall back to timing
     # ------------------------------------------------------------------
@@ -285,10 +281,7 @@ def can_render(data: DashboardData) -> bool:  # noqa: ARG001
 
 
 def _training_sections(data: DashboardData) -> str:
-    """Sections built from the training timing, solver and cut-selection
-    outputs, from the outside in: top-level phases that sum to the iteration
-    total, each wall phase's sub-components, parallel overhead and
-    efficiency, then per-iteration and per-stage LP solver detail."""
+    """Sections built from the training timing, solver and cut-selection outputs."""
     top_level_content = chart_grid(
         [
             wrap_chart(chart_iteration_timing_breakdown(data.timing)),
@@ -499,9 +492,8 @@ def _training_sections(data: DashboardData) -> str:
 def render(data: DashboardData) -> str:
     """Return full HTML for the v2 Performance tab.
 
-    A phase the case did not run contributes no sections: a simulation-only
-    case has no training sections or solver retries, a training-only case no
-    simulation section. LP dimensions and scaling are written by every run.
+    A phase the case did not run contributes no sections; LP dimensions and
+    scaling are written by every run.
     """
     parts = [section_title("Run Summary"), _build_metrics_row(data)]
     if data.training_available:

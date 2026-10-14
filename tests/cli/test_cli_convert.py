@@ -42,7 +42,6 @@ def _make_fake_decomp_dir_with_cuts(tmp_path: Path) -> Path:
 
 
 def _warn_then_fail(*_args: object, **_kwargs: object) -> None:
-    """A pipeline stand-in that finds a warning and then fails."""
     from novomodelo_bridge.core import diagnostics as dx
 
     dx.emit(

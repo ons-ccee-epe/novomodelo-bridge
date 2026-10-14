@@ -178,14 +178,14 @@ def convert_newave_case(
     """Convert a source-model case directory to a Novomodelo case directory.
 
     Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
-    failure clears the written outputs and forwards the warnings found before
-    it.
+    failure clears the written outputs and forwards the below-``ERROR``
+    findings collected before it.
 
     Parameters
     ----------
     src:
-        Path to the source model case directory.  Must exist and contain all required
-        the source model input files.
+        Path to the source model case directory.  Must exist and contain every
+        required source-model input file.
     dst:
         Path to the output Novomodelo case directory.  Must not exist or must be
         empty (call site is responsible for enforcing the --force contract
@@ -205,8 +205,12 @@ def convert_newave_case(
     Raises
     ------
     FileNotFoundError
-        If *src* does not exist, is not a directory, or a required the source model file
-        is missing.
+        If *src* does not exist, is not a directory, or a required source-model
+        file is missing.
+    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+        A ``ValueError``: a post-emission self-check in
+        :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
+        violation in the converted artifacts. No report is returned.
     """
     return run_conversion(
         lambda: _convert_newave_case_impl(src, dst, on_phase, dry_run=dry_run),
@@ -241,7 +245,8 @@ def _convert_newave_case_impl(
     # Build the parsed-case object once; every converter reads its parsed inputs from
     # ``case`` (each source-model file parsed once and cached).
     case = NewaveCase.from_directory(src)
-    if (tabs := tab_character_diagnostic(case.files.fixed_column_files)) is not None:
+    tabs = tab_character_diagnostic(case.files.fixed_column_files)
+    if tabs is not None:
         dx.emit(tabs)
 
     logger.debug("Building NewaveIdMap from %s", src)

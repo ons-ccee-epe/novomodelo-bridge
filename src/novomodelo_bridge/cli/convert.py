@@ -56,7 +56,6 @@ def _handle_conversion_pipeline_failure(
     ``report`` is None on this path, so counts are zeroed and the dry-run
     would-write listing is empty; ``status`` is "error" because
     ``diagnostic_from_exception`` yields an ERROR-severity diagnostic.
-    ``found_before`` holds what the pipeline collected before it failed.
     """
     diagnostics = [*found_before, diagnostic_from_exception(exc, context="Conversion")]
     if args.json_output:

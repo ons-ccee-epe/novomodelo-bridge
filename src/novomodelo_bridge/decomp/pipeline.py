@@ -1805,9 +1805,9 @@ def convert_decomp_case(
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
 
-    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`, as
-    the NEWAVE twin ``convert_newave_case`` does: a failure clears the written
-    outputs and forwards the warnings found before it.
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
+    failure clears the written outputs and forwards the below-``ERROR``
+    findings collected before it.
 
     Parameters
     ----------
@@ -1833,19 +1833,15 @@ def convert_decomp_case(
 
     Raises
     ------
-    ValueError
-        If the post-emission self-checks (novomodelo 0.13 rules 43/41/45/38/36 and
-        the ``block_id``-range rule; see :mod:`novomodelo_bridge.core.emission_checks`)
-        find an ``ERROR``-severity violation in the converted artifacts. An
-        ``INFO`` finding (e.g. rule 43's "not applicable" report, emitted when
-        no hydro-bounds capacity column is populated) never raises. No report
-        is returned on this path.
+    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+        A ``ValueError``: a post-emission self-check in
+        :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
+        violation in the converted artifacts. No report is returned.
     FileExistsError
         If *dst* already exists, is non-empty, and ``force`` is not set.
     """
-    # This refusal must run before ``run_conversion``: it is a "do not touch
-    # dst" guard, not a mid-write failure, so it must never reach the failure
-    # rollback and delete a pre-existing, unrelated case.
+    # Refuse before ``run_conversion``, whose failure rollback would otherwise
+    # delete the pre-existing case.
     if dst.exists() and any(dst.iterdir()):
         if not force:
             raise FileExistsError(
@@ -1862,7 +1858,6 @@ def convert_decomp_case(
         lambda: _convert_decomp_case_impl(
             src,
             dst,
-            force=force,
             on_phase=on_phase,
             dry_run=dry_run,
             fcf_inputs_out=fcf_inputs_out,
@@ -1877,7 +1872,6 @@ def _convert_decomp_case_impl(
     src: Path,
     dst: Path,
     *,
-    force: bool = False,
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,

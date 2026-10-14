@@ -172,14 +172,8 @@ def hydro_penalty_costs(
     turbined_cost = _PTURB * rho_avg
     diversion_cost = _PCDESV * rho_avg
 
-    # Inflow non-negativity: The source model has no PENALID variable for this. Novomodelo's
-    # default is 1000 R$/(m³/s · h), which is far below the operationally- significant
-    # flow-domain slacks above (turbined / outflow / evaporation / water-withdrawal).
-    # When the LP can choose between letting incremental natural inflow go negative (a
-    # non-physical phenomenon — implies upstream is somehow "absorbing water" the
-    # cascade can't account for) and violating another flow constraint, we want it to
-    # *always* prefer fixing the other constraint first. Anchor inflow non-negativity
-    # penalty to the withdrawal slack plus a 1 R$/m³/s tie-breaker.
+    # The source model has no PENALID entry for inflow non-negativity; the price is
+    # anchored to withdrawal (see ``_INFLOW_NN_OFFSET_R_PER_M3S``).
     inflow_nonnegativity_cost = water_withdrawal_cost + _INFLOW_NN_OFFSET_R_PER_M3S
 
     return {

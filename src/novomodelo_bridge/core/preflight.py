@@ -130,11 +130,7 @@ def optional_input_advisory(  # noqa: UP047
 def tab_character_advisory(
     paths: Sequence[Path], *, comment_prefix: str | None = None
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
-    """Passing check + :func:`tab_character_diagnostic`'s WARNING, if any.
-
-    A tab never blocks conversion, but being a WARNING it drives the
-    ``WARNINGS`` verdict.
-    """
+    """Passing check + :func:`tab_character_diagnostic`'s WARNING, if any."""
     diagnostic = tab_character_diagnostic(paths, comment_prefix=comment_prefix)
     detail = "none found" if diagnostic is None else "found; see the warning"
     return (

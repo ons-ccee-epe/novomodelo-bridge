@@ -77,10 +77,6 @@ def run_conversion(
 ) -> ConversionReport:
     """Run one track's *convert* and return its report with every finding in it.
 
-    Structured diagnostics and the residual ``logger.warning`` strings under
-    the package logger are both captured, then combined by
-    :func:`~novomodelo_bridge.core.diagnostics.finalize_diagnostics`.
-
     On a failure, *artifacts* are removed from *dst* unless *dry_run*, the
     below-``ERROR`` findings collected so far are emitted on the caller's sink
     (an early warning such as a tab in a fixed-column file often explains the
@@ -93,12 +89,10 @@ def run_conversion(
         with dx.collect() as collected:
             report = convert()
     except BaseException:
-        # The write phase is a sequence of independent file writes with no
-        # rollback, so a failure partway through leaves a subset of the outputs
-        # behind; clear them so a half-written case is never mistaken for a
-        # complete one and a plain re-run is not refused as "destination not
-        # empty". A dry run wrote nothing, and dst may be a populated directory
-        # the user never asked to clear.
+        # Clear the partial outputs so a half-written case is never mistaken for
+        # a complete one and a re-run is not refused as "not empty". Never on a
+        # dry run: it wrote nothing, and dst may hold a case the user never
+        # asked to clear.
         if not dry_run:
             clear_dst_contents(dst, artifacts)
         # ERROR findings are left out: the exception they raised repeats them.

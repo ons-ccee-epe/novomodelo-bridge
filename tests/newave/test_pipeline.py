@@ -501,8 +501,6 @@ class TestConversionWarningCapture:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The error report of a failed conversion keeps the warnings found
-        before the failure, such as a tab that misaligned a fixed-column file."""
         from novomodelo_bridge.core import diagnostics as dx
         from novomodelo_bridge.newave.converters import hydro
         from novomodelo_bridge.newave.pipeline import convert_newave_case

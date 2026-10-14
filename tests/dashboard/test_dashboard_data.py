@@ -707,9 +707,8 @@ class TestDashboardDataHoldsSubstructs:
     def test_empty_simulation_skeleton_loads_as_training_only(
         self, tmp_path: Path
     ) -> None:
-        """novomodelo creates the ``output/simulation/`` directory tree even when
-        the simulation is disabled, so the directories exist with no parquet
-        files in them."""
+        """novomodelo creates the ``output/simulation/`` tree even when the
+        simulation is disabled."""
         case_dir = _build_training_only_case(tmp_path)
         sim_dir = case_dir / "output" / "simulation"
         for entity in (*_SIMULATION_ENTITIES, "violations/generic"):
@@ -724,8 +723,6 @@ class TestDashboardDataHoldsSubstructs:
 
 
 class TestSimulationOnlyCase:
-    """A case novomodelo simulated from a stored policy, with training disabled."""
-
     def test_loads_without_convergence(self, tmp_path: Path) -> None:
         case_dir = _build_simulation_only_case(tmp_path)
 

@@ -218,8 +218,6 @@ class TestPipeline:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The error report of a failed conversion keeps the warnings found
-        before the failure, such as a tab that misaligned a register file."""
         from novomodelo_bridge.core import diagnostics as dx
         from novomodelo_bridge.decomp.converters import cadastro
         from novomodelo_bridge.decomp.pipeline import convert_decomp_case
