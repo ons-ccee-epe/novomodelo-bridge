@@ -175,7 +175,7 @@ Critérios de parada (`GP` como gap relativo e `NI` como limite de iterações) 
 **Quando:** sempre.  
 **Esquema:** [stages.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/stages.schema.json) · **Código:** `src/novomodelo_bridge/decomp/temporal.py`
 
-Calendário operativo semanal a partir de `DT` e das durações de patamar de `DP`; grafo de nós com tronco determinístico e leque terminal ponderado pelas probabilidades do arquivo de vazões; medida de risco de `AR`.
+Calendário operativo (semanas no 1º mês, estágios mensais nos meses seguintes) a partir de `DT` e das durações de patamar de `DP`; grafo de nós com tronco determinístico e leque terminal ponderado pelas probabilidades do arquivo de vazões; medida de risco de `AR`.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
@@ -187,15 +187,15 @@ Calendário operativo semanal a partir de `DT` e das durações de patamar de `D
 | `policy_graph.nodes[].label` | — *(derivado)* | Rótulo `trunk-{estágio}` nos nós do tronco e `fan-{cenário}` nos nós do leque. |
 | `policy_graph.transitions[].source_id` | — *(derivado)* | Nó de origem: cada nó do tronco liga-se ao seguinte; o último nó do tronco liga-se a todos os nós do leque. |
 | `policy_graph.transitions[].target_id` | — *(derivado)* | Nó de destino da aresta, na ordem canônica dos sucessores. |
-| `policy_graph.transitions[].probability` | `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)` | `1.0` nas arestas do tronco; nas arestas para o leque, a probabilidade de cada cenário do estágio terminal na tabela de probabilidades do arquivo de vazões (validadas como somando 1). |
+| `policy_graph.transitions[].probability` | `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)` | `1.0` nas arestas do tronco; nas arestas para o leque, a probabilidade de cada cenário do estágio terminal na tabela de probabilidades do arquivo de vazões (validadas como somando 1). O leque terminal é o único ponto de ramificação: o tronco pode ter qualquer número de meses, mas que ele seja de fato determinístico (uma abertura por estágio) é verificado contra o arquivo de vazões; um deck cuja árvore ramifica antes do último estágio é rejeitado, nunca achatado. |
 | `season_definitions.cycle_type` | — *(constante)* | Sempre `monthly`. |
 | `season_definitions.seasons[].id` | — *(constante)* | Doze estações fixas, ids 0 a 11 (janeiro = 0). |
 | `season_definitions.seasons[].month_start` | — *(constante)* | Mês de início de cada estação, 1 a 12. |
 | `season_definitions.seasons[].label` | — *(constante)* | Nome do mês em inglês (`January` … `December`), convenção compartilhada com a conversão NEWAVE. |
 | `stages[].id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | `estagio - 1`; os estágios de `DP` devem ser contíguos a partir de 1. |
 | `stages[].start_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado)* | Data de `DT` no primeiro estágio (obrigatoriamente um sábado); nos demais, a data final do estágio anterior. Cada estágio dura a soma das durações de patamar de `DP` convertida em dias inteiros. |
-| `stages[].end_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado)* | Data de início mais a duração do estágio (exclusiva). Todo estágio exceto o último deve somar 168 h; o último deve terminar em fronteira de mês civil e cobrir o segundo mês operativo. |
-| `stages[].season_id` | `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado)* | Estações semanais recebem o mês da sexta-feira da primeira semana (data de `DT` + 6 dias) menos 1; o estágio mensal final recebe o mês do seu próprio início menos 1. |
+| `stages[].end_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado)* | Data de início mais a duração do estágio (exclusiva). O primeiro mês operativo é uma sequência de semanas de 168 h que o preenche até a borda do mês civil; cada mês seguinte é um estágio mensal que fecha na borda do mês civil. O primeiro estágio mensal começa na fronteira semanal dentro do mês (perde os dias já cobertos pela última semana do 1º mês); os seguintes são meses civis completos. O `NH = 168 − 24·Ndias` de uma semana de borda é só o peso de energia para acoplamento com o NEWAVE, não a duração em `DP`. |
+| `stages[].season_id` | `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado)* | Estágios semanais recebem o mês da sexta-feira da primeira semana (data de `DT` + 6 dias) menos 1; cada estágio mensal recebe o mês do seu próprio início menos 1. |
 | `stages[].blocks[].id` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Índice 0-based do patamar dentro do estágio. |
 | `stages[].blocks[].name` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Nome canônico pelo número de patamares: `HEAVY`/`MEDIUM`/`LIGHT` para três, `HEAVY`/`LIGHT` para dois, `SINGLE` para um, `BLOCK_i` para outros valores. |
 | `stages[].blocks[].hours` | `dadger.rvN` › `DP` › `duracao` | Duração em horas de cada patamar (`duracao_k`). As durações devem coincidir entre todos os submercados do mesmo estágio; o deck define uma única grade temporal. |

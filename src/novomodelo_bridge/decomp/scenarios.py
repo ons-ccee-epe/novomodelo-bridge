@@ -272,6 +272,34 @@ def convert_external_inflows(
     )
 
 
+def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
+    """Fail unless every stage before *terminal* is deterministic.
+
+    The node graph fans only at the terminal stage (``build_node_graph``), so
+    the trunk — every 1-based stage ``1..terminal-1`` — must carry a single
+    inflow opening. A trunk stage with more than one ``cenario`` is DECOMP's
+    growing scenario tree (branching before the last month), which this
+    terminal-fan conversion cannot represent and must not silently flatten.
+    """
+    stage = prob["estagio"].astype(int)
+    trunk = prob[(stage >= 1) & (stage < terminal)]
+    branching = sorted(
+        {
+            int(s)
+            for s, n in trunk.groupby("estagio")["cenario"].nunique().items()
+            if n > 1
+        }
+    )
+    if branching:
+        raise ValueError(
+            f"inflow stages {branching} branch into multiple scenarios, but "
+            f"only the terminal stage {terminal} may fan. DECOMP's scenario "
+            f"tree branches from the second month on; a deck that branches "
+            f"before its last stage is not convertible by the terminal-fan "
+            f"model."
+        )
+
+
 def terminal_fan_probabilities(
     vazoes: Vazoes,
     calendar: Sequence[OperativeStage],
@@ -284,12 +312,16 @@ def terminal_fan_probabilities(
     returned list is indexed by 0-based scenario id (``cenario - 1``), the
     same id the external inflow library binds via each fan node's
     ``scenario_id``. Validated to be a contiguous 0-based range summing to 1.
+
+    Rejects (via :func:`_reject_branching_trunk`) a deck whose trunk already
+    branches, since only the terminal stage may fan.
     """
     prob = vazoes.probabilidades
     if prob is None or prob.empty:
         raise ValueError("the inflow file has no probability table")
 
     terminal = len(calendar)  # 1-based id of the terminal (fan) stage
+    _reject_branching_trunk(prob, terminal)
     rows = prob[prob["estagio"].astype(int) == terminal]
     if rows.empty:
         raise ValueError(

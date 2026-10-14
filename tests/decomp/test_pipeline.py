@@ -193,6 +193,22 @@ class TestScenarioEmitters:
         with pytest.raises(ValueError, match="sum"):
             terminal_fan_probabilities(vazoes, _calendar())
 
+    def test_branching_trunk_raises(self) -> None:
+        # A trunk stage (2) that branches into two scenarios is DECOMP's
+        # growing tree, which the terminal-fan model cannot represent.
+        vazoes = _StubVazoes()
+        vazoes.probabilidades = pd.concat(
+            [
+                vazoes.probabilidades,
+                pd.DataFrame(
+                    [{"estagio": 2, "no": 5, "cenario": 2, "probabilidade": 1.0}]
+                ),
+            ],
+            ignore_index=True,
+        )
+        with pytest.raises(ValueError, match="branch into multiple scenarios"):
+            terminal_fan_probabilities(vazoes, _calendar())
+
     def test_pre_terminal_fan_raises(self) -> None:
         vazoes = _StubVazoes()
         vazoes.cenarios_gerados.loc[0, "estagio"] = 2
