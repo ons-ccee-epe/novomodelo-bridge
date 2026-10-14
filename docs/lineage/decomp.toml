@@ -25,6 +25,12 @@ reads = [
 summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de iterações) e fontes externas de cenários; todo o restante é fixo."
 
   [[output.field]]
+  path = "modeling.inflow_non_negativity.method"
+  from = []
+  status = "constant"
+  how = "Sempre `truncation_with_penalty`, o mesmo método da conversão NEWAVE: a afluência incremental entra com o valor da árvore explícita, e uma correção limitada ao quanto ela fica abaixo de zero, penalizada por `hydro.inflow_nonnegativity_cost`, a eleva no balanço hídrico. A correção depende só da afluência do nó, nunca do estado, e não compromete a regra de parada por gap."
+
+  [[output.field]]
   path = "simulation.enabled"
   from = []
   status = "constant"

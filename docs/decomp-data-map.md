@@ -158,6 +158,7 @@ Critérios de parada (`GP` como gap relativo e `NI` como limite de iterações) 
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
+| `modeling.inflow_non_negativity.method` | — *(constante)* | Sempre `truncation_with_penalty`, o mesmo método da conversão NEWAVE: a afluência incremental entra com o valor da árvore explícita, e uma correção limitada ao quanto ela fica abaixo de zero, penalizada por `hydro.inflow_nonnegativity_cost`, a eleva no balanço hídrico. A correção depende só da afluência do nó, nunca do estado, e não compromete a regra de parada por gap. |
 | `simulation.enabled` | — *(constante)* | Sempre `true`: a simulação final é executada sobre a árvore explícita. |
 | `simulation.selection.method` | — *(constante)* | Sempre `enumerated`: a simulação percorre cada caminho raiz-folha do grafo de nós com a probabilidade do próprio nó. |
 | `training.scenario_source.inflow.scheme` | — *(constante)* | Sempre `external`: as vazões vêm da árvore explícita em `scenarios/external_inflow_scenarios.parquet`. |

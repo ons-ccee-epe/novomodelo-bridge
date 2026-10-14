@@ -22,6 +22,14 @@ boundary FCF an earlier bridge imported must be converted again.
 
 - **`novomodelo-python` is pinned to 0.18.1**, and `MIN_NOVOMODELO_VERSION`
   moves with it.
+- **`convert decomp` sets the inflow non-negativity method.** `config.json`
+  now carries `modeling.inflow_non_negativity.method` =
+  `"truncation_with_penalty"`, the method `convert newave` already sets,
+  instead of leaving it to novomodelo's default, which 0.18.1 moves from
+  `penalty` to that method. The inflow slack is capped at the amount a plant's
+  incremental inflow falls below zero, so it is zero wherever the tree's
+  inflow is non-negative; under `penalty` it could add water at any inflow.
+  DECOMP results can change where the LP used that slack.
 - **NEWAVE comparisons can show negative novomodelo inflows.** From 0.18.1,
   novomodelo's truncation methods keep the PAR inflow raw: `inflow_m3s`,
   `incremental_inflow_m3s` and `incremental_inflow_energy_mw` report the raw

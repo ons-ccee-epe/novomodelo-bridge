@@ -62,24 +62,18 @@ _STORAGE_VIOLATION_DEFICIT_MULT = 10.0
 # load deficit, hence 0.9 × MAX_CUSTO_DEFICIT.
 _FILLING_TARGET_DEFICIT_FRACTION = 0.9
 
-# --- Inflow non-negativity penalty anchor ---------------------------------
-# inflow_nonnegativity_cost is set to ``water_withdrawal_violation_cost + 1``
-# (R$/m³/s) so that the LP can never use the inflow slack as a cheaper
-# substitute for failing the deterministic withdrawal schedule.
-#
-# The previous "1 % above max(flow slacks)" rule scaled the slack to be a
-# soft margin, which is the wrong design for this column: the inflow
-# non-negativity slack physically *generates* water in the LP — every other
-# flow slack just *absorbs* a constraint violation — so giving it a price
-# even infinitesimally cheaper than some violation makes it exchangeable
-# with that violation.  The +1 R$/m³/s constant offset is just enough to
-# break the tie deterministically against withdrawal (the strictest
-# slack with the largest spread on the case set we calibrate against).
-#
-# This anchor still doesn't eliminate the exploit (the slack remains a
-# free water column in principle); ``modeling.inflow_non_negativity.method``
-# = ``truncation`` is the real fix.  This setting is the conservative
-# choice for the ``penalty`` method.
+# --- Inflow non-negativity -------------------------------------------------
+#: ``modeling.inflow_non_negativity.method`` for both tracks. It caps the inflow
+#: slack per solve at the truncation amount ``max(−r, 0)``, so the slack can only
+#: lift a negative incremental inflow to zero; under ``penalty`` it is an unbounded
+#: source of water that the LP trades against any violation priced above it.
+INFLOW_NON_NEGATIVITY_METHOD = "truncation_with_penalty"
+
+# inflow_nonnegativity_cost prices that lift at ``water_withdrawal_violation_cost
+# + 1`` (R$/m³/s). The slack *generates* water where every other flow slack only
+# *absorbs* a violation, so pricing it even infinitesimally below withdrawal would
+# make lifting the inflow a cheaper substitute for failing the withdrawal
+# schedule; the +1 offset breaks that tie deterministically.
 _INFLOW_NN_OFFSET_R_PER_M3S = 1.0
 
 
