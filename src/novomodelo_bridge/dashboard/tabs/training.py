@@ -531,16 +531,14 @@ def _chart_phase_distribution(timing: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
-def can_render(data: DashboardData) -> bool:  # noqa: ARG001
-    """Training tab always renders (convergence.parquet is always present)."""
-    return True
+def can_render(data: DashboardData) -> bool:
+    """Training tab renders only when training convergence data is available."""
+    return data.training_available
 
 
 def render(data: DashboardData) -> str:
     """Return the full HTML string for the v2 Training tab content area."""
     conv = data.conv
-    if conv.empty:
-        return "<p>No convergence data.</p>"
 
     section_a = _build_metrics_row(data)
 

@@ -60,6 +60,22 @@ boundary FCF an earlier bridge imported must be converted again.
   or cost missing, and the conversion stopped with an internal date-comparison
   error. It now fails with a source-field error that names the plant or cost
   modification, the field that could not be read and the entry number.
+- **`dashboard` builds for a case run with the simulation disabled.**
+  novomodelo creates the `output/simulation/` directories even when it does not
+  simulate, and the dashboard failed on the empty inflow-lag and
+  generic-violation directories instead of treating the case as
+  training-only.
+- **`dashboard` builds for a simulation-only case.** A run with training
+  disabled, simulating from a stored policy, writes no
+  `output/training/convergence.parquet`, which the dashboard required. Such a
+  case now gets no Training tab, its Overview takes the version, run date and
+  duration from the simulation metadata, and its Performance tab leaves out
+  the training sections and cards. A training-only case likewise gets no
+  Simulation section or cards in the Performance tab.
+- **Overview quick-look links highlight the tab they open.** They addressed
+  the navigation buttons by position, so the wrong button was highlighted
+  whenever the set of tabs differed from the one the positions assumed, as
+  it does when the Stochastic Model tab is present.
 
 ## [0.18.0] - 2026-10-08
 

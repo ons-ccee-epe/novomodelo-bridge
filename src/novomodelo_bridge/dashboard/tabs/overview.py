@@ -69,11 +69,11 @@ def _format_duration(elapsed_seconds: object) -> str:
 
 def _run_identity_strip(data: DashboardData) -> str:
     """Build the run identity row HTML."""
-    version = novomodelo_software_version(data.training_metadata) or "N/A"
+    version = novomodelo_software_version(data.run_metadata) or "N/A"
     discount_pct = data.discount_rate * 100.0
 
-    run_date = data.training_metadata.get("started_at", "N/A")
-    elapsed = data.training_metadata.get("duration_seconds")
+    run_date = data.run_metadata.get("started_at", "N/A")
+    elapsed = data.run_metadata.get("duration_seconds")
     duration_str = _format_duration(elapsed)
 
     n_hydros = len(data.hydro_meta)
@@ -101,16 +101,23 @@ def _run_identity_strip(data: DashboardData) -> str:
     )
 
 
+def _status_notice(message: str) -> str:
+    """Status row shown in place of the training summary fields."""
+    return (
+        '<div class="run-status-strip" style="'
+        "padding:0.5rem 1rem;background:#FEF3C7;border-radius:6px;"
+        'margin-bottom:1rem;font-size:0.875rem;">'
+        f"{message}"
+        "</div>"
+    )
+
+
 def _run_status_strip(data: DashboardData) -> str:
     """Build the run status row HTML."""
+    if not data.training_available:
+        return _status_notice("Simulation-only run: this case has no training output")
     if not data.training_metadata:
-        return (
-            '<div class="run-status-strip" style="'
-            "padding:0.5rem 1rem;background:#FEF3C7;border-radius:6px;"
-            'margin-bottom:1rem;font-size:0.875rem;">'
-            "No training metadata available"
-            "</div>"
-        )
+        return _status_notice("No training metadata available")
     termination = data.training_metadata.get("convergence", {}).get(
         "termination_reason", "N/A"
     )
@@ -388,31 +395,39 @@ def _quick_look_cell(chart_html: str, deep_link_html: str) -> str:
     return f"<div>{chart_html}{deep_link_html}</div>"
 
 
+def _tab_link(tab_id: str, text: str) -> str:
+    """Deep link that switches to *tab_id* and activates its nav button.
+
+    The button is found by the tab id in the ``onclick`` that ``build_html``
+    gives it, never by position: which tabs render varies with the case.
+    """
+    return (
+        '<p style="font-size:0.8rem;margin-top:0.25rem;">'
+        f'<a href="#" onclick="showTab(\'{tab_id}\','
+        f" document.querySelector('nav button[onclick*={tab_id}]'));"
+        f'return false;">{text} \u2192</a>'
+        "</p>"
+    )
+
+
+def _training_quick_look_cell(conv: pd.DataFrame) -> str:
+    """Training-convergence mini chart with its deep link."""
+    training_fig = _chart_training_mini(conv)
+    if training_fig is None:
+        return wrap_chart("<p>No convergence data.</p>")
+    chart = make_chart_card(
+        training_fig,
+        "Training Convergence",
+        "v2-training-mini-chart",
+        height=280,
+    )
+    return _quick_look_cell(chart, _tab_link("tab-training", "Full training analysis"))
+
+
 def _render_quick_look_charts(data: DashboardData) -> str:
     """Render the quick-look mini charts."""
-    link_style = 'style="font-size:0.8rem;margin-top:0.25rem;"'
+    cells = [_training_quick_look_cell(data.conv)] if data.training_available else []
 
-    # Training Bounds mini
-    training_fig = _chart_training_mini(data.conv)
-    if training_fig is None:
-        training_cell = wrap_chart("<p>No convergence data.</p>")
-    else:
-        chart = make_chart_card(
-            training_fig,
-            "Training Convergence",
-            "v2-training-mini-chart",
-            height=280,
-        )
-        link = (
-            f"<p {link_style}>"
-            '<a href="#" onclick="showTab(\'tab-training\','
-            " document.querySelector('nav button:nth-child(2)'));"
-            'return false;">Full training analysis \u2192</a>'
-            "</p>"
-        )
-        training_cell = _quick_look_cell(chart, link)
-
-    # Generation Mix mini
     gen_fig = _chart_gen_mix(data)
     if gen_fig is None:
         gen_cell = wrap_chart("<p>No generation data.</p>")
@@ -423,16 +438,12 @@ def _render_quick_look_charts(data: DashboardData) -> str:
             "v2-gen-mix-chart",
             height=280,
         )
-        link = (
-            f"<p {link_style}>"
-            '<a href="#" onclick="showTab(\'tab-energy-balance\','
-            " document.querySelector('nav button:nth-child(4)'));"
-            'return false;">Energy balance details \u2192</a>'
-            "</p>"
+        gen_cell = _quick_look_cell(
+            chart, _tab_link("tab-energy-balance", "Energy balance details")
         )
-        gen_cell = _quick_look_cell(chart, link)
+    cells.append(gen_cell)
 
-    return section_title("Quick Look") + chart_grid([training_cell, gen_cell])
+    return section_title("Quick Look") + chart_grid(cells, single=len(cells) == 1)
 
 
 def can_render(data: DashboardData) -> bool:

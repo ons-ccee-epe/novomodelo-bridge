@@ -35,6 +35,16 @@ from tests.conftest import (
 
 _DIAG_CODE = "dashboard-unweighted-tree-averages"
 
+_SIMULATION_ENTITIES = (
+    "buses",
+    "costs",
+    "exchanges",
+    "hydros",
+    "inflow_lags",
+    "non_controllables",
+    "thermals",
+)
+
 #: Repo-internal references that must NEVER leak into this diagnostic's
 #: summary/remediation: a pip-installed user has no repo checkout, no
 #: converter vocabulary, and no file layout to resolve any of these against.
@@ -552,8 +562,7 @@ def test_build_full_case_fixture_is_valid(tmp_path: Path, tree: bool) -> None:
 
 
 def _build_training_only_case(tmp_path: Path) -> Path:
-    """The two files ``DashboardData.load`` requires unconditionally
-    (``stages.json``, ``output/training/convergence.parquet``) and nothing
+    """``stages.json`` and ``output/training/convergence.parquet`` and nothing
     else -- every other loader degrades to an empty structure on a missing
     optional file, so this reproduces a training-only case without a
     ``output/simulation/`` tree at all.
@@ -592,6 +601,24 @@ def _build_training_only_case(tmp_path: Path) -> Path:
         }
     )
     pq.write_table(conv_table, conv_dir / "convergence.parquet")
+    return case
+
+
+_SIMULATION_METADATA = {
+    "software_version": "9.9.9",
+    "started_at": "2026-01-02T03:04:05Z",
+    "duration_seconds": 5.9,
+    "scenarios": {"total": 2, "completed": 2, "failed": 0},
+}
+
+
+def _build_simulation_only_case(tmp_path: Path) -> Path:
+    """The full case as novomodelo leaves it when training is disabled and the
+    policy is loaded from a stored checkpoint: no ``convergence.parquet``,
+    and the run's metadata under ``output/simulation/`` only."""
+    case = _build_full_case(tmp_path, tree=False)
+    (case / "output" / "training" / "convergence.parquet").unlink()
+    _write_json(case / "output" / "simulation" / "metadata.json", _SIMULATION_METADATA)
     return case
 
 
@@ -660,6 +687,7 @@ class TestDashboardDataHoldsSubstructs:
 
         data = DashboardData.load(case_dir)
 
+        assert data.training_available is True
         assert data.simulation_available is True
         assert data.n_scenarios == 2
         assert data.n_stages == 2
@@ -670,10 +698,89 @@ class TestDashboardDataHoldsSubstructs:
 
         data = DashboardData.load(case_dir)
 
+        assert data.training_available is True
         assert data.simulation_available is False
         assert data.n_scenarios == 0
         assert data.n_stages == 3
         assert data.case_name == case_dir.resolve().name
+
+    def test_empty_simulation_skeleton_loads_as_training_only(
+        self, tmp_path: Path
+    ) -> None:
+        """novomodelo creates the ``output/simulation/`` directory tree even when
+        the simulation is disabled, so the directories exist with no parquet
+        files in them."""
+        case_dir = _build_training_only_case(tmp_path)
+        sim_dir = case_dir / "output" / "simulation"
+        for entity in (*_SIMULATION_ENTITIES, "violations/generic"):
+            (sim_dir / entity).mkdir(parents=True)
+
+        data = DashboardData.load(case_dir)
+
+        assert data.simulation_available is False
+        assert data.simulation.costs.empty
+        assert data.simulation.gc_violations.empty
+        assert data.simulation.inflow_lags_lf.collect().is_empty()
+
+
+class TestSimulationOnlyCase:
+    """A case novomodelo simulated from a stored policy, with training disabled."""
+
+    def test_loads_without_convergence(self, tmp_path: Path) -> None:
+        case_dir = _build_simulation_only_case(tmp_path)
+
+        data = DashboardData.load(case_dir)
+
+        assert data.training_available is False
+        assert data.simulation_available is True
+        assert data.conv.empty
+        assert data.n_scenarios == 2
+
+    def test_run_metadata_falls_back_to_the_simulation_phase(
+        self, tmp_path: Path
+    ) -> None:
+        case_dir = _build_simulation_only_case(tmp_path)
+
+        data = DashboardData.load(case_dir)
+
+        assert data.training_metadata == {}
+        assert data.run_metadata == _SIMULATION_METADATA
+
+    def test_run_metadata_prefers_the_training_phase(self, tmp_path: Path) -> None:
+        case_dir = _build_full_case(tmp_path, tree=False)
+        training_metadata = {"software_version": "1.2.3", "duration_seconds": 60.0}
+        _write_json(
+            case_dir / "output" / "training" / "metadata.json", training_metadata
+        )
+        _write_json(
+            case_dir / "output" / "simulation" / "metadata.json", _SIMULATION_METADATA
+        )
+
+        data = DashboardData.load(case_dir)
+
+        assert data.run_metadata == training_metadata
+
+    def test_dashboard_command_builds_without_a_training_tab(
+        self, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.cli import app
+
+        case_dir = _build_simulation_only_case(tmp_path)
+        output_path = tmp_path / "dashboard.html"
+
+        result = CliRunner().invoke(
+            app, ["dashboard", str(case_dir), "--output", str(output_path), "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["status"] == "ok"
+        html = output_path.read_text(encoding="utf-8")
+        assert "showTab('tab-overview', this)" in html
+        assert "showTab('tab-performance', this)" in html
+        assert "showTab('tab-training', this)" not in html
+        assert "Overview failed to render" not in html
+        assert "Performance failed to render" not in html
+        assert "9.9.9" in html
 
 
 # ---------------------------------------------------------------------------
