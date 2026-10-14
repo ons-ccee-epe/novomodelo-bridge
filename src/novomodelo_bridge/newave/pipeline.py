@@ -225,6 +225,10 @@ def convert_newave_case(
         # directory the user never asked to clear.
         if not dry_run:
             clear_dst_contents(dst, NEWAVE_CLEARED_ARTIFACTS)
+        # Hand what was found before the failure to the caller's sink: a
+        # warning raised early (a tab in a fixed-column file) often explains it.
+        for diagnostic in dx.finalize_diagnostics(collected, collector.messages):
+            dx.emit(diagnostic)
         raise
     finally:
         pkg_logger.removeHandler(collector)

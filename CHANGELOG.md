@@ -50,6 +50,10 @@ boundary FCF an earlier bridge imported must be converted again.
 
 ### Fixed
 
+- **A failed `convert` keeps the warnings found before the failure.** Both
+  tracks reported only the error, so a warning that explained it, such as a
+  tab that misaligned a fixed-column file, was lost. The rendered notes and the
+  `--json` verdict now list those warnings next to the error.
 - **`convert newave` reports an unreadable `clast.dat` record instead of
   crashing.** `clast.dat` is read by fixed columns, so a line whose columns
   are shifted, for example by a tab in place of spaces, reads with its dates

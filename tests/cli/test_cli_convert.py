@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -38,6 +39,22 @@ def _make_fake_decomp_dir_with_cuts(tmp_path: Path) -> Path:
     (decomp_dir / "cortesh.rv0").write_text("stub")
     (decomp_dir / "cortes.rv0").write_text("stub")
     return decomp_dir
+
+
+def _warn_then_fail(*_args: object, **_kwargs: object) -> None:
+    """A pipeline stand-in that finds a warning and then fails."""
+    from novomodelo_bridge.core import diagnostics as dx
+
+    dx.emit(
+        dx.Diagnostic(
+            code="source-tab-character",
+            severity=dx.Severity.WARNING,
+            category="Source files",
+            title="Tab characters in fixed-column files",
+            summary="1 input file(s) contain tab characters.",
+        )
+    )
+    raise ValueError("boom")
 
 
 class TestCliInProcess:
@@ -314,6 +331,39 @@ class TestCliInProcess:
         assert doc["diagnostics"][0]["summary"] == "boom"
         # The Rich diagnostic block must not also render.
         assert "✖" not in stderr
+
+    @pytest.mark.parametrize(
+        ("track", "make_src"),
+        [
+            ("newave", _make_fake_newave_dir),
+            ("decomp", _make_fake_decomp_dir),
+        ],
+    )
+    def test_convert_json_failure_keeps_the_warnings_found_before_it(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        track: str,
+        make_src: Callable[[Path], Path],
+    ) -> None:
+        src = make_src(tmp_path)
+
+        with patch(
+            f"novomodelo_bridge.{track}.pipeline.convert_{track}_case",
+            side_effect=_warn_then_fail,
+        ):
+            code, stdout, _stderr = self._invoke_main(
+                ["convert", track, str(src), str(tmp_path / "dst"), "--json"],
+                monkeypatch,
+            )
+
+        assert code == 1
+        doc = json.loads(stdout)
+        assert doc["status"] == "error"
+        assert [(d["code"], d["severity"]) for d in doc["diagnostics"]] == [
+            ("source-tab-character", "warning"),
+            ("unexpected-error", "error"),
+        ]
 
     def test_convert_json_error_status_without_exception_exits_1(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

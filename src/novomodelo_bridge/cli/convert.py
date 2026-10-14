@@ -18,6 +18,7 @@ from novomodelo_bridge.cli.verdict import (
     _convert_verdict_summary,
     build_verdict,
 )
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.errors import (
     BridgeError,
     SourceFileError,
@@ -43,17 +44,22 @@ if TYPE_CHECKING:
 
 
 def _handle_conversion_pipeline_failure(
-    exc: Exception, args: ConvertArgs, *, command: str, err_console: Console
+    exc: Exception,
+    args: ConvertArgs,
+    *,
+    command: str,
+    err_console: Console,
+    found_before: Sequence[Diagnostic],
 ) -> NoReturn:
     """Render/emit a pipeline failure verdict and exit 1 (shared by both tracks).
 
     ``report`` is None on this path, so counts are zeroed and the dry-run
     would-write listing is empty; ``status`` is "error" because
     ``diagnostic_from_exception`` yields an ERROR-severity diagnostic.
+    ``found_before`` holds what the pipeline collected before it failed.
     """
-    diag = diagnostic_from_exception(exc, context="Conversion")
+    diagnostics = [*found_before, diagnostic_from_exception(exc, context="Conversion")]
     if args.json_output:
-        diagnostics = [diag]
         summary = _convert_verdict_summary(None)
         if args.dry_run:
             summary["would_write"] = []
@@ -63,7 +69,10 @@ def _handle_conversion_pipeline_failure(
         _emit_convert_json(build_verdict(command, status, summary, diagnostics))
     else:
         render_diagnostics(
-            [diag], heading="Conversion notes", console=err_console, quiet=args.quiet
+            diagnostics,
+            heading="Conversion notes",
+            console=err_console,
+            quiet=args.quiet,
         )
     raise typer.Exit(code=1)
 
@@ -158,18 +167,25 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
         dst.mkdir(parents=True, exist_ok=True)
 
     try:
-        with conversion_progress(
-            len(CONVERSION_PHASE_LABELS),
-            verbose=args.verbose > 0,
-            quiet=args.quiet,
-            no_color=args.no_color,
-        ) as step:
+        with (
+            dx.collect() as found_before,
+            conversion_progress(
+                len(CONVERSION_PHASE_LABELS),
+                verbose=args.verbose > 0,
+                quiet=args.quiet,
+                no_color=args.no_color,
+            ) as step,
+        ):
             report: ConversionReport = convert_newave_case(
                 src, dst, on_phase=step, dry_run=args.dry_run
             )
     except Exception as exc:  # noqa: BLE001
         _handle_conversion_pipeline_failure(
-            exc, args, command="convert newave", err_console=err_console
+            exc,
+            args,
+            command="convert newave",
+            err_console=err_console,
+            found_before=found_before,
         )
 
     if args.dry_run:
@@ -353,12 +369,15 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
     fcf_inputs = FcfInputs()
 
     try:
-        with conversion_progress(
-            len(DECOMP_CONVERSION_PHASE_LABELS),
-            verbose=args.verbose > 0,
-            quiet=args.quiet,
-            no_color=args.no_color,
-        ) as step:
+        with (
+            dx.collect() as found_before,
+            conversion_progress(
+                len(DECOMP_CONVERSION_PHASE_LABELS),
+                verbose=args.verbose > 0,
+                quiet=args.quiet,
+                no_color=args.no_color,
+            ) as step,
+        ):
             report: ConversionReport = convert_decomp_case(
                 args.src,
                 args.dst,
@@ -369,7 +388,11 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
             )
     except Exception as exc:  # noqa: BLE001
         _handle_conversion_pipeline_failure(
-            exc, args, command="convert decomp", err_console=err_console
+            exc,
+            args,
+            command="convert decomp",
+            err_console=err_console,
+            found_before=found_before,
         )
 
     if args.dry_run:
@@ -479,8 +502,6 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
         )
     if fcf_cut_files_present:
         assert case is not None  # narrowed by fcf_cut_files_present
-        from novomodelo_bridge.core import diagnostics as dx
-
         fcf_diags: list[Diagnostic] = []
         try:
             from novomodelo_bridge.decomp.fcf.capability import (

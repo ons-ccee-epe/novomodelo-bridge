@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -493,6 +494,37 @@ class TestConversionWarningCapture:
         assert not (dst / "system").exists()
         # dst itself may remain but must be empty, so a no-force re-run proceeds.
         assert not any(dst.iterdir())
+
+    def test_failure_hands_earlier_diagnostics_to_the_callers_sink(
+        self,
+        newave_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The error report of a failed conversion keeps the warnings found
+        before the failure, such as a tab that misaligned a fixed-column file."""
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.newave.converters import hydro
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
+
+        src = tmp_path / "deck"
+        shutil.copytree(newave_mini_deck, src)
+        clast = src / "clast.dat"
+        clast.write_bytes(b"\t" + clast.read_bytes())
+
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("hydro conversion failed")
+
+        monkeypatch.setattr(hydro, "convert_hydros", fail)
+        with (
+            dx.collect() as outer,
+            pytest.raises(RuntimeError, match="hydro conversion failed"),
+        ):
+            convert_newave_case(src, tmp_path / "out")
+
+        tab = [d for d in outer if d.code == "source-tab-character"]
+        assert len(tab) == 1 and tab[0].table is not None
+        assert tab[0].table.rows == [["clast.dat", "1"]]
 
     def test_dry_run_failure_preserves_pre_existing_dst_contents(
         self, tmp_path: Path
