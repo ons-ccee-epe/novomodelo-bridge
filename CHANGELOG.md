@@ -14,6 +14,8 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-14
+
 Pairs the bridge with the **novomodelo 0.18.1** release. novomodelo loads a
 policy checkpoint only in the version that wrote it, so a DECOMP case whose
 boundary FCF an earlier bridge imported must be converted again.
