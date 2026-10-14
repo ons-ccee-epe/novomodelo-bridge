@@ -39,6 +39,15 @@ boundary FCF an earlier bridge imported must be converted again.
   incremental inflow, the total inflow and the natural inflow energy are lower
   than under 0.18.0.
 
+### Fixed
+
+- **`convert newave` reports an unreadable `clast.dat` record instead of
+  crashing.** `clast.dat` is read by fixed columns, so a line whose columns
+  are shifted, for example by a tab in place of spaces, reads with its dates
+  or cost missing, and the conversion stopped with an internal date-comparison
+  error. It now fails with a source-field error that names the plant or cost
+  modification, the field that could not be read and the entry number.
+
 ## [0.18.0] - 2026-10-08
 
 ### Changed

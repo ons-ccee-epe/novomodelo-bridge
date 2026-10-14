@@ -26,6 +26,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
 from novomodelo_bridge.newave.horizon import build_stage_dates, historical_start_date
@@ -44,6 +45,100 @@ _THERMAL_BOUNDS_SCHEMA = pa.schema(
         pa.field("cost_per_mwh", pa.float64()),
     ]
 )
+
+
+@dataclass(frozen=True)
+class _CostModification:
+    """One date-range cost override from ``clast.dat``'s modification block."""
+
+    start: date
+    end: date | None  # None: open-ended, through the end of the horizon
+    cost: float
+
+
+def _clast_parse_error(
+    case: NewaveCase, what: str, *, field: str, row: int | None = None
+) -> FieldParseError:
+    return FieldParseError(
+        f"clast.dat {what}. clast.dat is read by fixed columns, so a tab or a "
+        "shifted field on a line moves every field after it.",
+        path=str(case.files.clast),
+        field=field,
+        row=row,
+    )
+
+
+def _clast_year_costs(
+    case: NewaveCase, usinas: pd.DataFrame | None
+) -> dict[tuple[int, int], float]:
+    """``(source-model code, study-year index) -> cost`` from the plant block.
+
+    Raises:
+        FieldParseError: a plant line's code or one of its year costs is unreadable.
+    """
+    costs: dict[tuple[int, int], float] = {}
+    if usinas is None:
+        return costs
+    for _, row in usinas.iterrows():
+        name = str(row["nome_usina"]).strip()
+        if pd.isna(row["codigo_usina"]):
+            raise _clast_parse_error(
+                case,
+                f"plant line with the name read as '{name}' has no readable code",
+                field="plant code",
+            )
+        code = int(row["codigo_usina"])
+        year_idx = int(row["indice_ano_estudo"])
+        if pd.isna(row["valor"]):
+            raise _clast_parse_error(
+                case,
+                f"plant {code} (name read as '{name}') has no readable cost for "
+                f"study year {year_idx}",
+                field=f"study-year {year_idx} cost",
+            )
+        costs[(code, year_idx)] = float(row["valor"])
+    return costs
+
+
+def _clast_cost_modifications(
+    case: NewaveCase, modificacoes: pd.DataFrame | None
+) -> dict[int, list[_CostModification]]:
+    """Per source-model code, the modification block's overrides in file order.
+
+    Raises:
+        FieldParseError: an entry's code, start month/year or cost is unreadable;
+            ``row`` is the entry's 1-based position in the block.
+    """
+    by_code: dict[int, list[_CostModification]] = {}
+    if modificacoes is None:
+        return by_code
+    for entry, (_, row) in enumerate(modificacoes.iterrows(), start=1):
+        for column, label in (
+            ("codigo_usina", "plant code"),
+            ("data_inicio", "start month/year"),
+            ("custo", "cost"),
+        ):
+            if pd.isna(row[column]):
+                name = str(row["nome_usina"]).strip()
+                raise _clast_parse_error(
+                    case,
+                    f"cost modification {entry} (name read as '{name}') has no "
+                    f"readable {label}",
+                    field=label,
+                    row=entry,
+                )
+        by_code.setdefault(int(row["codigo_usina"]), []).append(
+            _CostModification(
+                start=pd.Timestamp(row["data_inicio"]).date(),
+                end=(
+                    None
+                    if pd.isna(row["data_fim"])
+                    else pd.Timestamp(row["data_fim"]).date()
+                ),
+                cost=float(row["custo"]),
+            )
+        )
+    return by_code
 
 
 def thermal_generation_bounds(case: NewaveCase) -> dict[int, tuple[float, float]]:
@@ -89,19 +184,14 @@ def convert_thermals(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         Pre-built ID mapping for bus cross-references.
     """
     conft_df = case.conft.usinas
-    clast_df = case.clast.usinas
+    year_costs = _clast_year_costs(case, case.clast.usinas)
 
     # Anticipated dispatch (the source model GNL) — gated by
     # dger.despacho_antecipado_gnl. Returns an empty dict when the flag is off, so
     # non-GNL cases incur zero cost beyond the dger read inside the helper.
     anticipated_by_code = read_anticipated_dispatch(case)
 
-    # Build cost lookup: codigo_usina -> cost for indice_ano_estudo == 1.
-    cost_map: dict[int, float] = {}
-    if clast_df is not None:
-        first_year = clast_df[clast_df["indice_ano_estudo"] == 1]
-        for _, row in first_year.iterrows():
-            cost_map[int(row["codigo_usina"])] = float(row["valor"])
+    cost_map = {code: cost for (code, year), cost in year_costs.items() if year == 1}
 
     # Static (min_mw, max_mw) per plant — single-sourced so the anticipated
     # commitment seeding clamps against the very bounds written here.
@@ -727,46 +817,22 @@ def convert_thermal_bounds(
     first_year_stages = case.horizon.first_year_stages
 
     clast = case.clast
-    clast_df = clast.usinas
-    clast_modif_df = clast.modificacoes
-
-    # cost_by_code_year: (newave_code, indice_ano_estudo) -> cost
-    cost_by_code_year: dict[tuple[int, int], float] = {}
-    # Track which thermals have costs that vary across years.
+    cost_by_code_year = _clast_year_costs(case, clast.usinas)
     cost_varies: set[int] = set()
-    if clast_df is not None:
-        for _, row in clast_df.iterrows():
-            code = int(row["codigo_usina"])
-            year_idx = int(row["indice_ano_estudo"])
-            cost_by_code_year[(code, year_idx)] = float(row["valor"])
-        # Detect thermals with non-uniform costs.
-        codes_in_clast = {c for c, _ in cost_by_code_year}
-        for code in codes_in_clast:
-            year_costs = [
-                cost_by_code_year[(code, y)]
-                for y in range(1, num_anos + 1)
-                if (code, y) in cost_by_code_year
-            ]
-            if len(set(year_costs)) > 1:
-                cost_varies.add(code)
+    for code in {c for c, _ in cost_by_code_year}:
+        year_costs = [
+            cost_by_code_year[(code, y)]
+            for y in range(1, num_anos + 1)
+            if (code, y) in cost_by_code_year
+        ]
+        if len(set(year_costs)) > 1:
+            cost_varies.add(code)
 
-    # Date-range cost overrides from the modificacoes block at the end of
-    # clast.dat. Each entry overrides the year-indexed cost for stages
-    # whose first-of-month date falls within [data_inicio, data_fim].
-    # A plant with at least one modification is treated as cost-varying
-    # even when its year-indexed costs are uniform.
-    modif_by_code: dict[int, list[dict]] = {}
-    if clast_modif_df is not None and not clast_modif_df.empty:
-        for _, row in clast_modif_df.iterrows():
-            code = int(row["codigo_usina"])
-            modif_by_code.setdefault(code, []).append(
-                {
-                    "data_inicio": row["data_inicio"],
-                    "data_fim": row["data_fim"],
-                    "custo": float(row["custo"]),
-                }
-            )
-        cost_varies.update(modif_by_code.keys())
+    # Each override replaces the year-indexed cost for the stages whose
+    # first-of-month date falls in [start, end]; a plant with any override is
+    # cost-varying even when its year-indexed costs are uniform.
+    modif_by_code = _clast_cost_modifications(case, clast.modificacoes)
+    cost_varies.update(modif_by_code)
 
     model = _StageBoundsModel.build(case)
 
@@ -840,14 +906,9 @@ def convert_thermal_bounds(
                 # instead of letting a future-dated modification leak into the static
                 # final period.
                 for modif in modif_by_code.get(newave_code, []):
-                    mod_start = pd.Timestamp(modif["data_inicio"]).date()
-                    mod_end_raw = modif["data_fim"]
-                    if pd.isna(mod_end_raw):
-                        mod_end = model.stage_dates[-1]
-                    else:
-                        mod_end = pd.Timestamp(mod_end_raw).date()
-                    if mod_start <= ref_date <= mod_end:
-                        stage_cost = modif["custo"]
+                    mod_end = modif.end or model.stage_dates[-1]
+                    if modif.start <= ref_date <= mod_end:
+                        stage_cost = modif.cost
 
             rows_thermal_id.append(thermal_ids[newave_code])
             rows_stage_id.append(stage_idx)

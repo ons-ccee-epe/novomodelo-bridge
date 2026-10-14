@@ -60,6 +60,28 @@ class TestConvertThermals:
         assert ids == sorted(ids)
         assert ids[0] == 0
 
+    @pytest.mark.parametrize(
+        ("column", "field"),
+        [("codigo_usina", "plant code"), ("valor", "study-year 1 cost")],
+    )
+    def test_unreadable_clast_plant_field_raises_field_parse_error(
+        self, tmp_path, column: str, field: str
+    ) -> None:
+        from novomodelo_bridge.core.errors import FieldParseError
+        from novomodelo_bridge.newave.converters.thermal import convert_thermals
+
+        conft, clast, term = _thermal_readers()
+        clast.usinas[column] = clast.usinas[column].astype(float)
+        clast.usinas.loc[1, column] = float("nan")
+        case = make_case(
+            tmp_path, conft=conft, clast=clast, term=term, dger=_make_thermal_dger()
+        )
+
+        with pytest.raises(FieldParseError, match="TERMO_B") as excinfo:
+            convert_thermals(case, self._make_id_map())
+        assert excinfo.value.field == field
+        assert excinfo.value.path == str(case.files.clast)
+
     def test_cost_per_mwh_scalar(self, tmp_path) -> None:
         conft, clast, term = _thermal_readers()
         case = make_case(
@@ -432,6 +454,77 @@ class TestConvertThermalBoundsClastModificacoes:
         assert a_rows.loc[12:23, "min_generation_mw"].tolist() == pytest.approx(
             [30.0] * 12
         )
+
+    @pytest.mark.parametrize(
+        ("column", "field"),
+        [
+            ("codigo_usina", "plant code"),
+            ("data_inicio", "start month/year"),
+            ("custo", "cost"),
+        ],
+    )
+    def test_unreadable_modificacao_field_raises_field_parse_error(
+        self, tmp_path, column: str, field: str
+    ) -> None:
+        import datetime
+
+        from novomodelo_bridge.core.errors import FieldParseError
+        from novomodelo_bridge.newave.converters.thermal import convert_thermal_bounds
+
+        conft, clast, term = _thermal_readers()
+        modif = pd.DataFrame(
+            {
+                "codigo_usina": [10.0, 20.0],
+                "nome_usina": ["TERMO_A", "TERMO_B"],
+                "data_inicio": [datetime.datetime(2023, 3, 1)] * 2,
+                "data_fim": [datetime.datetime(2023, 5, 1)] * 2,
+                "custo": [77.0, 88.0],
+            }
+        )
+        modif.loc[1, column] = pd.NaT if column == "data_inicio" else float("nan")
+        clast.modificacoes = modif
+        case = make_case(
+            tmp_path, conft=conft, clast=clast, term=term, dger=self._make_dger()
+        )
+
+        with pytest.raises(FieldParseError, match="modification 2") as excinfo:
+            convert_thermal_bounds(case, self._make_id_map())
+        assert (excinfo.value.field, excinfo.value.row) == (field, 2)
+
+    def test_tab_shifted_modificacao_line_raises_field_parse_error(
+        self, tmp_path
+    ) -> None:
+        """A tab in place of the leading spaces shifts the fixed columns, so the
+        reader returns the line with its dates unread; the conversion names the
+        entry instead of failing on a missing date deep in the stage loop."""
+        from inewave.newave import Clast
+
+        from novomodelo_bridge.core.errors import FieldParseError
+        from novomodelo_bridge.newave.converters.thermal import convert_thermal_bounds
+
+        clast_path = tmp_path / "clast.dat"
+        clast_path.write_text(
+            " NUM  NOME CLASSE  TIPO COMB.  CUSTO   \n"
+            " XXXX XXXXXXXXXXXX XXXXXXXXXX XXXX.XX \n"
+            "   10 TERMO_A      Gas          50.00 \n"
+            " 9999\n"
+            " NUM     CUSTO\n"
+            " XXXX   XXXX.XX  XX XXXX  XX XXXX\n"
+            "   10     77.00   3 2023   5 2023  TERMO_A\n"
+            "\t10      0.00   9 2023           TERMO_A\n"
+        )
+        conft, _, term = _thermal_readers()
+        case = make_case(
+            tmp_path,
+            conft=conft,
+            clast=Clast.read(str(clast_path)),
+            term=term,
+            dger=self._make_dger(),
+        )
+
+        with pytest.raises(FieldParseError, match="modification 2") as excinfo:
+            convert_thermal_bounds(case, self._make_id_map())
+        assert excinfo.value.field == "start month/year"
 
     def test_cost_modificacao_does_not_leak_into_post_study(self, tmp_path) -> None:
         """A clast cost change dated inside the post-study tail must not apply —
