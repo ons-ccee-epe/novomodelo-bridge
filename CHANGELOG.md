@@ -18,6 +18,15 @@ Pairs the bridge with the **novomodelo 0.18.1** release. novomodelo loads a
 policy checkpoint only in the version that wrote it, so a DECOMP case whose
 boundary FCF an earlier bridge imported must be converted again.
 
+### Added
+
+- **`check` and `convert` warn about tabs in fixed-column inputs**, on both
+  tracks. The NEWAVE text inputs and DECOMP's `dadger`/`dadgnl` are read by
+  column position, so a tab where the layout expects spaces shifts the fields
+  after it; a DECOMP register line that starts with a tab is not read at all.
+  The warning names each file and its lines (DECOMP comment lines are
+  skipped), and a `check` that finds one reports ready with warnings.
+
 ### Changed
 
 - **`novomodelo-python` is pinned to 0.18.1**, and `MIN_NOVOMODELO_VERSION`

@@ -29,6 +29,7 @@ from novomodelo_bridge.core.conversion import (
     clear_dst_contents,
 )
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.source_text import tab_character_diagnostic, tab_lines
 from novomodelo_bridge.decomp import (
     bounds_accumulator,
     constraint_registers,
@@ -59,6 +60,7 @@ from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
+from novomodelo_bridge.decomp.files import REGISTER_COMMENT_PREFIX
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -767,6 +769,11 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     probabilities, and the annual discount rate.
     """
     case = DecompCase.from_directory(src)
+    tab_diagnostic = tab_character_diagnostic(
+        tab_lines(case.files.fixed_column_files, comment_prefix=REGISTER_COMMENT_PREFIX)
+    )
+    if tab_diagnostic is not None:
+        dx.emit(tab_diagnostic)
     id_map = case.id_map
     dadger = case.dadger
     calendar = case.calendar

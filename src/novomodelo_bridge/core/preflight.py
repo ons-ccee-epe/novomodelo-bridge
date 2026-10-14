@@ -7,8 +7,12 @@ from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.source_text import tab_character_diagnostic, tab_lines
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
     from _typeshed import DataclassInstance
 
 _OPTIONAL_ABSENT_DETAIL = "absent (optional; conversion proceeds)"
@@ -121,3 +125,26 @@ def optional_input_advisory(  # noqa: UP047
             )
         )
     return checks, diagnostics
+
+
+def tab_character_advisory(
+    paths: Sequence[Path], *, comment_prefix: str | None = None
+) -> tuple[list[CheckItem], list[Diagnostic]]:
+    """Passing check + :func:`tab_character_diagnostic`'s WARNING, if any.
+
+    A tab never blocks conversion, but being a WARNING it drives the
+    ``WARNINGS`` verdict.
+    """
+    found = tab_lines(paths, comment_prefix=comment_prefix)
+    diagnostic = tab_character_diagnostic(found)
+    detail = (
+        f"found in {', '.join(path.name for path in found)}" if found else "none found"
+    )
+    return (
+        [
+            CheckItem(
+                label="Fixed-column files scanned for tabs", passed=True, detail=detail
+            )
+        ],
+        [] if diagnostic is None else [diagnostic],
+    )

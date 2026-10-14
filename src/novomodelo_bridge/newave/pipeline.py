@@ -20,6 +20,7 @@ from novomodelo_bridge.core.conversion import (
     clear_dst_contents,
 )
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.source_text import tab_character_diagnostic, tab_lines
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters import constraints as constraints_conv
 from novomodelo_bridge.newave.converters import hydro as hydro_conv
@@ -259,6 +260,9 @@ def _convert_newave_case_impl(
     # Build the parsed-case object once; every converter reads its parsed inputs from
     # ``case`` (each source-model file parsed once and cached).
     case = NewaveCase.from_directory(src)
+    tab_diagnostic = tab_character_diagnostic(tab_lines(case.files.fixed_column_files))
+    if tab_diagnostic is not None:
+        dx.emit(tab_diagnostic)
 
     logger.debug("Building NewaveIdMap from %s", src)
     id_map = case.id_map

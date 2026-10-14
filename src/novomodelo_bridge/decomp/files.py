@@ -8,6 +8,9 @@ from pathlib import Path
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.decomp import constraint_registers
 
+#: Opens a comment line in the deck's register and index files.
+REGISTER_COMMENT_PREFIX = "&"
+
 
 @dataclass(frozen=True)
 class DecompFiles:
@@ -37,6 +40,11 @@ class DecompFiles:
     #: (the deck's ``FC NEWCUT`` record) or the glob idiom; ``None`` when
     #: absent.
     cortes: Path | None = None
+
+    @property
+    def fixed_column_files(self) -> list[Path]:
+        """The resolved inputs whose reader slices fixed columns."""
+        return [path for path in (self.dadger, self.dadgnl) if path is not None]
 
 
 #: ``FC`` register ``tipo`` mnemonics (``idecomp.decomp.Dadger.fc()``) naming
@@ -106,7 +114,8 @@ def discover_decomp_files(src: Path) -> DecompFiles:
         names = [
             stripped
             for line in index.read_text(encoding="latin-1").splitlines()
-            if (stripped := line.strip()) and not stripped.startswith("&")
+            if (stripped := line.strip())
+            and not stripped.startswith(REGISTER_COMMENT_PREFIX)
         ]
 
     def find(prefix: str, required: bool, *, exclude: str | None = None) -> Path | None:

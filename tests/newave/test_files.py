@@ -15,6 +15,7 @@ import pytest
 
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.newave.files import NewaveFiles, _resolve_required
+from tests.conftest import make_nw_files
 
 
 def test_missing_caso_raises_source_file_error(tmp_path: Path) -> None:
@@ -43,3 +44,28 @@ def test_resolve_required_missing_carries_path_and_field(tmp_path: Path) -> None
 def test_missing_caso_message_is_preserved(tmp_path: Path) -> None:
     with pytest.raises(SourceFileError, match=f"caso.dat not found in {tmp_path}"):
         NewaveFiles.from_directory(tmp_path)
+
+
+def test_fixed_column_files_leave_out_binary_delimited_and_absent_inputs(
+    tmp_path: Path,
+) -> None:
+    files = make_nw_files(
+        tmp_path,
+        cvar=tmp_path / "cvar.dat",
+        polinjus=tmp_path / "polinjus.csv",
+        tratamento_fpha=tmp_path / "tratamento-fpha.csv",
+    )
+
+    names = {path.name for path in files.fixed_column_files}
+
+    assert names == {
+        "dger.dat",
+        "confhd.dat",
+        "conft.dat",
+        "sistema.dat",
+        "clast.dat",
+        "term.dat",
+        "ree.dat",
+        "patamar.dat",
+        "cvar.dat",
+    }

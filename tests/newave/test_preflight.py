@@ -78,6 +78,19 @@ class TestRunPreflight:
         assert result.diagnostics == []
         assert all(check.passed for check in result.checks)
 
+    def test_tab_in_a_fixed_column_file_yields_warnings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        files = make_nw_files(tmp_path, **_all_optionals_present(tmp_path))
+        files.clast.write_text("    1 A\n\t2 B\n")
+        monkeypatch.setattr(preflight.NewaveFiles, "from_directory", lambda _src: files)
+
+        result = run_preflight(tmp_path)
+
+        assert result.verdict is PreflightVerdict.WARNINGS
+        assert [d.code for d in result.diagnostics] == ["source-tab-character"]
+        assert all(check.passed for check in result.checks)
+
     def test_preflight_writes_no_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

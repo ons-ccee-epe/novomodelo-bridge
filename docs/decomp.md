@@ -19,6 +19,12 @@ every converter.
 the conversion will leave behind for this particular deck. Exit 0 means ready,
 1 ready with warnings, 2 the deck will not convert.
 
+`dadger.rvN` and `dadgnl.rvN` are read by fixed columns, so a tab where the
+layout expects spaces shifts the fields after it, and a register line that
+starts with one is not read at all. `check decomp` and `convert decomp` warn
+about every tab outside a comment line (one starting with `&`) and name the
+file and lines.
+
 The register-by-register map from the deck to the converted case, including
 what the converter does not convert yet, is the
 [DECOMP data map](decomp-data-map.md) (in Portuguese).
