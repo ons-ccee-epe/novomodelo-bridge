@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 import re
+import shutil
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
@@ -210,6 +211,38 @@ class TestPipeline:
 
         with pytest.raises(FileNotFoundError, match="caso.dat"):
             convert_decomp_case(tmp_path, tmp_path / "out")
+
+    def test_failure_hands_earlier_diagnostics_to_the_callers_sink(
+        self,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.decomp.converters import cadastro
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        src = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, src)
+        dadger = src / "dadger.rv2"
+        lines = dadger.read_bytes().split(b"\n")
+        assert lines[6].startswith(b"TE")
+        lines[6] = lines[6].rstrip(b"\r") + b"\t"
+        dadger.write_bytes(b"\n".join(lines))
+
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("cadastro resolution failed")
+
+        monkeypatch.setattr(cadastro, "build_effective_cadastro", fail)
+        with (
+            dx.collect() as outer,
+            pytest.raises(RuntimeError, match="cadastro resolution failed"),
+        ):
+            convert_decomp_case(src, tmp_path / "out")
+
+        tab = [d for d in outer if d.code == "source-tab-character"]
+        assert len(tab) == 1 and tab[0].table is not None
+        assert tab[0].table.rows == [["dadger.rv2", "7"]]
 
     def test_discover_decomp_files_no_caso_raises_source_file_error(
         self, tmp_path: Path

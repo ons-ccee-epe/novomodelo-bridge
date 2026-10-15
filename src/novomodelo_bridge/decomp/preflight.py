@@ -31,13 +31,17 @@ from novomodelo_bridge.core.preflight import (
     PreflightResult,
     PreflightVerdict,
     optional_input_advisory,
+    tab_character_advisory,
 )
 from novomodelo_bridge.decomp import constraint_registers
 from novomodelo_bridge.decomp.converters.cadastro import (
     APPLIED_AC_CLASSES,
     UNINGESTABLE_AC_CLASSES,
 )
-from novomodelo_bridge.decomp.files import discover_decomp_files
+from novomodelo_bridge.decomp.files import (
+    REGISTER_COMMENT_PREFIX,
+    discover_decomp_files,
+)
 
 if TYPE_CHECKING:
     from idecomp.decomp import Dadger, Vazoes
@@ -491,6 +495,12 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
     optional_checks, optional_diags = optional_input_advisory(files)
     checks.extend(optional_checks)
     diagnostics.extend(optional_diags)
+
+    tab_checks, tab_diags = tab_character_advisory(
+        files.fixed_column_files, comment_prefix=REGISTER_COMMENT_PREFIX
+    )
+    checks.extend(tab_checks)
+    diagnostics.extend(tab_diags)
 
     try:
         # RegisterFile.read() is annotated to return the base RegisterFile,

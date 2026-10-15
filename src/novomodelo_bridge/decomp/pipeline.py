@@ -27,8 +27,10 @@ from novomodelo_bridge.core.conversion import (
     ClearedArtifacts,
     ConversionReport,
     clear_dst_contents,
+    run_conversion,
 )
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.decomp import (
     bounds_accumulator,
     constraint_registers,
@@ -59,6 +61,7 @@ from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
+from novomodelo_bridge.decomp.files import REGISTER_COMMENT_PREFIX
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -767,6 +770,11 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     probabilities, and the annual discount rate.
     """
     case = DecompCase.from_directory(src)
+    tabs = tab_character_diagnostic(
+        case.files.fixed_column_files, comment_prefix=REGISTER_COMMENT_PREFIX
+    )
+    if tabs is not None:
+        dx.emit(tabs)
     id_map = case.id_map
     dadger = case.dadger
     calendar = case.calendar
@@ -884,23 +892,22 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.stages_dict = stages_dict
     writer.write_json("stages.json", stages_dict)
 
-    # FPHA-anchor fidelity: the source model fits each plant's hydro production
-    # function around its initial reservoir volume. FPHA-eligible reservoirs get
-    # novomodelo's computed-FPHA model (geometry + tailrace families, fit over a
-    # ±window around the initial volume); the rest keep constant productivity,
-    # whose ρ_eq is likewise anchored at the initial volume (not the full-range mean) —
-    # see hydro._equivalent_productivity_mw_per_m3s and decomp/converters/fpha.py.
+    # FPHA-eligible plants get novomodelo's computed-FPHA model, fit over the
+    # whole storage envelope (fpha_conv.fitting_window) with its reference volume
+    # anchored at the initial volume; the rest keep constant productivity, whose
+    # ρ_eq is anchored at the initial volume (not the full-range mean) — see
+    # hydro._equivalent_productivity_mw_per_m3s.
     initial_volumes = hydro_conv._operated_initial_volumes(case, effective=effective)
     fpha_codes = fpha_conv.fpha_eligible_codes(effective, id_map)
     artifacts.fpha_codes = fpha_codes
     fpha_configs: dict[int, dict] = {}
     reference_volumes: dict[int, dict] = {}
     for code in fpha_codes:
-        vmin, vmax = cadastro_conv.effective_storage_range(effective, code, 0)
+        vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
         v_init = initial_volumes.get(code, vmin)
         fpha_configs[code] = {
             "source": "computed",
-            "fitting_window": fpha_conv.fitting_window(v_init, vmin, vmax),
+            "fitting_window": fpha_conv.fitting_window(effective, code),
         }
         reference_volumes[code] = {"volume_hm3": v_init}
 
@@ -1797,12 +1804,9 @@ def convert_decomp_case(
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
 
-    Mirrors the NEWAVE twin ``convert_newave_case``'s return contract: wraps
-    the conversion in a top-level :func:`novomodelo_bridge.core.diagnostics.collect`
-    sink and a package-logger ``dx.WarningCollector`` so every structured
-    ``dx.emit`` finding *and* every residual ``logger.warning`` string is
-    captured, then returns them as one de-duplicated
-    :class:`~novomodelo_bridge.core.conversion.ConversionReport`.
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
+    failure clears the written outputs and forwards the below-``ERROR``
+    findings collected before it.
 
     Parameters
     ----------
@@ -1828,21 +1832,15 @@ def convert_decomp_case(
 
     Raises
     ------
-    ValueError
-        If the post-emission self-checks (novomodelo 0.13 rules 43/41/45/38/36 and
-        the ``block_id``-range rule; see :mod:`novomodelo_bridge.core.emission_checks`)
-        find an ``ERROR``-severity violation in the converted artifacts. An
-        ``INFO`` finding (e.g. rule 43's "not applicable" report, emitted when
-        no hydro-bounds capacity column is populated) never raises. No report
-        is returned on this path.
+    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+        A ``ValueError``: a post-emission self-check in
+        :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
+        violation in the converted artifacts. No report is returned.
     FileExistsError
         If *dst* already exists, is non-empty, and ``force`` is not set.
     """
-    # This refusal must run before the clearing try/except below: it is a
-    # "do not touch dst" guard, not a mid-write failure, so it must never
-    # reach ``clear_dst_contents`` and delete a pre-existing, unrelated case
-    # (mirrors the source model's own NEWAVE-twin ordering, which performs
-    # this check ahead of its own write/clear try block).
+    # Refuse before ``run_conversion``, whose failure rollback would otherwise
+    # delete the pre-existing case.
     if dst.exists() and any(dst.iterdir()):
         if not force:
             raise FileExistsError(
@@ -1855,50 +1853,24 @@ def convert_decomp_case(
         if not dry_run:
             clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
 
-    collector = dx.WarningCollector()
-    pkg_logger = logging.getLogger("novomodelo_bridge")
-    pkg_logger.addHandler(collector)
-    try:
-        # Structured diagnostics emitted by converters (and the inner
-        # emission-self-check re-emit loop below) land in ``collected``; any
-        # remaining ``logger.warning`` strings (the deferral warning, the
-        # topology non-itemized warning) are picked up by ``collector`` and
-        # bridged below, so every warning still surfaces.
-        with dx.collect() as collected:
-            report = _convert_decomp_case_impl(
-                src,
-                dst,
-                force=force,
-                on_phase=on_phase,
-                dry_run=dry_run,
-                fcf_inputs_out=fcf_inputs_out,
-            )
-    except BaseException:
-        # The write phase is a sequence of independent file writes with no
-        # rollback, so a failure partway through can leave a subset of the
-        # output files behind. Remove the known pipeline outputs so a
-        # half-written case is never mistaken for a complete one and a plain
-        # (no --force) re-run is not refused as "destination not empty".
-        # Skipped under a dry run: nothing was written, and dst may be a
-        # pre-existing populated directory the user never asked to clear.
-        if not dry_run:
-            clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
-        raise
-    finally:
-        pkg_logger.removeHandler(collector)
-    report.diagnostics = dx.finalize_diagnostics(collected, collector.messages)
-    # Backward-compatible flat WARNING strings derived from the diagnostics.
-    report.warnings = [
-        d.summary for d in report.diagnostics if d.severity is dx.Severity.WARNING
-    ]
-    return report
+    return run_conversion(
+        lambda: _convert_decomp_case_impl(
+            src,
+            dst,
+            on_phase=on_phase,
+            dry_run=dry_run,
+            fcf_inputs_out=fcf_inputs_out,
+        ),
+        dst,
+        DECOMP_CLEARED_ARTIFACTS,
+        dry_run=dry_run,
+    )
 
 
 def _convert_decomp_case_impl(
     src: Path,
     dst: Path,
     *,
-    force: bool = False,
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,

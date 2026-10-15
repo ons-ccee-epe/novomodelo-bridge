@@ -4,7 +4,12 @@
 **relative** ``Gap`` stopping rule (``relative_tolerance``, matching DECOMP's
 ``Zsup/Zinf - 1 <= GP`` convergence; novomodelo auto-injects a ``BoundStalling``
 companion so an unattainable tolerance degrades to a diagnosed stall), the
-deck-faithful ``NI`` iteration backstop, and the external scenario schemes.
+deck-faithful ``NI`` iteration backstop, the external scenario schemes, and the
+inflow non-negativity method both tracks share. DECOMP's identity inflow
+stats carry no AR terms, so novomodelo's truncation of a negative tree inflow
+depends only on the node's own inflow, never on the incoming state; it cannot
+lift the lower bound above the upper bound and the ``gap`` rule stays sound
+under it.
 
 No ``state_space.inflow_lag_depth`` is emitted. Under a deferred boundary FCF
 the external white-noise inflow model contributes no inflow-lag state, so novomodelo
@@ -27,7 +32,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from novomodelo_bridge.core.penalties import PCORTEOL, PEXC, PINT, hydro_penalty_costs
+from novomodelo_bridge.core.penalties import (
+    INFLOW_NON_NEGATIVITY_METHOD,
+    PCORTEOL,
+    PEXC,
+    PINT,
+    hydro_penalty_costs,
+)
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -109,6 +120,9 @@ def convert_config(case: DecompCase) -> dict:
                 "load": {"scheme": "external"},
                 "ncs": {"scheme": "external"},
             },
+        },
+        "modeling": {
+            "inflow_non_negativity": {"method": INFLOW_NON_NEGATIVITY_METHOD},
         },
         "simulation": {
             "enabled": True,

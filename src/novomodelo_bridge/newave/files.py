@@ -13,12 +13,18 @@ case-insensitive directory scan. Optional files (``modif.dat``, ``ghmin.dat``,
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 from novomodelo_bridge.core.errors import SourceFileError
 
 _LOG = logging.getLogger(__name__)
+
+#: ``hidr``/``vazoes`` are binary and the FPHA libs files are delimited; every
+#: other discovered input is a fixed-column text file.
+_NOT_FIXED_COLUMN = frozenset(
+    {"directory", "hidr", "vazoes", "polinjus", "tratamento_fpha"}
+)
 
 
 def _find_file_case_insensitive(directory: Path, filename: str) -> Path | None:
@@ -125,6 +131,16 @@ class NewaveFiles:
     # FPHA libs files — fixed names, not listed in Arquivos (None when absent)
     polinjus: Path | None
     tratamento_fpha: Path | None
+
+    @property
+    def fixed_column_files(self) -> list[Path]:
+        """The resolved inputs whose reader slices fixed columns."""
+        return [
+            value
+            for f in fields(self)
+            if f.name not in _NOT_FIXED_COLUMN
+            and isinstance(value := getattr(self, f.name), Path)
+        ]
 
     @classmethod
     def from_directory(cls, directory: Path) -> NewaveFiles:

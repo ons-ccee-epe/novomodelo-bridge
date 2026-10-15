@@ -25,6 +25,12 @@ reads = [
 summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de iterações) e fontes externas de cenários; todo o restante é fixo."
 
   [[output.field]]
+  path = "modeling.inflow_non_negativity.method"
+  from = []
+  status = "constant"
+  how = "Sempre `truncation_with_penalty`, o mesmo método da conversão NEWAVE: uma afluência incremental negativa da árvore explícita é truncada em zero antes de entrar no PL, e a folga penalizada por `hydro.inflow_nonnegativity_cost` permanece no balanço hídrico. O truncamento depende só da afluência do nó, nunca do estado, e não compromete a regra de parada por gap."
+
+  [[output.field]]
   path = "simulation.enabled"
   from = []
   status = "constant"
@@ -1508,7 +1514,6 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
   path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3"
   when = "somente para usinas com modelo `fpha`"
   from = [
-    { file = "dadger", register = "UH", item = "volume_inicial" },
     { file = "hidr", item = "volume_minimo" },
     { file = "hidr", item = "volume_maximo" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
@@ -1516,13 +1521,12 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_referencia" },
   ]
-  how = "max(V_min, V_ini − 0,10 × (V_max − V_min)), com V_ini o volume inicial da usina em hm³ e [V_min, V_max] a faixa efetiva do estágio inicial. A meia-largura de 10 % do volume útil é um parâmetro de modelagem do novomodelo-bridge; fio d'água colapsa para o volume de referência."
+  how = "Menor `volume_minimo` efetivo (pós `AC VOLMIN`) entre os estágios do estudo, em hm³: a envoltória de armazenamento que o bloco `reservoir` da usina declara, a mesma faixa amostrada em `system/hydro_geometry.parquet`. Fio d'água (`D`) colapsa para `volume_referencia`. A janela cobre toda a faixa, e não uma banda em torno do volume inicial: abaixo da janela os hiperplanos ficam negativos com turbinamento nulo e impõem um turbinamento mínimo que torna inviável um estágio deplecionado."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3"
   when = "somente para usinas com modelo `fpha`"
   from = [
-    { file = "dadger", register = "UH", item = "volume_inicial" },
     { file = "hidr", item = "volume_minimo" },
     { file = "hidr", item = "volume_maximo" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
@@ -1530,7 +1534,7 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_referencia" },
   ]
-  how = "min(V_max, V_ini + 0,10 × (V_max − V_min)), com V_ini o volume inicial da usina em hm³ e [V_min, V_max] a faixa efetiva do estágio inicial (mesma construção de `volume_min_hm3`)."
+  how = "Maior `volume_maximo` efetivo (pós `AC VOLMAX`) entre os estágios do estudo, em hm³ (mesma envoltória de `volume_min_hm3`); fio d'água (`D`) colapsa para `volume_referencia`."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].reference_volume.volume_hm3"
@@ -1579,7 +1583,7 @@ summary = "Curva volume → cota → área amostrada em 100 pontos por usina ope
     { file = "hidr", item = "volume_referencia" },
   ]
   status = "derived"
-  how = "Malha uniforme de 100 volumes sobre a faixa efetiva [`volume_minimo`, `volume_maximo`] do estágio inicial; faixa degenerada (fio d'água) produz um único ponto."
+  how = "Malha uniforme de 100 volumes sobre a envoltória de armazenamento (menor `volume_minimo` e maior `volume_maximo` efetivos entre os estágios), a mesma faixa da janela de ajuste da FPHA; faixa degenerada (fio d'água) produz um único ponto."
 
   [[output.field]]
   path = "height_m"
@@ -2974,7 +2978,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "FP"
   status = "unread"
-  note = "Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela derivada do volume inicial e dos limites de armazenamento."
+  note = "Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela igual à envoltória de armazenamento da usina."
 
   [[source.item]]
   register = "IR"

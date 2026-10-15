@@ -7,8 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`check` and `convert` warn about tabs in fixed-column inputs**, on both
+  tracks. The NEWAVE text files `arquivos.dat` names and DECOMP's
+  `dadger`/`dadgnl` are read by column position, so a tab where the layout
+  expects spaces shifts the fields after it; a DECOMP register line that
+  starts with a tab is not read at all. The warning names each file and its
+  lines (DECOMP comment lines are skipped), and a `check` that finds one
+  reports ready with warnings.
+
+### Changed
+
+- **`convert decomp` sets the inflow non-negativity method.** `config.json`
+  now carries `modeling.inflow_non_negativity.method` =
+  `"truncation_with_penalty"`, the method `convert newave` already sets,
+  instead of leaving it to cobre's default, `penalty`. cobre now truncates a
+  negative incremental inflow of the tree to zero before it enters the LP; the
+  penalised inflow slack stays as before. DECOMP results can change where a
+  node's incremental inflow is negative.
+
 ### Fixed
 
+- **`convert decomp` fits each plant's FPHA over its whole storage range.**
+  The fitting window was a band of ±10 % of useful volume around the initial
+  storage. Below the band, cobre's production planes are negative at zero
+  turbined flow, so a plant drawn down past the band's lower edge had to
+  turbine a minimum flow. Where its inflow could not supply that flow, the
+  inflow slack supplied the missing water and inflated the costs, or, without
+  the slack, the stage was infeasible. The window and the
+  `hydro_geometry.parquet` volume grid now span the plant's storage envelope
+  over the study (a single reference volume for a run-of-river plant), as
+  `convert newave` fits its reservoirs over their whole storage range. DECOMP
+  results change for every FPHA plant whose band did not cover its storage
+  range.
+- **A failed `convert` keeps the warnings found before the failure.** Both
+  tracks reported only the error, so a warning that explained it, such as a
+  tab that misaligned a fixed-column file, was lost. The rendered notes and the
+  `--json` verdict now list those warnings next to the error.
 - **`dashboard` builds for a case run with the simulation disabled.** cobre
   creates the `output/simulation/` directories even when it does not
   simulate, and the dashboard failed on the empty inflow-lag and

@@ -428,6 +428,18 @@ class TestConvertConfig:
             "forward_passes": 20,
         }
 
+    def test_inflow_non_negativity_is_truncation_with_penalty(self, tmp_path) -> None:
+        # Pinned literally on both tracks so the two conversions keep the same
+        # method whatever novomodelo's default is.
+        case = make_case(tmp_path, dger=_make_dger_mock())
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        result = convert_config(case)
+        assert result["modeling"]["inflow_non_negativity"] == {
+            "method": "truncation_with_penalty"
+        }
+
     def test_iteration_limit(self, tmp_path) -> None:
         dger = _make_dger_mock(num_max_iteracoes=200)
         case = make_case(tmp_path, dger=dger)

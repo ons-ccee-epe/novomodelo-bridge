@@ -1,7 +1,7 @@
 """Tests for the DECOMP FPHA converter (``decomp/fpha.py``).
 
 Tier-1: synthetic ``EffectiveCadastro`` / ``DecompIdMap`` / polinjus doubles,
-no real deck. Covers the fitting window (a novomodelo-bridge parameter), eligibility,
+no real deck. Covers the fitting window, eligibility,
 turbine efficiency, the VHA geometry table, and the tailrace-curves wrapper.
 """
 
@@ -15,7 +15,6 @@ from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro, MachineSet
 from novomodelo_bridge.decomp.converters.fpha import (
-    FPHA_VOLUME_WINDOW_FRACTION,
     convert_hydro_geometry,
     convert_tailrace_curves,
     fitting_window,
@@ -85,25 +84,28 @@ def _id_map(codes: tuple[int, ...]) -> DecompIdMap:
 # ---------------------------------------------------------------------------
 
 
-def test_fitting_window_bands_each_side_of_initial() -> None:
-    # useful = 400; ±10% each side = ±40 around V_init=300 -> [260, 340].
-    assert FPHA_VOLUME_WINDOW_FRACTION == 0.10
-    assert fitting_window(300.0, 100.0, 500.0) == {
-        "volume_min_hm3": 260.0,
-        "volume_max_hm3": 340.0,
-    }
+def test_fitting_window_spans_the_whole_storage_range_of_a_reservoir() -> None:
+    eff = _effective({1: _plant_row(vmin=100.0, vmax=500.0)})
+    assert fitting_window(eff, 1) == {"volume_min_hm3": 100.0, "volume_max_hm3": 500.0}
 
 
-def test_fitting_window_clamps_to_reservoir_bounds() -> None:
-    # V_init near vmax: upper side clamps to vmax.
-    w = fitting_window(480.0, 100.0, 500.0)
-    assert w["volume_min_hm3"] == 440.0  # 480 - 40
-    assert w["volume_max_hm3"] == 500.0  # clamped
+def test_fitting_window_covers_a_later_stage_storage_floor() -> None:
+    hidr = pd.DataFrame({1: _plant_row(vmin=100.0, vmax=500.0)}).T
+    hidr.index.name = "codigo_usina"
+    eff = EffectiveCadastro(
+        base=hidr,
+        n_stages=3,
+        stage_varying={(1, "volume_minimo"): (100.0, 100.0, 40.0)},
+    )
+    assert fitting_window(eff, 1) == {"volume_min_hm3": 40.0, "volume_max_hm3": 500.0}
+    volumes = convert_hydro_geometry(eff, _id_map((1,))).column("volume_hm3")
+    assert volumes[0].as_py() == 40.0 and volumes[-1].as_py() == 500.0
 
 
-def test_fitting_window_collapses_for_run_of_river() -> None:
-    # Zero useful volume -> single-volume window.
-    assert fitting_window(250.0, 250.0, 250.0) == {
+def test_fitting_window_collapses_to_the_reference_volume_for_run_of_river() -> None:
+    row = _plant_row(vmin=100.0, vmax=500.0, tipo_regulacao="D")
+    row["volume_referencia"] = 250.0
+    assert fitting_window(_effective({1: row}), 1) == {
         "volume_min_hm3": 250.0,
         "volume_max_hm3": 250.0,
     }

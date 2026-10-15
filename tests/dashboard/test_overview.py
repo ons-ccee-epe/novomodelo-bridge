@@ -514,7 +514,6 @@ def test_render_with_empty_costs_does_not_raise_and_contains_placeholder() -> No
 
 
 def _make_simulation_only_data() -> MagicMock:
-    """A case with simulation output and no training output."""
     data = _make_mock_data(conv=pd.DataFrame(), training_manifest={})
     data.training_available = False
     data.run_metadata = {
@@ -555,8 +554,6 @@ def test_quick_look_omits_training_chart_without_training() -> None:
 
 
 def test_quick_look_links_find_nav_buttons_by_tab_id() -> None:
-    """A positional nav lookup activates the wrong button whenever a tab
-    ahead of the target is not rendered."""
     data = _make_mock_data()
 
     with patch(

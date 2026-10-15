@@ -21,6 +21,7 @@ from novomodelo_bridge.dashboard.chart_helpers import (
     make_chart_card,
 )
 from novomodelo_bridge.dashboard.data import _stage_avg_mw
+from novomodelo_bridge.dashboard.tabs import energy_balance, training
 from novomodelo_bridge.novomodelo.readers import novomodelo_software_version
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
@@ -421,7 +422,7 @@ def _training_quick_look_cell(conv: pd.DataFrame) -> str:
         "v2-training-mini-chart",
         height=280,
     )
-    return _quick_look_cell(chart, _tab_link("tab-training", "Full training analysis"))
+    return _quick_look_cell(chart, _tab_link(training.TAB_ID, "Full training analysis"))
 
 
 def _render_quick_look_charts(data: DashboardData) -> str:
@@ -439,7 +440,7 @@ def _render_quick_look_charts(data: DashboardData) -> str:
             height=280,
         )
         gen_cell = _quick_look_cell(
-            chart, _tab_link("tab-energy-balance", "Energy balance details")
+            chart, _tab_link(energy_balance.TAB_ID, "Energy balance details")
         )
     cells.append(gen_cell)
 
