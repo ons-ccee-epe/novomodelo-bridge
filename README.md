@@ -92,7 +92,7 @@ Shell completion: `novomodelo-bridge --install-completion`.
 under `system/`, inflow and load data under `scenarios/`, and bounds and
 generic constraints under `constraints/`. Stage-varying tables are Parquet;
 everything else is JSON. The layout is Novomodelo's documented input format (see
-the [novomodelo documentation](https://docs.novomodelo.invalid/)).
+the [novomodelo documentation](https://docs.modelossetoreletrico.org.br/)).
 
 Next to the case, `conversion_manifest.json` records provenance: the bridge
 version and git commit, the source directory, a hash of every input file read,

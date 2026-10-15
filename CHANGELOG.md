@@ -14,6 +14,12 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The README links the published novomodelo documentation**,
+  <https://docs.modelossetoreletrico.org.br/>, which the package's PyPI page
+  shows too.
+
 ## [0.18.1] - 2026-10-15
 
 Pairs the bridge with the **novomodelo 0.18.1** release. novomodelo loads a
