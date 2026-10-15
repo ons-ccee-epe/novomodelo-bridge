@@ -892,23 +892,22 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.stages_dict = stages_dict
     writer.write_json("stages.json", stages_dict)
 
-    # FPHA-anchor fidelity: the source model fits each plant's hydro production
-    # function around its initial reservoir volume. FPHA-eligible reservoirs get
-    # novomodelo's computed-FPHA model (geometry + tailrace families, fit over a
-    # ±window around the initial volume); the rest keep constant productivity,
-    # whose ρ_eq is likewise anchored at the initial volume (not the full-range mean) —
-    # see hydro._equivalent_productivity_mw_per_m3s and decomp/converters/fpha.py.
+    # FPHA-eligible plants get novomodelo's computed-FPHA model, fit over the
+    # whole storage envelope (fpha_conv.fitting_window) with its reference volume
+    # anchored at the initial volume; the rest keep constant productivity, whose
+    # ρ_eq is anchored at the initial volume (not the full-range mean) — see
+    # hydro._equivalent_productivity_mw_per_m3s.
     initial_volumes = hydro_conv._operated_initial_volumes(case, effective=effective)
     fpha_codes = fpha_conv.fpha_eligible_codes(effective, id_map)
     artifacts.fpha_codes = fpha_codes
     fpha_configs: dict[int, dict] = {}
     reference_volumes: dict[int, dict] = {}
     for code in fpha_codes:
-        vmin, vmax = cadastro_conv.effective_storage_range(effective, code, 0)
+        vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
         v_init = initial_volumes.get(code, vmin)
         fpha_configs[code] = {
             "source": "computed",
-            "fitting_window": fpha_conv.fitting_window(v_init, vmin, vmax),
+            "fitting_window": fpha_conv.fitting_window(effective, code),
         }
         reference_volumes[code] = {"volume_hm3": v_init}
 

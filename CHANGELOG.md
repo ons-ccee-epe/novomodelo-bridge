@@ -52,6 +52,19 @@ boundary FCF an earlier bridge imported must be converted again.
 
 ### Fixed
 
+- **`convert decomp` fits each plant's FPHA over its whole storage range.**
+  The fitting window was a band of ±10 % of useful volume around the initial
+  storage. Below the band, novomodelo's production planes are negative at zero
+  turbined flow, so a plant drawn down past the band's lower edge had to
+  turbine a minimum flow; where its inflow could not supply that flow, the
+  stage was infeasible and the boundary FCF import failed with "infeasible
+  subproblem". Under the `penalty` inflow method the case solved, but the
+  inflow slack supplied the missing water and inflated the costs. The window
+  and the `hydro_geometry.parquet` volume grid now span the plant's storage
+  envelope over the study (a single reference volume for a run-of-river
+  plant), as `convert newave` fits its reservoirs over their whole storage
+  range. DECOMP results change for every FPHA plant whose band did not cover
+  its storage range.
 - **A failed `convert` keeps the warnings found before the failure.** Both
   tracks reported only the error, so a warning that explained it, such as a
   tab that misaligned a fixed-column file, was lost. The rendered notes and the
