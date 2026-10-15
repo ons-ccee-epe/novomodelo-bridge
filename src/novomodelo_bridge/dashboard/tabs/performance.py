@@ -94,16 +94,7 @@ def _format_time(seconds: float) -> str:
 
 
 def _build_metrics_row(data: DashboardData) -> str:
-    """Build the 6-card metrics row from timing and solver DataFrames.
-
-    Card order matches the v1 ``build_performance_metrics_html`` layout:
-    1. Total Training Time
-    2. Simulation Time (wall-clock or CPU)
-    3. Avg LP Solve (training)
-    4. Avg LP Solve (simulation)
-    5. Total LP Solves
-    6. Total Simplex Iterations
-    """
+    """Build the run-summary metric cards from timing and solver DataFrames."""
     # ------------------------------------------------------------------
     # Training time: prefer wall-clock from metadata, fall back to timing
     # ------------------------------------------------------------------
@@ -188,38 +179,47 @@ def _build_metrics_row(data: DashboardData) -> str:
     # ------------------------------------------------------------------
     # Build cards
     # ------------------------------------------------------------------
-    cards = [
-        metric_card(
-            value=train_str,
-            label="Total Training Time",
-            color=COLORS["lower_bound"],
-        ),
-        metric_card(
-            value=sim_str,
-            label=sim_label,
-            color=COLORS["ncs"],
-        ),
-        metric_card(
-            value=f"{avg_lp_train_ms:.2f} ms",
-            label="Avg LP Solve (training)",
-            color=COLORS["hydro"],
-        ),
-        metric_card(
-            value=f"{avg_lp_sim_ms:.2f} ms",
-            label="Avg LP Solve (simulation)",
-            color=COLORS["spillage"],
-        ),
-        metric_card(
-            value=f"{all_lp_solves:,}",
-            label="Total LP Solves",
-            color=COLORS["thermal"],
-        ),
-        metric_card(
-            value=f"{total_simplex:,}",
-            label="Total Simplex Iterations",
-            color=COLORS["spillage"],
-        ),
-    ]
+    cards: list[str] = []
+    if data.training_available:
+        cards.append(
+            metric_card(
+                value=train_str,
+                label="Total Training Time",
+                color=COLORS["lower_bound"],
+            )
+        )
+    if data.simulation_available:
+        cards.append(metric_card(value=sim_str, label=sim_label, color=COLORS["ncs"]))
+    if data.training_available:
+        cards.append(
+            metric_card(
+                value=f"{avg_lp_train_ms:.2f} ms",
+                label="Avg LP Solve (training)",
+                color=COLORS["hydro"],
+            )
+        )
+    if data.simulation_available:
+        cards.append(
+            metric_card(
+                value=f"{avg_lp_sim_ms:.2f} ms",
+                label="Avg LP Solve (simulation)",
+                color=COLORS["spillage"],
+            )
+        )
+    cards.extend(
+        [
+            metric_card(
+                value=f"{all_lp_solves:,}",
+                label="Total LP Solves",
+                color=COLORS["thermal"],
+            ),
+            metric_card(
+                value=f"{total_simplex:,}",
+                label="Total Simplex Iterations",
+                color=COLORS["spillage"],
+            ),
+        ]
+    )
     return metrics_grid(cards)
 
 
@@ -280,27 +280,8 @@ def can_render(data: DashboardData) -> bool:  # noqa: ARG001
     return True
 
 
-def render(data: DashboardData) -> str:
-    """Return full HTML for the v2 Performance tab.
-
-    Sections are organised from the outside in:
-
-    1. Run Summary — headline KPIs.
-    2. Top-Level Timing — non-overlapping phases that sum to iteration total.
-    3. Forward / Backward Wall-Time Breakdown — decomposes each wall phase
-       into its sub-components (sums exactly to the parent wall).
-    4. Parallel Overhead Decomposition — setup/imbalance/scheduling.
-    5. Parallel Efficiency — aggregate worker setup CPU vs parallel wall.
-    6. Solver Progression — LP solves, simplex, failures, retries per iter.
-    7. Solver CPU Components — per-iteration breakdown of solve vs setup work.
-    8. Basis Warm-start — reuse rate evolution.
-    9. LP Solver Detail — per-stage heatmaps and averaged statistics.
-    10. LP Dimensions & Scaling — stage-wise LP sizing and scaling quality.
-    11. Solver Retries — retry histograms and heatmaps.
-    12. Simulation — post-training simulation solve times.
-    """
-    metrics_html = _build_metrics_row(data)
-
+def _training_sections(data: DashboardData) -> str:
+    """Sections built from the training timing, solver and cut-selection outputs."""
     top_level_content = chart_grid(
         [
             wrap_chart(chart_iteration_timing_breakdown(data.timing)),
@@ -414,29 +395,8 @@ def render(data: DashboardData) -> str:
         ]
     )
 
-    dimensions_content = chart_grid(
-        [
-            wrap_chart(chart_lp_dimensions(data.scaling_report)),
-            wrap_chart(chart_scaling_quality(data.scaling_report)),
-        ]
-    )
-
-    retry_content = chart_grid(
-        [
-            wrap_chart(_chart_retry_histogram(data.retry_histogram)),
-            wrap_chart(chart_retry_level_heatmap(data.retry_histogram)),
-        ]
-    )
-
-    simulation_content = chart_grid(
-        [wrap_chart(chart_simulation_scenario_times(data.solver_sim))],
-        single=True,
-    )
-
     return (
-        section_title("Run Summary")
-        + metrics_html
-        + collapsible_section(
+        collapsible_section(
             title="Top-Level Iteration Timing (non-overlapping phases)",
             content=top_level_content,
             default_collapsed=False,
@@ -526,19 +486,59 @@ def render(data: DashboardData) -> str:
             content=solver_by_phase_content,
             default_collapsed=True,
         )
-        + collapsible_section(
+    )
+
+
+def render(data: DashboardData) -> str:
+    """Return full HTML for the v2 Performance tab.
+
+    A phase the case did not run contributes no sections; LP dimensions and
+    scaling are written by every run.
+    """
+    parts = [section_title("Run Summary"), _build_metrics_row(data)]
+    if data.training_available:
+        parts.append(_training_sections(data))
+
+    dimensions_content = chart_grid(
+        [
+            wrap_chart(chart_lp_dimensions(data.scaling_report)),
+            wrap_chart(chart_scaling_quality(data.scaling_report)),
+        ]
+    )
+    parts.append(
+        collapsible_section(
             title="LP Dimensions & Scaling",
             content=dimensions_content,
             default_collapsed=True,
         )
-        + collapsible_section(
-            title="Solver Retries",
-            content=retry_content,
-            default_collapsed=True,
-        )
-        + collapsible_section(
-            title="Simulation",
-            content=simulation_content,
-            default_collapsed=True,
-        )
     )
+
+    if data.training_available:
+        retry_content = chart_grid(
+            [
+                wrap_chart(_chart_retry_histogram(data.retry_histogram)),
+                wrap_chart(chart_retry_level_heatmap(data.retry_histogram)),
+            ]
+        )
+        parts.append(
+            collapsible_section(
+                title="Solver Retries",
+                content=retry_content,
+                default_collapsed=True,
+            )
+        )
+
+    if data.simulation_available:
+        simulation_content = chart_grid(
+            [wrap_chart(chart_simulation_scenario_times(data.solver_sim))],
+            single=True,
+        )
+        parts.append(
+            collapsible_section(
+                title="Simulation",
+                content=simulation_content,
+                default_collapsed=True,
+            )
+        )
+
+    return "".join(parts)

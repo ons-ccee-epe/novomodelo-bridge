@@ -20,6 +20,10 @@ to run them in a normal development loop.
   their consumer tests with `NOVOMODELO_BRIDGE_UPDATE_GOLDENS=1`. Goldens are
   regenerated via this path, never hand-edited; review the resulting
   `git diff tests/golden/` before committing.
+- **`gen/sync-kiro-steering.py`** — projects `CLAUDE.md` and `.claude/rules/`
+  onto `.kiro/steering/*.md`, translating the front-matter (a rule's `paths:`
+  becomes a Kiro `fileMatch` pattern). Run it after editing either source;
+  never hand-edit the output.
 - **`analyze_results.py`** — local analysis utility, not a gate.
 
 ## `ci/` — quality gates

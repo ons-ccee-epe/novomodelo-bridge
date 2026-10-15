@@ -132,14 +132,20 @@ def test_tab_constants() -> None:
 
 
 # ---------------------------------------------------------------------------
-# test_can_render_returns_true
+# test_can_render
 # ---------------------------------------------------------------------------
 
 
-def test_can_render_returns_true() -> None:
-    """can_render() must always return True regardless of data."""
+def test_can_render_true_when_training_available() -> None:
     data = _make_mock_data()
+    data.training_available = True
     assert can_render(data) is True
+
+
+def test_can_render_false_when_training_unavailable() -> None:
+    data = _make_mock_data()
+    data.training_available = False
+    assert can_render(data) is False
 
 
 # ---------------------------------------------------------------------------
@@ -314,13 +320,6 @@ def test_render_contains_required_sections() -> None:
     assert "Lower Bound" in html
     assert "Training Bounds" in html
     assert "Cut Pool" in html
-
-
-def test_render_empty_conv_returns_placeholder() -> None:
-    """render() with empty conv must return a safe placeholder string."""
-    data = _make_mock_data(conv=pd.DataFrame())
-    html = render(data)
-    assert "No convergence data" in html
 
 
 def test_render_full_data_no_exception() -> None:

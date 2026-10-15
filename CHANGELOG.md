@@ -14,6 +14,78 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-15
+
+Pairs the bridge with the **novomodelo 0.18.1** release. novomodelo loads a
+policy checkpoint only in the version that wrote it, so a DECOMP case whose
+boundary FCF an earlier bridge imported must be converted again.
+
+### Added
+
+- **`check` and `convert` warn about tabs in fixed-column inputs**, on both
+  tracks. The NEWAVE text files `arquivos.dat` names and DECOMP's
+  `dadger`/`dadgnl` are read by column position, so a tab where the layout expects spaces shifts the fields
+  after it; a DECOMP register line that starts with a tab is not read at all.
+  The warning names each file and its lines (DECOMP comment lines are
+  skipped), and a `check` that finds one reports ready with warnings.
+
+### Changed
+
+- **`novomodelo-python` is pinned to 0.18.1**, and `MIN_NOVOMODELO_VERSION`
+  moves with it.
+- **`convert decomp` sets the inflow non-negativity method.** `config.json`
+  now carries `modeling.inflow_non_negativity.method` =
+  `"truncation_with_penalty"`, the method `convert newave` already sets,
+  instead of leaving it to novomodelo's default, which 0.18.1 moves from
+  `penalty` to that method. The inflow slack is capped at the amount a plant's
+  incremental inflow falls below zero, so it is zero wherever the tree's
+  inflow is non-negative; under `penalty` it could add water at any inflow.
+  DECOMP results can change where the LP used that slack.
+- **NEWAVE comparisons can show negative novomodelo inflows.** From 0.18.1,
+  novomodelo's truncation methods keep the PAR inflow raw: `inflow_m3s`,
+  `incremental_inflow_m3s` and `incremental_inflow_energy_mw` report the raw
+  draw, which can be negative, and `inflow_nonnegativity_slack_m3s` reports the
+  correction that lifts it to zero in the water balance. `compare newave`
+  compares the values novomodelo reports, so where the correction acts, the
+  incremental inflow, the total inflow and the natural inflow energy are lower
+  than under 0.18.0.
+
+### Fixed
+
+- **`convert decomp` fits each plant's FPHA over its whole storage range.**
+  The fitting window was a band of ±10 % of useful volume around the initial
+  storage. Below the band, novomodelo's production planes are negative at zero
+  turbined flow, so a plant drawn down past the band's lower edge had to
+  turbine a minimum flow; where its inflow could not supply that flow, the
+  stage was infeasible and the boundary FCF import failed with "infeasible
+  subproblem". Under the `penalty` inflow method the case solved, but the
+  inflow slack supplied the missing water and inflated the costs. The window
+  and the `hydro_geometry.parquet` volume grid now span the plant's storage
+  envelope over the study (a single reference volume for a run-of-river
+  plant), as `convert newave` fits its reservoirs over their whole storage
+  range. DECOMP results change for every FPHA plant whose band did not cover
+  its storage range.
+- **A failed `convert` keeps the warnings found before the failure.** Both
+  tracks reported only the error, so a warning that explained it, such as a
+  tab that misaligned a fixed-column file, was lost. The rendered notes and the
+  `--json` verdict now list those warnings next to the error.
+- **`dashboard` builds for a case run with the simulation disabled.**
+  novomodelo creates the `output/simulation/` directories even when it does not
+  simulate, and the dashboard failed on the empty inflow-lag and
+  generic-violation directories instead of treating the case as
+  training-only.
+- **`dashboard` builds for a simulation-only case.** A run with training
+  disabled, simulating from a stored policy, writes no
+  `output/training/convergence.parquet`, which the dashboard required. Such a
+  case now gets no Training tab, its Overview takes the version, run date and
+  duration from the simulation metadata, and its Performance tab leaves out
+  the training sections and cards. A training-only case likewise gets no
+  Simulation section or cards in the Performance tab.
+- **Overview quick-look links highlight the tab they open.** They addressed
+  the navigation buttons by position, so the wrong button was highlighted
+  whenever the set of tabs differed from the one the positions assumed, as
+  it does when the Stochastic Model tab is present.
+
 ## [0.18.0] - 2026-10-08
 
 ### Changed

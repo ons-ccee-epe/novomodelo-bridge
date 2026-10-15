@@ -17,9 +17,10 @@ from novomodelo_bridge.core.bound_merge import merge_bound_tables
 from novomodelo_bridge.core.conversion import (
     ClearedArtifacts,
     ConversionReport,
-    clear_dst_contents,
+    run_conversion,
 )
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters import constraints as constraints_conv
 from novomodelo_bridge.newave.converters import hydro as hydro_conv
@@ -176,11 +177,15 @@ def convert_newave_case(
 ) -> ConversionReport:
     """Convert a source-model case directory to a Novomodelo case directory.
 
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
+    failure clears the written outputs and forwards the below-``ERROR``
+    findings collected before it.
+
     Parameters
     ----------
     src:
-        Path to the source model case directory.  Must exist and contain all required
-        the source model input files.
+        Path to the source model case directory.  Must exist and contain every
+        required source-model input file.
     dst:
         Path to the output Novomodelo case directory.  Must not exist or must be
         empty (call site is responsible for enforcing the --force contract
@@ -200,38 +205,19 @@ def convert_newave_case(
     Raises
     ------
     FileNotFoundError
-        If *src* does not exist, is not a directory, or a required the source model file
-        is missing.
+        If *src* does not exist, is not a directory, or a required source-model
+        file is missing.
+    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+        A ``ValueError``: a post-emission self-check in
+        :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
+        violation in the converted artifacts. No report is returned.
     """
-    collector = dx.WarningCollector()
-    pkg_logger = logging.getLogger("novomodelo_bridge")
-    pkg_logger.addHandler(collector)
-    try:
-        # Structured diagnostics emitted by converters land in ``collected``; any
-        # remaining ``logger.warning`` strings (sites not yet migrated) are picked
-        # up by ``collector`` and bridged below, so every warning still surfaces.
-        with dx.collect() as collected:
-            report = _convert_newave_case_impl(src, dst, on_phase, dry_run=dry_run)
-    except BaseException:
-        # The write phase is a sequence of independent file writes with no
-        # rollback, so a failure partway through (disk full, a converter
-        # raising mid-write, an interrupt) can leave a subset of the output
-        # files behind. Remove the known pipeline outputs so a half-written
-        # case is never mistaken for a complete one and a plain (no --force)
-        # re-run is not refused as "destination not empty". Re-raise so the
-        # CLI still reports the original failure. Skipped under a dry run:
-        # nothing was written, and dst may be a pre-existing populated
-        # directory the user never asked to clear.
-        if not dry_run:
-            clear_dst_contents(dst, NEWAVE_CLEARED_ARTIFACTS)
-        raise
-    finally:
-        pkg_logger.removeHandler(collector)
-    report.diagnostics = dx.finalize_diagnostics(collected, collector.messages)
-    report.warnings = [
-        d.summary for d in report.diagnostics if d.severity is dx.Severity.WARNING
-    ]
-    return report
+    return run_conversion(
+        lambda: _convert_newave_case_impl(src, dst, on_phase, dry_run=dry_run),
+        dst,
+        NEWAVE_CLEARED_ARTIFACTS,
+        dry_run=dry_run,
+    )
 
 
 def _convert_newave_case_impl(
@@ -259,6 +245,9 @@ def _convert_newave_case_impl(
     # Build the parsed-case object once; every converter reads its parsed inputs from
     # ``case`` (each source-model file parsed once and cached).
     case = NewaveCase.from_directory(src)
+    tabs = tab_character_diagnostic(case.files.fixed_column_files)
+    if tabs is not None:
+        dx.emit(tabs)
 
     logger.debug("Building NewaveIdMap from %s", src)
     id_map = case.id_map

@@ -17,6 +17,7 @@ from novomodelo_bridge.dashboard.tabs.overview import (
     _chart_training_mini,
     _compute_gen_gwh,
     _format_duration,
+    _render_quick_look_charts,
     _run_identity_strip,
     _run_status_strip,
     can_render,
@@ -133,6 +134,7 @@ def _make_mock_data(
     data.n_stages = n_stages
     data.discount_rate = discount_rate
     data.training_metadata = _make_training_metadata(training_manifest, metadata)
+    data.run_metadata = data.training_metadata
     data.policy_metadata = _make_policy_metadata(training_manifest)
     data.conv = conv if conv is not None else _make_conv_df()
     data.costs = costs if costs is not None else _make_costs_df()
@@ -509,6 +511,60 @@ def test_render_with_empty_costs_does_not_raise_and_contains_placeholder() -> No
         html = render(data)
 
     assert "No cost data" in html
+
+
+def _make_simulation_only_data() -> MagicMock:
+    data = _make_mock_data(conv=pd.DataFrame(), training_manifest={})
+    data.training_available = False
+    data.run_metadata = {
+        "software_version": "9.9.9",
+        "started_at": "2026-01-02T03:04:05Z",
+        "duration_seconds": 7260,
+    }
+    return data
+
+
+def test_run_identity_strip_reads_simulation_metadata_without_training() -> None:
+    html = _run_identity_strip(_make_simulation_only_data())
+
+    assert "9.9.9" in html
+    assert "2026-01-02T03:04:05Z" in html
+    assert "2h 1min" in html
+
+
+def test_run_status_strip_names_a_simulation_only_run() -> None:
+    html = _run_status_strip(_make_simulation_only_data())
+
+    assert "Simulation-only run" in html
+    assert "No training metadata available" not in html
+
+
+def test_quick_look_omits_training_chart_without_training() -> None:
+    data = _make_simulation_only_data()
+
+    with patch(
+        "novomodelo_bridge.dashboard.tabs.overview._stage_avg_mw",
+        return_value={0: 100.0},
+    ):
+        html = _render_quick_look_charts(data)
+
+    assert "No convergence data" not in html
+    assert "tab-training" not in html
+    assert "v2-gen-mix-chart" in html
+
+
+def test_quick_look_links_find_nav_buttons_by_tab_id() -> None:
+    data = _make_mock_data()
+
+    with patch(
+        "novomodelo_bridge.dashboard.tabs.overview._stage_avg_mw",
+        return_value={0: 100.0},
+    ):
+        html = _render_quick_look_charts(data)
+
+    assert "nav button[onclick*=tab-training]" in html
+    assert "nav button[onclick*=tab-energy-balance]" in html
+    assert "nth-child" not in html
 
 
 def test_render_with_empty_conv_shows_no_convergence_placeholder() -> None:

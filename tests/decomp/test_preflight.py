@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import shutil
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -141,6 +142,36 @@ class TestIdMapReconcile:
         assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
         id_map_check = next(c for c in result.checks if c.label == "Entity id map")
         assert id_map_check.passed is False
+
+
+class TestTabCharacterAdvisory:
+    def test_tab_in_a_register_line_warns_and_one_in_a_comment_does_not(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        dadger = deck / "dadger.rv2"
+        lines = dadger.read_bytes().split(b"\n")
+        assert lines[0].startswith(b"&") and lines[6].startswith(b"TE")
+        lines[0] = b"&\t" + lines[0][1:]
+        lines[6] = lines[6].rstrip(b"\r") + b"\t"
+        dadger.write_bytes(b"\n".join(lines))
+
+        result = run_decomp_preflight(deck)
+
+        tab = [d for d in result.diagnostics if d.code == "source-tab-character"]
+        assert len(tab) == 1 and tab[0].severity is Severity.WARNING
+        assert tab[0].table is not None
+        assert tab[0].table.rows == [["dadger.rv2", "7"]]
+        assert result.verdict is PreflightVerdict.WARNINGS
+
+    def test_mini_deck_has_no_tab_warning(self, decomp_mini_deck: Path) -> None:
+        result = run_decomp_preflight(decomp_mini_deck)
+
+        assert "source-tab-character" not in {d.code for d in result.diagnostics}
+        assert any(
+            check.detail == "none found" and check.passed for check in result.checks
+        )
 
 
 class TestOptionalInputAdvisory:

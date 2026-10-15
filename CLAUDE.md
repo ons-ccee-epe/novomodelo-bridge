@@ -30,6 +30,7 @@ python3 scripts/ci/check_doc_paths.py
 scripts/gen-cli-docs.sh                      # regenerate docs/cli.md after any help-text change
 scripts/gen-lineage-docs.py                  # regenerate docs/*-data-map.md after editing docs/lineage/*.toml
 scripts/regen-goldens.sh                     # regenerate tests/golden/, then review the diff
+python3 scripts/gen/sync-kiro-steering.py    # regenerate .kiro/steering/ after editing this file or .claude/rules/
 ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 ```
 
@@ -46,6 +47,9 @@ is read and are the authoritative statements; do not restate them here:
 - `.claude/rules/bridge.md` (`src/`) — twin-track symmetry, the tracked
   novomodelo-gap protocol, presentation and I/O boundaries, exit-code and `--json`
   contracts.
+
+`.kiro/steering/` is generated from this file and those rules by
+`scripts/gen/sync-kiro-steering.py`; never hand-edit it.
 
 Hard rules that are fixed before any commit:
 

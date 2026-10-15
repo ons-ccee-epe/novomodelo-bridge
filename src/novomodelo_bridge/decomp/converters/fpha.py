@@ -14,12 +14,14 @@ volume→cota polynomial (the forebay curve), a positive ``ρ_esp``, and a posit
 ``AC``-adjusted rated turbined flow and power. Ineligible plants keep the
 constant-productivity path.
 
-**Fitting window (a novomodelo-bridge modelling parameter).** The source model fits
-each plant's FPHA locally, around its initial state. novomodelo-bridge opens a volume
-band of ±:data:`FPHA_VOLUME_WINDOW_FRACTION` of the plant's *useful* volume
-(``volume_maximo − volume_minimo``) on each side of the initial reservoir
-volume, clamped to ``[volume_minimo, volume_maximo]`` — collapsing to a single
-volume for a run-of-river plant (useful volume 0).
+**Fitting window.** Each plant is fit over its whole storage envelope
+(:func:`~novomodelo_bridge.decomp.converters.cadastro.storage_envelope`, the
+range the entity ``reservoir`` block declares) — a single volume for a
+run-of-river plant — and :func:`convert_hydro_geometry` samples the same range,
+since novomodelo clamps the window to the geometry table. Never a band around
+the initial volume: novomodelo's planes are an outer approximation only inside
+the window, and below it they turn negative at zero flow, forcing a minimum
+turbined flow that makes a drawn-down stage infeasible.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from novomodelo_bridge.core.diagnostics import emit
 from novomodelo_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
 from novomodelo_bridge.core.productivity import evaluate_cota, fpha_efficiency
 from novomodelo_bridge.core.tailrace import build_tailrace_table
-from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
+from novomodelo_bridge.decomp.converters.cadastro import storage_envelope
 from novomodelo_bridge.decomp.converters.hydro.bounds import _rated_envelope
 
 if TYPE_CHECKING:
@@ -44,15 +46,6 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
-
-#: Half-width of the FPHA volume fitting window as a fraction of a plant's
-#: useful volume (``volume_maximo − volume_minimo``): the window spans
-#: ±this fraction on each side of the initial reservoir volume (a 10% -> ±10%,
-#: 20%-wide band), clamped to ``[volume_minimo, volume_maximo]``. A novomodelo-bridge
-#: modelling choice: the source model fits the FPHA locally around the initial
-#: state, and this band captures the operative volume swing over a
-#: weekly/monthly horizon without over-extrapolating the fit.
-FPHA_VOLUME_WINDOW_FRACTION = 0.10
 
 #: Number of volume samples per plant in the VHA geometry table — matches
 #: :func:`novomodelo_bridge.newave.converters.hydro.generate_hydro_geometry`.
@@ -163,19 +156,11 @@ def fpha_eligible_codes(effective: EffectiveCadastro, id_map: DecompIdMap) -> se
     return eligible
 
 
-def fitting_window(
-    initial_volume_hm3: float, vol_min_hm3: float, vol_max_hm3: float
-) -> dict[str, float]:
-    """The FPHA volume ``fitting_window`` band for one plant (see the module
-    docstring).
-
-    ±:data:`FPHA_VOLUME_WINDOW_FRACTION` of the useful volume on each side of
-    *initial_volume_hm3*, clamped to ``[vol_min_hm3, vol_max_hm3]``.
-    """
-    half = FPHA_VOLUME_WINDOW_FRACTION * max(0.0, vol_max_hm3 - vol_min_hm3)
-    lo = max(vol_min_hm3, initial_volume_hm3 - half)
-    hi = min(vol_max_hm3, initial_volume_hm3 + half)
-    return {"volume_min_hm3": lo, "volume_max_hm3": hi}
+def fitting_window(effective: EffectiveCadastro, code: int) -> dict[str, float]:
+    """The FPHA volume ``fitting_window`` for plant *code*, in hm³: its storage
+    envelope (see the module docstring)."""
+    vmin, vmax = storage_envelope(effective, code)
+    return {"volume_min_hm3": vmin, "volume_max_hm3": vmax}
 
 
 def turbine_efficiency(effective: EffectiveCadastro, code: int, name: str) -> float:
@@ -196,8 +181,8 @@ def convert_hydro_geometry(
     Mirrors :func:`novomodelo_bridge.newave.converters.hydro.generate_hydro_geometry` but
     reads the **effective** (post-``AC COTVOL``) volume→cota polynomial and the
     base ``a*_cota_area`` height→area polynomial, sampling
-    :data:`_GEOMETRY_N_POINTS` uniform volume points over the stage-0 effective
-    ``[volume_minimo, volume_maximo]``. Emitted for every operated plant with a
+    :data:`_GEOMETRY_N_POINTS` uniform volume points over the plant's storage
+    envelope (the :func:`fitting_window` range). Emitted for every operated plant with a
     non-degenerate cota polynomial (so any plant is a valid backwater reference
     for its upstream FPHA neighbour); a run-of-river plant (``vmin == vmax``)
     contributes a single point; heights/areas are clamped to ``>= 0``.
@@ -215,7 +200,7 @@ def convert_hydro_geometry(
             continue
         base = effective.base.loc[code]
         ca_coeffs = [float(base[f"a{i}_cota_area"]) for i in range(5)]
-        vmin, vmax = effective_storage_range(effective, code, 0)
+        vmin, vmax = storage_envelope(effective, code)
         hydro_id = id_map.hydro_id(code)
 
         if vmax <= vmin:

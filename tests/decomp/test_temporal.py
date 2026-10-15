@@ -339,3 +339,15 @@ class TestConvertConfigStoppingRules:
         assert [r["type"] for r in rules] == ["gap", "iteration_limit"]
         assert rules[0]["relative_tolerance"] == 0.001
         assert rules[1]["limit"] == 500
+
+
+def test_convert_config_pins_truncation_with_penalty() -> None:
+    """The method is emitted, not left to novomodelo's default, and it is the
+    one the NEWAVE track emits."""
+    dadger = MagicMock()
+    dadger.ni.iteracoes = 500
+    dadger.gp.data = [0.001]
+    cfg = convert_config(make_decomp_case(Path("unused"), dadger=dadger))
+    assert cfg["modeling"]["inflow_non_negativity"] == {
+        "method": "truncation_with_penalty"
+    }

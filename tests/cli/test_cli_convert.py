@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -38,6 +39,21 @@ def _make_fake_decomp_dir_with_cuts(tmp_path: Path) -> Path:
     (decomp_dir / "cortesh.rv0").write_text("stub")
     (decomp_dir / "cortes.rv0").write_text("stub")
     return decomp_dir
+
+
+def _warn_then_fail(*_args: object, **_kwargs: object) -> None:
+    from novomodelo_bridge.core import diagnostics as dx
+
+    dx.emit(
+        dx.Diagnostic(
+            code="source-tab-character",
+            severity=dx.Severity.WARNING,
+            category="Source files",
+            title="Tab characters in fixed-column files",
+            summary="1 input file(s) contain tab characters.",
+        )
+    )
+    raise ValueError("boom")
 
 
 class TestCliInProcess:
@@ -315,6 +331,39 @@ class TestCliInProcess:
         # The Rich diagnostic block must not also render.
         assert "✖" not in stderr
 
+    @pytest.mark.parametrize(
+        ("track", "make_src"),
+        [
+            ("newave", _make_fake_newave_dir),
+            ("decomp", _make_fake_decomp_dir),
+        ],
+    )
+    def test_convert_json_failure_keeps_the_warnings_found_before_it(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        track: str,
+        make_src: Callable[[Path], Path],
+    ) -> None:
+        src = make_src(tmp_path)
+
+        with patch(
+            f"novomodelo_bridge.{track}.pipeline.convert_{track}_case",
+            side_effect=_warn_then_fail,
+        ):
+            code, stdout, _stderr = self._invoke_main(
+                ["convert", track, str(src), str(tmp_path / "dst"), "--json"],
+                monkeypatch,
+            )
+
+        assert code == 1
+        doc = json.loads(stdout)
+        assert doc["status"] == "error"
+        assert [(d["code"], d["severity"]) for d in doc["diagnostics"]] == [
+            ("source-tab-character", "warning"),
+            ("unexpected-error", "error"),
+        ]
+
     def test_convert_json_error_status_without_exception_exits_1(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -482,7 +531,7 @@ class TestCliInProcess:
         """The manifest's ``min_novomodelo_version`` tracks the CLI constant, pinned.
 
         A manifest written after the bump must record the real
-        floor (``"0.18.0"``), not a stale value — the manifest is provenance,
+        floor (``"0.18.1"``), not a stale value — the manifest is provenance,
         and a wrong floor there is false provenance. Pinning the literal (not
         just equality with the constant) catches an accidental revert of the
         constant itself.
@@ -491,7 +540,7 @@ class TestCliInProcess:
         from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
         from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_NOVOMODELO_VERSION == "0.18.0"
+        assert MIN_NOVOMODELO_VERSION == "0.18.1"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -510,7 +559,7 @@ class TestCliInProcess:
 
         assert code == 0
         manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")
-        assert manifest.min_novomodelo_version == "0.18.0"
+        assert manifest.min_novomodelo_version == "0.18.1"
         assert manifest.min_novomodelo_version == MIN_NOVOMODELO_VERSION
 
     def test_manifest_not_in_json_verdict(
@@ -1212,7 +1261,7 @@ class TestCliInProcess:
         from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
         from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_NOVOMODELO_VERSION == "0.18.0"
+        assert MIN_NOVOMODELO_VERSION == "0.18.1"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1242,7 +1291,7 @@ class TestCliInProcess:
         # validation did not run (not that it ran and passed).
         assert "skipping novomodelo-python validation" in stderr
         assert "0.12.0" in stderr
-        assert "0.18.0" in stderr
+        assert "0.18.1" in stderr
         assert MIN_NOVOMODELO_VERSION in stderr
         doc = json.loads(stdout)
         assert doc["status"] == "ok"

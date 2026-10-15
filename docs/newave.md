@@ -29,6 +29,12 @@ minimum outflow, and `REST. TURBINAMENTO` for the dated turbining records of
 ignores it, and both `check newave` and `convert newave` say so with an
 informational diagnostic. A switch line absent from `dger.dat` counts as on.
 
+NEWAVE's text files are read by fixed columns, so a tab where the layout
+expects spaces shifts every field after it on its line, and a data line can
+read with wrong or missing values. `check newave` and `convert newave` warn
+about every text file `arquivos.dat` names that contains a tab, and name its
+lines; replace each tab with the spaces that restore the columns.
+
 The field-by-field map from deck files to the converted case, including what
 the converter does not convert yet, is the [NEWAVE data map](newave-data-map.md)
 (in Portuguese).

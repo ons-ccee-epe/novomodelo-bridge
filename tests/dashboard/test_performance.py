@@ -786,3 +786,43 @@ class TestLightweightPayloads:
         n_points = x_match.group(1).count(",") + 1
         assert n_points == n_iter * n_stages
         assert n_points < n_iter * n_stages * n_openings
+
+
+# ---------------------------------------------------------------------------
+# Phase availability: a phase the case did not run contributes nothing
+# ---------------------------------------------------------------------------
+
+_SIMULATION_SECTION_TITLE = 'data-collapsible="true">Simulation<svg'
+
+
+def test_render_omits_training_sections_without_training() -> None:
+    data = _make_mock_data()
+    data.training_available = False
+    data.simulation_available = True
+
+    html = render(data)
+
+    assert "Top-Level Iteration Timing" not in html
+    assert "Convergence vs Wall Time" not in html
+    assert "Solver Retries" not in html
+    assert "Total Training Time" not in html
+    assert "Avg LP Solve (training)" not in html
+    assert "LP Dimensions" in html
+    assert "Avg LP Solve (simulation)" in html
+    assert "Total LP Solves" in html
+    assert _SIMULATION_SECTION_TITLE in html
+
+
+def test_render_omits_simulation_section_without_simulation() -> None:
+    data = _make_mock_data()
+    data.training_available = True
+    data.simulation_available = False
+
+    html = render(data)
+
+    assert _SIMULATION_SECTION_TITLE not in html
+    assert "Avg LP Solve (simulation)" not in html
+    assert "Total Training Time" in html
+    assert "Top-Level Iteration Timing" in html
+    assert "Solver Retries" in html
+    assert "LP Dimensions" in html
