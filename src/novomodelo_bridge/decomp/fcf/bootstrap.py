@@ -213,9 +213,14 @@ def bootstrap_terminal_manifest(case_dir: Path, *, work_dir: Path) -> TerminalMa
     # `simulation.enabled=False` skips the post-training simulation (the
     # bootstrap needs only the policy checkpoint's terminal manifest); novomodelo's
     # `run` gates simulation on the config, not a `skip_simulation` argument.
+    # `penalty` makes the inflow correction unbounded, so every stage keeps a
+    # priced recourse: without it a cut-less first forward pass can drain a
+    # reservoir below a later stage's hard storage floor (an RHV target) and
+    # the bootstrap dies infeasible. The terminal layout is method-independent.
     config_overrides: dict[str, object] = {
         "training.stopping_rules": [{"type": "iteration_limit", "limit": 1}],
         "simulation.enabled": False,
+        "modeling.inflow_non_negativity.method": "penalty",
     }
     novomodelo.run.run(
         str(variant_dir),
