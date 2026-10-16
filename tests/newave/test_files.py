@@ -157,3 +157,64 @@ def test_a_listed_libs_file_missing_from_the_deck_is_an_error(tmp_path: Path) ->
     with pytest.raises(SourceFileError) as err:
         NewaveFiles.from_directory(deck)
     assert err.value.field == "RESTRICAO-ELETRICA-ESPECIAL"
+
+
+# ---------------------------------------------------------------------------
+# Pumping station LIBS file discovery
+# ---------------------------------------------------------------------------
+
+
+def test_pumping_files_resolved_from_indices(tmp_path: Path) -> None:
+    """indices.csv listing pumping keys resolves both fields."""
+    from novomodelo_bridge.core.libs_index import (
+        ESTACAO_BOMBEAMENTO,
+        ESTACAO_BOMBEAMENTO_SUBMERCADO,
+    )
+
+    deck = _mini_deck(
+        tmp_path,
+        f"{ESTACAO_BOMBEAMENTO} ; ; estacao-bombeamento.csv\n"
+        f"{ESTACAO_BOMBEAMENTO_SUBMERCADO} ; ; estacao-bombeamento-submercado.csv\n",
+        "estacao-bombeamento.csv",
+        "estacao-bombeamento-submercado.csv",
+    )
+
+    files = NewaveFiles.from_directory(deck)
+
+    assert files.estacao_bombeamento == deck / "estacao-bombeamento.csv"
+    assert (
+        files.estacao_bombeamento_submercado
+        == deck / "estacao-bombeamento-submercado.csv"
+    )
+
+
+def test_pumping_files_none_when_not_in_index(tmp_path: Path) -> None:
+    """Pumping files not in indices.csv are None, not discovered by name."""
+    deck = _mini_deck(
+        tmp_path,
+        "",  # Empty indices.csv — no records listed
+        "estacao-bombeamento.csv",  # File present but not indexed
+    )
+
+    files = NewaveFiles.from_directory(deck)
+
+    assert files.estacao_bombeamento is None
+    assert files.estacao_bombeamento_submercado is None
+
+
+def test_pumping_files_unindexed_warning(tmp_path: Path) -> None:
+    """Unlisted pumping file produces libs-unindexed-file warning."""
+    deck = _mini_deck(
+        tmp_path,
+        "",  # Empty indices.csv
+        "estacao-bombeamento.csv",  # Present but not listed
+    )
+
+    files = NewaveFiles.from_directory(deck)
+    diagnostic = unindexed_libs_diagnostic(files)
+
+    assert diagnostic is not None
+    assert diagnostic.table is not None
+    # Should report the pumping file as unindexed
+    file_names = [row[0] for row in diagnostic.table.rows]
+    assert "estacao-bombeamento.csv" in file_names

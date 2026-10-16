@@ -76,6 +76,8 @@ def _make_nw_files(
         polinjus=None,
         tratamento_fpha=None,
         restricao_eletrica=None,
+        estacao_bombeamento=None,
+        estacao_bombeamento_submercado=None,
     )
 
 
