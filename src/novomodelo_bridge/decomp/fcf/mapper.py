@@ -16,9 +16,11 @@ source/target term with no live counterpart — including a dated ring slot
 whose delivery falls before :attr:`GnlRingPlan.post_horizon_start` (an
 in-study delivery, priced by the in-study committed window rather than the
 ring) — is dropped the same way into :class:`MappingResult.gnl_dropped`.
-``HydroTransitBucket`` slots, and any ``AnticipatedThermalState`` ring slot
-with no resolved target (including the undated sentinel slot and every
-non-covered dated slot), are left at an explicit coefficient ``0.0``.
+``HydroTransitBucket`` slots are populated with the downstream plant's own
+storage coefficient, or inflow-lag coefficient when storage is near zero.
+Any ``AnticipatedThermalState`` ring slot with no resolved target (including
+the undated sentinel slot and every non-covered dated slot) is left at an
+explicit coefficient ``0.0``.
 """
 
 from __future__ import annotations
@@ -828,6 +830,31 @@ def map_boundary_cuts(
                     strict=True,
                 )
             )
+
+        # HydroTransitBucket: water in transit toward plant h uses h's own
+        # storage coefficient, or inflow-lag if pi_varm ≈ 0.
+        for (entity_type, entity_id, subindex), position in slot_positions.items():
+            if entity_type != _HYDRO_TRANSIT_BUCKET:
+                continue
+            hydro_id = entity_id
+            if hydro_id < 0 or hydro_id >= len(id_map.hydro_codes):
+                continue
+            plant_code = id_map.hydro_codes[hydro_id]
+            plant_index = None
+            for idx, code in enumerate(cuts.header.plant_codes):
+                if code == plant_code:
+                    plant_index = idx
+                    break
+            if plant_index is None:
+                continue
+            storage_coef = record.pi_varm[plant_index] * cost_unit_factor
+            if abs(storage_coef) > 1e-9:
+                coefficients[position] = storage_coef
+            else:
+                # Transit buckets are Hm³, same as pi_qafl's native unit.
+                coefficients[position] = (
+                    record.pi_qafl[plant_index][0] * cost_unit_factor
+                )
 
         if len(coefficients) != manifest.state_dimension:
             raise ValueError(

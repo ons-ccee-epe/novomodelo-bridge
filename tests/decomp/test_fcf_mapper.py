@@ -84,10 +84,13 @@ def test_map_storage_places_pi_varm_at_hydro_slots() -> None:
     mapped = result.cuts[0]
     assert len(mapped.coefficients) == manifest.state_dimension
     # Storage coefficients and the intercept are scaled to novomodelo cost units
-    # by MONTH_HOURS (the source's ($·mês)/h -> $ conversion); zero slots stay 0.
+    # by MONTH_HOURS (the source's ($·mês)/h -> $ conversion).
     assert mapped.coefficients[0] == pytest.approx(3.0 * MONTH_HOURS)
     assert mapped.coefficients[1] == pytest.approx(5.0 * MONTH_HOURS)
-    assert mapped.coefficients[2:] == (0.0,) * 13
+    # Inflow-lag slots (positions 2-13) are zero (no pi_qafl given).
+    assert mapped.coefficients[2:14] == (0.0,) * 12
+    # Transit bucket for hydro_id=1 gets plant 20's storage coefficient.
+    assert mapped.coefficients[14] == pytest.approx(5.0 * MONTH_HOURS)
     assert mapped.intercept == pytest.approx(100.0 * MONTH_HOURS)
 
 
@@ -335,7 +338,7 @@ def test_map_complexo_none_leaves_complexo_dropped() -> None:
     assert [term.plant_code for term in result.dropped] == [99]
 
 
-def test_map_zeroes_buckets_and_gnl_ring() -> None:
+def test_map_transit_bucket_and_gnl_ring() -> None:
     id_map = make_id_map((10,))
     manifest = make_manifest(
         [
@@ -349,7 +352,9 @@ def test_map_zeroes_buckets_and_gnl_ring() -> None:
     result = map_boundary_cuts(cuts, manifest, id_map, cost_unit_hours=MONTH_HOURS)
 
     for mapped in result.cuts:
-        assert mapped.coefficients[1] == 0.0
+        # Transit bucket gets the downstream plant's storage coefficient.
+        assert mapped.coefficients[1] == pytest.approx(9.0 * MONTH_HOURS)
+        # GNL ring stays zero (no gnl_plan).
         assert mapped.coefficients[2] == 0.0
     assert result.cuts[0].coefficients[0] == pytest.approx(9.0 * MONTH_HOURS)
 
