@@ -63,7 +63,7 @@ _STORAGE_VIOLATION_DEFICIT_MULT = 10.0
 _FILLING_TARGET_DEFICIT_FRACTION = 0.9
 
 # --- Inflow non-negativity -------------------------------------------------
-#: ``modeling.inflow_non_negativity.method`` for both tracks. It caps the inflow
+#: ``modeling.inflow_non_negativity.method`` for the NEWAVE track. It caps the inflow
 #: slack per solve at the truncation amount ``max(−r, 0)``, so the slack can only
 #: lift a negative incremental inflow to zero; under ``penalty`` it is an unbounded
 #: source of water that the LP trades against any violation priced above it.

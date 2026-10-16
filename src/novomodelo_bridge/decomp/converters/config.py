@@ -32,7 +32,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.penalties import (
-    INFLOW_NON_NEGATIVITY_METHOD,
     PCORTEOL,
     PEXC,
     PINT,
@@ -121,7 +120,10 @@ def convert_config(case: DecompCase) -> dict:
             },
         },
         "modeling": {
-            "inflow_non_negativity": {"method": INFLOW_NON_NEGATIVITY_METHOD},
+            # `penalty`, not the NEWAVE track's `truncation_with_penalty`: the
+            # unbounded priced inflow keeps a cut-less forward pass feasible
+            # against a later stage's hard storage floor (an RHV volume target).
+            "inflow_non_negativity": {"method": "penalty"},
         },
         "simulation": {
             "enabled": True,

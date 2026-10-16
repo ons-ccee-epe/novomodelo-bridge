@@ -19,6 +19,12 @@ links are cobre-bridge's.
 - **The README links the published novomodelo documentation**,
   <https://docs.modelossetoreletrico.org.br/>, which the package's PyPI page
   shows too.
+- **A DECOMP deck with a single-plant volume target (RHV) converts with its
+  boundary FCF.** The target becomes a hard storage floor, and the boundary
+  import's one-iteration run could not reach it, so `convert decomp` failed
+  with "Boundary FCF import failed: infeasible subproblem". The converted
+  DECOMP case now uses the `penalty` inflow non-negativity method, and the
+  import's run does too; the NEWAVE track keeps `truncation_with_penalty`.
 
 ## [0.18.1] - 2026-10-15
 

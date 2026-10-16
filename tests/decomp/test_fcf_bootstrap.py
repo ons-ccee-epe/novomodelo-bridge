@@ -148,8 +148,10 @@ def test_bootstrap_passes_single_iteration_run_contract(
 ) -> None:
     """The bootstrap drives novomodelo in-process for a single iteration: it calls
     ``novomodelo.run.run`` on the flattened variant (never ``case_dir`` itself)
-    with a ``config_overrides`` capping training at one iteration and disabling
-    simulation, and an ``on_iteration`` stop callback — never a subprocess
+    with a ``config_overrides`` capping training at one iteration, disabling
+    simulation, and forcing the unbounded ``penalty`` inflow correction (so a
+    cut-less first forward pass cannot go infeasible against a later hard
+    storage floor), and an ``on_iteration`` stop callback — never a subprocess
     binary."""
     case_dir = tmp_path / "case"
     case_dir.mkdir()
@@ -188,6 +190,9 @@ def test_bootstrap_passes_single_iteration_run_contract(
         {"type": "iteration_limit", "limit": 1}
     ]
     assert kwargs["config_overrides"]["simulation.enabled"] is False
+    assert (
+        kwargs["config_overrides"]["modeling.inflow_non_negativity.method"] == "penalty"
+    )
     assert callable(kwargs["on_iteration"])
     assert kwargs["on_iteration"](object()) is True  # stops at the first boundary
 
