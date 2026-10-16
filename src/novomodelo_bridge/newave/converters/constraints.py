@@ -31,6 +31,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.errors import BridgeError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -151,6 +152,8 @@ class VminopResult(NamedTuple):
 def _build_hydro_downstream_map(
     confhd_df: pd.DataFrame,
     cadastro: pd.DataFrame | None = None,
+    *,
+    fictitious: frozenset[int] | None = None,
 ) -> dict[int, int | None]:
     """Return ``{plant_code: downstream_code}`` for every real (non-FICT) plant.
 
@@ -171,12 +174,16 @@ def _build_hydro_downstream_map(
         resolver cannot tell a fictitious accounting node from a real plant and
         the cascade stops short.  Defaults to empty only for callers that
         operate on FICT-free plant sets (e.g. unit tests).
+    fictitious:
+        Pre-computed fictitious codes (e.g., from ``NewaveCase.fictitious_codes``).
+        When provided, passed to :func:`resolve_cascade` to ensure the pumping
+        exemption is applied.
     """
     from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
     if cadastro is None:
         cadastro = pd.DataFrame()
-    resolutions = resolve_cascade(confhd_df, cadastro)
+    resolutions = resolve_cascade(confhd_df, cadastro, fictitious=fictitious)
     return {code: r.downstream_code for code, r in resolutions.items()}
 
 
@@ -286,19 +293,30 @@ def _cascade_sum(
     Plants with no downstream (sea sinks) keep their own value. Used by both
     the single-scalar :func:`compute_accumulated_productivities` and the
     per-stage :func:`compute_per_stage_acc_productivities`.
+
+    Raises
+    ------
+    BridgeError
+        If a cycle is detected in the downstream map.
     """
     result: dict[int, float] = {}
 
-    def _accumulate(code: int) -> float:
+    def _accumulate(code: int, visited: frozenset[int]) -> float:
+        if code in visited:
+            cycle_path = " → ".join(str(c) for c in [*visited, code])
+            raise BridgeError(
+                f"Cascade cycle detected: {cycle_path}. This usually indicates "
+                "a fictitious plant was removed that breaks the cascade topology."
+            )
         if code in result:
             return result[code]
         ds = downstream_map.get(code)
-        ds_acc = _accumulate(ds) if ds is not None else 0.0
+        ds_acc = _accumulate(ds, visited | {code}) if ds is not None else 0.0
         result[code] = own_value.get(code, 0.0) + ds_acc
         return result[code]
 
     for code in downstream_map:
-        _accumulate(code)
+        _accumulate(code, frozenset())
     return result
 
 
