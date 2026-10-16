@@ -241,7 +241,9 @@ class TestAccumulatedProductivity:
     def test_sink_plant_has_own_productivity_only(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         # Plant 3 is the sink (downstream=None).
         # Its own productivity: 0.03 * (500 + 0.02*1500 - 400) = 0.03 * 130 = 3.9
@@ -251,7 +253,9 @@ class TestAccumulatedProductivity:
     def test_middle_plant_accumulates_downstream(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_3 = 0.03 * ((500.0 + 0.02 * 1500.0) - 400.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -260,7 +264,9 @@ class TestAccumulatedProductivity:
     def test_upstream_plant_accumulates_full_chain(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_3 = 0.03 * ((500.0 + 0.02 * 1500.0) - 400.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -274,7 +280,9 @@ class TestAccumulatedProductivity:
         # Break the cascade: all plants have downstream=0
         confhd_df["codigo_usina_jusante"] = [0, 0, 0]
 
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_1 = 0.01 * ((300.0 + 0.1 * 500.0) - 200.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -370,7 +378,9 @@ class TestAccumulatedIntegratedProductivities:
         cadastro = _make_cadastro()
         cadastro["tipo_regulacao"] = "M"
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_integrated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_integrated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
         # PLANT_A: 0.01 · (300 + 0.1·550 − 200) = 0.01 · 155 = 1.55
         # PLANT_B: 0.02 · (400 + 0.05·(200+2000)/2 − 300) = 0.02 · 155 = 3.1
         # PLANT_C: 0.03 · (500 + 0.02·(300+3000)/2 − 400) = 0.03 · 133 = 3.99
@@ -386,7 +396,9 @@ class TestAccumulatedIntegratedProductivities:
         # matching the source model's EARM convention for them.
         cadastro = _make_cadastro()  # all tipo_regulacao == "D"
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_integrated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_integrated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
         # PLANT_A @vref=500: 0.01 · (300 + 0.1·500 − 200) = 0.01 · 150 = 1.5
         # PLANT_B @vref=1000: 0.02 · (400 + 0.05·1000 − 300) = 0.02 · 150 = 3.0
         # PLANT_C @vref=1500: 0.03 · (500 + 0.02·1500 − 400) = 0.03 · 130 = 3.9
@@ -451,7 +463,9 @@ class TestPerStageAccumulatedProductivities:
         confhd_df = _make_confhd_df()
         # Three plants, two stages, all own ρ_eq constant in time.
         per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.9, 0.9]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
+        acc = compute_per_stage_acc_productivities(
+            confhd_df, per_stage_own, fictitious=frozenset()
+        )
 
         # Plant 3 is the sink → ρ_acum(3) = own(3) at every stage.
         assert acc[3] == pytest.approx([0.9, 0.9])
@@ -473,7 +487,9 @@ class TestPerStageAccumulatedProductivities:
         confhd_df = _make_confhd_df()
         # Plant 3 ρ_eq drops from 0.9 to 0.6 starting at stage 1.
         per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.9, 0.6]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
+        acc = compute_per_stage_acc_productivities(
+            confhd_df, per_stage_own, fictitious=frozenset()
+        )
 
         # Stage 0: unchanged baselines.
         assert acc[3][0] == pytest.approx(0.9)
@@ -504,7 +520,9 @@ class TestPerStageAccumulatedProductivities:
         )
         # Branch 1→2: constant. Branch 3→4: plant 4 ρ_eq drops at stage 1.
         per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.4, 0.4], 4: [0.8, 0.5]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
+        acc = compute_per_stage_acc_productivities(
+            confhd_df, per_stage_own, fictitious=frozenset()
+        )
 
         # Branch 1→2 unchanged across stages.
         assert acc[1] == pytest.approx([1.2, 1.2])

@@ -349,6 +349,9 @@ class NewaveCase:
         dead-volume filling row is admitted at its confhd declaration position. The
         path-only ``build_id_map`` keeps the in-service-only enumeration
         (``exph=None``).
+
+        Uses ``self.pumping_related_codes`` so hydros referenced by pumping stations
+        are not excluded as fictitious.
         """
         from novomodelo_bridge.newave.id_map import build_id_map_from_readers
 
@@ -359,4 +362,5 @@ class NewaveCase:
             self.ree,
             self.hidr,
             exph=self.exph,
+            pumping_related_codes=self.pumping_related_codes,
         )
