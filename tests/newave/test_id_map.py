@@ -72,8 +72,10 @@ def _make_nw_files(
         volref_saz=volref_saz,
         shist=shist,
         adterm=None,
+        libs_index=None,
         polinjus=None,
         tratamento_fpha=None,
+        restricao_eletrica=None,
     )
 
 

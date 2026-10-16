@@ -818,15 +818,10 @@ class TestParseFormula:
 
 def _make_electric_re_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
     """Return a ``(case, id_map)`` pair for a single-code electric constraint:
-    ``indices.csv`` -> ``restricao-eletrica.csv`` declaring a two-sided
+    ``restricao-eletrica.csv`` declaring a two-sided
     ``[50, 200]`` limit on ``ger_usih(10)`` over 2020, with ``dger``/``sistema``
     mocked to a 1-year 2020 study carrying no exchange/deficit data.
     """
-    indices = tmp_path / "indices.csv"
-    indices.write_text(
-        "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-        encoding="latin-1",
-    )
     re_path = tmp_path / "restricao-eletrica.csv"
     re_path.write_text(
         "RE;1;1.0ger_usih(10)\n"
@@ -845,7 +840,12 @@ def _make_electric_re_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
     sistema.limites_intercambio = None
     sistema.custo_deficit = None
 
-    case = make_case(tmp_path, dger=dger, sistema=sistema, re_dat=None)
+    case = make_case(
+        make_nw_files(tmp_path, restricao_eletrica=re_path),
+        dger=dger,
+        sistema=sistema,
+        re_dat=None,
+    )
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
     return case, id_map
 
@@ -878,19 +878,7 @@ class TestConvertElectricConstraints:
         assert [d.code for d in collected] == ["dger-switch-off"]
         assert "re.dat" in collected[0].title
 
-    def test_returns_none_when_no_indices_csv(self, tmp_path: Path) -> None:
-        """Return None gracefully when indices.csv is absent."""
-        case = make_case(tmp_path, re_dat=None)
-        id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[], thermal_codes=[])
-        assert convert_electric_constraints(case, id_map) is None
-
-    def test_returns_none_when_re_file_missing(self, tmp_path: Path) -> None:
-        """Return None when indices.csv exists but points to a missing file."""
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL; ; does-not-exist.csv\n", encoding="latin-1"
-        )
-
+    def test_returns_none_when_the_deck_declares_no_csv(self, tmp_path: Path) -> None:
         case = make_case(tmp_path, re_dat=None)
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[], thermal_codes=[])
         assert convert_electric_constraints(case, id_map) is None
@@ -980,11 +968,6 @@ class TestConvertElectricConstraintsEmission:
         """One hydro-unmapped term from a formula and one from an
         RE.DAT-only constraint both land in the same diagnostic, with the
         Source column distinguishing them."""
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10) + 1.0ger_usih(9999)\n"
@@ -1019,7 +1002,9 @@ class TestConvertElectricConstraintsEmission:
         sistema.limites_intercambio = None
         sistema.custo_deficit = None
 
-        files = make_nw_files(tmp_path, re_dat=tmp_path / "RE.DAT")
+        files = make_nw_files(
+            tmp_path, re_dat=tmp_path / "RE.DAT", restricao_eletrica=re_path
+        )
         case = make_case(
             files,
             dger=dger,
@@ -1045,11 +1030,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_interchange_no_line_recorded(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10) + 1.0ener_interc(2,3)\n"
@@ -1069,7 +1049,7 @@ class TestConvertElectricConstraintsEmission:
         sistema.custo_deficit = None
 
         case = make_case(
-            tmp_path,
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
             dger=dger,
             sistema=sistema,
             re_dat=None,
@@ -1091,11 +1071,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_malformed_term_recorded(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10) + 1.0ener_interc(2)\n"
@@ -1115,7 +1090,7 @@ class TestConvertElectricConstraintsEmission:
         sistema.custo_deficit = None
 
         case = make_case(
-            tmp_path,
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
             dger=dger,
             sistema=sistema,
             re_dat=None,
@@ -1141,11 +1116,6 @@ class TestConvertElectricConstraintsEmission:
         """Two constraint codes hit the two ``electric-constraint-skipped``
         reasons: code 1 has only an unmapped hydro term (no valid terms);
         code 2 has a valid expression but a horizon carrying no bound rows."""
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(9999)\n"
@@ -1167,7 +1137,7 @@ class TestConvertElectricConstraintsEmission:
         sistema.custo_deficit = None
 
         case = make_case(
-            tmp_path,
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
             dger=dger,
             sistema=sistema,
             re_dat=None,
@@ -1207,13 +1177,10 @@ class TestConvertElectricConstraintsEmission:
         sistema.limites_intercambio = None
         sistema.custo_deficit = None
 
-        files = make_nw_files(tmp_path, penalid=tmp_path / "penalid.dat")
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
+        files = make_nw_files(
+            tmp_path, penalid=tmp_path / "penalid.dat", restricao_eletrica=re_path
+        )
         re_path.write_text(
             "RE;1;1.0ger_usih(10)\n"
             "RE-HORIZ-PER;1;2020/01;2020/12\n"
@@ -1244,11 +1211,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_re_dat_unreadable_records_diagnostic(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10)\n"
@@ -1267,7 +1229,9 @@ class TestConvertElectricConstraintsEmission:
         sistema.limites_intercambio = None
         sistema.custo_deficit = None
 
-        files = make_nw_files(tmp_path, re_dat=tmp_path / "RE.DAT")
+        files = make_nw_files(
+            tmp_path, re_dat=tmp_path / "RE.DAT", restricao_eletrica=re_path
+        )
         case = NewaveCase(files=files)
         case.__dict__["dger"] = dger
         case.__dict__["sistema"] = sistema
@@ -1293,11 +1257,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_individualizado_cutoff_unknown_no_entries(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10)\n"
@@ -1320,7 +1279,11 @@ class TestConvertElectricConstraintsEmission:
         empty_ree.rees = pd.DataFrame()
 
         case = make_case(
-            tmp_path, dger=dger, sistema=sistema, re_dat=None, ree=empty_ree
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
+            dger=dger,
+            sistema=sistema,
+            re_dat=None,
+            ree=empty_ree,
         )
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
@@ -1878,11 +1841,8 @@ def test_re_dat_bound_covers_only_its_declared_window(tmp_path: Path) -> None:
 def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> None:
     # Declared for the first quarter of a three-year horizon whose
     # individualizado period ends in December 2020.
-    (tmp_path / "indices.csv").write_text(
-        "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-        encoding="latin-1",
-    )
-    (tmp_path / "restricao-eletrica.csv").write_text(
+    re_path = tmp_path / "restricao-eletrica.csv"
+    re_path.write_text(
         "RE;1;1.0ger_usih(10)\n"
         "RE-HORIZ-PER;1;2020/01;2020/03\n"
         "RE-LIM-FORM-PER-PAT;1;2020/01;2020/03;1;50.;200.\n",
@@ -1896,7 +1856,10 @@ def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> N
     )
     sistema = MagicMock(limites_intercambio=None, custo_deficit=None)
     case = make_case(
-        make_nw_files(tmp_path), dger=dger, sistema=sistema, ree=_valid_ree_reader()
+        make_nw_files(tmp_path, restricao_eletrica=re_path),
+        dger=dger,
+        sistema=sistema,
+        ree=_valid_ree_reader(),
     )
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 

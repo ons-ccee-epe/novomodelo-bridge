@@ -51,7 +51,7 @@ _DERIVED: dict[str, dict[str, tuple[Token, ...]]] = {
 }
 # ``case.files.<attr>`` reads that are not files-dataclass fields.
 _FILES_ATTR: dict[str, dict[str, Token]] = {
-    "newave": {"directory": ("restricao_eletrica", None)},
+    "newave": {},
     "decomp": {},
 }
 _RECEIVERS = {"dadger": "dadger", "dg": "dadger", "dadgnl": "dadgnl", "gnl": "dadgnl"}

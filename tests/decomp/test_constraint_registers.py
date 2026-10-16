@@ -595,28 +595,13 @@ def test_clean_deck_no_findings(tmp_path: Path) -> None:
     assert detect_unreadable_electrical(dadger_path) == []
 
 
-def test_libs_indices_warns(tmp_path: Path) -> None:
-    """``indices.csv`` listing ``RESTRICAO-ELETRICA-ESPECIAL`` warns; a deck
-    without that row, and a deck with no ``indices.csv`` at all, return
-    ``None``."""
-    libs_dir = tmp_path / "with_libs"
-    libs_dir.mkdir()
-    (libs_dir / "indices.csv").write_text(
-        "RESTRICAO-ELETRICA-ESPECIAL;Descricao;lib_restricao-eletrica-especial.csv\n",
-        encoding="latin-1",
+def test_libs_electrical_warns_only_when_the_deck_declares_the_file(
+    tmp_path: Path,
+) -> None:
+    diagnostic = detect_libs_electrical(
+        tmp_path / "lib_restricao-eletrica-especial.csv"
     )
-    diagnostic = detect_libs_electrical(libs_dir)
     assert diagnostic is not None
     assert diagnostic.severity is Severity.WARNING
 
-    clean_dir = tmp_path / "without_libs"
-    clean_dir.mkdir()
-    (clean_dir / "indices.csv").write_text(
-        "HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE;Descricao;polinjus.csv\n",
-        encoding="latin-1",
-    )
-    assert detect_libs_electrical(clean_dir) is None
-
-    missing_dir = tmp_path / "missing_indices"
-    missing_dir.mkdir()
-    assert detect_libs_electrical(missing_dir) is None
+    assert detect_libs_electrical(None) is None

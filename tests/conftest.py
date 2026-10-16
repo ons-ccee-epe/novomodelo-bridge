@@ -184,8 +184,10 @@ _OPTIONAL = (
     "volref_saz",
     "shist",
     "adterm",
+    "libs_index",
     "polinjus",
     "tratamento_fpha",
+    "restricao_eletrica",
 )
 
 
@@ -242,6 +244,7 @@ _DECOMP_OPTIONAL = (
     "libs_restricao_eletrica",
     "cortesh",
     "cortes",
+    "libs_index",
 )
 
 

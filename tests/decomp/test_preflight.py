@@ -194,16 +194,17 @@ class TestOptionalInputAdvisory:
             libs_restricao_eletrica=overrides.get("libs_restricao_eletrica"),
             cortesh=overrides.get("cortesh"),
             cortes=overrides.get("cortes"),
+            libs_index=overrides.get("libs_index"),
         )
 
-    def test_reports_all_six_decomp_optionals(self, tmp_path: Path) -> None:
+    def test_reports_every_absent_decomp_optional(self, tmp_path: Path) -> None:
         files = self._files(tmp_path)
 
         checks, diagnostics = optional_input_advisory(files)
 
-        assert len(checks) == 6
+        assert len(checks) == 7
         assert all(check.passed for check in checks)
-        assert len(diagnostics) == 6
+        assert len(diagnostics) == 7
         assert all(d.code == "optional-file-absent" for d in diagnostics)
         assert all(d.severity is Severity.INFO for d in diagnostics)
 
@@ -220,6 +221,7 @@ class TestOptionalInputAdvisory:
             "libs_restricao_eletrica",
             "cortesh",
             "cortes",
+            "libs_index",
         }
 
     def test_skips_present_decomp_optional(self, tmp_path: Path) -> None:
@@ -227,7 +229,7 @@ class TestOptionalInputAdvisory:
 
         _checks, diagnostics = optional_input_advisory(files)
 
-        assert len(diagnostics) == 5
+        assert len(diagnostics) == 6
         assert not any("field: dadgnl" in d.notes for d in diagnostics)
 
     def test_run_decomp_preflight_uses_the_shared_advisory_helper(self) -> None:
@@ -370,16 +372,15 @@ class TestSpecialConstraintCoverage:
 
     @staticmethod
     def _files(
-        tmp_path: Path, dadger_text: str, *, indices_csv: str | None = None
+        tmp_path: Path, dadger_text: str, *, libs_file: Path | None = None
     ) -> SimpleNamespace:
-        """A minimal ``files``-shaped stub — only ``.dadger`` is read by the
-        coverage function, so a duck-typed object avoids coupling this test
-        to ``DecompFiles``'s full field list."""
+        """A minimal ``files``-shaped stub — only ``.dadger`` and
+        ``.libs_restricao_eletrica`` are read by the coverage function, so a
+        duck-typed object avoids coupling this test to ``DecompFiles``'s full
+        field list."""
         dadger_path = tmp_path / "dadger.rv0"
         dadger_path.write_text(dadger_text, encoding="latin-1")
-        if indices_csv is not None:
-            (tmp_path / "indices.csv").write_text(indices_csv, encoding="latin-1")
-        return SimpleNamespace(dadger=dadger_path)
+        return SimpleNamespace(dadger=dadger_path, libs_restricao_eletrica=libs_file)
 
     def test_mixed_deck_emits_summary_plus_converted_and_deferred_diagnostics(
         self, tmp_path: Path
@@ -452,12 +453,9 @@ class TestSpecialConstraintCoverage:
         files = self._files(
             tmp_path,
             "VAZOES record only\n",
-            indices_csv=(
-                "RESTRICAO-ELETRICA-ESPECIAL;Descricao;"
-                "lib_restricao-eletrica-especial.csv\n"
-            ),
+            libs_file=tmp_path / "lib_restricao-eletrica-especial.csv",
         )
-        expected = detect_libs_electrical(files.dadger.parent)
+        expected = detect_libs_electrical(files.libs_restricao_eletrica)
         assert expected is not None  # sanity: the fixture trips the LIBs token
 
         _checks, diagnostics = _special_constraint_coverage(dadger, files)

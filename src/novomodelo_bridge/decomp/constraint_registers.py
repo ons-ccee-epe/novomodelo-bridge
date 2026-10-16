@@ -611,11 +611,6 @@ _MNEMONIC_FE = "FE"
 #: The whole ``RHA`` family (``HA``/``LA``/``CA``) has no idecomp accessor.
 _RHA_MNEMONICS = frozenset({"HA", "LA", "CA"})
 
-#: The ``indices.csv`` entry a LIBs-era deck uses to point at its richer
-#: electrical-constraint file (``lib_restricao-eletrica-especial.csv``), E9
-#: (blocked).
-_LIBS_ELECTRICAL_TOKEN = "RESTRICAO-ELETRICA-ESPECIAL"
-
 
 def detect_unreadable_electrical(dadger_path: Path) -> list[Diagnostic]:
     """Detect ``FE``/``RHA`` register lines the reader cannot ingest and warn
@@ -694,45 +689,21 @@ def detect_unreadable_electrical(dadger_path: Path) -> list[Diagnostic]:
     return diagnostics
 
 
-def detect_libs_electrical(deck_dir: Path) -> Diagnostic | None:
+def detect_libs_electrical(libs_file: Path | None) -> Diagnostic | None:
     """Warn when a LIBs-era deck moves its electrical constraints out of
     ``dadger``.
 
-    A deck using the LIBs electrical-constraint family declares it in
-    ``indices.csv`` under a ``RESTRICAO-ELETRICA-ESPECIAL`` entry; that
-    richer format is unconverted only for its short-form ``RE``/``RE-*`` and
-    date-indexed ``-HORIZONTE-DATA``/``-FORMULA-DATA-PATAMAR`` variants (the
-    period-keyed long-form cards ARE converted — see
-    :mod:`novomodelo_bridge.decomp.converters.libs_electrical`). This reads
-    ``indices.csv`` (when present) and reports the entry's presence; it does
-    not parse or convert the LIBs file itself, and does not know whether the
-    long-form subset converted — the caller (:func:`~novomodelo_bridge.decomp.
-    pipeline.convert_decomp_case`) is the one that reads
-    :func:`~novomodelo_bridge.decomp.converters.libs_electrical.read_libs_electrical` and
-    decides whether this diagnostic's return value is still worth emitting:
-    it suppresses it once the long-form subset converts (the census INFO
-    diagnostic, ``decomp-libs-electrical-converted``, is authoritative
-    then), and still emits it for a short-form-only entry. This function
-    itself is unchanged either way — always returning the same diagnostic
-    for the same *deck_dir*.
+    *libs_file* is the deck's ``RESTRICAO-ELETRICA-ESPECIAL`` file
+    (``DecompFiles.libs_restricao_eletrica``). Only that format's long-form
+    period-keyed cards are converted (:mod:`novomodelo_bridge.decomp.converters.
+    libs_electrical`), so the caller suppresses this warning once that subset
+    converts and the ``decomp-libs-electrical-converted`` census is
+    authoritative.
 
-    Parameters
-    ----------
-    deck_dir:
-        The deck's source directory (holding ``indices.csv`` alongside
-        ``caso.dat``).
-
-    Returns
-    -------
-    A ``WARNING`` diagnostic when ``indices.csv`` lists a
-    ``RESTRICAO-ELETRICA-ESPECIAL`` entry (case-insensitive), else ``None`` —
-    including when ``indices.csv`` itself is absent.
+    Returns:
+        A ``WARNING`` when the deck declares the file, else ``None``.
     """
-    indices_path = deck_dir / "indices.csv"
-    if not indices_path.is_file():
-        return None
-    text = indices_path.read_text(encoding="latin-1")
-    if not any(_LIBS_ELECTRICAL_TOKEN in line.upper() for line in text.splitlines()):
+    if libs_file is None:
         return None
     return Diagnostic(
         code="decomp-libs-electrical-present",
@@ -740,7 +711,7 @@ def detect_libs_electrical(deck_dir: Path) -> Diagnostic | None:
         category=_CATEGORY,
         title="LIBs electrical constraints present",
         summary=(
-            "The deck's indices.csv lists a RESTRICAO-ELETRICA-ESPECIAL "
+            "The deck's LIBS index lists a RESTRICAO-ELETRICA-ESPECIAL "
             "entry (the LIBs-era electrical-constraint family); this richer "
             "format is not converted, so the electrical model on this deck "
             "is not authoritative."
@@ -750,43 +721,3 @@ def detect_libs_electrical(deck_dir: Path) -> Diagnostic | None:
             "needed to convert."
         ),
     )
-
-
-def resolve_libs_electrical_path(deck_dir: Path) -> Path | None:
-    """Resolve the deck's LIBs electrical-constraint file path.
-
-    Reads *deck_dir*'s ``indices.csv`` for the ``RESTRICAO-ELETRICA-ESPECIAL``
-    entry's own ``Caminho`` (the third ``;``-delimited field), matched by its
-    first field **exactly** — never the ``-ATIVACAO``/``-VIOLACAO`` sibling
-    entries :func:`detect_libs_electrical`'s substring scan also matches —
-    and resolved relative to *deck_dir*. Falls back to a
-    ``lib_restricao-eletrica-especial*.csv`` glob in *deck_dir* when
-    ``indices.csv`` is absent, carries no such entry, or the entry's own path
-    does not resolve to an existing file — mirroring
-    :func:`~novomodelo_bridge.decomp.files.discover_decomp_files`'s own
-    ``find`` fallback idiom for the deck's other optional files.
-
-    Parameters
-    ----------
-    deck_dir:
-        The deck's source directory (holding ``indices.csv`` alongside
-        ``caso.dat``).
-
-    Returns
-    -------
-    The resolved file path, or ``None`` when neither resolves.
-    """
-    indices_path = deck_dir / "indices.csv"
-    if indices_path.is_file():
-        for line in indices_path.read_text(encoding="latin-1").splitlines():
-            fields = line.split(";")
-            if len(fields) < 3 or fields[0].strip().upper() != _LIBS_ELECTRICAL_TOKEN:
-                continue
-            filename = fields[2].strip()
-            if not filename:
-                continue
-            candidate = deck_dir / filename
-            if candidate.is_file():
-                return candidate
-    matches = sorted(deck_dir.glob("lib_restricao-eletrica-especial*.csv"))
-    return matches[0] if matches else None

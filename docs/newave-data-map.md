@@ -91,7 +91,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `agrint.dat` (opcional) |  |  |  |  |  | ● | ● |  |
 | `re.dat` (opcional) |  |  |  |  |  | ● | ● |  |
 | `volref_saz.dat` (opcional) | ● |  |  |  |  |  |  |  |
-| `restricao-eletrica.csv` |  |  |  |  |  | ● | ● |  |
+| `restricao-eletrica.csv` (opcional) |  |  |  |  |  | ● | ● |  |
 
 ## Arquivos gerados
 
@@ -354,7 +354,7 @@ Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produti
 | `production_models[].seasons[].fpha_config.source` | — *(constante; condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Sempre `computed`. |
 | `production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume` *(condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Igual a `stage_ranges[].fpha_config.fitting_window.volume_min_hm3`, repetido em cada estação. |
 | `production_models[].seasons[].fpha_config.fitting_window.volume_max_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMAX · volume` *(condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Igual a `stage_ranges[].fpha_config.fitting_window.volume_max_hm3`, repetido em cada estação. |
-| `fpha_plane_reduction.method` | `tratamento-fpha.csv` › `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO / HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO` *(condicional: somente em caso FPHA com ao menos uma usina `fpha` e `tratamento-fpha.csv` com linha de método ativa)* | `angle` para a linha `…-ANGULO-PADRAO`, `distance` para `…-DISTANCIA-PADRAO`; linhas iniciadas por `&` são comentários. Com mais de uma linha ativa, a primeira vale e um aviso é emitido. |
+| `fpha_plane_reduction.method` | `tratamento-fpha.csv` › `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO / HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO` *(condicional: somente em caso FPHA com ao menos uma usina `fpha`, `indices.csv` listando `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e o arquivo apontado com linha de método ativa; sem a chave no índice a redução de planos fica desligada no Novomodelo)* | `angle` para a linha `…-ANGULO-PADRAO`, `distance` para `…-DISTANCIA-PADRAO`; linhas iniciadas por `&` são comentários. Com mais de uma linha ativa, a primeira vale e um aviso é emitido. |
 | `fpha_plane_reduction.tolerance_deg` | `tratamento-fpha.csv` › `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO` *(condicional: somente quando o método ativo em `tratamento-fpha.csv` é o de ângulo)* | Tolerância angular (graus) lida após o `;` da linha. |
 | `fpha_plane_reduction.tolerance_pct` | `tratamento-fpha.csv` › `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO` *(condicional: somente quando o método ativo em `tratamento-fpha.csv` é o de distância)* | Tolerância de distância lida após o `;` da linha. |
 | `fpha_plane_reduction.n_samples` | — *(constante; condicional: somente quando o método ativo em `tratamento-fpha.csv` é o de distância)* | Sempre 100: o NEWAVE não define o número de amostras da distância quadrática média exigido pelo Novomodelo, e a ponte fornece este padrão. |
@@ -393,7 +393,7 @@ Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fonte única d
 ### `system/tailrace_curves.parquet`
 
 **Lê:** `polinjus.csv` (opcional), `confhd.dat`, `hidr.dat`, `exph.dat` (opcional)  
-**Quando:** somente quando o caso traz `polinjus.csv` e ao menos um segmento pertence a uma usina convertida  
+**Quando:** somente quando `indices.csv` lista `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e ao menos um segmento do arquivo apontado pertence a uma usina convertida  
 **Código:** `src/novomodelo_bridge/newave/converters/tailrace.py`
 
 Famílias de curvas de nível de jusante (polinômios por partes na vazão defluente total) de `polinjus.csv`, uma linha por segmento, ordenadas por (`hydro_id`, `family_id`, `segment_id`); os índices 1-based do NEWAVE são mantidos e segmentos de usinas fora do mapa de ids (fictícias) são descartados.
@@ -611,8 +611,8 @@ Recalcula o bloco `hydro` de `penalties.json` com a PROD_MEDIA_SIN de cada está
 
 ### `constraints/generic_constraints.json`
 
-**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv`, `re.dat` (opcional), `sistema.dat`, `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
-**Quando:** somente quando alguma família gera restrições: curva de segurança (`curva.dat` presente, `curva_aversao` de `dger.dat` diferente de 0 e ao menos um REE com reservatório de regularização mensal com volume útil), restrições elétricas (`restricao-eletrica.csv` apontado por `indices.csv`, ou `re.dat`, com ao menos um limite válido) ou agrupamentos de intercâmbio (`agrint.dat` com grupos e limites); cada família só é lida se o flag correspondente de `dger.dat` estiver ligado (`agrupamento_livre`, `restricoes_eletricas`, `restricoes_eletricas_especiais`)  
+**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv` (opcional), `re.dat` (opcional), `sistema.dat`, `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
+**Quando:** somente quando alguma família gera restrições: curva de segurança (`curva.dat` presente, `curva_aversao` de `dger.dat` diferente de 0 e ao menos um REE com reservatório de regularização mensal com volume útil), restrições elétricas (arquivo apontado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv`, ou `re.dat`, com ao menos um limite válido) ou agrupamentos de intercâmbio (`agrint.dat` com grupos e limites); cada família só é lida se o flag correspondente de `dger.dat` estiver ligado (`agrupamento_livre`, `restricoes_eletricas`, `restricoes_eletricas_especiais`)  
 **Esquema:** [generic_constraints.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/generic_constraints.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/constraints.py`
 
 Restrições genéricas de três famílias concatenadas nesta ordem: curva de segurança (VminOP, uma por REE de `curva.dat`), restrições elétricas (`restricao-eletrica.csv` e `re.dat`) e agrupamentos de intercâmbio (`agrint.dat`). Os limites ficam em `constraints/generic_constraint_bounds.parquet`.
@@ -628,7 +628,7 @@ Restrições genéricas de três famílias concatenadas nesta ordem: curva de se
 
 ### `constraints/generic_constraint_bounds.parquet`
 
-**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv`, `re.dat` (opcional), `sistema.dat`, `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
+**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv` (opcional), `re.dat` (opcional), `sistema.dat`, `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
 **Quando:** escrito junto com `constraints/generic_constraints.json`, sob a mesma condição  
 **Código:** `src/novomodelo_bridge/newave/converters/constraints.py`
 
@@ -1587,11 +1587,17 @@ Lido integralmente quando `despacho_antecipado_gnl ≠ 0`; despachos por patamar
 - `despachos · codigo_usina` → `system/thermals.json` › `thermals[].anticipated_config`
 - `despachos · lag` → `system/thermals.json` › `thermals[].anticipated_config.lead_stages`
 
+### `indices.csv`
+
+**Estado:** arquivo de índice, lido para localizar os demais.
+
+Índice dos arquivos LIBs, procurado pelo nome fixo `indices.csv` na pasta do deck. Cada registro LIBs convertido é lido do arquivo que o índice aponta para a sua chave: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE`, `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem índice, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro.
+
 ### `polinjus.csv`
 
 **Estado:** convertido em parte. **Lido por:** `system/tailrace_curves.parquet`.
 
-Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `HidreletricaCurvaJusantePolinomioPorPartesSegmento`) alimentam `system/tailrace_curves.parquet`.
+Localizado pela chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` de `indices.csv`; um arquivo com esse nome que o índice não lista é ignorado, com aviso. Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `HidreletricaCurvaJusantePolinomioPorPartesSegmento`) alimentam `system/tailrace_curves.parquet`.
 
 - `HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · codigo_usina` → `system/tailrace_curves.parquet` › `hydro_id`
 - `HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · indice_familia` → `system/tailrace_curves.parquet` › `family_id`
@@ -1612,30 +1618,18 @@ Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `Hidreletrica
 
 **Estado:** convertido em parte. **Lido por:** `system/hydro_production_models.json`.
 
-Só a linha ativa terminada em `ANGULO-PADRAO` ou `DISTANCIA-PADRAO` vira `fpha_plane_reduction` em `system/hydro_production_models.json`; o número de amostras do método por distância é uma constante do bridge.
+Localizado pela chave `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` de `indices.csv`; um arquivo com esse nome que o índice não lista é ignorado, com aviso. Só a linha ativa terminada em `ANGULO-PADRAO` ou `DISTANCIA-PADRAO` vira `fpha_plane_reduction` em `system/hydro_production_models.json`; o número de amostras do método por distância é uma constante do bridge.
 
 - `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO / HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO` → `system/hydro_production_models.json` › `fpha_plane_reduction.method`
 - `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO` → `system/hydro_production_models.json` › `fpha_plane_reduction.tolerance_deg`
 - `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO` → `system/hydro_production_models.json` › `fpha_plane_reduction.tolerance_pct`
 - `linhas por usina (sufixo diferente de -PADRAO)` — *não lido.* Ajustes do método de redução de cortes por usina; o Novomodelo só aceita um método por caso.
 
-### `caso.dat`
-
-**Estado:** arquivo de índice, lido para localizar os demais.
-
-Nomeia o arquivo de índice (`arquivos.dat` por padrão). Lido apenas para localizar os demais arquivos do caso.
-
-### `arquivos.dat`
-
-**Estado:** arquivo de índice, lido para localizar os demais.
-
-Índice que nomeia cada arquivo de dados do caso. Lido apenas para localizar os demais arquivos; os nomes que aponta são resolvidos sem distinção de maiúsculas.
-
 ### `restricao-eletrica.csv`
 
 **Estado:** convertido em parte. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`.
 
-Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por um parser próprio; as demais chaves de `indices.csv` não são seguidas.
+Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por um parser próprio; um arquivo com esse nome que o índice não lista é ignorado, com aviso.
 
 - `RE · cod_rest` → `constraints/generic_constraints.json` › `constraints[].id`
 - `RE · cod_rest` → `constraints/generic_constraints.json` › `constraints[].name`
@@ -1652,11 +1646,17 @@ Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por 
 - `funções de fórmula além de ger_usih e ener_interc` — *não lido.* Só termos `ger_usih(usina)` e `ener_interc(de, para)` são traduzidos para `hydro_generation` e `line_direct`/`line_reverse`; qualquer outra função (térmica, eólica, carga) é descartada silenciosamente pelo parser de fórmula.
 - `registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*` — *não lido.* Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O parser ignora toda linha cujo primeiro campo não seja `RE`, `RE-HORIZ-PER` ou `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`.
 
-### `indices.csv`
+### `caso.dat`
 
 **Estado:** arquivo de índice, lido para localizar os demais.
 
-Índice dos arquivos LIBs. Lido apenas para localizar `restricao-eletrica.csv`.
+Nomeia o arquivo de índice (`arquivos.dat` por padrão). Lido apenas para localizar os demais arquivos do caso.
+
+### `arquivos.dat`
+
+**Estado:** arquivo de índice, lido para localizar os demais.
+
+Índice que nomeia cada arquivo de dados do caso. Lido apenas para localizar os demais arquivos; os nomes que aponta são resolvidos sem distinção de maiúsculas.
 
 ### `arquivos de saída do NEWAVE`
 

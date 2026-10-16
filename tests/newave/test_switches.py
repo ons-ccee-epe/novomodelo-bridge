@@ -105,20 +105,22 @@ class TestSwitchedOffInputs:
                 restricoes_eletricas_especiais=0,  # csv absent: not reported
             )
         )
-        off = switched_off_inputs(files, switches, restricao_eletrica_present=False)
+        off = switched_off_inputs(files, switches)
         assert [s.ignored for s in off] == [
             "ghmin.dat",
             "TURBMAXT records of modif.dat",
         ]
 
-    def test_min_outflow_needs_no_file_and_csv_presence_is_an_argument(
+    def test_min_outflow_needs_no_file_and_csv_presence_comes_from_the_index(
         self, tmp_path: Path
     ) -> None:
-        files = make_nw_files(tmp_path)
+        files = make_nw_files(
+            tmp_path, restricao_eletrica=tmp_path / "restricao-eletrica.csv"
+        )
         switches = DgerSwitches.from_dger(
             _dger(desconsidera_vazao_minima=1, restricoes_eletricas_especiais=0)
         )
-        off = switched_off_inputs(files, switches, restricao_eletrica_present=True)
+        off = switched_off_inputs(files, switches)
         assert [s.ignored for s in off] == [
             "restricao-eletrica.csv",
             "minimum outflow (VAZMIN, VAZMINT)",
