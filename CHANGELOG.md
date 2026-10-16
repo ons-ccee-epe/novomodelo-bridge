@@ -36,6 +36,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negative incremental inflow of the tree to zero before it enters the LP; the
   penalised inflow slack stays as before. DECOMP results can change where a
   node's incremental inflow is negative.
+- **VminOP (NEWAVE) and RHE (DECOMP) bound stored energy in MWh with cobre's
+  scaled parameters.** The bridge no longer computes the integrated
+  accumulated productivity itself: expressions reference cobre's
+  `scaled_integrated_accumulated_productivity` (`@rho_acum_scaled_h{id}`,
+  MWh/hm³). VminOP bounds useful stored energy,
+  `Σ @rho_acum_scaled_h{id} * hydro_useful_volume_final(id) >=
+  Σ @pct_vminop_ree{code} * @earm_max_h{id}`, with the curve as a per-stage
+  fraction. RHE bounds useful stored energy the same way, the base of the
+  source model's `%EAMAX`: a percentage limit is `limite/100 · @earm_max_h{id}`
+  and an absolute limit is converted from MWmês to MWh with the stage hours.
+- **VminOP and RHE are emitted as one constraint per stage.** cobre multiplies
+  generic-constraint slack by the stage hours, so each stage is priced at the
+  R$/MWh penalty divided by its own hours, which keeps the effective violation
+  cost at R$/MWh on months of 672–744 h and on weekly DECOMP stages. They are
+  named `VminOP_<REE>_s<stage>` and `RHE_<code>_s<stage>`, and the ids of the
+  constraint families emitted after them shift accordingly.
+- **`compare` and `dashboard` read generic constraints from cobre's echo.**
+  The Constraints tabs take each term's coefficient and each row's bounds
+  from `output/generic_constraints/resolved_echo.parquet`, as the LP received
+  them, instead of re-deriving them from the expression text and
+  `generic_parameters.json`. VminOP and RHE are shown as one constraint per
+  REE or record across their stages, with the penalty in R$/MWh; VminOP reads
+  as useful stored energy in MWh against the curve fraction of its maximum,
+  and the source-model side weights `VARMUH` by the same coefficients. The
+  DECOMP RHE achieved value is converted from stage-average MW to MWh. A
+  constraint with a term the simulation output cannot value is left out of
+  the cobre-side LHS instead of being evaluated partially.
+- **`generic_parameters.json` declares the scaled per-hydro parameters.** Every
+  hydro also gets `rho_eq_scaled_h{id}`, `rho_acum_scaled_h{id}` and
+  `earm_max_h{id}` (cobre's `scaled_integrated_equivalent_productivity`,
+  `scaled_integrated_accumulated_productivity` and `scaled_max_stored_energy`),
+  and `rho_acum_h{id}` is always cobre's computed point productivity.
 
 ### Fixed
 

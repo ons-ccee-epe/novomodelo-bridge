@@ -1,45 +1,34 @@
 """DECOMP writer for ``constraints/generic_parameters.json``.
 
-RHE (``HE``/``CM``) constraints are stored-energy generics of the VminOP
-shape ``Σ_{p∈REE} @rho_acum_h{id} * hydro_storage(id) >= limite``.
-Each ``@rho_acum_h{id}`` token is a scalar-parameter sigil that
-novomodelo must resolve at solve time; novomodelo defaults it to its own *point*
-accumulated productivity, but the source model evaluates stored energy with
-the **integrated** accumulated productivity (the volume-integral EARM
-convention), which differs by up to ~10% on plants with head swing. So the
-LHS coefficient at ``@rho_acum_h{id}`` must be overridden with the same
-integrated per-stage ρ_acum the RHE generic emitter uses to build the RHS, or
-the LP's LHS silently drifts from the RHS.
+RHE (``HE``/``CM``) constraints are stored-energy generics of the shape
+``Σ_{p∈REE} @rho_acum_scaled_h{id} * hydro_storage_final(id) >= limite``
+(MWh). Every ``@name`` token must be declared in the parameters file or
+novomodelo fails to load the case; novomodelo resolves the scaled integrated
+accumulated productivity itself at solve time.
 
 This module owns building and writing that declaration file for the DECOMP
 case. It delegates entry-building to the model-agnostic
 :func:`novomodelo_bridge.novomodelo.scalar_parameters.build_scalar_parameters` —
 the same reuse posture as ``decomp/productivity.py``.
-
-Override contract (produced by the RHE generic emitter, consumed here):
-``{novomodelo_hydro_id: [ρ_acum per stage in MWmês/hm³]}`` — one float per
-operative stage, already divided by the DECOMP stage-hours energy factor
-(the RHE generic emitter owns that division). A hydro absent from the
-override map keeps
-novomodelo's ``computed`` default; a hydro present switches to a ``per_stage``
-entry.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 from novomodelo_bridge.novomodelo.scalar_parameters import (
     build_scalar_parameters,
-    rho_acum_name,  # re-exported for the RHE emitter's @-sigil expression
+    earm_max_name,  # re-exported for the RHE emitter's @-sigil expression
+    rho_acum_scaled_name,  # re-exported for the RHE emitter's @-sigil expression
 )
 
 __all__ = [
     "build_decomp_scalar_parameters",
+    "earm_max_name",
     "write_scalar_parameters",
-    "rho_acum_name",
+    "rho_acum_scaled_name",
 ]
 
 # Live path on novomodelo's feat/generic-constraint-authoring branch
@@ -50,24 +39,15 @@ __all__ = [
 _SCALAR_PARAMETERS_RELPATH = Path("constraints") / "generic_parameters.json"
 
 
-def build_decomp_scalar_parameters(
-    hydro_ids: Iterable[int],
-    rho_acum_per_stage_overrides: Mapping[int, Sequence[float]] | None = None,
-) -> dict:
+def build_decomp_scalar_parameters(hydro_ids: Iterable[int]) -> dict:
     """Return the ``generic_parameters.json`` dict for a DECOMP case.
 
     Thin delegation to
     :func:`novomodelo_bridge.novomodelo.scalar_parameters.build_scalar_parameters`
-    — *hydro_ids* and *rho_acum_per_stage_overrides* pass straight through,
-    the entry-building logic is not reimplemented here.
-
-    *hydro_ids* are novomodelo 0-based hydro ids (the declared set); the override
-    keys are the same 0-based ids, mapping each hydro to its per-stage
-    integrated ρ_acum in MWmês/hm³ (see module docstring for the full
-    contract). A hydro absent from the override map keeps novomodelo's
-    ``computed`` default.
+    over *hydro_ids* (novomodelo 0-based hydro ids, the declared set) — the
+    entry-building logic is not reimplemented here.
     """
-    return build_scalar_parameters(hydro_ids, rho_acum_per_stage_overrides)
+    return build_scalar_parameters(hydro_ids)
 
 
 def write_scalar_parameters(writer: CaseWriter, params: Mapping[str, object]) -> None:

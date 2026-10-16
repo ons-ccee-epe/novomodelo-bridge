@@ -20,8 +20,7 @@ from novomodelo_bridge.dashboard.tabs.constraints_utils import (
     derive_constraint_shape,
 )
 from novomodelo_bridge.novomodelo.constraint_expr import (
-    evaluate_constraint_expressions,
-    load_rho_acum_overrides,
+    evaluate_lhs,
 )
 from novomodelo_bridge.ui.html.document import (
     escape_attr,
@@ -555,15 +554,9 @@ def can_render(data: DashboardData) -> bool:
 
 def render(data: DashboardData) -> str:
     """Return the full HTML string for the v2 Constraints tab content area."""
-    # Evaluate LHS expressions once; passed to LHS vs Bound chart. A
-    # @rho_acum_h{id}-scaled term (VminOP, RHE) resolves against the LP's
-    # per-stage override, not the simulation's default point-productivity
-    # column -- otherwise the LHS renders on the wrong scale relative to its
-    # own (unmodified) bound.
-    rho_acum_overrides = load_rho_acum_overrides(data.case_dir)
-    lhs_df = evaluate_constraint_expressions(
-        data.gc_constraints, data.hydros_lf, data.exchanges_lf, rho_acum_overrides
-    )
+    # Evaluate the LHS once from novomodelo's own resolved coefficients; passed to
+    # the LHS vs Bound chart.
+    lhs_df = evaluate_lhs(data.gc_resolved, data.hydros_lf, data.exchanges_lf)
 
     # --- Section A: metrics row ---
     section_a = _build_metrics_row(data)

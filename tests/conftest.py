@@ -695,3 +695,45 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
             return_value=None,
         ),
     ]
+
+
+#: One synthetic echo term: ``(constraint_id, constraint_name, stage_id,
+#: block_id, variable, coefficient, bound_lower, bound_upper)``.
+EchoTerm = tuple[int, str, int, int | None, str, float, float | None, float | None]
+
+
+def write_generic_constraint_echo(output_dir: Path, terms: list[EchoTerm]) -> None:
+    """Write a synthetic ``generic_constraints/resolved_echo.parquet``.
+
+    The ``variable`` text follows novomodelo's rendering (``kind(id=N, block=all)``);
+    ``variable_kind`` is its prefix and ``term_index`` its position within the
+    ``(constraint, stage, block)`` row.
+    """
+    import pyarrow.parquet as pq
+
+    positions: dict[tuple[int, int, int | None], int] = {}
+    term_index: list[int] = []
+    for cid, _name, stage, block, *_rest in terms:
+        key = (cid, stage, block)
+        term_index.append(positions.get(key, 0))
+        positions[key] = term_index[-1] + 1
+    table = pa.table(
+        {
+            "stage_id": pa.array([t[2] for t in terms], pa.int32()),
+            "block_id": pa.array([t[3] for t in terms], pa.int32()),
+            "constraint_id": pa.array([t[0] for t in terms], pa.int32()),
+            "constraint_name": pa.array([t[1] for t in terms], pa.string()),
+            "term_index": pa.array(term_index, pa.int32()),
+            "variable_kind": pa.array([t[4].split("(")[0] for t in terms], pa.string()),
+            "variable": pa.array([t[4] for t in terms], pa.string()),
+            "coefficient": pa.array([t[5] for t in terms], pa.float64()),
+            "bound_lower": pa.array([t[6] for t in terms], pa.float64()),
+            "bound_upper": pa.array([t[7] for t in terms], pa.float64()),
+            "derived_shape": pa.array(["floor"] * len(terms), pa.string()),
+            "slack_enabled": pa.array([True] * len(terms), pa.bool_()),
+            "slack_penalty": pa.array([1.0] * len(terms), pa.float64()),
+        }
+    )
+    path = output_dir / "generic_constraints" / "resolved_echo.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, path)

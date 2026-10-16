@@ -2497,9 +2497,9 @@ def _storage_lookup(
     the same floor `_novomodelo_hydro` subtracts in the other direction for the
     Hydro Operation tab's own storage row -- rather than rebuilding
     ``EffectiveCadastro`` from the deck a second time. A single static value
-    per plant, not per-stage: the same simplification
-    `constraints_compare._load_hydro_min_storage` already accepts on the
-    source-model side.
+    per plant, not per-stage: the same simplification the shared generic
+    constraint view (`novomodelo.constraint_expr.resolve_generic_constraints`)
+    accepts for its useful-volume terms.
     """
     useful = _stage_frame_to_lookup(hydro_frame, "volume_util_final_hm3")
     out: dict[tuple[int, int], float] = {}
@@ -2564,9 +2564,9 @@ def _rhe_lhs_lookup(
 
     RHE constraints report their achieved LHS directly in
     ``DecOperRheSoft``: ``valor_MW`` is the achieved Σρ_acum·storage in the
-    operation -- the same raw physical quantity novomodelo's own (slack-free)
-    expression evaluation produces, so the two overlaid series compare on
-    the same basis. Read it directly rather than re-deriving the
+    operation, as a stage-average MW -- the stored energy novomodelo's own
+    (slack-free) expression evaluation produces in MWh, once the caller
+    multiplies it by the stage's hours. Read it directly rather than re-deriving the
     ρ_acum-weighted cascade sum ``decomp.converters.constraints.emit_rhe_generics``
     computes at conversion time, which would duplicate a large, easily
     drifting piece of machinery.
@@ -2645,7 +2645,9 @@ def _generic_constraint_lhs_decomp(
       ``dec_oper_usih``'s *useful* stage-final volume, floor-adjusted to
       novomodelo's absolute basis (see `_storage_lookup`).
     - **RHE** (soft stored-energy): read directly from ``DecOperRheSoft``
-      (see `_rhe_lhs_lookup`) -- no register/census lookup needed.
+      (see `_rhe_lhs_lookup`) -- no register/census lookup needed -- and
+      converted from stage-average MW to MWh with the stage's hours, the unit
+      of novomodelo's RHE row.
 
     Deferred (novomodelo-only render, logged, never fabricated): RE
     ``interchange`` (FI) and HQ ``QBOM`` (pumping) terms -- see
@@ -2692,6 +2694,7 @@ def _generic_constraint_lhs_decomp(
     rhe_lhs = _rhe_lhs_lookup(
         _dec_oper_rhesoft_frame(decomp_dir), probabilities=probabilities
     )
+    stage_hours = novomodelo_readers.read_novomodelo_stage_hours(novomodelo_output_dir)
 
     rows: list[dict[str, object]] = []
     n_skipped = 0
@@ -2722,8 +2725,13 @@ def _generic_constraint_lhs_decomp(
                 n_skipped += 1
                 continue
             rows.extend(
-                {"constraint_id": novomodelo_cid, "stage_id": stage, "lhs_value": value}
+                {
+                    "constraint_id": novomodelo_cid,
+                    "stage_id": stage,
+                    "lhs_value": value * stage_hours[stage],
+                }
                 for stage, value in stage_values.items()
+                if stage in stage_hours
             )
             continue
 
@@ -3004,24 +3012,17 @@ def build_decomp_dataset(
     # docstring for the per-family derivation.
     from novomodelo_bridge.comparators.constraints import (
         evaluate_lhs_novomodelo,
-        load_generic_constraint_bounds,
-        load_generic_constraints,
+        load_resolved_generic_constraints,
     )
-    from novomodelo_bridge.novomodelo.constraint_expr import load_rho_acum_overrides
 
     novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
-    gc_constraints = load_generic_constraints(novomodelo_case_dir)
-    gc_bounds_df = load_generic_constraint_bounds(novomodelo_case_dir)
+    gc_resolved = load_resolved_generic_constraints(
+        novomodelo_case_dir, novomodelo_output_dir
+    )
+    gc_constraints = gc_resolved.constraints
+    gc_bounds_df = gc_resolved.bounds
     if gc_constraints:
-        # RHE's ``@rho_acum_h{id}`` resolves against the LP's per-stage
-        # override (same mechanism as VminOP), not the simulation's default
-        # productivity column -- unlike the source-model VminOP path, RHE's
-        # bound is never useful-energy-shifted (dead volume can exceed the
-        # bound here), so only the LHS scaling is corrected.
-        rho_acum_overrides = load_rho_acum_overrides(novomodelo_case_dir)
-        gc_lhs_cb = evaluate_lhs_novomodelo(
-            gc_constraints, novomodelo_output_dir, rho_acum_overrides
-        )
+        gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
         gc_lhs_nw = _generic_constraint_lhs_decomp(
             case, novomodelo_output_dir, gc_constraints, probabilities=probabilities
         )

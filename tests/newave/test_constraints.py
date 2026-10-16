@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,7 +17,6 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
 )
 from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
-from novomodelo_bridge.core.units import C_M3S2HM3
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.constraints import (
     _curve_seasonalizes,
@@ -24,7 +24,6 @@ from novomodelo_bridge.newave.converters.constraints import (
     _is_stored_energy_reservoir,
     _parse_formula,
     _parse_re_dat,
-    _vminop_energy_factor,
     _warn_if_non_fixa_penalization,
     compute_accumulated_integrated_productivities,
     compute_accumulated_productivities,
@@ -397,120 +396,49 @@ class TestAccumulatedIntegratedProductivities:
         assert acc[1] == pytest.approx(own_a + own_b + own_c)
 
 
-class TestBuildScalarParametersOverride:
-    """build_scalar_parameters switches rho_acum_h{id} to kind=per_stage
-    only for hydros present in the override map."""
+class TestBuildScalarParameters:
+    """build_scalar_parameters declares the per-hydro computed family for every
+    hydro, then the caller's per_stage entries."""
 
-    def test_no_overrides_emits_only_computed(self) -> None:
-        d = build_scalar_parameters([0, 1])
-        # 4 entries (rho_eq + rho_acum) × 2 plants; all computed.
-        assert len(d["scalar_parameters"]) == 4
-        assert all(e["kind"] == "computed" for e in d["scalar_parameters"])
-        names = [e["name"] for e in d["scalar_parameters"]]
-        assert names == ["rho_eq_h0", "rho_acum_h0", "rho_eq_h1", "rho_acum_h1"]
-
-    def test_override_switches_only_rho_acum_to_per_stage(self) -> None:
-        d = build_scalar_parameters(
-            [0, 1, 2], rho_acum_per_stage_overrides={1: [1.5, 1.6, 1.7]}
-        )
-        by_name = {e["name"]: e for e in d["scalar_parameters"]}
-        # Only plant 1's rho_acum becomes per_stage; everything else is computed.
-        assert by_name["rho_acum_h1"]["kind"] == "per_stage"
-        assert by_name["rho_acum_h1"]["values"] == [
-            [0, 1.5],
-            [1, 1.6],
-            [2, 1.7],
+    def test_declares_the_computed_family_per_hydro(self) -> None:
+        d = build_scalar_parameters([1, 0, 1])
+        entries = d["scalar_parameters"]
+        assert [e["name"] for e in entries] == [
+            "rho_eq_h0",
+            "rho_acum_h0",
+            "rho_eq_scaled_h0",
+            "rho_acum_scaled_h0",
+            "earm_max_h0",
+            "rho_eq_h1",
+            "rho_acum_h1",
+            "rho_eq_scaled_h1",
+            "rho_acum_scaled_h1",
+            "earm_max_h1",
         ]
-        assert "computed_spec" not in by_name["rho_acum_h1"]
-        # rho_eq_h1 is still computed — the override is only for ρ_acum.
-        assert by_name["rho_eq_h1"]["kind"] == "computed"
-        assert by_name["rho_eq_h1"]["computed_spec"]["tag"] == "equivalent_productivity"
-        # Plants without overrides stay computed.
-        assert by_name["rho_acum_h0"]["kind"] == "computed"
-        assert by_name["rho_acum_h2"]["kind"] == "computed"
+        assert all(e["kind"] == "computed" for e in entries)
+        assert [e["computed_spec"]["tag"] for e in entries[:5]] == [
+            "equivalent_productivity",
+            "accumulated_productivity",
+            "scaled_integrated_equivalent_productivity",
+            "scaled_integrated_accumulated_productivity",
+            "scaled_max_stored_energy",
+        ]
+        assert {e["computed_spec"]["hydro_id"] for e in entries[5:]} == {1}
 
-    def test_overrides_preserve_unique_ids(self) -> None:
-        d = build_scalar_parameters(
-            [0, 1], rho_acum_per_stage_overrides={0: [2.0], 1: [3.0]}
-        )
+    def test_per_stage_entries_follow_the_computed_family(self) -> None:
+        d = build_scalar_parameters([0], per_stage={"pct_vminop_ree1": [0.2, 0.25]})
+        entries = d["scalar_parameters"]
+        assert entries[-1] == {
+            "id": 5,
+            "name": "pct_vminop_ree1",
+            "kind": "per_stage",
+            "values": [[0, 0.2], [1, 0.25]],
+        }
+
+    def test_ids_are_contiguous_from_zero(self) -> None:
+        d = build_scalar_parameters([0, 1], per_stage={"p": [1.0]})
         ids = [e["id"] for e in d["scalar_parameters"]]
-        assert ids == sorted(set(ids))
-
-
-class TestPerStageAccumulatedProductivities:
-    """Per-stage cascade-sum of own ρ_eq for the VminOP RHS bound."""
-
-    def test_no_overrides_yields_flat_lists(self) -> None:
-        """Without CFUGA/CMONT inputs every plant has a constant ρ_acum across
-        stages."""
-        from novomodelo_bridge.newave.converters.constraints import (
-            compute_per_stage_acc_productivities,
-        )
-
-        confhd_df = _make_confhd_df()
-        # Three plants, two stages, all own ρ_eq constant in time.
-        per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.9, 0.9]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
-
-        # Plant 3 is the sink → ρ_acum(3) = own(3) at every stage.
-        assert acc[3] == pytest.approx([0.9, 0.9])
-        # Plant 2 → ρ_acum(2) = own(2) + ρ_acum(3) = 1.6
-        assert acc[2] == pytest.approx([1.6, 1.6])
-        # Plant 1 → ρ_acum(1) = own(1) + ρ_acum(2) = 2.1
-        assert acc[1] == pytest.approx([2.1, 2.1])
-
-    def test_override_on_downstream_propagates_upstream_only_after_stage(
-        self,
-    ) -> None:
-        """A CFUGA-style change in plant 3's own ρ_eq at stage 1 shifts every
-        upstream plant's ρ_acum from that stage on. Stage 0 stays unchanged.
-        """
-        from novomodelo_bridge.newave.converters.constraints import (
-            compute_per_stage_acc_productivities,
-        )
-
-        confhd_df = _make_confhd_df()
-        # Plant 3 ρ_eq drops from 0.9 to 0.6 starting at stage 1.
-        per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.9, 0.6]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
-
-        # Stage 0: unchanged baselines.
-        assert acc[3][0] == pytest.approx(0.9)
-        assert acc[2][0] == pytest.approx(1.6)
-        assert acc[1][0] == pytest.approx(2.1)
-        # Stage 1: ρ_acum shifts everywhere in plant 3's upstream cone.
-        assert acc[3][1] == pytest.approx(0.6)
-        assert acc[2][1] == pytest.approx(0.7 + 0.6)
-        assert acc[1][1] == pytest.approx(0.5 + 0.7 + 0.6)
-
-    def test_sibling_branch_unaffected_by_override(self) -> None:
-        """Sibling branches stay untouched when a leaf in another branch shifts."""
-        from novomodelo_bridge.newave.converters.constraints import (
-            compute_per_stage_acc_productivities,
-        )
-
-        # Two independent branches: 1→2 (sink), 3→4 (sink). 1 and 3 are headwaters.
-        confhd_df = pd.DataFrame(
-            {
-                "codigo_usina": [1, 2, 3, 4],
-                "nome_usina": ["A", "B", "C", "D"],
-                "usina_existente": ["EX", "EX", "EX", "EX"],
-                "codigo_usina_jusante": [2, 0, 4, 0],
-                "ree": [1, 1, 1, 1],
-                "posto": [1, 2, 3, 4],
-                "volume_inicial_percentual": [50.0, 50.0, 50.0, 50.0],
-            }
-        )
-        # Branch 1→2: constant. Branch 3→4: plant 4 ρ_eq drops at stage 1.
-        per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.4, 0.4], 4: [0.8, 0.5]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
-
-        # Branch 1→2 unchanged across stages.
-        assert acc[1] == pytest.approx([1.2, 1.2])
-        assert acc[2] == pytest.approx([0.7, 0.7])
-        # Branch 3→4 shifts at stage 1.
-        assert acc[3][0] == pytest.approx(1.2)
-        assert acc[3][1] == pytest.approx(0.9)
+        assert ids == list(range(len(ids)))
 
 
 class TestConvertVminopConstraints:
@@ -1717,17 +1645,12 @@ class TestConstraintResultTypes:
         from novomodelo_bridge.newave.converters.constraints import VminopResult
 
         bounds = pa.table({"constraint_id": [0]})
-        r = VminopResult({"constraints": [1, 2]}, bounds, [3, 4], {5: [1.0]})
-        # Named access (new).
+        r = VminopResult({"constraints": [1, 2]}, bounds, [3, 4], {"p": [1.0]})
         assert r.constraints_dict == {"constraints": [1, 2]}
         assert r.bounds is bounds
         assert r.referenced_hydro_ids == [3, 4]
-        assert r.rho_acum_overrides == {5: [1.0]}
-        # Legacy index / destructure still works (backward compatible).
+        assert r.per_stage_parameters == {"p": [1.0]}
         assert r[2] == [3, 4]
-        cdict, b, ids, overrides = r
-        assert cdict == {"constraints": [1, 2]}
-        assert ids == [3, 4]
 
     def test_generic_constraint_result_named_and_tuple_access(self) -> None:
         from novomodelo_bridge.newave.converters.constraints import (
@@ -1742,38 +1665,150 @@ class TestConstraintResultTypes:
         assert constraints == [{"id": 0}]
 
 
-class TestVminopEnergyFactor:
-    """Guard the VminOP unit conversion: ρ_acum·hm³ → MWmonth must use each
-    stage's *real* month length, not the source model's fixed 730 h.
+def _make_vminop_case(
+    tmp_path: Path,
+    *,
+    curve: list[tuple[datetime, float]],
+    penalty: float = 1488.0,
+    num_anos_pos_estudo: int = 0,
+    seasonalize: bool = False,
+) -> tuple[NewaveCase, NewaveIdMap]:
+    """REE 1 (SUDESTE) over the three-plant monthly-reservoir cascade."""
+    cadastro = _make_cadastro()
+    cadastro["tipo_regulacao"] = "M"
 
-    Regression for the security-curve bug: leaving the VminOP LHS in
-    ρ_acum·hm³ (≈ 2.628× true MWmonth) while novomodelo prices the slack
-    ``× block_hours`` made the effective curve-violation penalty exceed the
-    deficit cost, so novomodelo deficited instead of drawing reservoirs down.
-    """
+    dger = MagicMock()
+    dger.mes_inicio_estudo = 1
+    dger.ano_inicio_estudo = 2020
+    dger.num_anos_estudo = 1
+    dger.num_anos_pos_estudo = num_anos_pos_estudo
+    dger.curva_aversao = 1
 
-    def test_factor_matches_real_month_hours(self) -> None:
-        # Study starting Sep 2024 (the example horizon).
-        #   stage 0 = Sep 2024 (30 d = 720 h)
-        #   stage 3 = Dec 2024 (31 d = 744 h)
-        #   stage 5 = Feb 2025 (28 d = 672 h)
-        assert _vminop_energy_factor(2024, 9, 0) == pytest.approx(720 * 3600 / 1e6)
-        assert _vminop_energy_factor(2024, 9, 3) == pytest.approx(744 * 3600 / 1e6)
-        assert _vminop_energy_factor(2024, 9, 5) == pytest.approx(672 * 3600 / 1e6)
+    curva = MagicMock()
+    curva.curva_seguranca = pd.DataFrame(
+        {
+            "codigo_ree": [1] * len(curve),
+            "data": [d for d, _ in curve],
+            "valor": [v for _, v in curve],
+        }
+    )
+    curva.configuracoes_penalizacao = [0, 11, 1 if seasonalize else 0]
+    curva.custos_penalidades = pd.DataFrame(
+        {"codigo_ree": [1], "penalidade": [penalty]}
+    )
 
-    def test_factor_differs_from_fixed_constant_off_730(self) -> None:
-        # Short/long months must NOT use the fixed 730 h constant — that was the
-        # bug. February (672 h) is ~8% below C_M3S2HM3.
-        feb = _vminop_energy_factor(2024, 9, 5)
-        assert feb != pytest.approx(C_M3S2HM3)
-        assert feb / C_M3S2HM3 == pytest.approx(672 / 730)
+    confhd = MagicMock()
+    confhd.usinas = _make_confhd_df()
+    hidr = MagicMock()
+    hidr.cadastro = cadastro
+    ree = MagicMock()
+    ree.rees = pd.DataFrame({"codigo": [1], "nome": ["SUDESTE"]})
 
-    def test_factor_equals_constant_for_730h_month(self) -> None:
-        # A hypothetical 730 h month (the source model's convention) reproduces
-        # C_M3S2HM3. No real calendar month is 730 h, so assert the relationship holds
-        # via the month-hours ratio instead (April = 30 d = 720 h).
-        apr = _vminop_energy_factor(2025, 4, 0)
-        assert apr == pytest.approx(C_M3S2HM3 * 720 / 730)
+    case = make_case(
+        tmp_path, dger=dger, curva=curva, confhd=confhd, hidr=hidr, ree=ree
+    )
+    id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[1, 2, 3], thermal_codes=[])
+    return case, id_map
+
+
+class TestVminopScaledStoredEnergy:
+    """VminOP bounds useful stored energy (MWh) with novomodelo's scaled parameters,
+    one constraint per stage priced at R$/MWh ÷ the stage's real hours."""
+
+    def test_expression_bounds_useful_energy_by_curve_fraction(
+        self, tmp_path: Path
+    ) -> None:
+        case, id_map = _make_vminop_case(tmp_path, curve=[(datetime(2020, 1, 1), 30.0)])
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        constraint = result.constraints_dict["constraints"][0]
+        assert constraint["expression"] == (
+            "@rho_acum_scaled_h0 * hydro_useful_volume_final(0)"
+            " + @rho_acum_scaled_h1 * hydro_useful_volume_final(1)"
+            " + @rho_acum_scaled_h2 * hydro_useful_volume_final(2)"
+            " >= @pct_vminop_ree1 * @earm_max_h0"
+            " + @pct_vminop_ree1 * @earm_max_h1"
+            " + @pct_vminop_ree1 * @earm_max_h2"
+        )
+        assert result.referenced_hydro_ids == [0, 1, 2]
+
+    def test_one_constraint_per_stage_with_zero_parquet_bound(
+        self, tmp_path: Path
+    ) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, m, 1), 20.0 + m) for m in range(1, 13)],
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        constraints = result.constraints_dict["constraints"]
+        assert [c["name"] for c in constraints] == [
+            f"VminOP_SUDESTE_s{s}" for s in range(12)
+        ]
+        rows = result.bounds.to_pylist()
+        assert [(r["constraint_id"], r["stage_id"]) for r in rows] == [
+            (c["id"], s) for s, c in enumerate(constraints)
+        ]
+        assert all(r["bound_lower"] == 0.0 for r in rows)
+        assert all(r["bound_upper"] is None and r["block_id"] is None for r in rows)
+
+    def test_penalty_is_divided_by_each_stage_real_hours(self, tmp_path: Path) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, m, 1), 20.0) for m in (1, 2)],
+            penalty=1488.0,
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        penalties = [
+            c["slack"]["penalty"] for c in result.constraints_dict["constraints"]
+        ]
+        # Jan 2020 = 744 h; Feb 2020 (leap year) = 696 h.
+        assert penalties[0] == pytest.approx(1488.0 / 744.0)
+        assert penalties[1] == pytest.approx(1488.0 / 696.0)
+        # Novomodelo's slack cost (penalty × stage hours) is back to R$/MWh.
+        assert penalties[1] * 696.0 == pytest.approx(1488.0)
+
+    def test_curve_fraction_parameter_covers_every_stage(self, tmp_path: Path) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, 1, 1), 30.0), (datetime(2020, 12, 1), 45.0)],
+            num_anos_pos_estudo=1,
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        values = result.per_stage_parameters["pct_vminop_ree1"]
+        assert len(values) == 24
+        # Percent becomes a fraction; uncovered in-study months stay 0 (no
+        # constraint there); the post-study tail freezes at December.
+        assert values[0] == pytest.approx(0.30)
+        assert values[1] == 0.0
+        assert values[11] == pytest.approx(0.45)
+        assert values[12:] == pytest.approx([0.45] * 12)
+        stages = [r["stage_id"] for r in result.bounds.to_pylist()]
+        assert stages == [0, 11, *range(12, 24)]
+
+    def test_seasonalized_tail_repeats_the_study_year(self, tmp_path: Path) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, m, 1), float(m)) for m in range(1, 13)],
+            num_anos_pos_estudo=1,
+            seasonalize=True,
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        values = result.per_stage_parameters["pct_vminop_ree1"]
+        assert values[12:] == pytest.approx([m / 100.0 for m in range(1, 13)])
 
 
 class TestConstraintsNoLongerBridgesLegacyWarning:

@@ -1233,8 +1233,8 @@ def _synthetic_rhv_record() -> ConstraintRecord:
 
 #: The RHE record's percentage limit — deliberately a *percentage*
 #: (``tipo_limite=2``) rather than an absolute MWmes limit, so its RHS
-#: genuinely depends on ρ_acum (an absolute limit would not exercise the
-#: "LHS sigil == the RHS ρ_acum it drove" wiring at all).
+#: genuinely references the scaled ρ_acum sigil (an absolute limit would not
+#: exercise the "LHS sigil == the RHS sigil" wiring at all).
 _RHE_LIMITE_PCT = 40.0
 
 
@@ -1279,21 +1279,22 @@ class TestGenericConstraintWiring:
     def test_ids_are_dense_and_unique_across_the_emitters(self, tmp_path: Path) -> None:
         """RE (one upper-only id) -> the combined RHQ/RHV emitter (one
         genuinely two-sided HQ id under novomodelo's F3 interval model + one
-        lower-only HV id) -> RHE (one id) share a single running allocator,
-        so the 4 emitted ids form a gap-free ``range(4)`` with no
-        collision, regardless of which emitter produced which id."""
+        lower-only HV id) -> RHE (one id per stage, three stages) share a
+        single running allocator, so the 6 emitted ids form a gap-free
+        ``range(6)`` with no collision, regardless of which emitter produced
+        which id."""
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, to_generic=_all_synthetic_generics()
         )
         doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
         ids = [c["id"] for c in doc["constraints"]]
-        assert len(ids) == 4
+        assert len(ids) == 6
         assert sorted(ids) == list(range(len(ids)))
         assert len(ids) == len(set(ids))
         # E7's fixed order: RE, then HQ/HV (combined), then RHE. The
         # genuinely two-sided HQ record is one F3 constraint, not two.
         by_family = [c["name"].split("_")[0] for c in doc["constraints"]]
-        assert by_family == ["RE", "HQ", "HV", "RHE"]
+        assert by_family == ["RE", "HQ", "HV", "RHE", "RHE", "RHE"]
 
     def test_writes_both_generic_files_when_generics_present(
         self, tmp_path: Path
@@ -1316,59 +1317,63 @@ class TestGenericConstraintWiring:
         assert not (dst / "constraints" / "generic_constraints.json").exists()
         assert not (dst / "constraints" / "generic_constraint_bounds.parquet").exists()
 
-    def test_rhe_rho_acum_sigil_matches_the_rhs_it_drove(self, tmp_path: Path) -> None:
-        """The ``@rho_acum_h{id}`` LHS sigil ``generic_parameters.json``
-        declares for a referenced hydro resolves to the SAME per-stage value
-        ``emit_rhe_generics`` used to compute that same constraint's own RHS
-        (a percentage-of-EARM limit, so the RHS genuinely depends on it) —
-        proving the pipeline wires the scalar-parameters half and the
-        RHE emitter half together, not two independently
-        computed values that merely happen to look alike."""
+    def test_rhe_scaled_sigils_are_declared_and_drive_the_rhs(
+        self, tmp_path: Path
+    ) -> None:
+        """Every ``@rho_acum_scaled_h{id}``/``@earm_max_h{id}`` sigil an RHE
+        expression references is declared in ``generic_parameters.json`` as
+        novomodelo's computed scaled integrated accumulated productivity and
+        maximum useful stored energy, and the percentage limit's RHS is
+        ``limite/100 · @earm_max_h{id}`` — proving the pipeline wires the
+        scalar-parameters half and the RHE emitter half together."""
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, to_generic=(_synthetic_rhe_record(),)
         )
 
         doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
-        [rhe] = doc["constraints"]
-        assert rhe["name"].startswith("RHE_")
-        referenced_hids = sorted(
-            int(hid) for hid in re.findall(r"rho_acum_h(\d+)", rhe["expression"])
-        )
-        assert referenced_hids == [0, 1]  # both fixture plants (REE 1)
+        rhe = doc["constraints"]
+        assert [c["name"] for c in rhe] == [f"RHE_904_s{s}" for s in range(3)]
 
         params = json.loads(
             (dst / "constraints" / "generic_parameters.json").read_text()
         )["scalar_parameters"]
-        per_stage_by_hid = {
-            hid: dict(
-                next(
-                    p
-                    for p in params
-                    if p["name"] == f"rho_acum_h{hid}" and p["kind"] == "per_stage"
-                )["values"]
-            )
-            for hid in referenced_hids
+        declared = {
+            p["name"]: p["computed_spec"]["tag"]
+            for p in params
+            if p["kind"] == "computed"
         }
+        referenced = set(
+            re.findall(r"@((?:rho_acum_scaled|earm_max)_h\d+)", rhe[0]["expression"])
+        )
+        assert referenced == {
+            "rho_acum_scaled_h0",
+            "rho_acum_scaled_h1",
+            "earm_max_h0",
+            "earm_max_h1",
+        }
+        assert all(
+            declared[name]
+            == (
+                "scaled_max_stored_energy"
+                if name.startswith("earm_max")
+                else "scaled_integrated_accumulated_productivity"
+            )
+            for name in referenced
+        )
+
+        # Fixture plants (codes 1, 2 -> hids 0, 1) share no coupled cascade.
+        assert rhe[0]["expression"].endswith(
+            f" >= {_RHE_LIMITE_PCT / 100.0} * @earm_max_h0"
+            f" + {_RHE_LIMITE_PCT / 100.0} * @earm_max_h1"
+        )
 
         bounds = pq.read_table(
             dst / "constraints" / "generic_constraint_bounds.parquet"
         ).to_pylist()
-        [bound_row] = [
-            row
-            for row in bounds
-            if row["constraint_id"] == rhe["id"] and row["stage_id"] == 0
+        rows = [row for row in bounds if row["constraint_id"] == rhe[0]["id"]]
+        assert [(r["stage_id"], r["bound_lower"], r["bound_upper"]) for r in rows] == [
+            (0, 0.0, None)
         ]
-
-        # volume_maximo per fixture plant (codes 1, 2 -> hids 0, 1) — no
-        # ACVOLMAX override active in this test (ac_volmax_frame=None), so
-        # the effective value equals the base _cadastro_plant_row vmax.
-        volume_maximo_by_hid = {0: 100.0, 1: 50.0}
-        expected_rhs = (_RHE_LIMITE_PCT / 100.0) * sum(
-            per_stage_by_hid[hid][0] * volume_maximo_by_hid[hid]
-            for hid in referenced_hids
-        )
-        assert bound_row["bound_lower"] == pytest.approx(expected_rhs)
-        assert bound_row["bound_upper"] is None
 
     def test_detection_diagnostics_flow_through_the_dx_sink(
         self, tmp_path: Path

@@ -8,8 +8,14 @@
     },
     {
       "id": 1,
-      "name": "VminOP_hydro0",
-      "expression": "@rho_acum_h0 * hydro_storage(0)",
+      "name": "VminOP_SUDESTE_s0",
+      "expression": "@rho_acum_scaled_h0 * hydro_useful_volume_final(0) >= @pct_vminop_ree1 * @earm_max_h0",
+      "description": "Security-curve stored-energy floor"
+    },
+    {
+      "id": 2,
+      "name": "VminOP_SUDESTE_s1",
+      "expression": "@rho_acum_scaled_h0 * hydro_useful_volume_final(0) >= @pct_vminop_ree1 * @earm_max_h0",
       "description": "Security-curve stored-energy floor"
     }
   ]
