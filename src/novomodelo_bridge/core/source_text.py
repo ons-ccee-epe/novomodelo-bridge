@@ -1,4 +1,4 @@
-"""The tab-character check on the source decks' fixed-column text files."""
+"""Reading the source decks' text files, and the tab check on fixed-column ones."""
 
 from __future__ import annotations
 
@@ -11,6 +11,20 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     format_stage_ranges,
 )
+
+
+def read_source_text(path: Path) -> str:
+    """*path*'s text in the encoding it was written in: UTF-8 when it is valid
+    UTF-8 (a BOM is dropped), else latin-1.
+
+    Decks mix encodings file by file, so the choice is never made once per deck.
+    """
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Not UTF-8 means a single-byte code page; latin-1 decodes every byte.
+        return data.decode("latin-1")
 
 
 def tab_character_diagnostic(
