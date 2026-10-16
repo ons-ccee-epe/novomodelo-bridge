@@ -10,10 +10,24 @@ in the [CLI reference](cli.md).
 
 `SRC` is the deck directory. `caso.dat` names the revision (`rv0`, `rv1`, and
 so on) and the revision's index file names that revision's data files:
-`dadger.rvN` and `vazoes.rvN`, the shared `hidr.dat` and `polinjus.csv`
-registries, `dadgnl.rvN` when the deck has fuel-constrained thermals, and the
-cut files when the deck declares them. The deck is parsed once and shared by
-every converter.
+`dadger.rvN` and `vazoes.rvN`, the shared `hidr.dat` registry, `dadgnl.rvN`
+when the deck has fuel-constrained thermals, and the cut files when the deck
+declares them. The deck is parsed once and shared by every converter.
+
+The CSV inputs of the LIBS family are found through the LIBS index that the
+`FA` register of `dadger.rvN` names. Each line of the index names a record key
+and the file that holds it, and the converter reads each LIBS record from the
+file listed for its key: the `PARQUE-EOLICO-EQUIVALENTE-*` records (the
+renewable plants, which must all be in one file),
+`HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` (the tailrace curves) and
+`RESTRICAO-ELETRICA-ESPECIAL` (the electrical constraints). Lines starting with
+`&` are comments. The `FJ` register can name the tailrace-curve file too, with
+or without an index; when both name one, they must agree. Apart from that file,
+a deck without `FA` has no LIBS records. A declared file that is not in the
+deck directory makes the deck fail to convert. A
+file with a usual LIBS name, such as `renovaveis.csv`, that nothing declares is
+ignored, and `check decomp` and `convert decomp` warn about it. The index is
+read as UTF-8 when it is valid UTF-8 and as Latin-1 otherwise.
 
 `check decomp` validates the deck without writing anything and also lists what
 the conversion will leave behind for this particular deck. Exit 0 means ready,

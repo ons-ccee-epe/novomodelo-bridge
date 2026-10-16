@@ -1663,7 +1663,7 @@ summary = "Uma linha por usina operada com produtibilidade constante (as usinas 
 [[output]]
 path = "system/tailrace_curves.parquet"
 kind = "parquet"
-when = "somente quando o deck traz `polinjus.csv` e ao menos um segmento de curva de jusante pertence a uma usina operada"
+when = "somente quando o índice LIBs (ou o registro `FJ`) aponta o arquivo de curvas de jusante e ao menos um segmento pertence a uma usina operada"
 module = "src/novomodelo_bridge/decomp/converters/fpha.py"
 reads = [
   { file = "polinjus" },
@@ -2486,7 +2486,6 @@ reads = [
   { file = "dadger", register = "PQ" },
   { file = "dadger", register = "AC" },
   { file = "hidr" },
-  { file = "indices" },
   { file = "libs_restricao_eletrica" },
   { file = "renovaveis" },
 ]
@@ -2611,7 +2610,6 @@ reads = [
   { file = "dadger", register = "PQ" },
   { file = "dadger", register = "AC" },
   { file = "hidr" },
-  { file = "indices" },
   { file = "libs_restricao_eletrica" },
   { file = "renovaveis" },
 ]
@@ -3047,13 +3045,13 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
 
   [[source.item]]
   register = "FA"
-  status = "unread"
-  note = "Nome do arquivo índice CSV das LIBs. Não lido: o bridge procura `indices.csv` diretamente no diretório do deck."
+  status = "index"
+  note = "Nome do arquivo índice CSV das LIBs. Lido para localizar o índice; sem `FA`, nenhum arquivo LIBs é lido."
 
   [[source.item]]
   register = "FJ"
-  status = "unread"
-  note = "Nome do arquivo de polinômios de jusante. Não lido: o bridge resolve `polinjus*` por prefixo no diretório do deck."
+  status = "index"
+  note = "Nome do arquivo de polinômios de jusante. Lido para localizar o arquivo, sozinho ou junto da chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` do índice; se os dois apontam arquivos diferentes, é erro."
 
   [[source.item]]
   register = "PU"
@@ -3230,17 +3228,17 @@ note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os ca
   note = "Tratamento de violação por intervalo de estágios. Não lido: só o tratamento fixo da restrição é usado."
 
 # ---------------------------------------------------------------------------
-# indices.csv — only one entry is resolved
+# LIBS index — named by the FA register
 # ---------------------------------------------------------------------------
 [[source]]
-file = "indices"
+file = "libs_index"
 status = "index"
-note = "Índice das LIBs do deck. O bridge lê apenas a entrada `RESTRICAO-ELETRICA-ESPECIAL` (caminho do arquivo de restrições elétricas)."
+note = "Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso."
 
   [[source.item]]
   item = "demais entradas (inclusive as irmãs -ATIVACAO e -VIOLACAO)"
   status = "unread"
-  note = "Os demais arquivos listados no índice não são abertos; `renovaveis*` e `polinjus*` são resolvidos por prefixo de nome, não pelo índice."
+  note = "Os demais arquivos listados no índice não são abertos."
 
 # ---------------------------------------------------------------------------
 # Deck input files the bridge never resolves

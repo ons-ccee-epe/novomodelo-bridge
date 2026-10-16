@@ -40,6 +40,7 @@ from novomodelo_bridge.core.productivity import (
     compute_productivity,
     stored_energy_productivity,
 )
+from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.core.units import C_M3S2HM3, MONTH_HOURS
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro import (
@@ -890,48 +891,6 @@ def convert_vminop_constraints(
 _UNBOUNDED_THRESHOLD = -1.0e29  # values below this are treated as -inf
 
 
-def _find_restricao_eletrica(directory: Path) -> Path | None:
-    """Locate ``restricao-eletrica.csv`` via ``indices.csv`` in *directory*.
-
-    Parses ``indices.csv`` case-insensitively, looking for the
-    ``RESTRICAO-ELETRICA-ESPECIAL`` key.  Returns the resolved path or
-    ``None`` if either file is absent.
-    """
-    indices_path: Path | None = None
-    for entry in directory.iterdir():
-        if entry.is_file() and entry.name.lower() == "indices.csv":
-            indices_path = entry
-            break
-
-    if indices_path is None:
-        return None
-
-    try:
-        with indices_path.open(encoding="latin-1") as fh:
-            for line in fh:
-                parts = [p.strip() for p in line.split(";")]
-                if (
-                    len(parts) >= 3
-                    and parts[0].upper() == "RESTRICAO-ELETRICA-ESPECIAL"
-                ):
-                    filename = parts[2].strip()
-                    if not filename:
-                        return None
-                    candidate = directory / filename
-                    if candidate.exists():
-                        return candidate
-                    # Case-insensitive fallback
-                    lower = filename.lower()
-                    for entry in directory.iterdir():
-                        if entry.is_file() and entry.name.lower() == lower:
-                            return entry
-                    return None
-    except OSError:
-        return None
-
-    return None
-
-
 def _parse_restricao_eletrica(
     path: Path,
 ) -> tuple[
@@ -954,31 +913,30 @@ def _parse_restricao_eletrica(
     horizons: dict[int, tuple[str, str]] = {}
     bounds: list[tuple[int, str, str, int, float, float]] = []
 
-    with path.open(encoding="latin-1") as fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line or line.startswith("&"):
-                continue
+    for raw_line in read_source_text(path).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("&"):
+            continue
 
-            parts = [p.strip() for p in line.split(";")]
+        parts = [p.strip() for p in line.split(";")]
 
-            if parts[0].upper() == "RE" and len(parts) >= 3:
-                cod = int(parts[1])
-                formula = parts[2]
-                expressions[cod] = formula
+        if parts[0].upper() == "RE" and len(parts) >= 3:
+            cod = int(parts[1])
+            formula = parts[2]
+            expressions[cod] = formula
 
-            elif parts[0].upper() == "RE-HORIZ-PER" and len(parts) >= 4:
-                cod = int(parts[1])
-                horizons[cod] = (parts[2], parts[3])
+        elif parts[0].upper() == "RE-HORIZ-PER" and len(parts) >= 4:
+            cod = int(parts[1])
+            horizons[cod] = (parts[2], parts[3])
 
-            elif parts[0].upper() == "RE-LIM-FORM-PER-PAT" and len(parts) >= 7:
-                cod = int(parts[1])
-                per_ini = parts[2]
-                per_fin = parts[3]
-                pat = int(parts[4])
-                lim_inf = float(parts[5])
-                lim_sup = float(parts[6])
-                bounds.append((cod, per_ini, per_fin, pat, lim_inf, lim_sup))
+        elif parts[0].upper() == "RE-LIM-FORM-PER-PAT" and len(parts) >= 7:
+            cod = int(parts[1])
+            per_ini = parts[2]
+            per_fin = parts[3]
+            pat = int(parts[4])
+            lim_inf = float(parts[5])
+            lim_sup = float(parts[6])
+            bounds.append((cod, per_ini, per_fin, pat, lim_inf, lim_sup))
 
     return expressions, horizons, bounds
 
@@ -1347,7 +1305,7 @@ def convert_electric_constraints(
         exactly one endpoint is populated per row.
     """
     switches = case.switches
-    re_path = _find_restricao_eletrica(case.files.directory)
+    re_path = case.files.restricao_eletrica
     if re_path is not None and not switches.restricao_eletrica.on:
         emit(switch_off_diagnostic(switches.restricao_eletrica), logger=_LOG)
         re_path = None

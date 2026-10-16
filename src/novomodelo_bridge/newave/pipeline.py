@@ -31,6 +31,7 @@ from novomodelo_bridge.newave.converters import stochastic as stochastic_conv
 from novomodelo_bridge.newave.converters import tailrace as tailrace_conv
 from novomodelo_bridge.newave.converters import temporal as temporal_conv
 from novomodelo_bridge.newave.converters import thermal as thermal_conv
+from novomodelo_bridge.newave.files import unindexed_libs_diagnostic
 from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -248,6 +249,9 @@ def _convert_newave_case_impl(
     tabs = tab_character_diagnostic(case.files.fixed_column_files)
     if tabs is not None:
         dx.emit(tabs)
+    unindexed = unindexed_libs_diagnostic(case.files)
+    if unindexed is not None:
+        dx.emit(unindexed)
 
     logger.debug("Building NewaveIdMap from %s", src)
     id_map = case.id_map

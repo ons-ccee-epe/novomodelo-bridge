@@ -128,12 +128,7 @@ def switch_off_diagnostic(switch: Switch) -> Diagnostic:
     )
 
 
-def switched_off_inputs(
-    files: NewaveFiles,
-    switches: DgerSwitches,
-    *,
-    restricao_eletrica_present: bool,
-) -> list[Switch]:
+def switched_off_inputs(files: NewaveFiles, switches: DgerSwitches) -> list[Switch]:
     """The switches that are off while the input they gate is present.
 
     Minimum outflow needs no file (``hidr.dat`` carries it for every plant);
@@ -145,7 +140,7 @@ def switched_off_inputs(
         "c_adic": files.c_adic is not None,
         "ghmin": files.ghmin is not None,
         "re_dat": files.re_dat is not None,
-        "restricao_eletrica": restricao_eletrica_present,
+        "restricao_eletrica": files.restricao_eletrica is not None,
         "min_outflow": True,
         "turbined_max": files.modif is not None,
         "turbined_min": files.modif is not None,

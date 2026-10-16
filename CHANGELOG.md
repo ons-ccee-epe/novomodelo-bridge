@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **LIBS files are read from the files the deck declares, not by name.** The
+  CSV inputs of the LIBS family were found by fixed file name or prefix; now
+  each record is read from the file the deck's LIBS index lists for its key,
+  as the source models read them. The index is `indices.csv` in a NEWAVE case
+  directory and the file the `FA` register names in a DECOMP deck (the `FJ`
+  register still names the tailrace-curve file on its own). A deck without an
+  index has no LIBS records; an index key whose file is missing, an `FJ` that
+  disagrees with the index, or renewable records spread over several files
+  now fail the conversion. A file with a usual LIBS name that nothing declares
+  is ignored, and `check` and `convert` warn about it on both tracks.
 - **`convert decomp` sets the inflow non-negativity method.** `config.json`
   now carries `modeling.inflow_non_negativity.method` =
   `"truncation_with_penalty"`, the method `convert newave` already sets,
@@ -29,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert newave` applies the FPHA plane reduction only when the case
+  declares it.** A `tratamento-fpha.csv` in the case directory set
+  `fpha_plane_reduction` even when `indices.csv` left out or commented out
+  `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES`, the line that makes NEWAVE use
+  it. Such a case now converts without the block, so Cobre keeps every FPHA
+  plane, and FPHA results change for those cases.
+- **A commented-out LIBS index line no longer triggers the DECOMP
+  electrical-constraint warning.** The check scanned the raw index text, so
+  an `&RESTRICAO-ELETRICA-ESPECIAL` line counted as present.
+- **`convert newave` reads a Latin-1 `tratamento-fpha.csv`.** The file was
+  read as UTF-8 only, so a Latin-1 one failed the conversion, while the
+  electrical-constraint file was read as Latin-1 only. Decks mix the two
+  encodings, so each of these files, and the LIBS index on both tracks, is
+  now read as UTF-8 when it is valid UTF-8 and as Latin-1 otherwise.
 - **`convert decomp` fits each plant's FPHA over its whole storage range.**
   The fitting window was a band of ±10 % of useful volume around the initial
   storage. Below the band, cobre's production planes are negative at zero

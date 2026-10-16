@@ -122,7 +122,6 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `hidr.dat` | ● | ● |  | ● |  |  | ● | ● | ● |
 | `renovaveis*` (opcional) |  |  |  |  |  |  | ● | ● |  |
 | `lib_restricao-eletrica-especial*.csv` (opcional) |  |  |  |  |  |  | ● | ● |  |
-| `indices.csv` |  |  |  |  |  |  | ● | ● |  |
 
 ### `boundary/`
 
@@ -421,7 +420,7 @@ Uma linha por usina operada com produtibilidade constante (as usinas FPHA são o
 ### `system/tailrace_curves.parquet`
 
 **Lê:** `polinjus.csv` (opcional), `dadger.rvN` (`UH`, `SB`, `CT`)  
-**Quando:** somente quando o deck traz `polinjus.csv` e ao menos um segmento de curva de jusante pertence a uma usina operada  
+**Quando:** somente quando o índice LIBs (ou o registro `FJ`) aponta o arquivo de curvas de jusante e ao menos um segmento pertence a uma usina operada  
 **Código:** `src/novomodelo_bridge/decomp/converters/fpha.py`
 
 Famílias de curvas de nível de jusante por usina (uma linha por segmento polinomial), copiadas do `polinjus.csv` para as usinas operadas e ordenadas por id Novomodelo, família e segmento; segmentos de usinas não operadas são descartados.
@@ -730,7 +729,7 @@ Limites e preço de cada contrato por estágio (estágios não declarados herdam
 
 ### `constraints/generic_constraints.json`
 
-**Lê:** `dadger.rvN` (`SB`, `CT`, `UH`, `DP`, `DT`, `RE`, `LU`, `FU`, `FT`, `FI`, `HQ`, `LQ`, `CQ`, `HV`, `LV`, `CV`, `HE`, `CM`, `CD`, `IA`, `UE`, `RI`, `MP`, `FD`, `PQ`, `AC`), `hidr.dat`, `indices.csv`, `lib_restricao-eletrica-especial*.csv` (opcional), `renovaveis*` (opcional)  
+**Lê:** `dadger.rvN` (`SB`, `CT`, `UH`, `DP`, `DT`, `RE`, `LU`, `FU`, `FT`, `FI`, `HQ`, `LQ`, `CQ`, `HV`, `LV`, `CV`, `HE`, `CM`, `CD`, `IA`, `UE`, `RI`, `MP`, `FD`, `PQ`, `AC`), `hidr.dat`, `lib_restricao-eletrica-especial*.csv` (opcional), `renovaveis*` (opcional)  
 **Quando:** somente quando ao menos uma restrição especial (RE com vários termos, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica  
 **Esquema:** [generic_constraints.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/generic_constraints.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/constraints.py`
 
@@ -747,7 +746,7 @@ Uma entrada por restrição especial que não se reduz a limite de entidade: `RE
 
 ### `constraints/generic_constraint_bounds.parquet`
 
-**Lê:** `dadger.rvN` (`SB`, `CT`, `UH`, `DP`, `DT`, `RE`, `LU`, `FU`, `FT`, `FI`, `HQ`, `LQ`, `CQ`, `HV`, `LV`, `CV`, `HE`, `CM`, `CD`, `IA`, `UE`, `RI`, `MP`, `FD`, `PQ`, `AC`), `hidr.dat`, `indices.csv`, `lib_restricao-eletrica-especial*.csv` (opcional), `renovaveis*` (opcional)  
+**Lê:** `dadger.rvN` (`SB`, `CT`, `UH`, `DP`, `DT`, `RE`, `LU`, `FU`, `FT`, `FI`, `HQ`, `LQ`, `CQ`, `HV`, `LV`, `CV`, `HE`, `CM`, `CD`, `IA`, `UE`, `RI`, `MP`, `FD`, `PQ`, `AC`), `hidr.dat`, `lib_restricao-eletrica-especial*.csv` (opcional), `renovaveis*` (opcional)  
 **Quando:** somente quando ao menos uma restrição especial (RE com vários termos, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica  
 **Código:** `src/novomodelo_bridge/decomp/converters/constraints.py`
 
@@ -1158,7 +1157,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 **Estado:** não lido.
 
-- todo o registro — *não lido.* Nome do arquivo índice CSV das LIBs. Não lido: o bridge procura `indices.csv` diretamente no diretório do deck.
+- todo o registro — *arquivo de índice, lido para localizar os demais.* Nome do arquivo índice CSV das LIBs. Lido para localizar o índice; sem `FA`, nenhum arquivo LIBs é lido.
 
 ### `dadger.rvN` › `FC`
 
@@ -1194,7 +1193,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 **Estado:** não lido.
 
-- todo o registro — *não lido.* Nome do arquivo de polinômios de jusante. Não lido: o bridge resolve `polinjus*` por prefixo no diretório do deck.
+- todo o registro — *arquivo de índice, lido para localizar os demais.* Nome do arquivo de polinômios de jusante. Lido para localizar o arquivo, sozinho ou junto da chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` do índice; se os dois apontam arquivos diferentes, é erro.
 
 ### `dadger.rvN` › `FP`
 
@@ -1964,19 +1963,19 @@ Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de f
 
 **Estado:** lido, não convertido. **Lido por:** `boundary/`.
 
+### `indices.csv`
+
+**Estado:** arquivo de índice, lido para localizar os demais.
+
+Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso.
+
+- `demais entradas (inclusive as irmãs -ATIVACAO e -VIOLACAO)` — *não lido.* Os demais arquivos listados no índice não são abertos.
+
 ### `caso.dat`
 
 **Estado:** arquivo de índice, lido para localizar os demais.
 
 Nomeia a revisão (`rv0`, `rv1`, ...) cujo índice lista os arquivos de dados. Lido apenas para localizar os demais arquivos do deck.
-
-### `indices.csv`
-
-**Estado:** arquivo de índice, lido para localizar os demais. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`.
-
-Índice das LIBs do deck. O bridge lê apenas a entrada `RESTRICAO-ELETRICA-ESPECIAL` (caminho do arquivo de restrições elétricas).
-
-- `demais entradas (inclusive as irmãs -ATIVACAO e -VIOLACAO)` — *não lido.* Os demais arquivos listados no índice não são abertos; `renovaveis*` e `polinjus*` são resolvidos por prefixo de nome, não pelo índice.
 
 ### `mlt.dat`
 
@@ -2071,8 +2070,8 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `VU` — *não lido.* Usina cuja defluência influencia a cota de jusante de outra. Não lido; ver `VA`.
 - `dadger.rvN` › `CS` — *não lido.* Habilita a consistência de dados do DECOMP. Sem contrapartida.
 - `dadger.rvN` › `EV` — *não lido.* Configuração da evaporação (modelo e volume de referência). Não lido: a evaporação é convertida a partir do sinalizador `evaporacao` do `UH` e dos coeficientes mensais de `hidr.dat`.
-- `dadger.rvN` › `FA` — *não lido.* Nome do arquivo índice CSV das LIBs. Não lido: o bridge procura `indices.csv` diretamente no diretório do deck.
-- `dadger.rvN` › `FJ` — *não lido.* Nome do arquivo de polinômios de jusante. Não lido: o bridge resolve `polinjus*` por prefixo no diretório do deck.
+- `dadger.rvN` › `FA` — *arquivo de índice, lido para localizar os demais.* Nome do arquivo índice CSV das LIBs. Lido para localizar o índice; sem `FA`, nenhum arquivo LIBs é lido.
+- `dadger.rvN` › `FJ` — *arquivo de índice, lido para localizar os demais.* Nome do arquivo de polinômios de jusante. Lido para localizar o arquivo, sozinho ou junto da chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` do índice; se os dois apontam arquivos diferentes, é erro.
 - `dadger.rvN` › `PU` — *não lido.* Habilita a solução do problema via PL único. Sem contrapartida.
 - `dadger.rvN` › `RC` — *não lido.* Inclusão de restrições do tipo escada por mnemônico. Não lido.
 - `dadger.rvN` › `TE` — *não lido.* Título do estudo. Não lido.

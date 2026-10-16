@@ -61,7 +61,10 @@ from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
-from novomodelo_bridge.decomp.files import REGISTER_COMMENT_PREFIX
+from novomodelo_bridge.decomp.files import (
+    REGISTER_COMMENT_PREFIX,
+    unindexed_libs_diagnostic,
+)
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -775,6 +778,9 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     )
     if tabs is not None:
         dx.emit(tabs)
+    unindexed = unindexed_libs_diagnostic(case.files)
+    if unindexed is not None:
+        dx.emit(unindexed)
     id_map = case.id_map
     dadger = case.dadger
     calendar = case.calendar
@@ -1620,7 +1626,7 @@ def _emit_and_write(
         for _, row in operated_uh.iterrows()
     }
 
-    # Read the deck's LIBs-era electrical-constraint file (the indices.csv
+    # Read the deck's LIBs-era electrical-constraint file (the LIBS index's
     # RESTRICAO-ELETRICA-ESPECIAL entry, resolved by discover_decomp_files)
     # once: both the narrowed detect_libs_electrical decision and the
     # generic-constraint emitter below thread this same `libs_electrical_model`,
@@ -1753,11 +1759,8 @@ def _emit_and_write(
     # all despite the indices.csv entry (OQ-4). Once the long-form subset
     # converts, the census INFO below is authoritative and this flat warning
     # would otherwise be a stale "not converted" claim over that subset.
-    # `discover_decomp_files` always resolves every deck file (including
-    # `dadger`) as `src / name`, so `case.files.dadger.parent` recovers the
-    # deck root without a dedicated `src` field on the bundle.
     libs_detection = constraint_registers.detect_libs_electrical(
-        case.files.dadger.parent
+        case.files.libs_restricao_eletrica
     )
     if libs_detection is not None and libs_electrical_model is None:
         dx.emit(libs_detection, logger=_LOG)

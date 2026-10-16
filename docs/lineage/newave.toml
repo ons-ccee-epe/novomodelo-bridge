@@ -1956,7 +1956,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
 
   [[output.field]]
   path = "fpha_plane_reduction.method"
-  when = "somente em caso FPHA com ao menos uma usina `fpha` e `tratamento-fpha.csv` com linha de método ativa"
+  when = "somente em caso FPHA com ao menos uma usina `fpha`, `indices.csv` listando `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e o arquivo apontado com linha de método ativa; sem a chave no índice a redução de planos fica desligada no Novomodelo"
   from = [ { file = "tratamento_fpha", item = "HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO / HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO" } ]
   how = "`angle` para a linha `…-ANGULO-PADRAO`, `distance` para `…-DISTANCIA-PADRAO`; linhas iniciadas por `&` são comentários. Com mais de uma linha ativa, a primeira vale e um aviso é emitido."
 
@@ -2108,7 +2108,7 @@ summary = "Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fon
 [[output]]
 path = "system/tailrace_curves.parquet"
 kind = "parquet"
-when = "somente quando o caso traz `polinjus.csv` e ao menos um segmento pertence a uma usina convertida"
+when = "somente quando `indices.csv` lista `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e ao menos um segmento do arquivo apontado pertence a uma usina convertida"
 module = "src/novomodelo_bridge/newave/converters/tailrace.py"
 reads = [
   { file = "polinjus" },
@@ -2641,7 +2641,7 @@ summary = "Disponibilidade da geração não simulada por bloco e estágio, como
 [[output]]
 path = "constraints/generic_constraints.json"
 kind = "json"
-when = "somente quando alguma família gera restrições: curva de segurança (`curva.dat` presente, `curva_aversao` de `dger.dat` diferente de 0 e ao menos um REE com reservatório de regularização mensal com volume útil), restrições elétricas (`restricao-eletrica.csv` apontado por `indices.csv`, ou `re.dat`, com ao menos um limite válido) ou agrupamentos de intercâmbio (`agrint.dat` com grupos e limites); cada família só é lida se o flag correspondente de `dger.dat` estiver ligado (`agrupamento_livre`, `restricoes_eletricas`, `restricoes_eletricas_especiais`)"
+when = "somente quando alguma família gera restrições: curva de segurança (`curva.dat` presente, `curva_aversao` de `dger.dat` diferente de 0 e ao menos um REE com reservatório de regularização mensal com volume útil), restrições elétricas (arquivo apontado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv`, ou `re.dat`, com ao menos um limite válido) ou agrupamentos de intercâmbio (`agrint.dat` com grupos e limites); cada família só é lida se o flag correspondente de `dger.dat` estiver ligado (`agrupamento_livre`, `restricoes_eletricas`, `restricoes_eletricas_especiais`)"
 module = "src/novomodelo_bridge/newave/converters/constraints.py"
 reads = [
   { file = "curva" },
@@ -3213,7 +3213,7 @@ note = "Lido integralmente quando `despacho_antecipado_gnl ≠ 0`; despachos por
 
 [[source]]
 file = "polinjus"
-note = "Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `HidreletricaCurvaJusantePolinomioPorPartesSegmento`) alimentam `system/tailrace_curves.parquet`."
+note = "Localizado pela chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` de `indices.csv`; um arquivo com esse nome que o índice não lista é ignorado, com aviso. Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `HidreletricaCurvaJusantePolinomioPorPartesSegmento`) alimentam `system/tailrace_curves.parquet`."
 
   [[source.item]]
   item = "HidreletricaCurvaJusanteAfogamentoExplicitoPadrao · HidreletricaCurvaJusanteAfogamentoExplicitoUsina"
@@ -3232,7 +3232,7 @@ note = "Só as famílias de curva de jusante (`HidreletricaCurvaJusante` e `Hidr
 
 [[source]]
 file = "tratamento_fpha"
-note = "Só a linha ativa terminada em `ANGULO-PADRAO` ou `DISTANCIA-PADRAO` vira `fpha_plane_reduction` em `system/hydro_production_models.json`; o número de amostras do método por distância é uma constante do bridge."
+note = "Localizado pela chave `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` de `indices.csv`; um arquivo com esse nome que o índice não lista é ignorado, com aviso. Só a linha ativa terminada em `ANGULO-PADRAO` ou `DISTANCIA-PADRAO` vira `fpha_plane_reduction` em `system/hydro_production_models.json`; o número de amostras do método por distância é uma constante do bridge."
 
   [[source.item]]
   item = "linhas por usina (sufixo diferente de -PADRAO)"
@@ -3241,7 +3241,7 @@ note = "Só a linha ativa terminada em `ANGULO-PADRAO` ou `DISTANCIA-PADRAO` vir
 
 [[source]]
 file = "restricao_eletrica"
-note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por um parser próprio; as demais chaves de `indices.csv` não são seguidas."
+note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por um parser próprio; um arquivo com esse nome que o índice não lista é ignorado, com aviso."
 
   [[source.item]]
   item = "funções de fórmula além de ger_usih e ener_interc"
@@ -3264,6 +3264,6 @@ status = "index"
 note = "Índice que nomeia cada arquivo de dados do caso. Lido apenas para localizar os demais arquivos; os nomes que aponta são resolvidos sem distinção de maiúsculas."
 
 [[source]]
-file = "indices"
+file = "libs_index"
 status = "index"
-note = "Índice dos arquivos LIBs. Lido apenas para localizar `restricao-eletrica.csv`."
+note = "Índice dos arquivos LIBs, procurado pelo nome fixo `indices.csv` na pasta do deck. Cada registro LIBs convertido é lido do arquivo que o índice aponta para a sua chave: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE`, `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem índice, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro."
