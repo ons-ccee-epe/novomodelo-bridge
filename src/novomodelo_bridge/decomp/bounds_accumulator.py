@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pyarrow as pa
 
+from novomodelo_bridge.core.bound_schemas import PUMPING_BOUNDS_SCHEMA
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.core.tolerances import relative_tolerance
 
@@ -459,16 +460,6 @@ THERMAL_BOUNDS_SCHEMA = pa.schema(
         pa.field("block_id", pa.int32(), nullable=True),
         pa.field("min_generation_mw", pa.float64(), nullable=True),
         pa.field("max_generation_mw", pa.float64(), nullable=True),
-    ]
-)
-
-PUMPING_BOUNDS_SCHEMA = pa.schema(
-    [
-        pa.field("pumping_station_id", pa.int32(), nullable=False),
-        pa.field("stage_id", pa.int32(), nullable=False),
-        pa.field("block_id", pa.int32(), nullable=True),
-        pa.field("min_m3s", pa.float64(), nullable=True),
-        pa.field("max_m3s", pa.float64(), nullable=True),
     ]
 )
 
