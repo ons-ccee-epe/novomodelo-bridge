@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING, NamedTuple
 
 import pandas as pd
@@ -19,8 +20,6 @@ from novomodelo_bridge.newave.horizon import stage_dates_for
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from novomodelo_bridge.newave.case import NewaveCase
     from novomodelo_bridge.newave.id_map import NewaveIdMap
 
@@ -129,7 +128,7 @@ def convert_pumping_stations(
             "pumping_stations": [],
         }
 
-    op_date = case.horizon.start_date.isoformat()
+    op_date = date(case.horizon.start_year, case.horizon.start_month, 1).isoformat()
     stations: list[dict] = []
 
     for _, row in inputs.stations.sort_values("codigo_estacao").iterrows():
@@ -202,7 +201,7 @@ def convert_pumping_bounds(
         return None
 
     stage_dates: list[date] = stage_dates_for(case.horizon)
-    n_blocks = case.horizon.n_blocks
+    n_blocks = case.patamar.numero_patamares or 1
 
     rows: list[dict] = []
     for _, limit_row in inputs.limits.iterrows():
@@ -223,8 +222,12 @@ def convert_pumping_bounds(
             )
         block_id = patamar - 1
 
-        start_date = limit_row["data_inicio"]
-        end_date = limit_row["data_fim"]
+        start_dt = limit_row["data_inicio"]
+        end_dt = limit_row["data_fim"]
+
+        # Convert Timestamps to date for comparison with stage_date
+        start_date = start_dt.date() if hasattr(start_dt, "date") else start_dt
+        end_date = end_dt.date() if hasattr(end_dt, "date") else end_dt
 
         min_m3s = float(limit_row["limite_inferior"])
         max_m3s = float(limit_row["limite_superior"])

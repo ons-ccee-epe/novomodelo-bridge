@@ -248,7 +248,8 @@ class TestConvertPumpingStations:
 
     def test_builds_station_dict_correctly(self) -> None:
         case = MagicMock()
-        type(case.horizon).start_date = PropertyMock(return_value=date(2025, 1, 1))
+        case.horizon.start_year = 2025
+        case.horizon.start_month = 1
         type(case).pumping_related_codes = PropertyMock(
             return_value=frozenset({10, 20})
         )
@@ -296,8 +297,9 @@ class TestConvertPumpingBounds:
     ) -> MagicMock:
         """Create a mock case with a real-ish horizon for bounds tests."""
         case = MagicMock()
-        horizon = MagicMock()
-        horizon.n_blocks = n_blocks
+        case.horizon.start_year = start.year
+        case.horizon.start_month = start.month
+        case.patamar.numero_patamares = n_blocks
 
         # Build stage dates starting from start month
         stage_dates = []
@@ -308,10 +310,6 @@ class TestConvertPumpingBounds:
             if m > 12:
                 m = 1
                 y += 1
-
-        # Patch stage_dates_for via the horizon property
-        case.horizon = horizon
-        case.horizon.start_date = start
 
         return case, stage_dates
 
@@ -335,7 +333,7 @@ class TestConvertPumpingBounds:
         )
 
         case = MagicMock()
-        case.horizon.n_blocks = 3
+        case.patamar.numero_patamares = 3
 
         limits_df = pd.DataFrame(
             [
@@ -366,7 +364,7 @@ class TestConvertPumpingBounds:
         )
 
         case = MagicMock()
-        case.horizon.n_blocks = 3
+        case.patamar.numero_patamares = 3
 
         limits_df = pd.DataFrame(
             [
@@ -396,7 +394,7 @@ class TestConvertPumpingBounds:
         )
 
         case = MagicMock()
-        case.horizon.n_blocks = 3
+        case.patamar.numero_patamares = 3
 
         # patamar 2 -> block_id 1
         limits_df = pd.DataFrame(
@@ -426,7 +424,7 @@ class TestConvertPumpingBounds:
         )
 
         case = MagicMock()
-        case.horizon.n_blocks = 3
+        case.patamar.numero_patamares = 3
 
         # Multiple stations, multiple stages, multiple blocks
         limits_df = pd.DataFrame(
@@ -469,7 +467,7 @@ class TestConvertPumpingBounds:
         )
 
         case = MagicMock()
-        case.horizon.n_blocks = 3
+        case.patamar.numero_patamares = 3
 
         limits_df = pd.DataFrame(
             [
