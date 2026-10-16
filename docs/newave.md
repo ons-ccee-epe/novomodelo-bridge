@@ -13,6 +13,22 @@ File-name lookups are case-insensitive. The two binary registries the index
 does not list, `hidr.dat` and `vazoes.dat`, are found by scanning the
 directory.
 
+The CSV inputs of the LIBS family are found through their own index,
+`indices.csv` in the case directory. Each line of it names a record key and the
+file that holds it, and the converter reads each LIBS record from the file
+listed for its key: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` (the
+tailrace curves), `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` (the FPHA plane
+reduction method) and `RESTRICAO-ELETRICA-ESPECIAL` (the electrical
+constraints). Lines starting with `&` are comments. Without `indices.csv`, or
+with a key left out or commented out, that record is not part of the case: no
+tailrace curves, no electrical constraints from the CSV, and no plane
+reduction, which Novomodelo then leaves off. A key whose file is not in the
+directory makes the case fail to convert. A file with a usual LIBS name, such
+as `polinjus.csv`, that the index does not list is ignored, and `check newave`
+and `convert newave` warn about it. `indices.csv`, the plane-reduction file and
+the electrical-constraint file are each read as UTF-8 when they are valid UTF-8
+and as Latin-1 otherwise.
+
 Many inputs are optional (`modif.dat`, `cvar.dat`, `curva.dat`, `agrint.dat`,
 and others). `check newave` prints one line per optional input that is absent
 and states that the conversion proceeds without it. A required input that is
