@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` emits water travel time.** A plant's `VI` register now
+  converts to the delayed cascade arc (`hydros[].travel_time_hours`) and the
+  in-transit water seeding it (`initial_conditions.past_defluences`), instead
+  of being read and deferred. The deferral stood on a cobre cut-generation
+  defect that produced an invalid in-transit cut; that defect is fixed in the
+  paired cobre release, so the emission is restored. A deck with no `VI`
+  register is unaffected (the arc stays instantaneous).
+
 ### Fixed
 
 - **`dashboard` builds for a case run with the simulation disabled.** cobre

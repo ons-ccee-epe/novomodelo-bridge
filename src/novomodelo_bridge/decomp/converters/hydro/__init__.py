@@ -4,15 +4,14 @@ Thin facade — re-exports the public API from :mod:`.entity`, :mod:`.bounds`,
 and :mod:`.productivity`.
 
 Converted scope: faithful registry, cascade,
-capability, initial storage, and head/productivity, including head-aware
-engolimento — with everything whose faithful treatment is still gated on
-later features left unconverted: travel time (``VI`` — a separate dadger
-register, not an ``AC`` class) and the evaporation/tailrace-polynomial
-models (``COTVAZ``/``COTARE``/``COFEVA`` — ``AC`` classes with no DECOMP
-consumer). The ``AC`` families' own per-deck coverage (which of them a
-given deck actually declares) is reported by ``check decomp``
-(:mod:`novomodelo_bridge.decomp.preflight`); ``VI``, not being an ``AC``
-register, is documented only here.
+capability, initial storage, head/productivity (including head-aware
+engolimento), and the ``VI`` water travel time — a separate dadger register,
+not an ``AC`` class, converted in
+:mod:`novomodelo_bridge.decomp.converters.travel_time`. Left unconverted are the
+evaporation/tailrace-polynomial models (``COTVAZ``/``COTARE``/``COFEVA`` —
+``AC`` classes with no DECOMP consumer). The ``AC`` families' own per-deck
+coverage (which of them a given deck actually declares) is reported by
+``check decomp`` (:mod:`novomodelo_bridge.decomp.preflight`).
 """
 
 from __future__ import annotations

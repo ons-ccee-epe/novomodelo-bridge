@@ -38,9 +38,9 @@ Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and
 the same diagnostics land in `--diagnostics-json` and the `--json` verdict.
-Examples at the time of writing are water travel time (the `VI` register),
-the boundary coupling volume limit (the `EZ` register), and a few
-restriction-register term types; the [DECOMP data map](decomp-data-map.md)
+Examples at the time of writing are the boundary coupling volume limit (the
+`EZ` register), the unreadable special-constraint families (`FE`, `RHA`), and
+a few restriction-register term types; the [DECOMP data map](decomp-data-map.md)
 lists every register and field the converter leaves out. Each warning's
 remediation line states whether any action is needed; usually none, and the
 conversion proceeds.
