@@ -292,3 +292,86 @@ def test_active_hydros_admits_ee_at_declaration_position_without_exph() -> None:
     # ``build_id_map``, which passes exph=None) enumerates the pipeline's set.
     assert active_hydro_codes(_EE_CASE, _EE_CAD) == [10, 5, 7]
     assert list(active_hydros(_EE_CASE, _EE_CAD, None)["codigo_usina"]) == [10, 5, 7]
+
+
+# ---------------------------------------------------------------------------
+# Pumping-related codes exemption
+# ---------------------------------------------------------------------------
+
+
+def test_pumping_related_codes_excluded_from_fictitious() -> None:
+    """Pumping-related codes are excluded from fictitious classification."""
+    # Same setup as full-case twin test: 319 would be fictitious
+    confhd = _confhd(
+        [
+            {
+                "codigo_usina": 57,
+                "nome_usina": "MAUA",
+                "posto": 57,
+                "usina_existente": "EX",
+            },
+            {
+                "codigo_usina": 319,
+                "nome_usina": "FICT.MAUA",
+                "posto": 57,
+                "usina_existente": "EX",
+            },
+        ]
+    )
+    cad = _cadastro({57: 0.009, 319: 0.0})
+
+    # Without pumping exclusion: 319 is fictitious
+    fict_without = fictitious_codes(confhd, cad)
+    assert 319 in fict_without
+
+    # With pumping exclusion: 319 is preserved
+    fict_with = fictitious_codes(confhd, cad, pumping_related_codes=frozenset({319}))
+    assert 319 not in fict_with
+
+
+def test_pumping_exemption_propagates_to_active_hydros() -> None:
+    """active_hydros respects pumping exemption via fictitious parameter."""
+    confhd = _confhd(
+        [
+            {
+                "codigo_usina": 57,
+                "nome_usina": "MAUA",
+                "posto": 57,
+                "usina_existente": "EX",
+            },
+            {
+                "codigo_usina": 319,
+                "nome_usina": "FICT.MAUA",
+                "posto": 57,
+                "usina_existente": "EX",
+            },
+        ]
+    )
+    cad = _cadastro({57: 0.009, 319: 0.0})
+
+    # Without exemption: 319 is dropped
+    codes_without = active_hydro_codes(confhd, cad)
+    assert 319 not in codes_without
+
+    # With exemption via fictitious parameter: 319 is kept
+    fict = fictitious_codes(confhd, cad, pumping_related_codes=frozenset({319}))
+    codes_with = active_hydro_codes(confhd, cad, fictitious=fict)
+    assert 319 in codes_with
+
+
+def test_fictitious_codes_returns_frozenset() -> None:
+    """fictitious_codes returns frozenset for immutability."""
+    confhd = _confhd(
+        [
+            {
+                "codigo_usina": 57,
+                "nome_usina": "MAUA",
+                "posto": 57,
+                "usina_existente": "EX",
+            },
+        ]
+    )
+    cad = _cadastro({57: 0.009})
+
+    result = fictitious_codes(confhd, cad)
+    assert isinstance(result, frozenset)

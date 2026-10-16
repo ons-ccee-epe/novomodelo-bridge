@@ -48,7 +48,12 @@ def existing_hydros(confhd_df: pd.DataFrame) -> pd.DataFrame:
     return confhd_df[_is_in_service(confhd_df)]
 
 
-def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int]:
+def fictitious_codes(
+    confhd_df: pd.DataFrame,
+    cadastro: pd.DataFrame,
+    *,
+    pumping_related_codes: frozenset[int] | None = None,
+) -> frozenset[int]:
     """Return codes of existing plants that are fictitious accounting nodes.
 
     Structural rule: a plant is fictitious iff it generates nothing
@@ -61,6 +66,10 @@ def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int
     twin orphaned by a reduction (e.g. ``FICT.MAUA`` once ``MAUA`` is filtered out), and
     it stays in the LP.
 
+    When *pumping_related_codes* is provided, those codes are excluded from the
+    fictitious set — they are legitimate pumped-storage reservoirs that must stay
+    in the model even if they have zero productivity.
+
     Returns an empty set when the productivity (``cadastro``) or ``posto`` data
     needed for the test is unavailable.
     """
@@ -70,7 +79,7 @@ def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int
         or cadastro.empty
         or _RHO_COL not in cadastro.columns
     ):
-        return set()  # data needed for the structural test is unavailable
+        return frozenset()  # data needed for the structural test is unavailable
     existing = existing_hydros(confhd_df)
     rho: dict[int, float] = {}
     posto: dict[int, int] = {}
@@ -81,7 +90,12 @@ def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int
         rho[code] = float(cadastro.loc[code, _RHO_COL])
         posto[code] = int(row["posto"])
     generating_postos = {posto[c] for c, r in rho.items() if r > 0.0}
-    return {c for c, r in rho.items() if r == 0.0 and posto[c] in generating_postos}
+    fict = {c for c, r in rho.items() if r == 0.0 and posto[c] in generating_postos}
+
+    if pumping_related_codes:
+        fict -= pumping_related_codes
+
+    return frozenset(fict)
 
 
 def filling_hydro_codes(
@@ -123,6 +137,8 @@ def active_hydros(
     confhd_df: pd.DataFrame,
     cadastro: pd.DataFrame,
     exph_df: pd.DataFrame | None = None,
+    *,
+    fictitious: frozenset[int] | None = None,
 ) -> pd.DataFrame:
     """Return the existing, non-fictitious hydro rows that enter the Novomodelo LP.
 
@@ -139,8 +155,15 @@ def active_hydros(
     over *confhd_df*, never a concat/append, so id assignment stays deterministic).
     With ``exph_df is None`` the result is the in-service set alone — no ``NE``
     plant is admitted.
+
+    When *fictitious* is provided, it is used directly instead of calling
+    :func:`fictitious_codes`. This allows callers to use a pre-computed set
+    (e.g., from ``NewaveCase.fictitious_codes``) that includes the pumping
+    exemption.
     """
-    fict = fictitious_codes(confhd_df, cadastro)
+    fict = (
+        fictitious if fictitious is not None else fictitious_codes(confhd_df, cadastro)
+    )
     in_service = _is_in_service(confhd_df)
     if fict:
         in_service = in_service & ~confhd_df["codigo_usina"].isin(fict)
@@ -153,9 +176,16 @@ def active_hydro_codes(
     confhd_df: pd.DataFrame,
     cadastro: pd.DataFrame,
     exph_df: pd.DataFrame | None = None,
+    *,
+    fictitious: frozenset[int] | None = None,
 ) -> list[int]:
-    """Return ``codigo_usina`` of the active hydros in declaration order."""
+    """Return ``codigo_usina`` of the active hydros in declaration order.
+
+    When *fictitious* is provided, it is passed to :func:`active_hydros`.
+    """
     return [
         int(code)
-        for code in active_hydros(confhd_df, cadastro, exph_df)["codigo_usina"]
+        for code in active_hydros(confhd_df, cadastro, exph_df, fictitious=fictitious)[
+            "codigo_usina"
+        ]
     ]
