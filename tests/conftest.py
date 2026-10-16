@@ -188,6 +188,8 @@ _OPTIONAL = (
     "polinjus",
     "tratamento_fpha",
     "restricao_eletrica",
+    "estacao_bombeamento",
+    "estacao_bombeamento_submercado",
 )
 
 
@@ -692,6 +694,22 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.convert_storage_bounds",
+            return_value=None,
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.pumping_conv.read_pumping_inputs",
+            return_value=None,
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.pumping_conv.pumping_station_id_map",
+            return_value={},
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.pumping_conv.convert_pumping_stations",
+            return_value={"$schema": "test", "pumping_stations": []},
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.pumping_conv.convert_pumping_bounds",
             return_value=None,
         ),
     ]
