@@ -124,12 +124,14 @@ def build_id_map(nw_files: NewaveFiles) -> NewaveIdMap:
     entry point shared by the conversion pipeline and the comparators, so both derive
     the source model→Novomodelo mapping the same way.
 
-    This path-only entry point intentionally does **not** thread ``exph``, so it
-    forwards ``exph=None`` to :func:`build_id_map_from_readers`: the comparators and
-    any other caller that only holds paths keep the in-service-only enumeration
-    (they run against cases whose plants are already in service). The conversion
-    pipeline admits ``NE``-with-filling plants through :attr:`NewaveCase.id_map`,
-    which passes the case's ``exph`` reader.
+    This path-only entry point computes the pumping exemption when the pumping files
+    are available, ensuring the same fictitious classification as
+    :attr:`NewaveCase.id_map`. The ``exph=None`` enumeration is preserved: comparators
+    and other path-only callers keep the in-service-only enumeration.
+
+    .. note::
+       For conversion, use :attr:`NewaveCase.id_map` directly — it caches the result
+       and threads the ``exph`` reader for NE-with-filling plants.
     """
     from inewave.newave import Confhd, Conft, Hidr, Ree, Sistema
 
@@ -138,7 +140,27 @@ def build_id_map(nw_files: NewaveFiles) -> NewaveIdMap:
     sistema = Sistema.read(str(nw_files.sistema))
     ree_file = Ree.read(str(nw_files.ree))
     hidr = Hidr.read(str(nw_files.hidr))
-    return build_id_map_from_readers(confhd, conft, sistema, ree_file, hidr)
+
+    # Compute pumping_related_codes the same way NewaveCase does
+    pumping_codes: frozenset[int] = frozenset()
+    if nw_files.estacao_bombeamento is not None:
+        try:
+            from inewave.libs import UsinasHidreletricas
+
+            reader = UsinasHidreletricas.read(str(nw_files.estacao_bombeamento))
+            df = reader.estacao_bombeamento(df=True)
+            if df is not None and not df.empty:
+                codes: set[int] = set()
+                for col in ("codigo_usina_origem", "codigo_usina_destino"):
+                    if col in df.columns:
+                        codes.update(int(c) for c in df[col].dropna())
+                pumping_codes = frozenset(codes)
+        except Exception:  # noqa: BLE001
+            pass  # No pumping data available
+
+    return build_id_map_from_readers(
+        confhd, conft, sistema, ree_file, hidr, pumping_related_codes=pumping_codes
+    )
 
 
 def build_id_map_from_readers(
@@ -149,6 +171,7 @@ def build_id_map_from_readers(
     hidr: Hidr,
     *,
     exph: Exph | None = None,
+    pumping_related_codes: frozenset[int] | None = None,
 ) -> NewaveIdMap:
     """Build the canonical :class:`NewaveIdMap` from already-parsed readers.
 
@@ -163,12 +186,17 @@ def build_id_map_from_readers(
     ``exph is None`` — the default, used by every path-only caller (``build_id_map``,
     the comparators) — enumeration is byte-identical to the in-service set: no ``NE``
     plant is admitted.
+
+    When *pumping_related_codes* is supplied, those codes are exempted from fictitious
+    classification (they may have zero productivity but are pumping station endpoints).
     """
     # Hydro codes from confhd — existing plants minus the fictitious accounting
     # nodes (zero productivity sharing a generating plant's posto).
     confhd_df = confhd.usinas
     cadastro = hidr.cadastro
-    fict = fictitious_codes(confhd_df, cadastro)
+    fict = fictitious_codes(
+        confhd_df, cadastro, pumping_related_codes=pumping_related_codes
+    )
     if fict:
         rows = sorted(
             (
@@ -197,7 +225,7 @@ def build_id_map_from_readers(
             logger=_LOG,
         )
     hydro_codes = active_hydro_codes(
-        confhd_df, cadastro, exph_df=exph.expansoes if exph else None
+        confhd_df, cadastro, exph_df=exph.expansoes if exph else None, fictitious=fict
     )
 
     # Thermal codes from conft.
