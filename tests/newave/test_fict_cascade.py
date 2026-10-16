@@ -290,3 +290,37 @@ class TestExpansionPlantIsRealNode:
         assert res[1].downstream_code == 2
         assert res[2].downstream_code == 3
         assert res[3].downstream_code is None
+
+
+class TestReeCouplingTwin:
+    """The coupling cut (rule 3) and each plant's posto-sharing fictitious twin."""
+
+    def _confhd(self) -> pd.DataFrame:
+        # UP -> CUT (terminal); FICT.UP -> FICT.CUT -> DOWN carry the cascade.
+        rows = [
+            (1, "UP", 2, 1),
+            (2, "CUT", 0, 2),
+            (3, "FICT.UP", 4, 1),
+            (4, "FICT.CUT", 5, 2),
+            (5, "DOWN", 0, 5),
+        ]
+        return pd.DataFrame(
+            [
+                {**_confhd_row(code, name, ds), "posto": posto}
+                for code, name, ds, posto in rows
+            ]
+        )
+
+    def test_terminal_plant_with_twin_is_truncated(
+        self, empty_cadastro: pd.DataFrame
+    ) -> None:
+        res = resolve_cascade(self._confhd(), empty_cadastro, fictitious={3, 4})
+
+        assert res[2].truncated
+        assert res[2].downstream_code == 5
+        assert (res[2].counterpart_fict, res[2].counterpart_downstream) == (4, 5)
+        assert not res[1].truncated
+        assert res[1].downstream_code == 2
+        assert (res[1].counterpart_fict, res[1].counterpart_downstream) == (3, 5)
+        assert not res[5].truncated
+        assert res[5].counterpart_fict is None

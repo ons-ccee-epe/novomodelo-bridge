@@ -96,7 +96,11 @@ def _hydro_row(
 
 
 def _hidr_frame(rows: dict[int, dict[str, object]]) -> pd.DataFrame:
-    """A synthetic ``hidr``-shaped frame, indexed by ``codigo_usina``."""
+    """A synthetic ``hidr``-shaped frame, indexed by ``codigo_usina``.
+
+    A row without a ``posto`` gets its own code, so no two plants share one.
+    """
+    rows = {code: {"posto": code, **row} for code, row in rows.items()}
     df = pd.DataFrame(rows).T
     df.index.name = "codigo_usina"
     return df
@@ -546,3 +550,111 @@ def test_emit_rhe_generics_empty_census_returns_none() -> None:
         )
 
     assert result is None
+
+
+def _coupled_cascade() -> tuple[DecompIdMap, EffectiveCadastro, dict[int, int]]:
+    """REE 1 (UP -> CUT) drains into REE 2 (DOWN); UP and CUT have twins.
+
+    FICT.UP and FICT.CUT are the non-generating, non-operated ``hidr`` plants
+    on UP's and CUT's postos, chained to DOWN. FICT.UP stores less than UP.
+    SIDE crosses into REE 2 too, but with no twin, so its cascade is not cut.
+    """
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 2, 5, 7))
+    effective = EffectiveCadastro(
+        base=_hidr_frame(
+            {
+                1: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=2),
+                2: _hydro_row(
+                    tipo_regulacao="M", codigo_usina_jusante=5, volume_maximo=2000.0
+                ),
+                3: {
+                    **_hydro_row(
+                        tipo_regulacao="M",
+                        codigo_usina_jusante=4,
+                        produtibilidade_especifica=0.0,
+                        volume_maximo=500.0,
+                    ),
+                    "posto": 1,
+                },
+                4: {
+                    **_hydro_row(
+                        tipo_regulacao="M",
+                        codigo_usina_jusante=5,
+                        produtibilidade_especifica=0.0,
+                        volume_maximo=2000.0,
+                    ),
+                    "posto": 2,
+                },
+                5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
+                7: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=5),
+            }
+        ),
+        n_stages=1,
+        stage_varying={},
+    )
+    return id_map, effective, {1: 1, 2: 1, 5: 2, 7: 1}
+
+
+def _emit_coupled(tipo_limite: int) -> dict[str, dict]:
+    id_map, effective, hydro_to_ree = _coupled_cascade()
+    records = [
+        _he_record(
+            constraint_id=200 + ree_code,
+            ree_code=ree_code,
+            coefficient=1.0,
+            bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+            tipo_limite=tipo_limite,
+            valor_penalidade=250.0,
+        )
+        for ree_code in (1, 2)
+    ]
+    result = emit_rhe_generics(
+        _case([_stage(0, 730.0)]),
+        id_map,
+        census=_census(*records),
+        effective=effective,
+        hydro_to_ree=hydro_to_ree,
+    )
+    assert result is not None
+    return {c["name"]: c for c in result.constraints}
+
+
+def test_emit_rhe_generics_coupled_own_ree_stops_at_the_cut() -> None:
+    by_name = _emit_coupled(tipo_limite=1)
+
+    assert by_name["RHE_201_s0"]["expression"] == (
+        "@rho_eq_scaled_h0 * hydro_useful_volume_final(0)"
+        " + @rho_eq_scaled_h1 * hydro_useful_volume_final(0)"
+        " + @rho_eq_scaled_h1 * hydro_useful_volume_final(1)"
+        " + @rho_acum_scaled_h3 * hydro_useful_volume_final(3)"
+    )
+
+
+def test_emit_rhe_generics_coupled_downstream_ree_counts_the_twins() -> None:
+    by_name = _emit_coupled(tipo_limite=1)
+
+    assert by_name["RHE_202_s0"]["expression"] == (
+        "@rho_acum_scaled_h2 * hydro_useful_volume_final(0)"
+        " + @rho_acum_scaled_h2 * hydro_useful_volume_final(1)"
+        " + @rho_acum_scaled_h2 * hydro_useful_volume_final(2)"
+    )
+
+
+def test_emit_rhe_generics_coupled_percentage_uses_the_physical_volume() -> None:
+    by_name = _emit_coupled(tipo_limite=2)
+
+    # The shares use UP's own 1000 hm³ (not FICT.UP's 500 hm³) and CUT's
+    # 2000 hm³; DOWN, uncoupled, keeps novomodelo's maximum useful stored energy.
+    assert by_name["RHE_202_s0"]["expression"].split(" >= ")[1] == (
+        "100.0 * @rho_acum_scaled_h2 + 200.0 * @rho_acum_scaled_h2 + 0.1 * @earm_max_h2"
+    )
+
+
+def test_emit_rhe_generics_coupling_is_reported() -> None:
+    with dx.collect() as collected:
+        _emit_coupled(tipo_limite=1)
+
+    [diag] = [d for d in collected if d.code == "decomp-rhe-ree-hydraulic-coupling"]
+    assert diag.severity is Severity.INFO
+    assert diag.table is not None
+    assert diag.table.rows == [[1, 1, 2, 3, 2, 5], [2, 1, 2, 4, 2, 5]]

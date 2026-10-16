@@ -22,6 +22,7 @@ from novomodelo_bridge.novomodelo.scalar_parameters import (
     build_scalar_parameters,
     earm_max_name,  # re-exported for the RHE emitter's @-sigil expression
     rho_acum_scaled_name,  # re-exported for the RHE emitter's @-sigil expression
+    rho_eq_scaled_name,  # re-exported for the RHE emitter's @-sigil expression
 )
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "earm_max_name",
     "write_scalar_parameters",
     "rho_acum_scaled_name",
+    "rho_eq_scaled_name",
 ]
 
 # Live path on novomodelo's feat/generic-constraint-authoring branch

@@ -43,7 +43,8 @@ plumbing).
 ``emit_rhe_generics``: the LHS weights each reservoir's storage by novomodelo's
 scaled integrated accumulated productivity (``@rho_acum_scaled_h{id}``,
 MWh/hm³), so the constraint is a whole-REE stored-energy bound in MWh rather
-than a per-plant limit read off the register.
+than a per-plant limit read off the register. A cascade the source model
+splits between two REEs is weighted per REE instead (:func:`_rhe_ree_terms`).
 """
 
 from __future__ import annotations
@@ -51,9 +52,15 @@ from __future__ import annotations
 import dataclasses
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -64,10 +71,13 @@ from novomodelo_bridge.decomp.constraint_registers import StageBounds
 from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
     is_reservoir,
+    storage_envelope,
 )
+from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 from novomodelo_bridge.decomp.converters.scalar_parameters import (
     earm_max_name,
     rho_acum_scaled_name,
+    rho_eq_scaled_name,
 )
 
 if TYPE_CHECKING:
@@ -782,32 +792,186 @@ def _is_stored_energy_reservoir(effective: EffectiveCadastro, code: int) -> bool
 
 #: One RHE term: the novomodelo ``@name`` weighting a reservoir's useful volume,
 #: the reservoir's novomodelo id, and its maximum useful stored energy as
-#: ``scale * token`` (``1.0 * @earm_max_h{id}``).
+#: ``scale * token`` (``1.0 * @earm_max_h{id}``, or ``useful * @name`` for a
+#: coupled cascade's share).
 _RheTerm = tuple[str, int, float, str]
+
+
+@dataclass(frozen=True)
+class _RheCoupling:
+    """One reservoir whose cascade the source model splits between two REEs."""
+
+    plant_code: int
+    ree_code: int
+    cut_code: int
+    fict_code: int | None
+    fict_ree_code: int | None
+    downstream_code: int | None
+
+
+def _fictitious_twins(
+    effective: EffectiveCadastro, operated: set[int]
+) -> dict[int, int]:
+    """Map each operated plant to the fictitious twin sharing its ``hidr`` posto.
+
+    The source model keeps, outside the configuration, a non-generating
+    (``produtibilidade_especifica == 0``) ``hidr.dat`` plant on a real plant's
+    posto to account the energy below a REE cut — the same structural rule as
+    the NEWAVE track's ``fictitious_codes``. Read off the *base* cadastro.
+    """
+    base = effective.base
+    real_by_posto: dict[int, int] = {}
+    for code in operated:
+        if code in base.index:
+            real_by_posto.setdefault(int(base.loc[code, "posto"]), code)
+    twins: dict[int, int] = {}
+    for code in base.index:
+        code = int(code)
+        if code in operated or float(base.loc[code, "produtibilidade_especifica"]):
+            continue
+        real = real_by_posto.get(int(base.loc[code, "posto"]))
+        if real is not None:
+            twins.setdefault(real, code)
+    return twins
 
 
 def _rhe_ree_terms(
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     hydro_to_ree: Mapping[int, int],
-) -> dict[int, list[_RheTerm]]:
-    """Build every REE's RHE terms, in plant-code order.
+) -> tuple[dict[int, list[_RheTerm]], list[_RheCoupling]]:
+    """Build every REE's RHE terms, splitting the cascades the REEs couple.
 
-    Each stored-energy reservoir (:func:`_is_stored_energy_reservoir`)
-    operated in ``id_map`` contributes its useful volume weighted by novomodelo's
-    ``@rho_acum_scaled_h{id}``, with novomodelo's ``@earm_max_h{id}`` as its
-    maximum useful stored energy.
+    The source model cuts a reservoir's cascade at the first plant whose
+    downstream lies in another REE **and** that has a fictitious twin
+    (:func:`_fictitious_twins`), and accounts the water below the cut in the
+    twin's downstream REE; ``hydros.json`` keeps the physical link, so novomodelo's
+    ``@rho_acum_scaled_h{id}`` sums the whole cascade. For a reservoir whose
+    cascade reaches such a cut:
+
+    - in its own REE it gets one ``@rho_eq_scaled_h{c}`` term per plant ``c``
+      from the reservoir to the cut plant;
+    - when it has a fictitious twin, the REE of the first operated plant on the
+      twin's cascade gets the reservoir's useful volume weighted by that
+      plant's ``@rho_acum_scaled_h{id}``.
+
+    Each share's maximum energy is the reservoir's useful volume (its
+    ``hydros.json`` storage envelope) times its coefficient. A cascade that
+    crosses a REE boundary without a twin at the crossing (e.g. into ITAIPU)
+    is not cut. Every other reservoir keeps ``@rho_acum_scaled_h{id}`` and
+    novomodelo's ``@earm_max_h{id}``. Returns the terms by REE code (in plant-code
+    order) and the split reservoirs.
     """
     operated = set(id_map.hydro_codes)
+    twins = _fictitious_twins(effective, operated)
+    downstream = {
+        code: _downstream_operated(effective, code, operated) for code in operated
+    }
+
+    def _cut_at(code: int, ree_code: int) -> bool:
+        below = downstream[code]
+        return (
+            code in twins and below is not None and hydro_to_ree.get(below) != ree_code
+        )
+
     terms: dict[int, list[_RheTerm]] = defaultdict(list)
+    couplings: list[_RheCoupling] = []
     for code, ree_code in sorted(hydro_to_ree.items()):
         if code not in operated or not _is_stored_energy_reservoir(effective, code):
             continue
         hid = id_map.hydro_id(code)
-        terms[ree_code].append(
-            (rho_acum_scaled_name(hid), hid, 1.0, f"@{earm_max_name(hid)}")
+        min_storage, max_storage = storage_envelope(effective, code)
+        useful = max_storage - min_storage
+
+        def _share(name: str, hid: int = hid, useful: float = useful) -> _RheTerm:
+            return (name, hid, useful, f"@{name}")
+
+        chain = [code]
+        while not _cut_at(chain[-1], ree_code):
+            below = downstream[chain[-1]]
+            if below is None or below in chain:
+                chain = []
+                break
+            chain.append(below)
+
+        if not chain:
+            terms[ree_code].append(
+                (rho_acum_scaled_name(hid), hid, 1.0, f"@{earm_max_name(hid)}")
+            )
+            continue
+
+        for chain_code in chain:
+            terms[ree_code].append(
+                _share(rho_eq_scaled_name(id_map.hydro_id(chain_code)))
+            )
+
+        twin = twins.get(code)
+        twin_downstream = (
+            _downstream_operated(effective, twin, operated)
+            if twin is not None
+            else None
         )
-    return terms
+        twin_ree = hydro_to_ree.get(twin_downstream) if twin_downstream else None
+        lands = (
+            twin is not None
+            and twin_ree is not None
+            and twin_ree != ree_code
+            and _is_stored_energy_reservoir(effective, twin)
+        )
+        if lands:
+            terms[twin_ree].append(
+                _share(rho_acum_scaled_name(id_map.hydro_id(twin_downstream)))
+            )
+        couplings.append(
+            _RheCoupling(
+                plant_code=code,
+                ree_code=ree_code,
+                cut_code=chain[-1],
+                fict_code=twin if lands else None,
+                fict_ree_code=twin_ree if lands else None,
+                downstream_code=twin_downstream if lands else None,
+            )
+        )
+    return terms, couplings
+
+
+def _emit_rhe_hydraulic_coupling(couplings: Sequence[_RheCoupling]) -> None:
+    """Emit the ``decomp-rhe-ree-hydraulic-coupling`` INFO listing split reservoirs."""
+    emit(
+        Diagnostic(
+            code="decomp-rhe-ree-hydraulic-coupling",
+            severity=Severity.INFO,
+            category="Special constraints",
+            title=f"RHE split across coupled REEs ({len(couplings)} plant(s))",
+            summary=(
+                f"{len(couplings)} reservoir(s) drain into another REE; their "
+                "stored energy counts in their own REE only down to the coupling "
+                "plant, and the rest counts in the downstream REE."
+            ),
+            table=DiagnosticTable(
+                columns=[
+                    "Plant",
+                    "REE",
+                    "Coupling plant",
+                    "Fictitious twin",
+                    "Downstream REE",
+                    "Downstream plant",
+                ],
+                rows=[
+                    [
+                        c.plant_code,
+                        c.ree_code,
+                        c.cut_code,
+                        c.fict_code if c.fict_code is not None else "-",
+                        c.fict_ree_code if c.fict_ree_code is not None else "-",
+                        c.downstream_code if c.downstream_code is not None else "-",
+                    ]
+                    for c in couplings
+                ],
+                justify=["right"] * 6,
+            ),
+        )
+    )
 
 
 def _emit_rhe_no_storage_plants(record: ConstraintRecord) -> None:
@@ -906,12 +1070,13 @@ def emit_rhe_generics(
     signed by its REE's CM coefficient (:func:`_format_expression`): the
     useful stored energy in MWh, the stored energy the source model's
     ``%EAMAX`` refers to (novomodelo moves the dead-volume term onto the bound).
-    ``@coef`` is ``@rho_acum_scaled_h{id}``. The bound follows the record's
-    ``tipo_limite``:
+    ``@coef`` is ``@rho_acum_scaled_h{id}``, or the per-REE split of a
+    coupled cascade. The bound follows the record's ``tipo_limite``:
 
     - ``2`` — ``limite`` percent of the terms' maximum useful stored energy,
-      written into the expression as ``Σ limite/100 · @earm_max_h{id}`` with
-      a zero parquet bound;
+      written into the expression as ``Σ limite/100 · @earm_max_h{id}`` (a
+      coupled share: ``limite/100 · useful · @coef``) with a zero parquet
+      bound;
     - ``1`` — ``limite`` is an absolute stage-average MW (MWmês) bound,
       converted to MWh with the stage's hours into the parquet bound; any
       other value is treated the same way, with a WARNING.
@@ -929,7 +1094,7 @@ def emit_rhe_generics(
     """
     calendar = case.calendar
 
-    ree_terms = _rhe_ree_terms(effective, id_map, hydro_to_ree)
+    ree_terms, couplings = _rhe_ree_terms(effective, id_map, hydro_to_ree)
 
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
@@ -1003,6 +1168,8 @@ def emit_rhe_generics(
                 slots=slots_from_record(stage_record, calendar),
             )
 
+    if couplings:
+        _emit_rhe_hydraulic_coupling(couplings)
     _LOG.debug(
         "RHE split into one constraint per stage to price its MWh slack"
         " in R$/MWh (novomodelo prices generic slack × stage hours)."

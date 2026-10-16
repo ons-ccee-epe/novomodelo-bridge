@@ -754,7 +754,7 @@ reads = [
   { file = "dadger", register = "CM" },
   { file = "dadger", register = "UH" },
 ]
-summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_scaled_h{id}`, `@rho_acum_scaled_h{id}` e `@earm_max_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_scaled` (produtibilidade acumulada integrada no volume, em MWh/hm³), e o `earm_max` (energia útil máxima, em MWh)."
+summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_scaled_h{id}`, `@rho_acum_scaled_h{id}` e `@earm_max_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_scaled` (produtibilidade acumulada integrada no volume, em MWh/hm³), o `earm_max` (energia útil máxima, em MWh) e, nas cascatas acopladas entre REEs, o `rho_eq_scaled`."
 
   [[output.field]]
   path = "scalar_parameters[].id"
@@ -2537,6 +2537,10 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "CM", item = "codigo_ree" },
     { file = "dadger", register = "CM", item = "coeficiente" },
     { file = "dadger", register = "UH", item = "codigo_ree" },
+    { file = "hidr", item = "posto" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "codigo_usina_jusante" },
+    { file = "dadger", register = "AC", item = "NUMJUS" },
     { file = "dadger", register = "IA", item = "nome_submercado_de" },
     { file = "dadger", register = "IA", item = "nome_submercado_para" },
     { file = "dadger", register = "UE", item = "codigo_usina" },
@@ -2546,7 +2550,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
     { file = "renovaveis", item = "PEE-CAD · codigo_pee" },
   ]
-  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)`, `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`; `HE` expande cada REE (`CM`) em `@rho_acum_scaled_h<id> * hydro_useful_volume_final(id)` (energia armazenada útil em MWh, a base do `%EAMAX`) sobre os reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, com o sinal do `CM`. Com `tipo_limite` = 2 acrescenta `>= Σ limite/100 · @earm_max_h<id>` (energia útil máxima do Novomodelo). Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `disp_usih`) são dobrados no limite."
+  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)`, `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`; `HE` expande cada REE (`CM`) em `@rho_acum_scaled_h<id> * hydro_useful_volume_final(id)` (energia armazenada útil em MWh, a base do `%EAMAX`) sobre os reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, com o sinal do `CM`. Acoplamento entre REEs (a primeira usina da cascata cuja jusante operada está em outro REE e que tem gêmea fictícia no `hidr` — usina fora da configuração, `produtibilidade_especifica` 0 e mesmo `posto`, como TRES MARIAS → SOBRADINHO): no REE da usina entra um termo `@rho_eq_scaled_h<c> * hydro_useful_volume_final(<id>)` para cada usina `c` da cascata, da própria usina até a usina de acoplamento; se o reservatório tem gêmea fictícia, o REE da primeira usina operada na cascata da gêmea recebe `@rho_acum_scaled_h<jusante> * hydro_useful_volume_final(<id>)`; uma travessia de REE sem gêmea (como para ITAIPU) não corta a cascata. Com `tipo_limite` = 2 acrescenta `>= Σ limite/100 · @earm_max_h<id>` (energia útil máxima do Novomodelo) e, nas parcelas de acoplamento, `limite/100 · <volume útil> * @coeficiente`, com o volume útil da envoltória de armazenamento da própria usina. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `disp_usih`) são dobrados no limite."
 
   [[output.field]]
   path = "constraints[].slack.enabled"

@@ -43,6 +43,7 @@ from novomodelo_bridge.core.productivity import (
 )
 from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 from novomodelo_bridge.newave.converters.temporal import _month_hours
 from novomodelo_bridge.newave.id_map import NewaveIdMap
@@ -52,6 +53,7 @@ from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.scalar_parameters import (
     earm_max_name,
     rho_acum_scaled_name,
+    rho_eq_scaled_name,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -76,6 +78,18 @@ class _VminopPenaltyClamp:
     ree_name: str
     declared: float
     applied: float
+
+
+@dataclass
+class _VminopCoupling:
+    """One reservoir whose cascade the source model splits between two REEs."""
+
+    plant_code: int
+    ree_code: int
+    cut_code: int
+    fict_code: int | None
+    fict_ree_code: int | None
+    downstream_code: int | None
 
 
 @dataclass
@@ -147,14 +161,51 @@ def _vminop_ree_terms(
     confhd_df: pd.DataFrame,
     id_map: NewaveIdMap,
     acc_prod: dict[int, float],
-) -> dict[int, list[_VminopTerm]]:
-    """Build every REE's VminOP terms, in plant-code order.
+) -> tuple[dict[int, list[_VminopTerm]], list[_VminopCoupling]]:
+    """Build every REE's VminOP terms, splitting the cascades the REEs couple.
 
-    Each stored-energy reservoir contributes its useful volume weighted by
-    novomodelo's ``@rho_acum_scaled_h{id}`` on the LHS and the curve fraction of
-    novomodelo's ``@earm_max_h{id}`` on the RHS.
+    The source model cuts a reservoir's cascade where it crosses into another
+    REE (``codigo_usina_jusante == 0``) and accounts the water below the cut
+    through the fictitious twin sharing the cut plant's posto, in the twin's
+    REE. ``hydros.json`` instead links the cut plant straight to the real plant
+    below the twin, so novomodelo's ``@rho_acum_scaled_h{id}`` and
+    ``@earm_max_h{id}`` sum the whole cascade. For a reservoir whose cascade
+    reaches such a cut:
+
+    - in its own REE the coefficient is the sum of the integrated equivalent
+      productivities down to the cut plant, written as one
+      ``@rho_eq_scaled_h{c} * hydro_useful_volume_final(id)`` term per plant
+      ``c`` from the reservoir to the cut;
+    - when it has a fictitious twin in another REE, that REE gets the
+      reservoir's useful volume weighted by novomodelo's ``@rho_acum_scaled_h{id}``
+      of the first real plant on the twin's cascade, bounded by the
+      reservoir's own useful volume — the twin does not operate, so its
+      volume range (e.g. a ``VOLMAX %`` on the twin in ``modif.dat``) is not
+      used.
+
+    Every other reservoir keeps ``@rho_acum_scaled_h{id}`` and ``@earm_max_h{id}``.
+    Returns the terms by REE code (in plant-code order) and the split
+    reservoirs.
     """
+    resolutions = resolve_cascade(confhd_df, cadastro)
+    hydro_ree = {int(r["codigo_usina"]): int(r["ree"]) for _, r in confhd_df.iterrows()}
+
+    def _useful(code: int) -> float:
+        return float(cadastro.loc[code, "volume_maximo"]) - float(
+            cadastro.loc[code, "volume_minimo"]
+        )
+
+    def _crosses_ree(code: int, ree_code: int) -> bool:
+        resolution = resolutions[code]
+        twin = resolution.counterpart_fict
+        return (
+            resolution.truncated
+            and twin is not None
+            and hydro_ree.get(twin) != ree_code
+        )
+
     terms: dict[int, list[_VminopTerm]] = defaultdict(list)
+    couplings: list[_VminopCoupling] = []
     for code, ree_code in sorted(_build_hydro_to_ree(confhd_df, cadastro).items()):
         # The source model's stored energy (EARM) — and thus the VminOP expression —
         # counts only monthly-regulating reservoirs with usable storage. Gate on
@@ -170,13 +221,62 @@ def _vminop_ree_terms(
             hid = id_map.hydro_id(code)
         except KeyError:
             continue
-        terms[ree_code].append(
-            (
-                f"@{rho_acum_scaled_name(hid)} * hydro_useful_volume_final({hid})",
-                f"@{{pct}} * @{earm_max_name(hid)}",
+        variable = f"hydro_useful_volume_final({hid})"
+
+        chain = [code]
+        while not _crosses_ree(chain[-1], ree_code):
+            downstream = resolutions[chain[-1]].downstream_code
+            if downstream not in resolutions or downstream in chain:
+                chain = []
+                break
+            chain.append(downstream)
+
+        if not chain:
+            terms[ree_code].append(
+                (
+                    f"@{rho_acum_scaled_name(hid)} * {variable}",
+                    f"@{{pct}} * @{earm_max_name(hid)}",
+                )
+            )
+            continue
+
+        for chain_code in chain:
+            own_name = rho_eq_scaled_name(id_map.hydro_id(chain_code))
+            terms[ree_code].append(
+                (
+                    f"@{own_name} * {variable}",
+                    f"{_useful(code)} * @{{pct}} * @{own_name}",
+                )
+            )
+
+        resolution = resolutions[code]
+        twin = resolution.counterpart_fict
+        twin_ree = hydro_ree.get(twin) if twin is not None else None
+        twin_downstream = resolution.counterpart_downstream
+        lands = (
+            twin is not None
+            and twin_ree is not None
+            and twin_ree != ree_code
+            and twin_downstream is not None
+            and twin_downstream in id_map.all_hydro_codes
+            and _is_stored_energy_reservoir(cadastro, twin)
+        )
+        if lands:
+            ds_name = rho_acum_scaled_name(id_map.hydro_id(twin_downstream))
+            terms[twin_ree].append(
+                (f"@{ds_name} * {variable}", f"{_useful(code)} * @{{pct}} * @{ds_name}")
+            )
+        couplings.append(
+            _VminopCoupling(
+                plant_code=code,
+                ree_code=ree_code,
+                cut_code=chain[-1],
+                fict_code=twin if lands else None,
+                fict_ree_code=twin_ree if lands else None,
+                downstream_code=twin_downstream if lands else None,
             )
         )
-    return terms
+    return terms, couplings
 
 
 def _build_hydro_downstream_map(
@@ -494,6 +594,9 @@ def convert_vminop_constraints(
     Only monthly-regulating reservoirs with usable storage participate in a REE's
     expression (see :func:`_is_stored_energy_reservoir`); run-of-river and
     special-regime plants are excluded to match the source model's EARM plant set.
+    A reservoir whose cascade the source model splits between two REEs gets
+    other coefficients, and also enters the downstream REE (see
+    :func:`_vminop_ree_terms`).
 
     Parameters
     ----------
@@ -564,7 +667,7 @@ def convert_vminop_constraints(
     acc_prod = compute_accumulated_integrated_productivities(cadastro, confhd_df)
 
     hydro_to_ree = _build_hydro_to_ree(confhd_df, cadastro)
-    ree_terms = _vminop_ree_terms(cadastro, confhd_df, id_map, acc_prod)
+    ree_terms, couplings = _vminop_ree_terms(cadastro, confhd_df, id_map, acc_prod)
     per_stage_parameters: dict[str, list[float]] = {}
 
     ree_hydros: dict[int, list[int]] = defaultdict(list)
@@ -707,6 +810,43 @@ def convert_vminop_constraints(
         ]
         all_referenced_ids.update(referenced_ids)
 
+    if couplings:
+        emit(
+            Diagnostic(
+                code="vminop-ree-hydraulic-coupling",
+                severity=Severity.INFO,
+                category=_CATEGORY,
+                title=f"VminOP split across coupled REEs ({len(couplings)} plant(s))",
+                summary=(
+                    f"{len(couplings)} reservoir(s) drain into another REE; their "
+                    "stored energy counts in their own REE only down to the coupling "
+                    "plant, and the rest counts in the downstream REE."
+                ),
+                table=DiagnosticTable(
+                    columns=[
+                        "Plant",
+                        "REE",
+                        "Coupling plant",
+                        "Fictitious twin",
+                        "Downstream REE",
+                        "Downstream plant",
+                    ],
+                    rows=[
+                        [
+                            c.plant_code,
+                            c.ree_code,
+                            c.cut_code,
+                            c.fict_code if c.fict_code is not None else "-",
+                            c.fict_ree_code if c.fict_ree_code is not None else "-",
+                            c.downstream_code if c.downstream_code is not None else "-",
+                        ]
+                        for c in couplings
+                    ],
+                    justify=["right"] * 6,
+                ),
+            ),
+            logger=_LOG,
+        )
     if vminop_skips:
         emit(
             Diagnostic(

@@ -1811,6 +1811,140 @@ class TestVminopScaledStoredEnergy:
         assert values[12:] == pytest.approx([m / 100.0 for m in range(1, 13)])
 
 
+def _make_coupled_vminop_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
+    """REE 1 (UP -> CUT, terminal) coupled to REE 2 through FICT.UP/FICT.CUT -> DOWN.
+
+    FICT.UP stores less than its twin UP; the downstream REE's bound still
+    uses UP's useful volume, since the twin does not operate.
+    """
+    codes = [1, 2, 3, 4, 5]
+    cadastro = pd.DataFrame(
+        {
+            "nome_usina": ["UP", "CUT", "FICT.UP", "FICT.CUT", "DOWN"],
+            "produtibilidade_especifica": [0.01, 0.02, 0.0, 0.0, 0.03],
+            "volume_minimo": [100.0, 200.0, 100.0, 200.0, 300.0],
+            "volume_maximo": [1000.0, 2000.0, 600.0, 2000.0, 3000.0],
+            "volume_referencia": [500.0, 1000.0, 500.0, 1000.0, 1500.0],
+            "canal_fuga_medio": [200.0, 300.0, 200.0, 300.0, 400.0],
+            "tipo_perda": [0] * 5,
+            "perdas": [0.0] * 5,
+            "tipo_regulacao": ["M"] * 5,
+            "a0_volume_cota": [300.0, 400.0, 300.0, 400.0, 500.0],
+            "a1_volume_cota": [0.1, 0.05, 0.1, 0.05, 0.02],
+            "a2_volume_cota": [0.0] * 5,
+            "a3_volume_cota": [0.0] * 5,
+            "a4_volume_cota": [0.0] * 5,
+        },
+        index=pd.Index(codes, name="codigo_usina"),
+    )
+    confhd_df = pd.DataFrame(
+        {
+            "codigo_usina": codes,
+            "nome_usina": list(cadastro["nome_usina"]),
+            "usina_existente": ["EX"] * 5,
+            "codigo_usina_jusante": [2, 0, 4, 5, 0],
+            "ree": [1, 1, 2, 2, 2],
+            "posto": [1, 2, 1, 2, 5],
+            "volume_inicial_percentual": [50.0] * 5,
+        }
+    )
+
+    dger = MagicMock()
+    dger.mes_inicio_estudo = 1
+    dger.ano_inicio_estudo = 2020
+    dger.num_anos_estudo = 1
+    dger.num_anos_pos_estudo = 0
+    dger.curva_aversao = 1
+
+    curva = MagicMock()
+    curva.curva_seguranca = pd.DataFrame(
+        {
+            "codigo_ree": [1, 2],
+            "data": [datetime(2020, 1, 1)] * 2,
+            "valor": [30.0, 40.0],
+        }
+    )
+    curva.configuracoes_penalizacao = [0, 11, 0]
+    curva.custos_penalidades = pd.DataFrame(
+        {"codigo_ree": [1, 2], "penalidade": [1488.0, 1488.0]}
+    )
+
+    confhd = MagicMock()
+    confhd.usinas = confhd_df
+    hidr = MagicMock()
+    hidr.cadastro = cadastro
+    ree = MagicMock()
+    ree.rees = pd.DataFrame({"codigo": [1, 2], "nome": ["SUDESTE", "NORDESTE"]})
+
+    case = make_case(
+        tmp_path, dger=dger, curva=curva, confhd=confhd, hidr=hidr, ree=ree
+    )
+    id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[1, 2, 5], thermal_codes=[])
+    return case, id_map
+
+
+class TestVminopReeCoupling:
+    """A reservoir cascade the source model cuts between two REEs (e.g. TRES
+    MARIAS -> FICT.TRES MA -> SOBRADINHO) is split: its own REE weights it by the
+    equivalent productivities down to the cut, the downstream REE by the
+    accumulated productivity of the first real plant below the cut."""
+
+    def _convert(self, tmp_path: Path):
+        case, id_map = _make_coupled_vminop_case(tmp_path)
+        result = convert_vminop_constraints(case, id_map)
+        assert result is not None
+        return {c["name"]: c for c in result.constraints_dict["constraints"]}, result
+
+    def test_own_ree_uses_equivalent_productivities_down_to_the_cut(
+        self, tmp_path: Path
+    ) -> None:
+        by_name, _ = self._convert(tmp_path)
+
+        assert by_name["VminOP_SUDESTE_s0"]["expression"] == (
+            "@rho_eq_scaled_h0 * hydro_useful_volume_final(0)"
+            " + @rho_eq_scaled_h1 * hydro_useful_volume_final(0)"
+            " + @rho_eq_scaled_h1 * hydro_useful_volume_final(1)"
+            " >= 900.0 * @pct_vminop_ree1 * @rho_eq_scaled_h0"
+            " + 900.0 * @pct_vminop_ree1 * @rho_eq_scaled_h1"
+            " + 1800.0 * @pct_vminop_ree1 * @rho_eq_scaled_h1"
+        )
+
+    def test_only_the_curve_fraction_is_a_bridge_parameter(
+        self, tmp_path: Path
+    ) -> None:
+        _, result = self._convert(tmp_path)
+
+        assert set(result.per_stage_parameters) == {
+            "pct_vminop_ree1",
+            "pct_vminop_ree2",
+        }
+
+    def test_downstream_ree_counts_the_coupled_volume_below_the_cut(
+        self, tmp_path: Path
+    ) -> None:
+        by_name, result = self._convert(tmp_path)
+
+        assert by_name["VminOP_NORDESTE_s0"]["expression"] == (
+            "@rho_acum_scaled_h2 * hydro_useful_volume_final(0)"
+            " + @rho_acum_scaled_h2 * hydro_useful_volume_final(1)"
+            " + @rho_acum_scaled_h2 * hydro_useful_volume_final(2)"
+            " >= 900.0 * @pct_vminop_ree2 * @rho_acum_scaled_h2"
+            " + 1800.0 * @pct_vminop_ree2 * @rho_acum_scaled_h2"
+            " + @pct_vminop_ree2 * @earm_max_h2"
+        )
+        assert result.referenced_hydro_ids == [0, 1, 2]
+
+    def test_coupling_is_reported(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
+            self._convert(tmp_path)
+
+        [diag] = [d for d in collected if d.code == "vminop-ree-hydraulic-coupling"]
+        assert diag.severity is Severity.INFO
+        assert diag.table is not None
+        assert diag.table.rows == [[1, 1, 2, 3, 2, 5], [2, 1, 2, 4, 2, 5]]
+        _assert_no_repo_internal_leaks(collected)
+
+
 class TestConstraintsNoLongerBridgesLegacyWarning:
     """After the migration, constraints.py has no ``_LOG.warning(...)`` call
     left to be swept into a generic ``legacy-warning`` panel (OQ3); the
