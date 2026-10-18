@@ -64,7 +64,6 @@ def load_resolved_generic_constraints(
             novomodelo_output_dir
         ),
         min_storage,
-        novomodelo_readers.read_novomodelo_stage_hours(novomodelo_output_dir),
     )
 
 

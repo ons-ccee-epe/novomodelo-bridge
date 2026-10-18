@@ -3,24 +3,18 @@
 novomodelo writes the generic constraints it actually built into
 ``output/generic_constraints/resolved_echo.parquet``: one row per LHS term per
 active ``(stage, block)`` row, with the term's coefficient and the row's bounds
-exactly as the LP received them — every ``@name`` parameter, parameter product
-and parquet base already resolved. This module turns that echo into the
-comparison-ready view both the dashboard and the comparator render, so neither
-re-derives a coefficient from the expression text.
+exactly as the LP received them — every ``@name`` parameter and arithmetic
+over parameters already resolved, and repeated references to one variable
+merged into one term. This module turns that echo into the comparison-ready
+view both the dashboard and the comparator render, so neither re-derives a
+coefficient from the expression text.
 
-Two adjustments make the view comparable across stages and against the source
-model:
-
-- **Stage-split families are merged.** The bridge emits VminOP and RHE as one
-  constraint per stage (``VminOP_<REE>_s<stage>``, ``RHE_<code>_s<stage>``) to
-  price their MWh slack; each family is shown as one constraint whose rows span
-  its stages, with its penalty back in R$/MWh.
-- **Useful-volume terms are shown as useful volume.** novomodelo resolves
-  ``hydro_useful_volume_final`` to the absolute storage column and moves the
-  dead-volume term ``coefficient × min_storage`` onto the bound. The view keeps
-  the useful volume on the LHS and removes that term from the bound, so a VminOP
-  row reads as useful stored energy (MWh) against the curve fraction of its
-  maximum.
+Useful-volume terms are shown as useful volume. novomodelo resolves
+``hydro_useful_volume_final`` to the absolute storage column and moves the
+dead-volume term ``coefficient × min_storage`` onto the bound. The view keeps
+the useful volume on the LHS and removes that term from the bound, so a VminOP
+row reads as useful stored energy (MWh) against the curve fraction of its
+maximum.
 
 It lives at the package top level so neither consumer imports across the
 comparator↔UI boundary.
@@ -37,9 +31,6 @@ import polars as pl
 
 _LOG = logging.getLogger(__name__)
 
-#: A stage-split constraint name: the family base and the stage it covers.
-_STAGE_SPLIT_RE = re.compile(r"^(?P<base>VminOP_.+|RHE_\d+)_s(?P<stage>\d+)$")
-_DESCRIPTION_STAGE_RE = re.compile(r",\s*stage \d+$")
 _ENTITY_RE = re.compile(r"\bid=(\d+)")
 _BLOCK_RE = re.compile(r"\bblock=(\d+)")
 
@@ -83,17 +74,14 @@ _LHS_COLUMNS = ["constraint_id", "scenario_id", "stage_id", "block_id", "lhs_val
 class ResolvedGenericConstraints(NamedTuple):
     """The comparison-ready view of a case's generic constraints.
 
-    ``constraints`` holds one dict per shown constraint (stage-split families
-    merged under the smallest member id); ``terms`` and ``bounds`` are keyed by
-    those ids; ``display_ids`` maps every constraint id novomodelo reports (e.g. in
-    ``violations/generic``) to its shown id; ``min_storage`` is the per-hydro
+    ``constraints`` holds the declared constraint dicts; ``terms`` and
+    ``bounds`` are keyed by their ids; ``min_storage`` is the per-hydro
     ``min_storage_hm3`` the useful-volume terms subtract.
     """
 
     constraints: list[dict]
     terms: pl.DataFrame
     bounds: pl.DataFrame
-    display_ids: dict[int, int]
     min_storage: dict[int, float]
 
 
@@ -101,28 +89,21 @@ def resolve_generic_constraints(
     constraints: list[dict],
     echo: pl.DataFrame | None,
     min_storage: dict[int, float],
-    stage_hours: dict[int, float],
 ) -> ResolvedGenericConstraints:
     """Build the comparison-ready view from the declared constraints and the echo.
 
-    *stage_hours* (``{stage_id: hours}``) restores a stage-split member's
-    per-stage penalty (R$/MWh ÷ stage hours) to R$/MWh. With no echo the view
-    carries the constraints but no terms or bounds.
+    With no echo the view carries the constraints but no terms or bounds.
     """
-    display_ids, shown = _merge_stage_split(constraints, stage_hours)
     if echo is None or echo.is_empty():
         return ResolvedGenericConstraints(
-            shown,
+            constraints,
             pl.DataFrame(schema=TERMS_SCHEMA),
             pl.DataFrame(schema=BOUNDS_SCHEMA),
-            display_ids,
             min_storage,
         )
 
     rows = echo.filter(pl.col("coefficient").is_not_null()).with_columns(
-        pl.col("constraint_id")
-        .replace_strict(display_ids, default=pl.col("constraint_id"))
-        .cast(pl.Int32),
+        pl.col("constraint_id").cast(pl.Int32),
         pl.col("variable")
         .str.extract(_ENTITY_RE.pattern, 1)
         .cast(pl.Int32)
@@ -151,11 +132,7 @@ def resolve_generic_constraints(
     )
     keys = ["constraint_id", "stage_id", "block_id"]
     bounds = (
-        echo.with_columns(
-            pl.col("constraint_id")
-            .replace_strict(display_ids, default=pl.col("constraint_id"))
-            .cast(pl.Int32)
-        )
+        echo.with_columns(pl.col("constraint_id").cast(pl.Int32))
         .select([*keys, "bound_lower", "bound_upper"])
         .unique(subset=keys, keep="first")
         .join(dead, on=keys, how="left", nulls_equal=True)
@@ -167,40 +144,7 @@ def resolve_generic_constraints(
         .cast(BOUNDS_SCHEMA)
         .sort(keys)
     )
-    return ResolvedGenericConstraints(shown, terms, bounds, display_ids, min_storage)
-
-
-def _merge_stage_split(
-    constraints: list[dict], stage_hours: dict[int, float]
-) -> tuple[dict[int, int], list[dict]]:
-    """Merge stage-split members under their family; return ``(display_ids, shown)``."""
-    display_ids: dict[int, int] = {}
-    shown: list[dict] = []
-    family_id: dict[str, int] = {}
-    for c in sorted(constraints, key=lambda c: int(c["id"])):
-        cid = int(c["id"])
-        match = _STAGE_SPLIT_RE.match(str(c.get("name", "")))
-        if match is None:
-            display_ids[cid] = cid
-            shown.append(c)
-            continue
-        base = match.group("base")
-        if base in family_id:
-            display_ids[cid] = family_id[base]
-            continue
-        family_id[base] = cid
-        display_ids[cid] = cid
-        merged = dict(c, name=base)
-        merged["description"] = _DESCRIPTION_STAGE_RE.sub(
-            "", str(c.get("description", ""))
-        )
-        slack = dict(c.get("slack") or {})
-        hours = stage_hours.get(int(match.group("stage")))
-        if "penalty" in slack and hours:
-            slack["penalty"] = float(slack["penalty"]) * hours
-        merged["slack"] = slack
-        shown.append(merged)
-    return display_ids, shown
+    return ResolvedGenericConstraints(constraints, terms, bounds, min_storage)
 
 
 def unsupported_constraint_ids(terms: pl.DataFrame) -> set[int]:

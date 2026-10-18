@@ -53,7 +53,7 @@ def evaluate_lhs_newave(
     pair.
 
     Each term is weighted by novomodelo's own coefficient for that stage, so a
-    VminOP term carries the same scaled stored-energy productivity (MWh/hm³)
+    VminOP term carries the same integrated stored-energy productivity (MWh/hm³)
     on both sides. A useful-volume term reads ``VARMUH`` (useful stored volume)
     directly; an absolute-storage term adds back the plant's ``min_storage_hm3``.
 

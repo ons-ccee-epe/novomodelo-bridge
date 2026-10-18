@@ -1204,7 +1204,7 @@ class TestCompareResultsReturnsDataset:
 
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.constraints.load_resolved_generic_constraints",
-            lambda *_a: resolve_generic_constraints([], None, {}, {}),
+            lambda *_a: resolve_generic_constraints([], None, {}),
         )
 
     def test_compare_results_returns_validated_dataset(
@@ -1629,7 +1629,7 @@ class TestEvaluateLhsNovomodelo:
             schema_overrides={"block_id": pl.Int32, "bound_upper": pl.Float64},
         )
         return resolve_generic_constraints(
-            [{"id": 0, "name": "HV_1", "slack": {"enabled": False}}], echo, {}, {}
+            [{"id": 0, "name": "HV_1", "slack": {"enabled": False}}], echo, {}
         )
 
     def test_evaluates_lhs_from_a_real_simulation_lazyframe(self) -> None:
@@ -1684,7 +1684,7 @@ class TestEvaluateLhsNovomodelo:
             "novomodelo_bridge.comparators.constraints.scan_simulation_entity"
         ) as scan:
             result = evaluate_lhs_novomodelo(
-                resolve_generic_constraints([], None, {}, {}), Path("/out")
+                resolve_generic_constraints([], None, {}), Path("/out")
             )
         assert result.is_empty()
         scan.assert_not_called()

@@ -14,7 +14,7 @@ slot/sentinel helpers (:data:`UNBOUNDED`, :func:`is_bounded`,
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import pyarrow as pa
 
@@ -124,6 +124,42 @@ def slot_endpoints(
     return bound_lower, bound_upper
 
 
+#: How novomodelo charges a generic-constraint slack penalty: ``per_hour`` multiplies
+#: it by the hours the violated row covers (a price per MWh on a MW row),
+#: ``per_unit`` charges it once per unit of violation (a price per MWh on a MWh
+#: row, whatever the stage length).
+PenaltyBasis = Literal["per_hour", "per_unit"]
+
+
+def hard_slack() -> dict[str, object]:
+    """A disabled slack: the constraint is hard.
+
+    novomodelo rejects a disabled slack that carries a ``penalty`` or a
+    ``penalty_basis``.
+    """
+    return {"enabled": False}
+
+
+def soft_slack(penalty: float, basis: PenaltyBasis) -> dict[str, object]:
+    """An enabled slack charging *penalty* on *basis*."""
+    return {"enabled": True, "penalty": float(penalty), "penalty_basis": basis}
+
+
+def _check_slack(name: str, slack: Mapping[str, object]) -> None:
+    if not slack.get("enabled"):
+        if set(slack) != {"enabled"}:
+            raise ValueError(f"{name}: a disabled slack carries {sorted(slack)}")
+        return
+    if "penalty" not in slack or slack.get("penalty_basis") not in (
+        "per_hour",
+        "per_unit",
+    ):
+        raise ValueError(
+            f"{name}: an enabled slack needs a penalty and a penalty_basis, "
+            f"got {dict(slack)}"
+        )
+
+
 class GenericConstraintBuilder:
     """Assembles generic constraints sharing one 0-based id space via *allocator*.
 
@@ -149,7 +185,13 @@ class GenericConstraintBuilder:
         expression: str,
         slack: Mapping[str, object],
     ) -> int:
-        """Append one constraint dict and return its allocated id."""
+        """Append one constraint dict and return its allocated id.
+
+        Raises:
+            ValueError: *slack* is not a shape novomodelo loads (see
+                :func:`soft_slack` and :func:`hard_slack`).
+        """
+        _check_slack(name, slack)
         constraint_id = self._allocator.next_id
         self._constraints.append(
             {

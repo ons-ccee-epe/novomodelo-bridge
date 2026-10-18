@@ -8,18 +8,17 @@ for every hydro in the converted case:
 
 - ``rho_eq_h{id}`` — point equivalent productivity, MW/(m³/s)
 - ``rho_acum_h{id}`` — point accumulated (cascade) productivity, MW/(m³/s)
-- ``rho_eq_scaled_h{id}`` — integrated equivalent productivity, MWh/hm³
-- ``rho_acum_scaled_h{id}`` — integrated accumulated productivity, MWh/hm³
-- ``earm_max_h{id}`` — maximum useful stored energy, MWh
+- ``rho_eq_mwh_h{id}`` — integrated equivalent productivity, MWh/hm³
+- ``rho_acum_mwh_h{id}`` — integrated accumulated productivity, MWh/hm³
+- ``earm_max_mwh_h{id}`` — maximum stored energy over the cascade, MWh
 
-The values are derived by novomodelo at solve time; the bridge only declares the
-names. The scaled variants multiply the integrated productivity by novomodelo's
-fixed ``10⁶/3600`` hm³ → (m³/s)·h factor, so ``@rho_acum_scaled_h{id} ×
-volume[hm³]`` is stored energy in MWh with no dependence on stage length.
-Stored-energy constraints (VminOP, RHE) use the scaled variants.
+novomodelo derives the values at setup; the bridge only declares the names. The
+MWh forms make ``@rho_acum_mwh_h{id} × volume[hm³]`` stored energy in MWh with
+no dependence on stage length; the stored-energy constraints use them.
 
-A converter may also declare ``per_stage`` parameters it computes itself (the
-VminOP security-curve fraction); see :func:`build_scalar_parameters`.
+A converter may also declare ``per_stage`` parameters it computes itself (a
+security-curve fraction) and ``expression`` parameters over other parameters
+(a stored-energy share); see :func:`build_scalar_parameters`.
 
 See ``schemas/generic_parameters.schema.json`` in the novomodelo repo for the
 on-disk shape and the valid ``computed_spec.tag`` variants.
@@ -29,6 +28,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
+from novomodelo_bridge.core.stored_energy import (
+    earm_max_mwh_name,
+    rho_acum_mwh_name,
+    rho_eq_mwh_name,
+)
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 
@@ -42,43 +46,31 @@ def rho_acum_name(hydro_id: int) -> str:
     return f"rho_acum_h{hydro_id}"
 
 
-def rho_eq_scaled_name(hydro_id: int) -> str:
-    """Canonical ``@name`` for the scaled integrated equivalent productivity."""
-    return f"rho_eq_scaled_h{hydro_id}"
-
-
-def rho_acum_scaled_name(hydro_id: int) -> str:
-    """Canonical ``@name`` for the scaled integrated accumulated productivity."""
-    return f"rho_acum_scaled_h{hydro_id}"
-
-
-def earm_max_name(hydro_id: int) -> str:
-    """Canonical ``@name`` for the maximum useful stored energy of one hydro."""
-    return f"earm_max_h{hydro_id}"
-
-
 #: ``(name builder, computed_spec.tag)`` for every per-hydro parameter, in
 #: declaration order.
 _PER_HYDRO_COMPUTED: tuple[tuple[Callable[[int], str], str], ...] = (
     (rho_eq_name, "equivalent_productivity"),
     (rho_acum_name, "accumulated_productivity"),
-    (rho_eq_scaled_name, "scaled_integrated_equivalent_productivity"),
-    (rho_acum_scaled_name, "scaled_integrated_accumulated_productivity"),
-    (earm_max_name, "scaled_max_stored_energy"),
+    (rho_eq_mwh_name, "integrated_equivalent_productivity_mwh_per_hm3"),
+    (rho_acum_mwh_name, "integrated_accumulated_productivity_mwh_per_hm3"),
+    (earm_max_mwh_name, "max_stored_energy_mwh"),
 )
 
 
 def build_scalar_parameters(
     hydro_ids: Iterable[int],
     per_stage: Mapping[str, Sequence[float]] | None = None,
+    expressions: Mapping[str, str] | None = None,
 ) -> dict:
     """Return a ``generic_parameters.json`` dict.
 
     Declares every per-hydro ``computed`` parameter for each id in
     *hydro_ids* (deduplicated, ascending), then one ``per_stage`` entry per
-    *per_stage* item, in mapping order. Each *per_stage* value list holds one
-    float per study stage, indexed by stage id from 0 — novomodelo rejects a list
-    whose length differs from the stage count.
+    *per_stage* item and one ``expression`` entry per *expressions* item, each
+    in mapping order. Each *per_stage* value list holds one float per study
+    stage, indexed by stage id from 0 — novomodelo rejects a list whose length
+    differs from the stage count. Each *expressions* body is arithmetic over
+    other ``@name`` parameters.
     """
     entries: list[dict] = []
     for hydro_id in sorted({int(h) for h in hydro_ids}):
@@ -100,6 +92,15 @@ def build_scalar_parameters(
                 "values": [
                     [stage_id, float(value)] for stage_id, value in enumerate(values)
                 ],
+            }
+        )
+    for name, body in (expressions or {}).items():
+        entries.append(
+            {
+                "id": len(entries),
+                "name": name,
+                "kind": "expression",
+                "expression": body,
             }
         )
 

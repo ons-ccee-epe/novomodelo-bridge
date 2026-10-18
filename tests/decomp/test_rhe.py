@@ -5,8 +5,9 @@ Synthetic ``ConstraintRecord``/``ConstraintTerm``/``StageBounds``/
 ``example/`` read, no ``import novomodelo``. Covers the absolute (``tipo_limite=1``)
 MWh bound, the percentage (``tipo_limite=2``) useful-energy RHS, the reservoir
 plant set (cascade, run-of-river exclusion, weekly-regulating ``"S"``
-participation), the no-storage skip+WARNING, the one-constraint-per-stage
-split with its stage-hours penalty, and the negative-CM sign path.
+participation), the no-storage skip+WARNING, the single constraint per
+record with its per_unit penalty, the coupled-cascade expression parameters,
+and the negative-CM sign path.
 """
 
 from __future__ import annotations
@@ -167,16 +168,19 @@ def test_emit_rhe_generics_absolute_limit_becomes_mwh_bound() -> None:
     )
 
     assert result is not None
-    assert len(result.constraints) == 1
-    constraint = result.constraints[0]
-    assert constraint["name"] == "RHE_100_s0"
-    assert (
-        constraint["expression"] == "@rho_acum_scaled_h0 * hydro_useful_volume_final(0)"
-    )
+    [constraint] = result.generic.constraints
+    assert constraint["name"] == "RHE_100"
+    assert constraint["expression"] == "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
     assert set(constraint) == {"id", "name", "description", "expression", "slack"}
-    assert constraint["slack"]["penalty"] == pytest.approx(250.0 / 730.0)
+    assert constraint["slack"] == {
+        "enabled": True,
+        "penalty": 250.0,
+        "penalty_basis": "per_unit",
+    }
+    assert result.per_stage_parameters == {}
+    assert result.expression_parameters == {}
 
-    rows = result.bounds.to_pylist()
+    rows = result.generic.bounds.to_pylist()
     assert len(rows) == 1
     # 50 MWmes (stage-average MW) over a 730 h stage.
     assert rows[0]["bound_lower"] == pytest.approx(50.0 * 730.0)
@@ -210,11 +214,13 @@ def test_emit_rhe_generics_percentage_rhs_is_the_maximum_useful_energy() -> None
     )
 
     assert result is not None
-    # 20 % of novomodelo's maximum useful stored energy.
-    assert result.constraints[0]["expression"] == (
-        "@rho_acum_scaled_h0 * hydro_useful_volume_final(0) >= 0.2 * @earm_max_h0"
+    assert result.generic.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+        " >= @pct_rhe101 * @earm_max_mwh_h0"
     )
-    rows = result.bounds.to_pylist()
+    # 20 % of novomodelo's maximum useful stored energy.
+    assert result.per_stage_parameters == {"pct_rhe101": [pytest.approx(0.2)]}
+    rows = result.generic.bounds.to_pylist()
     assert rows[0]["bound_lower"] == 0.0
     assert rows[0]["bound_upper"] is None
 
@@ -254,10 +260,10 @@ def test_emit_rhe_generics_two_reservoir_cascade() -> None:
     )
 
     assert result is not None
-    assert result.constraints[0]["expression"] == (
-        "@rho_acum_scaled_h0 * hydro_useful_volume_final(0)"
-        " + @rho_acum_scaled_h1 * hydro_useful_volume_final(1)"
-        " >= 0.1 * @earm_max_h0 + 0.1 * @earm_max_h1"
+    assert result.generic.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+        " + @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
+        " >= @pct_rhe102 * (@earm_max_mwh_h0 + @earm_max_mwh_h1)"
     )
 
 
@@ -291,8 +297,8 @@ def test_emit_rhe_generics_run_of_river_excluded() -> None:
     )
 
     assert result is not None
-    assert result.constraints[0]["expression"] == (
-        "@rho_acum_scaled_h0 * hydro_useful_volume_final(0)"
+    assert result.generic.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
     )
 
 
@@ -316,8 +322,8 @@ def test_emit_rhe_generics_weekly_regulating_reservoir_participates() -> None:
     )
 
     assert result is not None
-    assert result.constraints[0]["expression"] == (
-        "@rho_acum_scaled_h0 * hydro_useful_volume_final(0)"
+    assert result.generic.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
     )
 
 
@@ -387,11 +393,11 @@ def test_emit_rhe_generics_unmapped_ree_skips_and_warns() -> None:
 
 
 # ---------------------------------------------------------------------------
-# One constraint per stage, priced at R$/MWh ÷ the stage's hours
+# One constraint per record over its weekly and monthly stages
 # ---------------------------------------------------------------------------
 
 
-def test_emit_rhe_generics_splits_weekly_and_monthly_stages() -> None:
+def test_emit_rhe_generics_one_constraint_spans_weekly_and_monthly_stages() -> None:
     id_map, effective = _single_reservoir()
     record = _he_record(
         constraint_id=106,
@@ -415,17 +421,41 @@ def test_emit_rhe_generics_splits_weekly_and_monthly_stages() -> None:
     )
 
     assert result is not None
-    assert [c["name"] for c in result.constraints] == ["RHE_106_s0", "RHE_106_s1"]
-    penalties = [c["slack"]["penalty"] for c in result.constraints]
-    assert penalties == pytest.approx([250.0 / 168.0, 250.0 / 730.0])
-    rows = result.bounds.to_pylist()
+    [constraint] = result.generic.constraints
+    assert constraint["name"] == "RHE_106"
+    rows = result.generic.bounds.to_pylist()
     assert [(r["constraint_id"], r["stage_id"]) for r in rows] == [
-        (result.constraints[0]["id"], 0),
-        (result.constraints[1]["id"], 1),
+        (constraint["id"], 0),
+        (constraint["id"], 1),
     ]
+    # Stage-average MW over each stage's own hours.
     assert [r["bound_lower"] for r in rows] == pytest.approx(
         [50.0 * 168.0, 60.0 * 730.0]
     )
+
+
+def test_emit_rhe_generics_percentage_fraction_is_zero_off_the_record_stages() -> None:
+    id_map, effective = _single_reservoir()
+    record = _he_record(
+        constraint_id=110,
+        ree_code=1,
+        coefficient=1.0,
+        bounds={1: StageBounds(lower=(30.0,), upper=(None,))},
+        tipo_limite=2,
+        valor_penalidade=250.0,
+    )
+
+    result = emit_rhe_generics(
+        _case([_stage(0, 168.0), _stage(1, 168.0), _stage(2, 730.0)]),
+        id_map,
+        census=_census(record),
+        effective=effective,
+        hydro_to_ree={5: 1},
+    )
+
+    assert result is not None
+    assert result.per_stage_parameters == {"pct_rhe110": pytest.approx([0.0, 0.3, 0.0])}
+    assert [r["stage_id"] for r in result.generic.bounds.to_pylist()] == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -469,9 +499,9 @@ def test_emit_rhe_generics_negative_cm_sign_subtracts() -> None:
     )
 
     assert result is not None
-    assert result.constraints[0]["expression"] == (
-        "@rho_acum_scaled_h0 * hydro_useful_volume_final(0)"
-        " - @rho_acum_scaled_h1 * hydro_useful_volume_final(1)"
+    assert result.generic.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+        " - @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
     )
 
 
@@ -501,7 +531,7 @@ def test_emit_rhe_generics_non_positive_penalty_falls_back_and_warns() -> None:
         )
 
     assert result is not None
-    assert result.constraints[0]["slack"]["penalty"] == pytest.approx(1000.0 / 730.0)
+    assert result.generic.constraints[0]["slack"]["penalty"] == 1000.0
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-default-penalty"
@@ -528,7 +558,7 @@ def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -
         )
 
     assert result is not None
-    rows = result.bounds.to_pylist()
+    rows = result.generic.bounds.to_pylist()
     assert rows[0]["bound_lower"] == pytest.approx(50.0 * 730.0)
     assert rows[0]["bound_upper"] is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
@@ -595,7 +625,7 @@ def _coupled_cascade() -> tuple[DecompIdMap, EffectiveCadastro, dict[int, int]]:
     return id_map, effective, {1: 1, 2: 1, 5: 2, 7: 1}
 
 
-def _emit_coupled(tipo_limite: int) -> dict[str, dict]:
+def _emit_coupled(tipo_limite: int) -> tuple[dict[str, dict], dict[str, str]]:
     id_map, effective, hydro_to_ree = _coupled_cascade()
     records = [
         _he_record(
@@ -616,38 +646,44 @@ def _emit_coupled(tipo_limite: int) -> dict[str, dict]:
         hydro_to_ree=hydro_to_ree,
     )
     assert result is not None
-    return {c["name"]: c for c in result.constraints}
+    by_name = {c["name"]: c for c in result.generic.constraints}
+    return by_name, result.expression_parameters
 
 
 def test_emit_rhe_generics_coupled_own_ree_stops_at_the_cut() -> None:
-    by_name = _emit_coupled(tipo_limite=1)
+    by_name, params = _emit_coupled(tipo_limite=1)
 
-    assert by_name["RHE_201_s0"]["expression"] == (
-        "@rho_eq_scaled_h0 * hydro_useful_volume_final(0)"
-        " + @rho_eq_scaled_h1 * hydro_useful_volume_final(0)"
-        " + @rho_eq_scaled_h1 * hydro_useful_volume_final(1)"
-        " + @rho_acum_scaled_h3 * hydro_useful_volume_final(3)"
+    assert by_name["RHE_201"]["expression"] == (
+        "@rho_cut_mwh_h0 * hydro_useful_volume_final(0)"
+        " + @rho_cut_mwh_h1 * hydro_useful_volume_final(1)"
+        " + @rho_acum_mwh_h3 * hydro_useful_volume_final(3)"
     )
+    assert params["rho_cut_mwh_h0"] == "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"
+    assert params["rho_cut_mwh_h1"] == "@rho_eq_mwh_h1"
 
 
 def test_emit_rhe_generics_coupled_downstream_ree_counts_the_twins() -> None:
-    by_name = _emit_coupled(tipo_limite=1)
+    by_name, _ = _emit_coupled(tipo_limite=1)
 
-    assert by_name["RHE_202_s0"]["expression"] == (
-        "@rho_acum_scaled_h2 * hydro_useful_volume_final(0)"
-        " + @rho_acum_scaled_h2 * hydro_useful_volume_final(1)"
-        " + @rho_acum_scaled_h2 * hydro_useful_volume_final(2)"
+    assert by_name["RHE_202"]["expression"] == (
+        "@rho_acum_mwh_h2 * hydro_useful_volume_final(0)"
+        " + @rho_acum_mwh_h2 * hydro_useful_volume_final(1)"
+        " + @rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
     )
 
 
 def test_emit_rhe_generics_coupled_percentage_uses_the_physical_volume() -> None:
-    by_name = _emit_coupled(tipo_limite=2)
+    by_name, params = _emit_coupled(tipo_limite=2)
 
+    assert by_name["RHE_202"]["expression"].split(" >= ")[1] == (
+        "@pct_rhe202 * (@earm_max_fict_mwh_h0 + @earm_max_fict_mwh_h1"
+        " + @earm_max_mwh_h2)"
+    )
     # The shares use UP's own 1000 hm³ (not FICT.UP's 500 hm³) and CUT's
     # 2000 hm³; DOWN, uncoupled, keeps novomodelo's maximum useful stored energy.
-    assert by_name["RHE_202_s0"]["expression"].split(" >= ")[1] == (
-        "100.0 * @rho_acum_scaled_h2 + 200.0 * @rho_acum_scaled_h2 + 0.1 * @earm_max_h2"
-    )
+    assert params["earm_max_fict_mwh_h0"] == "1000.0 * @rho_acum_mwh_h2"
+    assert params["earm_max_fict_mwh_h1"] == "2000.0 * @rho_acum_mwh_h2"
+    assert params["earm_max_cut_mwh_h0"] == "1000.0 * @rho_cut_mwh_h0"
 
 
 def test_emit_rhe_generics_coupling_is_reported() -> None:

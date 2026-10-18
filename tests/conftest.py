@@ -732,6 +732,7 @@ def write_generic_constraint_echo(output_dir: Path, terms: list[EchoTerm]) -> No
             "derived_shape": pa.array(["floor"] * len(terms), pa.string()),
             "slack_enabled": pa.array([True] * len(terms), pa.bool_()),
             "slack_penalty": pa.array([1.0] * len(terms), pa.float64()),
+            "slack_penalty_basis": pa.array(["per_unit"] * len(terms), pa.string()),
         }
     )
     path = output_dir / "generic_constraints" / "resolved_echo.parquet"

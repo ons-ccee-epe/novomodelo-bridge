@@ -29,7 +29,6 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_hydro_metadata,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
-    read_novomodelo_stage_hours,
     read_novomodelo_training_metadata,
 )
 
@@ -1040,10 +1039,10 @@ class GenericConstraintData:
 
     ``resolved`` is the comparison-ready view (see
     :func:`novomodelo_bridge.novomodelo.constraint_expr.resolve_generic_constraints`):
-    stage-split families merged, coefficients and bounds read from the run's
-    echo. F3 shape: ``constraints`` dicts carry no ``sense`` key, and
-    ``bounds`` has nullable ``bound_lower``/``bound_upper`` endpoint columns
-    instead of a single ``bound`` column (see
+    coefficients and bounds read from the run's echo. F3 shape:
+    ``constraints`` dicts carry no ``sense`` key, and ``bounds`` has nullable
+    ``bound_lower``/``bound_upper`` endpoint columns instead of a single
+    ``bound`` column (see
     :mod:`novomodelo_bridge.core.generic_constraint_format`). Readers derive the
     displayed direction from the endpoints via
     :func:`novomodelo_bridge.dashboard.tabs.constraints_utils.derive_constraint_shape`.
@@ -1081,7 +1080,6 @@ def load_generic_constraints(case_dir: Path) -> GenericConstraintData:
             if constraints
             else None,
             min_storage,
-            read_novomodelo_stage_hours(output_dir),
         )
     )
 
@@ -1415,16 +1413,7 @@ class DashboardData:
 
     @property
     def gc_violations(self) -> pd.DataFrame:
-        """``violations/generic`` keyed by the shown (merged) constraint ids."""
-        violations = self.simulation.gc_violations
-        display_ids = self.gc.resolved.display_ids
-        if violations.empty or "constraint_id" not in violations.columns:
-            return violations
-        out = violations.copy()
-        out["constraint_id"] = (
-            out["constraint_id"].map(display_ids).fillna(out["constraint_id"])
-        ).astype(violations["constraint_id"].dtype)
-        return out
+        return self.simulation.gc_violations
 
     @property
     def hydro_bounds(self) -> pd.DataFrame:

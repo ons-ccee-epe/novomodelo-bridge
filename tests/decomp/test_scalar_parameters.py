@@ -12,7 +12,6 @@ from pathlib import Path
 
 from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
-    rho_acum_scaled_name,
     write_scalar_parameters,
 )
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -41,8 +40,13 @@ def test_write_scalar_parameters_round_trip(tmp_path: Path) -> None:
     assert json.loads(written.read_text()) == params
 
 
-def test_rho_acum_scaled_name_reexported() -> None:
-    assert rho_acum_scaled_name(3) == "rho_acum_scaled_h3"
+def test_build_decomp_scalar_parameters_forwards_per_stage_and_expressions() -> None:
+    per_stage = {"pct_rhe7": [0.5, 0.0]}
+    expressions = {"rho_cut_mwh_h0": "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"}
+
+    assert build_decomp_scalar_parameters(
+        [0, 1], per_stage=per_stage, expressions=expressions
+    ) == build_scalar_parameters([0, 1], per_stage=per_stage, expressions=expressions)
 
 
 def test_build_decomp_scalar_parameters_empty_ids_empty_list(

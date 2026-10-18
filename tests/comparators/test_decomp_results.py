@@ -732,7 +732,7 @@ class TestBuildDecompDatasetSingleParse:
                 "id": 0,
                 "name": "RHE_115",
                 "description": "RHE stored-energy constraint 115",
-                "expression": "@rho_acum_scaled_h0 * hydro_storage_final(0)",
+                "expression": "@rho_acum_mwh_h0 * hydro_storage_final(0)",
                 "slack": {"enabled": True, "penalty": 1000.0},
             }
         ]

@@ -146,6 +146,7 @@ def test_generic_constraints_json_emit_matches_registry(tmp_path) -> None:
         bounds=fake_bounds,
         referenced_hydro_ids=[],
         per_stage_parameters={},
+        expression_parameters={},
     )
 
     fake_id_map = MagicMock()

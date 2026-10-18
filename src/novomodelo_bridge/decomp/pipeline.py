@@ -1678,8 +1678,8 @@ def _emit_and_write(
         allocator=allocator,
     )
     if rhe_generics is not None:
-        generic_constraints.extend(rhe_generics.constraints)
-        generic_bound_tables.append(rhe_generics.bounds)
+        generic_constraints.extend(rhe_generics.generic.constraints)
+        generic_bound_tables.append(rhe_generics.generic.bounds)
 
     # The 4th generic-constraint emitter link -- every
     # LIBs-era long-form electrical restriction that resolved
@@ -1733,15 +1733,17 @@ def _emit_and_write(
             pa.concat_tables(generic_bound_tables),
         )
 
-    # Every `@rho_acum_scaled_h{id}` sigil a surviving RHE
-    # expression references must resolve, or novomodelo fails to load the case --
-    # write generic_parameters.json whenever any RHE constraint survives,
-    # never only when another generic family also happens to be present.
+    # Every `@name` a surviving RHE expression references must resolve, or
+    # novomodelo fails to load the case -- write generic_parameters.json whenever
+    # any RHE constraint survives, never only when another generic family
+    # also happens to be present.
     if rhe_generics is not None:
         write_scalar_parameters(
             writer,
             build_decomp_scalar_parameters(
-                [id_map.hydro_id(code) for code in id_map.hydro_codes]
+                [id_map.hydro_id(code) for code in id_map.hydro_codes],
+                per_stage=rhe_generics.per_stage_parameters,
+                expressions=rhe_generics.expression_parameters,
             ),
         )
 

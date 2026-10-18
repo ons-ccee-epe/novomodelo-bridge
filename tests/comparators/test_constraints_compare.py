@@ -71,7 +71,7 @@ def _write_case(tmp_path: Path) -> tuple[Path, Path]:
     """A converted case (fixture constraints, hydros, stages) plus its run output.
 
     The echo carries novomodelo's coefficients: 1.0 on each generation term, the
-    scaled ρ (2.0 / 2.5 MWh/hm³) on the useful-volume term, whose bound holds
+    integrated ρ (2.0 / 2.5 MWh/hm³) on the useful-volume term, whose bound holds
     the ``2.0 · 100`` / ``2.5 · 100`` dead-volume energy.
     """
     case_dir = tmp_path / "case"
@@ -142,8 +142,8 @@ def _write_case(tmp_path: Path) -> tuple[Path, Path]:
                 None,
                 210.0,
             ),
-            (1, "VminOP_SUDESTE_s0", 0, None, useful, 2.0, 300.0, None),
-            (2, "VminOP_SUDESTE_s1", 1, None, useful, 2.5, 400.0, None),
+            (1, "VminOP_SUDESTE", 0, None, useful, 2.0, 300.0, None),
+            (1, "VminOP_SUDESTE", 1, None, useful, 2.5, 400.0, None),
         ],
     )
     sim_dir = output_dir / "simulation" / "hydros" / "scenario_id=0"
@@ -171,7 +171,7 @@ def _write_case(tmp_path: Path) -> tuple[Path, Path]:
 class TestLoadGenericConstraints:
     def test_parses_sense_free_constraints(self) -> None:
         constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
-        assert {c["id"] for c in constraints} == {0, 1, 2}
+        assert {c["id"] for c in constraints} == {0, 1}
         assert all("sense" not in c for c in constraints)
 
     def test_degrades_to_empty_list_on_missing_file(self, tmp_path: Path) -> None:
@@ -192,7 +192,7 @@ class TestLoadGenericConstraints:
 
 
 class TestLoadResolvedGenericConstraints:
-    def test_merges_the_vminop_family_and_shows_useful_energy_bounds(
+    def test_shows_each_stage_vminop_bound_as_useful_energy(
         self, tmp_path: Path
     ) -> None:
         case_dir, output_dir = _write_case(tmp_path)
@@ -300,7 +300,7 @@ class TestEvaluateLhsNewave:
         self, tmp_path: Path
     ) -> None:
         rows = self._lhs(tmp_path)
-        # novomodelo's scaled ρ × VARMUH(hydro 10), the useful stored volume.
+        # novomodelo's integrated ρ × VARMUH(hydro 10), the useful stored volume.
         assert rows[(_VMINOP_ID, 0)] == pytest.approx(2.0 * 40.0)
         assert rows[(_VMINOP_ID, 1)] == pytest.approx(2.5 * 42.0)
 
@@ -332,7 +332,7 @@ class TestEvaluateLhsNovomodelo:
         # constraint 0: generation_mw(hydro 0) + generation_mw(hydro 1).
         assert rows[(_NON_VMINOP_ID, 0)] == 95.0 + 88.0
         assert rows[(_NON_VMINOP_ID, 1)] == 97.0 + 90.0
-        # VminOP: novomodelo's scaled ρ × (storage_final − min_storage), useful energy.
+        # VminOP: novomodelo's integrated ρ × (storage_final − min_storage), useful energy.
         assert rows[(_VMINOP_ID, 0)] == 2.0 * (500.0 - 100.0)
         assert rows[(_VMINOP_ID, 1)] == 2.5 * (480.0 - 100.0)
 

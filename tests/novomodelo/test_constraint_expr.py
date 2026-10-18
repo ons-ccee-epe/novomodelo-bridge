@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 from novomodelo_bridge.novomodelo.constraint_expr import (
     evaluate_lhs,
@@ -26,13 +25,13 @@ def _echo(tmp_path: Path, terms: list[EchoTerm]) -> pl.DataFrame:
     return echo
 
 
-def _vminop(stage: int, cid: int) -> dict:
+def _vminop(cid: int) -> dict:
     return {
         "id": cid,
-        "name": f"VminOP_SUDESTE_s{stage}",
-        "description": f"Minimum stored energy for REE 1 (SUDESTE), stage {stage}",
+        "name": "VminOP_SUDESTE",
+        "description": "Minimum stored energy for REE 1 (SUDESTE)",
         "expression": "...",
-        "slack": {"enabled": True, "penalty": 1488.0 / [744.0, 696.0][stage]},
+        "slack": {"enabled": True, "penalty": 1488.0, "penalty_basis": "per_unit"},
     }
 
 
@@ -49,7 +48,7 @@ _HYDROS = pl.LazyFrame(
 
 
 class TestResolveGenericConstraints:
-    def test_stage_split_family_is_merged_with_its_penalty_in_r_per_mwh(
+    def test_one_constraint_carries_each_stage_coefficient_and_bound(
         self, tmp_path: Path
     ) -> None:
         echo = _echo(
@@ -57,7 +56,7 @@ class TestResolveGenericConstraints:
             [
                 (
                     3,
-                    "VminOP_SUDESTE_s0",
+                    "VminOP_SUDESTE",
                     0,
                     None,
                     "hydro_useful_volume_final(id=0, block=all)",
@@ -66,8 +65,8 @@ class TestResolveGenericConstraints:
                     None,
                 ),
                 (
-                    4,
-                    "VminOP_SUDESTE_s1",
+                    3,
+                    "VminOP_SUDESTE",
                     1,
                     None,
                     "hydro_useful_volume_final(id=0, block=all)",
@@ -78,16 +77,14 @@ class TestResolveGenericConstraints:
             ],
         )
 
-        resolved = resolve_generic_constraints(
-            [_vminop(0, 3), _vminop(1, 4)], echo, {0: 100.0}, {0: 744.0, 1: 696.0}
-        )
+        resolved = resolve_generic_constraints([_vminop(3)], echo, {0: 100.0})
 
-        [shown] = resolved.constraints
-        assert (shown["id"], shown["name"]) == (3, "VminOP_SUDESTE")
-        assert shown["description"] == "Minimum stored energy for REE 1 (SUDESTE)"
-        assert shown["slack"]["penalty"] == pytest.approx(1488.0)
-        assert resolved.display_ids == {3: 3, 4: 3}
-        assert set(resolved.terms["constraint_id"].to_list()) == {3}
+        assert resolved.constraints == [_vminop(3)]
+        assert resolved.terms["coefficient"].to_list() == [2.0, 2.5]
+        assert resolved.bounds["bound_lower"].to_list() == [
+            900.0 - 2.0 * 100.0,
+            950.0 - 2.5 * 100.0,
+        ]
 
     def test_useful_volume_dead_term_leaves_the_bound(self, tmp_path: Path) -> None:
         echo = _echo(
@@ -95,7 +92,7 @@ class TestResolveGenericConstraints:
             [
                 (
                     0,
-                    "VminOP_SUDESTE_s0",
+                    "VminOP_SUDESTE",
                     0,
                     None,
                     "hydro_useful_volume_final(id=0, block=all)",
@@ -105,7 +102,7 @@ class TestResolveGenericConstraints:
                 ),
                 (
                     0,
-                    "VminOP_SUDESTE_s0",
+                    "VminOP_SUDESTE",
                     0,
                     None,
                     "hydro_useful_volume_final(id=1, block=all)",
@@ -116,9 +113,7 @@ class TestResolveGenericConstraints:
             ],
         )
 
-        resolved = resolve_generic_constraints(
-            [_vminop(0, 0)], echo, {0: 100.0, 1: 50.0}, {}
-        )
+        resolved = resolve_generic_constraints([_vminop(0)], echo, {0: 100.0, 1: 50.0})
 
         # novomodelo's bound carries 2·100 + 3·50 of dead-volume energy.
         assert resolved.bounds["bound_lower"].to_list() == [900.0 - 350.0]
@@ -129,7 +124,7 @@ class TestResolveGenericConstraints:
             [
                 (
                     0,
-                    "RHE_7_s0",
+                    "RHE_7",
                     0,
                     None,
                     "hydro_storage_final(id=0, block=all)",
@@ -141,17 +136,13 @@ class TestResolveGenericConstraints:
         )
 
         resolved = resolve_generic_constraints(
-            [{"id": 0, "name": "RHE_7_s0", "slack": {"penalty": 1.0}}],
-            echo,
-            {0: 100.0},
-            {0: 168.0},
+            [{"id": 0, "name": "RHE_7"}], echo, {0: 100.0}
         )
 
-        assert resolved.constraints[0]["name"] == "RHE_7"
         assert resolved.bounds["bound_lower"].to_list() == [900.0]
 
     def test_no_echo_keeps_constraints_without_terms(self) -> None:
-        resolved = resolve_generic_constraints([_vminop(0, 0)], None, {}, {})
+        resolved = resolve_generic_constraints([_vminop(0)], None, {})
 
         assert [c["name"] for c in resolved.constraints] == ["VminOP_SUDESTE"]
         assert resolved.terms.is_empty()
@@ -165,7 +156,7 @@ class TestEvaluateLhs:
             [
                 (
                     0,
-                    "VminOP_SUDESTE_s0",
+                    "VminOP_SUDESTE",
                     0,
                     None,
                     "hydro_useful_volume_final(id=0, block=all)",
@@ -174,8 +165,8 @@ class TestEvaluateLhs:
                     None,
                 ),
                 (
-                    1,
-                    "VminOP_SUDESTE_s1",
+                    0,
+                    "VminOP_SUDESTE",
                     1,
                     None,
                     "hydro_useful_volume_final(id=0, block=all)",
@@ -185,9 +176,7 @@ class TestEvaluateLhs:
                 ),
             ],
         )
-        resolved = resolve_generic_constraints(
-            [_vminop(0, 0), _vminop(1, 1)], echo, {0: 100.0}, {}
-        )
+        resolved = resolve_generic_constraints([_vminop(0)], echo, {0: 100.0})
 
         lhs = evaluate_lhs(resolved, _HYDROS, pl.LazyFrame())
 
@@ -226,7 +215,7 @@ class TestEvaluateLhs:
             ],
         )
         resolved = resolve_generic_constraints(
-            [{"id": 0, "name": "RE_1"}], echo, {0: 100.0}, {}
+            [{"id": 0, "name": "RE_1"}], echo, {0: 100.0}
         )
 
         lhs = evaluate_lhs(resolved, _HYDROS, pl.LazyFrame())
@@ -264,8 +253,6 @@ class TestEvaluateLhs:
                 ),
             ],
         )
-        resolved = resolve_generic_constraints(
-            [{"id": 0, "name": "HQ_1"}], echo, {}, {}
-        )
+        resolved = resolve_generic_constraints([{"id": 0, "name": "HQ_1"}], echo, {})
 
         assert evaluate_lhs(resolved, _HYDROS, pl.LazyFrame()).empty

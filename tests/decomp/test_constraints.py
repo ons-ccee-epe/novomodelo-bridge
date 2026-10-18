@@ -26,6 +26,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.generic_constraint_builder import soft_slack
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -440,7 +441,7 @@ def test_emit_re_generics_mixed_hydro_interchange_round_trip(
     assert len(result.constraints) == 1
     constraint = result.constraints[0]
     assert constraint["expression"] == "hydro_generation(0) - line_direct(3)"
-    assert constraint["slack"] == {"enabled": True, "penalty": 45000.0}
+    assert constraint["slack"] == soft_slack(45000.0, "per_hour")
     assert set(constraint) == {"id", "name", "description", "expression", "slack"}
 
     rows = result.bounds.to_pylist()
@@ -667,7 +668,7 @@ def test_emit_rhq_rhv_generics_rhq_multi_term_round_trip(
     assert len(result.constraints) == 1
     constraint = result.constraints[0]
     assert constraint["expression"] == "hydro_outflow(0) + hydro_diversion(0)"
-    assert constraint["slack"] == {"enabled": True, "penalty": 45000.0}
+    assert constraint["slack"] == soft_slack(45000.0, "per_hour")
 
     rows = result.bounds.to_pylist()
     assert len(rows) == 1

@@ -398,7 +398,7 @@ class TestAccumulatedIntegratedProductivities:
 
 class TestBuildScalarParameters:
     """build_scalar_parameters declares the per-hydro computed family for every
-    hydro, then the caller's per_stage entries."""
+    hydro, then the caller's per_stage and expression entries."""
 
     def test_declares_the_computed_family_per_hydro(self) -> None:
         d = build_scalar_parameters([1, 0, 1])
@@ -406,22 +406,22 @@ class TestBuildScalarParameters:
         assert [e["name"] for e in entries] == [
             "rho_eq_h0",
             "rho_acum_h0",
-            "rho_eq_scaled_h0",
-            "rho_acum_scaled_h0",
-            "earm_max_h0",
+            "rho_eq_mwh_h0",
+            "rho_acum_mwh_h0",
+            "earm_max_mwh_h0",
             "rho_eq_h1",
             "rho_acum_h1",
-            "rho_eq_scaled_h1",
-            "rho_acum_scaled_h1",
-            "earm_max_h1",
+            "rho_eq_mwh_h1",
+            "rho_acum_mwh_h1",
+            "earm_max_mwh_h1",
         ]
         assert all(e["kind"] == "computed" for e in entries)
         assert [e["computed_spec"]["tag"] for e in entries[:5]] == [
             "equivalent_productivity",
             "accumulated_productivity",
-            "scaled_integrated_equivalent_productivity",
-            "scaled_integrated_accumulated_productivity",
-            "scaled_max_stored_energy",
+            "integrated_equivalent_productivity_mwh_per_hm3",
+            "integrated_accumulated_productivity_mwh_per_hm3",
+            "max_stored_energy_mwh",
         ]
         assert {e["computed_spec"]["hydro_id"] for e in entries[5:]} == {1}
 
@@ -435,8 +435,25 @@ class TestBuildScalarParameters:
             "values": [[0, 0.2], [1, 0.25]],
         }
 
+    def test_expression_entries_follow_the_per_stage_entries(self) -> None:
+        d = build_scalar_parameters(
+            [0],
+            per_stage={"p": [1.0]},
+            expressions={"rho_cut_mwh_h0": "@rho_eq_mwh_h0 + @p"},
+        )
+        entries = d["scalar_parameters"]
+        assert [e["kind"] for e in entries[-2:]] == ["per_stage", "expression"]
+        assert entries[-1] == {
+            "id": 6,
+            "name": "rho_cut_mwh_h0",
+            "kind": "expression",
+            "expression": "@rho_eq_mwh_h0 + @p",
+        }
+
     def test_ids_are_contiguous_from_zero(self) -> None:
-        d = build_scalar_parameters([0, 1], per_stage={"p": [1.0]})
+        d = build_scalar_parameters(
+            [0, 1], per_stage={"p": [1.0]}, expressions={"e": "2.0 * @p"}
+        )
         ids = [e["id"] for e in d["scalar_parameters"]]
         assert ids == list(range(len(ids)))
 
@@ -1645,11 +1662,14 @@ class TestConstraintResultTypes:
         from novomodelo_bridge.newave.converters.constraints import VminopResult
 
         bounds = pa.table({"constraint_id": [0]})
-        r = VminopResult({"constraints": [1, 2]}, bounds, [3, 4], {"p": [1.0]})
+        r = VminopResult(
+            {"constraints": [1, 2]}, bounds, [3, 4], {"p": [1.0]}, {"e": "@p"}
+        )
         assert r.constraints_dict == {"constraints": [1, 2]}
         assert r.bounds is bounds
         assert r.referenced_hydro_ids == [3, 4]
         assert r.per_stage_parameters == {"p": [1.0]}
+        assert r.expression_parameters == {"e": "@p"}
         assert r[2] == [3, 4]
 
     def test_generic_constraint_result_named_and_tuple_access(self) -> None:
@@ -1711,9 +1731,9 @@ def _make_vminop_case(
     return case, id_map
 
 
-class TestVminopScaledStoredEnergy:
-    """VminOP bounds useful stored energy (MWh) with novomodelo's scaled parameters,
-    one constraint per stage priced at R$/MWh ÷ the stage's real hours."""
+class TestVminopStoredEnergy:
+    """VminOP bounds useful stored energy (MWh) with novomodelo's MWh parameters,
+    one constraint per REE whose per_unit slack is a price per MWh."""
 
     def test_expression_bounds_useful_energy_by_curve_fraction(
         self, tmp_path: Path
@@ -1725,16 +1745,15 @@ class TestVminopScaledStoredEnergy:
         assert result is not None
         constraint = result.constraints_dict["constraints"][0]
         assert constraint["expression"] == (
-            "@rho_acum_scaled_h0 * hydro_useful_volume_final(0)"
-            " + @rho_acum_scaled_h1 * hydro_useful_volume_final(1)"
-            " + @rho_acum_scaled_h2 * hydro_useful_volume_final(2)"
-            " >= @pct_vminop_ree1 * @earm_max_h0"
-            " + @pct_vminop_ree1 * @earm_max_h1"
-            " + @pct_vminop_ree1 * @earm_max_h2"
+            "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+            " + @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
+            " + @rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
+            " >= @pct_vminop_ree1 * (@earm_max_mwh_h0 + @earm_max_mwh_h1"
+            " + @earm_max_mwh_h2)"
         )
         assert result.referenced_hydro_ids == [0, 1, 2]
 
-    def test_one_constraint_per_stage_with_zero_parquet_bound(
+    def test_one_constraint_per_ree_bounded_on_every_curve_stage(
         self, tmp_path: Path
     ) -> None:
         case, id_map = _make_vminop_case(
@@ -1745,18 +1764,16 @@ class TestVminopScaledStoredEnergy:
         result = convert_vminop_constraints(case, id_map)
 
         assert result is not None
-        constraints = result.constraints_dict["constraints"]
-        assert [c["name"] for c in constraints] == [
-            f"VminOP_SUDESTE_s{s}" for s in range(12)
-        ]
+        [constraint] = result.constraints_dict["constraints"]
+        assert constraint["name"] == "VminOP_SUDESTE"
         rows = result.bounds.to_pylist()
         assert [(r["constraint_id"], r["stage_id"]) for r in rows] == [
-            (c["id"], s) for s, c in enumerate(constraints)
+            (constraint["id"], s) for s in range(12)
         ]
         assert all(r["bound_lower"] == 0.0 for r in rows)
         assert all(r["bound_upper"] is None and r["block_id"] is None for r in rows)
 
-    def test_penalty_is_divided_by_each_stage_real_hours(self, tmp_path: Path) -> None:
+    def test_penalty_is_a_per_unit_price_per_mwh(self, tmp_path: Path) -> None:
         case, id_map = _make_vminop_case(
             tmp_path,
             curve=[(datetime(2020, m, 1), 20.0) for m in (1, 2)],
@@ -1766,14 +1783,12 @@ class TestVminopScaledStoredEnergy:
         result = convert_vminop_constraints(case, id_map)
 
         assert result is not None
-        penalties = [
-            c["slack"]["penalty"] for c in result.constraints_dict["constraints"]
-        ]
-        # Jan 2020 = 744 h; Feb 2020 (leap year) = 696 h.
-        assert penalties[0] == pytest.approx(1488.0 / 744.0)
-        assert penalties[1] == pytest.approx(1488.0 / 696.0)
-        # Novomodelo's slack cost (penalty × stage hours) is back to R$/MWh.
-        assert penalties[1] * 696.0 == pytest.approx(1488.0)
+        [constraint] = result.constraints_dict["constraints"]
+        assert constraint["slack"] == {
+            "enabled": True,
+            "penalty": 1488.0,
+            "penalty_basis": "per_unit",
+        }
 
     def test_curve_fraction_parameter_covers_every_stage(self, tmp_path: Path) -> None:
         case, id_map = _make_vminop_case(
@@ -1900,16 +1915,20 @@ class TestVminopReeCoupling:
     ) -> None:
         by_name, _ = self._convert(tmp_path)
 
-        assert by_name["VminOP_SUDESTE_s0"]["expression"] == (
-            "@rho_eq_scaled_h0 * hydro_useful_volume_final(0)"
-            " + @rho_eq_scaled_h1 * hydro_useful_volume_final(0)"
-            " + @rho_eq_scaled_h1 * hydro_useful_volume_final(1)"
-            " >= 900.0 * @pct_vminop_ree1 * @rho_eq_scaled_h0"
-            " + 900.0 * @pct_vminop_ree1 * @rho_eq_scaled_h1"
-            " + 1800.0 * @pct_vminop_ree1 * @rho_eq_scaled_h1"
-        )
+        by_name, result = self._convert(tmp_path)
 
-    def test_only_the_curve_fraction_is_a_bridge_parameter(
+        assert by_name["VminOP_SUDESTE"]["expression"] == (
+            "@rho_cut_mwh_h0 * hydro_useful_volume_final(0)"
+            " + @rho_cut_mwh_h1 * hydro_useful_volume_final(1)"
+            " >= @pct_vminop_ree1 * (@earm_max_cut_mwh_h0 + @earm_max_cut_mwh_h1)"
+        )
+        params = result.expression_parameters
+        assert params["rho_cut_mwh_h0"] == "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"
+        assert params["rho_cut_mwh_h1"] == "@rho_eq_mwh_h1"
+        assert params["earm_max_cut_mwh_h0"] == "900.0 * @rho_cut_mwh_h0"
+        assert params["earm_max_cut_mwh_h1"] == "1800.0 * @rho_cut_mwh_h1"
+
+    def test_only_the_curve_fraction_is_a_per_stage_parameter(
         self, tmp_path: Path
     ) -> None:
         _, result = self._convert(tmp_path)
@@ -1924,14 +1943,16 @@ class TestVminopReeCoupling:
     ) -> None:
         by_name, result = self._convert(tmp_path)
 
-        assert by_name["VminOP_NORDESTE_s0"]["expression"] == (
-            "@rho_acum_scaled_h2 * hydro_useful_volume_final(0)"
-            " + @rho_acum_scaled_h2 * hydro_useful_volume_final(1)"
-            " + @rho_acum_scaled_h2 * hydro_useful_volume_final(2)"
-            " >= 900.0 * @pct_vminop_ree2 * @rho_acum_scaled_h2"
-            " + 1800.0 * @pct_vminop_ree2 * @rho_acum_scaled_h2"
-            " + @pct_vminop_ree2 * @earm_max_h2"
+        assert by_name["VminOP_NORDESTE"]["expression"] == (
+            "@rho_acum_mwh_h2 * hydro_useful_volume_final(0)"
+            " + @rho_acum_mwh_h2 * hydro_useful_volume_final(1)"
+            " + @rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
+            " >= @pct_vminop_ree2 * (@earm_max_fict_mwh_h0 + @earm_max_fict_mwh_h1"
+            " + @earm_max_mwh_h2)"
         )
+        params = result.expression_parameters
+        assert params["earm_max_fict_mwh_h0"] == "900.0 * @rho_acum_mwh_h2"
+        assert params["earm_max_fict_mwh_h1"] == "1800.0 * @rho_acum_mwh_h2"
         assert result.referenced_hydro_ids == [0, 1, 2]
 
     def test_coupling_is_reported(self, tmp_path: Path) -> None:

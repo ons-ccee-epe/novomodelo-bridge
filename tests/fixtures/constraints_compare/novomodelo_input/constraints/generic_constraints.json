@@ -4,19 +4,15 @@
       "id": 0,
       "name": "RE_generation_sum",
       "expression": "hydro_generation(0) + hydro_generation(1)",
-      "description": "Electric restriction: sum of hydro generation"
+      "description": "Electric restriction: sum of hydro generation",
+      "slack": {"enabled": false}
     },
     {
       "id": 1,
-      "name": "VminOP_SUDESTE_s0",
-      "expression": "@rho_acum_scaled_h0 * hydro_useful_volume_final(0) >= @pct_vminop_ree1 * @earm_max_h0",
-      "description": "Security-curve stored-energy floor"
-    },
-    {
-      "id": 2,
-      "name": "VminOP_SUDESTE_s1",
-      "expression": "@rho_acum_scaled_h0 * hydro_useful_volume_final(0) >= @pct_vminop_ree1 * @earm_max_h0",
-      "description": "Security-curve stored-energy floor"
+      "name": "VminOP_SUDESTE",
+      "expression": "@rho_acum_mwh_h0 * hydro_useful_volume_final(0) >= @pct_vminop_ree1 * @earm_max_mwh_h0",
+      "description": "Security-curve stored-energy floor",
+      "slack": {"enabled": true, "penalty": 1488.0, "penalty_basis": "per_unit"}
     }
   ]
 }

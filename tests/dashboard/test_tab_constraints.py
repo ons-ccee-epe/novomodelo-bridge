@@ -935,6 +935,36 @@ class TestSummaryTableDerivesSenseFromBounds:
 
         assert "<code>&lt;=</code>" in html
 
+    def test_penalty_shows_how_it_is_charged(self) -> None:
+        constraints = [
+            {
+                "id": 0,
+                "name": "VminOP_c0",
+                "slack": {
+                    "enabled": True,
+                    "penalty": 1488.0,
+                    "penalty_basis": "per_unit",
+                },
+            },
+            {
+                "id": 1,
+                "name": "RE_c1",
+                "slack": {
+                    "enabled": True,
+                    "penalty": 500.0,
+                    "penalty_basis": "per_hour",
+                },
+            },
+        ]
+        gc_bounds = _make_gc_bounds([0, 1], n_stages=1, sense=">=", value=1.0)
+
+        html = build_constraints_summary_table(
+            constraints, gc_bounds, self._violations()
+        )
+
+        assert "1,488 per unit" in html
+        assert "500 per hour" in html
+
 
 # ---------------------------------------------------------------------------
 # dashboard/data.py's generic-constraint bounds loader reads the F3

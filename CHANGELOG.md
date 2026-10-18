@@ -37,61 +37,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   penalised inflow slack stays as before. DECOMP results can change where a
   node's incremental inflow is negative.
 - **VminOP (NEWAVE) and RHE (DECOMP) bound stored energy in MWh with cobre's
-  scaled parameters.** The bridge no longer computes the integrated
+  MWh parameters.** The bridge no longer computes the integrated
   accumulated productivity itself: expressions reference cobre's
-  `scaled_integrated_accumulated_productivity` (`@rho_acum_scaled_h{id}`,
-  MWh/hm³). VminOP bounds useful stored energy,
-  `Σ @rho_acum_scaled_h{id} * hydro_useful_volume_final(id) >=
-  Σ @pct_vminop_ree{code} * @earm_max_h{id}`, with the curve as a per-stage
-  fraction. RHE bounds useful stored energy the same way, the base of the
-  source model's `%EAMAX`: a percentage limit is `limite/100 · @earm_max_h{id}`
-  and an absolute limit is converted from MWmês to MWh with the stage hours.
-- **VminOP and RHE are emitted as one constraint per stage.** cobre multiplies
-  generic-constraint slack by the stage hours, so each stage is priced at the
-  R$/MWh penalty divided by its own hours, which keeps the effective violation
-  cost at R$/MWh on months of 672–744 h and on weekly DECOMP stages. They are
-  named `VminOP_<REE>_s<stage>` and `RHE_<code>_s<stage>`, and the ids of the
-  constraint families emitted after them shift accordingly.
+  `integrated_accumulated_productivity_mwh_per_hm3` (`@rho_acum_mwh_h{id}`,
+  MWh/hm³) and `max_stored_energy_mwh` (`@earm_max_mwh_h{id}`, MWh). VminOP
+  bounds useful stored energy,
+  `Σ @rho_acum_mwh_h{id} * hydro_useful_volume_final(id) >=
+  @pct_vminop_ree{code} * (Σ @earm_max_mwh_h{id})`, with the curve as a
+  per-stage fraction. RHE bounds useful stored energy the same way, the base
+  of the source model's `%EAMAX`: a percentage limit is a per-stage fraction
+  `@pct_rhe{code}` of the maximum, and an absolute limit is converted from
+  MWmês to MWh with the stage hours.
+- **Every generic-constraint slack declares how cobre charges its penalty.**
+  Each soft constraint now carries `slack.penalty_basis`, which cobre
+  requires. VminOP and RHE are `per_unit`: the source model's penalty is
+  charged per MWh of violation, so each stays one constraint per REE or
+  record (`VminOP_<REE>`, `RHE_<code>`) on months of 672–744 h and on weekly
+  DECOMP stages alike. Electric, `RE`, `HQ`, `HV` and LIBS constraints are
+  `per_hour`, cobre's previous charge of penalty × the row's hours, so their
+  costs do not change. The constraint families emitted after VminOP and RHE
+  get lower ids than with one constraint per stage.
 - **VminOP splits the reservoir cascades that couple two REEs.** Where the
   source model cuts a cascade at a REE boundary and accounts the water below
   the cut through a fictitious twin in the downstream REE (e.g. TRES MARIAS →
   FICT.TRES MA → SOBRADINHO), the reservoir counted the whole cascade in its own
-  REE and nothing in the downstream one. Its own REE now uses the productivity
-  down to the coupling plant (one `@rho_eq_scaled_h{c}` term on the
-  reservoir's volume per plant `c` from the reservoir to the cut), and the
-  downstream REE gets its useful volume weighted by the accumulated
-  productivity of the first real plant below the cut, bounded by the
-  reservoir's own useful volume (a `VOLMAX %` on the twin in `modif.dat` is
-  not applied). A `vminop-ree-hydraulic-coupling` note lists the split
-  reservoirs. A reservoir above the coupling plant puts several parameter
-  coefficients on one volume, which needs a cobre that sums repeated LP
-  matrix entries.
+  REE and nothing in the downstream one. Its own REE now weights the
+  reservoir's volume with `@rho_cut_mwh_h{id}`, the sum of the integrated
+  equivalent productivities from the reservoir down to the coupling plant,
+  and the downstream REE weights it with the accumulated productivity of the
+  first real plant below the cut, bounded by the reservoir's own useful
+  volume (a `VOLMAX %` on the twin in `modif.dat` is not applied). Both shares
+  are `expression` parameters in `generic_parameters.json`, with their
+  maximum energies `@earm_max_cut_mwh_h{id}` and `@earm_max_fict_mwh_h{id}`.
+  A `vminop-ree-hydraulic-coupling` note lists the split reservoirs.
 - **RHE (DECOMP) splits the reservoir cascades that couple two REEs.** The
   source model cuts a cascade where it leaves the REE at a plant with a
   fictitious twin in `hidr.dat` (a non-generating, unconfigured plant on its
   posto) and counts the rest in the twin's downstream REE (e.g. TRES MARIAS →
   SOBRADINHO). The RHE now weights those reservoirs as the NEWAVE VminOP
-  does — one `@rho_eq_scaled_h{c}` term per plant down to the cut in its own
-  REE and `@rho_acum_scaled_h{id}` of the first operated plant below the twin
-  in the downstream REE, with the physical plant's useful volume — instead of
-  the whole cascade in its own REE. A crossing without a twin (into
-  ITAIPU) is not cut. A `decomp-rhe-ree-hydraulic-coupling` note lists the
-  split reservoirs.
+  does, with the same expression parameters and the physical plant's useful
+  volume, instead of the whole cascade in its own REE. A crossing without a
+  twin (into ITAIPU) is not cut. A `decomp-rhe-ree-hydraulic-coupling` note
+  lists the split reservoirs.
 - **`compare` and `dashboard` read generic constraints from cobre's echo.**
   The Constraints tabs take each term's coefficient and each row's bounds
   from `output/generic_constraints/resolved_echo.parquet`, as the LP received
   them, instead of re-deriving them from the expression text and
   `generic_parameters.json`. VminOP and RHE are shown as one constraint per
-  REE or record across their stages, with the penalty in R$/MWh; VminOP reads
-  as useful stored energy in MWh against the curve fraction of its maximum,
-  and the source-model side weights `VARMUH` by the same coefficients. The
-  DECOMP RHE achieved value is converted from stage-average MW to MWh. A
-  constraint with a term the simulation output cannot value is left out of
-  the cobre-side LHS instead of being evaluated partially.
-- **`generic_parameters.json` declares the scaled per-hydro parameters.** Every
-  hydro also gets `rho_eq_scaled_h{id}`, `rho_acum_scaled_h{id}` and
-  `earm_max_h{id}` (cobre's `scaled_integrated_equivalent_productivity`,
-  `scaled_integrated_accumulated_productivity` and `scaled_max_stored_energy`),
+  REE or record across their stages, and each penalty says whether it is
+  charged per hour or per unit; VminOP reads as useful stored energy in MWh
+  against the curve fraction of its maximum, and the source-model side
+  weights `VARMUH` by the same coefficients. The DECOMP RHE achieved value is
+  converted from stage-average MW to MWh. A constraint with a term the
+  simulation output cannot value is left out of the cobre-side LHS instead of
+  being evaluated partially.
+- **`generic_parameters.json` declares the MWh per-hydro parameters.** Every
+  hydro also gets `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}` and
+  `earm_max_mwh_h{id}` (cobre's `integrated_equivalent_productivity_mwh_per_hm3`,
+  `integrated_accumulated_productivity_mwh_per_hm3` and `max_stored_energy_mwh`),
   and `rho_acum_h{id}` is always cobre's computed point productivity.
 
 ### Fixed
