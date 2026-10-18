@@ -65,6 +65,11 @@ def bound_value_column(shape: str) -> str:
     return "bound_upper" if shape in ("<=", "range") else "bound_lower"
 
 
+#: How a slack penalty is charged, shown beside its value: per hour of the
+#: violated row, or once per unit of violation.
+_PENALTY_BASIS_LABELS = {"per_hour": "per hour", "per_unit": "per unit"}
+
+
 def build_constraints_summary_table(
     constraints: list[dict],
     gc_bounds: pd.DataFrame,
@@ -93,6 +98,9 @@ def build_constraints_summary_table(
             if slack.get("enabled") and "penalty" in slack
             else "—"
         )
+        basis = _PENALTY_BASIS_LABELS.get(str(slack.get("penalty_basis")))
+        if basis is not None and slack.get("enabled"):
+            penalty = f"{penalty} {basis}"
         bounds_rows = gc_bounds[gc_bounds["constraint_id"] == cid]
         sense = derive_constraint_shape(bounds_rows)
         active_stages = (

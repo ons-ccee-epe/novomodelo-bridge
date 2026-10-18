@@ -55,11 +55,25 @@ class FictCascadeResolution:
         sum reproduces the source model's ``produtibilidade_acumulada_calculo_earm``.
         Fictitious plants have ρ = 0 by definition, so this is zero in practice — kept
         for generality.
+    truncated:
+        ``True`` when the source model ends the plant's cascade (``codigo_usina_jusante
+        == 0``) and the link to ``downstream_code`` comes from the fictitious plant
+        sharing its posto (rule 3) — the source model's coupling between two REEs,
+        where the stored energy below this plant is accounted in the fictitious
+        plant's REE, not the plant's own.
+    counterpart_fict:
+        The fictitious plant sharing this plant's posto (its accounting twin in
+        another REE), or ``None``.
+    counterpart_downstream:
+        The first real plant on ``counterpart_fict``'s cascade, or ``None``.
     """
 
     downstream_code: int | None
     fict_chain: tuple[int, ...]
     fict_rho_sum: float
+    truncated: bool = False
+    counterpart_fict: int | None = None
+    counterpart_downstream: int | None = None
 
 
 def resolve_cascade(
@@ -201,46 +215,39 @@ def resolve_cascade(
         row = row_by_code[code]
         ds_raw = row.get("codigo_usina_jusante")
         ds_code = int(ds_raw) if ds_raw is not None and not pd.isna(ds_raw) else 0
+        posto_raw = row.get("posto")
+        twin = (
+            fict_by_posto.get(int(posto_raw))
+            if has_posto and posto_raw is not None and not pd.isna(posto_raw)
+            else None
+        )
+        twin_downstream = _walk_chain(twin)[0] if twin is not None else None
 
         if ds_code != 0:
             if ds_code in real_codes:
                 # Rule 1 — direct real downstream.
-                result[code] = FictCascadeResolution(
-                    downstream_code=ds_code,
-                    fict_chain=(),
-                    fict_rho_sum=0.0,
-                )
-                continue
-            # Rule 2 — confhd points to a fictitious or NE/NC plant.  Walk the
-            # chain to find the next real plant downstream.
-            real_ds, fict_codes, rho_sum = _walk_chain(ds_code)
-            result[code] = FictCascadeResolution(
-                downstream_code=real_ds,
-                fict_chain=tuple(fict_codes),
-                fict_rho_sum=rho_sum,
-            )
-            continue
-
-        # Rule 3 — physically terminal.  A fictitious plant sharing this
-        # plant's posto carries the energy-cascade link (its real twin).
-        posto_raw = row.get("posto")
-        fict_code = (
-            fict_by_posto.get(int(posto_raw))
-            if posto_raw is not None and not pd.isna(posto_raw)
-            else None
-        )
-        if fict_code is None:
-            result[code] = FictCascadeResolution(
-                downstream_code=None,
-                fict_chain=(),
-                fict_rho_sum=0.0,
-            )
-            continue
-        real_ds, fict_codes, rho_sum = _walk_chain(fict_code)
+                real_ds, fict_codes, rho_sum = ds_code, [], 0.0
+            else:
+                # Rule 2 — confhd points to a fictitious or NE/NC plant.  Walk the
+                # chain to find the next real plant downstream.
+                real_ds, fict_codes, rho_sum = _walk_chain(ds_code)
+            truncated = False
+        elif twin is None:
+            # Rule 4 — the cascade terminates.
+            real_ds, fict_codes, rho_sum = None, [], 0.0
+            truncated = False
+        else:
+            # Rule 3 — physically terminal.  A fictitious plant sharing this
+            # plant's posto carries the energy-cascade link (its real twin).
+            real_ds, fict_codes, rho_sum = _walk_chain(twin)
+            truncated = True
         result[code] = FictCascadeResolution(
             downstream_code=real_ds,
             fict_chain=tuple(fict_codes),
             fict_rho_sum=rho_sum,
+            truncated=truncated,
+            counterpart_fict=twin,
+            counterpart_downstream=twin_downstream,
         )
 
     # Log NE/NC plants that bridged a real-to-real cascade so the operator

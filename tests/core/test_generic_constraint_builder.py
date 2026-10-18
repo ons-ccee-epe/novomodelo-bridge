@@ -8,10 +8,14 @@ Covers the ``GENERIC_BOUNDS_SCHEMA`` drift-guard invariant, every
 
 from __future__ import annotations
 
+import pytest
+
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
     ConstraintIdAllocator,
     GenericConstraintBuilder,
+    hard_slack,
+    soft_slack,
 )
 from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
 
@@ -29,7 +33,7 @@ def test_add_two_sided_slot_yields_one_id_with_both_endpoints() -> None:
         name="RE_1",
         description="RE generic constraint 1",
         expression="hydro_generation(0)",
-        slack={"enabled": True, "penalty": 1000.0},
+        slack=soft_slack(1000.0, "per_hour"),
         slots=[(0, None, 10.0, 20.0)],
     )
 
@@ -42,7 +46,7 @@ def test_add_two_sided_slot_yields_one_id_with_both_endpoints() -> None:
             "name": "RE_1",
             "description": "RE generic constraint 1",
             "expression": "hydro_generation(0)",
-            "slack": {"enabled": True, "penalty": 1000.0},
+            "slack": {"enabled": True, "penalty": 1000.0, "penalty_basis": "per_hour"},
         }
     ]
     assert result.bounds.num_rows == 1
@@ -64,7 +68,7 @@ def test_add_constraint_and_bound_row_append_in_call_order() -> None:
         name="AGRINT_0",
         description="AGRINT constraint 0",
         expression="hydro_outflow(1)",
-        slack={"enabled": False},
+        slack=hard_slack(),
     )
     builder.add_bound_row(cid, stage_id=0, block_id=None, lower=5.0, upper=None)
     builder.add_bound_row(cid, stage_id=1, block_id=None, lower=7.0, upper=None)
@@ -94,13 +98,42 @@ def test_add_with_all_unbounded_slots_returns_none_and_adds_no_id() -> None:
         name="HQ_1",
         description="HQ generic constraint 1",
         expression="hydro_turbined(2)",
-        slack={"enabled": True, "penalty": 100.0},
+        slack=soft_slack(100.0, "per_hour"),
         slots=[(0, None, None, None), (1, None, 1e21, -1e21)],
     )
 
     assert cid is None
     assert builder.result() is None
     assert allocator.next_id == 0
+
+
+@pytest.mark.parametrize(
+    "slack",
+    [
+        {"enabled": True, "penalty": 1000.0},
+        {"enabled": True, "penalty": 1000.0, "penalty_basis": "per_block"},
+        {"enabled": True, "penalty_basis": "per_unit"},
+        {"enabled": False, "penalty": 1000.0},
+        {"enabled": False, "penalty_basis": "per_hour"},
+    ],
+)
+def test_add_constraint_rejects_a_slack_novomodelo_does_not_load(
+    slack: dict[str, object],
+) -> None:
+    builder = GenericConstraintBuilder(ConstraintIdAllocator())
+
+    with pytest.raises(ValueError, match="RE_1"):
+        builder.add_constraint(
+            name="RE_1", description="", expression="hydro_generation(0)", slack=slack
+        )
+
+
+def test_soft_slack_carries_penalty_and_basis() -> None:
+    assert soft_slack(250, "per_unit") == {
+        "enabled": True,
+        "penalty": 250.0,
+        "penalty_basis": "per_unit",
+    }
 
 
 def test_constraint_id_allocator_seeded_start_and_advance() -> None:

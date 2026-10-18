@@ -133,8 +133,8 @@ def hydro_penalty_costs(
     # prices these Family-D slots with NO time multiplier (`objective = penalty`).
     # If they are ever wired into the LP with a `× block_hours` term (like the
     # generic/VminOP slack), this conversion becomes wrong: the slack would then
-    # need per-stage hours, exactly like
-    # `constraints.py:_vminop_energy_factor`. Keep these two facts in lockstep.
+    # need per-stage hours, exactly like the VminOP per-stage penalty in
+    # `convert_vminop_constraints`. Keep these two facts in lockstep.
     #
     # storage_violation_below_cost is priced at the evaporation tier
     # (10 × MAX_CUSTO_DEFICIT) — the greatest hydro penalty. With no PENALID
