@@ -50,14 +50,11 @@ def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
 
 
 class TestPerStageProductivitiesSazonalCfugaCmont:
-    """Verify that CFUGA/CMONT step-function carries vs. seasonal cycling.
+    """CFUGA/CMONT records are a step function over the study period.
 
-    The source model's Dger ``sazonaliza_cfuga_cmont`` flag changes how CFUGA/CMONT
-    overrides are extended beyond their last explicit
-    entry: when ``0`` the last applied value carries forward
-    indefinitely (pure step function); when ``1`` each calendar
-    month picks up the value from the latest year that defined it
-    and that seasonal pattern repeats month-by-month thereafter.
+    The source model's Dger ``sazonaliza_cfuga_cmont`` flag governs only the
+    static post-study period: when ``1`` it repeats the last study year's
+    levels month by month, when ``0`` it holds the last study stage's level.
     """
 
     def _hreg(self) -> pd.Series:
@@ -120,7 +117,7 @@ class TestPerStageProductivitiesSazonalCfugaCmont:
         assert vals[1] == pytest.approx(640.0)
         assert vals[12] == pytest.approx(640.0)
 
-    def test_seasonal_cycle_after_last_event_when_sazonaliza_one(
+    def test_study_period_holds_the_last_record_when_sazonaliza_one(
         self, tmp_path
     ) -> None:
         from novomodelo_bridge.newave.converters.hydro import _per_stage_productivities
@@ -134,42 +131,54 @@ class TestPerStageProductivitiesSazonalCfugaCmont:
             base_productivity=0.0,
             drop_overrides=overrides,
             case=self._dger_case(tmp_path, sazonaliza=1),
-            total_stages=24,
+            total_stages=28,
         )
 
-        # See test_step_function_carries_when_sazonaliza_zero for the
-        # head computation: prod = 650 - cfuga at every stage.
-        # Stage 0 = Sep 2024 = explicit 5.0 → 645.
-        # Stage 1 = Oct 2024 = explicit 10.0 → 640.
-        # Stage 12 = Sep 2025 → AFTER last_event_stage (1, Oct 2024) →
-        # seasonal cfuga[9] = 5.0 → 645.
-        # Stage 13 = Oct 2025 → seasonal cfuga[10] = 10.0 → 640.
+        # prod = 650 - cfuga (see test_step_function_carries_when_sazonaliza_zero).
+        # Stage 12 = Sep 2025 is in the study, so the Oct 2024 level holds.
         assert vals[0] == pytest.approx(645.0)
         assert vals[1] == pytest.approx(640.0)
-        assert vals[12] == pytest.approx(645.0)
-        assert vals[13] == pytest.approx(640.0)
+        assert vals[12] == pytest.approx(640.0)
+        assert vals[24] == pytest.approx(640.0)
 
-    def test_seasonal_picks_latest_year_value_per_month(self, tmp_path) -> None:
-        """When the same calendar month appears in multiple years, the
-        latest year's value becomes the seasonal value."""
+    def test_post_study_repeats_the_last_study_year_not_earlier_months(
+        self, tmp_path
+    ) -> None:
+        """Months declared only in an early year never return.
+
+        The record pattern of Tucurui (275) in a real deck: Sep-Nov of the
+        first year, then Jan-Jul of each later year. The source model's
+        post-study pattern holds the last study year's levels, so Sep and Oct
+        stay at Jul's 5.45 m in that year and after it.
+        """
         from novomodelo_bridge.newave.converters.hydro import _per_stage_productivities
 
+        first_year = [(2024, 9, 5.0), (2024, 10, 4.9), (2024, 11, 5.45)]
+        yearly = [7.34, 9.15, 10.86, 11.49, 9.99, 6.87, 5.45]
+        later_years = [
+            (year, month, value)
+            for year in (2025, 2026)
+            for month, value in enumerate(yearly, start=1)
+        ]
         overrides = [
-            {"type": "CFUGA", "year": 2024, "month": 9, "value": 5.0},
-            {"type": "CFUGA", "year": 2025, "month": 9, "value": 7.0},  # newer
-            {"type": "CFUGA", "year": 2025, "month": 10, "value": 10.0},
+            {"type": "CFUGA", "year": year, "month": month, "value": value}
+            for year, month, value in first_year + later_years
         ]
         vals = _per_stage_productivities(
             self._hreg(),
             base_productivity=0.0,
             drop_overrides=overrides,
             case=self._dger_case(tmp_path, sazonaliza=1),
-            total_stages=36,
+            total_stages=28 + 12,
         )
 
-        # Stage 24 = Sep 2026 → AFTER last_event_stage → seasonal cfuga[9]
-        # = 7.0 (Sep 2025 won over Sep 2024) → prod = 650 - 7 = 643.
-        assert vals[24] == pytest.approx(643.0)
+        # Study = Sep 2024..Dec 2026 (stages 0-27); post-study from stage 28.
+        assert vals[24] == pytest.approx(650.0 - 5.45)  # Sep 2026
+        assert vals[25] == pytest.approx(650.0 - 5.45)  # Oct 2026
+        assert vals[28] == pytest.approx(650.0 - 7.34)  # Jan, post-study
+        assert vals[34] == pytest.approx(650.0 - 5.45)  # Jul, post-study
+        assert vals[36] == pytest.approx(650.0 - 5.45)  # Sep, post-study
+        assert vals[37] == pytest.approx(650.0 - 5.45)  # Oct, post-study
 
     def test_no_overrides_returns_base(self, tmp_path) -> None:
         """Without any CFUGA/CMONT overrides the base value is returned
@@ -186,12 +195,10 @@ class TestPerStageProductivitiesSazonalCfugaCmont:
         assert vals == [42.0] * 12
 
     def test_post_study_continues_seasonal_cycle(self, tmp_path) -> None:
-        """Post-study continues the seasonal CFUGA/CMONT cycle (no freeze).
+        """With ``sazonaliza_cfuga_cmont == 1`` post-study cycles, not freezes.
 
-        VOLREF_SAZ / CFUGA-CMONT seasonal patterns are re-applied every year,
-        including post-study, when ``sazonaliza_cfuga_cmont == 1`` — only the
-        no-flag bounds (outflow / turbined) freeze. With study_months = 4,
-        stages 4+ are post-study and must keep cycling Sep=645 / Oct=640.
+        With study_months = 4 (Sep-Dec 2024), stages 4+ are post-study and
+        repeat the study's Sep=645 / Oct=640 rather than holding Dec's 640.
         """
         from novomodelo_bridge.newave.converters.hydro import _per_stage_productivities
 

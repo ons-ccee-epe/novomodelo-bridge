@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -28,7 +28,7 @@ from novomodelo_bridge.core.diagnostics import (
 )
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR
+from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, seasonal_step_function
 
 if TYPE_CHECKING:
     from cfinterface.components.register import Register
@@ -615,82 +615,38 @@ def _per_stage_drop_overrides(
     case: NewaveCase,
     total_stages: int,
 ) -> list[tuple[float | None, float | None]]:
-    """Per-stage effective ``(CFUGA, CMONT)`` from MODIF.DAT step-functions.
+    """Per-stage effective ``(CFUGA, CMONT)`` from MODIF.DAT dated records.
 
-    Evolves the CFUGA / CMONT temporal overrides into a per-stage
-    ``(canal_fuga, cmont)`` state: each event applies from its stage of effect
-    forward; events before the horizon fold in at stage 0; and when
-    ``sazonaliza_cfuga_cmont == 1`` the calendar month's latest-year value
-    repeats after the last explicit event. Shared by both
-    :func:`_per_stage_productivities` (point ρ, combined with VOLREF_SAZ) and
-    :func:`_per_stage_equivalent_productivities` (PRODT, which ignores VOLREF_SAZ).
+    Each record holds from its stage until the next record of the same type,
+    and records before the horizon fold in at stage 0. The post-study tail
+    follows ``sazonaliza_cfuga_cmont`` (the source model's seasonal flag for
+    the static periods) through :func:`seasonal_step_function`: ``1`` repeats
+    the last study year's levels month by month, ``0`` holds the last study
+    stage's level. Never a per-month pattern built from the latest record
+    naming each month: an earlier year's month would then reappear in the
+    last study year and in every post-study year.
+
+    Shared by :func:`_per_stage_productivities` (point ρ, combined with
+    VOLREF_SAZ) and :func:`_per_stage_equivalent_productivities` (PRODT, which
+    ignores VOLREF_SAZ).
     """
     if not drop_overrides:
         return [(None, None)] * total_stages
 
-    dger = case.dger
-    start_year = int(dger.ano_inicio_estudo)
-    start_month = int(dger.mes_inicio_estudo)
-    seasonalize = int(getattr(dger, "sazonaliza_cfuga_cmont", 0) or 0) == 1
+    horizon = replace(case.horizon, total_stages=total_stages)
+    seasonalize = int(getattr(case.dger, "sazonaliza_cfuga_cmont", 0) or 0) == 1
 
-    events_by_stage: dict[int, list[tuple[float | None, float | None]]] = {}
-    last_event_stage = -1
-    for override in drop_overrides:
-        stage_id = (override["year"] - start_year) * 12 + (
-            override["month"] - start_month
+    def levels(kind: str) -> list[float | None]:
+        by_stage = seasonal_step_function(
+            [
+                (int(o["year"]), int(o["month"]), float(o["value"]))
+                for o in drop_overrides
+                if o["type"] == kind
+            ],
+            float,
+            seasonalize=seasonalize,
+            horizon=horizon,
         )
-        last_event_stage = max(last_event_stage, stage_id)
-        if override["type"] == "CFUGA":
-            events_by_stage.setdefault(stage_id, []).append(
-                (float(override["value"]), None)
-            )
-        else:  # CMONT
-            events_by_stage.setdefault(stage_id, []).append(
-                (None, float(override["value"]))
-            )
+        return [by_stage.get(stage_id) for stage_id in range(total_stages)]
 
-    # sazonaliza_cfuga_cmont == 1: after the last explicit entry the source model
-    # repeats the seasonal pattern from the latest year defining each calendar month.
-    seasonal_cfuga: dict[int, float] = {}
-    seasonal_cmont: dict[int, float] = {}
-    if seasonalize:
-        latest_cfuga: dict[int, int] = {}
-        latest_cmont: dict[int, int] = {}
-        for override in drop_overrides:
-            year = int(override["year"])
-            month = int(override["month"])
-            value = float(override["value"])
-            if override["type"] == "CFUGA":
-                if month not in latest_cfuga or year > latest_cfuga[month]:
-                    latest_cfuga[month] = year
-                    seasonal_cfuga[month] = value
-            elif month not in latest_cmont or year > latest_cmont[month]:
-                latest_cmont[month] = year
-                seasonal_cmont[month] = value
-
-    drops: list[tuple[float | None, float | None]] = []
-    active_cfuga: float | None = None
-    active_cmont: float | None = None
-    for stage_id in range(total_stages):
-        if stage_id == 0:
-            applicable_stages = sorted(s for s in events_by_stage if s <= 0)
-        elif stage_id in events_by_stage:
-            applicable_stages = [stage_id]
-        else:
-            applicable_stages = []
-        for past_stage in applicable_stages:
-            for cfuga_val, cmont_val in events_by_stage[past_stage]:
-                if cfuga_val is not None:
-                    active_cfuga = cfuga_val
-                if cmont_val is not None:
-                    active_cmont = cmont_val
-
-        calendar_month = ((start_month - 1 + stage_id) % 12) + 1
-        if seasonalize and stage_id > last_event_stage:
-            if calendar_month in seasonal_cfuga:
-                active_cfuga = seasonal_cfuga[calendar_month]
-            if calendar_month in seasonal_cmont:
-                active_cmont = seasonal_cmont[calendar_month]
-
-        drops.append((active_cfuga, active_cmont))
-    return drops
+    return list(zip(levels("CFUGA"), levels("CMONT"), strict=True))

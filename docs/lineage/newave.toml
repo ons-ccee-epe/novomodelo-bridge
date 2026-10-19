@@ -2102,7 +2102,7 @@ summary = "Por usina ativa (inclusive FPHA), a produtibilidade equivalente ρ_eq
     { file = "confhd", item = "codigo_usina_jusante" },
     { file = "confhd", item = "posto" },
   ]
-  how = "`ρ_esp · (cota(V_ref) − canal de fuga − perdas)`, com V_ref = `volume_minimo` + 65% do volume útil para regulação `M` (altura 65 do NEWAVE) e `volume_referencia` para `D`/`S`. Por estágio, `CFUGA` substitui o canal de fuga e `CMONT` fixa a cota de montante (função degrau a partir de `data_inicio`, repetida sazonalmente após o último registro se `sazonaliza_cfuga_cmont = 1`), e a linha de `volref_saz.dat` fixa V_ref = `volume_minimo + valor` do mês civil. Soma-se a ρ_eq das usinas fictícias atravessadas na cascata (zero nos decks reais)."
+  how = "`ρ_esp · (cota(V_ref) − canal de fuga − perdas)`, com V_ref = `volume_minimo` + 65% do volume útil para regulação `M` (altura 65 do NEWAVE) e `volume_referencia` para `D`/`S`. Por estágio, `CFUGA` substitui o canal de fuga e `CMONT` fixa a cota de montante (função degrau a partir de `data_inicio` durante o estudo; no pós-estudo, o último ano do estudo se repete mês a mês se `sazonaliza_cfuga_cmont = 1`, e o valor do último estágio do estudo se mantém se `0`), e a linha de `volref_saz.dat` fixa V_ref = `volume_minimo + valor` do mês civil. Soma-se a ρ_eq das usinas fictícias atravessadas na cascata (zero nos decks reais)."
 
   [[output.field]]
   path = "integrated_equivalent_productivity_mw_per_m3s"

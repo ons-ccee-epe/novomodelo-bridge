@@ -166,6 +166,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **NEWAVE: `CFUGA`/`CMONT` levels after the last record now follow the
+  source model.** During the study, each `modif.dat` record holds until the
+  next one. With the `dger.dat` seasonal flag on, the post-study repeats the
+  last study year month by month. Previously, every month after the last
+  record took the latest record naming that calendar month in any year, so a
+  month declared only in an early year came back in the last study year and
+  in every post-study year. That record could be, for example, Tucuruí's
+  September and October tailrace in the first year. Per-stage productivity in
+  `hydro_energy_productivity.parquet`, the generation caps and the
+  stored-energy productivity change for those plants and stages.
 - **`convert newave` gives every plant on a shared gauging station its own
   inflow series, and zero inflow on the artificial gauge.** Inflows were
   attributed per station, so when several plants shared one, only the last
