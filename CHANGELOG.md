@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `ESTACOES BOMBEAMENTO` switch is on, the converter generates
   `system/pumping_stations.json` and `constraints/pumping_bounds.parquet`.
   Open-ended limit periods (blank `data_fim`) extend to the last stage.
+- **NEWAVE: diversion channels.** A `CDESVIO` record in a plant's `USINA`
+  block of `modif.dat` now gives that plant a diversion channel in
+  `hydros.json`, to the record's target plant and up to its maximum flow, when
+  the `CANAL DE DESVIO` switch of `dger.dat` is on. Plants fed only by a
+  channel, such as BELO MONTE below PIMENTAL, now receive that water. The
+  `desvio` code of `hidr.dat` alone declares no channel. A record without a
+  maximum flow, or whose target plant is not in the case, converts to no
+  channel and is reported; with the switch off the records are ignored and
+  reported.
 - **`check` and `convert` warn about tabs in fixed-column inputs**, on both
   tracks. The NEWAVE text files `arquivos.dat` names and DECOMP's
   `dadger`/`dadgnl` are read by column position, so a tab where the layout

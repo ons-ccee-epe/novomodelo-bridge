@@ -1,7 +1,8 @@
 """Source-file override readers for hydro entity conversion.
 
-Reads MODIF.DAT (permanent + temporal overrides) and GHMIN.DAT. The
-package's lowest layer: imports nothing from a sibling submodule.
+Reads MODIF.DAT (permanent + temporal overrides and diversion channels) and
+GHMIN.DAT. The package's lowest layer: imports nothing from a sibling
+submodule.
 
 MODIF.DAT volume records (VOLMAX, VOLMIN, VMAXT, VMINT) carry a unit column:
 ``h`` is hm³ and ``%`` is a percentage of the plant's useful volume. The
@@ -13,6 +14,8 @@ depend on record order.
 from __future__ import annotations
 
 import logging
+import math
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -22,6 +25,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR
 
@@ -265,6 +269,76 @@ def _apply_permanent_overrides(
     )
 
     return result
+
+
+@dataclass(frozen=True)
+class DiversionRecord:
+    """A ``CDESVIO`` record: the plant its channel diverts to, and the
+    channel's maximum flow in m³/s (``None`` when the record gives none)."""
+
+    target: int
+    max_flow_m3s: float | None
+
+
+def read_diversion_records(case: NewaveCase) -> dict[int, DiversionRecord]:
+    """``{plant code: its CDESVIO record}`` from ``modif.dat``.
+
+    inewave keeps ``CDESVIO`` as an unparsed line, so its free-format fields
+    are split here and the record belongs to the ``USINA`` record above it.
+    A plant with more than one keeps the last, as with the other permanent
+    records.
+
+    Raises:
+        FieldParseError: a record before any ``USINA`` record, without an
+            integer target code, diverting to its own plant, or with a flow
+            that is not a non-negative number.
+    """
+    modif = case.modif
+    if modif is None:
+        return {}
+    records: dict[int, DiversionRecord] = {}
+    plant: int | None = None
+    for register in modif.data:
+        if type(register).__name__ == "USINA":
+            plant = int(register.codigo)
+            continue
+        line = getattr(register, "data", None)
+        if not isinstance(line, str):
+            continue
+        fields = line.split()
+        if not fields or fields[0].upper() != "CDESVIO":
+            continue
+        if plant is None:
+            raise _cdesvio_error("a CDESVIO record comes before any USINA record")
+        records[plant] = _parse_cdesvio(plant, fields[1:])
+    return records
+
+
+def _parse_cdesvio(plant: int, values: list[str]) -> DiversionRecord:
+    try:
+        target = int(values[0])
+    except (IndexError, ValueError):
+        raise _cdesvio_error(
+            f"the CDESVIO record of plant {plant} has no integer target plant code"
+        ) from None
+    if target == plant:
+        raise _cdesvio_error(f"the CDESVIO record of plant {plant} diverts to itself")
+    if len(values) < 2:
+        return DiversionRecord(target, None)
+    try:
+        max_flow = float(values[1])
+    except ValueError:
+        max_flow = math.nan
+    if not math.isfinite(max_flow) or max_flow < 0.0:
+        raise _cdesvio_error(
+            f"the CDESVIO record of plant {plant} gives the maximum flow "
+            f"{values[1]!r}; expected a non-negative number in m³/s"
+        )
+    return DiversionRecord(target, max_flow)
+
+
+def _cdesvio_error(reason: str) -> FieldParseError:
+    return FieldParseError(f"modif.dat: {reason}", path="modif.dat", field="CDESVIO")
 
 
 def read_cadastro(case: NewaveCase) -> pd.DataFrame:

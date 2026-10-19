@@ -44,6 +44,7 @@ class DgerSwitches:
     agrint: Switch
     bombeamento: Switch
     c_adic: Switch
+    canal_desvio: Switch
     ghmin: Switch
     re_dat: Switch
     restricao_eletrica: Switch
@@ -74,6 +75,9 @@ class DgerSwitches:
             ),
             c_adic=plain(
                 "considera_carga_adicional", "CONS. CARGA ADICIONAL", "c_adic.dat"
+            ),
+            canal_desvio=plain(
+                "canal_desvio", "CANAL DE DESVIO", "CDESVIO records of modif.dat"
             ),
             ghmin=plain("considera_ghmin", "CONSIDERA GHMIN", "ghmin.dat"),
             re_dat=plain("restricoes_eletricas", "RESTRICOES ELETRICAS", "re.dat"),
@@ -137,7 +141,9 @@ def switched_off_inputs(files: NewaveFiles, switches: DgerSwitches) -> list[Swit
 
     Minimum outflow needs no file (``hidr.dat`` carries it for every plant);
     the two turbining switches only matter when ``modif.dat`` exists, since
-    they gate its dated records.
+    they gate its dated records. The diversion-channel switch is left out:
+    only reading ``modif.dat`` tells whether it carries ``CDESVIO`` records,
+    so the conversion reports it instead.
     """
     present = {
         "agrint": files.agrint is not None,

@@ -10,7 +10,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
 from tests.conftest import make_case, make_nw_files
-from tests.newave.conftest import _make_hidr_cadastro
+from tests.newave.conftest import _make_hidr_cadastro, _read_modif
 
 # The title/summary/remediation/notes strings overrides.py emits reach a
 # pip-installed user with no repo checkout — none may leak a repo-internal
@@ -1071,3 +1071,86 @@ class TestOverridesResidualLegacyWarning:
         assert len(result) == 1
         assert result[0].code == "legacy-warning"
         assert result[0].summary == "some other warning"
+
+
+class TestReadDiversionRecords:
+    """``CDESVIO`` records of ``modif.dat``, read through inewave's own parser."""
+
+    def _records(self, tmp_path, *lines: str):
+        from novomodelo_bridge.newave.converters.hydro.overrides import (
+            read_diversion_records,
+        )
+
+        return read_diversion_records(
+            make_case(tmp_path, modif=_read_modif(tmp_path, *lines))
+        )
+
+    def test_each_record_belongs_to_the_usina_above_it(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro.overrides import DiversionRecord
+
+        records = self._records(
+            tmp_path,
+            " USINA    118                               BILLINGS",
+            " VAZMIN       34",
+            " CDESVIO 119 100. ",
+            " USINA    119                               HENRY BORDEN",
+            " VAZMIN       10",
+            " USINA    314                               PIMENTAL",
+            " CDESVIO 288 9999999. ",
+        )
+        assert records == {
+            118: DiversionRecord(target=119, max_flow_m3s=100.0),
+            314: DiversionRecord(target=288, max_flow_m3s=9999999.0),
+        }
+
+    def test_the_flow_is_optional_and_the_keyword_case_free(self, tmp_path) -> None:
+        records = self._records(
+            tmp_path,
+            " USINA    118                               BILLINGS",
+            " cdesvio 119",
+        )
+        assert records[118].target == 119
+        assert records[118].max_flow_m3s is None
+
+    def test_the_last_record_of_a_plant_wins(self, tmp_path) -> None:
+        records = self._records(
+            tmp_path,
+            " USINA    118                               BILLINGS",
+            " CDESVIO 119 100.",
+            " CDESVIO 120 50.",
+        )
+        assert (records[118].target, records[118].max_flow_m3s) == (120, 50.0)
+
+    def test_no_modif_and_no_record_read_as_empty(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro.overrides import (
+            read_diversion_records,
+        )
+
+        assert read_diversion_records(make_case(tmp_path, modif=None)) == {}
+        assert (
+            self._records(
+                tmp_path, " USINA    118                               BILLINGS"
+            )
+            == {}
+        )
+
+    @pytest.mark.parametrize(
+        ("lines", "reason"),
+        [
+            ((" CDESVIO 119 100.",), "before any USINA"),
+            ((" USINA    118    BILLINGS", " CDESVIO"), "no integer target"),
+            ((" USINA    118    BILLINGS", " CDESVIO X 100."), "no integer target"),
+            ((" USINA    118    BILLINGS", " CDESVIO 118 100."), "diverts to itself"),
+            ((" USINA    118    BILLINGS", " CDESVIO 119 -1."), "'-1.'"),
+            ((" USINA    118    BILLINGS", " CDESVIO 119 abc"), "'abc'"),
+        ],
+    )
+    def test_a_malformed_record_fails_naming_the_problem(
+        self, tmp_path, lines: tuple[str, ...], reason: str
+    ) -> None:
+        from novomodelo_bridge.core.errors import FieldParseError
+
+        with pytest.raises(FieldParseError, match=reason) as excinfo:
+            self._records(tmp_path, *lines)
+        assert excinfo.value.path == "modif.dat"
+        assert excinfo.value.field == "CDESVIO"

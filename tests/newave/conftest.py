@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
+from inewave.newave import Modif
 
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import _all_converter_patches, make_case, make_nw_files
@@ -434,6 +435,14 @@ def _make_hydro_dger_mock(
     dger.ano_inicial_historico = 1931
     dger.funcao_producao_uhe = 1
     return dger
+
+
+def _read_modif(tmp_path: Path, *lines: str) -> Modif:
+    """inewave's reader over a ``modif.dat`` holding *lines* below its header."""
+    path = tmp_path / "modif.dat"
+    header = [" P.CHAVE  MODIFICACOES E INDICES", " XXXXXXXX XXXXXXXXXXXXXXXXXXXXX"]
+    path.write_text("\n".join([*header, *lines]) + "\n")
+    return Modif.read(str(path))
 
 
 def _hydro_case(
