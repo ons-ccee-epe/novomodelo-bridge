@@ -114,8 +114,8 @@ def _modif_blocks(modif: Modif) -> list[tuple[int | None, list[Register]]]:
 
     A plant may have several blocks, each its own entry; records before the
     first ``USINA`` record come first, under ``None``. The registers are walked
-    directly because inewave's per-plant accessors drop the file's last record,
-    read only a plant's first block, and fail on a file with a single block.
+    directly because ``Modif.modificacoes_usina`` reads only a plant's first
+    block.
     """
     blocks: list[tuple[int | None, list[Register]]] = [(None, [])]
     for register in modif.data:

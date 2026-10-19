@@ -30,14 +30,14 @@ wheels = [
 
 [[package]]
 name = "cfinterface"
-version = "1.10.1"
+version = "1.10.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/b9/425e3eb6bf06778e55771a057db1f6f696ea53cae826ad1851062cc96c19/cfinterface-1.10.1.tar.gz", hash = "sha256:18cbefd0e3cde531a76040cc8aae99584a03bfccb066bec489d55a18e0a09944", size = 82009, upload-time = "2026-04-13T13:17:05.169Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/61/dc0144d0b206bf017a11b75744a941fdac77965df031493fdcf595cbed9a/cfinterface-1.10.2.tar.gz", hash = "sha256:21262ac57179f6d4eaa2b1f6a82f776c1070db706f2afd32f92d094da2b931fe", size = 82457, upload-time = "2026-10-14T14:47:33.158Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/41/70bd41267a4bc8f26bd96faea977f853f3f7b72776a44503042a412e7943/cfinterface-1.10.1-py3-none-any.whl", hash = "sha256:9de23ac94ac2f8ba56d215d773df32ce429ad2db2260894356913e961cc7ef82", size = 42112, upload-time = "2026-04-13T13:17:03.649Z" },
+    { url = "https://files.pythonhosted.org/packages/23/7d/574afe13c89cc32513402dd25571a328668cabe556dcf60129674f0dff1a/cfinterface-1.10.2-py3-none-any.whl", hash = "sha256:e8e21daf0aed8f09c07454d40df5f8086d62c84735af026ac6de93f865adef68", size = 42216, upload-time = "2026-10-14T14:47:31.697Z" },
 ]
 
 [[package]]
@@ -69,7 +69,7 @@ dev = [
 requires-dist = [
     { name = "cobre-python", specifier = "==0.18.0" },
     { name = "idecomp", specifier = ">=1.14.2" },
-    { name = "inewave", specifier = ">=1.16.1" },
+    { name = "inewave", specifier = ">=1.16.2" },
     { name = "jsonschema", marker = "extra == 'dev'" },
     { name = "pandas", specifier = ">=3.0.6" },
     { name = "plotly", specifier = ">=7.1.0" },
@@ -221,16 +221,16 @@ wheels = [
 
 [[package]]
 name = "inewave"
-version = "1.16.1"
+version = "1.16.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfinterface" },
     { name = "numpy" },
     { name = "pandas" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/11/1d/b910f7368cd589412c29dbda48fd2d019ceefac6cf2669fcc6f01cc87964/inewave-1.16.1.tar.gz", hash = "sha256:b5d0f8f4a2d19e33d9a9ed791d76a535bc6d58d3ed0bdd2bc3dba1d371a5e282", size = 14297913, upload-time = "2026-09-30T12:21:06.365Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/29/2f10562224245973ac0168dcb5388c360e902ff30926638de8484434b9fa/inewave-1.16.2.tar.gz", hash = "sha256:3f279519ced9e3199fe788b13d60dbe6e277bed9d857566e6464120f571cb6fb", size = 14299463, upload-time = "2026-10-19T22:53:42.024Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/88/59abcdbeca7e50a58c8bcd80914d42db576e774ea16cd4ca8a5fae533075/inewave-1.16.1-py3-none-any.whl", hash = "sha256:bb8237b0283f840181570de7ed0fe469c6fde0ff6e61f8ff0c7a1de93f795a09", size = 455632, upload-time = "2026-09-30T12:21:04.386Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/91/739a489d4f563b7347e722900731579ea87c3bf03f7d29e65ec671776a3c/inewave-1.16.2-py3-none-any.whl", hash = "sha256:53ef5ddfb849a3e7a540fc032d49068ee4ce31062f71c40fe37e58b7c1847cba", size = 455650, upload-time = "2026-10-19T22:53:39.577Z" },
 ]
 
 [[package]]

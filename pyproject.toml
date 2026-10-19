@@ -13,7 +13,7 @@ dependencies = [
     "idecomp>=1.14.2",
     # 1.16.1: first to read modif.dat VAZMINT PRE/POS markers (1.16.0: modif.dat
     # POTEFE/VOLCOTA/COTAREA and vazoes.dat at 600 postos).
-    "inewave>=1.16.1",
+    "inewave>=1.16.2",
     "pyarrow>=25.0.1",
     "pandas>=3.0.6",
     "plotly>=7.1.0",
