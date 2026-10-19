@@ -443,7 +443,7 @@ class TestEmissionCheckWiring:
 
 
 class TestBoundAccumulatorWiring:
-    """The E2 accumulator is the *single* merge point
+    """The bounds accumulator is the *single* merge point
     for every per-entity bound, and the new pumping family is wired
     end-to-end."""
 
@@ -513,7 +513,7 @@ class TestCli:
         self, tmp_path: Path
     ) -> None:
         """The ``ValueError`` ``convert_decomp_case`` raises on an
-        ERROR-severity post-emission self-check finding (Finding 1) is caught
+        ERROR-severity post-emission self-check finding is caught
         by the same except tuple as a missing/existing-destination failure —
         no dedicated CLI branch is needed."""
         runner = CliRunner()
@@ -695,7 +695,7 @@ def _run_cadastro_pipeline(
     generic-constraint emitters consume, none of which the mock deck's
     ``Dadger`` can produce for real (it exposes no
     ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors).
-    *unreadable_electrical*/*libs_electrical* feed the E1
+    *unreadable_electrical*/*libs_electrical* feed the
     detection helpers the same way — both otherwise patched to their
     empty/absent default so this shared fixture keeps regressing the
     bound-combine logic it was built for, undisturbed.
@@ -850,7 +850,7 @@ def _run_cadastro_pipeline(
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
         # The mock deck exposes no real files (DecompCase.from_directory
         # is patched wholesale above, so no real file I/O happens anywhere in this
-        # fixture) — the E1 detection helpers read the raw deck files directly, so
+        # fixture) — the detection helpers read the raw deck files directly, so
         # they must be patched here too, the same way the special-constraint
         # reader above is.
         "novomodelo_bridge.decomp.pipeline"
@@ -1259,7 +1259,7 @@ def _synthetic_rhe_record() -> ConstraintRecord:
 
 
 def _all_synthetic_generics() -> tuple[ConstraintRecord, ...]:
-    """RE, then the combined RHQ/RHV family, then RHE — the E7 emission
+    """RE, then the combined RHQ/RHV family, then RHE — the fixed emission
     order, in one census, for the cross-emitter id-allocation tests."""
     return (
         _synthetic_re_record(),
@@ -1270,7 +1270,7 @@ def _all_synthetic_generics() -> tuple[ConstraintRecord, ...]:
 
 
 class TestGenericConstraintWiring:
-    """The E4/E5 generic-constraint emitters wired
+    """The generic-constraint emitters wired
     into ``convert_decomp_case`` over one shared 0-based id allocator.
     Tier-1 synthetic only — the ``_run_cadastro_pipeline`` mock deck,
     extended with a ``to_generic`` census; no real deck, no ``import novomodelo``.
@@ -1278,7 +1278,7 @@ class TestGenericConstraintWiring:
 
     def test_ids_are_dense_and_unique_across_the_emitters(self, tmp_path: Path) -> None:
         """RE (one upper-only id) -> the combined RHQ/RHV emitter (one
-        genuinely two-sided HQ id under novomodelo's F3 interval model + one
+        genuinely two-sided HQ id under novomodelo's sense-free interval model + one
         lower-only HV id) -> RHE (one id over its three stages) share a
         single running allocator, so the 4 emitted ids form a gap-free
         ``range(4)`` with no collision, regardless of which emitter produced
@@ -1291,8 +1291,8 @@ class TestGenericConstraintWiring:
         assert len(ids) == 4
         assert sorted(ids) == list(range(len(ids)))
         assert len(ids) == len(set(ids))
-        # E7's fixed order: RE, then HQ/HV (combined), then RHE. The
-        # genuinely two-sided HQ record is one F3 constraint, not two.
+        # Fixed emission order: RE, then HQ/HV (combined), then RHE. The
+        # genuinely two-sided HQ record is one interval constraint, not two.
         by_family = [c["name"].split("_")[0] for c in doc["constraints"]]
         assert by_family == ["RE", "HQ", "HV", "RHE"]
 
@@ -1316,6 +1316,44 @@ class TestGenericConstraintWiring:
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
         assert not (dst / "constraints" / "generic_constraints.json").exists()
         assert not (dst / "constraints" / "generic_constraint_bounds.parquet").exists()
+
+    def test_stage_varying_coefficient_is_declared_without_rhe(
+        self, tmp_path: Path
+    ) -> None:
+        """A per-stage coefficient alone, with no RHE constraint, still writes
+        ``generic_parameters.json`` declaring the parameter it reads."""
+        base = _synthetic_rhv_record()
+        varying = dataclasses.replace(
+            base,
+            terms=(
+                base.terms[0],
+                dataclasses.replace(base.terms[1], schedule=((0, 1.0), (2, 2.0))),
+            ),
+        )
+        dst = _run_cadastro_pipeline(
+            tmp_path, ac_volmax_frame=None, to_generic=(varying,)
+        )
+
+        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        assert "@coef_hv903_t1" in doc["constraints"][0]["expression"]
+        params = {
+            p["name"]: p
+            for p in json.loads(
+                (dst / "constraints" / "generic_parameters.json").read_text()
+            )["scalar_parameters"]
+        }
+        values = dict(params["coef_hv903_t1"]["values"])
+        assert params["coef_hv903_t1"]["kind"] == "per_stage"
+        assert [values[s] for s in range(3)] == [1.0, 1.0, 2.0]
+
+    def test_no_parameters_file_when_no_expression_reads_one(
+        self, tmp_path: Path
+    ) -> None:
+        dst = _run_cadastro_pipeline(
+            tmp_path, ac_volmax_frame=None, to_generic=(_synthetic_rhv_record(),)
+        )
+        assert (dst / "constraints" / "generic_constraints.json").is_file()
+        assert not (dst / "constraints" / "generic_parameters.json").exists()
 
     def test_rhe_sigils_are_declared_and_drive_the_rhs(self, tmp_path: Path) -> None:
         """Every ``@name`` an RHE expression references is declared in
@@ -1376,7 +1414,7 @@ class TestGenericConstraintWiring:
     def test_detection_diagnostics_flow_through_the_dx_sink(
         self, tmp_path: Path
     ) -> None:
-        """The E1 FE/RHA/LIBs-electrical detection diagnostics are
+        """The FE/RHA/LIBs-electrical detection diagnostics are
         captured on the returned ``ConversionReport``, not only logged.
 
         ``convert_decomp_case`` now owns its own top-level

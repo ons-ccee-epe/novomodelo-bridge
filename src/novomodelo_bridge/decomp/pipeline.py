@@ -1461,7 +1461,7 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
 
     # The CI/CE energy-contract model, read once and
     # shared by both emitters. Real decks carry no usable contract data
-    # (rv0's single placeholder is skipped by D6, rv3 has none), so the
+    # (rv0's single placeholder row is skipped, rv3 has none), so the
     # visible effect on a real conversion is: no contract files written, no
     # self-check finding, no regression.
     contracts = contracts_conv.read_contracts(dadger, calendar)
@@ -1614,7 +1614,7 @@ def _emit_and_write(
     # entity bound (`census.to_generic`, resolved once in `_resolve_bounds`)
     # as a Novomodelo generic constraint, over one shared 0-based constraint-id
     # allocator so ids never collide across emitters regardless of which
-    # family produced them. The three emitters run in this fixed order (E7);
+    # family produced them. The emitters run in this fixed order;
     # `big_m`, `line_map`, and `hydro_to_ree` are shared inputs every emitter
     # needs but none of them reads the deck to build for itself.
     big_m = constraints_conv.big_m_penalty(deficit_cost)
@@ -1633,7 +1633,7 @@ def _emit_and_write(
     # so neither can disagree about whether the deck's long-form subset
     # converted. `read_libs_electrical` returns `None` for a short-form-only
     # (RE/RE-* or date-indexed) file -- that fallback stays on
-    # detect_libs_electrical's flat warning (OQ-4).
+    # detect_libs_electrical's flat warning.
     libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None = None
     if case.libs_restricao_eletrica is not None:
         libs_electrical_model = libs_electrical_conv.read_libs_electrical(
@@ -1678,8 +1678,8 @@ def _emit_and_write(
         allocator=allocator,
     )
     if rhe_generics is not None:
-        generic_constraints.extend(rhe_generics.generic.constraints)
-        generic_bound_tables.append(rhe_generics.generic.bounds)
+        generic_constraints.extend(rhe_generics.constraints)
+        generic_bound_tables.append(rhe_generics.bounds)
 
     # The 4th generic-constraint emitter link -- every
     # LIBs-era long-form electrical restriction that resolved
@@ -1733,21 +1733,32 @@ def _emit_and_write(
             pa.concat_tables(generic_bound_tables),
         )
 
-    # Every `@name` a surviving RHE expression references must resolve, or
-    # novomodelo fails to load the case -- write generic_parameters.json whenever
-    # any RHE constraint survives, never only when another generic family
-    # also happens to be present.
-    if rhe_generics is not None:
+    # Every `@name` a surviving expression references must resolve, or novomodelo
+    # fails to load the case.
+    if any("@" in constraint["expression"] for constraint in generic_constraints):
+        parameterized = [
+            result
+            for result in (re_generics, rhq_rhv_generics, rhe_generics)
+            if result is not None
+        ]
         write_scalar_parameters(
             writer,
             build_decomp_scalar_parameters(
                 [id_map.hydro_id(code) for code in id_map.hydro_codes],
-                per_stage=rhe_generics.per_stage_parameters,
-                expressions=rhe_generics.expression_parameters,
+                per_stage={
+                    name: values
+                    for result in parameterized
+                    for name, values in result.per_stage_parameters.items()
+                },
+                expressions={
+                    name: body
+                    for result in parameterized
+                    for name, body in result.expression_parameters.items()
+                },
             ),
         )
 
-    # E1: the FE/RHA/LIBs-electrical detection diagnostics each surface
+    # The FE/RHA/LIBs-electrical detection diagnostics each surface
     # once, through the structured sink, alongside the flat deferral warning
     # below (the matching clause is deduped out of that warning).
     for detection in constraint_registers.detect_unreadable_electrical(
@@ -1757,7 +1768,7 @@ def _emit_and_write(
     # The flat presence warning is narrowed to the subset
     # `libs_electrical_model` (read once above) did NOT convert -- a
     # short-form-only (RE/RE-*, date-indexed) file, or no long-form card at
-    # all despite the indices.csv entry (OQ-4). Once the long-form subset
+    # all despite the indices.csv entry. Once the long-form subset
     # converts, the census INFO below is authoritative and this flat warning
     # would otherwise be a stale "not converted" claim over that subset.
     libs_detection = constraint_registers.detect_libs_electrical(

@@ -13,6 +13,7 @@ warning-skip), and the fail-loud dispatcher on an unhandled family.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 from pathlib import Path
 
@@ -167,6 +168,38 @@ def test_re_negative_coefficient_flips_sides(
     assert contributions[0].upper == -50.0
 
 
+def test_re_sign_change_between_stages_flips_that_stage_only(
+    id_map: DecompIdMap, effective: EffectiveCadastro
+) -> None:
+    bounds = {s: StageBounds(lower=(50.0,), upper=(212.0,)) for s in range(2)}
+    record = dataclasses.replace(
+        _re_record(constraint_id=12, coefficient=1.0, bounds=bounds),
+        terms=(
+            ConstraintTerm(
+                code=5,
+                coefficient=1.0,
+                variable="generation",
+                schedule=((0, 1.0), (1, -1.0)),
+            ),
+        ),
+    )
+    calendar = [_stage(0, 1), _stage(1, 1)]
+
+    contributions = single_term_bound_contributions(
+        _case(calendar),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=effective,
+        hydro_capacities=_capacities(max_generation_mw=1_000.0),
+    )
+
+    assert [(c.stage_id, c.lower, c.upper) for c in contributions] == [
+        (0, 50.0, 212.0),
+        (1, -212.0, -50.0),
+    ]
+
+
 def test_re_two_block_emits_per_block_contributions(
     id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
@@ -220,8 +253,7 @@ def test_ft_thermal_single_block_generation_bound(
     id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
     """A single-term ``FT`` RE lowers to a ``family="thermal"`` contribution
-    on the novomodelo ``generation`` axis, resolved via ``id_map.thermal_id``
-    (M1)."""
+    on the novomodelo ``generation`` axis, resolved via ``id_map.thermal_id``."""
     record = _ft_record(
         constraint_id=30,
         bounds={0: StageBounds(lower=(50.0,), upper=(212.0,))},
@@ -1048,7 +1080,7 @@ def test_hq_qbom_lowers_to_pumping_flow_bound(
     qbom_id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
     """A single-term ``QBOM`` RHQ lowers to a pumping ``flow`` bound resolved
-    through ``pumping_station_ids`` (M2)."""
+    through ``pumping_station_ids``."""
     record = _qbom_record(
         constraint_id=166,
         bounds={0: StageBounds(lower=(5.0,), upper=(80.0,))},

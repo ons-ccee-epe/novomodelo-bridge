@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert decomp` reads special-constraint coefficients stage by stage.**
+  Each `FU`/`FT`/`FI`, `CQ` and `CV` line declares a coefficient from its
+  `estagio` onward, but the reader kept a term's first coefficient for every
+  stage and counted a term from the constraint's first stage even when the
+  deck declares it later. A coefficient that changes between stages, or a
+  term that joins later and is absent before that stage, as DECOMP reads it,
+  is now a `per_stage` parameter `@coef_<family><code>_t<k>` in
+  `generic_parameters.json`; a constant coefficient stays a literal, so decks
+  without such lines convert as before. A single-term constraint lowers to an
+  entity bound only when its coefficient is ±1 at every stage. A `RE`, `HQ`
+  or `HV` with no coefficient at its first stage, a deck DECOMP rejects, now
+  fails the conversion.
 - **`convert newave` applies the FPHA plane reduction only when the case
   declares it.** A `tratamento-fpha.csv` in the case directory set
   `fpha_plane_reduction` even when `indices.csv` left out or commented out

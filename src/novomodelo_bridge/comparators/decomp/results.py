@@ -686,13 +686,13 @@ def _corridor_line_alignment(
 
     Keyed by novomodelo bus-id pair ``(bus_de, bus_para)`` -- built over every
     ordered pair of *declared* subsystem buses (the transhipment bus is
-    never a corridor endpoint in its own right, D-UNITS) -- to the ordered
+    never a corridor endpoint in its own right) -- to the ordered
     list of novomodelo ``(line_id, sign)`` legs realizing it:
 
     - a single leg when a direct novomodelo line connects the pair, in either
-      direction (requirement 3's "direct" branch);
+      direction;
     - else the two-leg ``bus_de -> transhipment_bus_id -> bus_para`` path,
-      when both legs exist (requirement 3's transhipment branch);
+      when both legs exist;
     - else the pair is simply absent from the returned mapping.
 
     :func:`_corridor_line_alignment` itself never raises and never reports:
@@ -1075,7 +1075,7 @@ def _energy_balance_frames(
     such translation since it sums across every submarket rather than
     keying per-bus.
 
-    D-STAGE-OFFSET: ``stage`` stays the raw 1-based ``estagio`` (unlike
+    ``stage`` stays the raw 1-based ``estagio`` (unlike
     :func:`_map_entities`, this does *not* rebase to Novomodelo's 0-based
     ``stage_id``), so the consuming charts' own stage-alignment (``nw_offset
     = 1``, set on ``PercentileData`` by ``build_decomp_dataset``) lines up.
@@ -1155,10 +1155,10 @@ def _energy_balance_frames(
         nw_net_load = _empty_market_frame()
 
     # nw_sin: EARMF / ENA summed across every submarket the deck declares. The
-    # transhipment bus never appears among ``codigo_submercado`` values
-    # (D-UNITS) — referenced only by name in ``IA`` records — so the sum
-    # already excludes it, no filter needed (``TestBusSideExcludesTranshipment``
-    # pins this down). ``newave_code`` is the SIN placeholder ``0``, matching
+    # transhipment bus never appears among ``codigo_submercado`` values —
+    # referenced only by name in ``IA`` records — so the sum already excludes
+    # it, no filter needed (``TestBusSideExcludesTranshipment`` pins this down).
+    # ``newave_code`` is the SIN placeholder ``0``, matching
     # ``read_medias_sin``'s newave-side convention.
     system_energy = {"earm_final_MWmes", "ena_MWmes"}
     if system_energy <= present:
@@ -1496,7 +1496,7 @@ def _map_entities(
     """Translate source codes to Novomodelo ids; report the codes with no mapping.
 
     Keeps the original code alongside the mapped ``entity_id`` (renamed to
-    the generic ``newave_code`` — D-SOURCE-TOKEN: the field name means "the
+    the generic ``newave_code`` — the field name means "the
     reference model's code", not NEWAVE-specific) so callers that need the
     reference code back (:func:`_result_comparisons`) don't have to invert
     ``mapping`` themselves.
@@ -2466,7 +2466,7 @@ def _stage_frame_to_lookup(
     *frame* is already collapsed to one row per (code, stage) by
     `_scenario_mean`; this only reshapes it into a lookup and converts the
     source model's 1-based ``estagio`` to the 0-based ``stage_id`` every
-    other ``gc_*`` frame uses (D-STAGE-OFFSET, offset=1).
+    other ``gc_*`` frame uses (offset=1).
     """
     if (
         frame.is_empty()
@@ -2774,7 +2774,7 @@ def _generic_constraint_lhs_decomp(
                 if value is None:
                     complete = False
                     break
-                lhs += term.coefficient * value
+                lhs += term.coefficient_at(stage) * value
             if complete:
                 rows.append(
                     {
@@ -2818,7 +2818,7 @@ def build_decomp_dataset(
     shape and assembles it through the shared, source-agnostic
     :func:`~novomodelo_bridge.comparators.analyze.build_results_dataset` kernel.
 
-    Per D-PERCENTILEDATA, the returned dataset's ``PercentileData`` carries:
+    The returned dataset's ``PercentileData`` carries:
 
     - Entity-name dicts (``nw_bus_names``/``nw_hydro_names``) and the
       novomodelo-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, read
@@ -2855,12 +2855,12 @@ def build_decomp_dataset(
     three have no dedicated ``PercentileData`` field and flow through
     ``results``/``dataset.metadata["unmapped"]``.
 
-    Unit reconciliations (D2): REE EARM MWh -> MWmês via
+    Unit reconciliations: REE EARM MWh -> MWmês via
     :data:`_EARM_MWH_TO_MWMES`, REE ENA (a stage-mean MW) -> MWmês via the
     stage's own hours, and evaporation hm³ -> m³/s via the stage's actual
     hours -- the last surfaces a TRACKED NOVOMODELO-GAP WORKAROUND (C11) rather
     than correcting it away (see `_evaporation_result_comparisons`).
-    ``nw_offset=1`` (D-STAGE-OFFSET): DECOMP's ``estagio`` is 1-based from the
+    ``nw_offset=1``: DECOMP's ``estagio`` is 1-based from the
     deck's first stage, so the offset is fixed at 1, not derived from the data.
 
     Nothing is fabricated to fill a gap: ``bus``/``hydro``/``thermal``/
@@ -3037,7 +3037,7 @@ def build_decomp_dataset(
         nw_market=aligned.nw_market,
         nw_net_load=aligned.nw_net_load,
         nw_sin=nw_sin,
-        # D-STAGE-OFFSET: fixed at 1, not derived — see the docstring above.
+        # Fixed at 1, not derived — see the docstring above.
         nw_offset=1,
         # Overview tab's Convergence overlay.
         nw_convergence=_decomp_convergence_frame(decomp_dir),
@@ -3105,7 +3105,7 @@ def build_decomp_dataset(
         fpha_metrics=fpha_metrics,
         # Constraints tab LHS-vs-bound metadata. ``nw_max_stage``
         # is unchanged (already set above by `_decomp_max_stage`) and
-        # doubles as this section's stage clamp (D-STAGE-OFFSET).
+        # doubles as this section's stage clamp.
         gc_constraints=gc_constraints,
         gc_bounds=gc_bounds_df,
         gc_lhs_newave=gc_lhs_nw,
