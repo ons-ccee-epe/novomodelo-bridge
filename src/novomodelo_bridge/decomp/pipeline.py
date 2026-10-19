@@ -917,14 +917,11 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         }
         reference_volumes[code] = {"volume_hm3": v_init}
 
-    # penalties.json takes the full per-plant ρ_eq list (system ρ_avg/ρ_max);
-    # the parquet omits FPHA plants (novomodelo computes their ρ_eq, so a parquet row
-    # would double-supply it).
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
     )
-    productivity_parquet = hydro_conv.convert_energy_productivity(
-        effective, id_map, initial_volumes, exclude_codes=fpha_codes
+    productivity_parquet = hydro_conv.convert_hydro_energy_productivity(
+        effective, id_map, initial_volumes, fpha_codes
     )
     deficit_costs = network_conv._bus_deficit_costs(dadger)
     deficit_cost = max(deficit_costs.values()) if deficit_costs else 0.0

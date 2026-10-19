@@ -1626,19 +1626,19 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "hidr" },
 ]
-summary = "Uma linha por usina operada com produtibilidade constante (as usinas FPHA são omitidas, pois o Novomodelo calcula o ρ_eq delas); valor único para todo o horizonte, ancorado no volume inicial."
+summary = "Uma linha padrão por usina operada com o ρ_eq de geração ancorado no volume inicial (nulo para as usinas FPHA, cujo ρ_eq o Novomodelo calcula) e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da RHE; quando um `AC` faz esta última variar entre estágios, ela vai em uma linha por estágio."
 
   [[output.field]]
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Novomodelo da usina, só para as de `generation.model` = `constant_productivity`."
+  how = "Id Novomodelo da usina operada."
 
   [[output.field]]
   path = "stage_id"
-  from = []
-  status = "null"
-  how = "Sempre nulo: o valor vale para todos os estágios; a variação de queda por estágio entra pelo teto de engolimento em `constraints/hydro_unit_group_bounds.parquet`."
+  from = [ { file = "dadger", register = "AC", item = "estagio" } ]
+  status = "derived"
+  how = "Nulo na linha padrão de cada usina, que vale para todos os estágios; um estágio 0-based por linha adicional quando um `AC` faz a produtibilidade de energia armazenada variar entre estágios. A variação de queda do ρ_eq de geração entra pelo teto de engolimento em `constraints/hydro_unit_group_bounds.parquet`."
 
   [[output.field]]
   path = "equivalent_productivity_mw_per_m3s"
@@ -1660,19 +1660,40 @@ summary = "Uma linha por usina operada com produtibilidade constante (as usinas 
     { file = "dadger", register = "AC", item = "VOLMIN" },
     { file = "dadger", register = "AC", item = "VOLMAX" },
   ]
-  how = "ρ_eq = ρ_esp × h_líq, com a cota de montante avaliada no volume inicial da usina (o ponto em que o DECOMP ancora a FPHA), menos `canal_fuga_medio` e a perda hidráulica (`tipo_perda` 1 = percentual, 2 = metros), queda líquida truncada em 0; todos os cadastrais são os efetivos do estágio inicial (`AC` aplicados). Polinômio cota-volume nulo gera aviso e ρ_eq = 0."
+  how = "ρ_eq = ρ_esp × h_líq, com a cota de montante avaliada no volume inicial da usina (o ponto em que o DECOMP ancora a FPHA), menos `canal_fuga_medio` e a perda hidráulica (`tipo_perda` 1 = percentual, 2 = metros), queda líquida truncada em 0; todos os cadastrais são os efetivos do estágio inicial (`AC` aplicados). Polinômio cota-volume nulo gera aviso e ρ_eq = 0. Nulo nas linhas por estágio e para as usinas FPHA."
 
   [[output.field]]
   path = "reference_outflow_m3s"
   from = []
   status = "null"
-  how = "Sempre nulo: o ρ_eq é uma constante, sem vazão de referência; a coluna existe porque o leitor exige o conjunto completo de colunas."
+  how = "Sempre nulo: o ρ_eq é uma constante, sem vazão de referência."
 
   [[output.field]]
   path = "specific_productivity_mw_per_m3s_per_m"
   from = []
   status = "null"
-  how = "Sempre nulo: a produtibilidade específica só é emitida, em `system/hydros.json`, para as usinas FPHA, que não têm linha nesta tabela."
+  how = "Sempre nulo: a produtibilidade específica das usinas FPHA é emitida em `system/hydros.json`."
+
+  [[output.field]]
+  path = "integrated_equivalent_productivity_mw_per_m3s"
+  from = [
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "a0_volume_cota..a4_volume_cota" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "perdas" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "dadger", register = "AC", item = "PROESP" },
+    { file = "dadger", register = "AC", item = "COTVOL" },
+    { file = "dadger", register = "AC", item = "JUSMED" },
+    { file = "dadger", register = "AC", item = "PERHID" },
+    { file = "dadger", register = "AC", item = "VOLMIN" },
+    { file = "dadger", register = "AC", item = "VOLMAX" },
+  ]
+  how = "Produtibilidade de energia armazenada da própria usina em cada estágio: para reservatório (regulação `M` ou `S`), `ρ_esp × (cota média entre `volume_minimo` e `volume_maximo` − `canal_fuga_medio` − perda hidráulica)`, com a média calculada pela integral exata do polinômio cota-volume; para fio d'água (`D`), a queda no `volume_referencia`; queda líquida truncada em 0 e cadastrais efetivos do estágio (`AC` aplicados). Na linha padrão quando constante no horizonte, senão nas linhas por estágio. Sempre preenchida, porque a integral do Novomodelo sobre a tabela VHA ignora os `AC` por estágio e integra também as usinas `D`."
 
 [[output]]
 path = "system/tailrace_curves.parquet"

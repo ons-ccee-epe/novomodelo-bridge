@@ -380,13 +380,14 @@ Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes entre `v
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/newave/converters/hydro/productivity.py`
 
-Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fonte única do coeficiente `geração = ρ_eq · Q` (inclusive para usinas FPHA): uma linha padrão com `stage_id` nulo por usina sem variação temporal, ou uma linha por estágio para usina com `CFUGA`/`CMONT` em `modif.dat` ou linha em `volref_saz.dat`.
+Por usina ativa (inclusive FPHA), a produtibilidade equivalente ρ_eq (MW por m³/s), fonte única do coeficiente `geração = ρ_eq · Q`, e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da VminOP: uma linha padrão com `stage_id` nulo por usina sem variação temporal, ou uma linha por estágio para usina com `CFUGA`/`CMONT` em `modif.dat` ou linha em `volref_saz.dat`.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
 | `hydro_id` | `confhd.dat` › `codigo_usina` *(derivado)* | Id Novomodelo da usina. |
 | `stage_id` | `modif.dat` › `CFUGA · data_inicio`, `modif.dat` › `CMONT · data_inicio`, `volref_saz.dat` › `valor`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `num_anos_estudo`, `dger.dat` › `num_anos_pos_estudo` *(derivado)* | Nulo (valor padrão para todo o horizonte) quando a usina não tem `CFUGA`/`CMONT` nem linha não nula em `volref_saz.dat`; caso contrário, um estágio 0-based por mês do estudo e do pós-estudo. |
 | `equivalent_productivity_mw_per_m3s` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `modif.dat` › `VOLCOTA · coeficientes a0 a a4`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `tipo_perda`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume`, `modif.dat` › `CFUGA · nivel`, `modif.dat` › `CMONT · nivel`, `volref_saz.dat` › `valor`, `dger.dat` › `sazonaliza_cfuga_cmont`, `dger.dat` › `mes_inicio_estudo`, `confhd.dat` › `codigo_usina_jusante`, `confhd.dat` › `posto` | `ρ_esp · (cota(V_ref) − canal de fuga − perdas)`, com V_ref = `volume_minimo` + 65% do volume útil para regulação `M` (altura 65 do NEWAVE) e `volume_referencia` para `D`/`S`. Por estágio, `CFUGA` substitui o canal de fuga e `CMONT` fixa a cota de montante (função degrau a partir de `data_inicio`, repetida sazonalmente após o último registro se `sazonaliza_cfuga_cmont = 1`), e a linha de `volref_saz.dat` fixa V_ref = `volume_minimo + valor` do mês civil. Soma-se a ρ_eq das usinas fictícias atravessadas na cascata (zero nos decks reais). |
+| `integrated_equivalent_productivity_mw_per_m3s` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `modif.dat` › `VOLCOTA · coeficientes a0 a a4`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `tipo_perda`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume`, `modif.dat` › `CFUGA · nivel`, `modif.dat` › `CMONT · nivel`, `dger.dat` › `sazonaliza_cfuga_cmont`, `confhd.dat` › `codigo_usina_jusante` | Produtibilidade de energia armazenada da própria usina, a mesma do `pmo.dat` (`produtibilidade_equivalente_volmin_volmax`): para regulação `M`, `ρ_esp · (cota média entre `volume_minimo` e `volume_maximo` − canal de fuga − perdas)`, com a média calculada pela integral exata do polinômio cota-volume; para `D`/`S`, a queda no `volume_referencia`. `CFUGA`/`CMONT` valem por estágio como em ρ_eq; `volref_saz.dat` não altera este valor. Soma-se a das usinas fictícias atravessadas na cascata. Sempre preenchida, porque a integral do Novomodelo sobre a tabela VHA integra também as usinas `D`/`S`, avalia o canal de fuga na vazão turbinada máxima e não aplica `CFUGA`/`CMONT`. |
 | `reference_outflow_m3s` | — *(sempre nulo)* | Sempre nulo: o volume de referência é declarado em `system/hydro_production_models.json`, não por vazão de referência. |
 | `specific_productivity_mw_per_m3s_per_m` | — *(sempre nulo)* | Sempre nulo aqui: a produtibilidade específica é declarada em `hydros[].specific_productivity_mw_per_m3s_per_m`. |
 
@@ -784,6 +785,7 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 - `num_anos_pos_estudo` → `system/hydro_energy_productivity.parquet` › `stage_id`
 - `sazonaliza_cfuga_cmont` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `mes_inicio_estudo` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
+- `sazonaliza_cfuga_cmont` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
 - `ano_inicio_estudo` → `constraints/hydro_bounds.parquet` › `stage_id`
 - `mes_inicio_estudo` → `constraints/hydro_bounds.parquet` › `stage_id`
 - `num_anos_estudo` → `constraints/hydro_bounds.parquet` › `stage_id`
@@ -871,6 +873,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `codigo_usina` → `system/hydro_energy_productivity.parquet` › `hydro_id`
 - `codigo_usina_jusante` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `posto` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
+- `codigo_usina_jusante` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
 - `codigo_usina` → `constraints/hydro_bounds.parquet` › `hydro_id`
 - `codigo_usina_jusante` → `constraints/hydro_bounds.parquet` › `water_withdrawal_m3s`
 - `usina_existente` → `constraints/hydro_bounds.parquet` › `max_generation_mw`
@@ -1179,6 +1182,15 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 - `volume_minimo` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `volume_maximo` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `volume_referencia` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
+- `produtibilidade_especifica` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `a0_volume_cota … a4_volume_cota` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `canal_fuga_medio` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `tipo_perda` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `perdas` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `tipo_regulacao` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `volume_minimo` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `volume_maximo` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `volume_referencia` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
 - `volume_minimo` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`
 - `volume_maximo` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`
 - `volume_minimo` → `constraints/hydro_bounds.parquet` › `max_storage_hm3`
@@ -1275,6 +1287,11 @@ Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`
 - `VOLMAX · volume` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `CFUGA · nivel` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `CMONT · nivel` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
+- `VOLCOTA · coeficientes a0 a a4` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `VOLMIN · volume` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `VOLMAX · volume` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `CFUGA · nivel` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `CMONT · nivel` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
 - `VMAXT · data_inicio` → `constraints/hydro_bounds.parquet` › `stage_id`
 - `VMINT · volume, unidade` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`
 - `VMINT · data_inicio` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`

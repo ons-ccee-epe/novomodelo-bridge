@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Both tracks supply each plant's own stored-energy productivity to
+  cobre.** `system/hydro_energy_productivity.parquet` has a new
+  `integrated_equivalent_productivity_mw_per_m3s` column, which cobre now
+  requires. cobre sums it down the cascade for the integrated accumulated
+  productivity and the maximum stored energy that VminOP and RHE read. The
+  value is the source model's own convention: NEWAVE integrates the head of
+  monthly reservoirs between minimum and maximum volume and takes the point
+  at `volume_referencia` for the other plants, with each stage's `CFUGA` and
+  `CMONT`, matching `pmo.dat`; DECOMP integrates the head of `M` and `S`
+  reservoirs and takes the point for `D` plants, with each stage's `AC`
+  overrides. The `equivalent_productivity_mw_per_m3s` column now sets only
+  the generation productivity, so without the new column VminOP and RHE
+  would weigh storage by cobre's integral of the plant geometry. A DECOMP
+  FPHA plant now has a row as well, with a NULL generation productivity.
 - **LIBS files are read from the files the deck declares, not by name.** The
   CSV inputs of the LIBS family were found by fixed file name or prefix; now
   each record is read from the file the deck's LIBS index lists for its key,

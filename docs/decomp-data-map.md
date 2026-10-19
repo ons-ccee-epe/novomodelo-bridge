@@ -407,15 +407,16 @@ Curva volume → cota → área amostrada em 100 pontos por usina operada com po
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/decomp/converters/hydro/productivity.py`
 
-Uma linha por usina operada com produtibilidade constante (as usinas FPHA são omitidas, pois o Novomodelo calcula o ρ_eq delas); valor único para todo o horizonte, ancorado no volume inicial.
+Uma linha padrão por usina operada com o ρ_eq de geração ancorado no volume inicial (nulo para as usinas FPHA, cujo ρ_eq o Novomodelo calcula) e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da RHE; quando um `AC` faz esta última variar entre estágios, ela vai em uma linha por estágio.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
-| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id Novomodelo da usina, só para as de `generation.model` = `constant_productivity`. |
-| `stage_id` | — *(sempre nulo)* | Sempre nulo: o valor vale para todos os estágios; a variação de queda por estágio entra pelo teto de engolimento em `constraints/hydro_unit_group_bounds.parquet`. |
-| `equivalent_productivity_mw_per_m3s` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX` | ρ_eq = ρ_esp × h_líq, com a cota de montante avaliada no volume inicial da usina (o ponto em que o DECOMP ancora a FPHA), menos `canal_fuga_medio` e a perda hidráulica (`tipo_perda` 1 = percentual, 2 = metros), queda líquida truncada em 0; todos os cadastrais são os efetivos do estágio inicial (`AC` aplicados). Polinômio cota-volume nulo gera aviso e ρ_eq = 0. |
-| `reference_outflow_m3s` | — *(sempre nulo)* | Sempre nulo: o ρ_eq é uma constante, sem vazão de referência; a coluna existe porque o leitor exige o conjunto completo de colunas. |
-| `specific_productivity_mw_per_m3s_per_m` | — *(sempre nulo)* | Sempre nulo: a produtibilidade específica só é emitida, em `system/hydros.json`, para as usinas FPHA, que não têm linha nesta tabela. |
+| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id Novomodelo da usina operada. |
+| `stage_id` | `dadger.rvN` › `AC` › `estagio` *(derivado)* | Nulo na linha padrão de cada usina, que vale para todos os estágios; um estágio 0-based por linha adicional quando um `AC` faz a produtibilidade de energia armazenada variar entre estágios. A variação de queda do ρ_eq de geração entra pelo teto de engolimento em `constraints/hydro_unit_group_bounds.parquet`. |
+| `equivalent_productivity_mw_per_m3s` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX` | ρ_eq = ρ_esp × h_líq, com a cota de montante avaliada no volume inicial da usina (o ponto em que o DECOMP ancora a FPHA), menos `canal_fuga_medio` e a perda hidráulica (`tipo_perda` 1 = percentual, 2 = metros), queda líquida truncada em 0; todos os cadastrais são os efetivos do estágio inicial (`AC` aplicados). Polinômio cota-volume nulo gera aviso e ρ_eq = 0. Nulo nas linhas por estágio e para as usinas FPHA. |
+| `reference_outflow_m3s` | — *(sempre nulo)* | Sempre nulo: o ρ_eq é uma constante, sem vazão de referência. |
+| `specific_productivity_mw_per_m3s_per_m` | — *(sempre nulo)* | Sempre nulo: a produtibilidade específica das usinas FPHA é emitida em `system/hydros.json`. |
+| `integrated_equivalent_productivity_mw_per_m3s` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX` | Produtibilidade de energia armazenada da própria usina em cada estágio: para reservatório (regulação `M` ou `S`), `ρ_esp × (cota média entre `volume_minimo` e `volume_maximo` − `canal_fuga_medio` − perda hidráulica)`, com a média calculada pela integral exata do polinômio cota-volume; para fio d'água (`D`), a queda no `volume_referencia`; queda líquida truncada em 0 e cadastrais efetivos do estágio (`AC` aplicados). Na linha padrão quando constante no horizonte, senão nas linhas por estágio. Sempre preenchida, porque a integral do Novomodelo sobre a tabela VHA ignora os `AC` por estágio e integra também as usinas `D`. |
 
 ### `system/tailrace_curves.parquet`
 
@@ -846,12 +847,19 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `VOLMIN` → `system/hydro_geometry.parquet` › `volume_hm3`
 - `VOLMAX` → `system/hydro_geometry.parquet` › `volume_hm3`
 - `COTVOL` → `system/hydro_geometry.parquet` › `height_m`
+- `estagio` → `system/hydro_energy_productivity.parquet` › `stage_id`
 - `PROESP` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `COTVOL` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `JUSMED` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `PERHID` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `VOLMIN` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `VOLMAX` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
+- `PROESP` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `COTVOL` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `JUSMED` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `PERHID` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `VOLMIN` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `VOLMAX` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
 - `VAZMIN` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `NUMJUS` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `VOLMIN` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`
@@ -1788,6 +1796,15 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `volume_maximo` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `tipo_regulacao` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `volume_referencia` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
+- `produtibilidade_especifica` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `a0_volume_cota..a4_volume_cota` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `canal_fuga_medio` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `perdas` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `tipo_perda` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `volume_minimo` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `volume_maximo` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `tipo_regulacao` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
+- `volume_referencia` → `system/hydro_energy_productivity.parquet` › `integrated_equivalent_productivity_mw_per_m3s`
 - `vazao_minima_historica` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `tipo_regulacao` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `codigo_usina_jusante` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
@@ -2113,7 +2130,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `system/thermals.json` › `thermals[].entry_stage_id` — Sempre nulo: térmicas GNL estão ativas em todo o horizonte. Térmicas de `CT` omitem o campo.
 - `system/thermals.json` › `thermals[].exit_stage_id` — Sempre nulo: térmicas GNL não saem dentro do horizonte. Térmicas de `CT` omitem o campo.
 - `system/hydros.json` › `hydros[].outflow.max_outflow_m3s` — Sempre nulo: o DECOMP não declara defluência máxima cadastral. Um teto de `QDEF` (RHQ de termo único) vai para `constraints/hydro_bounds.parquet`.
-- `system/hydro_energy_productivity.parquet` › `stage_id` — Sempre nulo: o valor vale para todos os estágios; a variação de queda por estágio entra pelo teto de engolimento em `constraints/hydro_unit_group_bounds.parquet`.
-- `system/hydro_energy_productivity.parquet` › `reference_outflow_m3s` — Sempre nulo: o ρ_eq é uma constante, sem vazão de referência; a coluna existe porque o leitor exige o conjunto completo de colunas.
-- `system/hydro_energy_productivity.parquet` › `specific_productivity_mw_per_m3s_per_m` — Sempre nulo: a produtibilidade específica só é emitida, em `system/hydros.json`, para as usinas FPHA, que não têm linha nesta tabela.
+- `system/hydro_energy_productivity.parquet` › `reference_outflow_m3s` — Sempre nulo: o ρ_eq é uma constante, sem vazão de referência.
+- `system/hydro_energy_productivity.parquet` › `specific_productivity_mw_per_m3s_per_m` — Sempre nulo: a produtibilidade específica das usinas FPHA é emitida em `system/hydros.json`.
 - `constraints/hydro_unit_group_bounds.parquet` › `min_turbined_m3s` — Sempre nulo: nenhum registro do DECOMP declara turbinamento mínimo por grupo.
