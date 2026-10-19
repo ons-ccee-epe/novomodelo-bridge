@@ -99,26 +99,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `per_hour`, cobre's previous charge of penalty × the row's hours, so their
   costs do not change. The constraint families emitted after VminOP and RHE
   get lower ids than with one constraint per stage.
-- **VminOP splits the reservoir cascades that couple two REEs.** Where the
-  source model cuts a cascade at a REE boundary and accounts the water below
-  the cut through a fictitious twin in the downstream REE (e.g. TRES MARIAS →
-  FICT.TRES MA → SOBRADINHO), the reservoir counted the whole cascade in its own
-  REE and nothing in the downstream one. Its own REE now weights the
-  reservoir's volume with `@rho_cut_mwh_h{id}`, the sum of the integrated
-  equivalent productivities from the reservoir down to the coupling plant,
-  and the downstream REE weights it with the accumulated productivity of the
-  first real plant below the cut, bounded by the reservoir's own useful
-  volume (a `VOLMAX %` on the twin in `modif.dat` is not applied). Both shares
-  are `expression` parameters in `generic_parameters.json`, with their
-  maximum energies `@earm_max_cut_mwh_h{id}` and `@earm_max_fict_mwh_h{id}`.
-  A `vminop-ree-hydraulic-coupling` note lists the split reservoirs.
 - **RHE (DECOMP) splits the reservoir cascades that couple two REEs.** The
   source model cuts a cascade where it leaves the REE at a plant with a
   fictitious twin in `hidr.dat` (a non-generating, unconfigured plant on its
   posto) and counts the rest in the twin's downstream REE (e.g. TRES MARIAS →
-  SOBRADINHO). The RHE now weights those reservoirs as the NEWAVE VminOP
-  does, with the same expression parameters and the physical plant's useful
-  volume, instead of the whole cascade in its own REE. A crossing without a
+  SOBRADINHO). The RHE now counts such a reservoir's cascade down to the
+  coupling plant in its own REE and the rest in the downstream REE, through
+  `expression` parameters in `generic_parameters.json` and the physical
+  plant's useful volume, instead of the whole cascade in its own REE. A crossing without a
   twin (into ITAIPU) is not cut. A `decomp-rhe-ree-hydraulic-coupling` note
   lists the split reservoirs.
 - **`compare` and `dashboard` read generic constraints from cobre's echo.**

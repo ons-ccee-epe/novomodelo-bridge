@@ -353,11 +353,9 @@ def _convert_newave_case_impl(
     )
     vminop_referenced_ids: list[int] = []
     vminop_per_stage_parameters: dict[str, list[float]] = {}
-    vminop_expression_parameters: dict[str, str] = {}
     if vminop_result is not None:
         vminop_referenced_ids = list(vminop_result.referenced_hydro_ids)
         vminop_per_stage_parameters = vminop_result.per_stage_parameters
-        vminop_expression_parameters = vminop_result.expression_parameters
 
     logger.debug("Converting electric constraints")
     electric_result = constraints_conv.convert_electric_constraints(
@@ -466,7 +464,6 @@ def _convert_newave_case_impl(
     scalar_parameters_dict = scalar_params_conv.build_scalar_parameters(
         all_hydro_ids,
         per_stage=vminop_per_stage_parameters,
-        expressions=vminop_expression_parameters,
     )
     writer.write_json("constraints/generic_parameters.json", scalar_parameters_dict)
 

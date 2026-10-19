@@ -48,13 +48,9 @@ from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.core.stored_energy import (
     StoredEnergyShare,
     cascade_share,
-    cut_cascade_share,
-    downstream_share,
-    share_parameters,
     stored_energy_floor,
 )
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import active_hydros
@@ -86,18 +82,6 @@ class _VminopPenaltyClamp:
     ree_name: str
     declared: float
     applied: float
-
-
-@dataclass
-class _VminopCoupling:
-    """One reservoir whose cascade the source model splits between two REEs."""
-
-    plant_code: int
-    ree_code: int
-    cut_code: int
-    fict_code: int | None
-    fict_ree_code: int | None
-    downstream_code: int | None
 
 
 @dataclass
@@ -145,15 +129,13 @@ class VminopResult(NamedTuple):
     null — VminOP is stage-level, never per-block). ``per_stage_parameters``
     maps each ``pct_vminop_ree{code}`` name the expressions reference to its
     per-stage curve fraction (one value per study stage, ``0.0`` where the REE
-    has no curve) and ``expression_parameters`` maps each coupled-cascade
-    share's parameter to its body, both for ``build_scalar_parameters``.
+    has no curve), for ``build_scalar_parameters``.
     """
 
     constraints_dict: dict
     bounds: pa.Table
     referenced_hydro_ids: list[int]
     per_stage_parameters: dict[str, list[float]]
-    expression_parameters: dict[str, str]
 
 
 def vminop_pct_name(ree_code: int) -> str:
@@ -161,60 +143,29 @@ def vminop_pct_name(ree_code: int) -> str:
     return f"pct_vminop_ree{ree_code}"
 
 
-def _vminop_ree_terms(
+def _vminop_ree_shares(
     cadastro: pd.DataFrame,
-    confhd_df: pd.DataFrame,
     id_map: NewaveIdMap,
     acc_prod: dict[int, float],
-    *,
-    fictitious: AbstractSet[int],
-) -> tuple[dict[int, list[StoredEnergyShare]], list[_VminopCoupling]]:
-    """Build every REE's VminOP shares, splitting the cascades the REEs couple.
+    hydro_to_ree: dict[int, int],
+) -> dict[int, list[StoredEnergyShare]]:
+    """Every REE's VminOP shares, by REE code in plant-code order.
 
-    The source model cuts a reservoir's cascade where it crosses into another
-    REE (``codigo_usina_jusante == 0``) and accounts the water below the cut
-    through the fictitious twin sharing the cut plant's posto, in the twin's
-    REE. ``hydros.json`` instead links the cut plant straight to the real plant
-    below the twin, so novomodelo's whole-cascade parameters would over-count the
-    reservoir's REE. A reservoir whose cascade reaches such a cut gets a
-    :func:`~novomodelo_bridge.core.stored_energy.cut_cascade_share` in its own REE
-    and, when its fictitious twin lies in another REE, a
-    :func:`~novomodelo_bridge.core.stored_energy.downstream_share` there, valued
-    with the first real plant on the twin's cascade. Both use the reservoir's
-    own useful volume: the twin does not operate, so its volume range (e.g. a
-    ``VOLMAX %`` on the twin in ``modif.dat``) is not used.
-
-    Every other reservoir gets a
-    :func:`~novomodelo_bridge.core.stored_energy.cascade_share`. Returns the
-    shares by REE code (in plant-code order) and the split reservoirs.
+    Each reservoir counts its whole cascade in its own REE, as the source
+    model's stored energy does, including the plants below a cut into another
+    REE. ``hydros.json`` links the cut plant to the real plant below its
+    fictitious twin, so novomodelo's accumulated productivity already spans that
+    cascade. Never split it at the REE boundary the way DECOMP's RHE does
+    (:func:`~novomodelo_bridge.core.stored_energy.cut_cascade_share`): that moves
+    stored energy between REEs, so water held upstream in one REE meets
+    another REE's curve.
     """
-    resolutions = resolve_cascade(confhd_df, cadastro, fictitious=fictitious)
-    hydro_ree = {int(r["codigo_usina"]): int(r["ree"]) for _, r in confhd_df.iterrows()}
-
-    def _useful(code: int) -> float:
-        return float(cadastro.loc[code, "volume_maximo"]) - float(
-            cadastro.loc[code, "volume_minimo"]
-        )
-
-    def _crosses_ree(code: int, ree_code: int) -> bool:
-        resolution = resolutions[code]
-        twin = resolution.counterpart_fict
-        return (
-            resolution.truncated
-            and twin is not None
-            and hydro_ree.get(twin) != ree_code
-        )
-
-    terms: dict[int, list[StoredEnergyShare]] = defaultdict(list)
-    couplings: list[_VminopCoupling] = []
-    hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
+    shares: dict[int, list[StoredEnergyShare]] = defaultdict(list)
     for code, ree_code in sorted(hydro_to_ree.items()):
-        # The source model's stored energy (EARM) — and thus the VminOP expression —
-        # counts only monthly-regulating reservoirs with usable storage. Gate on
-        # that, not on ``acc_prod > 0`` alone: run-of-river / special-regime plants
-        # such as ITAIPU and JIRAU carry a positive *accumulated* productivity from
-        # downstream powerhouses yet are not part of the source model's stored
-        # energy.
+        # Gate on the source model's stored-energy plant set, not on
+        # ``acc_prod > 0`` alone: run-of-river and special-regime plants such as
+        # ITAIPU and JIRAU carry a positive accumulated productivity from
+        # downstream powerhouses yet store no energy in the source model.
         if not _is_stored_energy_reservoir(cadastro, code):
             continue
         if acc_prod.get(code, 0.0) <= 0.0:
@@ -223,49 +174,8 @@ def _vminop_ree_terms(
             hid = id_map.hydro_id(code)
         except KeyError:
             continue
-        chain = [code]
-        while not _crosses_ree(chain[-1], ree_code):
-            downstream = resolutions[chain[-1]].downstream_code
-            if downstream not in resolutions or downstream in chain:
-                chain = []
-                break
-            chain.append(downstream)
-
-        if not chain:
-            terms[ree_code].append(cascade_share(hid))
-            continue
-
-        terms[ree_code].append(
-            cut_cascade_share(hid, _useful(code), [id_map.hydro_id(c) for c in chain])
-        )
-
-        resolution = resolutions[code]
-        twin = resolution.counterpart_fict
-        twin_ree = hydro_ree.get(twin) if twin is not None else None
-        twin_downstream = resolution.counterpart_downstream
-        lands = (
-            twin is not None
-            and twin_ree is not None
-            and twin_ree != ree_code
-            and twin_downstream is not None
-            and twin_downstream in id_map.all_hydro_codes
-            and _is_stored_energy_reservoir(cadastro, twin)
-        )
-        if lands:
-            terms[twin_ree].append(
-                downstream_share(hid, _useful(code), id_map.hydro_id(twin_downstream))
-            )
-        couplings.append(
-            _VminopCoupling(
-                plant_code=code,
-                ree_code=ree_code,
-                cut_code=chain[-1],
-                fict_code=twin if lands else None,
-                fict_ree_code=twin_ree if lands else None,
-                downstream_code=twin_downstream if lands else None,
-            )
-        )
-    return terms, couplings
+        shares[ree_code].append(cascade_share(hid))
+    return shares
 
 
 def _build_hydro_to_ree(
@@ -581,9 +491,8 @@ def convert_vminop_constraints(
     Only monthly-regulating reservoirs with usable storage participate in a REE's
     expression (see :func:`_is_stored_energy_reservoir`); run-of-river and
     special-regime plants are excluded to match the source model's EARM plant set.
-    A reservoir whose cascade the source model splits between two REEs gets
-    other coefficients, and also enters the downstream REE (see
-    :func:`_vminop_ree_terms`).
+    Each reservoir counts its whole cascade in its own REE (see
+    :func:`_vminop_ree_shares`).
 
     Parameters
     ----------
@@ -657,11 +566,8 @@ def convert_vminop_constraints(
     )
 
     hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
-    ree_terms, couplings = _vminop_ree_terms(
-        cadastro, confhd_df, id_map, acc_prod, fictitious=fictitious
-    )
+    ree_terms = _vminop_ree_shares(cadastro, id_map, acc_prod, hydro_to_ree)
     per_stage_parameters: dict[str, list[float]] = {}
-    expression_parameters: dict[str, str] = {}
 
     ree_hydros: dict[int, list[int]] = defaultdict(list)
     for code, ree_code in hydro_to_ree.items():
@@ -720,13 +626,8 @@ def convert_vminop_constraints(
 
         pct_name = vminop_pct_name(ree_code)
         expression = stored_energy_floor([(1.0, s) for s in shares], pct_name)
-        ree_parameters = share_parameters(shares)
         # Every hydro an ``@…_h{id}`` parameter names must be declared.
-        referenced_ids = [
-            int(h)
-            for text in (expression, *ree_parameters.values())
-            for h in re.findall(r"@\w+?_h(\d+)\b", text)
-        ]
+        referenced_ids = [int(h) for h in re.findall(r"@\w+?_h(\d+)\b", expression)]
         ree_name = ree_names.get(ree_code, str(ree_code))
         penalty = penalty_map.get(ree_code, 1000.0)
         if penalty <= 0.0:
@@ -790,46 +691,8 @@ def convert_vminop_constraints(
         per_stage_parameters[pct_name] = [
             pct_by_stage.get(stage_id, 0.0) / 100.0 for stage_id in range(num_stages)
         ]
-        expression_parameters.update(ree_parameters)
         all_referenced_ids.update(referenced_ids)
 
-    if couplings:
-        emit(
-            Diagnostic(
-                code="vminop-ree-hydraulic-coupling",
-                severity=Severity.INFO,
-                category=_CATEGORY,
-                title=f"VminOP split across coupled REEs ({len(couplings)} plant(s))",
-                summary=(
-                    f"{len(couplings)} reservoir(s) drain into another REE; their "
-                    "stored energy counts in their own REE only down to the coupling "
-                    "plant, and the rest counts in the downstream REE."
-                ),
-                table=DiagnosticTable(
-                    columns=[
-                        "Plant",
-                        "REE",
-                        "Coupling plant",
-                        "Fictitious twin",
-                        "Downstream REE",
-                        "Downstream plant",
-                    ],
-                    rows=[
-                        [
-                            c.plant_code,
-                            c.ree_code,
-                            c.cut_code,
-                            c.fict_code if c.fict_code is not None else "-",
-                            c.fict_ree_code if c.fict_ree_code is not None else "-",
-                            c.downstream_code if c.downstream_code is not None else "-",
-                        ]
-                        for c in couplings
-                    ],
-                    justify=["right"] * 6,
-                ),
-            ),
-            logger=_LOG,
-        )
     if vminop_skips:
         emit(
             Diagnostic(
@@ -895,7 +758,6 @@ def convert_vminop_constraints(
         result.bounds,
         sorted(all_referenced_ids),
         per_stage_parameters,
-        expression_parameters,
     )
 
 
