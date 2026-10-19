@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **NEWAVE: every record of `modif.dat` is read.** The last record of the
+  file was dropped, a plant with more than one `USINA` block kept only its
+  first, and a file with a single block failed to convert. The records of all
+  blocks now apply in file order, so PIMENTAL in a deck whose second block
+  carries the `VAZMINT` series now gets those minimum outflows. A dated
+  record that repeats a month now replaces the earlier one, where the larger
+  value used to win, and before the study start the latest record is the one
+  in force.
 - **NEWAVE: Hydro plants referenced by pumping stations are no longer
   classified as fictitious.** Previously, zero-productivity reservoirs used
   for pumped storage (e.g., VIGÁRIO) were removed, which could break cascade

@@ -113,6 +113,8 @@ def _diversion_channels(
         elif record.max_flow_m3s is None:
             dropped.append([*row, "no maximum flow given"])
         else:
+            # TRACKED NOVOMODELO-GAP WORKAROUND (C21): novomodelo has no channel without a
+            # limit, so a "no limit" record value (9999999) is emitted as given.
             channels[code] = {
                 "downstream_id": id_map.hydro_id(record.target),
                 "max_flow_m3s": record.max_flow_m3s,

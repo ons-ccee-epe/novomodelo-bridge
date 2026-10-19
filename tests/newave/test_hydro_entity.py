@@ -11,7 +11,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import hydro_with_group
+from tests.conftest import hydro_with_group, modif_mock
 from tests.newave.conftest import (
     _ee_expansion_case,
     _hydro_case,
@@ -51,13 +51,7 @@ class TestConvertHydros:
         potefe_rec.potencia = 100.0
         potefe_rec.conjunto = 1
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.side_effect = lambda code: (
-            [potefe_rec] if code == 1 else []
-        )
+        mock_modif = modif_mock((1, [potefe_rec]))
 
         with dx.collect():
             base = convert_hydros(_hydro_case(tmp_path), self._make_id_map())["hydros"]
@@ -1055,16 +1049,12 @@ class TestConvertHydrosDiversion:
 
     _USINA_A = " USINA      1                               USINA_A"
 
-    _USINA_B = " USINA      2                               USINA_B"
-
     def _convert(self, tmp_path, *lines: str, cadastro=None, dger=None):
-        """Convert with *lines* followed by a ``USINA_B`` block: inewave reads
-        a ``modif.dat`` with a single ``USINA`` block as no plant list."""
         from novomodelo_bridge.newave.converters.hydro import convert_hydros
 
         case = _hydro_case(
             tmp_path,
-            modif=_read_modif(tmp_path, *lines, self._USINA_B),
+            modif=_read_modif(tmp_path, *lines),
             cadastro=cadastro,
             dger=dger,
         )
