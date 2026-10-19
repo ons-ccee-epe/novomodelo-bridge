@@ -18,6 +18,7 @@ from novomodelo_bridge.core.emission_checks import (
     check_block_id_not_on_anticipated_thermal,
     check_bound_block_id_range,
     check_bound_row_uniqueness,
+    check_diversion_has_channel,
     check_group_bound_envelope,
     check_hydro_bounds_no_raising,
     check_unit_group_envelope,
@@ -847,6 +848,105 @@ class TestBlockIdNotOnAnticipatedThermal:
             check_block_id_not_on_anticipated_thermal(thermals, None)
 
         assert collected == []
+
+
+def _diversion_bounds(
+    rows: list[tuple[int, int, float | None, float | None]],
+) -> pa.Table:
+    """``hydro_bounds`` rows of ``(hydro_id, stage_id, min, max)`` diversion."""
+    return pa.table(
+        {
+            "hydro_id": pa.array([r[0] for r in rows], type=pa.int32()),
+            "stage_id": pa.array([r[1] for r in rows], type=pa.int32()),
+            "min_diversion_m3s": pa.array([r[2] for r in rows], type=pa.float64()),
+            "max_diversion_m3s": pa.array([r[3] for r in rows], type=pa.float64()),
+        }
+    )
+
+
+def _diverting_hydro(hydro_id: int, *, channel: bool) -> dict:
+    entry: dict = {"id": hydro_id, "name": f"Hydro {hydro_id}", "diversion": None}
+    if channel:
+        entry["diversion"] = {"downstream_id": 9, "max_flow_m3s": 100.0}
+    return entry
+
+
+class TestDiversionHasChannel:
+    def test_ceiling_without_channel_is_caught(self) -> None:
+        hydros = _hydros(_diverting_hydro(0, channel=False))
+        bounds = _diversion_bounds([(0, 0, 0.0, 25.0), (0, 1, 0.0, 34.0)])
+
+        with dx.collect() as collected:
+            check_diversion_has_channel(hydros, bounds)
+
+        assert len(collected) == 1
+        diag = collected[0]
+        assert diag.severity is Severity.ERROR
+        assert diag.code == "hydro-diversion-without-channel"
+        assert diag.table is not None
+        assert diag.table.rows == [[0, "Hydro 0", "max_diversion_m3s", "0-1", 34.0]]
+
+    def test_floor_without_channel_is_caught(self) -> None:
+        hydros = _hydros(_diverting_hydro(0, channel=False))
+        bounds = _diversion_bounds([(0, 2, 6.0, 6.0)])
+
+        with dx.collect() as collected:
+            check_diversion_has_channel(hydros, bounds)
+
+        assert len(collected) == 1
+        assert collected[0].table is not None
+        assert [row[2] for row in collected[0].table.rows] == [
+            "min_diversion_m3s",
+            "max_diversion_m3s",
+        ]
+
+    def test_diversion_with_channel_passes(self) -> None:
+        hydros = _hydros(_diverting_hydro(0, channel=True))
+        bounds = _diversion_bounds([(0, 0, 6.0, 25.0)])
+
+        with dx.collect() as collected:
+            check_diversion_has_channel(hydros, bounds)
+
+        assert collected == []
+
+    def test_closed_or_unset_diversion_without_channel_passes(self) -> None:
+        hydros = _hydros(_diverting_hydro(0, channel=False))
+        bounds = _diversion_bounds([(0, 0, 0.0, 0.0), (0, 1, None, None)])
+
+        with dx.collect() as collected:
+            check_diversion_has_channel(hydros, bounds)
+
+        assert collected == []
+
+    def test_absent_diversion_columns_are_not_applicable(self) -> None:
+        hydros = _hydros(_diverting_hydro(0, channel=False))
+        bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([0], type=pa.int32()),
+                "min_storage_hm3": pa.array([5.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            check_diversion_has_channel(hydros, bounds)
+
+        assert collected == []
+
+    def test_absent_hydro_bounds_table_is_not_applicable(self) -> None:
+        with dx.collect() as collected:
+            check_diversion_has_channel(_hydros(), None)
+
+        assert collected == []
+
+    def test_gate_refuses_a_diversion_without_channel(self) -> None:
+        hydros = _hydros(_diverting_hydro(0, channel=False))
+        bounds = _diversion_bounds([(0, 0, 0.0, 25.0)])
+
+        with pytest.raises(EmissionCheckError) as exc_info:
+            run_and_gate(lambda: check_diversion_has_channel(hydros, bounds))
+
+        assert "hydro-diversion-without-channel" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
