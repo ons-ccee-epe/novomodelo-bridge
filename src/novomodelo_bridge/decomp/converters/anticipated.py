@@ -201,7 +201,7 @@ def _parse_data_inicio(raw: object) -> date:
 
 
 def is_gnl_enabled(dadgnl: Dadgnl | None) -> bool:
-    """Whether ``dadgnl`` declares any committed GNL dispatch (the G6 gate).
+    """Whether ``dadgnl`` declares any committed GNL dispatch.
 
     ``True`` iff ``dadgnl`` is present and at least one ``gl`` register carries a
     nonzero ``geracao``. There is no source-model ``dger``-equivalent activation
@@ -473,7 +473,7 @@ def _study_lead_hours(
 
 
 def _warn_on_nonuniform_lag(nl_lag_months: Mapping[int, int]) -> None:
-    """Warn when GNL plants declare differing anticipation lags (spec §7 A1).
+    """Warn when GNL plants declare differing anticipation lags.
 
     The single global lead ``H`` assumes every anticipated plant shares the
     study-span anticipation lag. A deck mixing ``nl`` lags would need per-plant

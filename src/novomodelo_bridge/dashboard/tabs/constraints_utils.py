@@ -3,7 +3,7 @@
 The constraint-expression *domain* logic (parser, parameter resolver, LHS
 evaluator) now lives in :mod:`novomodelo_bridge.novomodelo.constraint_expr` so the dashboard and
 the comparator share one definition. This module keeps only the HTML rendering
-plus the small F3 bound-shape derivation used to display it.
+plus the small bound-shape derivation used to display it.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ from novomodelo_bridge.ui.html.document import escape_text
 
 
 def derive_constraint_shape(bounds_rows: pd.DataFrame) -> str:
-    """Derive a constraint's *displayed* direction label from its F3 bound endpoints.
+    """Derive a constraint's *displayed* direction label from its bound endpoints.
 
-    novomodelo's F3 ``generic_constraints.json`` objects are sense-free; direction
+    novomodelo's ``generic_constraints.json`` objects are sense-free; direction
     is encoded entirely by which endpoint(s) of ``generic_constraint_bounds
     .parquet`` are populated (see :mod:`novomodelo_bridge.core.generic_constraint_format`).
     DECOMP's ``RE``/``HQ``/``HV`` families genuinely emit two-sided
@@ -32,7 +32,7 @@ def derive_constraint_shape(bounds_rows: pd.DataFrame) -> str:
     (:func:`novomodelo_bridge.dashboard.tabs.constraints._build_constraint_lhs_data`)
     — read ``bound_lower``/``bound_upper`` directly per row instead of
     relying on this single derived label. Falls back to ``"<="`` — the
-    pre-F3 default sense for a constraint with no bound rows — when
+    legacy default sense for a constraint with no bound rows — when
     *bounds_rows* has no such row (including when it is empty).
     """
     for _, row in bounds_rows.iterrows():
@@ -47,7 +47,7 @@ def derive_constraint_shape(bounds_rows: pd.DataFrame) -> str:
 
 
 def bound_value_column(shape: str) -> str:
-    """Return which F3 endpoint column holds the summary display value for *shape*.
+    """Return which endpoint column holds the summary display value for *shape*.
 
     ``"<="``/``"range"`` read ``bound_upper``; ``">="``/``"=="`` read
     ``bound_lower`` (both endpoints are equal for ``"=="``, so either would

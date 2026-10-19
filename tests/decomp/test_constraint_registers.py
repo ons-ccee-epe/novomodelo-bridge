@@ -1,4 +1,4 @@
-"""Tier-1 tests for the special-constraint register readers (M2.1 T1).
+"""Tier-1 tests for the special-constraint register readers.
 
 Synthetic-fixture only — a fake ``Dadger`` returns pandas DataFrames shaped like
 ``idecomp``'s ``df=True`` accessors, so these run in CI with no real deck.
@@ -10,8 +10,10 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
@@ -207,7 +209,7 @@ def test_re_thermal_only_read() -> None:
 def test_re_thermal_only_single_term_lowers_to_generation_bound() -> None:
     """A single-term ``FT`` RE (no ``FU``/``FI``) lowers to a thermal
     ``generation`` bound: the record moves into ``to_bounds`` and out of
-    ``to_generic`` (M1)."""
+    ``to_generic``."""
     dadger = _FakeDadger(
         re=_decl((10, 1, 2)),
         ft=_ft((10, 1, 5, 1.0, 1)),
@@ -288,7 +290,7 @@ def test_hq_qdef_single_lowers_to_outflow_bound() -> None:
 
 def test_hq_qbom_single_lowers_to_pumping_bound() -> None:
     """A single-term ``QBOM`` RHQ lowers to a pumping ``flow`` bound: the
-    record moves into ``to_bounds`` and out of ``to_generic`` (M2)."""
+    record moves into ``to_bounds`` and out of ``to_generic``."""
     dadger = _FakeDadger(
         hq=_decl((5, 1, 1)),
         cq=_coeff((5, 30, 1.0, 1, "QBOM"), tipo=True),
@@ -335,7 +337,7 @@ def test_hq_qbom_no_double_emission() -> None:
 
 def test_hq_qdes_single_lowers_to_diversion_bound() -> None:
     """A single-term ``QDES`` RHQ lowers to a two-sided hydro ``diversion``
-    bound (M3), now that novomodelo's
+    bound, now that novomodelo's
     generic-constraint-authoring landed ``min_diversion_m3s``."""
     dadger = _FakeDadger(
         hq=_decl((6, 1, 1)),
@@ -353,7 +355,7 @@ def test_hq_qdes_single_lowers_to_diversion_bound() -> None:
 
 def test_hq_qver_single_lowers_to_spillage_bound() -> None:
     """A single-term ``QVER`` RHQ lowers to a two-sided hydro ``spillage``
-    bound (M5), now that novomodelo's
+    bound, now that novomodelo's
     generic-constraint-authoring landed ``min/max_spillage_m3s``."""
     dadger = _FakeDadger(
         hq=_decl((9, 1, 1)),
@@ -605,3 +607,79 @@ def test_libs_electrical_warns_only_when_the_deck_declares_the_file(
     assert diagnostic.severity is Severity.WARNING
 
     assert detect_libs_electrical(None) is None
+
+
+def test_stage_varying_coefficient_reads_a_schedule() -> None:
+    """A coefficient re-declared at a later stage holds from that stage on."""
+    dadger = _FakeDadger(
+        hv=_decl((108, 1, 3)),
+        cv=_coeff((108, 24, 1.0, 1, "VARM"), (108, 24, 2.0, 3, "VARM"), tipo=True),
+        lv=_lv((108, 1, 120.0, float("nan"))),
+    )
+    [term] = _only(read_constraints(dadger).by_family["HV"], 108).terms
+    assert term.schedule == ((0, 1.0), (2, 2.0))
+    assert [term.coefficient_at(s) for s in range(3)] == [1.0, 1.0, 2.0]
+
+
+def test_term_declared_after_the_first_stage_is_absent_before_it() -> None:
+    """A term joining at stage 2 contributes nothing at stage 1, as the source
+    model reads it; the term declared from stage 1 stays a constant."""
+    dadger = _FakeDadger(
+        hq=_decl((119, 1, 3)),
+        cq=_coeff((119, 275, 1.0, 1, "QTUR"), (119, 277, 1.0, 2, "QTUR"), tipo=True),
+        lq=_lu((119, 1, float("nan"), 11000.0) + (float("nan"), 11000.0) * 2),
+    )
+    rec = _only(read_constraints(dadger).by_family["HQ"], 119)
+    first, late = rec.terms
+    assert first.schedule == ()
+    assert late.schedule == ((1, 1.0),)
+    assert [late.coefficient_at(s) for s in range(3)] == [0.0, 1.0, 1.0]
+    assert not lowers_to_bound(rec)
+
+
+def test_repeated_constant_coefficient_stays_constant() -> None:
+    dadger = _FakeDadger(
+        re=_decl((10, 1, 2)),
+        fu=_coeff(
+            (10, 21, 1.0, 1, float("nan")), (10, 21, 1.0, 2, float("nan")), freq=True
+        ),
+        lu=_lu((10, 1, 50.0, 212.0, 50.0, 212.0, 50.0, 212.0)),
+    )
+    rec = _only(read_constraints(dadger).by_family["RE"], 10)
+    assert rec.terms[0].schedule == ()
+    assert lowers_to_bound(rec)
+
+
+def test_declaration_before_the_first_stage_holds_from_it() -> None:
+    dadger = _FakeDadger(
+        hv=_decl((7, 2, 3)),
+        cv=_coeff((7, 24, 2.0, 1, "VARM"), tipo=True),
+        lv=_lv((7, 2, 120.0, float("nan"))),
+    )
+    [term] = _only(read_constraints(dadger).by_family["HV"], 7).terms
+    assert term.schedule == ()
+    assert term.coefficient == 2.0
+
+
+def test_single_term_with_a_non_unit_coefficient_at_a_later_stage_is_generic() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((5, 1, 2)),
+        cq=_coeff((5, 30, 1.0, 1, "QTUR"), (5, 30, 2.0, 2, "QTUR"), tipo=True),
+        lq=_lu((5, 1, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)),
+    )
+    census = read_constraints(dadger)
+    rec = _only(census.by_family["HQ"], 5)
+    assert not lowers_to_bound(rec)
+    assert rec in census.to_generic
+
+
+def test_constraint_without_a_term_at_its_first_stage_is_rejected() -> None:
+    """The source model aborts on a constraint with no coefficient at its
+    first stage; the reader fails loud on the same deck."""
+    dadger = _FakeDadger(
+        re=_decl((991, 1, 3)),
+        fu=_coeff((991, 24, 1.0, 2, float("nan")), freq=True),
+        lu=_lu((991, 1, 400.0, float("nan"), 400.0, float("nan"), 400.0, float("nan"))),
+    )
+    with pytest.raises(FieldParseError, match="no coefficient at its first stage"):
+        read_constraints(dadger)

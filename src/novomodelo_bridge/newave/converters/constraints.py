@@ -141,7 +141,7 @@ class VminopResult(NamedTuple):
     """Result of :func:`convert_vminop_constraints`.
 
     ``constraints_dict`` is the full ``{"$schema", "constraints": [...]}``
-    object; ``bounds`` is the full 5-column F3 bounds table (``block_id`` always
+    object; ``bounds`` is the full 5-column interval bounds table (``block_id`` always
     null — VminOP is stage-level, never per-block). ``per_stage_parameters``
     maps each ``pct_vminop_ree{code}`` name the expressions reference to its
     per-stage curve fraction (one value per study stage, ``0.0`` where the REE

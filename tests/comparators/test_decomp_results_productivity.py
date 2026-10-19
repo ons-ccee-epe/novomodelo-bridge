@@ -29,7 +29,7 @@ from tests.comparators.conftest import (
 
 class TestHydroProductivityResults:
     """``_hydro_productivity_results`` derives per-(plant, stage) realized
-    productivity = generation / turbined from the E1 hydro
+    productivity = generation / turbined from the base hydro
     ``ResultComparison`` rows, mirroring
     ``novomodelo_bridge.comparators.newave.results``'s own ``_compare_hydros``
     productivity derivation (same ratio, same zero-guard)."""

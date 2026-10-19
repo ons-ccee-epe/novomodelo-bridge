@@ -114,8 +114,8 @@ def _sided_bounds(
     ``coefficient > 0`` (``+1``) leaves the entity bound as-is:
     ``x in [lower, upper]``. ``coefficient < 0`` (``-1``) flips and swaps the
     sides: ``-x in [lower, upper] => x in [-upper, -lower]``. Only ``+-1``
-    ever reaches here (``lowers_to_bound`` gates ``abs(coefficient) == 1``),
-    so the two branches are exhaustive.
+    ever reaches here (``lowers_to_bound`` gates ``abs(coefficient) == 1`` at
+    every stage), so the two branches are exhaustive.
 
     The ``+-1e21`` unbounded sentinel is not re-derived here — a bound is
     passed through unchanged (negating it keeps its magnitude at the
@@ -146,8 +146,9 @@ def _per_block_contributions(
     block whose sided bounds are both ``None`` emits no contribution.
     """
     contributions: list[BoundContribution] = []
-    coefficient = record.terms[0].coefficient
+    term = record.terms[0]
     for stage_index, stage_bounds in record.bounds.items():
+        coefficient = term.coefficient_at(stage_index)
         n_blocks = len(calendar[stage_index].block_hours)
         for block_id in range(n_blocks):
             if block_id >= len(stage_bounds.lower):
@@ -424,11 +425,13 @@ def _hv_storage_contributions(
         return []
 
     hydro_id = id_map.hydro_id(code)
-    coefficient = record.terms[0].coefficient
+    term = record.terms[0]
     contributions: list[BoundContribution] = []
     for stage_index, stage_bounds in record.bounds.items():
         rel_lower, rel_upper = _sided_bounds(
-            stage_bounds.lower[0], stage_bounds.upper[0], coefficient
+            stage_bounds.lower[0],
+            stage_bounds.upper[0],
+            term.coefficient_at(stage_index),
         )
         floor = effective_storage_range(effective, code, stage_index)[0]
         abs_lower = None if rel_lower is None else floor + rel_lower

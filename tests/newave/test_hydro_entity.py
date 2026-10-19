@@ -953,10 +953,10 @@ class TestLegacyHydroShapeRejectedBy013:
     emits it anymore.
 
     novomodelo 0.13's ``hydros.schema.json`` rejects that shape on load:
-    ``additionalProperties: false`` denies the stray top-level ``bus_id``
-    (decision 14 → §7.8), and ``unit_groups`` is a required, non-empty array
-    (decision 13 → §7.6). This test asserts the *shape difference* only — it
-    does not load either dict into novomodelo or a jsonschema validator (E4 owns
+    ``additionalProperties: false`` denies the stray top-level ``bus_id``,
+    and ``unit_groups`` is a required, non-empty array. This test asserts the
+    *shape difference* only — it does not load either dict into novomodelo or a
+    jsonschema validator (the tier-2 schema tests under ``tests/novomodelo/`` own
     real schema loads).
     """
 

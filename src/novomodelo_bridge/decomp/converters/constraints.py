@@ -7,7 +7,7 @@ an unbounded variable (spillage, diversion, pumping), a non-unit
 coefficient, or a whole-cascade energy sum — which needs novomodelo's
 **generic** constraint wire format instead: a flat ``expression`` string, a
 ``slack{enabled, penalty}`` pair, and a companion per-
-``(constraint_id, stage_id, block_id)`` bounds table carrying novomodelo's F3
+``(constraint_id, stage_id, block_id)`` bounds table carrying novomodelo's
 sense-free interval endpoints (``bound_lower``/``bound_upper`` — see
 :mod:`novomodelo_bridge.core.generic_constraint_format`) instead of a ``sense``/
 ``bound`` pair.
@@ -26,18 +26,22 @@ never imports — the sibling ``converters/constraints.py`` emitter's
 ``GenericConstraintBuilder``/``GenericConstraintResult``
 (:mod:`novomodelo_bridge.core.generic_constraint_builder`).
 
-GNL pre-processing (feature spec section 2.1/G4 -- abating commanded
-generation, aborting on uncommanded) is out of scope here: ``emit_re_generics``
-simply skips a constraint whose ``thermal_generation`` term names a thermal
-outside ``id_map.thermal_codes`` (an anticipation-track/GNL thermal), with a
-``WARNING``, deferring coordination with the GNL-ring track.
+GNL pre-processing (abating commanded generation, aborting on uncommanded)
+is out of scope here: ``emit_re_generics`` simply skips a constraint whose
+``thermal_generation`` term names a thermal outside ``id_map.thermal_codes``
+(an anticipation-track/GNL thermal), with a ``WARNING``, deferring
+coordination with the GNL-ring track.
 
-``RHV``'s volume tipos (``VDEF``/``VDES``/``VBOM``) are deferred rather than
-lowered: their hm³→flow conversion needs a per-stage coefficient (block
-hours vary per stage) that a stage-invariant novomodelo expression cannot carry,
-so ``emit_rhq_rhv_generics`` detects one and skips the constraint with a
-``WARNING`` instead of guessing a coefficient (see the E5 scalar-parameter
-plumbing).
+A coefficient that changes over a constraint's stages, or a term that joins
+after its first stage, reads a ``per_stage`` parameter
+(:func:`coefficient_parameter_name`); a constant one stays a literal.
+
+``RHV``'s volume tipos (``VDEF``/``VDES``/``VBOM``) bound a volume over the
+whole stage in hm³ (each block's flow times its duration, summed), not a
+per-block flow. TRACKED NOVOMODELO-GAP (C19): novomodelo's generic constraints have no
+stage-volume variable, and block-pinned flow terms would repeat the stage row
+once per block, so ``emit_rhq_rhv_generics`` skips such a constraint with a
+``WARNING``.
 
 ``HE`` (RHE stored-energy) constraints are emitted by
 ``emit_rhe_generics``: the LHS weights each reservoir's useful volume by
@@ -89,6 +93,8 @@ from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    import pyarrow as pa
+
     from novomodelo_bridge.core.generic_constraint_builder import Slot
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.constraint_registers import (
@@ -102,6 +108,10 @@ if TYPE_CHECKING:
 
 
 _LOG = logging.getLogger(__name__)
+
+#: A term's weight in an expression: a literal coefficient, or the ``@name``
+#: of the per-stage parameter carrying a stage-varying one.
+Weight = float | str
 
 #: The source model's ``num_max_iteracoes``-style deficit multiplier: the
 #: slack penalty on a generic constraint is this many times the worst bus
@@ -149,9 +159,9 @@ _HYDRO_TOKEN_FN: dict[str, str] = {
 #: mechanism that resolves them instead.
 _DEFERRED_VARIABLES: dict[str, str] = {
     "interchange": "the interchange (FI line) resolution path",
-    "VDEF": "the hours-weighted flow-domain path",
-    "VDES": "the hours-weighted flow-domain path",
-    "VBOM": "the hours-weighted flow-domain path",
+    "VDEF": "the RHV volume-tipo skip",
+    "VDES": "the RHV volume-tipo skip",
+    "VBOM": "the RHV volume-tipo skip",
 }
 
 
@@ -172,7 +182,7 @@ def _variable_token(
     ValueError
         For ``interchange`` (resolved by ``resolve_fi_term``, which needs
         the line map), the volume tipos ``VDEF``/``VDES``/``VBOM``
-        (resolved by the hours-weighted flow-domain path), or any other
+        (skipped by ``emit_rhq_rhv_generics``), or any other
         unrecognised variable — fail-loud, never a silent skip
         that would build a malformed expression.
     KeyError
@@ -193,7 +203,7 @@ def _variable_token(
     owner = _DEFERRED_VARIABLES.get(variable)
     if owner is not None:
         raise ValueError(
-            f"Cannot build a constraint term: {variable!r} is resolved by "
+            f"Cannot build a constraint term: {variable!r} is handled by "
             f"{owner}, not this dispatcher."
         )
     raise ValueError(f"Cannot build a constraint term: unknown variable {variable!r}.")
@@ -312,20 +322,25 @@ def resolve_fi_term(
     return None
 
 
-def _format_expression(terms: Sequence[tuple[float, str]]) -> str | None:
-    """Join ``(coefficient, token)`` pairs into a novomodelo expression string.
+def _format_expression(terms: Sequence[tuple[Weight, str]]) -> str | None:
+    """Join ``(weight, token)`` pairs into a novomodelo expression string.
 
     Mirrors ``converters/constraints.py::_parse_formula``'s coefficient-
     formatting rules: a unit (``|coeff| == 1.0``) term is the bare token
     (or ``- token`` when negative); a fractional term is ``{abs_coeff} *
-    {token}`` (or ``- {abs_coeff} * {token}`` when negative). The first term
-    omits the leading ``+``; every later term uses ``+``/``-`` as a binary
-    operator. Returns ``None`` for an empty term list.
+    {token}`` (or ``- {abs_coeff} * {token}`` when negative). A parameter
+    weight is ``@{name} * {token}``, its sign carried by the parameter's
+    values. The first term omits the leading ``+``; every later term uses
+    ``+``/``-`` as a binary operator. Returns ``None`` for an empty term list.
     """
     if not terms:
         return None
     parts: list[str] = []
     for i, (coeff, token) in enumerate(terms):
+        if isinstance(coeff, str):
+            body = f"@{coeff} * {token}"
+            parts.append(body if i == 0 else f"+ {body}")
+            continue
         abs_coeff = abs(coeff)
         is_negative = coeff < 0.0
         body = token if abs_coeff == 1.0 else f"{abs_coeff} * {token}"
@@ -334,6 +349,63 @@ def _format_expression(terms: Sequence[tuple[float, str]]) -> str | None:
         else:
             parts.append(f"- {body}" if is_negative else f"+ {body}")
     return " ".join(parts)
+
+
+def coefficient_parameter_name(record: ConstraintRecord, term_index: int) -> str:
+    """``@name`` of the per-stage coefficient of term *term_index* of *record*."""
+    return f"coef_{record.family.lower()}{record.constraint_id}_t{term_index}"
+
+
+def _weighted_terms(
+    record: ConstraintRecord, tokens: Sequence[str], n_stages: int
+) -> tuple[list[tuple[Weight, str]], dict[str, list[float]]]:
+    """Pair each term's token with its weight, and the per-stage parameters.
+
+    A constant coefficient is a literal weight; a coefficient that changes
+    over the constraint's stages (or a term that joins after its first stage)
+    reads a ``per_stage`` parameter holding one value per study stage.
+    """
+    weighted: list[tuple[Weight, str]] = []
+    parameters: dict[str, list[float]] = {}
+    for index, (term, token) in enumerate(zip(record.terms, tokens, strict=True)):
+        if not term.schedule:
+            weighted.append((term.coefficient, token))
+            continue
+        name = coefficient_parameter_name(record, index)
+        parameters[name] = [term.coefficient_at(stage) for stage in range(n_stages)]
+        weighted.append((name, token))
+    return weighted, parameters
+
+
+class DecompGenericResult(NamedTuple):
+    """Generic constraints of one emitter with the parameters they read.
+
+    ``constraints`` and ``bounds`` are as in
+    :class:`~novomodelo_bridge.core.generic_constraint_builder.GenericConstraintResult`.
+    ``per_stage_parameters`` maps each ``@name`` to one value per study stage
+    and ``expression_parameters`` maps each ``@name`` to its body, both for
+    ``build_decomp_scalar_parameters``.
+    """
+
+    constraints: list[dict]
+    bounds: pa.Table
+    per_stage_parameters: dict[str, list[float]]
+    expression_parameters: dict[str, str]
+
+
+def _with_parameters(
+    generic: GenericConstraintResult | None,
+    per_stage_parameters: dict[str, list[float]],
+    expression_parameters: dict[str, str] | None = None,
+) -> DecompGenericResult | None:
+    if generic is None:
+        return None
+    return DecompGenericResult(
+        generic.constraints,
+        generic.bounds,
+        per_stage_parameters,
+        expression_parameters or {},
+    )
 
 
 def slots_from_record(
@@ -421,8 +493,8 @@ def _resolve_re_terms(
     record: ConstraintRecord,
     id_map: DecompIdMap,
     line_map: Mapping[tuple[int, int], int],
-) -> list[tuple[float, str]] | None:
-    """Resolve every term of one generic RE record to ``(coefficient, token)`` pairs.
+) -> list[str] | None:
+    """Resolve every term of one generic RE record to its expression token.
 
     Dispatches on ``term.variable``:
 
@@ -442,26 +514,26 @@ def _resolve_re_terms(
       (the resolver already warned) drops the whole record.
 
     Any single unresolved term drops the **whole** constraint
-    (skip-not-partial) — never a partial expression. Returns the ordered
-    ``(coefficient, token)`` list when every term resolves.
+    (skip-not-partial) — never a partial expression. Returns the tokens in
+    term order when every term resolves.
     """
-    resolved: list[tuple[float, str]] = []
+    resolved: list[str] = []
     for term in record.terms:
         if term.variable == "generation":
             if term.frequency is not None:
                 _emit_re_frequency_split_deferred(term)
                 return None
-            resolved.append((term.coefficient, _variable_token(term, id_map, {})))
+            resolved.append(_variable_token(term, id_map, {}))
         elif term.variable == "thermal_generation":
             if term.code not in id_map.thermal_codes:
                 _emit_re_thermal_not_normal(term)
                 return None
-            resolved.append((term.coefficient, _variable_token(term, id_map, {})))
+            resolved.append(_variable_token(term, id_map, {}))
         elif term.variable == "interchange":
             token = resolve_fi_term(term, id_map, line_map)
             if token is None:
                 return None
-            resolved.append((term.coefficient, token))
+            resolved.append(token)
         else:
             raise ValueError(
                 f"_resolve_re_terms: unexpected RE term variable {term.variable!r}"
@@ -477,7 +549,7 @@ def emit_re_generics(
     line_map: Mapping[tuple[int, int], int],
     big_m: float,
     allocator: ConstraintIdAllocator | None = None,
-) -> GenericConstraintResult | None:
+) -> DecompGenericResult | None:
     """Emit every generic ``RE`` constraint (multi-term hydro/thermal/interchange).
 
     Iterates ``census.to_generic`` filtered to ``record.family == "RE"``,
@@ -491,38 +563,38 @@ def emit_re_generics(
     ``census.to_generic`` are :func:`emit_rhq_rhv_generics`'s, not this
     function's; ``HE`` records are unhandled (deferred).
 
-    Reads no ``dadger``; *big_m* and *line_map* arrive from the caller (E7).
+    Reads no ``dadger``; *big_m* and *line_map* arrive from the caller.
     *allocator* defaults to a fresh :class:`ConstraintIdAllocator` (ids from
     0) when omitted; the pipeline threads one shared instance across every
-    emitter. Returns ``builder.result()`` — ``None`` when no RE generic
-    constraint survives.
+    emitter. Returns ``None`` when no RE generic constraint survives.
     """
     calendar = case.calendar
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
+    per_stage_parameters: dict[str, list[float]] = {}
     for record in census.to_generic:
         if record.family != "RE":
             continue
-        terms = _resolve_re_terms(record, id_map, line_map)
-        if terms is None:
+        tokens = _resolve_re_terms(record, id_map, line_map)
+        if tokens is None:
             continue
+        terms, parameters = _weighted_terms(record, tokens, len(calendar))
         expression = _format_expression(terms)
         if expression is None:
             continue
-        builder.add(
+        added = builder.add(
             name=f"RE_{record.constraint_id}",
             description=f"RE generic constraint {record.constraint_id}",
             expression=expression,
             slack=soft_slack(big_m, "per_hour"),
             slots=slots_from_record(record, calendar),
         )
-    return builder.result()
+        if added is not None:
+            per_stage_parameters.update(parameters)
+    return _with_parameters(builder.result(), per_stage_parameters)
 
 
-#: RHV ``CV.tipo`` volume variables whose hm³→flow conversion needs a
-#: per-stage coefficient (block hours vary per stage) that a stage-invariant
-#: novomodelo expression cannot carry — deferred to the E5 scalar-parameter
-#: plumbing rather than emitted with a guessed coefficient.
+#: RHV ``CV.tipo`` stage-volume variables (hm³), skipped under C19.
 _RHV_VOLUME_TIPOS = frozenset({"VDEF", "VDES", "VBOM"})
 
 
@@ -551,8 +623,8 @@ def _resolve_rhq_terms(
     record: ConstraintRecord,
     id_map: DecompIdMap,
     pumping_station_ids: Mapping[int, int],
-) -> list[tuple[float, str]] | None:
-    """Resolve every term of one generic RHQ record to ``(coefficient, token)`` pairs.
+) -> list[str] | None:
+    """Resolve every term of one generic RHQ record to its expression token.
 
     Every flow variable resolves via :func:`_variable_token`. A ``QBOM`` term
     whose ``code`` has no matching entry in *pumping_station_ids* — it is a
@@ -560,17 +632,14 @@ def _resolve_rhq_terms(
     ``id_map.hydro_id`` — emits :func:`_emit_rhq_qbom_no_station` and drops
     the whole record (skip-not-partial), checked *before* the
     ``_variable_token`` call so a missing station never raises a raw
-    ``KeyError``. Returns the ordered ``(coefficient, token)`` list when
-    every term resolves.
+    ``KeyError``. Returns the tokens in term order when every term resolves.
     """
-    resolved: list[tuple[float, str]] = []
+    resolved: list[str] = []
     for term in record.terms:
         if term.variable == "QBOM" and term.code not in pumping_station_ids:
             _emit_rhq_qbom_no_station(record, term.code)
             return None
-        resolved.append(
-            (term.coefficient, _variable_token(term, id_map, pumping_station_ids))
-        )
+        resolved.append(_variable_token(term, id_map, pumping_station_ids))
     return resolved
 
 
@@ -609,15 +678,13 @@ def _emit_rhv_volume_tipo_deferred(record: ConstraintRecord, tipo: str) -> None:
             title="RHV volume tipo term deferred",
             summary=(
                 f"HV constraint {record.constraint_id} carries a {tipo} "
-                "volume term; its hm3-to-flow form needs a per-stage "
-                "coefficient (block hours vary per stage) that a "
-                "stage-invariant novomodelo expression cannot carry, so the "
-                "constraint is skipped rather than emitted with a guessed "
-                "coefficient."
+                "term, a volume over the whole stage in hm3; novomodelo generic "
+                "constraints have no stage-volume variable yet, so the "
+                "constraint is skipped."
             ),
             remediation=(
-                "This volume-based RHV limit needs per-stage coefficients that "
-                "are not yet supported, so the constraint is skipped; no action "
+                "This volume-based RHV limit is not converted until novomodelo "
+                "supports stage volumes in generic constraints; no action "
                 "needed to convert."
             ),
         )
@@ -641,7 +708,7 @@ def _resolve_hv_varm(
     id_map: DecompIdMap,
     effective: EffectiveCadastro,
     calendar: Sequence[OperativeStage],
-) -> tuple[list[tuple[float, str]], Mapping[int, StageBounds]] | None:
+) -> tuple[list[str], Mapping[int, StageBounds]] | None:
     """Resolve one generic multi-``VARM`` RHV record's expression and floor-adjusted
     bounds.
 
@@ -652,8 +719,9 @@ def _resolve_hv_varm(
 
     The source model's ``LV`` limits are relative to each plant's own useful
     volume, so the absolute RHS is the **per-term additive floor**: for each
-    declared stage, ``offset = sum(cᵢ * effective_storage_range(effective,
-    codeᵢ, stage)[0] for term i)``, added to whichever side of the record's
+    declared stage, ``offset = sum(cᵢ(stage) * effective_storage_range(
+    effective, codeᵢ, stage)[0] for term i)``, added to whichever side of the
+    record's
     stage-level ``StageBounds`` is actually bounded
     (:func:`~novomodelo_bridge.core.generic_constraint_builder.is_bounded`) —
     a ``±1e21``/``None`` side is left untouched, never offset. *calendar* is
@@ -661,23 +729,22 @@ def _resolve_hv_varm(
     ``single_term_bounds._hv_storage_contributions``); ``VARM`` is
     stage-level, so it is not read here.
 
-    Returns the ``(coefficient, token)`` list and the floor-adjusted
+    Returns the tokens in term order and the floor-adjusted
     ``{stage_index: StageBounds}`` map when every term resolves.
     """
-    resolved: list[tuple[float, str]] = []
-    coded_terms: list[tuple[float, int]] = []
+    resolved: list[str] = []
     for term in record.terms:
         if term.code not in effective.base.index:
             _emit_rhv_varm_uncadastred(record, term.code)
             return None
-        resolved.append((term.coefficient, _variable_token(term, id_map, {})))
-        coded_terms.append((term.coefficient, term.code))
+        resolved.append(_variable_token(term, id_map, {}))
 
     adjusted: dict[int, StageBounds] = {}
     for stage_index, stage_bounds in record.bounds.items():
         offset = sum(
-            coefficient * effective_storage_range(effective, code, stage_index)[0]
-            for coefficient, code in coded_terms
+            term.coefficient_at(stage_index)
+            * effective_storage_range(effective, term.code, stage_index)[0]
+            for term in record.terms
         )
         adjusted[stage_index] = StageBounds(
             lower=(_offset_if_bounded(stage_bounds.lower[0], offset),),
@@ -695,7 +762,7 @@ def emit_rhq_rhv_generics(
     effective: EffectiveCadastro,
     big_m: float,
     allocator: ConstraintIdAllocator | None = None,
-) -> GenericConstraintResult | None:
+) -> DecompGenericResult | None:
     """Emit every generic ``RHQ``/``RHV`` constraint (flow mixes and multi-``VARM``).
 
     Iterates ``census.to_generic`` filtered to ``record.family in ("HQ",
@@ -704,8 +771,8 @@ def emit_rhq_rhv_generics(
     - ``"HQ"`` (per-block flow terms) resolves via :func:`_resolve_rhq_terms`
       and feeds a two-sided ``HQ_<id>`` constraint.
     - ``"HV"`` carrying any volume-tipo term (``VDEF``/``VDES``/``VBOM``)
-      emits :func:`_emit_rhv_volume_tipo_deferred` and is skipped (deferred
-      to the E5 scalar-parameter plumbing — see the module docstring).
+      emits :func:`_emit_rhv_volume_tipo_deferred` and is skipped (see the
+      module docstring).
     - ``"HV"`` all-``VARM`` (stage-level) resolves via
       :func:`_resolve_hv_varm` and feeds a two-sided ``HV_<id>`` constraint
       on ``dataclasses.replace(record, bounds=adjusted)`` — the floor-
@@ -718,33 +785,36 @@ def emit_rhq_rhv_generics(
     an entity bound in ``single_term_bounds.py`` (``lowers_to_bound``).
 
     Reads no ``dadger``; *pumping_station_ids*, *effective*, and *big_m*
-    arrive from the caller (E7). *allocator* defaults to a fresh
+    arrive from the caller. *allocator* defaults to a fresh
     :class:`ConstraintIdAllocator` (ids from 0) when omitted; the pipeline
-    threads one shared instance across every emitter. Returns
-    ``builder.result()`` — ``None`` when no RHQ/RHV generic constraint
-    survives.
+    threads one shared instance across every emitter. Returns ``None`` when
+    no RHQ/RHV generic constraint survives.
     """
     calendar = case.calendar
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
+    per_stage_parameters: dict[str, list[float]] = {}
     for record in census.to_generic:
         if record.family not in ("HQ", "HV"):
             continue
 
         if record.family == "HQ":
-            rhq_terms = _resolve_rhq_terms(record, id_map, pumping_station_ids)
-            if rhq_terms is None:
+            rhq_tokens = _resolve_rhq_terms(record, id_map, pumping_station_ids)
+            if rhq_tokens is None:
                 continue
+            rhq_terms, parameters = _weighted_terms(record, rhq_tokens, len(calendar))
             expression = _format_expression(rhq_terms)
             if expression is None:
                 continue
-            builder.add(
+            added = builder.add(
                 name=f"HQ_{record.constraint_id}",
                 description=f"RHQ generic constraint {record.constraint_id}",
                 expression=expression,
                 slack=soft_slack(big_m, "per_hour"),
                 slots=slots_from_record(record, calendar),
             )
+            if added is not None:
+                per_stage_parameters.update(parameters)
             continue
 
         volume_tipo = next(
@@ -758,12 +828,13 @@ def emit_rhq_rhv_generics(
         hv_resolved = _resolve_hv_varm(record, id_map, effective, calendar)
         if hv_resolved is None:
             continue
-        hv_terms, adjusted_bounds = hv_resolved
+        hv_tokens, adjusted_bounds = hv_resolved
+        hv_terms, parameters = _weighted_terms(record, hv_tokens, len(calendar))
         expression = _format_expression(hv_terms)
         if expression is None:
             continue
         adjusted_record = dataclasses.replace(record, bounds=adjusted_bounds)
-        builder.add(
+        added = builder.add(
             name=f"HV_{record.constraint_id}",
             description=f"RHV generic constraint {record.constraint_id}",
             expression=expression,
@@ -773,7 +844,9 @@ def emit_rhq_rhv_generics(
             slack=soft_slack(big_m, "per_hour"),
             slots=slots_from_record(adjusted_record, calendar),
         )
-    return builder.result()
+        if added is not None:
+            per_stage_parameters.update(parameters)
+    return _with_parameters(builder.result(), per_stage_parameters)
 
 
 #: The slack penalty (R$/MWh) an RHE constraint falls back to when its own
@@ -1038,22 +1111,6 @@ def _emit_rhe_unknown_tipo_limite(
     )
 
 
-class RheResult(NamedTuple):
-    """Result of :func:`emit_rhe_generics`.
-
-    ``generic`` holds the constraints and their bounds;
-    ``per_stage_parameters`` maps each ``pct_rhe{id}`` a percentage limit
-    reads to its per-stage fraction (one value per stage, ``0.0`` where the
-    record sets no limit) and ``expression_parameters`` maps each
-    coupled-cascade share's parameter to its body, both for
-    ``build_decomp_scalar_parameters``.
-    """
-
-    generic: GenericConstraintResult
-    per_stage_parameters: dict[str, list[float]]
-    expression_parameters: dict[str, str]
-
-
 def rhe_pct_name(constraint_id: int) -> str:
     """Canonical ``@name`` for the per-stage limit fraction of one RHE record."""
     return f"pct_rhe{constraint_id}"
@@ -1067,7 +1124,7 @@ def emit_rhe_generics(
     effective: EffectiveCadastro,
     hydro_to_ree: Mapping[int, int],
     allocator: ConstraintIdAllocator | None = None,
-) -> RheResult | None:
+) -> DecompGenericResult | None:
     """Emit every generic ``HE`` (RHE stored-energy) constraint.
 
     Iterates ``census.to_generic`` filtered to ``record.family == "HE"``.
@@ -1086,7 +1143,8 @@ def emit_rhe_generics(
 
     - ``2`` — ``limite`` percent of the shares' maximum stored energy,
       ``lhs >= @pct_rhe{id} * (Σ ±@emax)`` with a per-stage fraction
-      parameter and a zero parquet bound;
+      parameter (``0.0`` where the record sets no limit) and a zero parquet
+      bound;
     - ``1`` — ``limite`` is an absolute stage-average MW (MWmês) bound,
       converted to MWh with the stage's hours into the parquet bound; any
       other value is treated the same way, with a WARNING.
@@ -1178,7 +1236,6 @@ def emit_rhe_generics(
 
     if couplings:
         _emit_rhe_hydraulic_coupling(couplings)
-    generic = builder.result()
-    if generic is None:
-        return None
-    return RheResult(generic, per_stage_parameters, expression_parameters)
+    return _with_parameters(
+        builder.result(), per_stage_parameters, expression_parameters
+    )

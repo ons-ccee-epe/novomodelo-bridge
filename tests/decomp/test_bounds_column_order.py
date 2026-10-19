@@ -9,7 +9,7 @@ that layout so it cannot silently drift back to a trailing ``block_id``.
 The schema constant governs the written column order (each writer passes it as
 ``pa.table(..., schema=...)``), so asserting on the schema names asserts on the
 parquet layout. The hydro/thermal/pumping *bound*
-schemas live on the E2 accumulator (``bounds_accumulator``), not on the
+schemas live on the bounds accumulator (``bounds_accumulator``), not on the
 individual converters — ``bounds.py``/``thermal.py``/``network.py`` emit
 ``BoundContribution`` lists the accumulator fans into these tables, and
 ``thermal.py`` keeps only its own ``cost_per_mwh`` side-table schema (cost is

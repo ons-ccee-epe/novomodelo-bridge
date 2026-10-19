@@ -21,7 +21,7 @@ import pytest
 from novomodelo_bridge.cli.args import CompareArgs
 from novomodelo_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, BridgeConfig
 
-# `novomodelo_bridge.cli`'s D5 __init__ re-exports `app` (the Typer instance) from
+# `novomodelo_bridge.cli`'s __init__ re-exports `app` (the Typer instance) from
 # a same-named submodule, shadowing a plain `import ... as` target the same
 # way `cli.app` would -- importlib.import_module resolves the submodule
 # instead.

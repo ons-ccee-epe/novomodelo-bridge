@@ -21,7 +21,7 @@ from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLU
 
 
 def test_generic_bounds_schema_matches_shared_columns() -> None:
-    """The builder's bounds schema stays in lockstep with the F3 column list."""
+    """The builder's bounds schema stays in lockstep with the shared column list."""
     assert GENERIC_BOUNDS_SCHEMA.names == list(GENERIC_BOUNDS_COLUMNS)
 
 

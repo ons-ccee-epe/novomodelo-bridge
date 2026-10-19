@@ -367,7 +367,7 @@ class TestBuildDecompDatasetThermalDetail:
     def test_thermal_tidy_rows_carry_generation_mw_and_known_sources(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """E1 already emits the thermal ``ResultComparison`` rows -- the
+        """The base comparison already emits the thermal ``ResultComparison`` rows -- the
         thermal-detail build must not re-emit or re-map them."""
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
 

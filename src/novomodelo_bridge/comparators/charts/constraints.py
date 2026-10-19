@@ -91,7 +91,7 @@ def constraints_comparison_chart(
         cid = int(c["id"])
         name = c["name"]
         cid_bounds = bound_by_constraint.get(cid, {})
-        # F3 constraints are sense-free; the shape (">="/"<="/"=="/"range") is
+        # Constraints are sense-free; the shape (">="/"<="/"=="/"range") is
         # whatever per_stage_bounds derived from the resolved bound endpoints,
         # not a removed `sense` field.
         shape = next((rb.shape for rb in cid_bounds.values()), "<=")

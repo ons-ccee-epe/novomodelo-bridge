@@ -129,12 +129,12 @@ def _contracts_stub() -> _StubDadger:
     """Shared integrated fixture: CI 1 (stages 1+3) + CI 9 placeholder + CE 1.
 
     ``CI`` numero 1 is declared at stages 1 and 3 only, so stage 2 is
-    forward-filled per D1; stage 1's limits are block-uniform and stage 3's
+    forward-filled; stage 1's limits are block-uniform and stage 3's
     ``limite_superior`` is non-uniform, to exercise the per-block override
-    rows. ``CE`` numero 1 carries a non-zero ``custo`` (D3 sign) and
+    rows. ``CE`` numero 1 carries a non-zero ``custo`` (negated on export) and
     deliberately reuses the same ``numero_contrato`` as the ``CI`` row, to
-    genuinely exercise D5's ``(kind, numero)`` id assignment. ``CI`` numero 9
-    is a blank-name, all-zero-bound placeholder (D6).
+    genuinely exercise the ``(kind, numero)`` id assignment. ``CI`` numero 9
+    is a blank-name, all-zero-bound placeholder.
     """
     ci = pd.DataFrame(
         [
@@ -695,11 +695,11 @@ def test_integrated_ids_and_placeholder_and_window() -> None:
     assert by_id[0]["type"] == "import"
     assert by_id[1]["type"] == "export"
 
-    # D6: the blank-name, all-zero CI numero 9 placeholder never becomes a
+    # The blank-name, all-zero CI numero 9 placeholder never becomes a
     # contract, so it cannot surface in the json output either.
     assert not any(c.numero == 9 for c in contracts)
 
-    # D1: every contract is emitted always-active.
+    # Every contract is emitted always-active.
     for entry in result["contracts"]:
         assert "entry_stage_id" not in entry
         assert "exit_stage_id" not in entry
@@ -735,7 +735,7 @@ def test_integrated_carry_forward_and_per_block_sparsity() -> None:
         row["stage_id"]: row for row in import_rows if row["block_id"] is None
     }
 
-    # D1 carry-forward: the forward-filled stage-2 (stage_id==1) base row is
+    # Carry-forward: the forward-filled stage-2 (stage_id==1) base row is
     # identical to its declared stage-1 (stage_id==0) base row.
     assert base_by_stage[0]["min_mw"] == base_by_stage[1]["min_mw"]
     assert base_by_stage[0]["max_mw"] == base_by_stage[1]["max_mw"]
@@ -755,7 +755,7 @@ def test_integrated_carry_forward_and_per_block_sparsity() -> None:
     assert overrides_stage0 == []
     assert overrides_stage1 == []
 
-    # D4: the non-uniform declared stage 3 (stage_id==2) emits per-block
+    # The non-uniform declared stage 3 (stage_id==2) emits per-block
     # override rows for every block.
     overrides_stage2 = sorted(
         (
@@ -812,7 +812,7 @@ def test_d41_json_shape_roundtrip() -> None:
 
     Value identity is intentionally not asserted: d41's export contract
     carries ``entry_stage_id``/``exit_stage_id`` (a commissioning window),
-    while the bridge always emits D1's always-active window (neither key at
+    while the bridge always emits an always-active window (neither key at
     all) — both are legal shapes under the same required-key set.
     """
     d41_doc = json.loads(
@@ -870,7 +870,7 @@ def test_d41_parquet_schema_superset() -> None:
     columns.
 
     d41's parquet has no ``block_id`` column; the bridge's always does (a
-    legal superset per decision 6), so value identity is not asserted here —
+    legal superset), so value identity is not asserted here —
     only column presence and shared-column types.
     """
     d41_table = pq.read_table(_D41_DIR / "constraints" / "contract_bounds.parquet")

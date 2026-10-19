@@ -29,7 +29,7 @@ from tests.comparators.conftest import (
 def _fpha_id_map() -> DecompIdMap:
     """One hydro plant (code 10 -> novomodelo id 0), matching `_aligned_fixture`'s
     own hydro code/id/name so the SAME `_patch_aligned_frames` fixture can
-    back both the E1 result rows and the FPHA metrics in the same
+    back both the base result rows and the FPHA metrics in the same
     ``build_decomp_dataset`` test."""
     return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10, 20))
 

@@ -383,7 +383,7 @@ def _special_constraint_coverage(
 
     A pure read of *dadger* (through the same census
     :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints` the
-    pipeline consumes) and *files* (whose ``dadger`` path feeds the E1
+    pipeline consumes) and *files* (whose ``dadger`` path feeds the
     unreadable-electrical scan, and whose LIBs electrical-constraint file
     feeds the LIBs-electrical scan) — no conversion, no emitter.
 
@@ -392,9 +392,9 @@ def _special_constraint_coverage(
     diagnostic per bucket that is non-empty: an ``INFO`` for the converted
     split — present whenever the deck declares at least one special
     constraint — reporting the bounds-lowered/generic-emitted counts as
-    probes (per spec §10, never a hard-coded oracle), plus a ``WARNING`` per
+    probes (never a hard-coded oracle), plus a ``WARNING`` per
     present deferred surface. The deferred diagnostics are produced verbatim
-    by the E1 detection helpers
+    by the detection helpers
     (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unreadable_electrical`
     / :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`)
     — never re-derived here.
