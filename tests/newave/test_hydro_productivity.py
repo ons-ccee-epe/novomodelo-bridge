@@ -1393,11 +1393,7 @@ class TestConvertHydroEnergyProductivity:
         """CFUGA moves the integrated value from its stage on; VOLREF_SAZ moves
         only the point ρ_eq."""
         cfuga_rec = _make_cfuga_rec(month=4, year=2025, nivel=60.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((1, [cfuga_rec]))
         volref_df = pd.DataFrame(
             {
                 "codigo_usina": [1] * 12,
