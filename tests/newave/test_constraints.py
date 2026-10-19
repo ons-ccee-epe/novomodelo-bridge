@@ -19,6 +19,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
 from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.constraints import (
+    _cascade_sum,
     _curve_seasonalizes,
     _ElectricTermSkip,
     _is_stored_energy_reservoir,
@@ -239,7 +240,9 @@ class TestAccumulatedProductivity:
     def test_sink_plant_has_own_productivity_only(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         # Plant 3 is the sink (downstream=None).
         # Its own productivity: 0.03 * (500 + 0.02*1500 - 400) = 0.03 * 130 = 3.9
@@ -249,7 +252,9 @@ class TestAccumulatedProductivity:
     def test_middle_plant_accumulates_downstream(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_3 = 0.03 * ((500.0 + 0.02 * 1500.0) - 400.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -258,7 +263,9 @@ class TestAccumulatedProductivity:
     def test_upstream_plant_accumulates_full_chain(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_3 = 0.03 * ((500.0 + 0.02 * 1500.0) - 400.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -272,7 +279,9 @@ class TestAccumulatedProductivity:
         # Break the cascade: all plants have downstream=0
         confhd_df["codigo_usina_jusante"] = [0, 0, 0]
 
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_1 = 0.01 * ((300.0 + 0.1 * 500.0) - 200.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -368,7 +377,9 @@ class TestAccumulatedIntegratedProductivities:
         cadastro = _make_cadastro()
         cadastro["tipo_regulacao"] = "M"
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_integrated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_integrated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
         # PLANT_A: 0.01 · (300 + 0.1·550 − 200) = 0.01 · 155 = 1.55
         # PLANT_B: 0.02 · (400 + 0.05·(200+2000)/2 − 300) = 0.02 · 155 = 3.1
         # PLANT_C: 0.03 · (500 + 0.02·(300+3000)/2 − 400) = 0.03 · 133 = 3.99
@@ -384,7 +395,9 @@ class TestAccumulatedIntegratedProductivities:
         # matching the source model's EARM convention for them.
         cadastro = _make_cadastro()  # all tipo_regulacao == "D"
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_integrated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_integrated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
         # PLANT_A @vref=500: 0.01 · (300 + 0.1·500 − 200) = 0.01 · 150 = 1.5
         # PLANT_B @vref=1000: 0.02 · (400 + 0.05·1000 − 300) = 0.02 · 150 = 3.0
         # PLANT_C @vref=1500: 0.03 · (500 + 0.02·1500 − 400) = 0.03 · 130 = 3.9
@@ -2059,3 +2072,42 @@ def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> N
     df = result[1].to_pandas()
     assert set(df[df["bound_upper"].notna()]["stage_id"]) == {0, 1, 2}
     assert set(df[df["bound_lower"].notna()]["stage_id"]) == {0, 1, 2}
+
+
+# ---------------------------------------------------------------------------
+# _cascade_sum cycle detection
+# ---------------------------------------------------------------------------
+
+
+def test_cascade_sum_detects_cycle() -> None:
+    """A cycle in the downstream map raises BridgeError with the path."""
+    from novomodelo_bridge.core.errors import BridgeError
+
+    # Crafted cycle: 1 → 2 → 1
+    downstream_map: dict[int, int | None] = {1: 2, 2: 1}
+    values = {1: 10.0, 2: 20.0}
+
+    with pytest.raises(BridgeError, match=r"Cascade cycle detected.*1.*2.*1"):
+        _cascade_sum(downstream_map, values)
+
+
+def test_cascade_sum_cycle_path_is_ordered_and_excludes_the_approach() -> None:
+    """The message names the cycle in flow order, without the plant above it."""
+    from novomodelo_bridge.core.errors import BridgeError
+
+    downstream_map: dict[int, int | None] = {5: 1, 1: 2, 2: 3, 3: 1}
+
+    with pytest.raises(BridgeError, match=r"detected: 1 → 2 → 3 → 1\."):
+        _cascade_sum(downstream_map, {})
+
+
+def test_cascade_sum_no_cycle() -> None:
+    """Normal cascade without cycle works correctly."""
+    # Linear cascade: 1 → 2 → 3 → None (sea sink)
+    downstream_map: dict[int, int | None] = {1: 2, 2: 3, 3: None}
+    values = {1: 10.0, 2: 20.0, 3: 30.0}
+
+    result = _cascade_sum(downstream_map, values)
+
+    # result[3] = 30, result[2] = 20 + 30 = 50, result[1] = 10 + 50 = 60
+    assert result == {1: 60.0, 2: 50.0, 3: 30.0}

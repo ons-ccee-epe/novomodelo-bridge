@@ -42,6 +42,7 @@ class Switch:
 @dataclass(frozen=True)
 class DgerSwitches:
     agrint: Switch
+    bombeamento: Switch
     c_adic: Switch
     ghmin: Switch
     re_dat: Switch
@@ -68,6 +69,9 @@ class DgerSwitches:
         drop_min_outflow = read("desconsidera_vazao_minima")
         return cls(
             agrint=plain("agrupamento_livre", "AGRUPAMENTO LIVRE", "agrint.dat"),
+            bombeamento=plain(
+                "estacoes_bombeamento", "ESTACOES BOMBEAMENTO", "pumping stations"
+            ),
             c_adic=plain(
                 "considera_carga_adicional", "CONS. CARGA ADICIONAL", "c_adic.dat"
             ),
@@ -137,6 +141,7 @@ def switched_off_inputs(files: NewaveFiles, switches: DgerSwitches) -> list[Swit
     """
     present = {
         "agrint": files.agrint is not None,
+        "bombeamento": files.estacao_bombeamento is not None,
         "c_adic": files.c_adic is not None,
         "ghmin": files.ghmin is not None,
         "re_dat": files.re_dat is not None,

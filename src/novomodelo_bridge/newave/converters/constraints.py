@@ -21,7 +21,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import pandas as pd
 import pyarrow as pa
@@ -32,6 +32,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.errors import BridgeError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -59,6 +60,9 @@ from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import active_hydros
 from novomodelo_bridge.newave.switches import switch_off_diagnostic
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+
+if TYPE_CHECKING:
+    from collections.abc import AbstractSet
 
 _LOG = logging.getLogger(__name__)
 
@@ -162,6 +166,8 @@ def _vminop_ree_terms(
     confhd_df: pd.DataFrame,
     id_map: NewaveIdMap,
     acc_prod: dict[int, float],
+    *,
+    fictitious: AbstractSet[int],
 ) -> tuple[dict[int, list[StoredEnergyShare]], list[_VminopCoupling]]:
     """Build every REE's VminOP shares, splitting the cascades the REEs couple.
 
@@ -182,7 +188,7 @@ def _vminop_ree_terms(
     :func:`~novomodelo_bridge.core.stored_energy.cascade_share`. Returns the
     shares by REE code (in plant-code order) and the split reservoirs.
     """
-    resolutions = resolve_cascade(confhd_df, cadastro)
+    resolutions = resolve_cascade(confhd_df, cadastro, fictitious=fictitious)
     hydro_ree = {int(r["codigo_usina"]): int(r["ree"]) for _, r in confhd_df.iterrows()}
 
     def _useful(code: int) -> float:
@@ -201,7 +207,8 @@ def _vminop_ree_terms(
 
     terms: dict[int, list[StoredEnergyShare]] = defaultdict(list)
     couplings: list[_VminopCoupling] = []
-    for code, ree_code in sorted(_build_hydro_to_ree(confhd_df, cadastro).items()):
+    hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
+    for code, ree_code in sorted(hydro_to_ree.items()):
         # The source model's stored energy (EARM) — and thus the VminOP expression —
         # counts only monthly-regulating reservoirs with usable storage. Gate on
         # that, not on ``acc_prod > 0`` alone: run-of-river / special-regime plants
@@ -261,49 +268,19 @@ def _vminop_ree_terms(
     return terms, couplings
 
 
-def _build_hydro_downstream_map(
-    confhd_df: pd.DataFrame,
-    cadastro: pd.DataFrame | None = None,
-) -> dict[int, int | None]:
-    """Return ``{plant_code: downstream_code}`` for every real (non-FICT) plant.
-
-    The map collapses any chain of fictitious plants between a real plant and
-    its next real downstream — see
-    :func:`novomodelo_bridge.newave.converters.fict_cascade.resolve_cascade` for the
-    resolution rules.  ``downstream_code`` is ``None`` when the cascade
-    terminates at the sea.
-
-    Parameters
-    ----------
-    confhd_df:
-        ``Confhd.usinas``.
-    cadastro:
-        ``Hidr.cadastro`` (with MODIF.DAT overrides applied).  Required for a
-        correct map: fictitious plants are now identified structurally from
-        productivity (:func:`plants.fictitious_codes`), so without it the
-        resolver cannot tell a fictitious accounting node from a real plant and
-        the cascade stops short.  Defaults to empty only for callers that
-        operate on FICT-free plant sets (e.g. unit tests).
-    """
-    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
-
-    if cadastro is None:
-        cadastro = pd.DataFrame()
-    resolutions = resolve_cascade(confhd_df, cadastro)
-    return {code: r.downstream_code for code, r in resolutions.items()}
-
-
 def _build_hydro_to_ree(
-    confhd_df: pd.DataFrame, cadastro: pd.DataFrame
+    confhd_df: pd.DataFrame, *, fictitious: AbstractSet[int]
 ) -> dict[int, int]:
     """Return {plant_code: ree_code} for existing non-fictitious plants."""
-    non_fict = active_hydros(confhd_df, cadastro)
+    non_fict = active_hydros(confhd_df, fictitious=fictitious)
     return {int(r["codigo_usina"]): int(r["ree"]) for _, r in non_fict.iterrows()}
 
 
 def compute_accumulated_integrated_productivities(
     cadastro: pd.DataFrame,
     confhd_df: pd.DataFrame,
+    *,
+    fictitious: AbstractSet[int],
 ) -> dict[int, float]:
     """Cascade-sum of per-plant stored-energy (EARM) productivity.
 
@@ -323,10 +300,19 @@ def compute_accumulated_integrated_productivities(
     values keyed by plant code.  Used as the base-case static check in
     :func:`convert_vminop_constraints` — the per-stage version is computed
     separately and accounts for CFUGA/CMONT overrides.
+
+    Parameters
+    ----------
+    cadastro:
+        The ``Hidr.cadastro`` DataFrame (with MODIF.DAT overrides applied).
+    confhd_df:
+        The ``Confhd.usinas`` DataFrame.
+    fictitious:
+        The case's fictitious plant codes (``NewaveCase.fictitious_codes``).
     """
     from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
-    resolutions = resolve_cascade(confhd_df, cadastro)
+    resolutions = resolve_cascade(confhd_df, cadastro, fictitious=fictitious)
     downstream_map: dict[int, int | None] = {
         code: r.downstream_code for code, r in resolutions.items()
     }
@@ -345,6 +331,8 @@ def compute_accumulated_integrated_productivities(
 def compute_accumulated_productivities(
     cadastro: pd.DataFrame,
     confhd_df: pd.DataFrame,
+    *,
+    fictitious: AbstractSet[int],
 ) -> dict[int, float]:
     """Compute accumulated cascade productivity for each hydro plant.
 
@@ -366,6 +354,8 @@ def compute_accumulated_productivities(
         The ``Hidr.cadastro`` DataFrame (with MODIF.DAT overrides applied).
     confhd_df:
         The ``Confhd.usinas`` DataFrame.
+    fictitious:
+        The case's fictitious plant codes (``NewaveCase.fictitious_codes``).
 
     Returns
     -------
@@ -374,7 +364,7 @@ def compute_accumulated_productivities(
     """
     from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
-    resolutions = resolve_cascade(confhd_df, cadastro)
+    resolutions = resolve_cascade(confhd_df, cadastro, fictitious=fictitious)
     downstream_map: dict[int, int | None] = {
         code: r.downstream_code for code, r in resolutions.items()
     }
@@ -398,19 +388,31 @@ def _cascade_sum(
 
     Plants with no downstream (sea sinks) keep their own value. Shared by the
     accumulated-productivity helpers of this module.
+
+    Raises
+    ------
+    BridgeError
+        If a cycle is detected in the downstream map.
     """
     result: dict[int, float] = {}
 
-    def _accumulate(code: int) -> float:
+    def _accumulate(code: int, path: tuple[int, ...]) -> float:
+        if code in path:
+            cycle = path[path.index(code) :] + (code,)
+            cycle_path = " → ".join(str(c) for c in cycle)
+            raise BridgeError(
+                f"Cascade cycle detected: {cycle_path}. This usually indicates "
+                "a fictitious plant was removed that breaks the cascade topology."
+            )
         if code in result:
             return result[code]
         ds = downstream_map.get(code)
-        ds_acc = _accumulate(ds) if ds is not None else 0.0
+        ds_acc = _accumulate(ds, (*path, code)) if ds is not None else 0.0
         result[code] = own_value.get(code, 0.0) + ds_acc
         return result[code]
 
     for code in downstream_map:
-        _accumulate(code)
+        _accumulate(code, ())
     return result
 
 
@@ -434,10 +436,11 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
     try:
         cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
         confhd_df = case.confhd.usinas
+        fictitious = case.fictitious_codes
     except (OSError, ValueError, AttributeError, TypeError, KeyError):
         return None
 
-    resolutions = resolve_cascade(confhd_df, cadastro)
+    resolutions = resolve_cascade(confhd_df, cadastro, fictitious=fictitious)
     downstream_map: dict[int, int | None] = {
         code: r.downstream_code for code, r in resolutions.items()
     }
@@ -648,10 +651,15 @@ def convert_vminop_constraints(
     num_stages = _horizon.total_stages
 
     # Plants with no positive integrated cascade productivity store no energy.
-    acc_prod = compute_accumulated_integrated_productivities(cadastro, confhd_df)
+    fictitious = case.fictitious_codes
+    acc_prod = compute_accumulated_integrated_productivities(
+        cadastro, confhd_df, fictitious=fictitious
+    )
 
-    hydro_to_ree = _build_hydro_to_ree(confhd_df, cadastro)
-    ree_terms, couplings = _vminop_ree_terms(cadastro, confhd_df, id_map, acc_prod)
+    hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
+    ree_terms, couplings = _vminop_ree_terms(
+        cadastro, confhd_df, id_map, acc_prod, fictitious=fictitious
+    )
     per_stage_parameters: dict[str, list[float]] = {}
     expression_parameters: dict[str, str] = {}
 

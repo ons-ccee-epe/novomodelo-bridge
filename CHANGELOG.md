@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NEWAVE: Pumping station conversion.** When the deck declares
+  `ESTACAO-BOMBEAMENTO` and `ESTACAO-BOMBEAMENTO-SUBMERCADO` in `indices.csv`
+  and the `ESTACOES BOMBEAMENTO` switch is on, the converter generates
+  `system/pumping_stations.json` and `constraints/pumping_bounds.parquet`.
+  Open-ended limit periods (blank `data_fim`) extend to the last stage.
 - **`check` and `convert` warn about tabs in fixed-column inputs**, on both
   tracks. The NEWAVE text files `arquivos.dat` names and DECOMP's
   `dadger`/`dadgnl` are read by column position, so a tab where the layout
@@ -99,6 +104,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **NEWAVE: Hydro plants referenced by pumping stations are no longer
+  classified as fictitious.** Previously, zero-productivity reservoirs used
+  for pumped storage (e.g., VIGÁRIO) were removed, which could break cascade
+  topology and cause a RecursionError.
+- **NEWAVE: Cascade cycle detection now raises a clear error instead of
+  RecursionError.** The error names the cycle path and points to the fictitious
+  classification as the likely cause.
 - **`convert newave` applies the FPHA plane reduction only when the case
   declares it.** A `tratamento-fpha.csv` in the case directory set
   `fpha_plane_reduction` even when `indices.csv` left out or commented out

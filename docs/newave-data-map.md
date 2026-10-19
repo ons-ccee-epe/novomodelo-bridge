@@ -16,7 +16,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 
 | Arquivo do deck | `config.json` | `stages.json` | `penalties.json` | `initial_conditions.json` |
 | --- | :-: | :-: | :-: | :-: |
-| `dger.dat` | ● | ● |  | ● |
+| `dger.dat` | ● | ● | ● | ● |
 | `confhd.dat` |  |  | ● | ● |
 | `conft.dat` |  |  |  | ● |
 | `sistema.dat` |  |  | ● |  |
@@ -30,28 +30,31 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `cvar.dat` (opcional) |  | ● |  |  |
 | `shist.dat` (opcional) | ● | ● |  |  |
 | `adterm.dat` (opcional) |  |  |  | ● |
+| `estacao-bombeamento.csv` (opcional) |  |  | ● |  |
 
 ### `system/`
 
-| Arquivo do deck | `buses.json` | `lines.json` | `thermals.json` | `hydros.json` | `hydro_production_models.json` | `hydro_geometry.parquet` | `hydro_energy_productivity.parquet` | `tailrace_curves.parquet` | `non_controllable_sources.json` |
-| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| `dger.dat` | ● | ● | ● | ● | ● |  | ● |  | ● |
-| `confhd.dat` |  |  |  | ● | ● | ● | ● | ● |  |
-| `conft.dat` |  |  | ● |  |  |  |  |  |  |
-| `sistema.dat` | ● | ● | ● | ● |  |  |  |  | ● |
-| `clast.dat` |  |  | ● |  |  |  |  |  |  |
-| `term.dat` |  |  | ● |  |  |  |  |  |  |
-| `ree.dat` | ● | ● | ● | ● |  |  |  |  | ● |
-| `patamar.dat` |  |  | ● |  |  |  |  |  |  |
-| `hidr.dat` |  |  |  | ● | ● | ● | ● | ● |  |
-| `modif.dat` (opcional) |  |  |  | ● | ● | ● | ● |  |  |
-| `expt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |
-| `exph.dat` (opcional) |  |  |  | ● | ● | ● | ● | ● |  |
-| `manutt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |
-| `volref_saz.dat` (opcional) |  |  |  | ● | ● |  | ● |  |  |
-| `adterm.dat` (opcional) |  |  | ● |  |  |  |  |  |  |
-| `polinjus.csv` (opcional) |  |  |  |  |  |  |  | ● |  |
-| `tratamento-fpha.csv` (opcional) |  |  |  |  | ● |  |  |  |  |
+| Arquivo do deck | `buses.json` | `lines.json` | `thermals.json` | `hydros.json` | `hydro_production_models.json` | `hydro_geometry.parquet` | `hydro_energy_productivity.parquet` | `tailrace_curves.parquet` | `non_controllable_sources.json` | `pumping_stations.json` |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| `dger.dat` | ● | ● | ● | ● | ● |  | ● |  | ● | ● |
+| `confhd.dat` |  |  |  | ● | ● | ● | ● | ● |  | ● |
+| `conft.dat` |  |  | ● |  |  |  |  |  |  |  |
+| `sistema.dat` | ● | ● | ● | ● |  |  |  |  | ● |  |
+| `clast.dat` |  |  | ● |  |  |  |  |  |  |  |
+| `term.dat` |  |  | ● |  |  |  |  |  |  |  |
+| `ree.dat` | ● | ● | ● | ● |  |  |  |  | ● |  |
+| `patamar.dat` |  |  | ● |  |  |  |  |  |  |  |
+| `hidr.dat` |  |  |  | ● | ● | ● | ● | ● |  |  |
+| `modif.dat` (opcional) |  |  |  | ● | ● | ● | ● |  |  |  |
+| `expt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
+| `exph.dat` (opcional) |  |  |  | ● | ● | ● | ● | ● |  |  |
+| `manutt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
+| `volref_saz.dat` (opcional) |  |  |  | ● | ● |  | ● |  |  |  |
+| `adterm.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
+| `polinjus.csv` (opcional) |  |  |  |  |  |  |  | ● |  |  |
+| `tratamento-fpha.csv` (opcional) |  |  |  |  | ● |  |  |  |  |  |
+| `estacao-bombeamento.csv` (opcional) |  |  |  | ● |  |  |  |  |  | ● |
+| `estacao-bombeamento-submercado.csv` (opcional) |  |  |  |  |  |  |  |  |  | ● |
 
 ### `scenarios/`
 
@@ -69,29 +72,31 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 
 ### `constraints/`
 
-| Arquivo do deck | `hydro_bounds.parquet` | `thermal_bounds.parquet` | `line_bounds.parquet` | `penalty_overrides_bus.parquet` | `penalty_overrides_hydro.parquet` | `generic_constraints.json` | `generic_constraint_bounds.parquet` | `generic_parameters.json` |
-| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| `dger.dat` | ● | ● | ● | ● | ● | ● | ● | ● |
-| `confhd.dat` | ● |  |  |  | ● | ● | ● | ● |
-| `conft.dat` |  | ● |  |  |  |  |  |  |
-| `sistema.dat` |  |  | ● | ● | ● | ● | ● |  |
-| `clast.dat` |  | ● |  |  |  |  |  |  |
-| `term.dat` |  | ● |  |  |  |  |  |  |
-| `ree.dat` |  |  |  | ● |  | ● | ● | ● |
-| `patamar.dat` |  |  | ● |  |  | ● | ● |  |
-| `hidr.dat` | ● |  |  |  | ● | ● | ● | ● |
-| `modif.dat` (opcional) | ● |  |  |  | ● | ● | ● | ● |
-| `ghmin.dat` (opcional) | ● |  |  |  |  |  |  |  |
-| `penalid.dat` (opcional) |  |  |  |  | ● | ● | ● |  |
-| `dsvagua.dat` (opcional) | ● |  |  |  |  |  |  |  |
-| `curva.dat` (opcional) |  |  |  |  |  | ● | ● | ● |
-| `expt.dat` (opcional) |  | ● |  |  |  |  |  |  |
-| `exph.dat` (opcional) | ● |  |  |  | ● | ● | ● | ● |
-| `manutt.dat` (opcional) |  | ● |  |  |  |  |  |  |
-| `agrint.dat` (opcional) |  |  |  |  |  | ● | ● |  |
-| `re.dat` (opcional) |  |  |  |  |  | ● | ● |  |
-| `volref_saz.dat` (opcional) | ● |  |  |  |  |  |  |  |
-| `restricao-eletrica.csv` (opcional) |  |  |  |  |  | ● | ● |  |
+| Arquivo do deck | `hydro_bounds.parquet` | `thermal_bounds.parquet` | `line_bounds.parquet` | `pumping_bounds.parquet` | `penalty_overrides_bus.parquet` | `penalty_overrides_hydro.parquet` | `generic_constraints.json` | `generic_constraint_bounds.parquet` | `generic_parameters.json` |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| `dger.dat` | ● | ● | ● | ● | ● | ● | ● | ● | ● |
+| `confhd.dat` | ● |  |  | ● |  | ● | ● | ● | ● |
+| `conft.dat` |  | ● |  |  |  |  |  |  |  |
+| `sistema.dat` |  |  | ● |  | ● | ● | ● | ● |  |
+| `clast.dat` |  | ● |  |  |  |  |  |  |  |
+| `term.dat` |  | ● |  |  |  |  |  |  |  |
+| `ree.dat` |  |  |  |  | ● |  | ● | ● | ● |
+| `patamar.dat` |  |  | ● | ● |  |  | ● | ● |  |
+| `hidr.dat` | ● |  |  |  |  | ● | ● | ● | ● |
+| `modif.dat` (opcional) | ● |  |  |  |  | ● | ● | ● | ● |
+| `ghmin.dat` (opcional) | ● |  |  |  |  |  |  |  |  |
+| `penalid.dat` (opcional) |  |  |  |  |  | ● | ● | ● |  |
+| `dsvagua.dat` (opcional) | ● |  |  |  |  |  |  |  |  |
+| `curva.dat` (opcional) |  |  |  |  |  |  | ● | ● | ● |
+| `expt.dat` (opcional) |  | ● |  |  |  |  |  |  |  |
+| `exph.dat` (opcional) | ● |  |  |  |  | ● | ● | ● | ● |
+| `manutt.dat` (opcional) |  | ● |  |  |  |  |  |  |  |
+| `agrint.dat` (opcional) |  |  |  |  |  |  | ● | ● |  |
+| `re.dat` (opcional) |  |  |  |  |  |  | ● | ● |  |
+| `volref_saz.dat` (opcional) | ● |  |  |  |  |  |  |  |  |
+| `restricao-eletrica.csv` (opcional) |  |  |  |  |  |  | ● | ● |  |
+| `estacao-bombeamento.csv` (opcional) |  |  |  | ● |  |  |  |  |  |
+| `estacao-bombeamento-submercado.csv` (opcional) |  |  |  | ● |  |  |  |  |  |
 
 ## Arquivos gerados
 
@@ -170,7 +175,7 @@ Um estágio mensal por mês de estudo e de pós-estudo, com blocos (patamares) d
 
 ### `penalties.json`
 
-**Lê:** `sistema.dat`, `penalid.dat` (opcional), `hidr.dat`, `confhd.dat`, `modif.dat` (opcional), `exph.dat` (opcional)  
+**Lê:** `sistema.dat`, `penalid.dat` (opcional), `hidr.dat`, `confhd.dat`, `modif.dat` (opcional), `exph.dat` (opcional), `dger.dat`, `estacao-bombeamento.csv` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [penalties.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/penalties.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/network.py`
 
@@ -279,7 +284,7 @@ Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Novomodelo, com 
 
 ### `system/hydros.json`
 
-**Lê:** `hidr.dat`, `confhd.dat`, `ree.dat`, `sistema.dat`, `modif.dat` (opcional), `exph.dat` (opcional), `dger.dat`, `volref_saz.dat` (opcional)  
+**Lê:** `hidr.dat`, `confhd.dat`, `ree.dat`, `sistema.dat`, `modif.dat` (opcional), `exph.dat` (opcional), `dger.dat`, `volref_saz.dat` (opcional), `estacao-bombeamento.csv` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [hydros.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/hydros.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/hydro/entity.py`
 
@@ -287,7 +292,7 @@ Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `hydros[].id` | `confhd.dat` › `codigo_usina`, `confhd.dat` › `usina_existente`, `confhd.dat` › `posto`, `hidr.dat` › `produtibilidade_especifica`, `exph.dat` › `data_inicio_enchimento` *(derivado)* | Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`. |
+| `hydros[].id` | `confhd.dat` › `codigo_usina`, `confhd.dat` › `usina_existente`, `confhd.dat` › `posto`, `hidr.dat` › `produtibilidade_especifica`, `exph.dat` › `data_inicio_enchimento`, `estacao-bombeamento.csv` › `codigo_usina_origem`, `estacao-bombeamento.csv` › `codigo_usina_destino` *(derivado)* | Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`. Com o switch de bombeamento ligado, usinas de origem ou destino de uma estação de bombeamento nunca são fictícias. |
 | `hydros[].name` | `confhd.dat` › `nome_usina` | Nome da usina em `confhd.dat`, sem espaços nas extremidades. |
 | `hydros[].operational_start_date` | `dger.dat` › `ano_inicial_historico`, `exph.dat` › `data_inicio_enchimento`, `exph.dat` › `duracao_enchimento` *(derivado)* | Usinas existentes: 1º de janeiro de `ano_inicial_historico` (1931 se ausente). Usina NE em enchimento: primeiro dia do mês em que o enchimento termina (`data_inicio_enchimento` mais `duracao_enchimento` meses). No Novomodelo é chave de ordenação, não porta de entrada em operação. |
 | `hydros[].downstream_id` | `confhd.dat` › `codigo_usina_jusante`, `confhd.dat` › `usina_existente`, `confhd.dat` › `posto`, `hidr.dat` › `produtibilidade_especifica`, `exph.dat` › `data_inicio_enchimento` *(derivado)* | Id Novomodelo da próxima usina real a jusante. A cadeia `codigo_usina_jusante` é percorrida de forma transparente através de usinas fictícias e NE/NC; quando o jusante é 0 mas uma usina fictícia compartilha o `posto` da usina, ela é tomada como elo implícito da cascata. Nulo quando a cascata termina no mar. |
@@ -428,6 +433,27 @@ Uma fonte não controlável por par (`codigo_submercado`, `indice_bloco`) da ger
 | `non_controllable_sources[].bus_id` | `sistema.dat` › `geracao_usinas_nao_simuladas · codigo_submercado` *(derivado)* | Id Novomodelo do submercado do grupo. |
 | `non_controllable_sources[].max_generation_mw` | `sistema.dat` › `geracao_usinas_nao_simuladas · valor` | Maior `valor` não nulo do grupo dentro do horizonte; a disponibilidade por estágio (`valor` / máximo) vai para `scenarios/non_controllable_stats.parquet`. |
 | `non_controllable_sources[].allow_curtailment` | — *(constante)* | Sempre `false`: o NEWAVE abate a geração não simulada do mercado antes do despacho, logo ela é obrigatória; permitir corte desviava o despacho hidráulico. |
+
+### `system/pumping_stations.json`
+
+**Lê:** `estacao-bombeamento.csv` (opcional), `estacao-bombeamento-submercado.csv` (opcional), `confhd.dat`, `dger.dat`  
+**Quando:** switch bombeamento ligado e arquivo estacao-bombeamento.csv presente  
+**Esquema:** [pumping_stations.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/pumping_stations.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/pumping.py`
+
+Estações de bombeamento convertidas dos arquivos LIBs. Usinas origem e destino são preservadas no filtro de fictícias.
+
+| Campo | Origem | Transformação |
+| --- | --- | --- |
+| `pumping_stations` | `estacao-bombeamento.csv` › `estacao_bombeamento` | Lista de estações; vazia quando o switch está desligado ou arquivo ausente. |
+| `pumping_stations[].id` | `estacao-bombeamento.csv` › `codigo_estacao` *(derivado; condicional: lista não vazia)* | Id 0-based, ordenado por `codigo_estacao` crescente. |
+| `pumping_stations[].name` | `estacao-bombeamento.csv` › `nome_estacao` *(condicional: lista não vazia)* | Nome da estação, sem espaços nas pontas. |
+| `pumping_stations[].operational_start_date` | `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `mes_inicio_estudo` *(derivado; condicional: lista não vazia)* | 1º dia do mês de início do estudo; estações não têm data de entrada própria. |
+| `pumping_stations[].bus_id` | `estacao-bombeamento-submercado.csv` › `codigo_submercado` *(derivado; condicional: lista não vazia)* | Id da barra do submercado via o mapa de buses. |
+| `pumping_stations[].source_hydro_id` | `estacao-bombeamento.csv` › `codigo_usina_origem` *(derivado; condicional: lista não vazia)* | Id da usina de origem (jusante) via o mapa de hidros. |
+| `pumping_stations[].destination_hydro_id` | `estacao-bombeamento.csv` › `codigo_usina_destino` *(derivado; condicional: lista não vazia)* | Id da usina de destino (montante) via o mapa de hidros. |
+| `pumping_stations[].consumption_mw_per_m3s` | `estacao-bombeamento.csv` › `consumo_estacao` *(condicional: lista não vazia)* | Taxa de consumo elétrico por vazão bombeada. |
+| `pumping_stations[].flow.min_m3s` | — *(constante; condicional: lista não vazia)* | Sempre 0.0; o registro de estação não define mínimo. |
+| `pumping_stations[].flow.max_m3s` | `estacao-bombeamento.csv` › `bombeamento_maximo` *(condicional: lista não vazia)* | Vazão máxima bombeável. |
 
 ### `scenarios/inflow_history.parquet`
 
@@ -572,6 +598,22 @@ Uma linha base por (linha, estágio) com os limites de intercâmbio do mês, mai
 | `direct_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `patamar.dat` › `intercambio_patamares · valor` | Linha base: limite menor→maior código no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano. |
 | `reverse_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `patamar.dat` › `intercambio_patamares · valor` | Mesma regra no sentido maior→menor código (fator de `intercambio_patamares` com de > para). |
 
+### `constraints/pumping_bounds.parquet`
+
+**Lê:** `estacao-bombeamento.csv` (opcional), `estacao-bombeamento-submercado.csv` (opcional), `confhd.dat`, `dger.dat`, `patamar.dat`  
+**Quando:** switch bombeamento ligado e limites por período/patamar presentes  
+**Código:** `src/novomodelo_bridge/newave/converters/pumping.py`
+
+Limites de vazão bombeada por estágio e patamar.
+
+| Coluna | Origem | Transformação |
+| --- | --- | --- |
+| `pumping_station_id` | `estacao-bombeamento.csv` › `codigo_estacao` *(derivado)* | Id da estação via mapa de pumping stations. |
+| `stage_id` | `estacao-bombeamento.csv` › `data_inicio`, `estacao-bombeamento.csv` › `data_fim`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `num_anos_estudo`, `dger.dat` › `num_anos_pos_estudo` *(derivado)* | Estágio 0-based derivado do intervalo [`data_inicio`, `data_fim`]; `data_fim` nula estende até o fim do horizonte. |
+| `block_id` | `estacao-bombeamento.csv` › `patamar` *(derivado)* | `patamar` menos 1. |
+| `min_m3s` | `estacao-bombeamento.csv` › `limite_inferior` | Vazão mínima bombeável no patamar. |
+| `max_m3s` | `estacao-bombeamento.csv` › `limite_superior` | Vazão máxima bombeável no patamar. |
+
 ### `constraints/penalty_overrides_bus.parquet`
 
 **Lê:** `sistema.dat`, `dger.dat`, `ree.dat`  
@@ -667,7 +709,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dger.dat`
 
-**Estado:** convertido em parte. **Lido por:** 24 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 27 arquivos gerados; ver a visão geral.
 
 O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações, CVaR, curva de aversão, simulação final, reamostragem, seleção de cortes, GNL antecipado, FPHA, outros usos, sazonalização de VMAXT/VMINT/CFUGA-CMONT, estados dos cortes). Os demais flags são agrupados abaixo por tema.
 
@@ -823,6 +865,12 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 - `mes_inicio_estudo` → `constraints/generic_constraint_bounds.parquet` › `stage_id`
 - `num_anos_estudo` → `constraints/generic_constraint_bounds.parquet` › `stage_id`
 - `num_anos_pos_estudo` → `constraints/generic_constraint_bounds.parquet` › `stage_id`
+- `ano_inicio_estudo` → `system/pumping_stations.json` › `pumping_stations[].operational_start_date`
+- `mes_inicio_estudo` → `system/pumping_stations.json` › `pumping_stations[].operational_start_date`
+- `ano_inicio_estudo` → `constraints/pumping_bounds.parquet` › `stage_id`
+- `mes_inicio_estudo` → `constraints/pumping_bounds.parquet` › `stage_id`
+- `num_anos_estudo` → `constraints/pumping_bounds.parquet` › `stage_id`
+- `num_anos_pos_estudo` → `constraints/pumping_bounds.parquet` › `stage_id`
 - `execução, impressão e memória (nome_caso, duracao_periodo, imprime_*, impressao_operacao/ena/convergencia/cortes_ativos_sim_final, gera_arquivo_cortes_unico, mantem_arquivos_*, alocacao_memoria_*, memoria_calculo_cortes, armazenamento_local_arquivos_temporarios, utiliza_gerenciamento_pls, comunicacao_dois_niveis, intervalo_para_gravar, tamanho_registro_arquivo_historico, consulta_fcf)` — *não lido.* Controles de relatório, disco e memória do executável NEWAVE. Não têm contraparte no caso Novomodelo.
 - `convergência e gestão de cortes (tolerancia, delta_zinf, delta_zsup, deltas_consecutivos, converge_no_zero, num_minimo_iteracoes, inicio_teste_convergencia, desconsidera_convergencia_estatistica, considera_zsup_min_convergencia, iteracao_para_simulacao_final, aproveitamento_bases_backward, janela_de_cortes, periodos_manutencao_cortes, eliminacao_cortes, fcf_pos_estudo, mes_inicio_pre_estudo)` — *não lido.* O bridge fixa apenas `iteration_limit` (de `num_max_iteracoes`) e o liga/desliga da seleção de cortes; critérios de parada por gap e janelas de cortes ficam nos defaults do Novomodelo. `num_anos_pre_estudo` é convertido em `pre_study_stages`, mas `mes_inicio_pre_estudo` não é lido.
 - `modelo estocástico de afluências (tipo_geracao_enas, matriz_correlacao_espacial, reducao_automatica_ordem, considera_tendencia_hidrologica_calculo_politica, considera_tendencia_hidrologica_sim_final, tipo_reamostragem_cenarios, passo_reamostragem_cenarios, momento_reamostragem, aberturas_variaveis, num_anos_pos_sim_final, agregacao_simulacao_final, simulacao_final_com_data, representacao_agregacao, el_nino, enso)` — *não lido.* O Novomodelo estima o PAR(p) a partir de `scenarios/inflow_history.parquet` com sua própria seleção de ordem (`estimation.order_selection`); só `ordem_maxima_parp`, `consideracao_media_anual_afluencias`, `num_series_sinteticas` e `considera_reamostragem_cenarios` são espelhados. A tendência hidrológica é sempre emitida (`recent_observations`) quando `vazpast.dat` existe, sem consultar os flags.
@@ -831,7 +879,7 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 
 ### `confhd.dat`
 
-**Estado:** convertido em parte. **Lido por:** 14 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 16 arquivos gerados; ver a visão geral.
 
 Entram no caso as usinas em operação e não fictícias — `usina_existente` igual a `EX` ou a `EE` (existente em expansão) —, mais as usinas `NE` com registro de enchimento de volume morto em `exph.dat`. A usina `EE` opera desde o primeiro estágio e sua capacidade cresce conforme as máquinas de `exph.dat` entram.
 
@@ -1023,7 +1071,7 @@ Todas as colunas de `usinas` são lidas (potência, FCMAX, TEIF, IP, GTMIN por m
 
 ### `patamar.dat`
 
-**Estado:** convertido. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `constraints/line_bounds.parquet`, `initial_conditions.json`, `scenarios/load_factors.json`, `scenarios/non_controllable_factors.json`, `stages.json`, `system/thermals.json`.
+**Estado:** convertido. **Lido por:** 9 arquivos gerados; ver a visão geral.
 
 - `numero_patamares` → `stages.json` › `stages[].blocks[].id`
 - `numero_patamares` → `stages.json` › `stages[].blocks[].name`
@@ -1590,7 +1638,7 @@ Localizado pela chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` de `indi
 - `HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a4` → `system/tailrace_curves.parquet` › `coefficient_4`
 - `HidreletricaCurvaJusanteAfogamentoExplicitoPadrao · HidreletricaCurvaJusanteAfogamentoExplicitoUsina` — *não lido.* Flag de afogamento explícito do canal de fuga. O Novomodelo escolhe a família pelo nível de referência de jusante; o flag não é consultado.
 - `HidreletricaPerdaHidraulicaGrade · HidreletricaProdutibilidadeEspecificaGrade` — *não lido.* Grades de perda hidráulica e de produtibilidade específica por turbinamento. O bridge usa os valores constantes do `hidr.dat` (`perdas`, `tipo_perda`, `produtibilidade_especifica`).
-- `VolumeReferencialPeriodo · VolumeReferencialTipoPadrao · EstacaoBombeamento*` — *não lido.* Volumes de referência por período e estações de bombeamento. O volume de referência vem de `hidr.dat`/`volref_saz.dat`; bombeamento não é modelado.
+- `VolumeReferencialPeriodo · VolumeReferencialTipoPadrao` — *não lido.* Volumes de referência por período. O volume de referência vem de `hidr.dat`/`volref_saz.dat`.
 
 ### `tratamento-fpha.csv`
 
@@ -1623,6 +1671,32 @@ Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por 
 - `RE-LIM-FORM-PER-PAT · lim_sup` → `constraints/generic_constraint_bounds.parquet` › `bound_upper`
 - `funções de fórmula além de ger_usih e ener_interc` — *não lido.* Só termos `ger_usih(usina)` e `ener_interc(de, para)` são traduzidos para `hydro_generation` e `line_direct`/`line_reverse`; qualquer outra função (térmica, eólica, carga) é descartada silenciosamente pelo parser de fórmula.
 - `registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*` — *não lido.* Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O parser ignora toda linha cujo primeiro campo não seja `RE`, `RE-HORIZ-PER` ou `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`.
+
+### `estacao-bombeamento.csv`
+
+**Estado:** convertido. **Lido por:** `constraints/pumping_bounds.parquet`, `penalties.json`, `system/hydros.json`, `system/pumping_stations.json`.
+
+- `codigo_usina_origem` → `system/hydros.json` › `hydros[].id`
+- `codigo_usina_destino` → `system/hydros.json` › `hydros[].id`
+- `estacao_bombeamento` → `system/pumping_stations.json` › `pumping_stations`
+- `codigo_estacao` → `system/pumping_stations.json` › `pumping_stations[].id`
+- `nome_estacao` → `system/pumping_stations.json` › `pumping_stations[].name`
+- `codigo_usina_origem` → `system/pumping_stations.json` › `pumping_stations[].source_hydro_id`
+- `codigo_usina_destino` → `system/pumping_stations.json` › `pumping_stations[].destination_hydro_id`
+- `consumo_estacao` → `system/pumping_stations.json` › `pumping_stations[].consumption_mw_per_m3s`
+- `bombeamento_maximo` → `system/pumping_stations.json` › `pumping_stations[].flow.max_m3s`
+- `codigo_estacao` → `constraints/pumping_bounds.parquet` › `pumping_station_id`
+- `data_inicio` → `constraints/pumping_bounds.parquet` › `stage_id`
+- `data_fim` → `constraints/pumping_bounds.parquet` › `stage_id`
+- `patamar` → `constraints/pumping_bounds.parquet` › `block_id`
+- `limite_inferior` → `constraints/pumping_bounds.parquet` › `min_m3s`
+- `limite_superior` → `constraints/pumping_bounds.parquet` › `max_m3s`
+
+### `estacao-bombeamento-submercado.csv`
+
+**Estado:** convertido. **Lido por:** `constraints/pumping_bounds.parquet`, `system/pumping_stations.json`.
+
+- `codigo_submercado` → `system/pumping_stations.json` › `pumping_stations[].bus_id`
 
 ### `caso.dat`
 
@@ -1782,7 +1856,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `re.dat` › `restricoes · motivo` — *não lido.* Justificativa textual da restrição; sem contraparte.
 - `polinjus.csv` › `HidreletricaCurvaJusanteAfogamentoExplicitoPadrao · HidreletricaCurvaJusanteAfogamentoExplicitoUsina` — *não lido.* Flag de afogamento explícito do canal de fuga. O Novomodelo escolhe a família pelo nível de referência de jusante; o flag não é consultado.
 - `polinjus.csv` › `HidreletricaPerdaHidraulicaGrade · HidreletricaProdutibilidadeEspecificaGrade` — *não lido.* Grades de perda hidráulica e de produtibilidade específica por turbinamento. O bridge usa os valores constantes do `hidr.dat` (`perdas`, `tipo_perda`, `produtibilidade_especifica`).
-- `polinjus.csv` › `VolumeReferencialPeriodo · VolumeReferencialTipoPadrao · EstacaoBombeamento*` — *não lido.* Volumes de referência por período e estações de bombeamento. O volume de referência vem de `hidr.dat`/`volref_saz.dat`; bombeamento não é modelado.
+- `polinjus.csv` › `VolumeReferencialPeriodo · VolumeReferencialTipoPadrao` — *não lido.* Volumes de referência por período. O volume de referência vem de `hidr.dat`/`volref_saz.dat`.
 - `tratamento-fpha.csv` › `linhas por usina (sufixo diferente de -PADRAO)` — *não lido.* Ajustes do método de redução de cortes por usina; o Novomodelo só aceita um método por caso.
 - `restricao-eletrica.csv` › `funções de fórmula além de ger_usih e ener_interc` — *não lido.* Só termos `ger_usih(usina)` e `ener_interc(de, para)` são traduzidos para `hydro_generation` e `line_direct`/`line_reverse`; qualquer outra função (térmica, eólica, carga) é descartada silenciosamente pelo parser de fórmula.
 - `restricao-eletrica.csv` › `registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*` — *não lido.* Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O parser ignora toda linha cujo primeiro campo não seja `RE`, `RE-HORIZ-PER` ou `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`.

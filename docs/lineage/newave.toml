@@ -437,6 +437,8 @@ reads = [
   { file = "confhd" },
   { file = "modif" },
   { file = "exph" },
+  { file = "dger" },
+  { file = "estacao_bombeamento" },
 ]
 summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalidades internas do NEWAVE (manual v30, §3.24) e penalidades de `penalid.dat` convertidas de R$/MWh para o domínio de vazão com as produtibilidades do SIN."
 
@@ -1437,6 +1439,7 @@ reads = [
   { file = "exph" },
   { file = "dger" },
   { file = "volref_saz" },
+  { file = "estacao_bombeamento" },
 ]
 summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX` ou `EE` — e não fictícias, mais usinas NE com enchimento de volume morto em `exph.dat`), com o cadastro de `hidr.dat` já corrigido pelos registros permanentes de `modif.dat`, ordenada pelo id Novomodelo."
 
@@ -1448,9 +1451,11 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "confhd", item = "posto" },
     { file = "hidr", item = "produtibilidade_especifica" },
     { file = "exph", item = "data_inicio_enchimento" },
+    { file = "estacao_bombeamento", item = "codigo_usina_origem" },
+    { file = "estacao_bombeamento", item = "codigo_usina_destino" },
   ]
   status = "derived"
-  how = "Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`."
+  how = "Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`. Com o switch de bombeamento ligado, usinas de origem ou destino de uma estação de bombeamento nunca são fictícias."
 
   [[output.field]]
   path = "hydros[].name"
@@ -2829,6 +2834,142 @@ summary = "Limites por restrição, estágio e patamar das três famílias, conc
   ]
   how = "Elétricas: `lim_sup` de `restricao-eletrica.csv` (quando maior que −1e29) nos estágios individualizados; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos."
 
+# =============================================================================
+# system/pumping_stations.json
+# =============================================================================
+[[output]]
+path = "system/pumping_stations.json"
+kind = "json"
+when = "switch bombeamento ligado e arquivo estacao-bombeamento.csv presente"
+module = "src/novomodelo_bridge/newave/converters/pumping.py"
+reads = [
+  { file = "estacao_bombeamento" },
+  { file = "estacao_bombeamento_submercado" },
+  { file = "confhd" },
+  { file = "dger" },
+]
+summary = "Estações de bombeamento convertidas dos arquivos LIBs. Usinas origem e destino são preservadas no filtro de fictícias."
+
+  [[output.field]]
+  path = "pumping_stations"
+  from = [ { file = "estacao_bombeamento", item = "estacao_bombeamento" } ]
+  how = "Lista de estações; vazia quando o switch está desligado ou arquivo ausente."
+
+  [[output.field]]
+  path = "pumping_stations[].id"
+  from = [ { file = "estacao_bombeamento", item = "codigo_estacao" } ]
+  status = "derived"
+  when = "lista não vazia"
+  how = "Id 0-based, ordenado por `codigo_estacao` crescente."
+
+  [[output.field]]
+  path = "pumping_stations[].name"
+  from = [ { file = "estacao_bombeamento", item = "nome_estacao" } ]
+  when = "lista não vazia"
+  how = "Nome da estação, sem espaços nas pontas."
+
+  [[output.field]]
+  path = "pumping_stations[].operational_start_date"
+  from = [
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "lista não vazia"
+  how = "1º dia do mês de início do estudo; estações não têm data de entrada própria."
+
+  [[output.field]]
+  path = "pumping_stations[].bus_id"
+  from = [ { file = "estacao_bombeamento_submercado", item = "codigo_submercado" } ]
+  status = "derived"
+  when = "lista não vazia"
+  how = "Id da barra do submercado via o mapa de buses."
+
+  [[output.field]]
+  path = "pumping_stations[].source_hydro_id"
+  from = [ { file = "estacao_bombeamento", item = "codigo_usina_origem" } ]
+  status = "derived"
+  when = "lista não vazia"
+  how = "Id da usina de origem (jusante) via o mapa de hidros."
+
+  [[output.field]]
+  path = "pumping_stations[].destination_hydro_id"
+  from = [ { file = "estacao_bombeamento", item = "codigo_usina_destino" } ]
+  status = "derived"
+  when = "lista não vazia"
+  how = "Id da usina de destino (montante) via o mapa de hidros."
+
+  [[output.field]]
+  path = "pumping_stations[].consumption_mw_per_m3s"
+  from = [ { file = "estacao_bombeamento", item = "consumo_estacao" } ]
+  when = "lista não vazia"
+  how = "Taxa de consumo elétrico por vazão bombeada."
+
+  [[output.field]]
+  path = "pumping_stations[].flow.min_m3s"
+  from = []
+  status = "constant"
+  when = "lista não vazia"
+  how = "Sempre 0.0; o registro de estação não define mínimo."
+
+  [[output.field]]
+  path = "pumping_stations[].flow.max_m3s"
+  from = [ { file = "estacao_bombeamento", item = "bombeamento_maximo" } ]
+  when = "lista não vazia"
+  how = "Vazão máxima bombeável."
+
+# =============================================================================
+# constraints/pumping_bounds.parquet
+# =============================================================================
+[[output]]
+path = "constraints/pumping_bounds.parquet"
+kind = "parquet"
+when = "switch bombeamento ligado e limites por período/patamar presentes"
+module = "src/novomodelo_bridge/newave/converters/pumping.py"
+reads = [
+  { file = "estacao_bombeamento" },
+  { file = "estacao_bombeamento_submercado" },
+  { file = "confhd" },
+  { file = "dger" },
+  { file = "patamar" },
+]
+summary = "Limites de vazão bombeada por estágio e patamar."
+
+  [[output.field]]
+  path = "pumping_station_id"
+  from = [ { file = "estacao_bombeamento", item = "codigo_estacao" } ]
+  status = "derived"
+  how = "Id da estação via mapa de pumping stations."
+
+  [[output.field]]
+  path = "stage_id"
+  from = [
+    { file = "estacao_bombeamento", item = "data_inicio" },
+    { file = "estacao_bombeamento", item = "data_fim" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "num_anos_estudo" },
+    { file = "dger", item = "num_anos_pos_estudo" },
+  ]
+  status = "derived"
+  how = "Estágio 0-based derivado do intervalo [`data_inicio`, `data_fim`]; `data_fim` nula estende até o fim do horizonte."
+
+  [[output.field]]
+  path = "block_id"
+  from = [ { file = "estacao_bombeamento", item = "patamar" } ]
+  status = "derived"
+  how = "`patamar` menos 1."
+
+  [[output.field]]
+  path = "min_m3s"
+  from = [ { file = "estacao_bombeamento", item = "limite_inferior" } ]
+  how = "Vazão mínima bombeável no patamar."
+
+  [[output.field]]
+  path = "max_m3s"
+  from = [ { file = "estacao_bombeamento", item = "limite_superior" } ]
+  how = "Vazão máxima bombeável no patamar."
+
 # ===== frag_G_nw_inventory =====
 # Fragmento G — inventário de fontes NEWAVE: arquivos e registros/colunas que o
 # bridge NÃO converte. Itens convertidos são derivados dos fragmentos de campos e
@@ -3217,9 +3358,9 @@ note = "Localizado pela chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` 
   note = "Grades de perda hidráulica e de produtibilidade específica por turbinamento. O bridge usa os valores constantes do `hidr.dat` (`perdas`, `tipo_perda`, `produtibilidade_especifica`)."
 
   [[source.item]]
-  item = "VolumeReferencialPeriodo · VolumeReferencialTipoPadrao · EstacaoBombeamento*"
+  item = "VolumeReferencialPeriodo · VolumeReferencialTipoPadrao"
   status = "unread"
-  note = "Volumes de referência por período e estações de bombeamento. O volume de referência vem de `hidr.dat`/`volref_saz.dat`; bombeamento não é modelado."
+  note = "Volumes de referência por período. O volume de referência vem de `hidr.dat`/`volref_saz.dat`."
 
 [[source]]
 file = "tratamento_fpha"

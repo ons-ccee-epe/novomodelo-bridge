@@ -17,6 +17,8 @@ from pathlib import Path
 from novomodelo_bridge.core.diagnostics import Diagnostic
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.libs_index import (
+    ESTACAO_BOMBEAMENTO,
+    ESTACAO_BOMBEAMENTO_SUBMERCADO,
     HIDRELETRICA_CURVAJUSANTE,
     HIDRELETRICA_FPHA_REDUCAO_CORTES,
     INDEX_FILENAME,
@@ -41,6 +43,8 @@ _NOT_FIXED_COLUMN = frozenset(
         "polinjus",
         "tratamento_fpha",
         "restricao_eletrica",
+        "estacao_bombeamento",
+        "estacao_bombeamento_submercado",
     }
 )
 
@@ -119,6 +123,8 @@ class NewaveFiles:
     polinjus: Path | None
     tratamento_fpha: Path | None
     restricao_eletrica: Path | None
+    estacao_bombeamento: Path | None
+    estacao_bombeamento_submercado: Path | None
 
     @property
     def fixed_column_files(self) -> list[Path]:
@@ -203,6 +209,8 @@ class NewaveFiles:
         polinjus = libs.path(HIDRELETRICA_CURVAJUSANTE)
         tratamento_fpha = libs.path(HIDRELETRICA_FPHA_REDUCAO_CORTES)
         restricao_eletrica = libs.path(RESTRICAO_ELETRICA_ESPECIAL)
+        estacao_bombeamento = libs.path(ESTACAO_BOMBEAMENTO)
+        estacao_bombeamento_submercado = libs.path(ESTACAO_BOMBEAMENTO_SUBMERCADO)
 
         # --- Step 5: optional files from Arquivos ------------------------------
         def _opt(attr: str) -> Path | None:
@@ -264,6 +272,8 @@ class NewaveFiles:
             polinjus=polinjus,
             tratamento_fpha=tratamento_fpha,
             restricao_eletrica=restricao_eletrica,
+            estacao_bombeamento=estacao_bombeamento,
+            estacao_bombeamento_submercado=estacao_bombeamento_submercado,
         )
 
 
@@ -282,6 +292,16 @@ def unindexed_libs_diagnostic(files: NewaveFiles) -> Diagnostic | None:
             "restricao-eletrica.csv",
             RESTRICAO_ELETRICA_ESPECIAL,
             files.restricao_eletrica,
+        ),
+        ConventionalFile(
+            "estacao-bombeamento.csv",
+            ESTACAO_BOMBEAMENTO,
+            files.estacao_bombeamento,
+        ),
+        ConventionalFile(
+            "estacao-bombeamento-submercado.csv",
+            ESTACAO_BOMBEAMENTO_SUBMERCADO,
+            files.estacao_bombeamento_submercado,
         ),
     ]
     return unindexed_files_diagnostic(
