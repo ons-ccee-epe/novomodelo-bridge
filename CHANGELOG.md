@@ -104,6 +104,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert newave` gives every plant on a shared gauging station its own
+  inflow series, and zero inflow on the artificial gauge.** Inflows were
+  attributed per station, so when several plants shared one, only the last
+  received a history and the others failed Cobre's validation, and the upstream
+  stations of all of them were subtracted from that one plant. A deck that puts
+  several plants on posto 300, NEWAVE's artificial gauge for plants without
+  natural inflow, gave one plant a negative series and left the rest without
+  history. Each plant now subtracts only its own upstream stations; a plant on
+  posto 300 gets zero history, seasonal statistics and recent inflows, and an
+  artificial plant upstream is not subtracted. Both tracks list the plants on
+  the artificial gauge, and warn when a gauged plant sits below an artificial
+  plant that has gauged plants further upstream. Cases without shared stations
+  convert as before.
 - **NEWAVE: Hydro plants referenced by pumping stations are no longer
   classified as fictitious.** Previously, zero-productivity reservoirs used
   for pumped storage (e.g., VIGÁRIO) were removed, which could break cascade

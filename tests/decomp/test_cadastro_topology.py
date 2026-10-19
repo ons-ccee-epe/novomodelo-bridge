@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 from idecomp.decomp.modelos.dadger import ACNUMJUS, ACNUMPOS
 
+from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
@@ -403,3 +404,22 @@ def test_temporal_gauge_warns_uses_stage0(caplog: pytest.LogCaptureFixture) -> N
 
     assert any("varies across stages" in record.message for record in caplog.records)
     assert station_by_code[1] == "11"
+
+
+def test_plants_on_the_artificial_gauge_are_reported() -> None:
+    hidr = _hidr_frame(
+        {
+            1: _plant_row(jusante=3, posto=300, name="A"),
+            2: _plant_row(jusante=3, posto=300, name="B"),
+            3: _plant_row(jusante=0, posto=13, name="C"),
+        }
+    )
+    effective, _ = build_effective_cadastro(_FakeDadger({}), hidr, _calendar())
+    vazoes = _StubVazoes({"300": (0.0, 0.0), "13": (300.0, 310.0)})
+    case = make_decomp_case(Path("unused"), calendar=_calendar())
+    with collect() as diagnostics:
+        convert_external_inflows(case, _ABC_ID_MAP, vazoes=vazoes, effective=effective)
+    reported = [d for d in diagnostics if d.code == "artificial-gauge-plants"]
+    assert len(reported) == 1
+    assert reported[0].table is not None
+    assert reported[0].table.rows == [[1, "A", 0], [2, "B", 1]]

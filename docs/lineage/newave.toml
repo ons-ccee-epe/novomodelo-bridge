@@ -705,7 +705,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   ]
   status = "derived"
   when = "somente quando `vazpast.dat` está presente com dados de tendência"
-  how = "`codigo_usina` de `vazpast.dat` é o posto; mapeado ao id Novomodelo pela coluna `posto` de `confhd.dat`. Ordenado pelo id."
+  how = "`codigo_usina` de `vazpast.dat` é o posto; cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id."
 
   [[output.field]]
   path = "recent_observations[].start_date"
@@ -737,7 +737,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
     { file = "confhd", item = "usinas · codigo_usina_jusante" },
   ]
   when = "somente quando `vazpast.dat` está presente com dados de tendência"
-  how = "Vazão natural do posto convertida em incremental subtraindo, mês a mês, a vazão natural dos postos imediatamente a montante na cascata de `codigo_usina_jusante`."
+  how = "Vazão natural do posto convertida em incremental subtraindo, mês a mês, a vazão natural dos postos das usinas imediatamente a montante da usina na cascata de `codigo_usina_jusante`, cada posto uma vez. Usina no posto artificial (300) recebe 0 nos 12 meses, e um posto artificial a montante não é subtraído."
 
 # =============================================================================
 # system/buses.json
@@ -2359,7 +2359,7 @@ summary = "Histórico de vazões incrementais mensais de `vazoes.dat`, uma linha
     { file = "confhd", item = "posto" },
   ]
   status = "derived"
-  how = "Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). A coluna de `vazoes.dat` é escolhida pelo `posto` da usina em `confhd.dat`; a série é emitida uma vez por posto, de modo que, se dois códigos ativos compartilham o posto, só o último na ordem de `confhd.dat` recebe linhas."
+  how = "Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). A coluna de `vazoes.dat` é escolhida pelo `posto` da usina em `confhd.dat`; cada usina ativa recebe sua própria série, inclusive quando várias compartilham o posto."
 
   [[output.field]]
   path = "start_date"
@@ -2383,7 +2383,7 @@ summary = "Histórico de vazões incrementais mensais de `vazoes.dat`, uma linha
     { file = "dger", item = "ano_inicio_estudo" },
     { file = "dger", item = "mes_inicio_estudo" },
   ]
-  how = "Vazão incremental (m³/s): vazão natural do posto menos a soma das vazões naturais dos postos imediatamente a montante na cascata de `confhd.dat` (usinas NE/NC no caminho são atravessadas; usinas NE com enchimento em `exph.dat` contam como nó da cascata). A série é truncada no mês anterior ao início do estudo."
+  how = "Vazão incremental (m³/s): vazão natural do posto menos a soma das vazões naturais dos postos das usinas imediatamente a montante da usina na cascata de `confhd.dat`, cada posto uma vez (usinas NE/NC no caminho são atravessadas; usinas NE com enchimento em `exph.dat` contam como nó da cascata). Usina no posto artificial (300), sem posto fluviométrico, tem vazão natural nula: recebe série zero, sem subtração, e um posto artificial a montante não é subtraído. A série é truncada no mês anterior ao início do estudo."
 
 # ---------------------------------------------------------------------------
 # scenarios/inflow_seasonal_stats.parquet
@@ -2428,7 +2428,7 @@ summary = "Média e desvio-padrão da vazão incremental histórica por usina e 
     { file = "dger", item = "ano_inicio_estudo" },
     { file = "dger", item = "mes_inicio_estudo" },
   ]
-  how = "Média, ao longo dos anos do histórico (até o mês anterior ao início do estudo), da vazão incremental do posto da usina no mês-calendário do estágio. A vazão incremental é a natural menos as naturais dos postos imediatamente a montante em `confhd.dat`. Usina cujo posto não tem coluna em `vazoes.dat` recebe 0."
+  how = "Média, ao longo dos anos do histórico (até o mês anterior ao início do estudo), da vazão incremental da usina no mês-calendário do estágio, calculada como em `scenarios/inflow_history.parquet`. Usina no posto artificial (300), ou cujo posto não tem coluna em `vazoes.dat`, recebe 0."
 
   [[output.field]]
   path = "std_m3s"
@@ -2437,7 +2437,7 @@ summary = "Média e desvio-padrão da vazão incremental histórica por usina e 
     { file = "confhd", item = "posto" },
     { file = "confhd", item = "codigo_usina_jusante" },
   ]
-  how = "Desvio-padrão amostral (n − 1) da mesma amostra de vazões incrementais do mês-calendário; 0 quando há uma única observação ou quando o posto não tem série."
+  how = "Desvio-padrão amostral (n − 1) da mesma amostra de vazões incrementais do mês-calendário; 0 quando há uma única observação, quando o posto não tem série ou quando a usina está no posto artificial (300)."
 
 # ---------------------------------------------------------------------------
 # scenarios/load_seasonal_stats.parquet
