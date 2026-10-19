@@ -43,6 +43,12 @@ summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de it
   how = "Sempre `enumerated`: a simulação percorre cada caminho raiz-folha do grafo de nós com a probabilidade do próprio nó."
 
   [[output.field]]
+  path = "simulation.cut_set"
+  from = []
+  status = "constant"
+  how = "Sempre `all`: a simulação usa todos os cortes gerados no treinamento; a conversão não ativa seleção de cortes."
+
+  [[output.field]]
   path = "training.scenario_source.inflow.scheme"
   from = []
   status = "constant"

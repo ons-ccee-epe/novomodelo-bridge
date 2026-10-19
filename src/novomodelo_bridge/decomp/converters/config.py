@@ -39,6 +39,7 @@ from novomodelo_bridge.core.penalties import (
     PINT,
     hydro_penalty_costs,
 )
+from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -127,6 +128,7 @@ def convert_config(case: DecompCase) -> dict:
         "simulation": {
             "enabled": True,
             "selection": {"method": "enumerated"},
+            "cut_set": SIMULATION_CUT_SET,
         },
     }
 

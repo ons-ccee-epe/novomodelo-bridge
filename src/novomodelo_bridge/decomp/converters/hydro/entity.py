@@ -181,8 +181,7 @@ def _evaporation_coefficients_mm(hidr: pd.DataFrame, code: int) -> list[float] |
     novomodelo (>= 0.14) computes the evaporation-outflow model internally from
     these monthly rates and the reservoir area geometry
     (``hydro_geometry.parquet``, emitted by the FPHA path), scaling each stage
-    to its ``stage_hours / month_hours`` share of the calendar month — the C11
-    fix (pre-0.14 deposited a whole month's evaporation on every stage). The
+    to its ``stage_hours / month_hours`` share of the calendar month. The
     bridge supplies only the monthly mm rates.
     """
     if code not in hidr.index or not all(

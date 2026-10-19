@@ -68,6 +68,12 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   how = "Sempre `sampled`."
 
   [[output.field]]
+  path = "simulation.cut_set"
+  from = []
+  status = "constant"
+  how = "Sempre `all`: a simulação usa todos os cortes gerados no treinamento. A seleção de cortes do NEWAVE é exata e só reduz o tempo de solução dos PLs; a simulação final avalia a política de todos os cortes."
+
+  [[output.field]]
   path = "simulation.selection.num_scenarios"
   from = [
     { file = "dger", item = "num_series_sinteticas" },

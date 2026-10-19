@@ -15,6 +15,7 @@ from datetime import date
 from inewave.newave import Dger
 
 from novomodelo_bridge.core.penalties import INFLOW_NON_NEGATIVITY_METHOD
+from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
 from novomodelo_bridge.core.season_calendar import (
     block_names,
     monthly_season_definitions,
@@ -598,6 +599,7 @@ def convert_config(case: NewaveCase) -> dict:
     simulation_section: dict = {
         "enabled": simulation_enabled,
         "selection": {"method": "sampled", "num_scenarios": num_series},
+        "cut_set": SIMULATION_CUT_SET,
     }
     if simulation_enabled:
         if tipo_simulacao_final == 2:

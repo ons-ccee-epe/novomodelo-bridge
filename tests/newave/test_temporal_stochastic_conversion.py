@@ -494,6 +494,17 @@ class TestConvertConfig:
         result = convert_config(case)
         assert result["simulation"]["enabled"] is True
 
+    def test_simulation_uses_every_cut(self, tmp_path) -> None:
+        dger = _make_dger_mock(
+            selecao_de_cortes_forward=1, selecao_de_cortes_backward=1
+        )
+        case = make_case(tmp_path, dger=dger)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        result = convert_config(case)
+        assert result["simulation"]["cut_set"] == "all"
+
     def test_num_scenarios_from_num_series(self, tmp_path) -> None:
         dger = _make_dger_mock(num_series=500)
         case = make_case(tmp_path, dger=dger)

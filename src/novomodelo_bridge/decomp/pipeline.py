@@ -1843,7 +1843,7 @@ def _emit_and_write(
 
     # Milestone-deferral warning. Boundary FCF is imported by default now (the
     # CLI runs the importer after this converter returns), reservoir evaporation
-    # is converted (novomodelo >= 0.14's C11 fix), and windowed inflow inputs are a
+    # is converted, and windowed inflow inputs are a
     # source-model concept that does not apply to the external explicit tree the
     # DECOMP path emits — so none of those are deferred. Only VI water travel
     # time remains deferred (a tracked novomodelo-gap; see the note in
