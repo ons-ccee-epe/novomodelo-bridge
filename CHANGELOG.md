@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The source models' cut selection only speeds up the LP solves, and their
   final simulation evaluates the policy of all the cuts; cobre's `active`
   set would keep only the cuts its selection kept at the last iteration.
+  `convert newave` warns when `dger.dat` turns on the cut window
+  (`janela_de_cortes`), which Cobre does not have: every cut is kept.
 - **Both tracks supply each plant's own stored-energy productivity to
   cobre.** `system/hydro_energy_productivity.parquet` has a new
   `integrated_equivalent_productivity_mw_per_m3s` column, which cobre now

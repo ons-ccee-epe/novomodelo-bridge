@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import calendar
 import datetime
+import logging
 import struct
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -62,6 +63,7 @@ def _make_dger_mock(
     selecao_de_cortes_backward: int = 1,
     ordem_maxima_parp: int = 6,
     impressao_estados_geracao_cortes: int | None = None,
+    janela_de_cortes: int | None = 0,
 ) -> MagicMock:
     dger = MagicMock()
     dger.mes_inicio_estudo = mes_inicio
@@ -84,6 +86,7 @@ def _make_dger_mock(
     dger.selecao_de_cortes_backward = selecao_de_cortes_backward
     dger.ordem_maxima_parp = ordem_maxima_parp
     dger.impressao_estados_geracao_cortes = impressao_estados_geracao_cortes
+    dger.janela_de_cortes = janela_de_cortes
     return dger
 
 
@@ -503,6 +506,23 @@ class TestConvertConfig:
         from novomodelo_bridge.newave.converters.temporal import convert_config
 
         result = convert_config(case)
+        assert result["simulation"]["cut_set"] == "all"
+
+    @pytest.mark.parametrize(
+        ("janela", "warned"), [(1, True), (0, False), (None, False)]
+    )
+    def test_the_cut_window_is_warned_about_and_every_cut_kept(
+        self, tmp_path, caplog, janela: int | None, warned: bool
+    ) -> None:
+        dger = _make_dger_mock(janela_de_cortes=janela)
+        case = make_case(tmp_path, dger=dger)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with caplog.at_level(logging.WARNING, logger="novomodelo_bridge"):
+            result = convert_config(case)
+
+        assert ("janela_de_cortes=1" in caplog.text) is warned
         assert result["simulation"]["cut_set"] == "all"
 
     def test_num_scenarios_from_num_series(self, tmp_path) -> None:

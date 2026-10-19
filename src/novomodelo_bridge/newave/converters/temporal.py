@@ -553,6 +553,13 @@ def convert_config(case: NewaveCase) -> dict:
             "method": "level1",
             "check_frequency": 1,
         }
+    if dger.janela_de_cortes == 1:
+        logger.warning(
+            "dger.dat turns on the cut window (janela_de_cortes=1), which "
+            "discards the cuts not used in the most recent iterations. Novomodelo has "
+            "no cut window: it keeps every cut, the exact policy the window "
+            "approximates, so the two models' policies can differ."
+        )
 
     # -- Backward-pass scheduler --
     # Opt into ``by_node`` so each backward work unit is a (trial point, opening
