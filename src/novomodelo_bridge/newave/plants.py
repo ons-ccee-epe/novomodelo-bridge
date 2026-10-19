@@ -18,12 +18,18 @@ in the LP as a ρ=0 routing/regulation reservoir. This unifies "is it fictitious
 These helpers are the one home for that filter (historically copy-pasted at ~13
 sites). They are pure functions over an already-read ``Confhd.usinas`` DataFrame
 plus the ``Hidr.cadastro`` (for the productivity test); they do **not** read
-files.
+files. :func:`fictitious_codes` classifies; the case computes it once
+(``NewaveCase.fictitious_codes``) and every other helper takes that set.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pandas as pd
+
+if TYPE_CHECKING:
+    from collections.abc import AbstractSet
 
 # Productivity at or below this is treated as "no generation" (the source model FICT
 # accounting plants carry produtibilidade_especifica == 0 exactly).
@@ -48,7 +54,12 @@ def existing_hydros(confhd_df: pd.DataFrame) -> pd.DataFrame:
     return confhd_df[_is_in_service(confhd_df)]
 
 
-def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int]:
+def fictitious_codes(
+    confhd_df: pd.DataFrame,
+    cadastro: pd.DataFrame,
+    *,
+    pumping_related_codes: AbstractSet[int],
+) -> frozenset[int]:
     """Return codes of existing plants that are fictitious accounting nodes.
 
     Structural rule: a plant is fictitious iff it generates nothing
@@ -61,6 +72,10 @@ def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int
     twin orphaned by a reduction (e.g. ``FICT.MAUA`` once ``MAUA`` is filtered out), and
     it stays in the LP.
 
+    Plants in *pumping_related_codes* (the source or destination of a pumping
+    station) are never fictitious: they are pumped-storage reservoirs that stay
+    in the model even with zero productivity.
+
     Returns an empty set when the productivity (``cadastro``) or ``posto`` data
     needed for the test is unavailable.
     """
@@ -70,7 +85,7 @@ def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int
         or cadastro.empty
         or _RHO_COL not in cadastro.columns
     ):
-        return set()  # data needed for the structural test is unavailable
+        return frozenset()  # data needed for the structural test is unavailable
     existing = existing_hydros(confhd_df)
     rho: dict[int, float] = {}
     posto: dict[int, int] = {}
@@ -81,7 +96,9 @@ def fictitious_codes(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> set[int
         rho[code] = float(cadastro.loc[code, _RHO_COL])
         posto[code] = int(row["posto"])
     generating_postos = {posto[c] for c, r in rho.items() if r > 0.0}
-    return {c for c, r in rho.items() if r == 0.0 and posto[c] in generating_postos}
+    fict = {c for c, r in rho.items() if r == 0.0 and posto[c] in generating_postos}
+
+    return frozenset(fict - pumping_related_codes)
 
 
 def filling_hydro_codes(
@@ -121,17 +138,15 @@ def filling_hydro_codes(
 
 def active_hydros(
     confhd_df: pd.DataFrame,
-    cadastro: pd.DataFrame,
+    *,
+    fictitious: AbstractSet[int],
     exph_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return the existing, non-fictitious hydro rows that enter the Novomodelo LP.
 
-    The in-service rows (:data:`IN_SERVICE_STATUSES`) minus
-    :func:`fictitious_codes`, in confhd
-    declaration order (the id-map relies on this order to assign 0-based Novomodelo
-    hydro IDs). *cadastro* (``Hidr.cadastro``) is required for the structural
-    fictitious test; with the data unavailable, no plant is classified
-    fictitious and all existing plants are returned.
+    The in-service rows (:data:`IN_SERVICE_STATUSES`) minus *fictitious* (the
+    case's :func:`fictitious_codes`), in confhd declaration order (the id-map
+    relies on this order to assign 0-based Novomodelo hydro IDs).
 
     When *exph_df* (``Exph().expansoes`` or ``None``) is supplied, the ``NE`` plants
     that carry a dead-volume filling row (:func:`filling_hydro_codes`) are also
@@ -140,10 +155,9 @@ def active_hydros(
     With ``exph_df is None`` the result is the in-service set alone — no ``NE``
     plant is admitted.
     """
-    fict = fictitious_codes(confhd_df, cadastro)
     in_service = _is_in_service(confhd_df)
-    if fict:
-        in_service = in_service & ~confhd_df["codigo_usina"].isin(fict)
+    if fictitious:
+        in_service = in_service & ~confhd_df["codigo_usina"].isin(fictitious)
     filling = filling_hydro_codes(confhd_df, exph_df)
     keep = in_service | confhd_df["codigo_usina"].isin(filling)
     return confhd_df[keep]
@@ -151,11 +165,10 @@ def active_hydros(
 
 def active_hydro_codes(
     confhd_df: pd.DataFrame,
-    cadastro: pd.DataFrame,
+    *,
+    fictitious: AbstractSet[int],
     exph_df: pd.DataFrame | None = None,
 ) -> list[int]:
     """Return ``codigo_usina`` of the active hydros in declaration order."""
-    return [
-        int(code)
-        for code in active_hydros(confhd_df, cadastro, exph_df)["codigo_usina"]
-    ]
+    active = active_hydros(confhd_df, fictitious=fictitious, exph_df=exph_df)
+    return [int(code) for code in active["codigo_usina"]]

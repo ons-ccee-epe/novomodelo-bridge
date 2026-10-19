@@ -136,7 +136,12 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # ``novomodelo_bridge.newave.converters.fict_cascade`` for the resolution rules.
     from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
-    fict_cascade = resolve_cascade(confhd_df, cadastro, filling_codes=filling_codes)
+    fict_cascade = resolve_cascade(
+        confhd_df,
+        cadastro,
+        fictitious=case.fictitious_codes,
+        filling_codes=filling_codes,
+    )
 
     # Per-hydro envelope over the head-corrected per-stage turbined caps that
     # convert_turbined_bounds_head_corrected emits into hydro_bounds.parquet.

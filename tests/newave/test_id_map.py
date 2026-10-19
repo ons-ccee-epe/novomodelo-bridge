@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -76,6 +76,8 @@ def _make_nw_files(
         polinjus=None,
         tratamento_fpha=None,
         restricao_eletrica=None,
+        estacao_bombeamento=None,
+        estacao_bombeamento_submercado=None,
     )
 
 
@@ -209,7 +211,7 @@ class TestCrossReferenceConsistency:
 
 
 # ---------------------------------------------------------------------------
-# build_id_map fictitious plant filtering
+# id-map fictitious plant filtering
 # ---------------------------------------------------------------------------
 
 
@@ -242,52 +244,34 @@ def _fict_cadastro(rho: dict[int, float]) -> pd.DataFrame:
     ).set_index("codigo_usina")
 
 
+def _build_from_frames(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> NewaveIdMap:
+    """Build the id map from in-memory frames with the structural fictitious set."""
+    from novomodelo_bridge.newave.id_map import build_id_map_from_readers
+    from novomodelo_bridge.newave.plants import fictitious_codes
+
+    confhd = MagicMock(usinas=confhd_df)
+    conft = MagicMock(usinas=pd.DataFrame({"codigo_usina": []}))
+    sistema = MagicMock(custo_deficit=None)
+    ree_file = MagicMock(rees=None)
+    fictitious = fictitious_codes(
+        confhd_df, cadastro, pumping_related_codes=frozenset()
+    )
+    return build_id_map_from_readers(
+        confhd, conft, sistema, ree_file, fictitious=fictitious
+    )
+
+
 class TestBuildIdMap:
-    """Unit tests for ``build_id_map`` fictitious-plant filtering."""
+    """Unit tests for ``build_id_map_from_readers`` fictitious-plant filtering."""
 
-    @patch("inewave.newave.Hidr")
-    @patch("inewave.newave.Ree")
-    @patch("inewave.newave.Conft")
-    @patch("inewave.newave.Sistema")
-    @patch("inewave.newave.Confhd")
-    def test_excludes_fictitious_plants(
-        self,
-        mock_confhd_cls,
-        mock_sistema_cls,
-        mock_conft_cls,
-        mock_ree_cls,
-        mock_hidr_cls,
-        tmp_path,
-    ) -> None:
+    def test_excludes_fictitious_plants(self) -> None:
         """FICT. plants must be absent from id_map.all_hydro_codes."""
-        for fname in ("confhd.dat", "conft.dat", "sistema.dat", "ree.dat"):
-            (tmp_path / fname).touch()
-
-        mock_confhd = MagicMock()
-        mock_confhd.usinas = _make_confhd_df_with_fict()
-        mock_confhd_cls.read.return_value = mock_confhd
-
         # Real twins generate; FICT plants have ρ=0 and share their posto →
         # structurally fictitious, so codes 2 and 4 are excluded.
-        mock_hidr_cls.read.return_value.cadastro = _fict_cadastro(
-            {1: 0.01, 2: 0.0, 3: 0.01, 4: 0.0}
+        id_map = _build_from_frames(
+            _make_confhd_df_with_fict(),
+            _fict_cadastro({1: 0.01, 2: 0.0, 3: 0.01, 4: 0.0}),
         )
-
-        mock_conft = MagicMock()
-        mock_conft.usinas = pd.DataFrame({"codigo_usina": []})
-        mock_conft_cls.read.return_value = mock_conft
-
-        mock_sistema = MagicMock()
-        mock_sistema.custo_deficit = None
-        mock_sistema_cls.read.return_value = mock_sistema
-
-        mock_ree = MagicMock()
-        mock_ree.rees = None
-        mock_ree_cls.read.return_value = mock_ree
-
-        from novomodelo_bridge.newave.id_map import build_id_map
-
-        id_map = build_id_map(_make_nw_files(tmp_path))
 
         # Only the two non-fictitious plants must appear.
         assert 1 in id_map.all_hydro_codes
@@ -296,28 +280,12 @@ class TestBuildIdMap:
         assert 4 not in id_map.all_hydro_codes, "FICT.CAMPO G must be excluded"
         assert len(id_map.all_hydro_codes) == 2
 
-    @patch("inewave.newave.Hidr")
-    @patch("inewave.newave.Ree")
-    @patch("inewave.newave.Conft")
-    @patch("inewave.newave.Sistema")
-    @patch("inewave.newave.Confhd")
-    def test_count_excludes_fict_plants(
-        self,
-        mock_confhd_cls,
-        mock_sistema_cls,
-        mock_conft_cls,
-        mock_ree_cls,
-        mock_hidr_cls,
-        tmp_path,
-    ) -> None:
+    def test_count_excludes_fict_plants(self) -> None:
         """15 fictitious twins among 160 existing -> 145 hydro codes in id_map.
 
         Each fictitious plant (ρ=0) shares a real generator's posto; the real
         plants get unique generating postos.
         """
-        for fname in ("confhd.dat", "conft.dat", "sistema.dat", "ree.dat"):
-            (tmp_path / fname).touch()
-
         n_real, n_fict = 145, 15
         rho: dict[int, float] = {}
         rows = []
@@ -339,68 +307,13 @@ class TestBuildIdMap:
                     "usina_existente": "EX",
                 }
             )
-        confhd_df = pd.DataFrame(rows)
-        mock_hidr_cls.read.return_value.cadastro = _fict_cadastro(rho)
-
-        mock_confhd = MagicMock()
-        mock_confhd.usinas = confhd_df
-        mock_confhd_cls.read.return_value = mock_confhd
-
-        mock_conft = MagicMock()
-        mock_conft.usinas = pd.DataFrame({"codigo_usina": []})
-        mock_conft_cls.read.return_value = mock_conft
-
-        mock_sistema = MagicMock()
-        mock_sistema.custo_deficit = None
-        mock_sistema_cls.read.return_value = mock_sistema
-
-        mock_ree = MagicMock()
-        mock_ree.rees = None
-        mock_ree_cls.read.return_value = mock_ree
-
-        from novomodelo_bridge.newave.id_map import build_id_map
-
-        id_map = build_id_map(_make_nw_files(tmp_path))
+        id_map = _build_from_frames(pd.DataFrame(rows), _fict_cadastro(rho))
         assert len(id_map.all_hydro_codes) == n_real
 
-    @patch("inewave.newave.Hidr")
-    @patch("inewave.newave.Ree")
-    @patch("inewave.newave.Conft")
-    @patch("inewave.newave.Sistema")
-    @patch("inewave.newave.Confhd")
-    def test_no_fictitious_plants_proceeds_normally(
-        self,
-        mock_confhd_cls,
-        mock_sistema_cls,
-        mock_conft_cls,
-        mock_ree_cls,
-        mock_hidr_cls,
-        tmp_path,
-    ) -> None:
+    def test_no_fictitious_plants_proceeds_normally(self) -> None:
         """When no FICT. plants exist, all existing plants are included."""
-        for fname in ("confhd.dat", "conft.dat", "sistema.dat", "ree.dat"):
-            (tmp_path / fname).touch()
-        mock_hidr_cls.read.return_value.cadastro = pd.DataFrame()
-
-        mock_confhd = MagicMock()
-        mock_confhd.usinas = _make_confhd_df()  # standard two-plant fixture, no FICT.
-        mock_confhd_cls.read.return_value = mock_confhd
-
-        mock_conft = MagicMock()
-        mock_conft.usinas = pd.DataFrame({"codigo_usina": []})
-        mock_conft_cls.read.return_value = mock_conft
-
-        mock_sistema = MagicMock()
-        mock_sistema.custo_deficit = None
-        mock_sistema_cls.read.return_value = mock_sistema
-
-        mock_ree = MagicMock()
-        mock_ree.rees = None
-        mock_ree_cls.read.return_value = mock_ree
-
-        from novomodelo_bridge.newave.id_map import build_id_map
-
-        id_map = build_id_map(_make_nw_files(tmp_path))
+        # Standard two-plant fixture, no FICT.
+        id_map = _build_from_frames(_make_confhd_df(), pd.DataFrame())
 
         assert 1 in id_map.all_hydro_codes
         assert 2 in id_map.all_hydro_codes

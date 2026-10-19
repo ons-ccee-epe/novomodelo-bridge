@@ -17,9 +17,9 @@ the cascade connectivity they provide so that:
   fictitious plant's own productivity along the chain (zero in practice).
 
 This module is the single source of truth for that resolution.  Both
-``newave.converters.hydro.convert_hydros`` and
-``newave.converters.constraints._build_hydro_downstream_map`` consume it so the
-LP topology and the cascade accounting agree.
+``newave.converters.hydro.convert_hydros`` and the accumulated-productivity
+helpers in ``newave.converters.constraints`` consume it so the LP topology and
+the cascade accounting agree.
 """
 
 from __future__ import annotations
@@ -27,8 +27,12 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from collections.abc import AbstractSet
 
 from novomodelo_bridge.core.productivity import compute_productivity
 from novomodelo_bridge.newave.plants import IN_SERVICE_STATUSES
@@ -79,7 +83,8 @@ class FictCascadeResolution:
 def resolve_cascade(
     confhd_df: pd.DataFrame,
     cadastro: pd.DataFrame,
-    fictitious: set[int] | None = None,
+    *,
+    fictitious: AbstractSet[int],
     filling_codes: set[int] | None = None,
 ) -> dict[int, FictCascadeResolution]:
     """Resolve the effective cascade downstream of every real (existing) plant.
@@ -108,13 +113,11 @@ def resolve_cascade(
         rule 3).
     cadastro:
         ``Hidr.cadastro`` with MODIF.DAT overrides already applied.  Used to
-        compute the fictitious plants' ``ρ_eq`` and (when *fictitious* is not
-        supplied) to identify them.
+        compute the fictitious plants' ``ρ_eq``.
     fictitious:
-        Pre-computed set of fictitious plant codes (the single source of truth
-        is :func:`plants.fictitious_codes`).  Defaults to computing it from
-        *confhd_df* + *cadastro* — pass it explicitly to decouple the
-        classification (e.g. in tests).
+        Pre-computed set of fictitious plant codes. The single source of truth
+        is ``NewaveCase.fictitious_codes`` (which applies the pumping exemption).
+        Required parameter to ensure callers propagate the correct set.
     filling_codes:
         Pre-computed set of ``NE``-with-filling plant codes (the single source
         of truth is :attr:`plants.filling_hydro_codes`).  Such plants are
@@ -128,11 +131,6 @@ def resolve_cascade(
     dict[int, FictCascadeResolution]
         One entry per real existing plant in ``confhd_df``.
     """
-    if fictitious is None:
-        from novomodelo_bridge.newave.plants import fictitious_codes
-
-        fictitious = fictitious_codes(confhd_df, cadastro)
-
     if filling_codes is None:
         filling_codes = set()
 

@@ -75,6 +75,8 @@ _NEWAVE_LABELS: dict[str, tuple[str, str | None]] = {
     "polinjus": ("polinjus.csv", None),
     "tratamento_fpha": ("tratamento-fpha.csv", None),
     "restricao_eletrica": ("restricao-eletrica.csv", None),
+    "estacao_bombeamento": ("estacao-bombeamento.csv", None),
+    "estacao_bombeamento_submercado": ("estacao-bombeamento-submercado.csv", None),
 }
 # Deck files the converter reads without a ``NewaveFiles`` field: the index
 # files that name the others.

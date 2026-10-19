@@ -27,6 +27,7 @@ from novomodelo_bridge.newave.converters import hydro as hydro_conv
 from novomodelo_bridge.newave.converters import inflow_windows
 from novomodelo_bridge.newave.converters import initial_conditions as ic_conv
 from novomodelo_bridge.newave.converters import network as network_conv
+from novomodelo_bridge.newave.converters import pumping as pumping_conv
 from novomodelo_bridge.newave.converters import stochastic as stochastic_conv
 from novomodelo_bridge.newave.converters import tailrace as tailrace_conv
 from novomodelo_bridge.newave.converters import temporal as temporal_conv
@@ -276,6 +277,20 @@ def _convert_newave_case_impl(
     logger.debug("Converting lines")
     lines_dict = network_conv.convert_lines(case, id_map)
 
+    logger.debug("Converting pumping stations")
+    pumping_inputs = pumping_conv.read_pumping_inputs(case)
+    pumping_station_ids = (
+        pumping_conv.pumping_station_id_map(pumping_inputs)
+        if pumping_inputs is not None
+        else {}
+    )
+    pumping_dict = pumping_conv.convert_pumping_stations(
+        case, id_map, pumping_inputs, pumping_station_ids
+    )
+    pumping_bounds_table = pumping_conv.convert_pumping_bounds(
+        case, pumping_inputs, pumping_station_ids
+    )
+
     logger.debug("Converting penalties")
     # DESVIO ("outros usos") + evaporation use MAX_PRODTACUM_SIN (max accumulated ρ at
     # altura máxima, constant); VAZMIN/TURBMN/TURBMX use PROD_MEDIA_SIN (mean PRODT,
@@ -429,6 +444,7 @@ def _convert_newave_case_impl(
     writer.write_json("system/thermals.json", thermals_dict)
     writer.write_json("system/buses.json", buses_dict)
     writer.write_json("system/lines.json", lines_dict)
+    writer.write_json("system/pumping_stations.json", pumping_dict)
     writer.write_json("system/non_controllable_sources.json", ncs_dict)
     writer.write_json("scenarios/load_factors.json", load_factors_dict)
     writer.write_json("scenarios/non_controllable_factors.json", ncs_factors_dict)
@@ -481,6 +497,9 @@ def _convert_newave_case_impl(
 
     if thermal_bounds_table is not None:
         writer.write_parquet("constraints/thermal_bounds.parquet", thermal_bounds_table)
+
+    if pumping_bounds_table is not None and pumping_bounds_table.num_rows > 0:
+        writer.write_parquet("constraints/pumping_bounds.parquet", pumping_bounds_table)
 
     # Per-bus excess-cost override: forbid energy excess at fictitious
     # submarkets (pure transshipment nodes) by pricing it prohibitively.

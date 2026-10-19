@@ -108,6 +108,61 @@ Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,
 `--diagnostics-json` saves them, and `--json` includes them in the verdict.
 
+## Pumping stations
+
+The converter reads pumping station data from LIBS files declared in
+`indices.csv`:
+
+| Index key | Content |
+|-----------|---------|
+| `ESTACAO-BOMBEAMENTO` | Station definitions and temporal limits |
+| `ESTACAO-BOMBEAMENTO-SUBMERCADO` | Station-to-subsystem mapping |
+
+Both keys must be listed for pumping conversion to proceed. Files present
+in the deck directory but not declared in `indices.csv` are ignored (with
+a warning).
+
+### Switch
+
+The feature respects the `ESTACOES BOMBEAMENTO` register in `dger.dat`:
+
+| Value | Behavior |
+|-------|----------|
+| `1` (or absent) | Pumping converted |
+| `0` | Pumping skipped; `pumping_stations.json` has an empty list |
+
+When the switch is off but the files are present, a diagnostic notes that
+the input was skipped.
+
+### Fictitious filter exemption
+
+Hydro plants referenced as origin or destination by a pumping station are
+excluded from the fictitious-plant filter. Without this exemption, a
+zero-productivity reservoir used for pumped storage would be removed,
+potentially breaking cascade topology.
+
+### Open-ended periods
+
+A temporal limit row with a blank `data_fim` applies from `data_inicio`
+to the last stage of the study horizon.
+
+### Validation
+
+The converter raises `SourceFileError` when:
+
+- A station has no entry (or multiple entries) in the submercado file
+- `codigo_usina_origem` or `codigo_usina_destino` references a hydro not
+  in `confhd.dat`
+- A limits row references an undefined station
+- `patamar` is outside the horizon's block range
+
+### Output files
+
+| File | When written |
+|------|--------------|
+| `system/pumping_stations.json` | Always (empty list when no stations) |
+| `constraints/pumping_bounds.parquet` | Only when temporal limits exist |
+
 ## Comparing results
 
 `compare newave NEWAVE_DIR NOVOMODELO_OUTPUT_DIR` needs, on the NEWAVE side, the

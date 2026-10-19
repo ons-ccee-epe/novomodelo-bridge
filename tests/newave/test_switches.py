@@ -125,3 +125,51 @@ class TestSwitchedOffInputs:
             "restricao-eletrica.csv",
             "minimum outflow (VAZMIN, VAZMINT)",
         ]
+
+
+# ---------------------------------------------------------------------------
+# Pumping station (bombeamento) switch
+# ---------------------------------------------------------------------------
+
+
+class TestBombeamentoSwitch:
+    def test_bombeamento_switch_uses_plain_pattern(self) -> None:
+        """bombeamento switch follows plain() pattern: off at 0, on otherwise."""
+        switches_on = DgerSwitches.from_dger(_dger(estacoes_bombeamento=1))
+        switches_off = DgerSwitches.from_dger(_dger(estacoes_bombeamento=0))
+        switches_absent = DgerSwitches.from_dger(_dger())
+
+        assert switches_on.bombeamento.on is True
+        assert switches_off.bombeamento.on is False
+        assert switches_absent.bombeamento.on is True  # absent = on
+
+    def test_bombeamento_switch_label_and_ignored(self) -> None:
+        """bombeamento switch has correct label and ignored description."""
+        switches = DgerSwitches.from_dger(_dger(estacoes_bombeamento=1))
+
+        assert switches.bombeamento.label == "ESTACOES BOMBEAMENTO"
+        assert switches.bombeamento.ignored == "pumping stations"
+
+    def test_bombeamento_in_switched_off_inputs(self, tmp_path: Path) -> None:
+        """bombeamento appears in switched_off_inputs when file present and switch off."""
+        files = make_nw_files(
+            tmp_path, estacao_bombeamento=tmp_path / "estacao-bombeamento.csv"
+        )
+        switches = DgerSwitches.from_dger(_dger(estacoes_bombeamento=0))
+
+        off = switched_off_inputs(files, switches)
+
+        ignored_names = [s.ignored for s in off]
+        assert "pumping stations" in ignored_names
+
+    def test_bombeamento_not_in_switched_off_when_file_absent(
+        self, tmp_path: Path
+    ) -> None:
+        """bombeamento not reported when file is absent, even if switch is off."""
+        files = make_nw_files(tmp_path)  # No pumping file
+        switches = DgerSwitches.from_dger(_dger(estacoes_bombeamento=0))
+
+        off = switched_off_inputs(files, switches)
+
+        ignored_names = [s.ignored for s in off]
+        assert "pumping stations" not in ignored_names
