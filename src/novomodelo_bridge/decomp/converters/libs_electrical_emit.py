@@ -42,6 +42,7 @@ from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
+    soft_slack,
 )
 from novomodelo_bridge.decomp.constraint_registers import ConstraintRecord, StageBounds
 from novomodelo_bridge.decomp.converters.constraints import (
@@ -522,10 +523,9 @@ def emit_libs_electrical_generics(
             name=f"LIBS_ELEC_{code}",
             description=f"LIBs electrical special constraint {code}",
             expression=expression,
-            slack={
-                "enabled": True,
-                "penalty": _resolve_violation_penalty(restriction, big_m),
-            },
+            slack=soft_slack(
+                _resolve_violation_penalty(restriction, big_m), "per_hour"
+            ),
             slots=slots_from_record(record, calendar),
         )
         converted.append(code)

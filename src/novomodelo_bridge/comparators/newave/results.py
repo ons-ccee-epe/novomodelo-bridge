@@ -1206,50 +1206,35 @@ def compare_results(
 
     # --- Generic constraints LHS comparison (RE / AGRINT / VminOP) ---
     # The Novomodelo case directory is one level above the simulation output dir
-    # (novomodelo_output_dir ends in ``output/``).  Both the constraint
-    # definitions and the per-stage bound parquet live in the case's
-    # ``constraints/`` subdirectory.
+    # (novomodelo_output_dir ends in ``output/``); the constraint definitions live in
+    # the case's ``constraints/``, their resolved coefficients and bounds in
+    # the run's ``generic_constraints/`` echo.
     from novomodelo_bridge.comparators.constraints import (
         evaluate_lhs_novomodelo,
-        load_generic_constraint_bounds,
-        load_generic_constraints,
+        load_resolved_generic_constraints,
     )
-    from novomodelo_bridge.comparators.newave.constraints import (
-        apply_vminop_useful_energy,
-        evaluate_lhs_newave,
-    )
+    from novomodelo_bridge.comparators.newave.constraints import evaluate_lhs_newave
 
     novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
-    gc_constraints = load_generic_constraints(novomodelo_case_dir)
-    gc_bounds_df = load_generic_constraint_bounds(novomodelo_case_dir)
+    gc_resolved = load_resolved_generic_constraints(
+        novomodelo_case_dir, novomodelo_output_dir
+    )
+    gc_constraints = gc_resolved.constraints
+    gc_bounds_df = gc_resolved.bounds
     if gc_constraints and source_dir.is_dir():
         _LOG.info(
             "Comparing %d generic constraints (RE/AGRINT/VminOP)...",
             len(gc_constraints),
         )
         gc_lhs_nw = evaluate_lhs_newave(
-            gc_constraints,
+            gc_resolved,
             nw_hydro,
             nw_intercambio,
             alignment,
             id_map,
             nw_offset,
         )
-        gc_lhs_cb = evaluate_lhs_novomodelo(gc_constraints, novomodelo_output_dir)
-        # VminOP constraints bound stored energy; re-express their LHS/bound as useful
-        # stored energy (MWmonth) so they compare like-for-like against The source
-        # model's per-REE EARMF from MEDIAS-REE.CSV.  RE/AGRINT are untouched.
-        gc_bounds_df, gc_lhs_nw, gc_lhs_cb = apply_vminop_useful_energy(
-            gc_constraints,
-            gc_bounds_df,
-            gc_lhs_nw,
-            gc_lhs_cb,
-            novomodelo_case_dir,
-            novomodelo_output_dir,
-            nw_hydro,
-            id_map,
-            nw_offset,
-        )
+        gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
     else:
         gc_lhs_nw = pl.DataFrame()
         gc_lhs_cb = pl.DataFrame()

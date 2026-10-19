@@ -20,7 +20,6 @@ from novomodelo_bridge.core.productivity import (
     compute_productivity,
     equivalent_productivity,
     integrated_productivity,
-    stored_energy_productivity,
 )
 from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.newave.case import NewaveCase
@@ -46,7 +45,6 @@ _LOG = logging.getLogger(__name__)
 _compute_productivity = compute_productivity
 _equivalent_productivity = equivalent_productivity
 _compute_integrated_productivity = integrated_productivity
-_stored_energy_productivity = stored_energy_productivity
 
 # --- FPHA (hydro production function) emission ---------------------------------
 #
@@ -378,92 +376,6 @@ def _total_study_stages(case: NewaveCase) -> int:
     return case.horizon.total_stages
 
 
-def _per_stage_integrated_productivities(
-    hreg: pd.Series,
-    base_integrated: float,
-    drop_overrides: list[dict],
-    case: NewaveCase,
-    total_stages: int,
-) -> list[float]:
-    """Per-stage integrated productivity with CFUGA/CMONT step-function awareness.
-
-    Recomputes the *integrated* productivity (volmin_volmax average) at each
-    stage where canal_fuga or cmont state changes; stages with no active override
-    return *base_integrated*. The per-stage ``(CFUGA, CMONT)`` step-function sweep
-    is shared with :func:`_per_stage_equivalent_productivities` via
-    :func:`_per_stage_drop_overrides` (the integrated variant differs only in
-    applying :func:`_compute_integrated_productivity` instead of the point ρ).
-    """
-    if not drop_overrides:
-        return [base_integrated] * total_stages
-
-    drops = _per_stage_drop_overrides(drop_overrides, case, total_stages)
-    return [
-        base_integrated
-        if cfuga is None and cmont is None
-        else _stored_energy_productivity(
-            hreg, canal_fuga_override=cfuga, cmont_override=cmont
-        )
-        for cfuga, cmont in drops
-    ]
-
-
-def compute_per_stage_own_integrated_productivities(
-    case: NewaveCase,
-) -> dict[int, list[float]]:
-    """Return ``{plant_code: [own integrated ρ per stage]}`` for every existing plant.
-
-    Companion to :func:`compute_per_stage_own_productivities` but with the
-    EARM convention: ρ is the volume-integrated productivity (matching
-    the source model's ``produtibilidade_equivalente_volmin_volmax``), not the point
-    productivity at v_65.  Used by VminOP to override the ``rho_acum_h{id}`` scalar
-    parameter so the constraint coefficient matches the source model's stored-energy
-    accounting rather than the LP's gen = ρ·Q point coefficient.
-
-    CFUGA/CMONT temporal overrides shift the integrand at every stage from the
-    override's effective stage forward; FICT-cascade contribution is folded into the
-    upstream real plant's own value so cascade traversal in the source-model-code space
-    matches the rewired ``downstream_id`` in ``hydros.json``.
-    """
-    total_stages = _total_study_stages(case)
-    if total_stages <= 0:
-        return {}
-
-    cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
-
-    confhd_df = case.confhd.usinas
-    existing = case.active_hydros
-    confhd_codes = [int(r["codigo_usina"]) for _, r in existing.iterrows()]
-
-    temporal_overrides = _extract_temporal_overrides(case, confhd_codes)
-    plants_with_drop_overrides = {
-        code: [o for o in overrides if o["type"] in ("CFUGA", "CMONT")]
-        for code, overrides in temporal_overrides.items()
-        if any(o["type"] in ("CFUGA", "CMONT") for o in overrides)
-    }
-
-    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
-
-    fict_cascade = resolve_cascade(
-        confhd_df, cadastro, fictitious=case.fictitious_codes
-    )
-
-    result: dict[int, list[float]] = {}
-    for plant_code in confhd_codes:
-        if plant_code not in cadastro.index:
-            continue
-        hreg = cadastro.loc[plant_code]
-        base = _stored_energy_productivity(hreg)
-        resolution = fict_cascade.get(plant_code)
-        fict_extra = resolution.fict_rho_sum if resolution is not None else 0.0
-        overrides = plants_with_drop_overrides.get(plant_code, [])
-        per_stage = _per_stage_integrated_productivities(
-            hreg, base, overrides, case, total_stages
-        )
-        result[plant_code] = [v + fict_extra for v in per_stage]
-    return result
-
-
 def _per_stage_equivalent_productivities(
     hreg: pd.Series,
     base_prodt: float,
@@ -664,12 +576,6 @@ def compute_per_stage_own_productivities(
     effective tailrace / forebay overrides as they take effect. Plants
     without any temporal overrides return a flat list of length
     ``total_stages``.
-
-    Used by the VminOP RHS calculation so that the absolute bound
-    ``(pct/100) × useful + dead`` is computed with the **same** per-stage
-    ρ_acum that novomodelo uses to evaluate the LHS at solve time — otherwise
-    the constraint silently drifts at every stage where overrides apply
-    or for any plant upstream of an overridden plant in the cascade.
 
     Keys are the source model plant codes (not Novomodelo ids) since cascade traversal in
     ``compute_accumulated_productivities`` works in the source-model-code space.

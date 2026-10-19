@@ -352,10 +352,12 @@ def _convert_newave_case_impl(
         case, id_map, allocator=allocator
     )
     vminop_referenced_ids: list[int] = []
-    rho_acum_overrides: dict[int, list[float]] = {}
+    vminop_per_stage_parameters: dict[str, list[float]] = {}
+    vminop_expression_parameters: dict[str, str] = {}
     if vminop_result is not None:
         vminop_referenced_ids = list(vminop_result.referenced_hydro_ids)
-        rho_acum_overrides = vminop_result.rho_acum_overrides
+        vminop_per_stage_parameters = vminop_result.per_stage_parameters
+        vminop_expression_parameters = vminop_result.expression_parameters
 
     logger.debug("Converting electric constraints")
     electric_result = constraints_conv.convert_electric_constraints(
@@ -449,13 +451,10 @@ def _convert_newave_case_impl(
 
     writer.write_json("system/hydro_production_models.json", production_models_dict)
 
-    # Declare per-hydro @rho_eq_h{id} / @rho_acum_h{id} computed parameters for
-    # every hydro in the case. novomodelo rejects any @name token that has not been
-    # declared, so we always emit the file so handwritten or generated
-    # constraint expressions can reference any per-hydro productivity. The
-    # ids set is the union of the VminOP-referenced ids (covers the values we
-    # currently emit) and every hydro that has a production-model entry
-    # (covers future references).
+    # novomodelo rejects an undeclared @name, so the file always declares the
+    # per-hydro computed parameters of every hydro a VminOP share references
+    # or a production model names (for handwritten constraints), plus the
+    # VminOP curve fractions and coupled-cascade shares.
     all_hydro_ids = sorted(
         set(vminop_referenced_ids)
         | {
@@ -465,7 +464,8 @@ def _convert_newave_case_impl(
     )
     scalar_parameters_dict = scalar_params_conv.build_scalar_parameters(
         all_hydro_ids,
-        rho_acum_per_stage_overrides=rho_acum_overrides or None,
+        per_stage=vminop_per_stage_parameters,
+        expressions=vminop_expression_parameters,
     )
     writer.write_json("constraints/generic_parameters.json", scalar_parameters_dict)
 

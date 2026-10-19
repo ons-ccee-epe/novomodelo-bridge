@@ -33,6 +33,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
+    GC_STAGE_HOURS,
     _aligned_fixture,
     _extract_tab_content,
     _no_dec_oper,
@@ -370,13 +371,18 @@ class TestGenericConstraintLhsDecomp:
             ),
         )
 
+        (tmp_path / "stages.json").write_text(
+            '{"stages": [{"id": 3, "blocks": [{"id": 0, "hours": 168.0}]}]}'
+        )
+
         result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(7, "RHE_115")])
 
         rows = result.to_dicts()
         assert len(rows) == 1
         assert rows[0]["constraint_id"] == 7
         assert rows[0]["stage_id"] == 3
-        assert rows[0]["lhs_value"] == pytest.approx(2951.58)
+        # valor_MW (stage-average MW) over the weekly stage's 168 h, in MWh.
+        assert rows[0]["lhs_value"] == pytest.approx(2951.58 * 168.0)
 
     def test_interchange_term_skips_whole_constraint_novomodelo_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -515,7 +521,7 @@ class TestBuildDecompDatasetConstraints:
                 "id": 0,
                 "name": "RHE_115",
                 "description": "RHE stored-energy constraint 115",
-                "expression": "@rho_acum_h0 * hydro_storage(0)",
+                "expression": "@rho_acum_mwh_h0 * hydro_storage_final(0)",
                 "slack": {"enabled": True, "penalty": 1000.0},
             }
         ]
@@ -564,7 +570,7 @@ class TestBuildDecompDatasetConstraints:
         nw_row = dataset.render.gc_lhs_newave.row(0, named=True)
         assert nw_row["constraint_id"] == 0
         assert nw_row["stage_id"] == 0
-        assert nw_row["lhs_value"] == pytest.approx(2951.58)
+        assert nw_row["lhs_value"] == pytest.approx(2951.58 * GC_STAGE_HOURS)
         cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}
 
@@ -573,15 +579,14 @@ class TestBuildDecompDatasetConstraints:
         assert "Generic Constraints — LHS vs Bound" in constraints_tab
         assert "Plotly.newPlot" in constraints_tab
 
-    def test_rhe_lhs_forwards_overrides_and_bound_stays_raw_nonnegative(
+    def test_rhe_lhs_uses_the_resolved_view_and_bound_stays_raw_nonnegative(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Regression guard: the RHE novomodelo-side LHS now resolves
-        ``@rho_acum_h{id}`` via the LP's per-stage override (same mechanism as
-        VminOP), forwarded through ``evaluate_lhs_novomodelo``'s third positional
-        arg -- and, unlike the source-model VminOP path, the RHE bound is
-        NEVER useful-energy-shifted (dead volume can exceed the bound for
-        DECOMP RHE), so it must reach the dataset unchanged and non-negative.
+        """Regression guard: the RHE novomodelo-side LHS is evaluated from the
+        resolved view (novomodelo's own coefficients) -- and, unlike the VminOP
+        useful-volume path, the RHE absolute-storage bound is NEVER
+        useful-energy-shifted (dead volume can exceed the bound for DECOMP
+        RHE), so it must reach the dataset unchanged and non-negative.
         """
         _patch_aligned_frames(monkeypatch, _aligned_fixture())
         case_dir = tmp_path / "case"
@@ -590,7 +595,7 @@ class TestBuildDecompDatasetConstraints:
                 "id": 0,
                 "name": "RHE_115",
                 "description": "RHE stored-energy constraint 115",
-                "expression": "@rho_acum_h0 * hydro_storage(0)",
+                "expression": "@rho_acum_mwh_h0 * hydro_storage_final(0)",
                 "slack": {"enabled": True, "penalty": 1000.0},
             }
         ]
@@ -643,11 +648,10 @@ class TestBuildDecompDatasetConstraints:
 
         dataset = build_decomp_dataset(case_dir, output_dir)
 
-        # evaluate_lhs_novomodelo received a third positional arg -- the
-        # rho_acum_overrides mapping ({} here, since no
-        # generic_parameters.json was written by this fixture).
+        # evaluate_lhs_novomodelo received the resolved view and the output dir.
         assert len(calls) == 1
-        assert calls[0][2] == {}
+        assert [c["name"] for c in calls[0][0].constraints] == ["RHE_115"]
+        assert calls[0][1] == output_dir
 
         bound_row = dataset.render.gc_bounds.row(0, named=True)
         assert bound_row["bound_lower"] == pytest.approx(raw_bound_lower)

@@ -12,7 +12,6 @@ from pathlib import Path
 
 from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
-    rho_acum_name,
     write_scalar_parameters,
 )
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -21,29 +20,17 @@ from novomodelo_bridge.novomodelo.scalar_parameters import (
 )
 
 
-def test_build_decomp_scalar_parameters_no_override_matches_converter() -> None:
+def test_build_decomp_scalar_parameters_matches_converter() -> None:
     decomp_result = build_decomp_scalar_parameters([0, 1])
     converter_result = build_scalar_parameters([0, 1])
 
     assert decomp_result == converter_result
-    assert len(decomp_result["scalar_parameters"]) == 4
-
-
-def test_build_decomp_scalar_parameters_per_stage_override_switches_kind() -> None:
-    result = build_decomp_scalar_parameters([0], {0: [2.5, 2.6, 2.7]})
-
-    entries = {entry["name"]: entry for entry in result["scalar_parameters"]}
-
-    rho_acum_entry = entries["rho_acum_h0"]
-    assert rho_acum_entry["kind"] == "per_stage"
-    assert rho_acum_entry["values"] == [[0, 2.5], [1, 2.6], [2, 2.7]]
-
-    rho_eq_entry = entries["rho_eq_h0"]
-    assert rho_eq_entry["kind"] == "computed"
+    assert len(decomp_result["scalar_parameters"]) == 10
+    assert all(e["kind"] == "computed" for e in decomp_result["scalar_parameters"])
 
 
 def test_write_scalar_parameters_round_trip(tmp_path: Path) -> None:
-    params = build_decomp_scalar_parameters([0], {0: [2.5]})
+    params = build_decomp_scalar_parameters([0])
     writer = CaseWriter(tmp_path)
 
     write_scalar_parameters(writer, params)
@@ -53,8 +40,13 @@ def test_write_scalar_parameters_round_trip(tmp_path: Path) -> None:
     assert json.loads(written.read_text()) == params
 
 
-def test_rho_acum_name_reexported() -> None:
-    assert rho_acum_name(3) == "rho_acum_h3"
+def test_build_decomp_scalar_parameters_forwards_per_stage_and_expressions() -> None:
+    per_stage = {"pct_rhe7": [0.5, 0.0]}
+    expressions = {"rho_cut_mwh_h0": "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"}
+
+    assert build_decomp_scalar_parameters(
+        [0, 1], per_stage=per_stage, expressions=expressions
+    ) == build_scalar_parameters([0, 1], per_stage=per_stage, expressions=expressions)
 
 
 def test_build_decomp_scalar_parameters_empty_ids_empty_list(

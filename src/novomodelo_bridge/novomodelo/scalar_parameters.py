@@ -1,113 +1,108 @@
 """Scalar parameter declarations for ``constraints/generic_parameters.json``.
 
-Novomodelo added the ``@name`` sigil for `generic_constraints.json`
-expressions and a parallel parameters file that declares
-every parameter referenced via ``@name``. When the file is absent any
-``@name`` token in a constraint expression causes a load-time error, so
-novomodelo-bridge always emits it with the per-hydro computed parameters that
-are most likely to appear in handwritten or generated constraints.
+Novomodelo resolves every ``@name`` token of a ``generic_constraints.json``
+expression against this parallel parameters file; an undeclared name is a
+load-time error. novomodelo-bridge therefore always declares the per-hydro
+``computed`` parameters a generated or handwritten constraint may reference,
+for every hydro in the converted case:
 
-For every non-fictitious hydro in the converted case we declare two
-``computed`` entries:
+- ``rho_eq_h{id}`` — point equivalent productivity, MW/(m³/s)
+- ``rho_acum_h{id}`` — point accumulated (cascade) productivity, MW/(m³/s)
+- ``rho_eq_mwh_h{id}`` — integrated equivalent productivity, MWh/hm³
+- ``rho_acum_mwh_h{id}`` — integrated accumulated productivity, MWh/hm³
+- ``earm_max_mwh_h{id}`` — maximum stored energy over the cascade, MWh
 
-- ``rho_eq_h{id}`` — :math:`\\rho_{eq}` (equivalent productivity)
-- ``rho_acum_h{id}`` — :math:`\\rho_{acum}` (accumulated cascade productivity)
+novomodelo derives the values at setup; the bridge only declares the names. The
+MWh forms make ``@rho_acum_mwh_h{id} × volume[hm³]`` stored energy in MWh with
+no dependence on stage length; the stored-energy constraints use them.
 
-These two are the canonical the source-model-style productivities used by every
-hydro-storage / hydro-generation energy constraint we know of (VminOP, minimum cascade
-energy, EARM-based bounds, ...). The values themselves are derived by novomodelo from VHA
-geometry and ρ_esp at solve time — we only declare the names.
+A converter may also declare ``per_stage`` parameters it computes itself (a
+security-curve fraction) and ``expression`` parameters over other parameters
+(a stored-energy share); see :func:`build_scalar_parameters`.
 
 See ``schemas/generic_parameters.schema.json`` in the novomodelo repo for the
-on-disk shape and the seven valid ``computed_spec.tag`` variants.
+on-disk shape and the valid ``computed_spec.tag`` variants.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
+from novomodelo_bridge.core.stored_energy import (
+    earm_max_mwh_name,
+    rho_acum_mwh_name,
+    rho_eq_mwh_name,
+)
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 
+def rho_eq_name(hydro_id: int) -> str:
+    """Canonical ``@name`` for the point equivalent productivity of one hydro."""
+    return f"rho_eq_h{hydro_id}"
+
+
 def rho_acum_name(hydro_id: int) -> str:
-    """Canonical ``@name`` for the accumulated productivity of one hydro."""
+    """Canonical ``@name`` for the point accumulated productivity of one hydro."""
     return f"rho_acum_h{hydro_id}"
 
 
-def rho_eq_name(hydro_id: int) -> str:
-    """Canonical ``@name`` for the equivalent productivity of one hydro."""
-    return f"rho_eq_h{hydro_id}"
+#: ``(name builder, computed_spec.tag)`` for every per-hydro parameter, in
+#: declaration order.
+_PER_HYDRO_COMPUTED: tuple[tuple[Callable[[int], str], str], ...] = (
+    (rho_eq_name, "equivalent_productivity"),
+    (rho_acum_name, "accumulated_productivity"),
+    (rho_eq_mwh_name, "integrated_equivalent_productivity_mwh_per_hm3"),
+    (rho_acum_mwh_name, "integrated_accumulated_productivity_mwh_per_hm3"),
+    (earm_max_mwh_name, "max_stored_energy_mwh"),
+)
 
 
 def build_scalar_parameters(
     hydro_ids: Iterable[int],
-    rho_acum_per_stage_overrides: Mapping[int, Sequence[float]] | None = None,
+    per_stage: Mapping[str, Sequence[float]] | None = None,
+    expressions: Mapping[str, str] | None = None,
 ) -> dict:
-    """Return a ``generic_parameters.json`` dict declaring per-hydro parameters.
+    """Return a ``generic_parameters.json`` dict.
 
-    ``rho_eq_h{id}`` is always emitted as ``computed`` (the LP coefficient
-    is the gen = ρ·Q point productivity that novomodelo derives from the VHA
-    geometry).  ``rho_acum_h{id}`` is emitted as ``computed`` by default —
-    but when *rho_acum_per_stage_overrides* maps the hydro to a list of
-    per-stage values, the entry switches to ``kind: "per_stage"`` so that
-    every constraint referencing ``@rho_acum_h{id}`` uses the supplied
-    numeric values instead of novomodelo's cascade-summed point productivity.
-
-    Used by the VminOP pathway to inject the source model's stored-energy (EARM)
-    productivity convention — the cascade-summed integrated productivity ``ρ_esp ·
-    (1/useful) · ∫_vmin^vmax h(V) dV`` — which differs from the point productivity by up
-    to ~10% on plants with non-trivial head swing and is what the source model itself
-    uses to evaluate VminOP constraints.
+    Declares every per-hydro ``computed`` parameter for each id in
+    *hydro_ids* (deduplicated, ascending), then one ``per_stage`` entry per
+    *per_stage* item and one ``expression`` entry per *expressions* item, each
+    in mapping order. Each *per_stage* value list holds one float per study
+    stage, indexed by stage id from 0 — novomodelo rejects a list whose length
+    differs from the stage count. Each *expressions* body is arithmetic over
+    other ``@name`` parameters.
     """
-    unique_ids = sorted({int(h) for h in hydro_ids})
-    overrides = (
-        {int(h): list(vs) for h, vs in rho_acum_per_stage_overrides.items()}
-        if rho_acum_per_stage_overrides is not None
-        else {}
-    )
-
     entries: list[dict] = []
-    next_id = 0
-    for hydro_id in unique_ids:
+    for hydro_id in sorted({int(h) for h in hydro_ids}):
+        for name_of, tag in _PER_HYDRO_COMPUTED:
+            entries.append(
+                {
+                    "id": len(entries),
+                    "name": name_of(hydro_id),
+                    "kind": "computed",
+                    "computed_spec": {"tag": tag, "hydro_id": hydro_id},
+                }
+            )
+    for name, values in (per_stage or {}).items():
         entries.append(
             {
-                "id": next_id,
-                "name": rho_eq_name(hydro_id),
-                "kind": "computed",
-                "computed_spec": {
-                    "tag": "equivalent_productivity",
-                    "hydro_id": hydro_id,
-                },
+                "id": len(entries),
+                "name": name,
+                "kind": "per_stage",
+                "values": [
+                    [stage_id, float(value)] for stage_id, value in enumerate(values)
+                ],
             }
         )
-        next_id += 1
-
-        override_values = overrides.get(hydro_id)
-        if override_values is not None:
-            entries.append(
-                {
-                    "id": next_id,
-                    "name": rho_acum_name(hydro_id),
-                    "kind": "per_stage",
-                    "values": [
-                        [stage_id, float(value)]
-                        for stage_id, value in enumerate(override_values)
-                    ],
-                }
-            )
-        else:
-            entries.append(
-                {
-                    "id": next_id,
-                    "name": rho_acum_name(hydro_id),
-                    "kind": "computed",
-                    "computed_spec": {
-                        "tag": "accumulated_productivity",
-                        "hydro_id": hydro_id,
-                    },
-                }
-            )
-        next_id += 1
+    for name, body in (expressions or {}).items():
+        entries.append(
+            {
+                "id": len(entries),
+                "name": name,
+                "kind": "expression",
+                "expression": body,
+            }
+        )
 
     return {
         "$schema": novomodelo_schemas.schema_url_for(
