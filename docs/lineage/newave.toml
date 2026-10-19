@@ -1702,9 +1702,12 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
 
   [[output.field]]
   path = "hydros[].diversion"
-  from = []
-  status = "null"
-  how = "Sempre nulo: os desvios de água de `dsvagua.dat` são convertidos como retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`), não como canal de desvio."
+  from = [
+    { file = "dger", item = "canal_desvio" },
+    { file = "modif", item = "CDESVIO · usina de jusante" },
+    { file = "modif", item = "CDESVIO · vazão máxima" },
+  ]
+  how = "Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, sem alteração. Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`)."
 
   [[output.field]]
   path = "hydros[].filling"
@@ -3110,9 +3113,9 @@ note = "O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, ite
   note = "O Novomodelo estima o PAR(p) a partir de `scenarios/inflow_history.parquet` com sua própria seleção de ordem (`estimation.order_selection`); só `ordem_maxima_parp`, `consideracao_media_anual_afluencias`, `num_series_sinteticas` e `considera_reamostragem_cenarios` são espelhados. A tendência hidrológica é sempre emitida (`recent_observations`) quando `vazpast.dat` existe, sem consultar os flags."
 
   [[source.item]]
-  item = "flags de recursos não convertidos (restricao_defluencia, restricao_itaipu, restricoes_rhq, restricoes_rhv, restricao_lpp_*, restricoes_emissao_gee, restricoes_fornecimento_gas, sar, bid, modif_automatica_adterm, sazonaliza_vminp, canal_desvio, correcao_desvio)"
+  item = "flags de recursos não convertidos (restricao_defluencia, restricao_itaipu, restricoes_rhq, restricoes_rhv, restricao_lpp_*, restricoes_emissao_gee, restricoes_fornecimento_gas, sar, bid, modif_automatica_adterm, sazonaliza_vminp, correcao_desvio)"
   status = "unread"
-  note = "Ativam recursos que o conversor não converte (vazão máxima `VAZMAXT`, RHQ/RHV, LPP, SAR, GEE, gás, canal de desvio, ADTERM automático), logo não há o que ligar ou desligar. Os flags de `ghmin.dat`, `c_adic.dat`, `agrint.dat`, `re.dat`, `restricao-eletrica.csv`, vazão mínima e turbinamento são honrados: um arquivo presente com o flag desligado é ignorado e reportado (diagnóstico `dger-switch-off`); linha ausente conta como ligada."
+  note = "Ativam recursos que o conversor não converte (vazão máxima `VAZMAXT`, RHQ/RHV, LPP, SAR, GEE, gás, ADTERM automático), logo não há o que ligar ou desligar. Os flags de `ghmin.dat`, `c_adic.dat`, `agrint.dat`, `re.dat`, `restricao-eletrica.csv`, vazão mínima, turbinamento e canal de desvio são honrados: um arquivo ou registro presente com o flag desligado é ignorado e reportado (diagnóstico `dger-switch-off`); linha ausente conta como ligada."
 
   [[source.item]]
   item = "operação e penalidades internas (perdas_rede_transmissao, considera_geracao_eolica, penalidade_corte_geracao_eolica, estacoes_bombeamento, representacao_submotorizacao, calcula_volume_inicial, volume_inicial_subsistema, ordenacao_automatica, calcula_prodt_media_sin, racionamento_preventivo, primeira_profundidade_risco_deficit, segunda_profundidade_risco_deficit, equalizacao_penal_intercambio)"
@@ -3211,7 +3214,7 @@ note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo n
   [[source.item]]
   item = "volume_vertedouro · volume_desvio · cota_minima · cota_maxima · desvio"
   status = "unread"
-  note = "Volumes de vertedouro e de desvio, cotas limite e o código de desvio. O Novomodelo não modela vertedouro nem canal de desvio (`diversion` é sempre nulo); as cotas são avaliadas pelo polinômio cota × volume."
+  note = "Volumes de vertedouro e de desvio, cotas limite e o código de desvio. O Novomodelo não modela vertedouro nem volume mínimo de operação do canal de desvio; o canal de desvio vem só de `CDESVIO` em `modif.dat`, nunca do código `desvio`; as cotas são avaliadas pelo polinômio cota × volume."
 
   [[source.item]]
   item = "numero_unidades_base · representacao_conjunto · empresa · observacao · data"
@@ -3220,7 +3223,7 @@ note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo n
 
 [[source]]
 file = "modif"
-note = "Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio e `CFUGA`/`CMONT` alteram a produtibilidade por estágio."
+note = "Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio, `CFUGA`/`CMONT` alteram a produtibilidade por estágio e `CDESVIO` declara o canal de desvio da usina (`hydros[].diversion`)."
 
   [[source.item]]
   item = "VMINP"

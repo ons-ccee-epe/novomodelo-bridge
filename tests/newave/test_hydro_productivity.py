@@ -11,7 +11,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import make_case, make_nw_files
+from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
     _make_cfuga_rec,
     _make_confhd_df,
@@ -935,12 +935,7 @@ class TestConvertProductionModels:
         vazmint_rec.data_inicio = datetime.datetime(2025, 3, 1)
         vazmint_rec.vazao = 50.0
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vazmint_rec]
+        mock_modif = modif_mock((1, [vazmint_rec]))
 
         case = self._base_case(tmp_path, modif=mock_modif)
 
@@ -960,12 +955,8 @@ class TestConvertProductionModels:
     def test_single_cfuga_override_two_ranges(self, tmp_path: Path) -> None:
         """One CFUGA override at stage 3 -> two stage_ranges (base then overridden)."""
         cfuga_rec = _make_cfuga_rec(month=4, year=2025, nivel=60.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((1, [cfuga_rec]))
 
         # Study: start Jan 2025, 5 years -> 60 stages total.
         case = self._base_case(
@@ -997,12 +988,8 @@ class TestConvertProductionModels:
     def test_cmont_override_bypasses_polynomial(self, tmp_path: Path) -> None:
         """CMONT override at stage 0 -> single stage_range using cmont as height."""
         cmont_rec = _make_cmont_rec(month=1, year=2025, nivel=400.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cmont_rec]
+        mock_modif = modif_mock((1, [cmont_rec]))
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1029,12 +1016,8 @@ class TestConvertProductionModels:
             _make_cfuga_rec(month=6, year=2025, nivel=55.0),  # stage 5
             _make_cfuga_rec(month=1, year=2026, nivel=65.0),  # stage 12
         ]
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = recs
+        mock_modif = modif_mock((1, recs))
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1056,19 +1039,10 @@ class TestConvertProductionModels:
     def test_output_sorted_by_hydro_id(self, tmp_path: Path) -> None:
         """production_models list is sorted ascending by hydro_id."""
         # Both plants have CFUGA overrides; plant codes 1 and 2 -> ids 0 and 1.
-        usina_rec1 = MagicMock()
-        usina_rec1.codigo = 1
-        usina_rec2 = MagicMock()
-        usina_rec2.codigo = 2
-
-        def _mods(code: int) -> list:
-            if code == 1:
-                return [_make_cfuga_rec(month=3, year=2025, nivel=55.0)]
-            return [_make_cfuga_rec(month=6, year=2025, nivel=55.0)]
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec2, usina_rec1]  # reversed order
-        mock_modif.modificacoes_usina.side_effect = _mods
+        mock_modif = modif_mock(  # plant 2's block first
+            (2, [_make_cfuga_rec(month=6, year=2025, nivel=55.0)]),
+            (1, [_make_cfuga_rec(month=3, year=2025, nivel=55.0)]),
+        )
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1163,11 +1137,7 @@ class TestConvertHydroEnergyProductivity:
         """CFUGA at stage 3 → per-stage rows for the full horizon; stages [0..2] use
         base."""
         cfuga_rec = _make_cfuga_rec(month=4, year=2025, nivel=60.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((1, [cfuga_rec]))
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1338,11 +1308,7 @@ class TestConvertHydroEnergyProductivity:
         month's reference volume AND the active canal_fuga override."""
         # CFUGA effective from month 6 (stage 5) onward — canal_fuga 50 → 60.
         cfuga_rec = _make_cfuga_rec(month=6, year=2025, nivel=60.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((1, [cfuga_rec]))
 
         # Seasonal volref: every month useful=200 → V=300, h=330.
         volref_df = pd.DataFrame(

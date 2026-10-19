@@ -32,6 +32,7 @@ from novomodelo_bridge.newave.converters.hydro.geometry import (
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
+    read_diversion_records,
 )
 from novomodelo_bridge.newave.filling import (
     exph_unit_rows,
@@ -75,6 +76,100 @@ def _unit_ramp_summary(
     return "; ".join(parts)
 
 
+def _diversion_channels(
+    case: NewaveCase, id_map: NewaveIdMap, cadastro: pd.DataFrame
+) -> dict[int, dict]:
+    """``{plant code: hydros.json diversion channel}`` from ``CDESVIO`` records.
+
+    Only a ``CDESVIO`` record declares a channel; the ``hidr.dat`` ``desvio``
+    code alone does not. The channel carries the record's maximum flow as
+    given. A record on a plant outside the case is ignored; one whose target
+    is outside the case, or that gives no maximum flow, converts to no channel
+    and is reported.
+    """
+    records = read_diversion_records(case)
+    if not records:
+        return {}
+    switch = case.switches.canal_desvio
+    if not switch.on:
+        emit(switch_off_diagnostic(switch), logger=_LOG)
+        return {}
+
+    def name(code: int) -> str:
+        if code in cadastro.index and "nome_usina" in cadastro.columns:
+            return str(cadastro.loc[code, "nome_usina"]).strip()
+        return ""
+
+    in_case = set(id_map.all_hydro_codes)
+    channels: dict[int, dict] = {}
+    modeled: list[list[object]] = []
+    dropped: list[list[object]] = []
+    for code, record in sorted(records.items()):
+        if code not in in_case:
+            continue
+        row: list[object] = [code, name(code), record.target, name(record.target)]
+        if record.target not in in_case:
+            dropped.append([*row, "target plant not in the case"])
+        elif record.max_flow_m3s is None:
+            dropped.append([*row, "no maximum flow given"])
+        else:
+            # TRACKED NOVOMODELO-GAP WORKAROUND (C21): novomodelo has no channel without a
+            # limit, so a "no limit" record value (9999999) is emitted as given.
+            channels[code] = {
+                "downstream_id": id_map.hydro_id(record.target),
+                "max_flow_m3s": record.max_flow_m3s,
+            }
+            flow = f"{record.max_flow_m3s:.2f}".rstrip("0").rstrip(".")
+            modeled.append([*row, flow])
+
+    columns = ["Code", "Name", "Target code", "Target name"]
+    if modeled:
+        emit(
+            Diagnostic(
+                code="diversion-channels",
+                severity=Severity.INFO,
+                category="Diversion channels",
+                title=f"Diversion channels ({len(modeled)})",
+                summary=(
+                    f"{len(modeled)} plant(s) divert water to the target plant "
+                    "through a channel declared by CDESVIO in modif.dat, up to "
+                    "the listed maximum flow."
+                ),
+                table=DiagnosticTable(
+                    columns=[*columns, "Max flow (m³/s)"],
+                    rows=modeled,
+                    justify=["right", "left", "right", "left", "right"],
+                ),
+            ),
+            logger=_LOG,
+        )
+    if dropped:
+        emit(
+            Diagnostic(
+                code="diversion-channel-dropped",
+                severity=Severity.WARNING,
+                category="Diversion channels",
+                title=f"Diversion channels not converted ({len(dropped)})",
+                summary=(
+                    f"{len(dropped)} CDESVIO record(s) in modif.dat convert to "
+                    "no channel, so the listed plants release water only to "
+                    "their downstream plant."
+                ),
+                table=DiagnosticTable(
+                    columns=[*columns, "Reason"],
+                    rows=dropped,
+                    justify=["right", "left", "right", "left", "left"],
+                ),
+                remediation=(
+                    "Give each listed record a target plant that is in the case "
+                    "and the channel's maximum flow in m³/s after the target code."
+                ),
+            ),
+            logger=_LOG,
+        )
+    return channels
+
+
 def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     """Convert the source model hydro plant data to a Novomodelo ``hydros.json`` dict.
 
@@ -110,6 +205,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     ree_df = ree_file.rees  # columns: codigo, nome, submercado, ...
 
     cadastro = _apply_permanent_overrides(cadastro, case)
+    diversion_channels = _diversion_channels(case, id_map, cadastro)
 
     min_outflow_on = case.switches.min_outflow.on
     if not min_outflow_on:
@@ -520,7 +616,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             "specific_productivity_mw_per_m3s_per_m": rho_esp,
             "evaporation": evaporation,
             "tailrace": tailrace,
-            "diversion": None,
+            "diversion": diversion_channels.get(newave_code),
             "filling": filling,
             "efficiency": efficiency,
             "hydraulic_losses": hydraulic_losses,

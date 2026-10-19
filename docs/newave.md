@@ -40,8 +40,8 @@ Several optional inputs are also gated by a switch line in `dger.dat`, such
 as `CONSIDERA GHMIN` for `ghmin.dat`, `AGRUPAMENTO LIVRE` for `agrint.dat`,
 `CONS. CARGA ADICIONAL` for `c_adic.dat`, the two `RESTRICOES ELETRICAS`
 lines for `re.dat` and `restricao-eletrica.csv`, `DESCONSIDERA VAZMIN` for
-minimum outflow, and `REST. TURBINAMENTO` for the dated turbining records of
-`modif.dat`. A file that is present but switched off is ignored, as NEWAVE
+minimum outflow, `REST. TURBINAMENTO` for the dated turbining records of
+`modif.dat`, and `CANAL DE DESVIO` for its `CDESVIO` records. A file that is present but switched off is ignored, as NEWAVE
 ignores it, and both `check newave` and `convert newave` say so with an
 informational diagnostic. A switch line absent from `dger.dat` counts as on.
 
@@ -88,6 +88,14 @@ the same output.
   NEWAVE provides only for the study years (loads, block factors, some bounds)
   is extended into the post-study years by repeating the last study year's
   seasonal values.
+- **Diversion channels.** A `CDESVIO` record in a plant's block of
+  `modif.dat` becomes that plant's Novomodelo diversion channel, to the record's
+  target plant and capped at its maximum flow as given. Only `CDESVIO`
+  declares a channel; the `desvio` code of `hidr.dat` alone does not. A record
+  with no maximum flow, or whose target plant is not in the case, converts to
+  no channel and is reported, and so the plant releases only to its
+  downstream plant. The minimum storage for operating the channel
+  (`volume_desvio` in `hidr.dat`) is not converted.
 - **Constraints.** The minimum-storage security curve (`curva.dat`), electric
   constraints (`restricao-eletrica.csv`), and interchange group limits
   (`agrint.dat`) all become Novomodelo generic constraints: linear expressions over

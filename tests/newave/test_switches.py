@@ -19,6 +19,7 @@ from tests.conftest import make_nw_files
 _PLAIN = {
     "agrint": "agrupamento_livre",
     "c_adic": "considera_carga_adicional",
+    "canal_desvio": "canal_desvio",
     "ghmin": "considera_ghmin",
     "re_dat": "restricoes_eletricas",
     "restricao_eletrica": "restricoes_eletricas_especiais",
@@ -102,6 +103,7 @@ class TestSwitchedOffInputs:
                 considera_ghmin=0,
                 agrupamento_livre=0,  # agrint.dat absent: not reported
                 restricao_turbinamento=3,  # modif present: TURBMAXT reported
+                canal_desvio=0,  # modif present, CDESVIO unknown: not reported
                 restricoes_eletricas_especiais=0,  # csv absent: not reported
             )
         )

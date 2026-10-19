@@ -209,6 +209,20 @@ def make_nw_files(tmp_path: Path, **overrides: Path | None) -> NewaveFiles:
     return NewaveFiles(**fields)  # type: ignore[arg-type]
 
 
+def modif_mock(*blocks: tuple[int, list]) -> MagicMock:
+    """A ``Modif`` stand-in holding one ``USINA`` block per ``(code, records)``,
+    in order, as the register sequence the converter walks."""
+    modif = MagicMock()
+    data: list = []
+    for code, records in blocks:
+        usina = MagicMock()
+        type(usina).__name__ = "USINA"
+        usina.codigo = code
+        data.extend([usina, *records])
+    modif.data = data
+    return modif
+
+
 def make_case(files_or_tmp: NewaveFiles | Path, **parsed: Any) -> NewaveCase:
     """Build a ``NewaveCase`` with the given parsed readers pre-cached.
 

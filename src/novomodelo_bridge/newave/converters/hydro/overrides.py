@@ -1,7 +1,8 @@
 """Source-file override readers for hydro entity conversion.
 
-Reads MODIF.DAT (permanent + temporal overrides) and GHMIN.DAT. The
-package's lowest layer: imports nothing from a sibling submodule.
+Reads MODIF.DAT (permanent + temporal overrides and diversion channels) and
+GHMIN.DAT. The package's lowest layer: imports nothing from a sibling
+submodule.
 
 MODIF.DAT volume records (VOLMAX, VOLMIN, VMAXT, VMINT) carry a unit column:
 ``h`` is hm³ and ``%`` is a percentage of the plant's useful volume. The
@@ -13,6 +14,9 @@ depend on record order.
 from __future__ import annotations
 
 import logging
+import math
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -22,8 +26,13 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR
+
+if TYPE_CHECKING:
+    from cfinterface.components.register import Register
+    from inewave.newave import Modif
 
 _LOG = logging.getLogger(__name__)
 
@@ -100,6 +109,29 @@ def _emit_unknown_volume_units(
     )
 
 
+def _modif_blocks(modif: Modif) -> list[tuple[int | None, list[Register]]]:
+    """The records of ``modif.dat`` under each ``USINA`` record, in file order.
+
+    A plant may have several blocks, each its own entry; records before the
+    first ``USINA`` record come first, under ``None``. The registers are walked
+    directly because inewave's per-plant accessors drop the file's last record,
+    read only a plant's first block, and fail on a file with a single block.
+    """
+    blocks: list[tuple[int | None, list[Register]]] = [(None, [])]
+    for register in modif.data:
+        if type(register).__name__ == "USINA":
+            blocks.append((int(register.codigo), []))
+        else:
+            blocks[-1][1].append(register)
+    return blocks if blocks[0][1] else blocks[1:]
+
+
+def _plant_blocks(modif: Modif) -> list[tuple[int, list[Register]]]:
+    return [
+        (code, records) for code, records in _modif_blocks(modif) if code is not None
+    ]
+
+
 def _apply_permanent_overrides(
     cadastro: pd.DataFrame, case: NewaveCase
 ) -> pd.DataFrame:
@@ -140,23 +172,19 @@ def _apply_permanent_overrides(
         if _col in result.columns and result[_col].dtype.kind == "i":
             result[_col] = result[_col].astype(float)
 
-    usina_records = modif.usina()
-    if not usina_records:
-        return result
-
     # Loop-accumulate-then-emit-once: one record per skipped plant/record,
     # emitted after the loop (see the module's finalize_diagnostics de-dup).
     uncadastred: list[int] = []
     unsupported_perm: list[tuple[int, str]] = []
     unit_unknown: list[tuple[int, str, str]] = []
 
-    for usina_rec in usina_records:
-        code = int(usina_rec.codigo)
+    for code, records in _plant_blocks(modif):
         if code not in result.index:
-            uncadastred.append(code)
+            if code not in uncadastred:
+                uncadastred.append(code)
             continue
 
-        for rec in modif.modificacoes_usina(code):
+        for rec in records:
             type_name = type(rec).__name__
 
             # Skip temporal override types — handled separately.
@@ -267,6 +295,73 @@ def _apply_permanent_overrides(
     return result
 
 
+@dataclass(frozen=True)
+class DiversionRecord:
+    """A ``CDESVIO`` record: the plant its channel diverts to, and the
+    channel's maximum flow in m³/s (``None`` when the record gives none)."""
+
+    target: int
+    max_flow_m3s: float | None
+
+
+def read_diversion_records(case: NewaveCase) -> dict[int, DiversionRecord]:
+    """``{plant code: its CDESVIO record}`` from ``modif.dat``.
+
+    inewave keeps ``CDESVIO`` as an unparsed line, so its free-format fields
+    are split here and the record belongs to the ``USINA`` record above it.
+    A plant with more than one keeps the last, as with the other permanent
+    records.
+
+    Raises:
+        FieldParseError: a record before any ``USINA`` record, without an
+            integer target code, diverting to its own plant, or with a flow
+            that is not a non-negative number.
+    """
+    modif = case.modif
+    if modif is None:
+        return {}
+    records: dict[int, DiversionRecord] = {}
+    for plant, registers in _modif_blocks(modif):
+        for register in registers:
+            line = getattr(register, "data", None)
+            if not isinstance(line, str):
+                continue
+            fields = line.split()
+            if not fields or fields[0].upper() != "CDESVIO":
+                continue
+            if plant is None:
+                raise _cdesvio_error("a CDESVIO record comes before any USINA record")
+            records[plant] = _parse_cdesvio(plant, fields[1:])
+    return records
+
+
+def _parse_cdesvio(plant: int, values: list[str]) -> DiversionRecord:
+    try:
+        target = int(values[0])
+    except (IndexError, ValueError):
+        raise _cdesvio_error(
+            f"the CDESVIO record of plant {plant} has no integer target plant code"
+        ) from None
+    if target == plant:
+        raise _cdesvio_error(f"the CDESVIO record of plant {plant} diverts to itself")
+    if len(values) < 2:
+        return DiversionRecord(target, None)
+    try:
+        max_flow = float(values[1])
+    except ValueError:
+        max_flow = math.nan
+    if not math.isfinite(max_flow) or max_flow < 0.0:
+        raise _cdesvio_error(
+            f"the CDESVIO record of plant {plant} gives the maximum flow "
+            f"{values[1]!r}; expected a non-negative number in m³/s"
+        )
+    return DiversionRecord(target, max_flow)
+
+
+def _cdesvio_error(reason: str) -> FieldParseError:
+    return FieldParseError(f"modif.dat: {reason}", path="modif.dat", field="CDESVIO")
+
+
 def read_cadastro(case: NewaveCase) -> pd.DataFrame:
     """Read ``hidr.dat`` and apply permanent MODIF.DAT overrides.
 
@@ -330,21 +425,16 @@ def _extract_temporal_overrides(
     confhd_set = set(confhd_codes)
     result: dict[int, list[dict]] = {}
 
-    usina_records = modif.usina()
-    if not usina_records:
-        return result
-
     # Loop-accumulate-then-emit-once (see _apply_permanent_overrides above).
     undated: list[tuple[int, str]] = []
     unit_unknown: list[tuple[int, str, str]] = []
 
-    for usina_rec in usina_records:
-        code = int(usina_rec.codigo)
+    for code, records in _plant_blocks(modif):
         if code not in confhd_set:
             continue
 
         plant_overrides: list[dict] = []
-        for rec in modif.modificacoes_usina(code):
+        for rec in records:
             type_name = type(rec).__name__
             if type_name not in _TEMPORAL_OVERRIDE_TYPES:
                 continue
@@ -384,7 +474,7 @@ def _extract_temporal_overrides(
             plant_overrides.append(override)
 
         if plant_overrides:
-            result[code] = plant_overrides
+            result.setdefault(code, []).extend(plant_overrides)
 
     if undated:
         emit(
