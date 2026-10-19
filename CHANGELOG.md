@@ -104,6 +104,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert decomp` routes bounded diversions to their target plant.** A
+  plant whose single-term `QDES` restriction allowed a positive diversion but
+  set no positive floor got diversion bounds and no Cobre diversion channel,
+  so Cobre removed the diverted water from the system instead of passing it
+  to the plant that receives it (such as TOCOS to LAJES and VIGARIO to
+  FONTES AB). Every plant whose diversion can be positive now gets the
+  channel to its `AC DESVIO` or `hidr.dat` target, limited by the `AC DESVIO`
+  flow, else the largest `QDES` ceiling. A floored plant whose target has no
+  `AC DESVIO` limit now resolves the same way instead of being reported. When
+  the target plant is not in the case, the diversion ceiling is closed and
+  reported, so the water stays in the plant's own river.
+
+- **`convert` refuses a case where diverted water reaches no plant.** Both
+  `convert newave` and `convert decomp` now fail before writing when a plant
+  can divert water (a positive diversion floor or ceiling) but has no
+  diversion channel to a receiving plant. Cobre rejects such a floor but
+  accepts such a ceiling, and the diverted water then leaves the system.
+
 - **NEWAVE: Hydro plants referenced by pumping stations are no longer
   classified as fictitious.** Previously, zero-productivity reservoirs used
   for pumped storage (e.g., VIGÁRIO) were removed, which could break cascade

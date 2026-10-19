@@ -42,7 +42,10 @@ from novomodelo_bridge.decomp.converters.thermal import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.pipeline import (
     ConversionReport,
+    DiversionChannels,
     _base_diversion_channels,
+    _close_diversion,
+    _diversion_channel_dropped_diagnostic,
     _diversion_channels,
 )
 from novomodelo_bridge.decomp.scenarios import (
@@ -1799,9 +1802,9 @@ class TestDeferralWarning:
 
 
 class TestDiversionChannels:
-    """``_diversion_channels`` couples a positive QDES diversion floor to the
-    source-model diversion channel novomodelo requires for it (BILLINGS/PIMENTAL in
-    the real decks)."""
+    """``_diversion_channels`` gives every hydro whose resolved diversion can be
+    positive the channel to its source-model diversion target, so novomodelo credits
+    the diverted water to the receiving plant."""
 
     @staticmethod
     def _id_map() -> DecompIdMap:
@@ -1818,68 +1821,143 @@ class TestDiversionChannels:
         )
 
     @staticmethod
-    def _bounds(hydro_id: int, min_diversion: float | None) -> pa.Table:
+    def _caps() -> dict[int, HydroCapacities]:
+        return {
+            0: HydroCapacities(max_generation_mw=50.0, max_turbined_m3s=40.0),
+            1: HydroCapacities(max_generation_mw=900.0, max_turbined_m3s=150.0),
+        }
+
+    @staticmethod
+    def _bounds(
+        rows: list[tuple[int, float | None, float | None]],
+    ) -> pa.Table:
         return pa.table(
             {
-                "hydro_id": pa.array([hydro_id], type=pa.int32()),
-                "min_diversion_m3s": pa.array([min_diversion], type=pa.float64()),
+                "hydro_id": pa.array([r[0] for r in rows], type=pa.int32()),
+                "min_diversion_m3s": pa.array([r[1] for r in rows], type=pa.float64()),
+                "max_diversion_m3s": pa.array([r[2] for r in rows], type=pa.float64()),
             }
         )
 
-    def test_floored_hydro_with_channel_gets_the_channel(self) -> None:
-        channel = DiversionChannel(downstream=119, limit=100.0)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0),
+    def _resolve(self, rows: list, diversions: dict) -> DiversionChannels:
+        return _diversion_channels(
+            self._bounds(rows),
             self._id_map(),
-            self._effective({118: (channel, channel)}),
+            self._effective(diversions),
+            self._caps(),
         )
-        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": 100.0}}
-        assert unresolved == []
 
-    def test_floored_hydro_without_channel_is_unresolved(self) -> None:
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0), self._id_map(), self._effective({})
+    def test_floored_hydro_with_limit_gets_the_limit(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=100.0)
+        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        assert result == DiversionChannels(
+            {0: {"downstream_id": 1, "max_flow_m3s": 100.0}}, []
         )
-        assert channels == {}
-        assert unresolved == [0]
 
-    def test_channel_with_no_limit_is_unresolved(self) -> None:
+    def test_ceiling_only_hydro_gets_a_channel(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=100.0)
+        result = self._resolve([(0, 0.0, 25.0)], {118: (channel, channel)})
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": 100.0}}
+        assert result.dropped == []
+
+    def test_target_without_limit_uses_largest_finite_ceiling(self) -> None:
         channel = DiversionChannel(downstream=119, limit=None)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0),
-            self._id_map(),
-            self._effective({118: (channel, channel)}),
+        result = self._resolve(
+            [(0, 0.0, 25.0), (0, 0.0, 34.0), (0, None, None)],
+            {118: (channel, channel)},
         )
-        assert channels == {}
-        assert unresolved == [0]
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": 34.0}}
 
-    def test_channel_to_unmapped_downstream_is_unresolved(self) -> None:
+    def test_floor_with_target_without_limit_resolves(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=None)
+        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        assert result == DiversionChannels(
+            {0: {"downstream_id": 1, "max_flow_m3s": 6.0}}, []
+        )
+
+    def test_floor_without_ceiling_falls_back_to_receiver_turbine(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=None)
+        result = self._resolve([(0, 6.0, None)], {118: (channel, channel)})
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": 150.0}}
+
+    def test_floored_hydro_without_target_gets_no_channel_and_is_kept(self) -> None:
+        result = self._resolve([(0, 6.0, 6.0)], {})
+        assert result == DiversionChannels({}, [])
+
+    def test_floor_with_target_outside_the_case_gets_no_channel(self) -> None:
         channel = DiversionChannel(downstream=999, limit=100.0)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0),
-            self._id_map(),
-            self._effective({118: (channel, channel)}),
-        )
-        assert channels == {}
-        assert unresolved == [0]
+        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [])
 
-    def test_zero_floor_gets_no_channel(self) -> None:
+    def test_ceiling_with_target_outside_the_case_is_dropped(self) -> None:
+        channel = DiversionChannel(downstream=999, limit=None)
+        result = self._resolve([(0, 0.0, 25.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [0])
+
+    def test_closed_diversion_gets_no_channel(self) -> None:
         channel = DiversionChannel(downstream=119, limit=100.0)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 0.0),
-            self._id_map(),
-            self._effective({118: (channel, channel)}),
-        )
-        assert channels == {}
-        assert unresolved == []
+        result = self._resolve([(0, 0.0, 0.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [])
 
-    def test_absent_diversion_column_returns_empty(self) -> None:
+    def test_absent_diversion_columns_return_empty(self) -> None:
         table = pa.table({"hydro_id": pa.array([0], type=pa.int32())})
-        channels, unresolved = _diversion_channels(
-            table, self._id_map(), self._effective({})
+        result = _diversion_channels(
+            table, self._id_map(), self._effective({}), self._caps()
         )
-        assert channels == {}
-        assert unresolved == []
+        assert result == DiversionChannels({}, [])
+
+
+class TestCloseDiversion:
+    """``_close_diversion`` zeroes the ceiling of a hydro whose diversion
+    target is outside the case, so novomodelo keeps that water in its own river."""
+
+    def test_closes_only_the_listed_hydros(self) -> None:
+        table = pa.table(
+            {
+                "hydro_id": pa.array([0, 0, 1], type=pa.int32()),
+                "max_diversion_m3s": pa.array([25.0, None, 34.0], type=pa.float64()),
+            }
+        )
+        closed = _close_diversion(table, [0])
+        assert closed.column("max_diversion_m3s").to_pylist() == [0.0, None, 34.0]
+        assert closed.schema == table.schema
+
+
+class TestDiversionChannelDroppedDiagnostic:
+    """The WARNING for a closed diversion names the plant, its target and the
+    ceiling that was closed, in text a pip-installed user can act on."""
+
+    def _diagnostic(self) -> Diagnostic:
+        channel = DiversionChannel(downstream=999, limit=None)
+        table = pa.table(
+            {
+                "hydro_id": pa.array([0, 0], type=pa.int32()),
+                "max_diversion_m3s": pa.array([25.0, 20.0], type=pa.float64()),
+            }
+        )
+        return _diversion_channel_dropped_diagnostic(
+            table,
+            [0],
+            DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(180,)),
+            EffectiveCadastro(
+                base=pd.DataFrame(),
+                n_stages=1,
+                stage_varying={},
+                diversions={180: (channel,)},
+            ),
+            {"hydros": [{"id": 0, "name": "TOCOS"}]},
+        )
+
+    def test_table_names_plant_target_and_ceiling(self) -> None:
+        diagnostic = self._diagnostic()
+        assert diagnostic.code == "decomp-diversion-channel-dropped"
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [["TOCOS", 180, 999, 25.0]]
+
+    def test_remediation_has_no_repo_internal_references(self) -> None:
+        text = f"{self._diagnostic().summary} {self._diagnostic().remediation}"
+        for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
+            assert leak not in text
 
 
 class TestBaseDiversionChannels:

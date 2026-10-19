@@ -1446,25 +1446,27 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
 
   [[output.field]]
   path = "hydros[].diversion.downstream_id"
-  when = "somente quando a usina tem piso positivo em `min_diversion_m3s` (RHQ `QDES` de termo único) com canal resolúvel, ou um `desvio` de base sem limite explícito cuja usina receptora é operada"
+  when = "somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada"
   from = [
     { file = "hidr", item = "desvio" },
     { file = "dadger", register = "AC", item = "DESVIO" },
     { file = "dadger", register = "HQ", item = "codigo_restricao" },
     { file = "dadger", register = "LQ", item = "limite_inferior" },
+    { file = "dadger", register = "LQ", item = "limite_superior" },
     { file = "dadger", register = "CQ", item = "codigo_usina" },
     { file = "dadger", register = "CQ", item = "tipo" },
   ]
-  how = "Id Novomodelo da usina que recebe a água desviada: o `codigo_usina_jusante` do primeiro `AC DESVIO` em vigor ou, na falta dele, o `desvio` do `hidr.dat`. Um piso de desvio sem canal resolúvel (limite ausente ou receptora não operada) gera aviso e o bloco fica nulo; uma usina com desvio mas sem piso nem canal de base fica com `diversion` nulo."
+  how = "Id Novomodelo da usina que recebe a água desviada: o `codigo_usina_jusante` do primeiro `AC DESVIO` em vigor ou, na falta dele, o `desvio` do `hidr.dat`, a usina para onde o DECOMP envia o `QDES`. Com a usina receptora fora do caso, um piso positivo deixa o bloco nulo e a conversão falha (`hydro-diversion-without-channel`); um teto sem piso é fechado em 0 com aviso (`decomp-diversion-channel-dropped`), e a água fica no rio da própria usina. Uma usina com desvio fechado em [0, 0] em todos os estágios fica com `diversion` nulo."
 
   [[output.field]]
   path = "hydros[].diversion.max_flow_m3s"
-  when = "somente quando a usina tem piso positivo em `min_diversion_m3s` (RHQ `QDES` de termo único) com canal resolúvel, ou um `desvio` de base sem limite explícito cuja usina receptora é operada"
+  when = "somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada"
   from = [
     { file = "dadger", register = "AC", item = "DESVIO" },
     { file = "hidr", item = "desvio" },
+    { file = "dadger", register = "LQ", item = "limite_superior" },
   ]
-  how = "`limite_vazao` do `AC DESVIO` em vigor. Para um `desvio` de base sem limite explícito, o canal é limitado pelo `generation.max_turbined_m3s` da usina receptora, para que a água desviada chegue a ela (caso MOXOTÓ → P.AFONSO 4); esse teto também vira `max_diversion_m3s` em `constraints/hydro_bounds.parquet`."
+  how = "`limite_vazao` do `AC DESVIO` em vigor; na falta dele, o maior teto finito de `max_diversion_m3s` da usina (o `limite_superior` da RHQ `QDES`) e, sem teto, o `generation.max_turbined_m3s` da usina receptora. Para um `desvio` de base sem limite explícito nem RHQ, o canal é limitado pelo `generation.max_turbined_m3s` da usina receptora, para que a água desviada chegue a ela (caso MOXOTÓ → P.AFONSO 4); esse teto também vira `max_diversion_m3s` em `constraints/hydro_bounds.parquet`."
 
 [[output]]
 path = "system/hydro_production_models.json"
@@ -1937,7 +1939,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "hidr", item = "desvio" },
     { file = "dadger", register = "AC", item = "DESVIO" },
   ]
-  how = "Teto de vazão desviada de uma RHQ de termo único sobre `QDES`: `limite_superior` do `LQ` por patamar. Para um `desvio` de base (`hidr.dat` ou `AC DESVIO`) sem limite RHQ, o teto é o `limite_vazao` do `AC DESVIO` ou, na falta dele, o `generation.max_turbined_m3s` da usina receptora, em todos os estágios, para que a água desviada não fique presa em [0, 0]."
+  how = "Teto de vazão desviada de uma RHQ de termo único sobre `QDES`: `limite_superior` do `LQ` por patamar. Para um `desvio` de base (`hidr.dat` ou `AC DESVIO`) sem limite RHQ, o teto é o `limite_vazao` do `AC DESVIO` ou, na falta dele, o `generation.max_turbined_m3s` da usina receptora, em todos os estágios, para que a água desviada não fique presa em [0, 0]. Fechado em 0 quando a usina receptora do desvio está fora do caso (diagnóstico `decomp-diversion-channel-dropped`)."
 
   [[output.field]]
   path = "min_spillage_m3s"
