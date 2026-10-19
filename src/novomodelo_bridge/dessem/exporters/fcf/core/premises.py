@@ -69,8 +69,8 @@ P9 = (
 )
 
 P10 = (
-    "P10: all populated cuts emitted; is_active and active_cut_indices "
-    "recorded as ECO columns, not used as filters"
+    "P10: every populated cut past the warm-start slots emitted; is_active "
+    "recorded as an ECO column, not used as a filter"
 )
 
 P11 = (

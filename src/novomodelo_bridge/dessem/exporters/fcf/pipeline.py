@@ -55,11 +55,10 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     tree_indices,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
-    POLICY_MANIFEST_RELATIVE,
     PolicyFormatError,
-    load_pools,
     nodes_by_pool,
-    read_policy_manifest,
+    read_policy,
+    select_pools,
 )
 from novomodelo_bridge.dessem.exporters.fcf.eco.audit_raw_cuts import emit_eco_csvs
 from novomodelo_bridge.dessem.exporters.fcf.manifest import (
@@ -84,15 +83,14 @@ def _emit_export_warnings() -> None:
             title="Travel-time coefficients not supported",
             summary=(
                 "Water travel-time (tempo de viagem) coefficients are not yet "
-                "supported and are omitted from the export."
+                "supported: the export writes no travel-time block."
             ),
             notes=[
-                "Premise P3: Novomodelo does not model water travel time between "
-                "cascade stages, so n_utv = 0 and pi_qdefp coefficients are absent.",
+                "Premise P3: n_utv = 0, so the cuts carry no pi_qdefp coefficients.",
             ],
             remediation=(
-                "If the source policy includes travel-time state variables, "
-                "their sensitivity is not captured in the exported FCF."
+                "A policy whose cuts carry travel-time state is refused rather "
+                "than exported without it."
             ),
         )
     )
@@ -123,8 +121,8 @@ def _emit_export_warnings() -> None:
 # Phase labels for progress reporting (order matches run_export steps)
 EXPORT_PHASE_LABELS: tuple[str, ...] = (
     "Reading inputs",
-    "Reading policy manifest",
-    "Loading pools",
+    "Reading policy checkpoint",
+    "Selecting pools",
     "Validating premises",
     "Emitting ECO CSVs",
     "Building mappings",
@@ -313,9 +311,8 @@ def _assemble_cuts(
         pool = pools[pool_id]
         node_cuts: list[CutInput] = []
         for piece in pool.pieces:
-            if piece.slot_index >= pool.warm_start_count:
-                # Not a warm-start cut, include it
-                pass
+            if piece.slot_index < pool.warm_start_count:
+                continue
             pi_varm = storage_coefficients(piece, pool.slots, hydro_codes)
             pi_gnl = zeroed_gnl_block(offsets)
             node_cuts.append(
@@ -364,17 +361,18 @@ def run_export(
             hydro_codes = load_hydro_codes(Path(settings.hydro_codes_path))
             inputs = read_case_inputs(case_dir)
 
-        current_step = "read the policy manifest"
+        current_step = "read the policy checkpoint"
         _step(EXPORT_PHASE_LABELS[1])
         with _log_step(current_step):
-            manifest = read_policy_manifest(case_dir / POLICY_MANIFEST_RELATIVE)
+            checkpoint = read_policy(case_dir)
+            manifest = checkpoint.manifest
 
-        current_step = "read the trunk pools"
+        current_step = "select the trunk pools"
         _step(EXPORT_PHASE_LABELS[2])
         with _log_step(current_step):
             pool_ids = sorted(nodes_by_pool(manifest))
-            pools = load_pools(
-                case_dir, pool_ids, include_terminal=settings.include_terminal_pool
+            pools = select_pools(
+                checkpoint, pool_ids, include_terminal=settings.include_terminal_pool
             )
             trunk_pool_ids = cut_building_pools(pools, len(pool_ids) - 1)
             terminal_pool_id = pool_ids[-1]
@@ -508,6 +506,16 @@ def run_export(
 
     except (LayoutError, MappingError, PolicyFormatError) as exc:
         _LOG.error("export failed at step '%s': %s", current_step, exc)
+        emit(
+            Diagnostic(
+                code="dessem-fcf-export-failed",
+                severity=Severity.ERROR,
+                category="Export failure",
+                title="Export failed",
+                summary=str(exc),
+                notes=[f"Failed step: {current_step}"],
+            )
+        )
         if unvalidated_pair_published:
             reject_pair(paths.mapcut, paths.cortdeco)
         _write_failure_manifest(case_dir, revision, settings, paths, current_step)

@@ -1,18 +1,20 @@
-"""Policy checkpoint reader: reads Novomodelo FlatBuffers policy files.
+"""Policy checkpoint reader over novomodelo-python's `novomodelo.results.load_policy`.
 
-Both readers materialize their tables into frozen dataclasses at this boundary;
-no live FlatBuffers table travels deeper into the package, because a table is a
-view over a buffer whose lifetime the caller cannot see.
+The checkpoint is materialized into frozen dataclasses at this boundary, and
+every cut value leaves it in currency (R$): novomodelo stores intercepts and
+coefficients in the run's scaled units and names the scale in each pool's
+`cost_scale_factor`, so the reader multiplies by that factor. Dividing, or
+passing the stored values through, ships a FCF off by the run's scale.
 
 Coefficient vectors are sized by the pool's own entity manifest, never by
-`StageCuts.state_dimension`, which is the study-global dimension.
+`state_dimension`, which is the study-global dimension.
 """
 
 from __future__ import annotations
 
 import logging
-import struct
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,42 +22,20 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from novomodelo_bridge.novomodelo.flatbuffers.IO.Policy.CheckpointManifest import (
-    CheckpointManifest,
-)
-from novomodelo_bridge.novomodelo.flatbuffers.IO.Policy.StageCuts import StageCuts
-
 _LOG = logging.getLogger(__name__)
 
-SUPPORTED_FORMAT_VERSION = 1
-_MIN_BUFFER_BYTES = 8
-
-# FlatBuffers surfaces a malformed buffer as whatever the underlying struct or
-# index operation raises. Enumerated rather than caught blanket.
-_DECODE_ERRORS = (
-    IndexError,
-    OverflowError,
-    TypeError,
-    UnicodeDecodeError,
-    ValueError,
-    struct.error,
-)
-
-# Entity type codes from Novomodelo's policy.fbs schema.
+# Entity type codes from novomodelo's policy.fbs schema.
 VALID_ENTITY_TYPES = frozenset({0, 1, 2, 3})
 
-# Standard checkpoint paths relative to case directory.
-POLICY_MANIFEST_RELATIVE = Path("output/policy/manifest.bin")
-CUTS_SUBDIR = Path("output/policy/cuts")
+# `YYYYMMDD` date fields carry i32::MIN on the families they do not apply to.
+UNDATED = -2147483648
+
+POLICY_OUTPUT_RELATIVE = Path("output")
+POLICY_SUBDIR = "policy"
 
 
 class PolicyFormatError(Exception):
-    """Raised when a policy file is absent, truncated, or not the supported format."""
-
-
-# ---------------------------------------------------------------------------
-# Manifest dataclasses
-# ---------------------------------------------------------------------------
+    """Raised when the policy checkpoint is absent, unreadable, or inconsistent."""
 
 
 @dataclass(frozen=True)
@@ -86,36 +66,36 @@ class PolicyManifest:
     num_stages: int
     n_pools: int
     completed_iterations: int
-    cost_scale_factor: float
     nodes: tuple[ManifestNodeRecord, ...]
     edges: tuple[ManifestEdgeRecord, ...]
 
 
-# ---------------------------------------------------------------------------
-# Cut pool dataclasses
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class EntitySlotRecord:
-    """One state axis of a cut pool, in entity-manifest order."""
+    """One state axis of a cut pool, in entity-manifest order.
+
+    The dates are `YYYYMMDD` or `UNDATED`: `reference_date` is set on inflow
+    lags, the half-open `[interval_start, interval_end)` on transit buckets and
+    anticipated thermals (their delivery interval).
+    """
 
     entity_type: int
     entity_id: int
     subindex: int
     was_active: bool
-    delivery_date: int
+    reference_date: int
+    interval_start: int
+    interval_end: int
 
 
 @dataclass(frozen=True, eq=False)
 class AffinePieceRecord:
-    """One affine piece of the value function.
+    """One affine piece of the value function, in R$.
 
     `eq=False` because `coefficients` is a numpy array, which would make a
     generated `__eq__` return an array rather than a bool.
     """
 
-    piece_id: int
     slot_index: int
     iteration: int
     forward_pass_index: int
@@ -126,11 +106,12 @@ class AffinePieceRecord:
 
 @dataclass(frozen=True)
 class StageCutPool:
-    """Every cut of one pool, plus the axes those cuts are expressed over.
+    """Every populated cut of one pool, plus the axes those cuts are expressed over.
 
-    `stage_id` is the schema's pool id, the `cuts/<pool>.bin` key.
-    `graph_stage_id` is the actual stage key.
-    `node_id` is `-1` for a shared pool owned by several nodes.
+    `stage_id` is the schema's pool id, the key `ManifestNodeRecord.pool_id`
+    names. `graph_stage_id` is the actual stage key. `node_id` is `-1` for a
+    shared pool owned by several nodes. `cost_scale_factor` is the scale the
+    checkpoint stored the pieces in; `pieces` are already converted out of it.
     """
 
     stage_id: int
@@ -143,104 +124,146 @@ class StageCutPool:
     cost_scale_factor: float
     slots: tuple[EntitySlotRecord, ...]
     pieces: tuple[AffinePieceRecord, ...]
-    active_cut_indices: tuple[int, ...]
 
 
-# ---------------------------------------------------------------------------
-# Buffer helpers
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class PolicyCheckpoint:
+    """The checkpoint's manifest and every pool it holds, keyed by pool id."""
+
+    manifest: PolicyManifest
+    pools: Mapping[int, StageCutPool]
 
 
-def _read_buffer(path: Path) -> bytes:
-    """Read raw bytes from a file, validating minimum size."""
-    if not path.is_file():
-        raise PolicyFormatError(f"policy file not found: {path}")
-    raw = path.read_bytes()
-    if len(raw) < _MIN_BUFFER_BYTES:
-        raise PolicyFormatError(
-            f"policy file too short: {path} holds {len(raw)} bytes, "
-            f"minimum is {_MIN_BUFFER_BYTES}"
-        )
-    return raw
-
-
-def _decode_text(value: bytes | None) -> str:
-    """Decode a FlatBuffers string field."""
-    return value.decode("utf-8") if value is not None else ""
-
-
-def _read_coefficients(piece: Any, length: int) -> NDArray[np.float64]:
-    """Extract coefficient array from a FlatBuffers piece."""
-    if length == 0:
-        return np.empty(0, dtype=np.float64)
-    array: NDArray[np.float64] = np.asarray(
-        piece.CoefficientsAsNumpy(), dtype=np.float64
-    )
-    array.setflags(write=False)
-    return array
-
-
-# ---------------------------------------------------------------------------
-# Manifest reader
-# ---------------------------------------------------------------------------
-
-
-def read_policy_manifest(path: Path) -> PolicyManifest:
-    """Read `manifest.bin`, rejecting unsupported format versions."""
-    buffer = _read_buffer(path)
-    try:
-        table = CheckpointManifest.GetRootAs(buffer, 0)
-        format_version = table.FormatVersion()
-    except _DECODE_ERRORS as exc:
-        raise PolicyFormatError(f"cannot decode policy manifest {path}: {exc}") from exc
-
-    if format_version != SUPPORTED_FORMAT_VERSION:
-        raise PolicyFormatError(
-            f"unsupported policy format_version {format_version} in {path}; "
-            f"this tool supports version {SUPPORTED_FORMAT_VERSION}"
-        )
-
-    try:
-        nodes = tuple(
+def _manifest(metadata: Mapping[str, Any], n_pools_read: int) -> PolicyManifest:
+    graph = metadata["graph_manifest"]
+    return PolicyManifest(
+        format_version=int(metadata["format_version"]),
+        novomodelo_version=str(metadata["software_version"]),
+        created_at=str(metadata["created_at"]),
+        num_stages=int(metadata["num_stages"]),
+        n_pools=int(graph.get("n_pools", n_pools_read)),
+        completed_iterations=int(metadata["producer"]["completed_iterations"]),
+        nodes=tuple(
             ManifestNodeRecord(
-                id=node.Id(), stage_id=node.StageId(), pool_id=node.PoolId()
+                id=int(node["id"]),
+                stage_id=int(node["stage_id"]),
+                pool_id=int(node["pool_id"]),
             )
-            for node in (table.Nodes(i) for i in range(table.NodesLength()))
-        )
-        edges = tuple(
+            for node in graph["nodes"]
+        ),
+        edges=tuple(
             ManifestEdgeRecord(
-                source_id=edge.SourceId(),
-                target_id=edge.TargetId(),
-                probability=edge.Probability(),
+                source_id=int(edge["source_id"]),
+                target_id=int(edge["target_id"]),
+                probability=float(edge["probability"]),
             )
-            for edge in (table.Edges(i) for i in range(table.EdgesLength()))
+            for edge in graph.get("edges", ())
+        ),
+    )
+
+
+def _slot(entry: Mapping[str, Any], position: int, pool_id: int) -> EntitySlotRecord:
+    slot = EntitySlotRecord(
+        entity_type=int(entry["entity_type"]),
+        entity_id=int(entry["entity_id"]),
+        subindex=int(entry["subindex"]),
+        was_active=bool(entry["was_active"]),
+        reference_date=int(entry["reference_date"]),
+        interval_start=int(entry["interval_start"]),
+        interval_end=int(entry["interval_end"]),
+    )
+    if slot.entity_type not in VALID_ENTITY_TYPES:
+        raise PolicyFormatError(
+            f"unknown entity_type {slot.entity_type} at position {position} "
+            f"of pool {pool_id}"
         )
-        manifest = PolicyManifest(
-            format_version=format_version,
-            novomodelo_version=_decode_text(table.NovomodeloVersion()),
-            created_at=_decode_text(table.CreatedAt()),
-            num_stages=table.NumStages(),
-            n_pools=table.NPools(),
-            completed_iterations=table.CompletedIterations(),
-            cost_scale_factor=table.CostScaleFactor(),
-            nodes=nodes,
-            edges=edges,
+    return slot
+
+
+def _piece(
+    cut: Mapping[str, Any], scale: float, n_slots: int, pool_id: int
+) -> AffinePieceRecord:
+    coefficients = np.asarray(cut["coefficients"], dtype=np.float64) * scale
+    if coefficients.shape != (n_slots,):
+        raise PolicyFormatError(
+            f"pool {pool_id} cut at slot {cut['slot_index']} has "
+            f"{coefficients.size} coefficients but its entity manifest has "
+            f"{n_slots} slots"
         )
-    except _DECODE_ERRORS as exc:
-        raise PolicyFormatError(f"cannot decode policy manifest {path}: {exc}") from exc
+    coefficients.setflags(write=False)
+    return AffinePieceRecord(
+        slot_index=int(cut["slot_index"]),
+        iteration=int(cut["iteration"]),
+        forward_pass_index=int(cut["forward_pass_index"]),
+        intercept=float(cut["intercept"]) * scale,
+        coefficients=coefficients,
+        is_active=bool(cut["is_active"]),
+    )
+
+
+def _pool(entry: Mapping[str, Any]) -> StageCutPool:
+    pool_id = int(entry["stage_id"])
+    scale = entry.get("cost_scale_factor")
+    if scale is None or not math.isfinite(scale) or scale <= 0.0:
+        raise PolicyFormatError(
+            f"pool {pool_id} carries no usable cost_scale_factor ({scale!r}), "
+            f"so its cut values cannot be converted to currency"
+        )
+    slots = tuple(
+        _slot(slot, position, pool_id)
+        for position, slot in enumerate(entry["entity_manifest"])
+    )
+    return StageCutPool(
+        stage_id=pool_id,
+        node_id=int(entry["node_id"]),
+        graph_stage_id=int(entry["graph_stage_id"]),
+        state_dimension=int(entry["state_dimension"]),
+        capacity=int(entry["capacity"]),
+        warm_start_count=int(entry["warm_start_count"]),
+        populated_count=int(entry["populated_count"]),
+        cost_scale_factor=float(scale),
+        slots=slots,
+        pieces=tuple(_piece(cut, scale, len(slots), pool_id) for cut in entry["cuts"]),
+    )
+
+
+def read_policy(case_dir: Path) -> PolicyCheckpoint:
+    """Read `case_dir`'s `output/policy` checkpoint through novomodelo-python.
+
+    Raises:
+        PolicyFormatError: the checkpoint is missing, written by an
+            incompatible novomodelo version, or internally inconsistent.
+    """
+    import novomodelo
+
+    output_dir = case_dir / POLICY_OUTPUT_RELATIVE
+    try:
+        raw = novomodelo.results.load_policy(output_dir, policy_subdir=POLICY_SUBDIR)
+    except OSError as exc:
+        raise PolicyFormatError(
+            f"cannot read the policy checkpoint under {output_dir / POLICY_SUBDIR}: "
+            f"{exc}"
+        ) from exc
+
+    pools: dict[int, StageCutPool] = {}
+    for entry in raw["stage_cuts"]:
+        pool = _pool(entry)
+        pools[pool.stage_id] = pool
+    manifest = _manifest(raw["metadata"], len(pools))
 
     _LOG.info(
-        "read policy manifest %s: format_version=%d num_stages=%d n_pools=%d "
-        "nodes=%d edges=%d completed_iterations=%d",
-        path,
+        "read policy checkpoint %s: format_version=%d novomodelo=%s num_stages=%d "
+        "pools=%d nodes=%d edges=%d completed_iterations=%d",
+        output_dir / POLICY_SUBDIR,
         manifest.format_version,
+        manifest.novomodelo_version,
         manifest.num_stages,
-        manifest.n_pools,
+        len(pools),
         len(manifest.nodes),
         len(manifest.edges),
         manifest.completed_iterations,
     )
-    return manifest
+    return PolicyCheckpoint(manifest=manifest, pools=pools)
 
 
 def nodes_by_pool(manifest: PolicyManifest) -> dict[int, tuple[int, ...]]:
@@ -249,97 +272,6 @@ def nodes_by_pool(manifest: PolicyManifest) -> dict[int, tuple[int, ...]]:
     for node in manifest.nodes:
         grouped.setdefault(node.pool_id, []).append(node.id)
     return {pool_id: tuple(ids) for pool_id, ids in sorted(grouped.items())}
-
-
-# ---------------------------------------------------------------------------
-# Stage cuts reader
-# ---------------------------------------------------------------------------
-
-
-def read_stage_cuts(path: Path) -> StageCutPool:
-    """Read one `cuts/<pool>.bin`, sizing coefficients by the entity manifest."""
-    buffer = _read_buffer(path)
-    try:
-        table = StageCuts.GetRootAs(buffer, 0)
-        manifest_length = table.EntityManifestLength()
-
-        slots = tuple(
-            EntitySlotRecord(
-                entity_type=slot.EntityType(),
-                entity_id=slot.EntityId(),
-                subindex=slot.Subindex(),
-                was_active=bool(slot.WasActive()),
-                delivery_date=slot.DeliveryDate(),
-            )
-            for slot in (table.EntityManifest(i) for i in range(manifest_length))
-        )
-
-        for position, slot in enumerate(slots):
-            if slot.entity_type not in VALID_ENTITY_TYPES:
-                raise PolicyFormatError(
-                    f"unknown entity_type {slot.entity_type} at position "
-                    f"{position} in {path}"
-                )
-
-        pieces: list[AffinePieceRecord] = []
-        for index in range(table.CutsLength()):
-            piece = table.Cuts(index)
-            coef_len = piece.CoefficientsLength()
-            if coef_len != manifest_length:
-                raise PolicyFormatError(
-                    f"coefficient/manifest mismatch in {path}: piece {index} has "
-                    f"{coef_len} coefficients but manifest has {manifest_length}"
-                )
-            pieces.append(
-                AffinePieceRecord(
-                    piece_id=piece.PieceId(),
-                    slot_index=piece.SlotIndex(),
-                    iteration=piece.Iteration(),
-                    forward_pass_index=piece.ForwardPassIndex(),
-                    intercept=piece.Intercept(),
-                    coefficients=_read_coefficients(piece, coef_len),
-                    is_active=bool(piece.IsActive()),
-                )
-            )
-
-        pool = StageCutPool(
-            stage_id=table.StageId(),
-            node_id=table.NodeId(),
-            graph_stage_id=table.GraphStageId(),
-            state_dimension=table.StateDimension(),
-            capacity=table.Capacity(),
-            warm_start_count=table.WarmStartCount(),
-            populated_count=table.PopulatedCount(),
-            cost_scale_factor=table.CostScaleFactor(),
-            slots=slots,
-            pieces=tuple(pieces),
-            active_cut_indices=tuple(
-                int(table.ActiveCutIndices(i))
-                for i in range(table.ActiveCutIndicesLength())
-            ),
-        )
-    except _DECODE_ERRORS as exc:
-        raise PolicyFormatError(f"cannot decode stage cuts {path}: {exc}") from exc
-
-    _LOG.info(
-        "read stage cuts %s: stage_id=%d node_id=%d slots=%d pieces=%d",
-        path,
-        pool.stage_id,
-        pool.node_id,
-        len(pool.slots),
-        len(pool.pieces),
-    )
-    return pool
-
-
-# ---------------------------------------------------------------------------
-# Pool loading utilities
-# ---------------------------------------------------------------------------
-
-
-def _cuts_path(case_dir: Path, pool_id: int) -> Path:
-    """Return the path to a pool's cuts file."""
-    return case_dir / CUTS_SUBDIR / f"{pool_id:03d}.bin"
 
 
 def assert_pools_declared(pool_ids: Sequence[int]) -> None:
@@ -351,41 +283,30 @@ def assert_pools_declared(pool_ids: Sequence[int]) -> None:
         )
 
 
-def load_pools(
-    case_dir: Path,
+def select_pools(
+    checkpoint: PolicyCheckpoint,
     pool_ids: Sequence[int],
     include_terminal: bool,
 ) -> dict[int, StageCutPool]:
-    """Load trunk pools, optionally including terminal for ECO CSV.
+    """The trunk pools, plus the terminal pool when `include_terminal`.
 
-    Args:
-        case_dir: Novomodelo case directory
-        pool_ids: Sorted pool IDs from manifest (ascending)
-        include_terminal: If True, also load the terminal pool (last in pool_ids)
+    `pool_ids` is the manifest's ascending pool order; its last id is the
+    terminal pool.
 
-    Returns:
-        Dictionary mapping pool_id to StageCutPool
+    Raises:
+        PolicyFormatError: the manifest names a pool the checkpoint lacks.
     """
     assert_pools_declared(pool_ids)
-    terminal_pool_id = pool_ids[-1]
-    trunk_ids = pool_ids[:-1]
-
-    pools: dict[int, StageCutPool] = {
-        pool_id: read_stage_cuts(_cuts_path(case_dir, pool_id)) for pool_id in trunk_ids
-    }
-
-    if include_terminal:
-        pools[terminal_pool_id] = read_stage_cuts(
-            _cuts_path(case_dir, terminal_pool_id)
+    wanted = list(pool_ids) if include_terminal else list(pool_ids[:-1])
+    missing = [pool_id for pool_id in wanted if pool_id not in checkpoint.pools]
+    if missing:
+        raise PolicyFormatError(
+            f"the policy manifest names pool(s) {missing} that the checkpoint "
+            f"does not hold"
         )
-        _LOG.info(
-            "loaded terminal pool %d with %d pieces",
-            terminal_pool_id,
-            pools[terminal_pool_id].populated_count,
-        )
-
+    pools = {pool_id: checkpoint.pools[pool_id] for pool_id in wanted}
     _LOG.info(
-        "loaded %d pool(s): %s",
+        "selected %d pool(s): %s",
         len(pools),
         {pid: len(p.pieces) for pid, p in pools.items()},
     )

@@ -16,6 +16,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     EntitySlotRecord,
     ManifestEdgeRecord,
     ManifestNodeRecord,
+    PolicyCheckpoint,
     PolicyManifest,
     StageCutPool,
 )
@@ -36,13 +37,12 @@ def _make_manifest() -> PolicyManifest:
         for i in range(3)
     ]
     return PolicyManifest(
-        format_version=1,
+        format_version=4,
         novomodelo_version="0.1.0",
         created_at="2025-01-01T00:00:00Z",
         num_stages=n_stages,
         n_pools=n_pools,
         completed_iterations=10,
-        cost_scale_factor=1.0,
         nodes=tuple(nodes),
         edges=tuple(edges),
     )
@@ -57,7 +57,9 @@ def _make_slots() -> tuple[EntitySlotRecord, ...]:
             entity_id=i + 1,
             subindex=0,
             was_active=True,
-            delivery_date=sentinel,
+            reference_date=sentinel,
+            interval_start=sentinel,
+            interval_end=sentinel,
         )
         for i in range(3)
     )
@@ -72,7 +74,6 @@ def _make_pool(pool_id: int) -> StageCutPool:
         coef.setflags(write=False)
         pieces.append(
             AffinePieceRecord(
-                piece_id=i,
                 slot_index=i,
                 iteration=i + 1,
                 forward_pass_index=i,
@@ -92,7 +93,6 @@ def _make_pool(pool_id: int) -> StageCutPool:
         cost_scale_factor=1.0,
         slots=slots,
         pieces=tuple(pieces),
-        active_cut_indices=tuple(range(len(pieces))),
     )
 
 
@@ -179,18 +179,10 @@ class TestExportDessemCli:
 
         with (
             patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
-            ) as mock_read_manifest,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
-            ) as mock_load,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
-            ) as mock_nodes,
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as mock_read,
         ):
-            mock_read_manifest.return_value = mock_manifest
-            mock_load.return_value = mock_pools
-            mock_nodes.return_value = {i: (i,) for i in range(4)}
+            mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
 
             result = runner.invoke(
                 app,
@@ -257,18 +249,10 @@ class TestExportDessemCli:
 
         with (
             patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
-            ) as mock_read_manifest,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
-            ) as mock_load,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
-            ) as mock_nodes,
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as mock_read,
         ):
-            mock_read_manifest.return_value = mock_manifest
-            mock_load.return_value = mock_pools
-            mock_nodes.return_value = {i: (i,) for i in range(4)}
+            mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
 
             result = runner.invoke(
                 app,
@@ -305,18 +289,10 @@ class TestExportDessemCli:
 
         with (
             patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
-            ) as mock_read_manifest,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
-            ) as mock_load,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
-            ) as mock_nodes,
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as mock_read,
         ):
-            mock_read_manifest.return_value = mock_manifest
-            mock_load.return_value = mock_pools
-            mock_nodes.return_value = {i: (i,) for i in range(4)}
+            mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
 
             # Test that command works without --hydro-codes (will use bundled)
             # but we provide explicit one for the mock to work
@@ -348,18 +324,10 @@ class TestExportDessemCli:
 
         with (
             patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
-            ) as mock_read_manifest,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
-            ) as mock_load,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
-            ) as mock_nodes,
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as mock_read,
         ):
-            mock_read_manifest.return_value = mock_manifest
-            mock_load.return_value = mock_pools
-            mock_nodes.return_value = {i: (i,) for i in range(4)}
+            mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
 
             result = runner.invoke(
                 app,
@@ -392,18 +360,10 @@ class TestExportDessemCli:
 
         with (
             patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
-            ) as mock_read_manifest,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
-            ) as mock_load,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
-            ) as mock_nodes,
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as mock_read,
         ):
-            mock_read_manifest.return_value = mock_manifest
-            mock_load.return_value = mock_pools
-            mock_nodes.return_value = {i: (i,) for i in range(4)}
+            mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
 
             result = runner.invoke(
                 app,
@@ -438,18 +398,10 @@ class TestExportDessemCli:
 
         with (
             patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy_manifest"
-            ) as mock_read_manifest,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.load_pools"
-            ) as mock_load,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.nodes_by_pool"
-            ) as mock_nodes,
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as mock_read,
         ):
-            mock_read_manifest.return_value = mock_manifest
-            mock_load.return_value = mock_pools
-            mock_nodes.return_value = {i: (i,) for i in range(4)}
+            mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
 
             result = runner.invoke(
                 app,
@@ -469,3 +421,74 @@ class TestExportDessemCli:
         assert result.exit_code == 0
         assert not (output_dir / "eco").exists()
         assert not (output_dir / "content").exists()
+
+    def _invoke_json(self, case_dir: Path, hydro_codes: Path, output_dir: Path):
+        return runner.invoke(
+            app,
+            [
+                "export",
+                "dessem",
+                str(case_dir),
+                "--revision",
+                "rv0",
+                "--hydro-codes",
+                str(hydro_codes),
+                "--output",
+                str(output_dir),
+                "--json",
+            ],
+        )
+
+    def test_json_success_emits_one_ok_verdict(
+        self,
+        synthetic_case_dir: Path,
+        hydro_codes_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        output_dir = tmp_path / "output"
+        with patch(
+            "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+        ) as read:
+            read.return_value = PolicyCheckpoint(_make_manifest(), _make_pools_dict())
+            result = self._invoke_json(synthetic_case_dir, hydro_codes_file, output_dir)
+
+        assert result.exit_code == 0
+        verdict = json.loads(result.stdout)
+        assert verdict["command"] == "export dessem"
+        assert verdict["status"] == "ok"
+        assert verdict["summary"] == {"output_dir": str(output_dir), "revision": "rv0"}
+
+    def test_json_export_failure_emits_one_error_verdict(
+        self,
+        synthetic_case_dir: Path,
+        hydro_codes_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        from novomodelo_bridge.dessem.exporters.fcf.core.reader import PolicyFormatError
+
+        with patch(
+            "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+        ) as read:
+            read.side_effect = PolicyFormatError("no checkpoint here")
+            result = self._invoke_json(
+                synthetic_case_dir, hydro_codes_file, tmp_path / "output"
+            )
+
+        assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        assert verdict["status"] == "error"
+        errors = [d for d in verdict["diagnostics"] if d["severity"] == "error"]
+        assert [d["code"] for d in errors] == ["dessem-fcf-export-failed"]
+        assert errors[0]["summary"] == "no checkpoint here"
+
+    def test_json_missing_case_dir_emits_one_error_verdict(
+        self, hydro_codes_file: Path, tmp_path: Path
+    ) -> None:
+        result = self._invoke_json(
+            tmp_path / "nonexistent", hydro_codes_file, tmp_path / "output"
+        )
+
+        assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        assert verdict["status"] == "error"
+        assert "Case directory not found" in verdict["diagnostics"][0]["summary"]

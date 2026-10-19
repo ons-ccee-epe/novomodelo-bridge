@@ -10,7 +10,6 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
-    "flatbuffers>=25.2.10",
     "idecomp>=1.14.2",
     # 1.16.1: first to read modif.dat VAZMINT PRE/POS markers (1.16.0: modif.dat
     # POTEFE/VOLCOTA/COTAREA and vazoes.dat at 600 postos).
@@ -68,7 +67,6 @@ fail_under = 83
 # at the venv so the typed first-party deps (idecomp/inewave ship
 # py.typed) resolve instead of raising phantom missing-import errors.
 include = ["src", "tests"]
-exclude = ["src/novomodelo_bridge/novomodelo/flatbuffers"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"

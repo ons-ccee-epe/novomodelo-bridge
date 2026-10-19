@@ -24,7 +24,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.premises import PREMISES
 
 _LOG = logging.getLogger(__name__)
 
-_TRACKED_LIBRARIES = ("numpy", "flatbuffers")
+_TRACKED_LIBRARIES = ("numpy", "novomodelo-python")
 
 
 @dataclass(frozen=True)

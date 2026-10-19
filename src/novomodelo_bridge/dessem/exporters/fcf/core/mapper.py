@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import UNDATED
+
 if TYPE_CHECKING:
     from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
         BlockInfo,
@@ -51,9 +53,6 @@ ENTITY_TYPE_HYDRO_INFLOW_LAG = 1
 ENTITY_TYPE_ANTICIPATED_THERMAL = 2
 ENTITY_TYPE_HYDRO_TRANSIT_BUCKET = 3
 
-# Storage slots carry this sentinel in place of a delivery date
-DELIVERY_DATE_SENTINEL = -2147483648
-
 # Premise P15: Evidenced GNL lead time mapping
 EVIDENCED_GNL_LEAD_TIME_HOURS = 1608.0
 EVIDENCED_GNL_LAG_MESES = 2
@@ -77,7 +76,7 @@ class SlotIndex:
 class DeliveryGroup:
     """A GNL delivery month and its rank within one pool's own set of months."""
 
-    delivery_date: int
+    delivery_start: int
     pool_rank: int
 
 
@@ -115,8 +114,8 @@ def index_slots(slots: Sequence[EntitySlotRecord]) -> SlotIndex:
 
 
 def has_delivery_date(slot: EntitySlotRecord) -> bool:
-    """Whether the slot carries a real delivery date."""
-    return slot.delivery_date > 0
+    """Whether the slot carries a real delivery interval."""
+    return slot.interval_start != UNDATED
 
 
 # ---------------------------------------------------------------------------
@@ -341,12 +340,12 @@ def delivery_slot_map(
                 f"carries no delivery date"
             )
 
-    dates = sorted({slots[position].delivery_date for position in positions})
-    ranked = {delivery_date: rank for rank, delivery_date in enumerate(dates, start=1)}
+    dates = sorted({slots[position].interval_start for position in positions})
+    ranked = {start: rank for rank, start in enumerate(dates, start=1)}
     return {
         position: DeliveryGroup(
-            delivery_date=slots[position].delivery_date,
-            pool_rank=ranked[slots[position].delivery_date],
+            delivery_start=slots[position].interval_start,
+            pool_rank=ranked[slots[position].interval_start],
         )
         for position in positions
     }

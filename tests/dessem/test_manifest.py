@@ -58,7 +58,7 @@ class TestBuildExportManifest:
         )
 
         assert "numpy" in manifest.library_versions
-        assert "flatbuffers" in manifest.library_versions
+        assert "novomodelo-python" in manifest.library_versions
 
     def test_created_at_is_iso8601(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(

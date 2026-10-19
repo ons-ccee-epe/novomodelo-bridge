@@ -1,224 +1,132 @@
 # DESSEM FCF Export
 
-`export dessem` converts a Novomodelo policy checkpoint from a solved case into
-the DECOMP-format binary cut files (`mapcut`, `cortdeco`) that DESSEM uses to
-import a cost-to-go function. This page covers the workflow, output artifacts,
-the 15 conversion premises, configuration, and current limitations.
+`export dessem` converts the policy checkpoint of a solved Novomodelo case into the
+DECOMP-format binary cut files (`mapcut`, `cortdeco`) that DESSEM reads as its
+future cost function. This page covers the workflow, the output artifacts, the
+conversion premises, and the current limitations.
 
-## Quick Start
-
-```bash
-# Export FCF from a solved Novomodelo case (uses bundled default hydro codes)
-novomodelo-bridge export dessem /path/to/case --revision rv0
-
-# Or specify a custom hydro codes file
-novomodelo-bridge export dessem /path/to/case \
-    --revision rv0 \
-    --hydro-codes /path/to/custom_hydro_codes.json
-```
-
-The output appears in `<case>/dessem_fcf/` by default.
-
-## Usage
-
-### Basic Export
+## Quick start
 
 ```bash
-novomodelo-bridge export dessem CASE_DIR --revision REV --hydro-codes PATH
+novomodelo-bridge export dessem /path/to/case --revision rv0 \
+    --hydro-codes /path/to/hydro_codes.json
 ```
 
-`CASE_DIR` is a solved Novomodelo case containing `output/policy/` with the policy
-checkpoint. The command reads the FlatBuffers checkpoint, applies the
-conversion premises, and writes DECOMP-format binaries.
+The output appears in `<case>/dessem_fcf/` unless `--output` names another
+directory.
 
-### Options
+## Input
+
+`CASE_DIR` is a Novomodelo case that novomodelo has solved, so `CASE_DIR/output/policy/`
+holds its policy checkpoint. The checkpoint is read through `novomodelo-python`, so
+it must have been written by the novomodelo release this bridge pairs with; an
+older checkpoint is refused with an error naming its format version. The
+export also reads the case's `stages.json`, `system/hydros.json`,
+`system/thermals.json`, and `system/buses.json`.
+
+Novomodelo stores cut values in the run's scaled cost units and records the scale
+in each pool's `cost_scale_factor`. The export multiplies every intercept and
+coefficient by that factor to get R$, then divides by 1000 for DECOMP's
+10³ R$.
+
+## Options
 
 | Option | Description |
 |--------|-------------|
-| `--revision, -r` | PMO revision (required, e.g., `rv0`, `rv1`). Determines output file suffix. |
-| `--hydro-codes` | Path to JSON file mapping Novomodelo hydro positions to DECOMP plant codes. Default: bundled `decomp_hydro_codes.json`. |
+| `--revision, -r` | PMO revision (required, e.g. `rv0`). Sets the output file suffix. |
+| `--hydro-codes` | JSON file mapping Novomodelo hydro positions to DECOMP plant codes. Default: the bundled `decomp_hydro_codes.json`. |
 | `--output, -o` | Output directory. Default: `CASE_DIR/dessem_fcf/`. |
-| `--force` | Overwrite existing outputs without prompting. |
-| `--audit-csv` | Emit audit CSVs (`eco/` and `content/` directories). Default: off. |
-| `--include-terminal` | Include terminal pool in ECO CSVs (requires `--audit-csv`). |
-| `--json` | Emit a single machine-readable JSON verdict to stdout. |
-| `-v, -vv` | Increase verbosity (INFO, DEBUG). |
+| `--force` | Overwrite existing outputs. |
+| `--audit-csv` | Write the audit CSVs (`eco/` and `content/`). |
+| `--include-terminal` | Also write the terminal pool's audit CSV (with `--audit-csv`). |
+| `--json` | Print one machine-readable JSON verdict to stdout. |
+| `-v`, `-vv` | Increase console log verbosity (INFO, DEBUG). |
 
-### Hydro Codes File
+`docs/cli.md` lists every option with its help text.
 
-The hydro codes file maps Novomodelo's 0-indexed hydro positions to DECOMP's plant
-codes. By default, the export uses a bundled `decomp_hydro_codes.json` with
-the standard ONS hydro codes. You can override this with `--hydro-codes` if
-your case uses a different hydro set.
+### Hydro codes file
+
+The file maps Novomodelo's 0-based hydro positions to DECOMP plant codes. Keys are
+position strings, values are integer codes, and position 0 is the first
+storage coefficient:
 
 ```json
 {
   "0": 1,
-  "1": 6,
-  "2": 24,
-  "3": 25
+  "1": 2,
+  "2": 4
 }
 ```
 
-Keys are position strings (`"0"`, `"1"`, ...), values are DECOMP integer codes.
-Order matters: position 0 gets the first coefficient slot.
+The map must cover exactly the case's hydro plants. The bundled default holds
+one specific plant set, so a case converted from a deck with a different set
+of plants needs its own file; a mismatch fails the export with a message
+naming both counts. For a case converted with `convert decomp`, Novomodelo hydro
+ids are the deck's operated plants (`UH` records) in ascending code order, so
+position `i` maps to the `i`-th smallest operated plant code.
 
 ## Outputs
 
-The export produces these artifacts:
-
 | Artifact | Description |
 |----------|-------------|
-| `mapcut.<rev>` | DECOMP cut-header binary (48,020 bytes/record). Contains iteration counts, hydro codes, node tree indices, discount factors, and cut-head pointers. |
-| `cortdeco.<rev>` | DECOMP cut binary (26,976 bytes/record). Contains intercepts, storage coefficients, and GNL coefficients per cut. |
-| `eco/*.csv` | Pre-transformation audit CSVs with raw Novomodelo policy data (one per pool). Only with `--audit-csv`. |
-| `content/*.csv` | Post-write verification CSVs with the exact bytes written. Only with `--audit-csv`. |
-| `export_manifest.json` | Provenance record: premises, settings, output paths, status. |
+| `mapcut.<rev>` | DECOMP cut-header binary: iteration and cut counts, hydro codes, the node tree, discount factors, and the per-node cut-chain heads. |
+| `cortdeco.<rev>` | DECOMP cut binary: one record per cut with its right-hand side, storage coefficients, and GNL coefficients. |
+| `eco/*.csv` | With `--audit-csv`: one CSV per pool with every cut as read from the checkpoint, already converted to R$. |
+| `content/*.csv` | With `--audit-csv`: the values actually written to `mapcut` and `cortdeco`, read back from the binaries. |
+| `export_manifest.json` | Provenance: tool and library versions, settings, the full text of every premise applied, output paths, and status. |
 
 A successful export writes `export_manifest.json` with `"status": "ok"`. A
-failed export writes the same manifest with `"status": "failed"` and a
-`"failed_step"` field.
+failed one writes it with `"status": "failed"` and a `"failed_step"` field,
+and the command prints the reason (or, under `--json`, carries it in the
+verdict's `diagnostics`).
 
-### Cross-Check and Rejection
-
-After writing both binaries, the pipeline reads them back and verifies they
-parse correctly. If cross-check fails, both files are renamed to
-`.rejected` and the manifest records the failure. This prevents downstream
-tools from consuming corrupted outputs.
+After writing both binaries the export reads them back and checks that they
+parse and agree. If that check fails, both files are renamed with a
+`.rejected` suffix so a later DESSEM run cannot pick them up.
 
 ## Premises
 
-The export applies 15 documented conversion premises (P1–P15). Each describes
-a specific mapping, limitation, or convention.
+The conversion follows a fixed set of premises, P1 to P15. Their full text is
+the `PREMISES` tuple in `novomodelo_bridge.dessem.exporters.fcf.core.premises`,
+and every export copies it into `export_manifest.json`. In brief:
 
-### P1: Physical records emitted as zeros
+| Premise | Effect |
+|---------|--------|
+| P1 | `mapcut` physical records (indices 4–17) are written as zeros. |
+| P2 | Intercepts and coefficients are divided by 1000 (R$ to 10³ R$). |
+| P3 | No travel-time block: `n_utv = 0`. |
+| P4 | GNL coefficient sign flip; dormant while P14 holds. |
+| P5 | GNL split across load blocks by stage hours; dormant while P14 holds. |
+| P6 | Submarket is `bus_id + 1`; the `IV` transhipment bus is excluded. |
+| P7 | Only trunk pools are converted; the terminal pool is excluded. |
+| P8 | Inflow-lag coefficients are dropped, with a counted audit log. |
+| P9 | Discount factors are `(1+r)^(-days/365.25)` from the stage dates. |
+| P10 | Every populated cut past the warm-start slots is written; `is_active` is recorded, not used as a filter. |
+| P11 | `mapcut` record 10's operational cost parcels are written as zeros. |
+| P12 | `mapcut` record 9's trailing GNL hours block is written as zeros. |
+| P13 | `cortdeco` holds one extra record duplicating the last cut. |
+| P14 | GNL coefficients are written as zeros. |
+| P15 | GNL lag months are written as 2; any GNL plant whose lead time is not 1608 h is refused. |
 
-Indices 4–17 of the mapcut record are emitted as zeros. These contain
-DECOMP-specific physical data (commitment status, spill bounds, generation
-capacity) not derivable from a Novomodelo policy checkpoint.
-
-### P2: Cost unit conversion
-
-Intercept and all coefficients are divided by 1000. DECOMP stores costs in
-10³ R$ while Novomodelo uses R$.
-
-### P3: Travel-time coefficients not supported
-
-**Warning issued.** Novomodelo does not currently model water travel time between
-cascade stages. If the policy contains travel-time state variables, their
-coefficients cannot be mapped. The export emits a warning and proceeds.
-
-### P4: Storage coefficients positional
-
-Storage coefficients map by hydro position (0, 1, 2...) to DECOMP plant code
-via the `--hydro-codes` file. Coefficient order in the output follows DECOMP
-convention.
-
-### P5: Warm-start cuts excluded
-
-Cuts with `slot_index < warm_start_count` are warm-start (imported from a
-prior policy) and excluded from the export. Only cuts generated by Novomodelo's
-own iterations are written.
-
-### P6: Bus 5 excluded from GNL submarkets
-
-Bus ID 5 (Itaipu/fictitious interconnection) is not a valid GNL submarket.
-If a GNL thermal declares bus_id=5, the mapper raises an error.
-
-### P7: Terminal pool excluded
-
-The last pool in the policy graph is the terminal pool representing the
-boundary cost-to-go function. It is excluded from `mapcut`/`cortdeco` because
-DESSEM provides its own terminal value.
-
-### P8: Inflow-lag drop audit
-
-If a pool's entity manifest drops inflow-lag slots that the previous pool
-carried, a warning is logged. This is expected behavior (lags age out) but
-audited for traceability.
-
-### P9: Discount factors from stages
-
-Discount factors are computed from the case's `annual_discount_rate` and each
-stage's duration in days, using 365.25 days per year. The first stage has
-factor 1.0.
-
-### P10: Node tree indices from manifest
-
-The policy manifest's graph structure provides node parent/child
-relationships, mapped to DECOMP's `INDICE_NO_ARVORE` array.
-
-### P11: First-node-per-stage from manifest
-
-For each stage, the first node ID is written to `INDICE_PRIMEIRO_NO_ESTAGIO`.
-This reconstructs stage boundaries for DESSEM's traversal.
-
-### P12: Cut head indices computed
-
-`REGISTRO_ULTIMO_CORTE_NO` (pointers to the last cut of each node) are
-computed from the cumulative cut count per node.
-
-### P13: GNL block weights from stage hours
-
-GNL coefficients are distributed across load blocks proportionally to each
-block's hours. The weights sum to 1.0 within each stage.
-
-### P14: GNL coefficients emitted as zeros
-
-**Warning issued.** GNL (anticipated thermal) coefficients are currently
-emitted as zeros. Mapping anticipated-dispatch state variables to DECOMP's
-GNL submarket/block structure requires additional work.
-
-### P15: GNL lead time validation
-
-All anticipated thermals must have `lead_time_hours` equal to the evidenced
-value (1608 hours, approximately 2 months). Thermals with different lead
-times raise an error.
-
-## Configuration
-
-The export has no external configuration file. All settings come from CLI
-arguments.
-
-Future versions may support settings in `novomodelo-bridge.toml`:
-
-```toml
-[export.dessem_fcf]
-eco_subdirectory = "eco"
-content_subdirectory = "content"
-include_terminal_pool = false
-```
-
-## Exit Codes
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Export succeeded |
-| 1 | Export failed (case not found, mapping error, cross-check failed) |
-| 2 | Missing required option (`--hydro-codes`) |
+| 0 | Export succeeded. |
+| 1 | Export failed: case or hydro codes file not found, outputs exist without `--force`, unreadable checkpoint, a premise refused the case, or the read-back check failed. |
+| 2 | Invalid command line, such as a missing `--revision`. |
 
-With `--json`, the command emits a JSON verdict to stdout regardless of exit
-code.
+## Known limitations
 
-## Known Limitations
+1. **GNL coefficients are zeros (P14).** The exported cuts carry the value of
+   stored water but not of GNL commitments.
+2. **No travel time (P3).** A case whose cuts carry water travel-time state
+   is refused.
+3. **One GNL lead time (P15).** A case whose GNL plants declare a lead time
+   other than 1608 h is refused rather than mapped by a guessed rule.
+4. **Terminal pool excluded (P7).** DESSEM supplies its own terminal value.
 
-1. **GNL coefficients are zeros (P14):** Anticipated thermal dispatch
-   sensitivity is not yet mapped. The exported cuts model hydro storage value
-   but not GNL commitment value.
-
-2. **No travel-time support (P3):** Water travel time is not modeled, so
-   travel-time state variables cannot appear.
-
-3. **Fixed GNL lead time (P15):** All anticipated thermals must share the
-   evidenced 1608-hour lead time; heterogeneous configurations are rejected.
-
-4. **Terminal pool excluded (P7):** DESSEM must provide its own terminal
-   cost-to-go function.
-
-5. **ECO CSVs include only exported pools:** The ECO audit covers trunk pools.
-   Use `--include-terminal` if you need the terminal pool's raw cuts.
-
-## See Also
+## See also
 
 - [DECOMP track](decomp.md): converting DECOMP decks to Novomodelo.
-- [CLI reference](cli.md): all commands and flags.
+- [CLI reference](cli.md): every command and option.

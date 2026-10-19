@@ -82,8 +82,8 @@ Every command accepts `--json`, `-v`/`-vv`, `--log-file PATH`, `--no-color`,
 and `--quiet`. `convert` adds `--validate`, `--force`, `--dry-run`, and
 `--diagnostics-json PATH`; `convert decomp` also has `--no-fcf`. `compare`
 adds `--tolerance`, `--format`, and `--out-dir`. `export dessem` adds
-`--hydro-codes`, `--output`, `--force`, and `--include-terminal` (hydro codes
-default to `CASE_DIR/mapping/decomp_hydro_codes.json`). `dashboard`
+`--revision`, `--hydro-codes`, `--output`, `--force`, `--audit-csv`, and
+`--include-terminal`. `dashboard`
 adds `--output` and `--open`. The generated reference with every option's help
 text is [docs/cli.md](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/cli.md).
 Shell completion: `novomodelo-bridge --install-completion`.

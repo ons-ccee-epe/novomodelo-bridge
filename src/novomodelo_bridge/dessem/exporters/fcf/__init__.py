@@ -2,21 +2,19 @@
 
 from novomodelo_bridge.dessem.exporters.fcf.core.premises import P3, P14, PREMISES
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
-    CUTS_SUBDIR,
-    POLICY_MANIFEST_RELATIVE,
-    SUPPORTED_FORMAT_VERSION,
+    UNDATED,
     AffinePieceRecord,
     EntitySlotRecord,
     ManifestEdgeRecord,
     ManifestNodeRecord,
+    PolicyCheckpoint,
     PolicyFormatError,
     PolicyManifest,
     StageCutPool,
     assert_pools_declared,
-    load_pools,
     nodes_by_pool,
-    read_policy_manifest,
-    read_stage_cuts,
+    read_policy,
+    select_pools,
 )
 from novomodelo_bridge.dessem.exporters.fcf.pipeline import EXPORT_PHASE_LABELS
 
@@ -28,12 +26,11 @@ __all__ = [
     "P3",
     "P14",
     # Reader constants
-    "SUPPORTED_FORMAT_VERSION",
-    "POLICY_MANIFEST_RELATIVE",
-    "CUTS_SUBDIR",
+    "UNDATED",
     # Reader exceptions
     "PolicyFormatError",
     # Reader dataclasses - manifest
+    "PolicyCheckpoint",
     "PolicyManifest",
     "ManifestNodeRecord",
     "ManifestEdgeRecord",
@@ -42,9 +39,8 @@ __all__ = [
     "EntitySlotRecord",
     "AffinePieceRecord",
     # Reader functions
-    "read_policy_manifest",
-    "read_stage_cuts",
+    "read_policy",
     "nodes_by_pool",
-    "load_pools",
+    "select_pools",
     "assert_pools_declared",
 ]

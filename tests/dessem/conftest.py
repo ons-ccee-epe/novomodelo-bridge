@@ -44,13 +44,12 @@ def synthetic_manifest() -> PolicyManifest:
         ManifestEdgeRecord(source_id=1, target_id=3, probability=1.0),
     )
     return PolicyManifest(
-        format_version=1,
+        format_version=4,
         novomodelo_version="0.1.0",
         created_at="2026-01-01T00:00:00Z",
         num_stages=3,
         n_pools=3,
         completed_iterations=10,
-        cost_scale_factor=1.0,
         nodes=nodes,
         edges=edges,
     )
@@ -66,35 +65,45 @@ def synthetic_slots() -> tuple[EntitySlotRecord, ...]:
             entity_id=1,
             subindex=0,
             was_active=True,
-            delivery_date=sentinel,
+            reference_date=sentinel,
+            interval_start=sentinel,
+            interval_end=sentinel,
         ),
         EntitySlotRecord(
             entity_type=0,
             entity_id=2,
             subindex=0,
             was_active=True,
-            delivery_date=sentinel,
+            reference_date=sentinel,
+            interval_start=sentinel,
+            interval_end=sentinel,
         ),
         EntitySlotRecord(
             entity_type=0,
             entity_id=3,
             subindex=0,
             was_active=True,
-            delivery_date=sentinel,
+            reference_date=sentinel,
+            interval_start=sentinel,
+            interval_end=sentinel,
         ),
         EntitySlotRecord(
             entity_type=2,
             entity_id=100,
             subindex=0,
             was_active=True,
-            delivery_date=20260201,
+            reference_date=sentinel,
+            interval_start=20260201,
+            interval_end=20260301,
         ),
         EntitySlotRecord(
             entity_type=2,
             entity_id=100,
             subindex=1,
             was_active=True,
-            delivery_date=20260301,
+            reference_date=sentinel,
+            interval_start=20260301,
+            interval_end=20260401,
         ),
     )
 
@@ -113,7 +122,6 @@ def synthetic_pieces(
         coefficients.setflags(write=False)
         pieces.append(
             AffinePieceRecord(
-                piece_id=i,
                 slot_index=i,
                 iteration=i // 2,
                 forward_pass_index=i % 2,
@@ -142,7 +150,6 @@ def synthetic_pool(
         cost_scale_factor=1.0,
         slots=synthetic_slots,
         pieces=synthetic_pieces,
-        active_cut_indices=tuple(range(len(synthetic_pieces))),
     )
 
 

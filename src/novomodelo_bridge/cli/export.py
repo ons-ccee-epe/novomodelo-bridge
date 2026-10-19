@@ -12,16 +12,17 @@ from typing import Annotated
 import typer
 
 from novomodelo_bridge.cli.args import CommonArgs
+from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
 from novomodelo_bridge.cli.logging_config import configure_logging as _configure_logging
+from novomodelo_bridge.cli.verdict import build_verdict
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.errors import BridgeError
 from novomodelo_bridge.dessem.exporters.fcf import EXPORT_PHASE_LABELS
 from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
 from novomodelo_bridge.ui.console import (
     conversion_progress,
-    get_console,
     print_status,
     render_diagnostics,
-    render_error,
 )
 
 export_app = typer.Typer(
@@ -180,34 +181,31 @@ def _export_dessem(
         quiet=quiet,
     )
 
+    command = "export dessem"
     if not case_dir.is_dir():
-        render_error(
-            f"Case directory not found: {case_dir}", console=args.err_console()
-        )
-        raise typer.Exit(1)
+        _fail(command, args, BridgeError(f"Case directory not found: {case_dir}"), 1)
 
-    # Resolve hydro codes path: use bundled default if not provided
     if hydro_codes is not None:
-        hydro_codes_path = hydro_codes
-        if not hydro_codes_path.is_file():
-            render_error(
-                f"Hydro codes file not found: {hydro_codes_path}",
-                console=args.err_console(),
+        if not hydro_codes.is_file():
+            _fail(
+                command,
+                args,
+                BridgeError(f"Hydro codes file not found: {hydro_codes}"),
+                1,
             )
-            raise typer.Exit(1)
-        hydro_codes_str = str(hydro_codes_path)
+        hydro_codes_str = str(hydro_codes)
     else:
-        # Use bundled default
         hydro_codes_str = str(_DEFAULT_HYDRO_CODES)
 
     output_dir = output or (case_dir / "dessem_fcf")
 
     if not force and _outputs_exist(output_dir, revision):
-        render_error(
-            f"Outputs exist at {output_dir}. Use --force to overwrite.",
-            console=args.err_console(),
+        _fail(
+            command,
+            args,
+            BridgeError(f"Outputs exist at {output_dir}. Use --force to overwrite."),
+            1,
         )
-        raise typer.Exit(1)
 
     settings = ExportSettings(
         eco_subdirectory="eco",
@@ -219,7 +217,9 @@ def _export_dessem(
 
     # Minimum delay per phase (seconds) to keep progress readable in interactive use.
     # Only applied when progress is visible (TTY, not quiet, not verbose).
-    show_progress = sys.stderr.isatty() and not quiet and verbose == 0
+    show_progress = (
+        sys.stderr.isatty() and not quiet and verbose == 0 and not json_output
+    )
     min_phase_delay = 0.12 if show_progress else 0.0
 
     def _paced_step(step_fn):
@@ -232,14 +232,12 @@ def _export_dessem(
 
         return wrapper
 
-    err_console = get_console(stderr=True, no_color=no_color)
-
     try:
         with dx.collect() as export_diags:
             with conversion_progress(
                 len(EXPORT_PHASE_LABELS),
                 verbose=verbose > 0,
-                quiet=quiet,
+                quiet=quiet or json_output,
                 no_color=no_color,
             ) as step:
                 exit_code = run_export(
@@ -249,26 +247,28 @@ def _export_dessem(
                     settings=settings,
                     on_phase=_paced_step(step),
                 )
+    # Broad by design, as in `convert`: an unexpected export failure must still
+    # reach the user as one rendered diagnostic or `--json` envelope, exit 1.
+    except Exception as exc:  # noqa: BLE001
+        _fail(command, args, exc, 1)
 
-        if exit_code == 0:
-            if not quiet:
-                print_status(
-                    f"Export completed: {output_dir}",
-                    console=args.out_console(),
-                )
-
-        # Render diagnostics (warnings about P3, P14, etc.)
+    status = "ok" if exit_code == 0 else "error"
+    if json_output:
+        _emit_convert_json(
+            build_verdict(
+                command,
+                status,
+                {"output_dir": str(output_dir), "revision": revision},
+                export_diags,
+            )
+        )
+    else:
+        if exit_code == 0 and not quiet:
+            print_status(f"Export completed: {output_dir}", console=args.out_console())
         render_diagnostics(
             export_diags,
             heading="Export notes",
-            console=err_console,
+            console=args.err_console(),
             quiet=quiet,
         )
-
-        raise typer.Exit(exit_code)
-
-    except typer.Exit:
-        raise
-    except Exception as exc:
-        render_error(f"Export failed: {exc}", console=args.err_console())
-        raise typer.Exit(1) from exc
+    raise typer.Exit(exit_code)

@@ -9,10 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`export dessem` command** exports a Cobre policy checkpoint to
-  DESSEM-compatible `mapcut`/`cortdeco` binaries. The command applies 15
-  documented conversion premises, emits audit CSVs for traceability, and
-  writes a provenance manifest.
+- **`export dessem` command** exports a solved Cobre case's policy checkpoint
+  to the DECOMP-format `mapcut`/`cortdeco` binaries DESSEM reads as its future
+  cost function. The checkpoint is read through `cobre-python`, cut values are
+  converted from the run's cost scale to R$ and then to DECOMP's 10³ R$, and
+  each export records the conversion premises it applied in
+  `export_manifest.json`; `--audit-csv` adds per-pool CSVs of the cuts as read
+  and as written. GNL coefficients are written as zeros, and a policy carrying
+  travel-time state is refused.
 
 ## [0.18.0] - 2026-10-07
 

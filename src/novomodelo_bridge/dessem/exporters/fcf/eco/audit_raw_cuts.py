@@ -2,8 +2,9 @@
 
 This is the pre-transformation audit artifact. No division by 1000, no sign
 flip, no axis remapping, no reordering: one row per affine piece, one column
-per coefficient in `entity_manifest` order. `is_active` and
-`in_active_cut_indices` are recorded as columns and never used as filters (P10).
+per coefficient in `entity_manifest` order. Values are in R$, the scale the
+reader already converted to, not the checkpoint's stored scale. `is_active` is
+recorded as a column and never used as a filter (P10).
 """
 
 from __future__ import annotations
@@ -26,12 +27,10 @@ _LOG = logging.getLogger(__name__)
 FIXED_COLUMNS = (
     "pool_stage_id",
     "node_id",
-    "piece_id",
     "slot_index",
     "iteration",
     "forward_pass_index",
     "is_active",
-    "in_active_cut_indices",
     "intercept",
 )
 
@@ -78,7 +77,6 @@ def _write_rows(pool: StageCutPool, handle: TextIO) -> int:
     writer = csv.writer(handle, lineterminator="\n")
     writer.writerow([*FIXED_COLUMNS, *(slot_label(slot) for slot in pool.slots)])
 
-    active = set(pool.active_cut_indices)
     slot_count = len(pool.slots)
     for index, piece in enumerate(pool.pieces):
         coefficient_count = len(piece.coefficients)
@@ -92,12 +90,10 @@ def _write_rows(pool: StageCutPool, handle: TextIO) -> int:
             [
                 pool.stage_id,
                 pool.node_id,
-                piece.piece_id,
                 piece.slot_index,
                 piece.iteration,
                 piece.forward_pass_index,
                 piece.is_active,
-                index in active,
                 _format_float(piece.intercept),
                 *(_format_float(float(v)) for v in piece.coefficients),
             ]

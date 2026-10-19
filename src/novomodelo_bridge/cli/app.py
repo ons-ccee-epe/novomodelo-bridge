@@ -19,6 +19,7 @@ from novomodelo_bridge.cli.check import _run_check, _run_decomp_check
 from novomodelo_bridge.cli.compare import _run_decomp_comparison, _run_newave_comparison
 from novomodelo_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
 from novomodelo_bridge.cli.dashboard import _run_dashboard
+from novomodelo_bridge.cli.export import export_app
 
 # noqa: F401 below -- re-exported so `cli._NULL_HANDLER` keeps resolving for the
 # ``test_configure_logging_levels`` import + the ``cli._configure_logging`` spy sites.
@@ -130,9 +131,6 @@ compare_app = typer.Typer(
     help="Compare source model inputs/results against Novomodelo."
 )
 check_app = typer.Typer(help="Validate source-model inputs without converting.")
-
-from novomodelo_bridge.cli.export import export_app
-
 app.add_typer(convert_app, name="convert")
 app.add_typer(compare_app, name="compare")
 app.add_typer(check_app, name="check")
