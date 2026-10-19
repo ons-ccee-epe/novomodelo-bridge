@@ -103,6 +103,16 @@ the same output.
 - **Stochastic data.** Historical inflows (`vazoes.dat`, `vazpast.dat`), load
   (`sistema.dat`, `c_adic.dat`), and block factors (`patamar.dat`) are written
   under `scenarios/`, stage-varying tables as Parquet.
+- **Incremental inflows.** NEWAVE records natural inflow per gauging station
+  (posto); Novomodelo takes each plant's incremental inflow. The converter
+  subtracts, for each plant, the natural inflow of the stations of the plants
+  directly upstream of it. Plants that share a station each get their own
+  series. A plant on posto 300, NEWAVE's artificial gauge, has no natural
+  inflow: it gets a zero series, so Novomodelo treats its inflow as deterministic
+  zero, and an artificial plant upstream is not subtracted. `convert newave`
+  lists these plants, and warns when a gauged plant sits below an artificial
+  plant that has gauged plants further upstream, since their inflow may then
+  be counted twice.
 
 Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,

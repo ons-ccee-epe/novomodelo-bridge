@@ -1708,7 +1708,7 @@ def _make_vazpast_mock(
 def _make_confhd_posto_mock(posto_to_code: dict[int, int]) -> MagicMock:
     """Build a Confhd mock mapping postos to hydro codes.
 
-    Includes all columns needed by _build_upstream_postos (cascade logic).
+    Includes all columns needed by _inflow_cascade (cascade logic).
     All plants are headwater (no upstream) unless overridden.
     """
     rows = [
@@ -1728,7 +1728,7 @@ def _make_confhd_posto_mock(posto_to_code: dict[int, int]) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _build_upstream_postos — NE/NC cascade bypass
+# Tests: _inflow_cascade — NE/NC cascade bypass
 # ---------------------------------------------------------------------------
 
 
@@ -1747,104 +1747,83 @@ def _confhd_row(
     }
 
 
-class TestBuildUpstreamPostosExpansionPlant:
-    """An ``EE`` plant is in service, so its posto is a real inflow node.
-    Walking through it instead credits its whole natural inflow to the plant
-    below, inflating that plant's incremental series."""
+class TestInflowCascadeExpansionPlant:
+    """An ``EE`` plant is in service, so it is a real inflow node. Walking
+    through it instead credits its whole natural inflow to the plant below,
+    inflating that plant's incremental series."""
 
     def test_ee_plant_between_two_ex_plants_is_its_own_node(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
-        # A (EX, posto 100) -> B (EE, posto 200) -> C (EX, posto 300)
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 2, "EX"),
                 _confhd_row(2, 200, 3, "EE"),
-                _confhd_row(3, 300, 0, "EX"),
+                _confhd_row(3, 310, 0, "EX"),
             ]
         )
-        upstream = _build_upstream_postos(confhd)
-        assert upstream.get(200) == [100]
-        assert upstream.get(300) == [200]
+        cascade = _inflow_cascade(confhd)
+        assert cascade.upstream_of == {2: [1], 3: [2]}
+        assert cascade.posto_of == {1: 100, 2: 200, 3: 310}
 
 
-class TestBuildUpstreamPostosNonExistingBypass:
-    """``_build_upstream_postos`` must walk through NE/NC plants so the
-    posto-level cascade stays connected.  Without this, the downstream
-    EX plant's incremental inflow fails to subtract the upstream EX
-    plant's natural inflow."""
+class TestInflowCascadeNonExistingBypass:
+    """The cascade walks through NE/NC plants so it stays connected. Without
+    this, the downstream EX plant's incremental inflow fails to subtract the
+    upstream EX plant's natural inflow."""
 
-    def test_nc_plant_between_two_ex_plants_keeps_posto_edge(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+    def test_nc_plant_between_two_ex_plants_keeps_the_link(self) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
-        # A (EX, posto 100) -> B (NC, posto 200) -> C (EX, posto 300)
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 2, "EX"),
                 _confhd_row(2, 200, 3, "NC"),
-                _confhd_row(3, 300, 0, "EX"),
+                _confhd_row(3, 310, 0, "EX"),
             ]
         )
-        upstream = _build_upstream_postos(confhd)
-        assert upstream.get(300) == [100]
+        assert _inflow_cascade(confhd).upstream_of == {3: [1]}
 
-    def test_ne_plant_between_two_ex_plants_keeps_posto_edge(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+    def test_ne_plant_between_two_ex_plants_keeps_the_link(self) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 2, "EX"),
                 _confhd_row(2, 200, 3, "NE"),
-                _confhd_row(3, 300, 0, "EX"),
+                _confhd_row(3, 310, 0, "EX"),
             ]
         )
-        upstream = _build_upstream_postos(confhd)
-        assert upstream.get(300) == [100]
+        assert _inflow_cascade(confhd).upstream_of == {3: [1]}
 
-    def test_consecutive_absent_plants_collapse_to_single_edge(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+    def test_consecutive_absent_plants_collapse_to_single_link(self) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 2, "EX"),
                 _confhd_row(2, 200, 3, "NC"),
-                _confhd_row(3, 300, 4, "NE"),
+                _confhd_row(3, 310, 4, "NE"),
                 _confhd_row(4, 400, 0, "EX"),
             ]
         )
-        upstream = _build_upstream_postos(confhd)
-        assert upstream.get(400) == [100]
-        # No edge to the bypassed postos 200/300.
-        assert 200 not in upstream
-        assert 300 not in upstream
+        cascade = _inflow_cascade(confhd)
+        assert cascade.upstream_of == {4: [1]}
+        assert set(cascade.posto_of) == {1, 4}
 
-    def test_absent_at_chain_end_yields_no_edge(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+    def test_absent_at_chain_end_yields_no_link(self) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
-        # A (EX) -> B (NC) -> 0 (terminal); A has no downstream edge.
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 2, "EX"),
                 _confhd_row(2, 200, 0, "NC"),
             ]
         )
-        upstream = _build_upstream_postos(confhd)
-        assert upstream == {}
+        assert _inflow_cascade(confhd).upstream_of == {}
 
-    def test_direct_ex_to_ex_edge_preserved(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+    def test_direct_ex_to_ex_link_preserved(self) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
         confhd = pd.DataFrame(
             [
@@ -1852,76 +1831,45 @@ class TestBuildUpstreamPostosNonExistingBypass:
                 _confhd_row(2, 200, 0, "EX"),
             ]
         )
-        upstream = _build_upstream_postos(confhd)
-        assert upstream.get(200) == [100]
+        assert _inflow_cascade(confhd).upstream_of == {2: [1]}
 
 
-class TestBuildUpstreamPostosFillingAdmission:
-    """An admitted ``NE``-with-filling plant *receives* inflow, so its posto
-    must enter the map as a real node — an upstream plant forms a posto edge
-    **to** the filling plant instead of walking through it.  The JURUENA case
-    (code 309, posto 226, ``NE``) is the live exemplar."""
+class TestInflowCascadeFillingAdmission:
+    """An admitted ``NE``-with-filling plant *receives* inflow, so it is a
+    real node: an upstream plant links **to** the filling plant instead of
+    walking through it. The JURUENA case (code 309, posto 226, ``NE``) is the
+    live exemplar."""
 
-    def test_posto_map_includes_filling_node(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+    def test_filling_plant_is_a_node(self) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
-        # Upstream EX (posto 100) -> JURUENA code 309 (NE, posto 226) -> 0.
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 309, "EX"),
                 _confhd_row(309, 226, 0, "NE"),
             ]
         )
-        upstream = _build_upstream_postos(confhd, filling_codes={309})
-        # 226 is now a real node: it appears as an edge endpoint.
-        assert 226 in upstream
+        cascade = _inflow_cascade(confhd, filling_codes={309})
+        assert cascade.posto_of[309] == 226
+        assert cascade.upstream_of == {309: [1]}
 
-    def test_posto_map_unchanged_without_filling_codes(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+    def test_without_filling_codes_the_ne_plant_is_walked_through(self) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
-        # Same cascade: with the NE plant walked through, the EX upstream has
-        # no downstream EX node, so no edge survives.
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 309, "EX"),
                 _confhd_row(309, 226, 0, "NE"),
             ]
         )
-        baseline = _build_upstream_postos(confhd)
-        # filling_codes=None must be byte-identical to the EX-only result, and
-        # the empty set must match too (None is normalised to set()).
-        assert _build_upstream_postos(confhd, filling_codes=None) == baseline
-        assert _build_upstream_postos(confhd, filling_codes=set()) == baseline
-        # The NE posto 226 is NOT a node in the EX-only map.
-        assert 226 not in baseline
-
-    def test_posto_edge_to_filling_plant(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
-
-        # Upstream EX (posto 100) -> JURUENA code 309 (NE-filling, posto 226).
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 309, "EX"),
-                _confhd_row(309, 226, 0, "NE"),
-            ]
-        )
-        upstream = _build_upstream_postos(confhd, filling_codes={309})
-        # The upstream EX (posto 100) forms an edge TO JURUENA's posto 226.
-        assert upstream.get(226) == [100]
+        cascade = _inflow_cascade(confhd)
+        assert cascade == _inflow_cascade(confhd, filling_codes=set())
+        assert 309 not in cascade.posto_of
+        assert cascade.upstream_of == {}
 
     def test_filling_plant_with_nan_posto_is_skipped(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import (
-            _build_upstream_postos,
-        )
+        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
 
-        # JURUENA admitted but its posto is NaN — same pd.isna guard as the
-        # EX path: it is skipped, so the upstream edge does not resolve to it.
         confhd = pd.DataFrame(
             [
                 _confhd_row(1, 100, 309, "EX"),
@@ -1934,10 +1882,9 @@ class TestBuildUpstreamPostosFillingAdmission:
                 },
             ]
         )
-        upstream = _build_upstream_postos(confhd, filling_codes={309})
-        assert 226 not in upstream
-        # Walk-through finds no downstream EX, so no edge survives.
-        assert upstream == {}
+        cascade = _inflow_cascade(confhd, filling_codes={309})
+        assert 309 not in cascade.posto_of
+        assert cascade.upstream_of == {}
 
 
 # ---------------------------------------------------------------------------

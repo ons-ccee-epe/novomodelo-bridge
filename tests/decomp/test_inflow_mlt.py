@@ -9,11 +9,13 @@ subtraction and the lag-depth alignment.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.inflow_mlt import (
     build_incremental_mlt,
@@ -58,19 +60,58 @@ class TestBuildIncrementalMlt:
 
     def test_shared_upstream_posto_subtracted_once(self) -> None:
         # Two upstream plants share one station; the downstream increment
-        # subtracts that station's natural exactly once (posto-space dedup).
+        # subtracts that station's natural exactly once.
         mlt = _mlt({"1": [100.0] * 12, "2": [250.0] * 12})
         context = ({10: "1", 11: "1", 20: "2"}, {10: [], 11: [], 20: [10, 11]})
         out = _build(mlt, context)
         assert out[2][1] == pytest.approx(150.0)  # 250 - 100 (not 250 - 200)
 
-    def test_self_loop_upstream_skipped(self) -> None:
-        # A plant sharing its upstream sibling's station forms no posto edge
-        # (self-loop), so no subtraction happens.
+    def test_upstream_on_the_same_station_skipped(self) -> None:
+        # A plant sharing its upstream sibling's station subtracts nothing.
         mlt = _mlt({"1": [100.0] * 12})
         context = ({10: "1", 20: "1"}, {10: [], 20: [10]})
         out = _build(mlt, context)
         assert out[1][1] == pytest.approx(100.0)  # unchanged (no self-subtract)
+
+    def test_artificial_gauge_pinned_to_zero_even_with_a_stored_mean(self) -> None:
+        mlt = _mlt({"1": [100.0] * 12, "300": [40.0] * 12})
+        context = ({10: "1", 20: "300"}, {10: [], 20: [10]})
+        out = _build(mlt, context)
+        assert all(value == 0.0 for value in out[1].values())
+
+    def test_plants_sharing_a_station_subtract_only_their_own_upstream(
+        self,
+    ) -> None:
+        mlt = _mlt({"1": [10.0] * 12, "2": [30.0] * 12, "5": [100.0] * 12})
+        context = (
+            {10: "1", 20: "2", 30: "5", 40: "5"},
+            {10: [], 20: [], 30: [10], 40: [20]},
+        )
+        out = _build(mlt, context)
+        assert out[2][1] == pytest.approx(90.0)
+        assert out[3][1] == pytest.approx(70.0)
+
+    def test_gauged_plant_below_artificial_with_gauged_upstream_is_reported(
+        self,
+    ) -> None:
+        mlt = _mlt({"1": [10.0] * 12, "300": [0.0] * 12, "5": [100.0] * 12})
+        context = ({10: "1", 20: "300", 30: "5"}, {10: [], 20: [10], 30: [20]})
+        effective = SimpleNamespace(
+            base=pd.DataFrame({"nome_usina": ["A", "B", "C"]}, index=[10, 20, 30])
+        )
+        with (
+            patch(
+                "novomodelo_bridge.decomp.inflow_mlt._incremental_context",
+                return_value=context,
+            ),
+            collect() as diagnostics,
+        ):
+            build_incremental_mlt(mlt, effective, _id_map((10, 20, 30)))
+        [reported] = [
+            d for d in diagnostics if d.code == "artificial-gauge-upstream-double-count"
+        ]
+        assert reported.table is not None
+        assert reported.table.rows == [[30, "C", 20, "B"]]
 
     def test_missing_posto_omitted(self) -> None:
         # A plant whose station is absent from the MLT is left out entirely
