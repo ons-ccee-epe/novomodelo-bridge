@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`export dessem` command** exports a solved Cobre case's policy checkpoint
+  to the DECOMP-format `mapcut`/`cortdeco` binaries DESSEM reads as its future
+  cost function. The checkpoint is read through `cobre-python`, cut values are
+  converted from the run's cost scale to R$ and then to DECOMP's 10³ R$, and
+  each export records the conversion premises it applied in
+  `export_manifest.json`; `--audit-csv` adds per-pool CSVs of the cuts as read
+  and as written. GNL coefficients are written as zeros, and a policy carrying
+  travel-time state is refused.
 - **NEWAVE: Pumping station conversion.** When the deck declares
   `ESTACAO-BOMBEAMENTO` and `ESTACAO-BOMBEAMENTO-SUBMERCADO` in `indices.csv`
   and the `ESTACOES BOMBEAMENTO` switch is on, the converter generates

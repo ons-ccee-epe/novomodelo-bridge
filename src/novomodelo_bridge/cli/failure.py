@@ -34,6 +34,7 @@ _FAILURE_CONTEXT = {
     "convert": "Conversion",
     "compare": "Comparison",
     "dashboard": "Dashboard",
+    "export": "Export",
 }
 
 
