@@ -28,7 +28,7 @@ summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de it
   path = "modeling.inflow_non_negativity.method"
   from = []
   status = "constant"
-  how = "Sempre `truncation_with_penalty`, o mesmo método da conversão NEWAVE: uma afluência incremental negativa da árvore explícita é truncada em zero antes de entrar no PL, e a folga penalizada por `hydro.inflow_nonnegativity_cost` permanece no balanço hídrico. O truncamento depende só da afluência do nó, nunca do estado, e não compromete a regra de parada por gap."
+  how = "Sempre `truncation_with_penalty`, o mesmo método da conversão NEWAVE: uma afluência incremental negativa da árvore explícita mantém seu valor no balanço hídrico, e a folga penalizada por `hydro.inflow_nonnegativity_cost` pode repor no máximo a água que falta, `max(-afluência, 0)`. A folga depende só da afluência do nó, nunca do estado, e não compromete a regra de parada por gap."
 
   [[output.field]]
   path = "simulation.enabled"

@@ -67,10 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`convert decomp` sets the inflow non-negativity method.** `config.json`
   now carries `modeling.inflow_non_negativity.method` =
   `"truncation_with_penalty"`, the method `convert newave` already sets,
-  instead of leaving it to cobre's default, `penalty`. cobre now truncates a
-  negative incremental inflow of the tree to zero before it enters the LP; the
-  penalised inflow slack stays as before. DECOMP results can change where a
-  node's incremental inflow is negative.
+  instead of leaving it to cobre's default, `penalty`. Under it a negative
+  incremental inflow keeps its value, and the penalised inflow slack may add
+  back at most the missing water. The converted DECOMP trees have no negative
+  inflows, so DECOMP results do not change; NEWAVE results change where an
+  incremental inflow is negative, since cobre no longer raises it to zero.
 - **VminOP (NEWAVE) and RHE (DECOMP) bound stored energy in MWh with cobre's
   MWh parameters.** The bridge no longer computes the integrated
   accumulated productivity itself: expressions reference cobre's
