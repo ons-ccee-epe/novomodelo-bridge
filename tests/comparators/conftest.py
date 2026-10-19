@@ -193,7 +193,7 @@ def _balance_fixture() -> _AlignedDecompFrames:
 def _ree_id_map() -> DecompIdMap:
     """Two hydro plants (codes 10, 20 -> novomodelo ids 0, 1) -- matches
     ``_aligned_fixture``'s own hydro codes/ids so the same
-    ``_patch_aligned_frames`` fixture can back both the E1 result rows and
+    ``_patch_aligned_frames`` fixture can back both the base result rows and
     the REE rollup in the same ``build_decomp_dataset`` test."""
     return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10, 20))
 
@@ -241,7 +241,7 @@ def _ree_dec_oper_ree_fixture() -> pl.DataFrame:
 def _ree_aligned_fixture() -> _AlignedDecompFrames:
     """``_aligned_fixture()`` with its ``novomodelo_hydro`` extended to carry the
     ENA/EARM columns :func:`_novomodelo_ree_sums` reads -- the base fixture is
-    trimmed to only the columns E1's ``_HYDRO_VARIABLES`` needs."""
+    trimmed to only the columns ``_HYDRO_VARIABLES`` needs."""
     base = _aligned_fixture()
     return dataclasses.replace(
         base,

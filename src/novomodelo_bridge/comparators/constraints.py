@@ -25,7 +25,7 @@ _LOG = logging.getLogger(__name__)
 def load_generic_constraints(novomodelo_input_dir: Path) -> list[dict]:
     """Load constraint definitions from ``constraints/generic_constraints.json``.
 
-    The F3 objects are sense-free (no ``sense`` key); direction is derived
+    The objects are sense-free (no ``sense`` key); direction is derived
     from the companion bounds table's endpoints when a label is needed (see
     :func:`per_stage_bounds` / :func:`novomodelo_bridge.core.generic_constraint_format.
     shape_from_bounds`). Returns an empty list when the file is missing or
@@ -121,11 +121,11 @@ def evaluate_lhs_novomodelo(
 
 
 class ResolvedBound(NamedTuple):
-    """A per-(constraint, stage) F3 bound reduced to one comparison-ready limit.
+    """A per-(constraint, stage) interval bound reduced to one comparison-ready limit.
 
     ``value`` is the endpoint appropriate to the row's evaluated direction —
     the number the numeric comparison and the chart plot, identical to what
-    the pre-F3 single ``bound`` column held. ``shape`` is the direction label
+    a legacy single ``bound`` column held. ``shape`` is the direction label
     (``">="``/``"<="``/``"=="``/``"range"``) from
     :func:`~novomodelo_bridge.core.generic_constraint_format.shape_from_bounds`, for
     display only.
@@ -136,10 +136,10 @@ class ResolvedBound(NamedTuple):
 
 
 def _resolve_bound(lower: float | None, upper: float | None) -> ResolvedBound:
-    """Resolve one F3 bound row to a single comparison-ready limit + shape.
+    """Resolve one interval bound row to a single comparison-ready limit + shape.
 
     ``>=`` (lower-only) reads ``lower``; ``<=`` (upper-only) reads ``upper``;
-    ``==`` (both equal) reads either (they agree) — this matches the pre-F3
+    ``==`` (both equal) reads either (they agree) — this matches the legacy
     single ``bound`` column value exactly for every constraint family this
     comparator evaluates today (RE/AGRINT/VminOP are all single-sided). A
     genuine two-sided ``range`` has no producer feeding this comparator; the

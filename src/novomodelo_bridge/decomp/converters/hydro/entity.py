@@ -65,7 +65,7 @@ def _operated_uh(dadger: Dadger) -> pd.DataFrame:
     """The ``UH`` rows carrying an initial volume (the operated plants).
 
     Rows without one (coupling-only registrations) are excluded — their
-    terminal-value treatment is the boundary importer's D3 territory, not the
+    terminal-value treatment is the boundary importer's concern, not the
     registry's. :func:`convert_hydros` reports the excluded set (by name) once.
     """
     uh = dadger.uh(df=True)

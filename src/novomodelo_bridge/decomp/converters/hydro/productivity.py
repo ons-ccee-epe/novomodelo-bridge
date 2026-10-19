@@ -31,7 +31,7 @@ def _equivalent_productivity_mw_per_m3s(
     * ``None`` (the engolimento anchor) — the volume-averaged cota over the
       **full** operating range (``volume_minimo``..``volume_maximo``). This is
       the value the head-aware ``max_turbined`` envelope and
-      :func:`convert_hydro_group_availability`'s B8 hydraulic cap consume,
+      :func:`convert_hydro_group_availability`'s hydraulic cap consume,
       validated against the source model's ``Qtur Maxima``; it stays on the
       full-range mean so that path is unchanged.
     * a volume (the **generation** anchor) — the cota at that single volume.

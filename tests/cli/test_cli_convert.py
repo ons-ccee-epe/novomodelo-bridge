@@ -1738,7 +1738,7 @@ class TestCliInProcess:
     ) -> None:
         """``convert decomp --validate`` whitelists the interop inflow-lags warning.
 
-        The P3 lag-blind stage shape (``inflow_lags=false`` on every stage,
+        The lag-blind stage shape (``inflow_lags=false`` on every stage,
         locked in ``test_decomp_temporal.py``) trips novomodelo's non-fatal
         external-solver-interop warning on purpose; DECOMP's whitelist keeps
         it off stderr while newave's does not (see the sibling

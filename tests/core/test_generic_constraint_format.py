@@ -1,7 +1,7 @@
-"""Unit tests for the shared F3 sense<->interval mapping helper.
+"""Unit tests for the shared sense<->interval mapping helper.
 
 ``generic_constraint_format`` is the single source of truth both the source
-model and DECOMP generic-constraint writers use to map a pre-F3 ``(sense,
+model and DECOMP generic-constraint writers use to map a ``(sense,
 value)`` pair onto novomodelo's sense-free ``(bound_lower, bound_upper)``
 interval. Model-agnostic: no source-model/DECOMP coupling in the tests
 either.

@@ -1691,12 +1691,12 @@ class TestEvaluateLhsNovomodelo:
 
 
 # -------------------------------------------------------------------
-# comparator readers -> F3 (derive shape from the interval)
+# comparator readers derive shape from the interval
 # -------------------------------------------------------------------
 
 
 class TestShapeFromBounds:
-    """Unit tests for the F3 inverse-mapping helper."""
+    """Unit tests for the interval -> shape inverse-mapping helper."""
 
     def test_lower_only_is_ge(self) -> None:
         from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
@@ -1726,7 +1726,7 @@ class TestShapeFromBounds:
 
 
 class TestGenericConstraintF3Loaders:
-    """The constraints loader consumes F3's sense-free JSON."""
+    """The constraints loader consumes sense-free JSON."""
 
     def test_constraints_loader_parses_sense_free_json(self, tmp_path: Path) -> None:
         from novomodelo_bridge.comparators.constraints import (
@@ -1757,8 +1757,8 @@ class TestGenericConstraintF3Loaders:
 
 
 class TestPerStageBoundsResolution:
-    """per_stage_bounds resolves the endpoint the pre-F3
-    single ``bound`` column used to hold, for every constraint direction."""
+    """per_stage_bounds resolves the endpoint a legacy
+    single ``bound`` column held, for every constraint direction."""
 
     @staticmethod
     def _f3_bounds() -> pl.DataFrame:
@@ -1800,10 +1800,10 @@ class TestPerStageBoundsResolution:
 
 
 class TestAC3NumericRegressionAcrossF3Migration:
-    """An F3 case whose constraints round-trip
-    unchanged from the pre-F3 ``(sense, bound)`` content produces identical
-    per-stage evaluated limits and pass/fail verdicts to the pre-F3
-    comparison — same numbers, new column layout."""
+    """A sense-free case whose constraints round-trip
+    unchanged from legacy ``(sense, bound)`` content produces identical
+    per-stage evaluated limits and pass/fail verdicts to a legacy
+    comparison — same numbers, interval column layout."""
 
     def test_f3_limits_and_verdicts_match_pre_f3_content(self, tmp_path: Path) -> None:
         import pyarrow.parquet as pq
@@ -1811,10 +1811,10 @@ class TestAC3NumericRegressionAcrossF3Migration:
         from novomodelo_bridge.comparators.constraints import per_stage_bounds
         from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 
-        # Pre-F3 ground truth this case is migrated from: constraint 0 is a
+        # Legacy ground truth this case is built from: constraint 0 is a
         # VminOP-style `>=` security-curve floor; constraint 1 is an
         # AGRINT-style `<=` ceiling. These are the exact (sense, value) pairs
-        # a pre-F3 case would have carried in its single `bound` column.
+        # a legacy case carries in its single `bound` column.
         pre_f3_bound = {
             (0, 0): (">=", 500.0),
             (0, 1): (">=", 520.0),
@@ -1858,12 +1858,12 @@ class TestAC3NumericRegressionAcrossF3Migration:
 
         for (cid, stage), (sense, value) in pre_f3_bound.items():
             rb = resolved[cid][stage]
-            # Identical per-stage evaluated limit to the pre-F3 single
+            # Identical per-stage evaluated limit to the legacy single
             # `bound` column value.
             assert rb.value == value
             assert rb.shape == sense
-            # Identical pass/fail verdict to what a pre-F3 comparison
-            # (LHS vs. the single (sense, bound) pair) would have reached.
+            # Identical pass/fail verdict to what a legacy comparison
+            # (LHS vs. the single (sense, bound) pair) reaches.
             lhs_value = lhs[(cid, stage)]
             pre_f3_pass = lhs_value >= value if sense == ">=" else lhs_value <= value
             f3_pass = (
@@ -1881,7 +1881,7 @@ class TestConstraintsChartShapeLabelFromBounds:
         from novomodelo_bridge.comparators.charts import constraints_comparison_chart
         from novomodelo_bridge.comparators.constraints import ResolvedBound
 
-        constraints = [{"id": 0, "name": "VminOP_X"}]  # sense-free (F3)
+        constraints = [{"id": 0, "name": "VminOP_X"}]  # sense-free
         lhs_newave = pl.DataFrame(
             {"constraint_id": [0], "stage_id": [0], "lhs_value": [510.0]}
         )

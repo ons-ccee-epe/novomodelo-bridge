@@ -1902,7 +1902,7 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
             "max_turbined_m3s": float(generation.get("max_turbined_m3s", 0.0) or 0.0),
             "min_generation_mw": float(generation.get("min_generation_mw", 0.0) or 0.0),
             "max_generation_mw": float(generation.get("max_generation_mw", 0.0) or 0.0),
-            # Deliberately no "bus_id" key: see the docstring above (B1).
+            # Deliberately no "bus_id" key: see the docstring above.
         }
 
     return result

@@ -118,7 +118,7 @@ class TestStageRecords:
             assert "num_scenarios" not in record
 
     def test_stage_records_inflow_lags_false(self) -> None:
-        """Locks the P3 lag-blind convention on EVERY stage, not
+        """Locks the lag-blind convention on EVERY stage, not
         just the first: ``inflow_lags`` disabled, ``storage`` enabled. This is
         the exact shape that trips novomodelo's non-fatal external-solver-interop
         validation warning on purpose — ``convert decomp --validate``

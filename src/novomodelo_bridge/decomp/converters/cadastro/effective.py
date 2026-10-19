@@ -402,8 +402,8 @@ def build_effective_cadastro(
         If an override references a plant *code* absent from ``hidr.index``
         — the registry has no cadastro row to override. Applies to the
         scalar overrides, the source plant of an ``AC DESVIO`` (the
-        downstream plant it names is not validated here — that is M2.1's
-        concern), and every machine-set override.
+        downstream plant it names is not validated here), and every
+        machine-set override.
     """
     records, out_of_horizon = _read_scalar_overrides(dadger, calendar)
     diversion_records, diversion_out_of_horizon = _read_diversion_overrides(
