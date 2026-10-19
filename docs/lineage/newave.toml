@@ -51,7 +51,7 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   path = "modeling.inflow_non_negativity.method"
   from = []
   status = "constant"
-  how = "Sempre `truncation_with_penalty`, o mesmo método da conversão DECOMP: a afluência incremental negativa mantém seu valor no balanço hídrico e nas defasagens, e a folga penalizada por `hydro.inflow_nonnegativity_cost` pode repor no máximo a água que falta, `max(-afluência, 0)`."
+  how = "Sempre `truncation_with_penalty` (a conversão DECOMP usa `penalty`): a afluência incremental negativa mantém seu valor no balanço hídrico e nas defasagens, e a folga penalizada por `hydro.inflow_nonnegativity_cost` pode repor no máximo a água que falta, `max(-afluência, 0)`."
 
   [[output.field]]
   path = "simulation.enabled"

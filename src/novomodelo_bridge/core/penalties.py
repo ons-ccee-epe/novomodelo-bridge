@@ -63,10 +63,11 @@ _STORAGE_VIOLATION_DEFICIT_MULT = 10.0
 _FILLING_TARGET_DEFICIT_FRACTION = 0.9
 
 # --- Inflow non-negativity -------------------------------------------------
-#: ``modeling.inflow_non_negativity.method`` for both tracks, pinned so the two
-#: conversions share it whatever novomodelo's default is. A negative incremental
-#: inflow keeps its value, in the water balance and in the inflow lags; the
-#: priced slack may add back at most the missing water, ``max(-inflow, 0)``.
+#: ``modeling.inflow_non_negativity.method`` for the source-model track, pinned
+#: whatever novomodelo's default is; the DECOMP track pins ``penalty``. A negative
+#: incremental inflow keeps its value, in the water balance and in the inflow
+#: lags; the priced slack may add back at most the missing water,
+#: ``max(-inflow, 0)``.
 #: With the anchor below the LP buys that water only when the alternative costs
 #: more, so a negative inflow mostly acts as a water loss.
 INFLOW_NON_NEGATIVITY_METHOD = "truncation_with_penalty"

@@ -66,14 +66,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disagrees with the index, or renewable records spread over several files
   now fail the conversion. A file with a usual LIBS name that nothing declares
   is ignored, and `check` and `convert` warn about it on both tracks.
-- **`convert decomp` sets the inflow non-negativity method.** `config.json`
-  now carries `modeling.inflow_non_negativity.method` =
-  `"truncation_with_penalty"`, the method `convert newave` already sets,
-  instead of leaving it to cobre's default, `penalty`. Under it a negative
-  incremental inflow keeps its value, and the penalised inflow slack may add
-  back at most the missing water. The converted DECOMP trees have no negative
-  inflows, so DECOMP results do not change; NEWAVE results change where an
-  incremental inflow is negative, since cobre no longer raises it to zero.
+- **`convert decomp` pins the inflow non-negativity method to `penalty`.**
+  `config.json` now carries `modeling.inflow_non_negativity.method` =
+  `"penalty"`, cobre's current default, instead of leaving it unset. Its
+  unbounded, priced inflow correction keeps the first forward pass feasible
+  when a single-plant volume target (`HV`) becomes a hard storage floor at a
+  later stage; under a bounded correction the boundary FCF import's
+  one-iteration run can fail with an infeasible subproblem. `convert newave`
+  keeps `truncation_with_penalty`.
+- **NEWAVE results change where a historical incremental inflow is
+  negative.** Under `truncation_with_penalty` cobre now keeps the negative
+  value instead of raising it to zero; the penalised inflow slack may add back
+  at most the missing water.
 - **VminOP (NEWAVE) and RHE (DECOMP) bound stored energy in MWh with cobre's
   MWh parameters.** The bridge no longer computes the integrated
   accumulated productivity itself: expressions reference cobre's

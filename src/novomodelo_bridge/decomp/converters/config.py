@@ -5,11 +5,9 @@
 ``Zsup/Zinf - 1 <= GP`` convergence; novomodelo auto-injects a ``BoundStalling``
 companion so an unattainable tolerance degrades to a diagnosed stall), the
 deck-faithful ``NI`` iteration backstop, the external scenario schemes, and the
-inflow non-negativity method both tracks share. DECOMP's identity inflow
-stats carry no AR terms, so the water that method may add for a negative tree
-inflow depends only on the node's own inflow, never on the incoming state; it
-cannot lift the lower bound above the upper bound and the ``gap`` rule stays
-sound under it.
+``penalty`` inflow non-negativity method. Its inflow correction is an ordinary
+priced LP slack with no upper limit, so it cannot lift the lower bound above
+the upper bound and the ``gap`` rule stays sound under it.
 
 No ``state_space.inflow_lag_depth`` is emitted. Under a deferred boundary FCF
 the external white-noise inflow model contributes no inflow-lag state, so novomodelo
@@ -33,7 +31,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.penalties import (
-    INFLOW_NON_NEGATIVITY_METHOD,
     PCORTEOL,
     PEXC,
     PINT,
@@ -123,7 +120,11 @@ def convert_config(case: DecompCase) -> dict:
             },
         },
         "modeling": {
-            "inflow_non_negativity": {"method": INFLOW_NON_NEGATIVITY_METHOD},
+            # `penalty`, not the other track's `truncation_with_penalty`: the
+            # unbounded priced inflow keeps a cut-less forward pass feasible
+            # against a later stage's hard storage floor (an HV volume target),
+            # which the boundary-FCF bootstrap run would otherwise die on.
+            "inflow_non_negativity": {"method": "penalty"},
         },
         "simulation": {
             "enabled": True,
