@@ -541,16 +541,15 @@ def convert_config(case: NewaveCase) -> dict:
     backward_sel: int = dger.selecao_de_cortes_backward or 0
     cut_selection_enabled: bool = (forward_sel == 1) or (backward_sel == 1)
 
-    # novomodelo's `training.cut_selection` keeps two always-on knobs at the top level plus a
+    # novomodelo's `training.cut_selection` keeps the always-on knobs at the top level plus a
     # tagged `selection` object that names the method and carries only that method's
-    # parameters; omitting `selection` disables row selection. We mirror The source
-    # model's limited-memory Level-1 selection with `method = "lml1"`. The new lml1 is
-    # value-based (`tie_tolerance`, default 1e-10), so the source model's old
-    # memory-window knob has no equivalent and is intentionally dropped.
+    # parameters; omitting `selection` disables row selection. The source model's
+    # selection is mapped to novomodelo's Level-1 selection (`level1`), checked every
+    # iteration over the trial states of the whole run; `selcor.dat` is not read.
     cut_selection: dict = {"row_activity_tolerance": 1e-6}
     if cut_selection_enabled:
         cut_selection["selection"] = {
-            "method": "lml1",
+            "method": "level1",
             "check_frequency": 1,
         }
 

@@ -116,6 +116,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `integrated_accumulated_productivity_mwh_per_hm3` and `max_stored_energy_mwh`),
   and `rho_acum_h{id}` is always cobre's computed point productivity.
 
+- **`convert newave` turns cut selection on with `level1`.** cobre removed
+  the `lml1` method; the converted `config.json` now names `level1`, checked
+  every iteration over the trial states of the whole run. Level-1 selection
+  keeps exactly the cuts that are highest at some stored trial state, so
+  results can differ from a run made with `lml1`.
+
+- **`convert decomp` writes the boundary FCF in cobre's current policy
+  format.** The checkpoint no longer carries a cut id or a pool's list of
+  active cuts; each cut states its own activity.
+
+- **`dashboard` reads cobre's per-pool cut-selection report.** The cut counts
+  of a stage now sum the row pools of its nodes, and the pool size is read
+  from `cuts_in_pool`.
+
 ### Fixed
 
 - **NEWAVE: Hydro plants referenced by pumping stations are no longer

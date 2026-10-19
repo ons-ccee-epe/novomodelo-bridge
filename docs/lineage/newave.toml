@@ -137,14 +137,14 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   from = []
   status = "constant"
   when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
-  how = "Sempre `lml1` (seleção Level-1 de memória limitada). O Novomodelo tem um único interruptor para os dois passos; a união dos flags do NEWAVE o liga."
+  how = "Sempre `level1` (seleção Level-1 sobre os estados visitados de toda a execução). O Novomodelo tem um único interruptor para os dois passos; a união dos flags do NEWAVE o liga. Os parâmetros de `selcor.dat` não são lidos."
 
   [[output.field]]
   path = "training.cut_selection.selection.check_frequency"
   from = []
   status = "constant"
   when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
-  how = "Sempre 1. A janela de memória do NEWAVE não tem equivalente no `lml1` baseado em valor e é descartada."
+  how = "Sempre 1: a seleção é verificada a cada iteração. `lookback_iterations` não é emitido, então os estados de toda a execução são mantidos."
 
   [[output.field]]
   path = "training.parallelism.backward_scheduler.method"

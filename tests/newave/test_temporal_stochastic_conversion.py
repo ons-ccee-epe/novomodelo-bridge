@@ -813,7 +813,7 @@ class TestConvertConfig:
 
         result = convert_config(case)
         cs = result["training"]["cut_selection"]
-        assert cs["selection"]["method"] == "lml1"
+        assert cs["selection"]["method"] == "level1"
         assert cs["selection"]["check_frequency"] == 1
         assert cs["row_activity_tolerance"] == 1e-6
         assert "enabled" not in cs
@@ -828,7 +828,7 @@ class TestConvertConfig:
 
         result = convert_config(case)
         cs = result["training"]["cut_selection"]
-        assert cs["selection"]["method"] == "lml1"
+        assert cs["selection"]["method"] == "level1"
         assert cs["selection"]["check_frequency"] == 1
         assert cs["row_activity_tolerance"] == 1e-6
         assert "enabled" not in cs
@@ -843,7 +843,7 @@ class TestConvertConfig:
 
         result = convert_config(case)
         cs = result["training"]["cut_selection"]
-        assert cs["selection"]["method"] == "lml1"
+        assert cs["selection"]["method"] == "level1"
         assert cs["selection"]["check_frequency"] == 1
         assert cs["row_activity_tolerance"] == 1e-6
         assert "enabled" not in cs
