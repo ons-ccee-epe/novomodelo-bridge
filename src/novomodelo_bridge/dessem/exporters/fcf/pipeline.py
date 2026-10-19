@@ -8,7 +8,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
@@ -47,10 +47,13 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     assert_gnl_lead_time_is_evidenced,
     cut_building_pools,
     discount_factors,
+    downstream_positions,
     first_node_per_stage,
     inflow_lag_drop_audit,
-    load_hydro_codes,
+    match_source_hydros,
+    plant_codes,
     select_submarket_buses,
+    storage_plant_ids,
     submarket_for_bus,
     tree_indices,
 )
@@ -65,6 +68,9 @@ from novomodelo_bridge.dessem.exporters.fcf.manifest import (
     build_export_manifest,
     write_export_manifest,
 )
+
+if TYPE_CHECKING:
+    from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
 
 _LOG = logging.getLogger(__name__)
 
@@ -142,7 +148,6 @@ class ExportSettings:
 
     eco_subdirectory: str = "eco"
     content_subdirectory: str = "content"
-    hydro_codes_path: str = ""
     include_terminal_pool: bool = False
     emit_audit_csv: bool = False
 
@@ -189,7 +194,7 @@ def _log_step(step_name: str) -> Generator[None, None, None]:
 
 def _write_failure_manifest(
     case_dir: Path,
-    revision: str,
+    source: SourceDeck,
     settings: ExportSettings,
     paths: OutputPaths,
     failed_step: str,
@@ -198,7 +203,8 @@ def _write_failure_manifest(
     try:
         manifest = build_export_manifest(
             case_path=case_dir,
-            revision=revision,
+            source_path=source.directory,
+            revision=source.revision,
             settings_snapshot=asdict(settings),
             outputs={
                 "mapcut": paths.mapcut,
@@ -217,6 +223,7 @@ def _assemble_mapcut_header(
     pools: dict,
     trunk_pool_ids: tuple[int, ...],
     inputs: CaseInputs,
+    plant_ids: tuple[int, ...],
     hydro_codes: tuple[int, ...],
     gnl_thermals: tuple,
     gnl_submarket_codes: tuple[int, ...],
@@ -235,23 +242,6 @@ def _assemble_mapcut_header(
     )
     numero_cenarios = len(manifest.nodes)
     n_estagios = manifest.num_stages
-
-    # Downstream mapping (simplified: use 0 for terminal)
-    downstream = []
-    for hydro in inputs.hydros:
-        if hydro.downstream_id is None:
-            downstream.append(0)
-        else:
-            # Find the downstream hydro's code
-            try:
-                downstream_idx = next(
-                    i
-                    for i, h in enumerate(inputs.hydros)
-                    if h.id == hydro.downstream_id
-                )
-                downstream.append(hydro_codes[downstream_idx])
-            except StopIteration:
-                downstream.append(0)
 
     # GNL lag months (P15: all 2 for evidenced plants)
     lag_meses = tuple(EVIDENCED_GNL_LAG_MESES for _ in gnl_thermals)
@@ -282,7 +272,7 @@ def _assemble_mapcut_header(
         mes=mes,
         ano=ano,
         codigos_uhes=hydro_codes,
-        codigos_uhes_jusante=tuple(downstream),
+        codigos_uhes_jusante=downstream_positions(inputs.hydros, plant_ids),
         indice_no_arvore=tree_indices(manifest),
         indice_primeiro_no_estagio=first_node_per_stage(manifest),
         patamares_por_estagio=tuple(len(s.blocks) for s in inputs.stages),
@@ -298,7 +288,7 @@ def _assemble_mapcut_header(
 def _assemble_cuts(
     pools: dict,
     trunk_pool_ids: tuple[int, ...],
-    hydro_codes: tuple[int, ...],
+    plant_ids: tuple[int, ...],
     offsets: Any,
 ) -> list[list[CutInput]]:
     """Assemble cut inputs from pools."""
@@ -313,7 +303,7 @@ def _assemble_cuts(
         for piece in pool.pieces:
             if piece.slot_index < pool.warm_start_count:
                 continue
-            pi_varm = storage_coefficients(piece, pool.slots, hydro_codes)
+            pi_varm = storage_coefficients(piece, pool.slots, plant_ids)
             pi_gnl = zeroed_gnl_block(offsets)
             node_cuts.append(
                 CutInput(
@@ -328,7 +318,7 @@ def _assemble_cuts(
 
 def run_export(
     case_dir: Path,
-    revision: str,
+    source: SourceDeck,
     output_dir: Path,
     settings: ExportSettings,
     *,
@@ -339,8 +329,12 @@ def run_export(
     *on_phase* is an optional callback invoked at the start of each phase with the
     phase label (see EXPORT_PHASE_LABELS). Used by the CLI to drive a progress bar.
 
+    *source* is the deck the case was converted from; it supplies the output
+    revision and the plant codes.
+
     Returns exit code: 0 success, non-zero failure.
     """
+    revision = source.revision
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = _resolve_output_paths(output_dir, revision, settings)
 
@@ -358,8 +352,8 @@ def run_export(
         current_step = "read settings-derived inputs"
         _step(EXPORT_PHASE_LABELS[0])
         with _log_step(current_step):
-            hydro_codes = load_hydro_codes(Path(settings.hydro_codes_path))
             inputs = read_case_inputs(case_dir)
+            match_source_hydros(inputs.hydros, source.hydros)
 
         current_step = "read the policy checkpoint"
         _step(EXPORT_PHASE_LABELS[1])
@@ -407,6 +401,9 @@ def run_export(
         current_step = "build mapping quantities"
         _step(EXPORT_PHASE_LABELS[5])
         with _log_step(current_step):
+            plant_ids = storage_plant_ids(pools[trunk_pool_ids[0]].slots)
+            hydro_codes = plant_codes(plant_ids, source.hydros)
+
             # P6: GNL submarket codes
             gnl_submarket_codes = tuple(
                 submarket_for_bus(t.bus_id) for t in gnl_thermals
@@ -434,6 +431,7 @@ def run_export(
                 pools,
                 trunk_pool_ids,
                 inputs,
+                plant_ids,
                 hydro_codes,
                 gnl_thermals,
                 gnl_submarket_codes,
@@ -449,7 +447,7 @@ def run_export(
         current_step = "assemble cut inputs"
         _step(EXPORT_PHASE_LABELS[8])
         with _log_step(current_step):
-            cuts = _assemble_cuts(pools, trunk_pool_ids, hydro_codes, offsets)
+            cuts = _assemble_cuts(pools, trunk_pool_ids, plant_ids, offsets)
 
         current_step = "write cortdeco"
         _step(EXPORT_PHASE_LABELS[9])
@@ -495,6 +493,7 @@ def run_export(
                 outputs["cortdeco_content"] = paths.cortdeco_content
             manifest_obj = build_export_manifest(
                 case_path=case_dir,
+                source_path=source.directory,
                 revision=revision,
                 settings_snapshot=asdict(settings),
                 outputs=outputs,
@@ -518,12 +517,12 @@ def run_export(
         )
         if unvalidated_pair_published:
             reject_pair(paths.mapcut, paths.cortdeco)
-        _write_failure_manifest(case_dir, revision, settings, paths, current_step)
+        _write_failure_manifest(case_dir, source, settings, paths, current_step)
         return 1
 
     except BaseException as exc:
         _LOG.error("export failed at step '%s': %s", current_step, exc)
         if unvalidated_pair_published:
             reject_pair(paths.mapcut, paths.cortdeco)
-        _write_failure_manifest(case_dir, revision, settings, paths, current_step)
+        _write_failure_manifest(case_dir, source, settings, paths, current_step)
         raise

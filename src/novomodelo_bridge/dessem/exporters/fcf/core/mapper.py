@@ -1,20 +1,17 @@
 """Novomodelo-to-DECOMP mapping rules, one named function per premise.
 
 Each premise lives in exactly one function so it stays individually testable,
-documented and revertible. Nothing here performs I/O except `load_hydro_codes`.
+documented and revertible. Nothing here performs I/O.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import math
-from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
@@ -25,6 +22,7 @@ if TYPE_CHECKING:
     from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
         BlockInfo,
         BusInfo,
+        HydroInfo,
         StageInfo,
         ThermalInfo,
     )
@@ -426,77 +424,107 @@ def first_node_per_stage(manifest: PolicyManifest) -> tuple[int, ...]:
 # ---------------------------------------------------------------------------
 
 
-def _reject_repeated_keys(
-    path: Path,
-) -> Callable[[list[tuple[str, Any]]], dict[str, Any]]:
-    """A json object hook that refuses a repeated key."""
+@dataclass(frozen=True)
+class SourceHydro:
+    """A hydro plant as the source deck names it: `hidr.dat` code and name."""
 
-    def hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        seen: set[str] = set()
-        for key, _ in pairs:
-            if key in seen:
-                raise MappingError(f"{path} repeats key {key!r}")
-            seen.add(key)
-        return dict(pairs)
-
-    return hook
+    code: int
+    name: str
 
 
-def load_hydro_codes(path: Path) -> tuple[int, ...]:
-    """Read the Novomodelo-position-to-DECOMP-plant-code map in positional order."""
-    if not path.is_file():
-        raise MappingError(f"hydro code map not found: {path}")
-    try:
-        raw: Any = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=_reject_repeated_keys(path),
+def match_source_hydros(
+    hydros: Sequence[HydroInfo], source: Mapping[int, SourceHydro]
+) -> None:
+    """Refuse a deck other than the one the case was converted from.
+
+    *source* is keyed by novomodelo hydro id. The deck must operate exactly the
+    case's hydros, each under the name the case gives it.
+
+    Raises:
+        MappingError: the plant sets or any plant name differ.
+    """
+    if {hydro.id for hydro in hydros} != source.keys():
+        raise MappingError(
+            f"the deck operates {len(source)} hydro plants but the case holds "
+            f"{len(hydros)}; export from the deck the case was converted from"
         )
-    except json.JSONDecodeError as exc:
-        raise MappingError(f"{path} is not valid JSON: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise MappingError(f"{path} must hold a JSON object, got {type(raw).__name__}")
-    if not raw:
-        raise MappingError(f"{path} holds no entries")
+    renamed = [
+        (hydro, source[hydro.id])
+        for hydro in sorted(hydros, key=lambda hydro: hydro.id)
+        if hydro.name != source[hydro.id].name
+    ]
+    if renamed:
+        hydro, plant = renamed[0]
+        raise MappingError(
+            f"{len(renamed)} hydro plant names differ between the case and the "
+            f"deck, first hydro {hydro.id}: {hydro.name!r} in the case, "
+            f"{plant.name!r} (plant {plant.code}) in the deck; export from the "
+            "deck the case was converted from"
+        )
 
-    positions: dict[int, int] = {}
-    for key, value in raw.items():
-        try:
-            position = int(key)
-        except ValueError as exc:
+
+def storage_plant_ids(slots: Sequence[EntitySlotRecord]) -> tuple[int, ...]:
+    """The hydro ids of a pool's storage axes, in slot order.
+
+    Slot order is novomodelo's plant order, not ascending id order, and it orders
+    every per-plant `mapcut` record and each cut's `pi_varm` block.
+
+    Raises:
+        MappingError: storage is not one block at the head of the slots.
+    """
+    positions = index_slots(slots).storage
+    if positions != tuple(range(len(positions))):
+        raise MappingError(
+            f"storage occupies slot positions {positions[:4]}... "
+            f"({len(positions)} slots) instead of leading the slots as one block"
+        )
+    return tuple(slots[position].entity_id for position in positions)
+
+
+def plant_codes(
+    plant_ids: Sequence[int], source: Mapping[int, SourceHydro]
+) -> tuple[int, ...]:
+    """The `mapcut` plant-code record: each storage axis's deck plant code.
+
+    Raises:
+        MappingError: the storage axes and the deck's plants differ.
+    """
+    if sorted(plant_ids) != sorted(source):
+        missing = sorted(set(source) - set(plant_ids))
+        unknown = sorted(set(plant_ids) - set(source))
+        raise MappingError(
+            f"the cuts carry storage for {len(plant_ids)} hydros but the deck "
+            f"operates {len(source)} (deck hydro ids without storage: "
+            f"{missing[:10]}; storage hydro ids not in the deck: {unknown[:10]})"
+        )
+    return tuple(source[hydro_id].code for hydro_id in plant_ids)
+
+
+def downstream_positions(
+    hydros: Sequence[HydroInfo], plant_ids: Sequence[int]
+) -> tuple[int, ...]:
+    """The `mapcut` downstream-plant record, one entry per plant of *plant_ids*.
+
+    Each entry is the downstream plant's 1-based position in *plant_ids*, the
+    order of the plant-code record (0 = no downstream plant), never its plant
+    code: DECOMP writes positions into this record, and a code reads as a
+    different plant wherever code and position differ.
+
+    Raises:
+        MappingError: a plant names a downstream id outside *plant_ids*.
+    """
+    by_id = {hydro.id: hydro for hydro in hydros}
+    position_of = {hydro_id: position for position, hydro_id in enumerate(plant_ids, 1)}
+    positions = []
+    for hydro_id in plant_ids:
+        hydro = by_id[hydro_id]
+        if hydro.downstream_id is None:
+            positions.append(0)
+        elif hydro.downstream_id in position_of:
+            positions.append(position_of[hydro.downstream_id])
+        else:
             raise MappingError(
-                f"{path} key {key!r} is not an integer position"
-            ) from exc
-        if key != str(position):
-            raise MappingError(
-                f"{path} key {key!r} is not the canonical form of position "
-                f"{position}; keys must be exactly '0'..'N-1'"
+                f"hydro {hydro.id} ({hydro.name}) names downstream hydro "
+                f"{hydro.downstream_id}, which the case does not hold"
             )
-        if type(value) is not int:
-            raise MappingError(
-                f"{path} entry {key!r} must map to an int, got {type(value).__name__}"
-            )
-        positions[position] = value
-
-    expected = set(range(len(positions)))
-    missing = sorted(expected - positions.keys())
-    if missing:
-        raise MappingError(
-            f"{path} is not contiguous from 0: missing position(s) {missing[:10]}"
-        )
-    codes = tuple(positions[position] for position in sorted(positions))
-    repeated = sorted(code for code, count in Counter(codes).items() if count > 1)
-    if repeated:
-        raise MappingError(
-            f"{path} maps more than one position to DECOMP plant code(s) "
-            f"{repeated[:10]}"
-        )
-    return codes
-
-
-def hydro_code_for_position(codes: Sequence[int], position: int) -> int:
-    """Return the DECOMP plant code for a Novomodelo entity-manifest position."""
-    if not 0 <= position < len(codes):
-        raise MappingError(
-            f"hydro position {position} is outside the {len(codes)}-entry code map"
-        )
-    return codes[position]
+    return tuple(positions)

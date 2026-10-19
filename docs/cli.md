@@ -308,11 +308,9 @@ Export Novomodelo FCF to DESSEM-compatible mapcut/cortdeco format.
 Reads a Novomodelo policy checkpoint from a solved case directory and writes
 DECOMP-format mapcut and cortdeco binary files that DESSEM can consume.
 
-The --revision flag is required and determines the output file extension
-(mapcut.rv0, cortdeco.rv0, etc.).
-
-The --hydro-codes flag points to a JSON file mapping Novomodelo hydro positions
-to DECOMP plant codes. If not provided, uses the bundled default mapping.
+DECOMP_DIR is the deck the case was converted from. Its caso.dat names the
+revision, which sets the output file extension (mapcut.rv0, cortdeco.rv0,
+etc.), and its hidr.dat codes label the hydro plants in the cut files.
 
 
 Warnings logged during export:
@@ -322,19 +320,18 @@ Warnings logged during export:
 **Usage**:
 
 ```console
-$ novomodelo-bridge export dessem [OPTIONS] {case_dir}
+$ novomodelo-bridge export dessem [OPTIONS] {decomp_dir} {case_dir}
 ```
 
 **Arguments**:
 
+* `decomp_dir`: Path to the DECOMP deck directory the case was converted from.  [required]
 * `case_dir`: Path to the solved Novomodelo case directory.  [required]
 
 **Options**:
 
-* `-r, --revision <str>`: PMO revision (e.g., rv0, rv1). Required.  [required]
 * `-o, --output <path>`: Output directory. Default: CASE_DIR/dessem_fcf/
 * `--force`: Overwrite existing outputs.
-* `--hydro-codes PATH`: Path to hydro codes JSON mapping file. Default: bundled decomp_hydro_codes.json
 * `--include-terminal`: Include terminal pool in ECO CSV output.
 * `--audit-csv`: Emit audit CSVs (eco/ and content/ directories).
 * `--json`: Emit a single machine-readable JSON verdict to stdout.

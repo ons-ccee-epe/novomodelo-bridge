@@ -34,9 +34,8 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     MappingError,
-    hydro_code_for_position,
-    index_slots,
     negate_gnl_array,
+    storage_plant_ids,
     to_decomp_cost,
     to_decomp_costs,
 )
@@ -71,24 +70,22 @@ def zeroed_gnl_block(offsets: CutBlockOffsets) -> NDArray[np.float64]:
 def storage_coefficients(
     piece: AffinePieceRecord,
     slots: Sequence[EntitySlotRecord],
-    hydro_codes: Sequence[int],
+    plant_ids: Sequence[int],
 ) -> NDArray[np.float64]:
-    """One piece's `pi_varm` sub-array, extracted from its pool's raw coefficients.
+    """One piece's `pi_varm` sub-array, ordered like *plant_ids*.
 
-    Storage positions are ascending in the entity manifest and positionally
-    identical to `codigos_uhes`, so extraction is a direct slice.
+    Raises:
+        MappingError: the pool's storage axes are not *plant_ids* in order.
     """
-    positions = index_slots(slots).storage
-    if tuple(positions) != tuple(range(len(hydro_codes))):
+    pool_plant_ids = storage_plant_ids(slots)
+    if pool_plant_ids != tuple(plant_ids):
         raise MappingError(
-            f"storage occupies manifest positions {positions[:4]}... "
-            f"({len(positions)} slots) but the code map declares "
-            f"{len(hydro_codes)} plants at positions 0..{len(hydro_codes) - 1}"
+            f"a pool's storage axes name hydros {pool_plant_ids[:4]}... "
+            f"({len(pool_plant_ids)} slots) but the plant-code record holds "
+            f"{tuple(plant_ids)[:4]}... ({len(plant_ids)} plants)"
         )
-    for position in positions:
-        hydro_code_for_position(hydro_codes, position)
     coefficients = np.asarray(piece.coefficients, dtype=np.float64)
-    return coefficients[np.asarray(positions, dtype=np.intp)]
+    return coefficients[: len(plant_ids)].copy()
 
 
 def _validate_lengths(cut: CutInput, offsets: CutBlockOffsets) -> None:

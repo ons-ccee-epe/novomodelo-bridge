@@ -16,6 +16,7 @@ class TestBuildExportManifest:
     def test_builds_valid_manifest(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={"key": "value"},
             outputs={"mapcut": tmp_path / "mapcut.rv0"},
@@ -28,6 +29,7 @@ class TestBuildExportManifest:
     def test_includes_all_premises(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={},
             outputs={},
@@ -39,6 +41,7 @@ class TestBuildExportManifest:
     def test_failure_manifest(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={},
             outputs={},
@@ -52,6 +55,7 @@ class TestBuildExportManifest:
     def test_includes_library_versions(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={},
             outputs={},
@@ -63,6 +67,7 @@ class TestBuildExportManifest:
     def test_created_at_is_iso8601(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={},
             outputs={},
@@ -80,6 +85,7 @@ class TestWriteExportManifest:
     def test_writes_json_file(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={},
             outputs={},
@@ -95,6 +101,7 @@ class TestWriteExportManifest:
     def test_json_is_sorted(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={"z_key": 1, "a_key": 2},
             outputs={},
@@ -110,6 +117,7 @@ class TestWriteExportManifest:
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={},
             outputs={},
@@ -123,6 +131,7 @@ class TestWriteExportManifest:
     def test_no_partial_file_on_success(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(
             case_path=tmp_path / "case",
+            source_path=tmp_path / "deck",
             revision="rv0",
             settings_snapshot={},
             outputs={},

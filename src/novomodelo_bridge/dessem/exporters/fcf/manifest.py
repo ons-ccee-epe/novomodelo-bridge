@@ -38,6 +38,7 @@ class ExportManifest:
     tool_version: str
     created_at: str
     case_path: str
+    source_path: str
     revision: str
     settings_snapshot: dict[str, Any]
     premises: tuple[str, ...]
@@ -70,13 +71,14 @@ def _get_tool_version() -> str:
 
 def build_export_manifest(
     case_path: Path,
+    source_path: Path,
     revision: str,
     settings_snapshot: dict[str, Any],
     outputs: Mapping[str, Path],
     status: str = "ok",
     failed_step: str | None = None,
 ) -> ExportManifest:
-    """Assemble the manifest for a run over `case_path` at `revision`.
+    """Assemble the manifest for a run over `case_path`, converted from `source_path`.
 
     `status`/`failed_step` default to the success case.
     """
@@ -84,6 +86,7 @@ def build_export_manifest(
         tool_version=_get_tool_version(),
         created_at=datetime.now(UTC).isoformat(),
         case_path=str(case_path.resolve()),
+        source_path=str(source_path.resolve()),
         revision=revision,
         settings_snapshot=settings_snapshot,
         premises=PREMISES,

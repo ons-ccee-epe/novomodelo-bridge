@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -10,10 +11,13 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
+    read_mapcut,
     reject_pair,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import TAMANHO_CORTE
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     AffinePieceRecord,
     EntitySlotRecord,
@@ -24,6 +28,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     StageCutPool,
 )
 from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
+from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
 
 
 def _make_pool(
@@ -89,20 +94,23 @@ def _make_manifest(n_stages: int = 3, n_pools: int = 4) -> PolicyManifest:
     )
 
 
-def _make_slots(n_hydros: int) -> tuple[EntitySlotRecord, ...]:
-    """Create synthetic entity slots for hydros only (no GNL)."""
+def _make_slots(
+    n_hydros: int, entity_ids: tuple[int, ...] | None = None
+) -> tuple[EntitySlotRecord, ...]:
+    """Storage slots only (no GNL), for hydro ids 1..n unless *entity_ids* says."""
     sentinel = -2147483648
+    ids = entity_ids if entity_ids is not None else tuple(range(1, n_hydros + 1))
     return tuple(
         EntitySlotRecord(
             entity_type=0,
-            entity_id=i + 1,
+            entity_id=entity_id,
             subindex=0,
             was_active=True,
             reference_date=sentinel,
             interval_start=sentinel,
             interval_end=sentinel,
         )
-        for i in range(n_hydros)
+        for entity_id in ids
     )
 
 
@@ -117,14 +125,6 @@ class TestPipelineIntegration:
     """Integration tests for the full export pipeline."""
 
     @pytest.fixture
-    def hydro_codes_file(self, tmp_path: Path) -> Path:
-        """Create hydro codes JSON file."""
-        codes = {"0": 1, "1": 2, "2": 3}
-        path = tmp_path / "hydro_codes.json"
-        path.write_text(json.dumps(codes))
-        return path
-
-    @pytest.fixture
     def mock_manifest(self) -> PolicyManifest:
         """Create a mock policy manifest."""
         return _make_manifest(n_stages=3, n_pools=4)
@@ -137,7 +137,7 @@ class TestPipelineIntegration:
     def test_export_produces_files(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        synthetic_source: SourceDeck,
         mock_manifest: PolicyManifest,
         mock_pools: dict[int, StageCutPool],
         tmp_path: Path,
@@ -155,13 +155,12 @@ class TestPipelineIntegration:
             settings = ExportSettings(
                 eco_subdirectory="eco",
                 content_subdirectory="content",
-                hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
             )
 
             result = run_export(
                 case_dir=synthetic_case_dir,
-                revision="rv0",
+                source=synthetic_source,
                 output_dir=output_dir,
                 settings=settings,
             )
@@ -174,7 +173,7 @@ class TestPipelineIntegration:
     def test_warm_start_cuts_are_not_written(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        synthetic_source: SourceDeck,
         mock_manifest: PolicyManifest,
         tmp_path: Path,
     ) -> None:
@@ -190,9 +189,9 @@ class TestPipelineIntegration:
             read.return_value = PolicyCheckpoint(mock_manifest, pools)
             result = run_export(
                 case_dir=synthetic_case_dir,
-                revision="rv0",
+                source=synthetic_source,
                 output_dir=output_dir,
-                settings=ExportSettings(hydro_codes_path=str(hydro_codes_file)),
+                settings=ExportSettings(),
             )
 
         assert result == 0
@@ -202,10 +201,121 @@ class TestPipelineIntegration:
             cuts_written * TAMANHO_CORTE
         )
 
+    def test_records_carry_deck_codes_and_downstream_positions(
+        self,
+        synthetic_case_dir: Path,
+        synthetic_source: SourceDeck,
+        mock_manifest: PolicyManifest,
+        mock_pools: dict[int, StageCutPool],
+        tmp_path: Path,
+    ) -> None:
+        # The synthetic cascade sends UHE_B and UHE_C into UHE_A, the first plant.
+        output_dir = tmp_path / "dessem_fcf"
+
+        with patch(
+            "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+        ) as read:
+            read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
+            result = run_export(
+                case_dir=synthetic_case_dir,
+                source=synthetic_source,
+                output_dir=output_dir,
+                settings=ExportSettings(),
+            )
+
+        assert result == 0
+        mapcut = read_mapcut(output_dir / "mapcut.rv0")
+        assert mapcut.codigos_uhes == (101, 102, 103)
+        assert mapcut.codigos_uhes_jusante == (0, 1, 1)
+
+    def test_plant_records_follow_slot_order_not_id_order(
+        self,
+        synthetic_case_dir: Path,
+        synthetic_source: SourceDeck,
+        mock_manifest: PolicyManifest,
+        tmp_path: Path,
+    ) -> None:
+        # novomodelo orders plants by start date before id, so slots can run 3, 1, 2.
+        slots = _make_slots(3, entity_ids=(3, 1, 2))
+        pools = {i: _make_pool(i, i, i, slots, n_pieces=5) for i in range(3)}
+        output_dir = tmp_path / "dessem_fcf"
+
+        with patch(
+            "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+        ) as read:
+            read.return_value = PolicyCheckpoint(mock_manifest, pools)
+            result = run_export(
+                case_dir=synthetic_case_dir,
+                source=synthetic_source,
+                output_dir=output_dir,
+                settings=ExportSettings(),
+            )
+
+        assert result == 0
+        mapcut = read_mapcut(output_dir / "mapcut.rv0")
+        assert mapcut.codigos_uhes == (103, 101, 102)
+        # UHE_C and UHE_B drain into UHE_A, now the second plant.
+        assert mapcut.codigos_uhes_jusante == (2, 0, 2)
+
+    @pytest.mark.parametrize(
+        ("hydros", "match"),
+        [
+            pytest.param(
+                {
+                    1: SourceHydro(code=101, name="UHE_A"),
+                    2: SourceHydro(code=102, name="UHE_B"),
+                },
+                "the deck operates 2 hydro plants but the case holds 3",
+                id="plant-set",
+            ),
+            pytest.param(
+                {
+                    1: SourceHydro(code=101, name="UHE_A"),
+                    2: SourceHydro(code=102, name="UHE_X"),
+                    3: SourceHydro(code=103, name="UHE_C"),
+                },
+                "1 hydro plant names differ",
+                id="plant-name",
+            ),
+        ],
+    )
+    def test_deck_other_than_the_source_fails_the_export(
+        self,
+        synthetic_case_dir: Path,
+        synthetic_source: SourceDeck,
+        mock_manifest: PolicyManifest,
+        mock_pools: dict[int, StageCutPool],
+        tmp_path: Path,
+        hydros: dict[int, SourceHydro],
+        match: str,
+    ) -> None:
+        output_dir = tmp_path / "dessem_fcf"
+        wrong_deck = replace(synthetic_source, hydros=hydros)
+
+        with (
+            dx.collect() as diagnostics,
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as read,
+        ):
+            read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
+            result = run_export(
+                case_dir=synthetic_case_dir,
+                source=wrong_deck,
+                output_dir=output_dir,
+                settings=ExportSettings(),
+            )
+
+        assert result == 1
+        assert not (output_dir / "mapcut.rv0").exists()
+        errors = [d for d in diagnostics if d.code == "dessem-fcf-export-failed"]
+        assert len(errors) == 1
+        assert match in errors[0].summary
+
     def test_manifest_contains_metadata(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        synthetic_source: SourceDeck,
         mock_manifest: PolicyManifest,
         mock_pools: dict[int, StageCutPool],
         tmp_path: Path,
@@ -223,13 +333,12 @@ class TestPipelineIntegration:
             settings = ExportSettings(
                 eco_subdirectory="eco",
                 content_subdirectory="content",
-                hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
             )
 
             run_export(
                 case_dir=synthetic_case_dir,
-                revision="rv0",
+                source=synthetic_source,
                 output_dir=output_dir,
                 settings=settings,
             )
@@ -239,6 +348,7 @@ class TestPipelineIntegration:
 
         assert manifest["status"] == "ok"
         assert manifest["revision"] == "rv0"
+        assert manifest["source_path"] == str(synthetic_source.directory.resolve())
         assert "premises" in manifest
         assert len(manifest["premises"]) == 15
         assert "outputs" in manifest
@@ -248,7 +358,7 @@ class TestPipelineIntegration:
     def test_eco_csvs_created(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        synthetic_source: SourceDeck,
         mock_manifest: PolicyManifest,
         mock_pools: dict[int, StageCutPool],
         tmp_path: Path,
@@ -266,14 +376,13 @@ class TestPipelineIntegration:
             settings = ExportSettings(
                 eco_subdirectory="eco",
                 content_subdirectory="content",
-                hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
                 emit_audit_csv=True,
             )
 
             run_export(
                 case_dir=synthetic_case_dir,
-                revision="rv0",
+                source=synthetic_source,
                 output_dir=output_dir,
                 settings=settings,
             )
@@ -287,7 +396,7 @@ class TestPipelineIntegration:
     def test_content_csvs_created(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        synthetic_source: SourceDeck,
         mock_manifest: PolicyManifest,
         mock_pools: dict[int, StageCutPool],
         tmp_path: Path,
@@ -305,14 +414,13 @@ class TestPipelineIntegration:
             settings = ExportSettings(
                 eco_subdirectory="eco",
                 content_subdirectory="content",
-                hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
                 emit_audit_csv=True,
             )
 
             run_export(
                 case_dir=synthetic_case_dir,
-                revision="rv0",
+                source=synthetic_source,
                 output_dir=output_dir,
                 settings=settings,
             )
@@ -377,18 +485,10 @@ class TestCrossCheckIntegration:
 class TestFailureManifest:
     """Integration tests for failure manifest creation."""
 
-    @pytest.fixture
-    def hydro_codes_file(self, tmp_path: Path) -> Path:
-        """Create hydro codes JSON file."""
-        codes = {"0": 1, "1": 2, "2": 3}
-        path = tmp_path / "hydro_codes.json"
-        path.write_text(json.dumps(codes))
-        return path
-
     def test_failure_manifest_on_format_error(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        synthetic_source: SourceDeck,
         tmp_path: Path,
     ) -> None:
         """Test that failure manifest is written on PolicyFormatError."""
@@ -404,13 +504,12 @@ class TestFailureManifest:
             settings = ExportSettings(
                 eco_subdirectory="eco",
                 content_subdirectory="content",
-                hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
             )
 
             result = run_export(
                 case_dir=synthetic_case_dir,
-                revision="rv0",
+                source=synthetic_source,
                 output_dir=output_dir,
                 settings=settings,
             )
@@ -426,7 +525,7 @@ class TestFailureManifest:
     def test_failure_manifest_on_mapping_error(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        synthetic_source: SourceDeck,
         tmp_path: Path,
     ) -> None:
         """Test that failure manifest is written on MappingError."""
@@ -452,13 +551,12 @@ class TestFailureManifest:
             settings = ExportSettings(
                 eco_subdirectory="eco",
                 content_subdirectory="content",
-                hydro_codes_path=str(hydro_codes_file),
                 include_terminal_pool=False,
             )
 
             result = run_export(
                 case_dir=synthetic_case_dir,
-                revision="rv0",
+                source=synthetic_source,
                 output_dir=output_dir,
                 settings=settings,
             )

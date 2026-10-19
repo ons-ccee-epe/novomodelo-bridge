@@ -8,14 +8,25 @@ conversion premises, and the current limitations.
 ## Quick start
 
 ```bash
-novomodelo-bridge export dessem /path/to/case --revision rv0 \
-    --hydro-codes /path/to/hydro_codes.json
+novomodelo-bridge export dessem /path/to/decomp-deck /path/to/case
 ```
 
 The output appears in `<case>/dessem_fcf/` unless `--output` names another
 directory.
 
 ## Input
+
+`DECOMP_DIR` is the DECOMP deck the case was converted from with
+`convert decomp`. The export reads three things from it:
+
+- the revision named in `caso.dat`, which sets the output file suffix;
+- the operated hydro plants (`UH` records with an initial volume);
+- their `hidr.dat` codes, which label the plants in `mapcut`.
+
+The deck must operate exactly the case's hydro plants, under the names the
+case gives them. Otherwise the export fails with a message naming the first
+difference. Novomodelo hydro id `i` is the `i`-th smallest operated plant code,
+the numbering `convert decomp` uses.
 
 `CASE_DIR` is a Novomodelo case that novomodelo has solved, so `CASE_DIR/output/policy/`
 holds its policy checkpoint. The checkpoint is read through `novomodelo-python`, so
@@ -33,8 +44,6 @@ coefficient by that factor to get R$, then divides by 1000 for DECOMP's
 
 | Option | Description |
 |--------|-------------|
-| `--revision, -r` | PMO revision (required, e.g. `rv0`). Sets the output file suffix. |
-| `--hydro-codes` | JSON file mapping Novomodelo hydro positions to DECOMP plant codes. Default: the bundled `decomp_hydro_codes.json`. |
 | `--output, -o` | Output directory. Default: `CASE_DIR/dessem_fcf/`. |
 | `--force` | Overwrite existing outputs. |
 | `--audit-csv` | Write the audit CSVs (`eco/` and `content/`). |
@@ -44,36 +53,15 @@ coefficient by that factor to get R$, then divides by 1000 for DECOMP's
 
 `docs/cli.md` lists every option with its help text.
 
-### Hydro codes file
-
-The file maps Novomodelo's 0-based hydro positions to DECOMP plant codes. Keys are
-position strings, values are integer codes, and position 0 is the first
-storage coefficient:
-
-```json
-{
-  "0": 1,
-  "1": 2,
-  "2": 4
-}
-```
-
-The map must cover exactly the case's hydro plants. The bundled default holds
-one specific plant set, so a case converted from a deck with a different set
-of plants needs its own file; a mismatch fails the export with a message
-naming both counts. For a case converted with `convert decomp`, Novomodelo hydro
-ids are the deck's operated plants (`UH` records) in ascending code order, so
-position `i` maps to the `i`-th smallest operated plant code.
-
 ## Outputs
 
 | Artifact | Description |
 |----------|-------------|
-| `mapcut.<rev>` | DECOMP cut-header binary: iteration and cut counts, hydro codes, the node tree, discount factors, and the per-node cut-chain heads. |
+| `mapcut.<rev>` | DECOMP cut-header binary: iteration and cut counts, hydro plant codes in Novomodelo's plant order, each plant's downstream plant (as its 1-based position in that list, as DECOMP writes it), the node tree, discount factors, and the per-node cut-chain heads. |
 | `cortdeco.<rev>` | DECOMP cut binary: one record per cut with its right-hand side, storage coefficients, and GNL coefficients. |
 | `eco/*.csv` | With `--audit-csv`: one CSV per pool with every cut as read from the checkpoint, already converted to R$. |
 | `content/*.csv` | With `--audit-csv`: the values actually written to `mapcut` and `cortdeco`, read back from the binaries. |
-| `export_manifest.json` | Provenance: tool and library versions, settings, the full text of every premise applied, output paths, and status. |
+| `export_manifest.json` | Provenance: tool and library versions, the case and deck paths, settings, the full text of every premise applied, output paths, and status. |
 
 A successful export writes `export_manifest.json` with `"status": "ok"`. A
 failed one writes it with `"status": "failed"` and a `"failed_step"` field,
@@ -113,8 +101,8 @@ and every export copies it into `export_manifest.json`. In brief:
 | Code | Meaning |
 |------|---------|
 | 0 | Export succeeded. |
-| 1 | Export failed: case or hydro codes file not found, outputs exist without `--force`, unreadable checkpoint, a premise refused the case, or the read-back check failed. |
-| 2 | Invalid command line, such as a missing `--revision`. |
+| 1 | Export failed: deck or case not found, the deck is not the one the case was converted from, outputs exist without `--force`, unreadable checkpoint, a premise refused the case, or the read-back check failed. |
+| 2 | Invalid command line, such as a missing `DECOMP_DIR`. |
 
 ## Known limitations
 

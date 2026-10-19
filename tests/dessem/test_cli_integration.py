@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     PolicyManifest,
     StageCutPool,
 )
+from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
 
 runner = CliRunner()
 
@@ -106,12 +108,14 @@ class TestExportDessemCli:
     """Tests for the export dessem CLI command."""
 
     @pytest.fixture
-    def hydro_codes_file(self, tmp_path: Path) -> Path:
-        """Create hydro codes JSON file."""
-        codes = {"0": 1, "1": 2, "2": 3}
-        path = tmp_path / "hydro_codes.json"
-        path.write_text(json.dumps(codes))
-        return path
+    def deck_dir(self, synthetic_source: SourceDeck) -> Iterator[Path]:
+        """A deck directory whose reading yields `synthetic_source`."""
+        synthetic_source.directory.mkdir()
+        with patch(
+            "novomodelo_bridge.cli.export.read_source_deck",
+            return_value=synthetic_source,
+        ):
+            yield synthetic_source.directory
 
     def test_help_shows_command(self) -> None:
         """Test that help shows the dessem command."""
@@ -123,24 +127,22 @@ class TestExportDessemCli:
         """Test dessem command help."""
         result = runner.invoke(app, ["export", "dessem", "--help"])
         assert result.exit_code == 0
-        assert "--revision" in result.stdout
-        assert "--hydro-codes" in result.stdout
+        assert "DECOMP_DIR" in result.stdout
+        assert "--revision" not in result.stdout
+        assert "--hydro-codes" not in result.stdout
         assert "--output" in result.stdout
         assert "--force" in result.stdout
         assert "--include-terminal" in result.stdout
 
-    def test_missing_case_dir(self, tmp_path: Path, hydro_codes_file: Path) -> None:
+    def test_missing_case_dir(self, tmp_path: Path, deck_dir: Path) -> None:
         """Test error when case directory doesn't exist."""
         result = runner.invoke(
             app,
             [
                 "export",
                 "dessem",
+                str(deck_dir),
                 str(tmp_path / "nonexistent"),
-                "--revision",
-                "rv0",
-                "--hydro-codes",
-                str(hydro_codes_file),
             ],
         )
         assert result.exit_code == 1
@@ -148,28 +150,68 @@ class TestExportDessemCli:
             "not found" in result.stdout.lower() or "not found" in result.stderr.lower()
         )
 
-    def test_missing_hydro_codes_file(
-        self, synthetic_case_dir: Path, tmp_path: Path
+    def test_missing_deck_argument_is_a_usage_error(
+        self, synthetic_case_dir: Path
     ) -> None:
-        """Test error when explicitly provided hydro codes file doesn't exist."""
+        result = runner.invoke(app, ["export", "dessem", str(synthetic_case_dir)])
+
+        assert result.exit_code == 2
+
+    def test_missing_deck_dir(self, synthetic_case_dir: Path, tmp_path: Path) -> None:
         result = runner.invoke(
             app,
             [
                 "export",
                 "dessem",
+                str(tmp_path / "nonexistent"),
                 str(synthetic_case_dir),
-                "--revision",
-                "rv0",
-                "--hydro-codes",
-                str(tmp_path / "nonexistent.json"),
             ],
         )
+
         assert result.exit_code == 1
+        assert "DECOMP deck directory not found" in result.stderr
+
+    def test_directory_without_a_deck_fails(
+        self, synthetic_case_dir: Path, tmp_path: Path
+    ) -> None:
+        not_a_deck = tmp_path / "not_a_deck"
+        not_a_deck.mkdir()
+
+        result = runner.invoke(
+            app, ["export", "dessem", str(not_a_deck), str(synthetic_case_dir)]
+        )
+
+        assert result.exit_code == 1
+        assert "caso.dat" in result.stderr
+
+    def test_deck_the_case_was_not_converted_from_fails(
+        self, decomp_mini_deck: Path, synthetic_case_dir: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                "dessem",
+                str(decomp_mini_deck),
+                str(synthetic_case_dir),
+                "--output",
+                str(tmp_path / "output"),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        assert verdict["status"] == "error"
+        assert (
+            "export from the deck the case was converted from"
+            in (verdict["diagnostics"][-1]["summary"])
+        )
 
     def test_successful_export(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
         tmp_path: Path,
     ) -> None:
         """Test successful export with mocked pipeline."""
@@ -189,11 +231,8 @@ class TestExportDessemCli:
                 [
                     "export",
                     "dessem",
+                    str(deck_dir),
                     str(synthetic_case_dir),
-                    "--revision",
-                    "rv0",
-                    "--hydro-codes",
-                    str(hydro_codes_file),
                     "--output",
                     str(output_dir),
                 ],
@@ -207,7 +246,7 @@ class TestExportDessemCli:
     def test_outputs_exist_without_force(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
         tmp_path: Path,
     ) -> None:
         """Test error when outputs exist and --force not provided."""
@@ -220,11 +259,8 @@ class TestExportDessemCli:
             [
                 "export",
                 "dessem",
+                str(deck_dir),
                 str(synthetic_case_dir),
-                "--revision",
-                "rv0",
-                "--hydro-codes",
-                str(hydro_codes_file),
                 "--output",
                 str(output_dir),
             ],
@@ -236,7 +272,7 @@ class TestExportDessemCli:
     def test_force_overwrites(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
         tmp_path: Path,
     ) -> None:
         """Test that --force allows overwriting existing outputs."""
@@ -259,11 +295,8 @@ class TestExportDessemCli:
                 [
                     "export",
                     "dessem",
+                    str(deck_dir),
                     str(synthetic_case_dir),
-                    "--revision",
-                    "rv0",
-                    "--hydro-codes",
-                    str(hydro_codes_file),
                     "--output",
                     str(output_dir),
                     "--force",
@@ -272,51 +305,10 @@ class TestExportDessemCli:
 
         assert result.exit_code == 0
 
-    def test_default_hydro_codes_uses_bundled(
-        self,
-        synthetic_case_dir: Path,
-        hydro_codes_file: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Test that bundled hydro codes file is used when not provided.
-
-        Note: This test uses explicit --hydro-codes because the bundled file
-        has 164 hydros while the mock only has 3. In real usage, the bundled
-        file would be used with real cases that have all 164 hydros.
-        """
-        mock_manifest = _make_manifest()
-        mock_pools = _make_pools_dict()
-
-        with (
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
-            ) as mock_read,
-        ):
-            mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
-
-            # Test that command works without --hydro-codes (will use bundled)
-            # but we provide explicit one for the mock to work
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "dessem",
-                    str(synthetic_case_dir),
-                    "--revision",
-                    "rv0",
-                    "--hydro-codes",
-                    str(hydro_codes_file),
-                ],
-            )
-
-        assert result.exit_code == 0
-        default_output = synthetic_case_dir / "dessem_fcf"
-        assert (default_output / "mapcut.rv0").exists()
-
     def test_default_output_dir(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
     ) -> None:
         """Test that default output is CASE_DIR/dessem_fcf/."""
         mock_manifest = _make_manifest()
@@ -334,11 +326,8 @@ class TestExportDessemCli:
                 [
                     "export",
                     "dessem",
+                    str(deck_dir),
                     str(synthetic_case_dir),
-                    "--revision",
-                    "rv0",
-                    "--hydro-codes",
-                    str(hydro_codes_file),
                 ],
             )
 
@@ -350,7 +339,7 @@ class TestExportDessemCli:
     def test_audit_csv_flag_emits_csvs(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
         tmp_path: Path,
     ) -> None:
         """Test that --audit-csv emits eco/ and content/ directories."""
@@ -370,11 +359,8 @@ class TestExportDessemCli:
                 [
                     "export",
                     "dessem",
+                    str(deck_dir),
                     str(synthetic_case_dir),
-                    "--revision",
-                    "rv0",
-                    "--hydro-codes",
-                    str(hydro_codes_file),
                     "--output",
                     str(output_dir),
                     "--audit-csv",
@@ -388,7 +374,7 @@ class TestExportDessemCli:
     def test_no_audit_csv_by_default(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
         tmp_path: Path,
     ) -> None:
         """Test that eco/ and content/ are NOT emitted without --audit-csv."""
@@ -408,11 +394,8 @@ class TestExportDessemCli:
                 [
                     "export",
                     "dessem",
+                    str(deck_dir),
                     str(synthetic_case_dir),
-                    "--revision",
-                    "rv0",
-                    "--hydro-codes",
-                    str(hydro_codes_file),
                     "--output",
                     str(output_dir),
                 ],
@@ -422,17 +405,14 @@ class TestExportDessemCli:
         assert not (output_dir / "eco").exists()
         assert not (output_dir / "content").exists()
 
-    def _invoke_json(self, case_dir: Path, hydro_codes: Path, output_dir: Path):
+    def _invoke_json(self, deck: Path, case_dir: Path, output_dir: Path):
         return runner.invoke(
             app,
             [
                 "export",
                 "dessem",
+                str(deck),
                 str(case_dir),
-                "--revision",
-                "rv0",
-                "--hydro-codes",
-                str(hydro_codes),
                 "--output",
                 str(output_dir),
                 "--json",
@@ -442,7 +422,7 @@ class TestExportDessemCli:
     def test_json_success_emits_one_ok_verdict(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
         tmp_path: Path,
     ) -> None:
         output_dir = tmp_path / "output"
@@ -450,7 +430,7 @@ class TestExportDessemCli:
             "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
         ) as read:
             read.return_value = PolicyCheckpoint(_make_manifest(), _make_pools_dict())
-            result = self._invoke_json(synthetic_case_dir, hydro_codes_file, output_dir)
+            result = self._invoke_json(deck_dir, synthetic_case_dir, output_dir)
 
         assert result.exit_code == 0
         verdict = json.loads(result.stdout)
@@ -461,7 +441,7 @@ class TestExportDessemCli:
     def test_json_export_failure_emits_one_error_verdict(
         self,
         synthetic_case_dir: Path,
-        hydro_codes_file: Path,
+        deck_dir: Path,
         tmp_path: Path,
     ) -> None:
         from novomodelo_bridge.dessem.exporters.fcf.core.reader import PolicyFormatError
@@ -471,7 +451,7 @@ class TestExportDessemCli:
         ) as read:
             read.side_effect = PolicyFormatError("no checkpoint here")
             result = self._invoke_json(
-                synthetic_case_dir, hydro_codes_file, tmp_path / "output"
+                deck_dir, synthetic_case_dir, tmp_path / "output"
             )
 
         assert result.exit_code == 1
@@ -482,10 +462,10 @@ class TestExportDessemCli:
         assert errors[0]["summary"] == "no checkpoint here"
 
     def test_json_missing_case_dir_emits_one_error_verdict(
-        self, hydro_codes_file: Path, tmp_path: Path
+        self, deck_dir: Path, tmp_path: Path
     ) -> None:
         result = self._invoke_json(
-            tmp_path / "nonexistent", hydro_codes_file, tmp_path / "output"
+            deck_dir, tmp_path / "nonexistent", tmp_path / "output"
         )
 
         assert result.exit_code == 1

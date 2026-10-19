@@ -1,27 +1,32 @@
 """Tests for dessem/exporters/fcf/mapper.py."""
 
-from pathlib import Path
-
 import pytest
 
-from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import CaseInputs
+from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
+    CaseInputs,
+    HydroInfo,
+)
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     DAYS_PER_YEAR,
     DECOMP_COST_DIVISOR,
     EXCLUDED_BUS_ID,
     SUBMARKET_COUNT,
     MappingError,
+    SourceHydro,
     discount_factors,
+    downstream_positions,
     gnl_block_weights,
-    hydro_code_for_position,
-    load_hydro_codes,
+    match_source_hydros,
     negate_gnl,
     negate_gnl_array,
+    plant_codes,
     select_submarket_buses,
+    storage_plant_ids,
     submarket_for_bus,
     to_decomp_cost,
     to_decomp_costs,
 )
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import EntitySlotRecord
 
 
 class TestCostConversion:
@@ -128,43 +133,99 @@ class TestDiscountFactors:
         assert DAYS_PER_YEAR == 365.25
 
 
-class TestHydroCodes:
-    """Test hydro code loading and lookup."""
+_SENTINEL = -2147483648
 
-    def test_load_hydro_codes(self, tmp_path: Path) -> None:
-        codes_file = tmp_path / "codes.json"
-        codes_file.write_text('{"0": 101, "1": 102, "2": 103}')
-        codes = load_hydro_codes(codes_file)
-        assert codes == (101, 102, 103)
 
-    def test_load_hydro_codes_missing_file(self, tmp_path: Path) -> None:
-        with pytest.raises(MappingError, match="not found"):
-            load_hydro_codes(tmp_path / "nonexistent.json")
+def _slot(entity_type: int, entity_id: int) -> EntitySlotRecord:
+    return EntitySlotRecord(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        subindex=0,
+        was_active=True,
+        reference_date=_SENTINEL,
+        interval_start=_SENTINEL,
+        interval_end=_SENTINEL,
+    )
 
-    def test_load_hydro_codes_invalid_json(self, tmp_path: Path) -> None:
-        codes_file = tmp_path / "codes.json"
-        codes_file.write_text("not json")
-        with pytest.raises(MappingError, match="not valid JSON"):
-            load_hydro_codes(codes_file)
 
-    def test_load_hydro_codes_not_object(self, tmp_path: Path) -> None:
-        codes_file = tmp_path / "codes.json"
-        codes_file.write_text("[1, 2, 3]")
-        with pytest.raises(MappingError, match="JSON object"):
-            load_hydro_codes(codes_file)
+def _hydro(hydro_id: int, downstream_id: int | None) -> HydroInfo:
+    return HydroInfo(
+        id=hydro_id,
+        name=f"UHE_{hydro_id}",
+        downstream_id=downstream_id,
+        min_storage_hm3=0.0,
+        max_storage_hm3=1.0,
+    )
 
-    def test_load_hydro_codes_non_contiguous(self, tmp_path: Path) -> None:
-        codes_file = tmp_path / "codes.json"
-        codes_file.write_text('{"0": 1, "2": 3}')  # Missing key "1"
-        with pytest.raises(MappingError, match="not contiguous"):
-            load_hydro_codes(codes_file)
 
-    def test_hydro_code_for_position_valid(self) -> None:
-        codes = (101, 102, 103)
-        assert hydro_code_for_position(codes, 0) == 101
-        assert hydro_code_for_position(codes, 2) == 103
+def _source(*hydro_ids: int) -> dict[int, SourceHydro]:
+    return {i: SourceHydro(code=100 + i, name=f"UHE_{i}") for i in hydro_ids}
 
-    def test_hydro_code_for_position_out_of_range(self) -> None:
-        codes = (101, 102, 103)
-        with pytest.raises(MappingError, match="outside"):
-            hydro_code_for_position(codes, 3)
+
+class TestMatchSourceHydros:
+    """The deck must be the one the case was converted from."""
+
+    def test_same_plants_and_names_pass(self) -> None:
+        match_source_hydros([_hydro(0, None), _hydro(1, 0)], _source(0, 1))
+
+    def test_different_plant_set_raises(self) -> None:
+        with pytest.raises(
+            MappingError, match="operates 3 hydro plants but the case holds 2"
+        ):
+            match_source_hydros([_hydro(0, None), _hydro(1, 0)], _source(0, 1, 2))
+
+    def test_renamed_plant_raises(self) -> None:
+        source = _source(0, 1) | {1: SourceHydro(code=101, name="OTHER")}
+        with pytest.raises(MappingError, match="'UHE_1' in the case, 'OTHER'"):
+            match_source_hydros([_hydro(0, None), _hydro(1, 0)], source)
+
+
+class TestStoragePlantIds:
+    """Storage slots give the plant order of every per-plant record."""
+
+    def test_ids_follow_slot_order(self) -> None:
+        slots = [_slot(0, 3), _slot(0, 1), _slot(0, 2), _slot(2, 100)]
+
+        assert storage_plant_ids(slots) == (3, 1, 2)
+
+    def test_storage_after_another_axis_raises(self) -> None:
+        with pytest.raises(MappingError, match="instead of leading the slots"):
+            storage_plant_ids([_slot(2, 100), _slot(0, 1)])
+
+
+class TestPlantCodes:
+    """The plant-code record carries the deck code of each storage axis."""
+
+    def test_codes_follow_plant_order(self) -> None:
+        assert plant_codes((2, 0, 1), _source(0, 1, 2)) == (102, 100, 101)
+
+    def test_storage_hydro_missing_from_deck_raises(self) -> None:
+        with pytest.raises(
+            MappingError, match="storage hydro ids not in the deck: \\[5\\]"
+        ):
+            plant_codes((0, 5), _source(0, 1))
+
+
+class TestDownstreamPositions:
+    """The mapcut downstream record holds 1-based positions, not plant codes."""
+
+    def test_entries_are_positions_into_the_plant_list(self) -> None:
+        # A chain 0 -> 1 -> 2 -> 3, plus a second plant feeding 2.
+        hydros = [
+            _hydro(0, 1),
+            _hydro(1, 2),
+            _hydro(2, 3),
+            _hydro(3, None),
+            _hydro(4, 2),
+        ]
+
+        assert downstream_positions(hydros, (0, 1, 2, 3, 4)) == (2, 3, 4, 0, 3)
+
+    def test_entries_follow_plant_order_not_id_order(self) -> None:
+        hydros = [_hydro(0, 2), _hydro(1, 0), _hydro(2, None)]
+
+        assert downstream_positions(hydros, (2, 0, 1)) == (0, 1, 2)
+
+    def test_unknown_downstream_hydro_raises(self) -> None:
+        with pytest.raises(MappingError, match="names downstream hydro 9"):
+            downstream_positions([_hydro(0, 9)], (0,))

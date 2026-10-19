@@ -21,6 +21,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     ThermalInfo,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import CutBlockOffsets
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     AffinePieceRecord,
     EntitySlotRecord,
@@ -29,6 +30,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     PolicyManifest,
     StageCutPool,
 )
+from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
 
 
 @pytest.fixture
@@ -216,12 +218,6 @@ def synthetic_inputs() -> CaseInputs:
 
 
 @pytest.fixture
-def synthetic_hydro_codes() -> tuple[int, ...]:
-    """Hydro codes mapping (position -> DECOMP code)."""
-    return (1, 2, 3)
-
-
-@pytest.fixture
 def synthetic_offsets() -> CutBlockOffsets:
     """Offsets for 3 hydros, 2 GNL submarkets, 3 stages, 3 blocks."""
     return CutBlockOffsets(
@@ -233,12 +229,17 @@ def synthetic_offsets() -> CutBlockOffsets:
 
 
 @pytest.fixture
-def hydro_codes_json(tmp_path: Path) -> Path:
-    """Create a temporary hydro codes JSON file."""
-    codes = {"0": 1, "1": 2, "2": 3}
-    path = tmp_path / "hydro_codes.json"
-    path.write_text(json.dumps(codes))
-    return path
+def synthetic_source(tmp_path: Path) -> SourceDeck:
+    """The deck `synthetic_case_dir` was converted from; codes differ from ids."""
+    return SourceDeck(
+        directory=tmp_path / "deck",
+        revision="rv0",
+        hydros={
+            1: SourceHydro(code=101, name="UHE_A"),
+            2: SourceHydro(code=102, name="UHE_B"),
+            3: SourceHydro(code=103, name="UHE_C"),
+        },
+    )
 
 
 @pytest.fixture

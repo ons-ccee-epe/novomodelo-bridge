@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 import time
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path
 from typing import Annotated
 
@@ -19,6 +18,7 @@ from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.errors import BridgeError
 from novomodelo_bridge.dessem.exporters.fcf import EXPORT_PHASE_LABELS
 from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
+from novomodelo_bridge.dessem.exporters.fcf.source import read_source_deck
 from novomodelo_bridge.ui.console import (
     conversion_progress,
     print_status,
@@ -29,21 +29,15 @@ export_app = typer.Typer(
     help="Export Novomodelo artifacts to external formats (DESSEM, etc.)."
 )
 
-# Default hydro codes file bundled with the package
-_DEFAULT_HYDRO_CODES = resources.files(
-    "novomodelo_bridge.dessem.exporters.fcf.mapping"
-).joinpath("decomp_hydro_codes.json")
-
 
 @dataclass(frozen=True)
 class ExportDessemArgs(CommonArgs):
     """Options for ``export dessem``."""
 
+    decomp_dir: Path
     case_dir: Path
-    revision: str
     output: Path | None
     force: bool
-    hydro_codes: Path | None
     include_terminal: bool
 
 
@@ -95,16 +89,14 @@ def _outputs_exist(output_dir: Path, revision: str) -> bool:
 
 @export_app.command("dessem")
 def _export_dessem(
+    decomp_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the DECOMP deck directory the case was converted from."
+        ),
+    ],
     case_dir: Annotated[
         Path, typer.Argument(help="Path to the solved Novomodelo case directory.")
-    ],
-    revision: Annotated[
-        str,
-        typer.Option(
-            "--revision",
-            "-r",
-            help="PMO revision (e.g., rv0, rv1). Required.",
-        ),
     ],
     output: Annotated[
         Path | None,
@@ -118,17 +110,6 @@ def _export_dessem(
         bool,
         typer.Option("--force", help="Overwrite existing outputs."),
     ] = False,
-    hydro_codes: Annotated[
-        Path | None,
-        typer.Option(
-            "--hydro-codes",
-            metavar="PATH",
-            help=(
-                "Path to hydro codes JSON mapping file. "
-                "Default: bundled decomp_hydro_codes.json"
-            ),
-        ),
-    ] = None,
     include_terminal: Annotated[
         bool,
         typer.Option(
@@ -154,11 +135,9 @@ def _export_dessem(
     Reads a Novomodelo policy checkpoint from a solved case directory and writes
     DECOMP-format mapcut and cortdeco binary files that DESSEM can consume.
 
-    The --revision flag is required and determines the output file extension
-    (mapcut.rv0, cortdeco.rv0, etc.).
-
-    The --hydro-codes flag points to a JSON file mapping Novomodelo hydro positions
-    to DECOMP plant codes. If not provided, uses the bundled default mapping.
+    DECOMP_DIR is the deck the case was converted from. Its caso.dat names the
+    revision, which sets the output file extension (mapcut.rv0, cortdeco.rv0,
+    etc.), and its hidr.dat codes label the hydro plants in the cut files.
 
     \b
     Warnings logged during export:
@@ -168,11 +147,10 @@ def _export_dessem(
     _configure_logging(verbose, log_file)
 
     args = ExportDessemArgs(
+        decomp_dir=decomp_dir,
         case_dir=case_dir,
-        revision=revision,
         output=output,
         force=force,
-        hydro_codes=hydro_codes,
         include_terminal=include_terminal,
         json_output=json_output,
         verbose=verbose,
@@ -182,20 +160,24 @@ def _export_dessem(
     )
 
     command = "export dessem"
+    if not decomp_dir.is_dir():
+        _fail(
+            command,
+            args,
+            BridgeError(f"DECOMP deck directory not found: {decomp_dir}"),
+            1,
+        )
     if not case_dir.is_dir():
         _fail(command, args, BridgeError(f"Case directory not found: {case_dir}"), 1)
 
-    if hydro_codes is not None:
-        if not hydro_codes.is_file():
-            _fail(
-                command,
-                args,
-                BridgeError(f"Hydro codes file not found: {hydro_codes}"),
-                1,
-            )
-        hydro_codes_str = str(hydro_codes)
-    else:
-        hydro_codes_str = str(_DEFAULT_HYDRO_CODES)
+    # Broad by design, as around `run_export` below: the deck reader surfaces
+    # idecomp's own parse errors, which must still reach the user as one
+    # rendered diagnostic or `--json` envelope, exit 1.
+    try:
+        source = read_source_deck(decomp_dir)
+    except Exception as exc:  # noqa: BLE001
+        _fail(command, args, exc, 1)
+    revision = source.revision
 
     output_dir = output or (case_dir / "dessem_fcf")
 
@@ -210,7 +192,6 @@ def _export_dessem(
     settings = ExportSettings(
         eco_subdirectory="eco",
         content_subdirectory="content",
-        hydro_codes_path=hydro_codes_str,
         include_terminal_pool=include_terminal,
         emit_audit_csv=audit_csv,
     )
@@ -242,7 +223,7 @@ def _export_dessem(
             ) as step:
                 exit_code = run_export(
                     case_dir=case_dir,
-                    revision=revision,
+                    source=source,
                     output_dir=output_dir,
                     settings=settings,
                     on_phase=_paced_step(step),
