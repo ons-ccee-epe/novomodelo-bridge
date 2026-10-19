@@ -21,6 +21,11 @@ def _confhd(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _structural(confhd_df: pd.DataFrame, cadastro: pd.DataFrame) -> frozenset[int]:
+    """The structural fictitious set, with no pumping station in the case."""
+    return fictitious_codes(confhd_df, cadastro, pumping_related_codes=frozenset())
+
+
 def _cadastro(rho: dict[int, float]) -> pd.DataFrame:
     """Hidr-like cadastro indexed by code: {code: produtibilidade_especifica}."""
     return pd.DataFrame(
@@ -76,18 +81,20 @@ def test_existing_hydros_keeps_all_ex_including_fictitious() -> None:
 def test_fictitious_codes_flags_zero_rho_sharing_a_generating_posto() -> None:
     # Code 3 (ρ=0) shares posto 10 with PLANT A (ρ>0) -> fictitious.
     # Code 42 (ρ=0) is alone on posto 57 -> NOT fictitious (real reservoir).
-    assert fictitious_codes(_CASE, _CAD) == {3}
+    assert _structural(_CASE, _CAD) == {3}
 
 
 def test_active_hydros_drops_fictitious_keeps_orphan_rho_zero() -> None:
     # FICT TWIN (3) dropped; ORPHAN (42, ρ=0 but no generating posto-mate) kept.
-    assert active_hydro_codes(_CASE, _CAD) == [10, 7, 42]
-    assert list(active_hydros(_CASE, _CAD)["codigo_usina"]) == [10, 7, 42]
+    assert active_hydro_codes(_CASE, fictitious=_structural(_CASE, _CAD)) == [10, 7, 42]
+    assert list(
+        active_hydros(_CASE, fictitious=_structural(_CASE, _CAD))["codigo_usina"]
+    ) == [10, 7, 42]
 
 
 def test_active_hydros_preserves_declaration_order() -> None:
     # 10 is declared before 7; the id-map relies on this ordering.
-    assert active_hydro_codes(_CASE, _CAD)[:2] == [10, 7]
+    assert active_hydro_codes(_CASE, fictitious=_structural(_CASE, _CAD))[:2] == [10, 7]
 
 
 def test_full_case_twin_is_fictitious() -> None:
@@ -109,8 +116,8 @@ def test_full_case_twin_is_fictitious() -> None:
         ]
     )
     cad = _cadastro({57: 0.009, 319: 0.0})
-    assert fictitious_codes(confhd, cad) == {319}
-    assert active_hydro_codes(confhd, cad) == [57]
+    assert _structural(confhd, cad) == {319}
+    assert active_hydro_codes(confhd, fictitious=_structural(confhd, cad)) == [57]
 
 
 def test_reduced_case_orphaned_twin_is_kept() -> None:
@@ -133,8 +140,8 @@ def test_reduced_case_orphaned_twin_is_kept() -> None:
         ]
     )
     cad = _cadastro({61: 0.009, 319: 0.0})
-    assert fictitious_codes(confhd, cad) == set()
-    assert active_hydro_codes(confhd, cad) == [61, 319]
+    assert _structural(confhd, cad) == set()
+    assert active_hydro_codes(confhd, fictitious=_structural(confhd, cad)) == [61, 319]
 
 
 def test_two_zero_rho_on_one_posto_without_generator_are_both_real() -> None:
@@ -146,23 +153,26 @@ def test_two_zero_rho_on_one_posto_without_generator_are_both_real() -> None:
         ]
     )
     cad = _cadastro({1: 0.0, 2: 0.0})
-    assert fictitious_codes(confhd, cad) == set()
+    assert _structural(confhd, cad) == set()
 
 
 def test_fictitious_codes_empty_without_data() -> None:
     # No cadastro (empty) or no posto column -> cannot classify -> empty set.
-    assert fictitious_codes(_CASE, pd.DataFrame()) == set()
+    assert _structural(_CASE, pd.DataFrame()) == set()
     no_posto = _confhd(
         [{"codigo_usina": 1, "nome_usina": "A", "usina_existente": "EX"}]
     )
-    assert fictitious_codes(no_posto, _cadastro({1: 0.0})) == set()
+    assert _structural(no_posto, _cadastro({1: 0.0})) == set()
 
 
 def test_empty_confhd_yields_empty_active_set() -> None:
     empty = _confhd(
         [{"codigo_usina": 1, "nome_usina": "GONE", "posto": 1, "usina_existente": "NE"}]
     )
-    assert active_hydro_codes(empty, _cadastro({1: 0.01})) == []
+    assert (
+        active_hydro_codes(empty, fictitious=_structural(empty, _cadastro({1: 0.01})))
+        == []
+    )
 
 
 # --- Dead-volume filling admission ------------------------------
@@ -226,10 +236,16 @@ def test_active_hydros_includes_filling_in_declaration_order() -> None:
     )
     cad = _cadastro({10: 0.01, 7: 0.01})
     exph_df = _exph([{"codigo_usina": 5, "data_inicio_enchimento": "2024-10-01"}])
-    codes = active_hydro_codes(confhd_df, cad, exph_df)
+    codes = active_hydro_codes(
+        confhd_df, fictitious=_structural(confhd_df, cad), exph_df=exph_df
+    )
     # 5 is admitted and appears between 10 and 7 (declaration order), not last.
     assert codes == [10, 5, 7]
-    assert list(active_hydros(confhd_df, cad, exph_df)["codigo_usina"]) == [10, 5, 7]
+    assert list(
+        active_hydros(
+            confhd_df, fictitious=_structural(confhd_df, cad), exph_df=exph_df
+        )["codigo_usina"]
+    ) == [10, 5, 7]
 
 
 def test_active_hydros_unchanged_when_exph_none() -> None:
@@ -252,9 +268,16 @@ def test_active_hydros_unchanged_when_exph_none() -> None:
         ]
     )
     cad = _cadastro({10: 0.01, 7: 0.01})
-    assert active_hydro_codes(confhd_df, cad) == [10, 7]
-    assert active_hydro_codes(confhd_df, cad, None) == [10, 7]
-    assert list(active_hydros(confhd_df, cad)["codigo_usina"]) == [10, 7]
+    assert active_hydro_codes(confhd_df, fictitious=_structural(confhd_df, cad)) == [
+        10,
+        7,
+    ]
+    assert active_hydro_codes(
+        confhd_df, fictitious=_structural(confhd_df, cad), exph_df=None
+    ) == [10, 7]
+    assert list(
+        active_hydros(confhd_df, fictitious=_structural(confhd_df, cad))["codigo_usina"]
+    ) == [10, 7]
 
 
 # --- In-service admission: EE ("existente em expansão") ---------
@@ -288,10 +311,17 @@ def test_existing_hydros_tolerates_padded_status() -> None:
 
 
 def test_active_hydros_admits_ee_at_declaration_position_without_exph() -> None:
-    # EE admission reads confhd alone, so a path-only caller (the comparators'
-    # ``build_id_map``, which passes exph=None) enumerates the pipeline's set.
-    assert active_hydro_codes(_EE_CASE, _EE_CAD) == [10, 5, 7]
-    assert list(active_hydros(_EE_CASE, _EE_CAD, None)["codigo_usina"]) == [10, 5, 7]
+    # EE admission reads confhd alone, so it does not depend on exph.
+    assert active_hydro_codes(_EE_CASE, fictitious=_structural(_EE_CASE, _EE_CAD)) == [
+        10,
+        5,
+        7,
+    ]
+    assert list(
+        active_hydros(
+            _EE_CASE, fictitious=_structural(_EE_CASE, _EE_CAD), exph_df=None
+        )["codigo_usina"]
+    ) == [10, 5, 7]
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +351,7 @@ def test_pumping_related_codes_excluded_from_fictitious() -> None:
     cad = _cadastro({57: 0.009, 319: 0.0})
 
     # Without pumping exclusion: 319 is fictitious
-    fict_without = fictitious_codes(confhd, cad)
+    fict_without = _structural(confhd, cad)
     assert 319 in fict_without
 
     # With pumping exclusion: 319 is preserved
@@ -350,12 +380,12 @@ def test_pumping_exemption_propagates_to_active_hydros() -> None:
     cad = _cadastro({57: 0.009, 319: 0.0})
 
     # Without exemption: 319 is dropped
-    codes_without = active_hydro_codes(confhd, cad)
+    codes_without = active_hydro_codes(confhd, fictitious=_structural(confhd, cad))
     assert 319 not in codes_without
 
     # With exemption via fictitious parameter: 319 is kept
     fict = fictitious_codes(confhd, cad, pumping_related_codes=frozenset({319}))
-    codes_with = active_hydro_codes(confhd, cad, fictitious=fict)
+    codes_with = active_hydro_codes(confhd, fictitious=fict)
     assert 319 in codes_with
 
 
@@ -373,7 +403,7 @@ def test_fictitious_codes_returns_frozenset() -> None:
     )
     cad = _cadastro({57: 0.009})
 
-    result = fictitious_codes(confhd, cad)
+    result = _structural(confhd, cad)
     assert isinstance(result, frozenset)
 
 
@@ -434,7 +464,7 @@ def test_vigario_scenario_pumping_exemption_prevents_cascade_cycle() -> None:
     cad = _cadastro({131: 0.01, 133: 0.01, 182: 0.0})
 
     # Without pumping exemption: 182 is fictitious
-    fict_without = fictitious_codes(confhd, cad)
+    fict_without = _structural(confhd, cad)
     assert 182 in fict_without, "182 should be fictitious without pumping exemption"
 
     # With pumping exemption: 182 is NOT fictitious
@@ -443,7 +473,7 @@ def test_vigario_scenario_pumping_exemption_prevents_cascade_cycle() -> None:
     assert 182 not in fict_with, "182 should NOT be fictitious with pumping exemption"
 
     # All three plants should appear in active hydros
-    codes = active_hydro_codes(confhd, cad, fictitious=fict_with)
+    codes = active_hydro_codes(confhd, fictitious=fict_with)
     assert 131 in codes
     assert 133 in codes
     assert 182 in codes

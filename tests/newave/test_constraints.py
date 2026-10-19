@@ -2091,6 +2091,16 @@ def test_cascade_sum_detects_cycle() -> None:
         _cascade_sum(downstream_map, values)
 
 
+def test_cascade_sum_cycle_path_is_ordered_and_excludes_the_approach() -> None:
+    """The message names the cycle in flow order, without the plant above it."""
+    from novomodelo_bridge.core.errors import BridgeError
+
+    downstream_map: dict[int, int | None] = {5: 1, 1: 2, 2: 3, 3: 1}
+
+    with pytest.raises(BridgeError, match=r"detected: 1 → 2 → 3 → 1\."):
+        _cascade_sum(downstream_map, {})
+
+
 def test_cascade_sum_no_cycle() -> None:
     """Normal cascade without cycle works correctly."""
     # Linear cascade: 1 → 2 → 3 → None (sea sink)

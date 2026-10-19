@@ -1077,7 +1077,7 @@ def compare_results(
 
             confhd_df = case.confhd.usinas
             cb_accumulated = compute_accumulated_integrated_productivities(
-                nw_cadastro, confhd_df
+                nw_cadastro, confhd_df, fictitious=case.fictitious_codes
             )
         except Exception:  # noqa: BLE001
             _LOG.warning("Failed to compute accumulated productivities for the tab")

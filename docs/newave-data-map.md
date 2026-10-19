@@ -16,7 +16,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 
 | Arquivo do deck | `config.json` | `stages.json` | `penalties.json` | `initial_conditions.json` |
 | --- | :-: | :-: | :-: | :-: |
-| `dger.dat` | ● | ● |  | ● |
+| `dger.dat` | ● | ● | ● | ● |
 | `confhd.dat` |  |  | ● | ● |
 | `conft.dat` |  |  |  | ● |
 | `sistema.dat` |  |  | ● |  |
@@ -30,6 +30,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `cvar.dat` (opcional) |  | ● |  |  |
 | `shist.dat` (opcional) | ● | ● |  |  |
 | `adterm.dat` (opcional) |  |  |  | ● |
+| `estacao-bombeamento.csv` (opcional) |  |  | ● |  |
 
 ### `system/`
 
@@ -52,7 +53,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `adterm.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
 | `polinjus.csv` (opcional) |  |  |  |  |  |  |  | ● |  |  |
 | `tratamento-fpha.csv` (opcional) |  |  |  |  | ● |  |  |  |  |  |
-| `estacao-bombeamento.csv` (opcional) |  |  |  |  |  |  |  |  |  | ● |
+| `estacao-bombeamento.csv` (opcional) |  |  |  | ● |  |  |  |  |  | ● |
 | `estacao-bombeamento-submercado.csv` (opcional) |  |  |  |  |  |  |  |  |  | ● |
 
 ### `scenarios/`
@@ -80,7 +81,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `clast.dat` |  | ● |  |  |  |  |  |  |  |
 | `term.dat` |  | ● |  |  |  |  |  |  |  |
 | `ree.dat` |  |  |  |  | ● |  | ● | ● | ● |
-| `patamar.dat` |  |  | ● |  |  |  | ● | ● |  |
+| `patamar.dat` |  |  | ● | ● |  |  | ● | ● |  |
 | `hidr.dat` | ● |  |  |  |  | ● | ● | ● | ● |
 | `modif.dat` (opcional) | ● |  |  |  |  | ● | ● | ● | ● |
 | `ghmin.dat` (opcional) | ● |  |  |  |  |  |  |  |  |
@@ -174,7 +175,7 @@ Um estágio mensal por mês de estudo e de pós-estudo, com blocos (patamares) d
 
 ### `penalties.json`
 
-**Lê:** `sistema.dat`, `penalid.dat` (opcional), `hidr.dat`, `confhd.dat`, `modif.dat` (opcional), `exph.dat` (opcional)  
+**Lê:** `sistema.dat`, `penalid.dat` (opcional), `hidr.dat`, `confhd.dat`, `modif.dat` (opcional), `exph.dat` (opcional), `dger.dat`, `estacao-bombeamento.csv` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [penalties.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/penalties.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/network.py`
 
@@ -283,7 +284,7 @@ Uma entrada por usina térmica de `conft.dat`, ordenada pelo id Novomodelo, com 
 
 ### `system/hydros.json`
 
-**Lê:** `hidr.dat`, `confhd.dat`, `ree.dat`, `sistema.dat`, `modif.dat` (opcional), `exph.dat` (opcional), `dger.dat`, `volref_saz.dat` (opcional)  
+**Lê:** `hidr.dat`, `confhd.dat`, `ree.dat`, `sistema.dat`, `modif.dat` (opcional), `exph.dat` (opcional), `dger.dat`, `volref_saz.dat` (opcional), `estacao-bombeamento.csv` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [hydros.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/hydros.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/hydro/entity.py`
 
@@ -291,7 +292,7 @@ Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `hydros[].id` | `confhd.dat` › `codigo_usina`, `confhd.dat` › `usina_existente`, `confhd.dat` › `posto`, `hidr.dat` › `produtibilidade_especifica`, `exph.dat` › `data_inicio_enchimento` *(derivado)* | Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`. |
+| `hydros[].id` | `confhd.dat` › `codigo_usina`, `confhd.dat` › `usina_existente`, `confhd.dat` › `posto`, `hidr.dat` › `produtibilidade_especifica`, `exph.dat` › `data_inicio_enchimento`, `estacao-bombeamento.csv` › `codigo_usina_origem`, `estacao-bombeamento.csv` › `codigo_usina_destino` *(derivado)* | Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`. Com o switch de bombeamento ligado, usinas de origem ou destino de uma estação de bombeamento nunca são fictícias. |
 | `hydros[].name` | `confhd.dat` › `nome_usina` | Nome da usina em `confhd.dat`, sem espaços nas extremidades. |
 | `hydros[].operational_start_date` | `dger.dat` › `ano_inicial_historico`, `exph.dat` › `data_inicio_enchimento`, `exph.dat` › `duracao_enchimento` *(derivado)* | Usinas existentes: 1º de janeiro de `ano_inicial_historico` (1931 se ausente). Usina NE em enchimento: primeiro dia do mês em que o enchimento termina (`data_inicio_enchimento` mais `duracao_enchimento` meses). No Novomodelo é chave de ordenação, não porta de entrada em operação. |
 | `hydros[].downstream_id` | `confhd.dat` › `codigo_usina_jusante`, `confhd.dat` › `usina_existente`, `confhd.dat` › `posto`, `hidr.dat` › `produtibilidade_especifica`, `exph.dat` › `data_inicio_enchimento` *(derivado)* | Id Novomodelo da próxima usina real a jusante. A cadeia `codigo_usina_jusante` é percorrida de forma transparente através de usinas fictícias e NE/NC; quando o jusante é 0 mas uma usina fictícia compartilha o `posto` da usina, ela é tomada como elo implícito da cascata. Nulo quando a cascata termina no mar. |
@@ -599,7 +600,7 @@ Uma linha base por (linha, estágio) com os limites de intercâmbio do mês, mai
 
 ### `constraints/pumping_bounds.parquet`
 
-**Lê:** `estacao-bombeamento.csv` (opcional), `estacao-bombeamento-submercado.csv` (opcional), `confhd.dat`, `dger.dat`  
+**Lê:** `estacao-bombeamento.csv` (opcional), `estacao-bombeamento-submercado.csv` (opcional), `confhd.dat`, `dger.dat`, `patamar.dat`  
 **Quando:** switch bombeamento ligado e limites por período/patamar presentes  
 **Código:** `src/novomodelo_bridge/newave/converters/pumping.py`
 
@@ -708,7 +709,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dger.dat`
 
-**Estado:** convertido em parte. **Lido por:** 26 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 27 arquivos gerados; ver a visão geral.
 
 O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações, CVaR, curva de aversão, simulação final, reamostragem, seleção de cortes, GNL antecipado, FPHA, outros usos, sazonalização de VMAXT/VMINT/CFUGA-CMONT, estados dos cortes). Os demais flags são agrupados abaixo por tema.
 
@@ -1070,7 +1071,7 @@ Todas as colunas de `usinas` são lidas (potência, FCMAX, TEIF, IP, GTMIN por m
 
 ### `patamar.dat`
 
-**Estado:** convertido. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `constraints/line_bounds.parquet`, `initial_conditions.json`, `scenarios/load_factors.json`, `scenarios/non_controllable_factors.json`, `stages.json`, `system/thermals.json`.
+**Estado:** convertido. **Lido por:** 9 arquivos gerados; ver a visão geral.
 
 - `numero_patamares` → `stages.json` › `stages[].blocks[].id`
 - `numero_patamares` → `stages.json` › `stages[].blocks[].name`
@@ -1673,8 +1674,10 @@ Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por 
 
 ### `estacao-bombeamento.csv`
 
-**Estado:** convertido. **Lido por:** `constraints/pumping_bounds.parquet`, `system/pumping_stations.json`.
+**Estado:** convertido. **Lido por:** `constraints/pumping_bounds.parquet`, `penalties.json`, `system/hydros.json`, `system/pumping_stations.json`.
 
+- `codigo_usina_origem` → `system/hydros.json` › `hydros[].id`
+- `codigo_usina_destino` → `system/hydros.json` › `hydros[].id`
 - `estacao_bombeamento` → `system/pumping_stations.json` › `pumping_stations`
 - `codigo_estacao` → `system/pumping_stations.json` › `pumping_stations[].id`
 - `nome_estacao` → `system/pumping_stations.json` › `pumping_stations[].name`

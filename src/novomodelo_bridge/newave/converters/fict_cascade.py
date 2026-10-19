@@ -17,9 +17,9 @@ the cascade connectivity they provide so that:
   fictitious plant's own productivity along the chain (zero in practice).
 
 This module is the single source of truth for that resolution.  Both
-``newave.converters.hydro.convert_hydros`` and
-``newave.converters.constraints._build_hydro_downstream_map`` consume it so the
-LP topology and the cascade accounting agree.
+``newave.converters.hydro.convert_hydros`` and the accumulated-productivity
+helpers in ``newave.converters.constraints`` consume it so the LP topology and
+the cascade accounting agree.
 """
 
 from __future__ import annotations

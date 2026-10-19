@@ -1236,6 +1236,59 @@ class TestCompareResultsReturnsDataset:
         assert "results" not in written
         assert "top_divergences" in written
 
+    def test_productivity_tab_uses_the_case_fictitious_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The tab's accumulated productivities are computed with the case's
+        fictitious set and reach the tab; a failure there is swallowed into a
+        warning, so only the delivered values show it."""
+        import pandas as pd
+
+        from novomodelo_bridge.comparators.newave.results import compare_results
+
+        self._patch_all_readers(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            "novomodelo_bridge.newave.converters.hydro.read_cadastro",
+            lambda _case: pd.DataFrame({"produtibilidade_especifica": [0.01]}),
+        )
+        seen: dict[str, object] = {}
+
+        def _accumulated(
+            cadastro: pd.DataFrame, confhd_df: pd.DataFrame, *, fictitious: object
+        ) -> dict[int, float]:
+            seen["fictitious"] = fictitious
+            return {1: 2.5}
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.newave.converters.constraints."
+            "compute_accumulated_integrated_productivities",
+            _accumulated,
+        )
+        import novomodelo_bridge.comparators.analyze as analyze
+
+        real_detail = analyze.build_productivity_detail
+
+        def _detail(*args: object) -> object:
+            seen["accumulated"] = args[4]
+            return real_detail(*args)
+
+        monkeypatch.setattr(analyze, "build_productivity_detail", _detail)
+
+        case = MagicMock()
+        case.files.directory = tmp_path
+        case.fictitious_codes = frozenset({7})
+
+        compare_results(
+            case=case,
+            id_map=MagicMock(),
+            alignment=MagicMock(),
+            novomodelo_output_dir=tmp_path,
+            tolerance=0.05,
+        )
+
+        assert seen["fictitious"] == frozenset({7})
+        assert seen["accumulated"] == {1: 2.5}
+
 
 class TestProductivityDetail:
     """Productivity-tab readers, assembly, and charts.

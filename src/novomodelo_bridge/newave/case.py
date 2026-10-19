@@ -284,10 +284,9 @@ class NewaveCase:
     def fictitious_codes(self) -> frozenset[int]:
         """Fictitious hydro codes with pumping exemption applied.
 
-        This is the single source of truth for fictitious classification. All code
-        that needs the fictitious set should read this property rather than calling
-        ``plants.fictitious_codes`` directly, so the pumping exemption is always
-        applied.
+        The one place the case classifies fictitious plants; every helper that
+        needs the set takes this value, so the pumping exemption cannot be
+        skipped.
         """
         from novomodelo_bridge.newave.plants import fictitious_codes
 
@@ -309,31 +308,24 @@ class NewaveCase:
         plants; a direct ``plants`` caller without ``exph`` admits none). Recomputed
         per access (not cached) — it's a cheap filter and callers may hold their own
         view, so a shared cached DataFrame could alias.
-
-        Uses ``self.fictitious_codes`` so the pumping exemption is applied.
         """
         from novomodelo_bridge.newave.plants import active_hydros
 
         return active_hydros(
             self.confhd.usinas,
-            self.hidr.cadastro,
-            self.exph.expansoes if self.exph is not None else None,
             fictitious=self.fictitious_codes,
+            exph_df=self.exph.expansoes if self.exph is not None else None,
         )
 
     @property
     def active_hydro_codes(self) -> list[int]:
-        """``codigo_usina`` of the active hydros (in confhd declaration order).
-
-        Uses ``self.fictitious_codes`` so the pumping exemption is applied.
-        """
+        """``codigo_usina`` of the active hydros (in confhd declaration order)."""
         from novomodelo_bridge.newave.plants import active_hydro_codes
 
         return active_hydro_codes(
             self.confhd.usinas,
-            self.hidr.cadastro,
-            self.exph.expansoes if self.exph is not None else None,
             fictitious=self.fictitious_codes,
+            exph_df=self.exph.expansoes if self.exph is not None else None,
         )
 
     @cached_property
@@ -341,17 +333,10 @@ class NewaveCase:
         """The canonical the source model→Novomodelo :class:`NewaveIdMap` for this case.
 
         Built from the cached ``confhd``/``conft``/``sistema``/``ree``/``hidr``
-        readers, so it reuses parses already done rather than re-reading the files
-        (the free ``id_map.build_id_map`` re-reads them for callers that only hold
-        paths, e.g. the CLI compare commands).
+        readers, so it reuses parses already done rather than re-reading the files.
 
         The case's ``exph`` reader is threaded through, so any ``NE`` plant carrying a
-        dead-volume filling row is admitted at its confhd declaration position. The
-        path-only ``build_id_map`` keeps the in-service-only enumeration
-        (``exph=None``).
-
-        Uses ``self.pumping_related_codes`` so hydros referenced by pumping stations
-        are not excluded as fictitious.
+        dead-volume filling row is admitted at its confhd declaration position.
         """
         from novomodelo_bridge.newave.id_map import build_id_map_from_readers
 
@@ -360,7 +345,6 @@ class NewaveCase:
             self.conft,
             self.sistema,
             self.ree,
-            self.hidr,
             exph=self.exph,
-            pumping_related_codes=self.pumping_related_codes,
+            fictitious=self.fictitious_codes,
         )

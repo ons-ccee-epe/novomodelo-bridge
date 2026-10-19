@@ -437,6 +437,8 @@ reads = [
   { file = "confhd" },
   { file = "modif" },
   { file = "exph" },
+  { file = "dger" },
+  { file = "estacao_bombeamento" },
 ]
 summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalidades internas do NEWAVE (manual v30, §3.24) e penalidades de `penalid.dat` convertidas de R$/MWh para o domínio de vazão com as produtibilidades do SIN."
 
@@ -1437,6 +1439,7 @@ reads = [
   { file = "exph" },
   { file = "dger" },
   { file = "volref_saz" },
+  { file = "estacao_bombeamento" },
 ]
 summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX` ou `EE` — e não fictícias, mais usinas NE com enchimento de volume morto em `exph.dat`), com o cadastro de `hidr.dat` já corrigido pelos registros permanentes de `modif.dat`, ordenada pelo id Novomodelo."
 
@@ -1448,9 +1451,11 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "confhd", item = "posto" },
     { file = "hidr", item = "produtibilidade_especifica" },
     { file = "exph", item = "data_inicio_enchimento" },
+    { file = "estacao_bombeamento", item = "codigo_usina_origem" },
+    { file = "estacao_bombeamento", item = "codigo_usina_destino" },
   ]
   status = "derived"
-  how = "Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`."
+  how = "Id 0-based denso atribuído em ordem crescente de `codigo_usina` entre as usinas ativas: `usina_existente` em `EX`/`EE` menos as fictícias (produtibilidade específica zero compartilhando o `posto` de uma usina geradora), mais as usinas NE com registro de enchimento em `exph.dat`. Com o switch de bombeamento ligado, usinas de origem ou destino de uma estação de bombeamento nunca são fictícias."
 
   [[output.field]]
   path = "hydros[].name"
@@ -2926,6 +2931,7 @@ reads = [
   { file = "estacao_bombeamento_submercado" },
   { file = "confhd" },
   { file = "dger" },
+  { file = "patamar" },
 ]
 summary = "Limites de vazão bombeada por estágio e patamar."
 
