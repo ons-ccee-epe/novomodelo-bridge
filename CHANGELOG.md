@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NEWAVE: diversion channels.** A `CDESVIO` record in a plant's `USINA`
   block of `modif.dat` now gives that plant a diversion channel in
   `hydros.json`, to the record's target plant and up to its maximum flow, when
-  the `CANAL DE DESVIO` switch of `dger.dat` is on. Plants fed only by a
+  the `CANAL DE DESVIO` switch of `dger.dat` is on. A maximum flow of
+  9 999 999 m³/s or more, NEWAVE's value for no limit, gives a channel
+  without a limit and is reported. Plants fed only by a
   channel, such as BELO MONTE below PIMENTAL, now receive that water. The
   `desvio` code of `hidr.dat` alone declares no channel. A record without a
   maximum flow, or whose target plant is not in the case, converts to no
@@ -169,15 +171,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the plant that receives it (such as TOCOS to LAJES and VIGARIO to
   FONTES AB). Every plant whose diversion can be positive now gets the
   channel to its `AC DESVIO` or `hidr.dat` target, limited by the `AC DESVIO`
-  flow, else the largest `QDES` ceiling. A floored plant whose target has no
-  `AC DESVIO` limit now resolves the same way instead of being reported. When
-  the target plant is not in the case, the diversion ceiling is closed and
-  reported, so the water stays in the plant's own river.
+  flow, and the `QDES` bounds still apply stage by stage. A floored plant
+  whose target has no `AC DESVIO` limit now gets its channel instead of being
+  reported. When the target plant is not in the case, the diversion ceiling
+  is closed and reported, so the water stays in the plant's own river.
+- **`convert decomp` leaves a diversion channel unlimited when DECOMP does.**
+  A `desvio` without an `AC DESVIO` limit, or with the "no limit" value of
+  9 999 999 m³/s or more, was capped at the receiving plant's turbine
+  capacity, which DECOMP's own solutions exceed (MOXOTO to P.AFONSO 4). The
+  channel now carries no limit, and a base `desvio` no longer writes a
+  `max_diversion_m3s` bound. Channels given the "no limit" value are reported
+  on both tracks.
 - **`convert` refuses a case where diverted water reaches no plant.** Both
   `convert newave` and `convert decomp` now fail before writing when a plant
   can divert water (a positive diversion floor or ceiling) but has no
-  diversion channel to a receiving plant. Cobre rejects such a floor but
-  accepts such a ceiling, and the diverted water then leaves the system.
+  diversion channel to a receiving plant, which Cobre rejects. The failure
+  names each plant, the bound and its stages.
 - **NEWAVE: Hydro plants referenced by pumping stations are no longer
   classified as fictitious.** Previously, zero-productivity reservoirs used
   for pumped storage (e.g., VIGÁRIO) were removed, which could break cascade

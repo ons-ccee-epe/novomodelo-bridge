@@ -34,7 +34,6 @@ from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
 )
 from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
-from novomodelo_bridge.decomp.converters.single_term_bounds import HydroCapacities
 from novomodelo_bridge.decomp.converters.thermal import (
     _THERMAL_COST_SCHEMA,
     ThermalBounds,
@@ -1859,13 +1858,6 @@ class TestDiversionChannels:
         )
 
     @staticmethod
-    def _caps() -> dict[int, HydroCapacities]:
-        return {
-            0: HydroCapacities(max_generation_mw=50.0, max_turbined_m3s=40.0),
-            1: HydroCapacities(max_generation_mw=900.0, max_turbined_m3s=150.0),
-        }
-
-    @staticmethod
     def _bounds(
         rows: list[tuple[int, float | None, float | None]],
     ) -> pa.Table:
@@ -1882,7 +1874,6 @@ class TestDiversionChannels:
             self._bounds(rows),
             self._id_map(),
             self._effective(diversions),
-            self._caps(),
         )
 
     def test_floored_hydro_with_limit_gets_the_limit(self) -> None:
@@ -1898,25 +1889,30 @@ class TestDiversionChannels:
         assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": 100.0}}
         assert result.dropped == []
 
-    def test_target_without_limit_uses_largest_finite_ceiling(self) -> None:
+    def test_target_without_limit_gets_an_unlimited_channel(self) -> None:
         channel = DiversionChannel(downstream=119, limit=None)
         result = self._resolve(
             [(0, 0.0, 25.0), (0, 0.0, 34.0), (0, None, None)],
             {118: (channel, channel)},
         )
-        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": 34.0}}
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
 
     def test_floor_with_target_without_limit_resolves(self) -> None:
         channel = DiversionChannel(downstream=119, limit=None)
-        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        result = self._resolve([(0, 6.0, None)], {118: (channel, channel)})
         assert result == DiversionChannels(
-            {0: {"downstream_id": 1, "max_flow_m3s": 6.0}}, []
+            {0: {"downstream_id": 1, "max_flow_m3s": None}}, []
         )
 
-    def test_floor_without_ceiling_falls_back_to_receiver_turbine(self) -> None:
-        channel = DiversionChannel(downstream=119, limit=None)
-        result = self._resolve([(0, 6.0, None)], {118: (channel, channel)})
-        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": 150.0}}
+    def test_no_limit_value_gets_an_unlimited_channel(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=9_999_999.0)
+        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
+
+    def test_zero_limit_closes_a_ceiling(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=0.0)
+        result = self._resolve([(0, 0.0, 25.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [0])
 
     def test_floored_hydro_without_target_gets_no_channel_and_is_kept(self) -> None:
         result = self._resolve([(0, 6.0, 6.0)], {})
@@ -1939,9 +1935,7 @@ class TestDiversionChannels:
 
     def test_absent_diversion_columns_return_empty(self) -> None:
         table = pa.table({"hydro_id": pa.array([0], type=pa.int32())})
-        result = _diversion_channels(
-            table, self._id_map(), self._effective({}), self._caps()
-        )
+        result = _diversion_channels(table, self._id_map(), self._effective({}))
         assert result == DiversionChannels({}, [])
 
 
@@ -2000,8 +1994,8 @@ class TestDiversionChannelDroppedDiagnostic:
 
 class TestBaseDiversionChannels:
     """``_base_diversion_channels`` models the BASE ``desvio`` diversions that
-    carry no QDES flow bound (e.g. MOXOTO -> P.AFONSO 4): without them novomodelo pins
-    the diversion column to ``[0, 0]`` and the downstream plant is stranded."""
+    carry no QDES flow bound (e.g. MOXOTO -> P.AFONSO 4): without a channel
+    novomodelo closes the diversion column and the downstream plant is stranded."""
 
     @staticmethod
     def _id_map() -> DecompIdMap:
@@ -2017,77 +2011,71 @@ class TestBaseDiversionChannels:
             diversions=diversions,
         )
 
-    @staticmethod
-    def _caps() -> dict[int, HydroCapacities]:
-        return {
-            0: HydroCapacities(max_generation_mw=400.0, max_turbined_m3s=2120.5),
-            1: HydroCapacities(max_generation_mw=2462.4, max_turbined_m3s=2406.8),
-        }
-
-    def test_base_channel_capped_at_receiver_turbine(self) -> None:
-        channel = DiversionChannel(downstream=175, limit=None)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
+    def _channels(self, diversions: dict, already_bounded_ids: set[int]) -> dict:
+        return _base_diversion_channels(
+            self._effective(diversions), self._id_map(), already_bounded_ids
         )
-        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": 2406.8}}
-        # one diversion contribution per stage, opened [0, receiver-turbine]
-        assert [
-            (c.entity_id, c.stage_id, c.axis, c.lower, c.upper) for c in contribs
-        ] == [
-            (0, 0, "diversion", 0.0, 2406.8),
-            (0, 1, "diversion", 0.0, 2406.8),
-        ]
+
+    def test_base_channel_has_no_limit(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=None)
+        channels = self._channels({173: (channel, channel)}, set())
+        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
 
     def test_ac_limit_channel_uses_the_explicit_limit(self) -> None:
         channel = DiversionChannel(downstream=175, limit=500.0)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
-        )
+        channels = self._channels({173: (channel, channel)}, set())
         assert channels == {0: {"downstream_id": 1, "max_flow_m3s": 500.0}}
-        assert all(c.upper == 500.0 for c in contribs)
+
+    def test_no_limit_value_has_no_limit(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=10_000_000.0)
+        channels = self._channels({173: (channel, channel)}, set())
+        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
+
+    def test_zero_limit_is_skipped(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=0.0)
+        assert self._channels({173: (channel, channel)}, set()) == {}
 
     def test_already_bounded_source_is_skipped(self) -> None:
         channel = DiversionChannel(downstream=175, limit=None)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids={0},
-            stage_ids=[0, 1],
-        )
-        assert channels == {}
-        assert contribs == []
+        assert self._channels({173: (channel, channel)}, {0}) == {}
 
     def test_unmapped_downstream_is_skipped(self) -> None:
         channel = DiversionChannel(downstream=999, limit=None)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
-        )
-        assert channels == {}
-        assert contribs == []
+        assert self._channels({173: (channel, channel)}, set()) == {}
 
     def test_no_diversion_returns_empty(self) -> None:
-        channels, contribs = _base_diversion_channels(
-            self._effective({}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
-        )
-        assert channels == {}
-        assert contribs == []
+        assert self._channels({}, set()) == {}
+
+
+class TestMiniDeckDiversionChannels:
+    """The committed mini deck converts its diversions with the source model's
+    limits: an ``AC DESVIO`` flow stays, its "no limit" value and a base
+    ``desvio`` carry none."""
+
+    def test_channels_and_their_limits(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        import json
+
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        report = convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+        hydros = json.loads(
+            (tmp_path / "out" / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"]
+        limits = {
+            h["name"]: h["diversion"]["max_flow_m3s"]
+            for h in hydros
+            if h.get("diversion") is not None
+        }
+        assert limits["BILLINGS"] == 100.0
+        assert limits["PIMENTAL"] is None
+        assert limits["MOXOTO"] is None
+        (unlimited,) = [
+            d for d in report.diagnostics if d.code == "diversion-channel-unlimited"
+        ]
+        assert unlimited.table is not None
+        assert unlimited.table.rows == [[314, "PIMENTAL", 288, "BELO MONTE", "9999999"]]
 
 
 def _fc_line(tipo: str, caminho: str) -> str:

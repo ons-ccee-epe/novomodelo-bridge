@@ -1074,6 +1074,26 @@ class TestConvertHydrosDiversion:
         assert diag.table is not None
         assert diag.table.rows == [[1, "USINA_A", 2, "USINA_B", "100"]]
 
+    @pytest.mark.parametrize("flow", ["9999999.", "12000000."])
+    def test_the_no_limit_value_converts_to_no_limit(self, tmp_path, flow) -> None:
+        channels, collected = self._convert(
+            tmp_path, self._USINA_A, f" CDESVIO 2 {flow}"
+        )
+        assert channels["USINA_A"] == {"downstream_id": 1, "max_flow_m3s": None}
+        (modeled,) = [d for d in collected if d.code == "diversion-channels"]
+        assert modeled.table is not None
+        assert modeled.table.rows == [[1, "USINA_A", 2, "USINA_B", "no limit"]]
+        (unlimited,) = [d for d in collected if d.code == "diversion-channel-unlimited"]
+        assert unlimited.severity is Severity.INFO
+        assert unlimited.table is not None
+        assert unlimited.table.rows == [
+            [1, "USINA_A", 2, "USINA_B", f"{float(flow):.0f}"]
+        ]
+
+    def test_a_finite_flow_is_not_reported_as_unlimited(self, tmp_path) -> None:
+        _, collected = self._convert(tmp_path, self._USINA_A, " CDESVIO 2 100.")
+        assert not [d for d in collected if d.code == "diversion-channel-unlimited"]
+
     def test_the_registry_desvio_code_alone_declares_no_channel(self, tmp_path) -> None:
         cadastro = _make_hidr_cadastro()
         cadastro["desvio"] = [2, 0]

@@ -90,7 +90,9 @@ the same output.
   seasonal values.
 - **Diversion channels.** A `CDESVIO` record in a plant's block of
   `modif.dat` becomes that plant's Novomodelo diversion channel, to the record's
-  target plant and capped at its maximum flow as given. Only `CDESVIO`
+  target plant and capped at its maximum flow; a maximum flow of 9 999 999
+  m³/s or more, NEWAVE's "no limit" value, gives a channel without a limit
+  and is reported. Only `CDESVIO`
   declares a channel; the `desvio` code of `hidr.dat` alone does not. A record
   with no maximum flow, or whose target plant is not in the case, converts to
   no channel and is reported, and so the plant releases only to its

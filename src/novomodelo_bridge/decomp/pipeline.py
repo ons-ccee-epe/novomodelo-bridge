@@ -11,7 +11,6 @@ emitter that detects it, never dropped silently.
 from __future__ import annotations
 
 import logging
-import math
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -29,6 +28,11 @@ from novomodelo_bridge.core.conversion import (
     ConversionReport,
     clear_dst_contents,
     run_conversion,
+)
+from novomodelo_bridge.core.diversion import (
+    channel_flow_limit,
+    is_unlimited_flow,
+    unlimited_channels_diagnostic,
 )
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
@@ -622,7 +626,6 @@ def _diversion_channels(
     hydro_bounds: pa.Table,
     id_map: DecompIdMap,
     effective: cadastro_conv.EffectiveCadastro,
-    hydro_capacities: Mapping[int, single_term_bounds.HydroCapacities],
 ) -> DiversionChannels:
     """Channels for every hydro whose resolved diversion can be positive.
 
@@ -631,13 +634,13 @@ def _diversion_channels(
     ``min_diversion_m3s`` or ``max_diversion_m3s`` needs one. The source model
     sends ``QDES`` to the plant's ``desvio`` target (``AC DESVIO``, else
     ``hidr.dat``) and rejects a ``QDES`` restriction on a plant without one, so
-    the target comes from ``effective.diversions``. The channel limit is the
-    ``AC DESVIO`` limit, else the largest finite resolved ceiling, else the
-    receiving plant's turbine capacity as in :func:`_base_diversion_channels`.
-    A target outside the case leaves the hydro without a channel.
+    the target comes from ``effective.diversions``. The channel carries the
+    ``AC DESVIO`` limit, or none when the deck gives none or its "no limit"
+    value; the resolved bounds still cap each stage. A target outside the case
+    leaves the hydro without a channel.
     """
     floored: set[int] = set()
-    ceilings: dict[int, float] = {}
+    opened: set[int] = set()
     columns = hydro_bounds.column_names
     rows = len(hydro_bounds)
     hydro_ids = hydro_bounds.column("hydro_id").to_pylist()
@@ -654,37 +657,28 @@ def _diversion_channels(
     for hydro_id, floor, upper in zip(hydro_ids, floors, uppers, strict=True):
         if floor is not None and floor > 0.0:
             floored.add(int(hydro_id))
-        if upper is not None and upper > 0.0 and math.isfinite(upper):
-            ceilings[int(hydro_id)] = max(upper, ceilings.get(int(hydro_id), 0.0))
+        if upper is not None and upper > 0.0:
+            opened.add(int(hydro_id))
     code_by_id = {id_map.hydro_id(code): code for code in id_map.hydro_codes}
     operated_codes = set(id_map.hydro_codes)
     channels: dict[int, dict] = {}
     dropped: list[int] = []
-    for hydro_id in sorted(floored | set(ceilings)):
+    for hydro_id in sorted(floored | opened):
         code = code_by_id.get(hydro_id)
         channel = (
             _first_diversion_channel(effective, code) if code is not None else None
         )
-        limit = None
-        if channel is not None and channel.downstream in operated_codes:
-            # TRACKED NOVOMODELO-GAP WORKAROUND (C21): novomodelo has no channel without a
-            # limit, so an `AC DESVIO` "no limit" value (9999999) is emitted as
-            # given, and a floor with no ceiling borrows the receiver's turbine
-            # capacity where the source model leaves the channel unlimited.
-            limit = channel.limit
-            if limit is None:
-                limit = ceilings.get(hydro_id)
-            if limit is None:
-                limit = hydro_capacities[
-                    id_map.hydro_id(channel.downstream)
-                ].max_turbined_m3s
-        if limit is None or limit <= 0.0:
+        if (
+            channel is None
+            or channel.downstream not in operated_codes
+            or (channel.limit is not None and channel.limit <= 0.0)
+        ):
             if hydro_id not in floored:
                 dropped.append(hydro_id)
             continue
         channels[hydro_id] = {
             "downstream_id": id_map.hydro_id(channel.downstream),
-            "max_flow_m3s": float(limit),
+            "max_flow_m3s": channel_flow_limit(channel.limit),
         }
     return DiversionChannels(channels, dropped)
 
@@ -763,31 +757,23 @@ def _diversion_channel_dropped_diagnostic(
 def _base_diversion_channels(
     effective: cadastro_conv.EffectiveCadastro,
     id_map: DecompIdMap,
-    hydro_capacities: Mapping[int, single_term_bounds.HydroCapacities],
     already_bounded_ids: set[int],
-    stage_ids: Sequence[int],
-) -> tuple[dict[int, dict], list[bounds_accumulator.BoundContribution]]:
-    """Diversion channels + ``max_diversion`` bounds for BASE ``desvio`` diverters.
+) -> dict[int, dict]:
+    """Diversion channels for the ``desvio`` plants without a ``QDES`` bound.
 
-    A base ``desvio`` (the ``hidr`` field) with neither an ``AC DESVIO`` limit
-    nor a QDES single-term bound leaves novomodelo's diversion column pinned
-    ``[0, 0]`` (``max_diversion_m3s`` defaults to 0), stranding any downstream
+    Without a channel novomodelo closes a plant's diversion column, stranding any
     plant fed *solely* by that diversion -- e.g. MOXOTO's spill-side split to
-    P.AFONSO 4, which otherwise receives no water and generates 0 MW. This
-    declares the channel and opens the diversion column up to the receiving
-    plant's turbine capacity (the flow it can actually pass to generation), so
-    the diverted water reaches the downstream plant.
+    P.AFONSO 4, which otherwise receives no water and generates 0 MW. The
+    channel carries the ``AC DESVIO`` limit, or none when the deck gives none
+    or its "no limit" value, as in the source model.
 
     Skips any diverter whose diversion axis is already bounded
     (``already_bounded_ids`` -- a ``QDES`` bound, whose channel
-    :func:`_diversion_channels` resolves), so this only *adds* the previously-unmodelled
-    base channels and never overrides an explicit source limit. Returns the
-    ``{downstream_id, max_flow_m3s}`` channel per source novomodelo id and the
-    per-stage ``diversion`` bound contributions to fold into the accumulator.
+    :func:`_diversion_channels` resolves). Returns the ``{downstream_id,
+    max_flow_m3s}`` channel per source novomodelo id.
     """
     operated = set(id_map.hydro_codes)
     channels: dict[int, dict] = {}
-    contribs: list[bounds_accumulator.BoundContribution] = []
     for code in sorted(id_map.hydro_codes):
         if not effective.has_diversion(code):
             continue
@@ -797,31 +783,13 @@ def _base_diversion_channels(
         channel = _first_diversion_channel(effective, code)
         if channel is None or channel.downstream not in operated:
             continue
-        downstream_id = id_map.hydro_id(channel.downstream)
-        # TRACKED NOVOMODELO-GAP WORKAROUND (C21): a base `desvio` has no flow limit
-        # in the source model, but novomodelo has no channel without one, so the
-        # channel is capped at the receiving plant's turbine capacity.
-        cap = channel.limit
-        if cap is None:
-            cap = hydro_capacities[downstream_id].max_turbined_m3s
-        if cap is None or cap <= 0.0:
+        if channel.limit is not None and channel.limit <= 0.0:
             continue
-        cap = float(cap)
-        channels[source_id] = {"downstream_id": downstream_id, "max_flow_m3s": cap}
-        contribs.extend(
-            bounds_accumulator.BoundContribution(
-                family="hydro",
-                entity_id=source_id,
-                stage_id=stage_id,
-                block_id=None,
-                axis="diversion",
-                lower=0.0,
-                upper=cap,
-                contributor="base-desvio",
-            )
-            for stage_id in stage_ids
-        )
-    return channels, contribs
+        channels[source_id] = {
+            "downstream_id": id_map.hydro_id(channel.downstream),
+            "max_flow_m3s": channel_flow_limit(channel.limit),
+        }
+    return channels
 
 
 def _libs_electrical_census_diagnostic(
@@ -1344,23 +1312,15 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             hydro_capacities=hydro_capacities,
         ),
     ]
-    # Base `desvio` diverters carry no QDES flow bound, so novomodelo pins their
-    # diversion column to [0, 0] and strands any plant fed solely by the
-    # diversion (e.g. MOXOTO -> P.AFONSO 4, which otherwise generates 0 MW).
-    # Give the still-unbounded ones a max_diversion bound + a routed channel.
-    _diversion_bounded_ids = {
-        contrib.entity_id
-        for contrib in contribs
-        if contrib.family == "hydro" and contrib.axis == "diversion"
-    }
-    base_diversion_channels, base_diversion_contribs = _base_diversion_channels(
+    base_diversion_channels = _base_diversion_channels(
         effective,
         id_map,
-        hydro_capacities,
-        _diversion_bounded_ids,
-        [stage.index for stage in calendar],
+        {
+            contrib.entity_id
+            for contrib in contribs
+            if contrib.family == "hydro" and contrib.axis == "diversion"
+        },
     )
-    contribs.extend(base_diversion_contribs)
     block_counts = {stage.index: len(stage.block_hours) for stage in calendar}
     bound_tables = bounds_accumulator.build_bound_tables(
         bounds_accumulator.resolve(contribs, block_counts)
@@ -1377,7 +1337,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         bounds_conv.convert_irrigation_withdrawal(case, id_map),
         block_counts,
     )
-    diversion = _diversion_channels(hydro_bounds, id_map, effective, hydro_capacities)
+    diversion = _diversion_channels(hydro_bounds, id_map, effective)
     if diversion.dropped:
         dx.emit(
             _diversion_channel_dropped_diagnostic(
@@ -1386,12 +1346,32 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             logger=_LOG,
         )
         hydro_bounds = _close_diversion(hydro_bounds, diversion.dropped)
+    names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
+    unlimited: list[tuple[int, str, int, str, float]] = []
     for hydro in hydros_dict["hydros"]:
         channel = diversion.channels.get(hydro["id"]) or base_diversion_channels.get(
             hydro["id"]
         )
-        if channel is not None:
-            hydro["diversion"] = channel
+        if channel is None:
+            continue
+        hydro["diversion"] = channel
+        code = id_map.hydro_codes[hydro["id"]]
+        source = _first_diversion_channel(effective, code)
+        if source is not None and is_unlimited_flow(source.limit):
+            unlimited.append(
+                (
+                    code,
+                    hydro["name"],
+                    source.downstream,
+                    names.get(id_map.hydro_id(source.downstream), ""),
+                    source.limit,
+                )
+            )
+    if unlimited:
+        dx.emit(
+            unlimited_channels_diagnostic(unlimited, source="AC DESVIO"),
+            logger=_LOG,
+        )
     if base_diversion_channels:
         dx.emit(
             dx.Diagnostic(
@@ -1401,11 +1381,11 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
                 title="Base diversion channels modeled",
                 summary=(
                     f"{len(base_diversion_channels)} hydro(s) "
-                    f"({sorted(base_diversion_channels)}) carry a base diversion "
-                    "channel with no explicit flow limit; each was given a "
-                    "diversion channel capped at the receiving plant's turbine "
-                    "capacity so the diverted water reaches the downstream plant "
-                    "(otherwise that plant is stranded with no inflow)."
+                    f"({sorted(base_diversion_channels)}) divert water through "
+                    "their hidr.dat or AC DESVIO desvio with no QDES restriction; "
+                    "each was given a diversion channel to the receiving plant, "
+                    "limited only by an AC DESVIO flow, so the diverted water "
+                    "reaches that plant."
                 ),
             ),
             logger=_LOG,

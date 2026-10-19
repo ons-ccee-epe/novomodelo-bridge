@@ -1707,7 +1707,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "modif", item = "CDESVIO · usina de jusante" },
     { file = "modif", item = "CDESVIO · vazão máxima" },
   ]
-  how = "Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, sem alteração. Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`)."
+  how = "Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, ou nulo (sem limite) quando ela vale 9 999 999 m³/s ou mais, o valor do NEWAVE para canal sem limite (diagnóstico `diversion-channel-unlimited`). Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`)."
 
   [[output.field]]
   path = "hydros[].filling"

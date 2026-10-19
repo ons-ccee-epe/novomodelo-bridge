@@ -1479,9 +1479,8 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
   from = [
     { file = "dadger", register = "AC", item = "DESVIO" },
     { file = "hidr", item = "desvio" },
-    { file = "dadger", register = "LQ", item = "limite_superior" },
   ]
-  how = "`limite_vazao` do `AC DESVIO` em vigor; na falta dele, o maior teto finito de `max_diversion_m3s` da usina (o `limite_superior` da RHQ `QDES`) e, sem teto, o `generation.max_turbined_m3s` da usina receptora. Para um `desvio` de base sem limite explícito nem RHQ, o canal é limitado pelo `generation.max_turbined_m3s` da usina receptora, para que a água desviada chegue a ela (caso MOXOTÓ → P.AFONSO 4); esse teto também vira `max_diversion_m3s` em `constraints/hydro_bounds.parquet`."
+  how = "`limite_vazao` do `AC DESVIO` em vigor. Nulo (canal sem limite, como no DECOMP) quando não há `AC DESVIO` com limite, como num `desvio` de base (caso MOXOTÓ → P.AFONSO 4), e quando o limite vale 9 999 999 m³/s ou mais, o valor do DECOMP para canal sem limite (diagnóstico `diversion-channel-unlimited`); os tetos `max_diversion_m3s` de `constraints/hydro_bounds.parquet` continuam valendo em cada estágio."
 
 [[output]]
 path = "system/hydro_production_models.json"

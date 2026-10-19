@@ -31,9 +31,8 @@ semantic validation layer):
   (``block_bounds.rs::check_bound_block_id_range``).
 - Rule 38 — :func:`check_block_id_not_on_anticipated_thermal`
   (``block_bounds.rs::check_block_id_on_anticipated_thermal``).
-- Rule 46, widened — :func:`check_diversion_has_channel`
-  (``hydro.rs::check_diversion_floor_requires_channel``): a positive diversion
-  ceiling needs a channel too, which novomodelo does not check.
+- Rule 46 — :func:`check_diversion_has_channel`
+  (``hydro.rs::check_diversion_requires_channel``).
 
 This module must not import either pipeline — they import it — so it stays
 unit-testable against hand-built artifacts.
@@ -985,11 +984,7 @@ def check_diversion_has_channel(
     novomodelo takes a hydro's diversion out of that hydro's water balance and adds
     it to another plant only through the hydro's ``diversion`` channel in
     ``hydros.json``. A positive ``min_diversion_m3s`` or ``max_diversion_m3s``
-    row on a hydro without one is an ERROR: novomodelo rejects the floor (rule 46),
-    and the ceiling lets the diverted water leave the system.
-
-    TRACKED NOVOMODELO-GAP (C20): novomodelo accepts a positive ``max_diversion_m3s`` on
-    a hydro without a channel; once it rejects it, this is a plain mirror.
+    row on a hydro without one is an ERROR, as novomodelo rejects it (rule 46).
     """
     if hydro_bounds is None or hydro_bounds.num_rows == 0:
         return
