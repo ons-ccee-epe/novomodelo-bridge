@@ -2043,7 +2043,7 @@ reads = [
   { file = "volref_saz" },
   { file = "dger" },
 ]
-summary = "Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fonte única do coeficiente `geração = ρ_eq · Q` (inclusive para usinas FPHA): uma linha padrão com `stage_id` nulo por usina sem variação temporal, ou uma linha por estágio para usina com `CFUGA`/`CMONT` em `modif.dat` ou linha em `volref_saz.dat`."
+summary = "Por usina ativa (inclusive FPHA), a produtibilidade equivalente ρ_eq (MW por m³/s), fonte única do coeficiente `geração = ρ_eq · Q`, e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da VminOP: uma linha padrão com `stage_id` nulo por usina sem variação temporal, ou uma linha por estágio para usina com `CFUGA`/`CMONT` em `modif.dat` ou linha em `volref_saz.dat`."
 
   [[output.field]]
   path = "hydro_id"
@@ -2089,6 +2089,28 @@ summary = "Produtibilidade equivalente ρ_eq (MW por m³/s) por usina ativa, fon
     { file = "confhd", item = "posto" },
   ]
   how = "`ρ_esp · (cota(V_ref) − canal de fuga − perdas)`, com V_ref = `volume_minimo` + 65% do volume útil para regulação `M` (altura 65 do NEWAVE) e `volume_referencia` para `D`/`S`. Por estágio, `CFUGA` substitui o canal de fuga e `CMONT` fixa a cota de montante (função degrau a partir de `data_inicio`, repetida sazonalmente após o último registro se `sazonaliza_cfuga_cmont = 1`), e a linha de `volref_saz.dat` fixa V_ref = `volume_minimo + valor` do mês civil. Soma-se a ρ_eq das usinas fictícias atravessadas na cascata (zero nos decks reais)."
+
+  [[output.field]]
+  path = "integrated_equivalent_productivity_mw_per_m3s"
+  from = [
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "perdas" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "modif", item = "CFUGA · nivel" },
+    { file = "modif", item = "CMONT · nivel" },
+    { file = "dger", item = "sazonaliza_cfuga_cmont" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+  ]
+  how = "Produtibilidade de energia armazenada da própria usina, a mesma do `pmo.dat` (`produtibilidade_equivalente_volmin_volmax`): para regulação `M`, `ρ_esp · (cota média entre `volume_minimo` e `volume_maximo` − canal de fuga − perdas)`, com a média calculada pela integral exata do polinômio cota-volume; para `D`/`S`, a queda no `volume_referencia`. `CFUGA`/`CMONT` valem por estágio como em ρ_eq; `volref_saz.dat` não altera este valor. Soma-se a das usinas fictícias atravessadas na cascata. Sempre preenchida, porque a integral do Novomodelo sobre a tabela VHA integra também as usinas `D`/`S`, avalia o canal de fuga na vazão turbinada máxima e não aplica `CFUGA`/`CMONT`."
 
   [[output.field]]
   path = "reference_outflow_m3s"

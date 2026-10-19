@@ -1381,6 +1381,91 @@ class TestConvertHydroEnergyProductivity:
         assert by_stage[5] == pytest.approx(post)
         assert by_stage[11] == pytest.approx(post)
 
+    def test_integrated_column_is_the_mean_head_productivity(
+        self, tmp_path: Path
+    ) -> None:
+        """A monthly reservoir's integrated value averages the head over
+        [vmin, vmax], not the v_65 point of the ρ_eq column."""
+        case = self._base_case(tmp_path)
+
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_hydro_energy_productivity,
+        )
+
+        rows = convert_hydro_energy_productivity(case, self._make_id_map()).to_pylist()
+
+        integrated = {
+            r["hydro_id"]: r["integrated_equivalent_productivity_mw_per_m3s"]
+            for r in rows
+        }
+        # h(v) = 300 + 0.1·v is linear, so the mean head is h at mid-range.
+        assert integrated[0] == pytest.approx(0.9 * (300.0 + 0.1 * 550.0 - 50.0))
+        assert integrated[1] == pytest.approx(0.85 * (300.0 + 0.1 * 275.0 - 50.0))
+
+    def test_integrated_column_takes_run_of_river_point_head(
+        self, tmp_path: Path
+    ) -> None:
+        """A "D" plant's integrated value is the point head at volume_referencia."""
+        case = self._base_case(tmp_path)
+        case.hidr.cadastro.loc[2, "tipo_regulacao"] = "D"
+        case.hidr.cadastro.loc[2, "volume_referencia"] = 400.0
+
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_hydro_energy_productivity,
+        )
+
+        rows = convert_hydro_energy_productivity(case, self._make_id_map()).to_pylist()
+
+        b_row = next(r for r in rows if r["hydro_id"] == 1)
+        assert b_row["integrated_equivalent_productivity_mw_per_m3s"] == pytest.approx(
+            0.85 * (300.0 + 0.1 * 400.0 - 50.0)
+        )
+
+    def test_integrated_column_follows_cfuga_but_not_volref_saz(
+        self, tmp_path: Path
+    ) -> None:
+        """CFUGA moves the integrated value from its stage on; VOLREF_SAZ moves
+        only the point ρ_eq."""
+        cfuga_rec = _make_cfuga_rec(month=4, year=2025, nivel=60.0)
+        usina_rec = MagicMock()
+        usina_rec.codigo = 1
+        mock_modif = MagicMock()
+        mock_modif.usina.return_value = [usina_rec]
+        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        volref_df = pd.DataFrame(
+            {
+                "codigo_usina": [1] * 12,
+                "nome_usina": ["USINA_A"] * 12,
+                "mes": list(range(1, 13)),
+                "valor": [float(100 * m) for m in range(1, 13)],
+            }
+        )
+        case = self._base_case(
+            tmp_path,
+            modif=mock_modif,
+            volref_volumes=volref_df,
+            ano_inicio=2025,
+            mes_inicio=1,
+            num_anos=1,
+        )
+
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_hydro_energy_productivity,
+        )
+
+        rows = convert_hydro_energy_productivity(case, self._make_id_map()).to_pylist()
+
+        by_stage = {
+            r["stage_id"]: r["integrated_equivalent_productivity_mw_per_m3s"]
+            for r in rows
+            if r["hydro_id"] == 0
+        }
+        assert len(by_stage) == 12
+        base = 0.9 * (355.0 - 50.0)
+        override = 0.9 * (355.0 - 60.0)
+        assert [by_stage[s] for s in range(3)] == pytest.approx([base] * 3)
+        assert [by_stage[s] for s in range(3, 12)] == pytest.approx([override] * 9)
+
     def test_other_override_columns_are_null(self, tmp_path: Path) -> None:
         """reference_outflow_m3s / ρ_esp columns remain NULL.
 

@@ -238,7 +238,7 @@ def convert_hydros(
     (:func:`convert_hydro_group_availability`), never a change to the
     declared envelope itself. The production model is constant
     productivity, with the value emitted separately
-    (:func:`convert_energy_productivity`).
+    (:func:`convert_hydro_energy_productivity`).
 
     **``ACALTEFE`` tracked gap:** a plant declaring an ``AC ALTEFE``
     effective-head override is logged (not consumed — see the
