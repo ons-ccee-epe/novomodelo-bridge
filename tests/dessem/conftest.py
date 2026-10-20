@@ -21,7 +21,10 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     ThermalInfo,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import CutBlockOffsets
-from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceHydro
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
+    SourceGnlThermal,
+    SourceHydro,
+)
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     AffinePieceRecord,
     EntitySlotRecord,
@@ -197,7 +200,7 @@ def synthetic_inputs() -> CaseInputs:
         ),
     )
     thermals = (
-        ThermalInfo(id=100, name="GNL_A", bus_id=0, lead_time_hours=1608.0),
+        ThermalInfo(id=100, name="GNL_A", bus_id=0, lead_time_hours=1512.0),
         ThermalInfo(id=101, name="CONV_A", bus_id=1, lead_time_hours=None),
     )
     buses = (
@@ -239,6 +242,7 @@ def synthetic_source(tmp_path: Path) -> SourceDeck:
             2: SourceHydro(code=102, name="UHE_B"),
             3: SourceHydro(code=103, name="UHE_C"),
         },
+        gnl_thermals=(SourceGnlThermal(code=86, name="GNL_A", lag_months=3),),
     )
 
 

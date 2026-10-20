@@ -137,7 +137,8 @@ def _export_dessem(
 
     DECOMP_DIR is the deck the case was converted from. Its caso.dat names the
     revision, which sets the output file extension (mapcut.rv0, cortdeco.rv0,
-    etc.), and its hidr.dat codes label the hydro plants in the cut files.
+    etc.), its hidr.dat codes label the hydro plants in the cut files, and
+    its dadgnl NL records give each GNL plant's lag in months.
 
     \b
     Warnings logged during export:

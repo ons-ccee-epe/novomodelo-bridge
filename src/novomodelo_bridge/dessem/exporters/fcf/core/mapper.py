@@ -51,10 +51,6 @@ ENTITY_TYPE_HYDRO_INFLOW_LAG = 1
 ENTITY_TYPE_ANTICIPATED_THERMAL = 2
 ENTITY_TYPE_HYDRO_TRANSIT_BUCKET = 3
 
-# Premise P15: Evidenced GNL lead time mapping
-EVIDENCED_GNL_LEAD_TIME_HOURS = 1608.0
-EVIDENCED_GNL_LAG_MESES = 2
-
 
 class MappingError(Exception):
     """Raised when an input violates a mapping rule."""
@@ -299,23 +295,54 @@ def discount_factors(
 
 
 # ---------------------------------------------------------------------------
-# Premise P15: GNL lead time validation
+# Premise P15: GNL lag months
 # ---------------------------------------------------------------------------
 
 
-def assert_gnl_lead_time_is_evidenced(gnl_thermals: Sequence[ThermalInfo]) -> None:
-    """Refuse a GNL lead time the lag-month mapping has no evidence for."""
-    for thermal in gnl_thermals:
-        if thermal.lead_time_hours != EVIDENCED_GNL_LEAD_TIME_HOURS:
+@dataclass(frozen=True)
+class SourceGnlThermal:
+    """A GNL plant as the source deck declares it: `TG` code and name, `NL` lag."""
+
+    code: int
+    name: str
+    lag_months: int | None
+
+
+def gnl_lag_months(
+    gnl_thermals: Sequence[ThermalInfo], source: Sequence[SourceGnlThermal]
+) -> tuple[int, ...]:
+    """Each anticipated thermal's lag in whole months, from the deck's `NL` register.
+
+    *gnl_thermals* ascend by novomodelo id and *source* by deck code; they pair by
+    position because `convert decomp` numbers the GNL plants in ascending code
+    order.
+
+    Raises:
+        MappingError: the plant counts or names differ, or a plant has no `NL` lag.
+    """
+    if len(gnl_thermals) != len(source):
+        raise MappingError(
+            f"the deck declares {len(source)} GNL plants but the case holds "
+            f"{len(gnl_thermals)} anticipated thermals; export from the deck the "
+            "case was converted from"
+        )
+    lags: list[int] = []
+    for thermal, plant in zip(gnl_thermals, source, strict=True):
+        if thermal.name != plant.name:
             raise MappingError(
-                f"thermal {thermal.id} ({thermal.name}) declares lead_time_hours="
-                f"{thermal.lead_time_hours!r}, but the lead-time-to-lag-month "
-                f"mapping is evidenced only at {EVIDENCED_GNL_LEAD_TIME_HOURS} h"
+                f"anticipated thermal {thermal.id} is {thermal.name!r} in the case "
+                f"but GNL plant {plant.code} in the deck is {plant.name!r}; export "
+                "from the deck the case was converted from"
             )
-    _LOG.info(
-        "premise P15 holds: every GNL plant declares lead_time_hours=%s",
-        EVIDENCED_GNL_LEAD_TIME_HOURS,
-    )
+        if plant.lag_months is None:
+            raise MappingError(
+                f"GNL plant {plant.code} ({plant.name}) has no NL record in the "
+                "deck's dadgnl file, so its dispatch-anticipation lag in months "
+                "is unknown"
+            )
+        lags.append(plant.lag_months)
+    _LOG.info("premise P15: GNL lag months %s from the deck's NL records", lags)
+    return tuple(lags)
 
 
 # ---------------------------------------------------------------------------

@@ -17,16 +17,20 @@ directory.
 ## Input
 
 `DECOMP_DIR` is the DECOMP deck the case was converted from with
-`convert decomp`. The export reads three things from it:
+`convert decomp`. The export reads four things from it:
 
 - the revision named in `caso.dat`, which sets the output file suffix;
 - the operated hydro plants (`UH` records with an initial volume);
-- their `hidr.dat` codes, which label the plants in `mapcut`.
+- their `hidr.dat` codes, which label the plants in `mapcut`;
+- each GNL plant's lag in months, from its `NL` record in `dadgnl`, which
+  `mapcut` carries per GNL plant.
 
 The deck must operate exactly the case's hydro plants, under the names the
 case gives them. Otherwise the export fails with a message naming the first
 difference. Novomodelo hydro id `i` is the `i`-th smallest operated plant code,
-the numbering `convert decomp` uses.
+the numbering `convert decomp` uses. Likewise the deck's GNL plants, in
+ascending code order, must match the case's anticipated thermals in id order
+and by name, and each must have an `NL` record.
 
 `CASE_DIR` is a Novomodelo case that novomodelo has solved, so `CASE_DIR/output/policy/`
 holds its policy checkpoint. The checkpoint is read through `novomodelo-python`, so
@@ -94,7 +98,7 @@ and every export copies it into `export_manifest.json`. In brief:
 | P12 | `mapcut` record 9's trailing GNL hours block is written as zeros. |
 | P13 | `cortdeco` holds one extra record duplicating the last cut. |
 | P14 | GNL coefficients are written as zeros. |
-| P15 | GNL lag months are written as 2; any GNL plant whose lead time is not 1608 h is refused. |
+| P15 | GNL lag months are read from the deck's `NL` records; a GNL plant with no `NL` record is refused. |
 
 ## Exit codes
 
@@ -110,9 +114,7 @@ and every export copies it into `export_manifest.json`. In brief:
    stored water but not of GNL commitments.
 2. **No travel time (P3).** A case whose cuts carry water travel-time state
    is refused.
-3. **One GNL lead time (P15).** A case whose GNL plants declare a lead time
-   other than 1608 h is refused rather than mapped by a guessed rule.
-4. **Terminal pool excluded (P7).** DESSEM supplies its own terminal value.
+3. **Terminal pool excluded (P7).** DESSEM supplies its own terminal value.
 
 ## See also
 

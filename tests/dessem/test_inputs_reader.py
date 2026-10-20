@@ -54,7 +54,7 @@ class TestAnticipatedThermals:
 
         assert len(gnl) == 1
         assert gnl[0].name == "GNL_A"
-        assert gnl[0].lead_time_hours == 1608.0
+        assert gnl[0].lead_time_hours == 1512.0
 
     def test_non_gnl_excluded(self, synthetic_inputs: CaseInputs) -> None:
         gnl = anticipated_thermals(synthetic_inputs)

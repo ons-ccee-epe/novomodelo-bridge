@@ -42,13 +42,12 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapcut_writer import (
     write_mapcut,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
-    EVIDENCED_GNL_LAG_MESES,
     MappingError,
-    assert_gnl_lead_time_is_evidenced,
     cut_building_pools,
     discount_factors,
     downstream_positions,
     first_node_per_stage,
+    gnl_lag_months,
     inflow_lag_drop_audit,
     match_source_hydros,
     plant_codes,
@@ -227,6 +226,7 @@ def _assemble_mapcut_header(
     hydro_codes: tuple[int, ...],
     gnl_thermals: tuple,
     gnl_submarket_codes: tuple[int, ...],
+    gnl_lags: tuple[int, ...],
     n_patamares: int,
 ) -> MapcutHeader:
     """Assemble the mapcut header from all sources."""
@@ -243,8 +243,6 @@ def _assemble_mapcut_header(
     numero_cenarios = len(manifest.nodes)
     n_estagios = manifest.num_stages
 
-    # GNL lag months (P15: all 2 for evidenced plants)
-    lag_meses = tuple(EVIDENCED_GNL_LAG_MESES for _ in gnl_thermals)
     patamares_gnl = tuple(n_patamares for _ in gnl_thermals)
 
     # Discount factors
@@ -278,7 +276,7 @@ def _assemble_mapcut_header(
         patamares_por_estagio=tuple(len(s.blocks) for s in inputs.stages),
         registro_ultimo_corte_no=heads,
         codigos_submercados_gnl=gnl_submarket_codes,
-        lag_meses_gnl=lag_meses,
+        lag_meses_gnl=gnl_lags,
         patamares_gnl=patamares_gnl,
         taxa_desconto=factors,
         max_lag=0,
@@ -381,9 +379,8 @@ def run_export(
             # P8: Audit inflow lag drops
             inflow_lag_drop_audit(pools)
 
-            # P15: Validate GNL lead times
             gnl_thermals = anticipated_thermals(inputs)
-            assert_gnl_lead_time_is_evidenced(gnl_thermals)
+            gnl_lags = gnl_lag_months(gnl_thermals, source.gnl_thermals)
 
         current_step = "emit ECO CSVs"
         _step(EXPORT_PHASE_LABELS[4])
@@ -435,6 +432,7 @@ def run_export(
                 hydro_codes,
                 gnl_thermals,
                 gnl_submarket_codes,
+                gnl_lags,
                 n_patamares,
             )
 

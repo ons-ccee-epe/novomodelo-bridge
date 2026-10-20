@@ -5,6 +5,7 @@ import pytest
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     CaseInputs,
     HydroInfo,
+    ThermalInfo,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     DAYS_PER_YEAR,
@@ -12,10 +13,12 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     EXCLUDED_BUS_ID,
     SUBMARKET_COUNT,
     MappingError,
+    SourceGnlThermal,
     SourceHydro,
     discount_factors,
     downstream_positions,
     gnl_block_weights,
+    gnl_lag_months,
     match_source_hydros,
     negate_gnl,
     negate_gnl_array,
@@ -178,6 +181,42 @@ class TestMatchSourceHydros:
         source = _source(0, 1) | {1: SourceHydro(code=101, name="OTHER")}
         with pytest.raises(MappingError, match="'UHE_1' in the case, 'OTHER'"):
             match_source_hydros([_hydro(0, None), _hydro(1, 0)], source)
+
+
+def _gnl(thermal_id: int, name: str) -> ThermalInfo:
+    return ThermalInfo(id=thermal_id, name=name, bus_id=0, lead_time_hours=1512.0)
+
+
+class TestGnlLagMonths:
+    """Premise P15: each GNL plant's lag months come from the deck's NL record."""
+
+    def test_lags_follow_the_deck_nl_records_whatever_the_lead_time(self) -> None:
+        thermals = [_gnl(94, "SANTA CRUZ"), _gnl(95, "PSERGIPE I")]
+        source = [
+            SourceGnlThermal(code=86, name="SANTA CRUZ", lag_months=2),
+            SourceGnlThermal(code=224, name="PSERGIPE I", lag_months=3),
+        ]
+
+        assert gnl_lag_months(thermals, source) == (2, 3)
+
+    def test_no_gnl_plants_gives_no_lags(self) -> None:
+        assert gnl_lag_months([], []) == ()
+
+    def test_plant_count_mismatch_raises(self) -> None:
+        with pytest.raises(
+            MappingError, match="declares 0 GNL plants but the case holds 1"
+        ):
+            gnl_lag_months([_gnl(94, "SANTA CRUZ")], [])
+
+    def test_renamed_plant_raises(self) -> None:
+        source = [SourceGnlThermal(code=86, name="OTHER", lag_months=2)]
+        with pytest.raises(MappingError, match="'SANTA CRUZ' in the case"):
+            gnl_lag_months([_gnl(94, "SANTA CRUZ")], source)
+
+    def test_plant_without_nl_record_raises(self) -> None:
+        source = [SourceGnlThermal(code=86, name="SANTA CRUZ", lag_months=None)]
+        with pytest.raises(MappingError, match="GNL plant 86 .* has no NL record"):
+            gnl_lag_months([_gnl(94, "SANTA CRUZ")], source)
 
 
 class TestStoragePlantIds:

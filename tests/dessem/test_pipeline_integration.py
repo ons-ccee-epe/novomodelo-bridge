@@ -227,6 +227,7 @@ class TestPipelineIntegration:
         mapcut = read_mapcut(output_dir / "mapcut.rv0")
         assert mapcut.codigos_uhes == (101, 102, 103)
         assert mapcut.codigos_uhes_jusante == (0, 1, 1)
+        assert mapcut.lag_meses_gnl == (3,)
 
     def test_plant_records_follow_slot_order_not_id_order(
         self,
