@@ -117,13 +117,13 @@ class TestExportDessemCli:
         ):
             yield synthetic_source.directory
 
-    def test_help_shows_command(self) -> None:
+    def test_help_shows_command(self, dumb_terminal: None) -> None:
         """Test that help shows the dessem command."""
         result = runner.invoke(app, ["export", "--help"])
         assert result.exit_code == 0
         assert "dessem" in result.stdout
 
-    def test_dessem_help(self) -> None:
+    def test_dessem_help(self, dumb_terminal: None) -> None:
         """Test dessem command help."""
         result = runner.invoke(app, ["export", "dessem", "--help"])
         assert result.exit_code == 0
