@@ -1,7 +1,8 @@
 """Tests for the topology/gauge ``AC`` override family.
 
-Covers the two plant-keyed, ``int``-valued mnemonics (``ACNUMJUS`` — the
-water-routing downstream plant — and ``ACNUMPOS`` — the inflow gauge),
+Covers the plant-keyed, ``int``-valued mnemonics (``ACNUMJUS`` — the
+water-routing downstream plant — ``ACNUMPOS`` — the inflow gauge — and
+``ACJUSENA`` — the stored-energy downstream plant),
 flowing through the shared
 :func:`~novomodelo_bridge.decomp.converters.cadastro.overrides._read_keyed_overrides`
 reader (with ``_plant_code_key``), and their effect on the re-sourced
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
-from idecomp.decomp.modelos.dadger import ACNUMJUS, ACNUMPOS
+from idecomp.decomp.modelos.dadger import ACJUSENA, ACNUMJUS, ACNUMPOS
 
 from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -207,6 +208,27 @@ def test_numjus_override_relinks_downstream() -> None:
     base_b_downstream = int(hidr.loc[2, "codigo_usina_jusante"])
     assert all(effective.downstream_plant(2, s) == base_b_downstream for s in range(3))
     assert report.applied["codigo_usina_jusante"] == 1
+
+
+def test_jusena_override_sets_the_energy_link_only() -> None:
+    hidr = _abc_hidr()
+    dadger = _FakeDadger({ACJUSENA: _numjus_override(1, 3)})
+    effective, report = build_effective_cadastro(dadger, hidr, _calendar())
+
+    assert [effective.energy_link(1, s) for s in range(3)] == [3, 3, 3]
+    assert effective.energy_link(2, 0) is None
+    assert effective.downstream_plant(1, 0) == 2
+    assert effective.energy_link_varies(1) is False
+    assert report.applied["jusante_energia"] == 1
+
+
+def test_temporal_jusena_override_varies() -> None:
+    hidr = _abc_hidr()
+    dadger = _FakeDadger({ACJUSENA: _numjus_override(1, 3, mes="AGO", semana=1.0)})
+    effective, _ = build_effective_cadastro(dadger, hidr, _calendar())
+
+    assert [effective.energy_link(1, s) for s in range(3)] == [None, None, 3]
+    assert effective.energy_link_varies(1) is True
 
 
 # ---------------------------------------------------------------------------

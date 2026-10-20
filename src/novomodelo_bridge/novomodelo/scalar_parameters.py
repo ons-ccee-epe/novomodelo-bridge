@@ -11,6 +11,8 @@ for every hydro in the converted case:
 - ``rho_eq_mwh_h{id}`` — integrated equivalent productivity, MWh/hm³
 - ``rho_acum_mwh_h{id}`` — integrated accumulated productivity, MWh/hm³
 - ``earm_max_mwh_h{id}`` — maximum stored energy over the cascade, MWh
+- ``min_storage_h{id}`` / ``max_storage_h{id}`` — the reservoir's storage
+  range, hm³
 
 novomodelo derives the values at setup; the bridge only declares the names. The
 MWh forms make ``@rho_acum_mwh_h{id} × volume[hm³]`` stored energy in MWh with
@@ -46,6 +48,16 @@ def rho_acum_name(hydro_id: int) -> str:
     return f"rho_acum_h{hydro_id}"
 
 
+def min_storage_name(hydro_id: int) -> str:
+    """Canonical ``@name`` for the minimum storage of one hydro, hm³."""
+    return f"min_storage_h{hydro_id}"
+
+
+def max_storage_name(hydro_id: int) -> str:
+    """Canonical ``@name`` for the maximum storage of one hydro, hm³."""
+    return f"max_storage_h{hydro_id}"
+
+
 #: ``(name builder, computed_spec.tag)`` for every per-hydro parameter, in
 #: declaration order.
 _PER_HYDRO_COMPUTED: tuple[tuple[Callable[[int], str], str], ...] = (
@@ -54,6 +66,8 @@ _PER_HYDRO_COMPUTED: tuple[tuple[Callable[[int], str], str], ...] = (
     (rho_eq_mwh_name, "integrated_equivalent_productivity_mwh_per_hm3"),
     (rho_acum_mwh_name, "integrated_accumulated_productivity_mwh_per_hm3"),
     (earm_max_mwh_name, "max_stored_energy_mwh"),
+    (min_storage_name, "min_storage"),
+    (max_storage_name, "max_storage"),
 )
 
 

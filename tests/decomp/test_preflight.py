@@ -247,8 +247,8 @@ class TestAcCoverageRegistry:
     (``NCHAVE``/``TIPERH``/``VERTJU``) the old blanket warning never named.
     """
 
-    def test_coverage_registry_applied_classes_count_is_16(self) -> None:
-        assert len(APPLIED_AC_CLASSES) == 16
+    def test_coverage_registry_applied_classes_count_is_17(self) -> None:
+        assert len(APPLIED_AC_CLASSES) == 17
 
     def test_coverage_registry_uningestable_is_altefe_only(self) -> None:
         assert UNINGESTABLE_AC_CLASSES == frozenset({ACALTEFE})

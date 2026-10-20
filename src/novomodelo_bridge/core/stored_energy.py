@@ -5,10 +5,10 @@ VminOP and RHE bound a REE's useful stored energy in MWh::
     Σ ±@coef * hydro_useful_volume_final(id)  >=  @pct * (Σ ±@emax)
 
 ``@coef`` (MWh/hm³) and ``@emax`` (MWh) are novomodelo ``computed`` parameters for
-a reservoir whose whole cascade counts in its REE. A reservoir whose cascade
-the source model splits between two REEs contributes one share to each, and
-each share names its own ``kind: "expression"`` parameters over the computed
-ones, so the constraint keeps one term per reservoir and REE.
+a reservoir whose whole cascade counts in its REE (:func:`cascade_share`). A
+share the source model values otherwise names its own ``kind: "expression"``
+parameters over the computed ones, so the constraint keeps one term per
+reservoir and REE.
 """
 
 from __future__ import annotations
@@ -52,36 +52,6 @@ def cascade_share(hydro_id: int) -> StoredEnergyShare:
     return StoredEnergyShare(
         hydro_id, rho_acum_mwh_name(hydro_id), earm_max_mwh_name(hydro_id), {}
     )
-
-
-def cut_cascade_share(
-    hydro_id: int, useful_hm3: float, chain: Iterable[int]
-) -> StoredEnergyShare:
-    """The own-REE share of a reservoir whose cascade is cut at a REE boundary.
-
-    *chain* lists the novomodelo ids of the plants from the reservoir down to the
-    cut plant; the share's productivity sums their integrated equivalent
-    productivities, and its maximum is *useful_hm3* valued at that sum.
-    """
-    rho = f"rho_cut_mwh_h{hydro_id}"
-    emax = f"earm_max_cut_mwh_h{hydro_id}"
-    body = " + ".join(f"@{rho_eq_mwh_name(c)}" for c in chain)
-    return StoredEnergyShare(
-        hydro_id, rho, emax, {rho: body, emax: f"{useful_hm3!r} * @{rho}"}
-    )
-
-
-def downstream_share(
-    hydro_id: int, useful_hm3: float, downstream_id: int
-) -> StoredEnergyShare:
-    """The share a cut reservoir's water stores in the REE below the cut.
-
-    The useful volume of *hydro_id* is valued with the integrated accumulated
-    productivity of *downstream_id*, the first real plant below the cut.
-    """
-    rho = rho_acum_mwh_name(downstream_id)
-    emax = f"earm_max_fict_mwh_h{hydro_id}"
-    return StoredEnergyShare(hydro_id, rho, emax, {emax: f"{useful_hm3!r} * @{rho}"})
 
 
 def _signed_sum(terms: Sequence[tuple[float, str]]) -> str:

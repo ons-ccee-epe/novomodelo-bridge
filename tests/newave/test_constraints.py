@@ -422,27 +422,33 @@ class TestBuildScalarParameters:
             "rho_eq_mwh_h0",
             "rho_acum_mwh_h0",
             "earm_max_mwh_h0",
+            "min_storage_h0",
+            "max_storage_h0",
             "rho_eq_h1",
             "rho_acum_h1",
             "rho_eq_mwh_h1",
             "rho_acum_mwh_h1",
             "earm_max_mwh_h1",
+            "min_storage_h1",
+            "max_storage_h1",
         ]
         assert all(e["kind"] == "computed" for e in entries)
-        assert [e["computed_spec"]["tag"] for e in entries[:5]] == [
+        assert [e["computed_spec"]["tag"] for e in entries[:7]] == [
             "equivalent_productivity",
             "accumulated_productivity",
             "integrated_equivalent_productivity_mwh_per_hm3",
             "integrated_accumulated_productivity_mwh_per_hm3",
             "max_stored_energy_mwh",
+            "min_storage",
+            "max_storage",
         ]
-        assert {e["computed_spec"]["hydro_id"] for e in entries[5:]} == {1}
+        assert {e["computed_spec"]["hydro_id"] for e in entries[7:]} == {1}
 
     def test_per_stage_entries_follow_the_computed_family(self) -> None:
         d = build_scalar_parameters([0], per_stage={"pct_vminop_ree1": [0.2, 0.25]})
         entries = d["scalar_parameters"]
         assert entries[-1] == {
-            "id": 5,
+            "id": 7,
             "name": "pct_vminop_ree1",
             "kind": "per_stage",
             "values": [[0, 0.2], [1, 0.25]],
@@ -452,13 +458,13 @@ class TestBuildScalarParameters:
         d = build_scalar_parameters(
             [0],
             per_stage={"p": [1.0]},
-            expressions={"rho_cut_mwh_h0": "@rho_eq_mwh_h0 + @p"},
+            expressions={"rho_chain_mwh_h0": "@rho_eq_mwh_h0 + @p"},
         )
         entries = d["scalar_parameters"]
         assert [e["kind"] for e in entries[-2:]] == ["per_stage", "expression"]
         assert entries[-1] == {
-            "id": 6,
-            "name": "rho_cut_mwh_h0",
+            "id": 8,
+            "name": "rho_chain_mwh_h0",
             "kind": "expression",
             "expression": "@rho_eq_mwh_h0 + @p",
         }

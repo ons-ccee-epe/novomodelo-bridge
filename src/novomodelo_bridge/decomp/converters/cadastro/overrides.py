@@ -10,6 +10,7 @@ from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
     ACCOTVOL,
     ACDESVIO,
+    ACJUSENA,
     ACJUSMED,
     ACNUMCON,
     ACNUMJUS,
@@ -97,6 +98,7 @@ APPLIED_AC_CLASSES: frozenset[type] = frozenset(
         ACCOTVOL,
         ACNUMJUS,
         ACNUMPOS,
+        ACJUSENA,
     }
 )
 

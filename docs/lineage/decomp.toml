@@ -759,6 +759,8 @@ reads = [
   { file = "dadger", register = "HE" },
   { file = "dadger", register = "CM" },
   { file = "dadger", register = "UH" },
+  { file = "dadger", register = "AC" },
+  { file = "dadger", register = "EZ" },
   { file = "dadger", register = "FU" },
   { file = "dadger", register = "FT" },
   { file = "dadger", register = "FI" },
@@ -766,31 +768,31 @@ reads = [
   { file = "dadger", register = "CV" },
   { file = "hidr" },
 ]
-summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_mwh_h{id}`, `@rho_acum_mwh_h{id}` e `@earm_max_mwh_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_mwh` (produtibilidade acumulada integrada no volume, em MWh/hm³) e o `earm_max_mwh` (energia útil máxima, em MWh). Declara também, por restrição RHE com `tipo_limite` = 2, a fração `pct_rhe{código}` por estágio; para cada reservatório cuja cascata é cortada entre dois REEs, os parâmetros de expressão da sua parcela de energia armazenada; e, para cada termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição (ou que entra nela depois do primeiro estágio), o coeficiente por estágio `coef_<família><código>_t<termo>`."
+summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_mwh_h{id}`, `@rho_acum_mwh_h{id}`, `@earm_max_mwh_h{id}`, `@min_storage_h{id}` e `@max_storage_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_mwh` (produtibilidade acumulada integrada no volume, em MWh/hm³) e o `earm_max_mwh` (energia útil máxima, em MWh) quando a cadeia energética do reservatório é a sua rota hídrica. Declara também, por restrição RHE com `tipo_limite` = 2, a fração `pct_rhe{código}` por estágio; para cada reservatório cuja cadeia energética difere da rota hídrica do `hydros.json` (`AC JUSENA`) ou é cortada por um registro `EZ`, os parâmetros de expressão da sua parcela de energia armazenada; para cada usina fora da configuração nessa cadeia, a sua produtibilidade por estágio `rho_eq_mwh_plant{código}`; e, para cada termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição (ou que entra nela depois do primeiro estágio), o coeficiente por estágio `coef_<família><código>_t<termo>`."
 
   [[output.field]]
   path = "scalar_parameters[].id"
   from = []
   status = "derived"
-  how = "Sequencial 0-based: cinco por usina, em ordem crescente de id hidráulico, seguidos dos coeficientes por estágio (ordem `RE` → `HQ`/`HV`), das frações `pct_rhe{código}` (ordem dos registros `HE`) e dos parâmetros de expressão das cascatas acopladas."
+  how = "Sequencial 0-based: sete por usina, em ordem crescente de id hidráulico, seguidos dos coeficientes por estágio (ordem `RE` → `HQ`/`HV`), das frações `pct_rhe{código}` e das produtibilidades `rho_eq_mwh_plant{código}` (ordem dos registros `HE`) e dos parâmetros de expressão das parcelas de energia armazenada."
 
   [[output.field]]
   path = "scalar_parameters[].name"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}` ou `earm_max_mwh_h{id}`, com o id 0-based da usina operada; `pct_rhe{código}` com o código do `HE`; `coef_re{código}_t{k}`, `coef_hq{código}_t{k}` ou `coef_hv{código}_t{k}` com o código da restrição e o índice 0-based `k` do termo; numa cascata acoplada, `rho_cut_mwh_h{id}`, `earm_max_cut_mwh_h{id}` e `earm_max_fict_mwh_h{id}` com o id do reservatório."
+  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}`, `earm_max_mwh_h{id}`, `min_storage_h{id}` ou `max_storage_h{id}`, com o id 0-based da usina operada; `pct_rhe{código}` com o código do `HE`; `coef_re{código}_t{k}`, `coef_hq{código}_t{k}` ou `coef_hv{código}_t{k}` com o código da restrição e o índice 0-based `k` do termo; `rho_eq_mwh_plant{código}` com o código `hidr` de uma usina fora da configuração; nas parcelas de energia armazenada, `rho_chain_mwh_h{id}` com o id da primeira usina da cadeia e `earm_max_chain_mwh_h{id}` e `earm_max_ez_mwh_h{id}` com o id do reservatório."
 
   [[output.field]]
   path = "scalar_parameters[].kind"
   from = [ { file = "dadger", register = "HE", item = "tipo_limite" } ]
   status = "derived"
-  how = "`computed` para os cinco parâmetros de usina; `per_stage` para as frações `pct_rhe{código}` e os coeficientes `coef_…`; `expression` para as parcelas das cascatas acopladas."
+  how = "`computed` para os sete parâmetros de usina; `per_stage` para as frações `pct_rhe{código}`, os coeficientes `coef_…` e as produtibilidades `rho_eq_mwh_plant{código}`; `expression` para as parcelas de energia armazenada."
 
   [[output.field]]
   path = "scalar_parameters[].computed_spec.tag"
   from = []
   status = "constant"
-  how = "`equivalent_productivity` (ρ_eq pontual), `accumulated_productivity` (ρ_acum pontual), `integrated_equivalent_productivity_mwh_per_hm3` e `integrated_accumulated_productivity_mwh_per_hm3` (ρ integrado no volume útil em MWh/hm³) e `max_stored_energy_mwh` (energia armazenada útil máxima em MWh)."
+  how = "`equivalent_productivity` (ρ_eq pontual), `accumulated_productivity` (ρ_acum pontual), `integrated_equivalent_productivity_mwh_per_hm3` e `integrated_accumulated_productivity_mwh_per_hm3` (ρ integrado no volume útil em MWh/hm³) `max_stored_energy_mwh` (energia armazenada útil máxima em MWh) e `min_storage`/`max_storage` (faixa de armazenamento da usina em hm³)."
 
   [[output.field]]
   path = "scalar_parameters[].computed_spec.hydro_id"
@@ -813,24 +815,28 @@ summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novo
     { file = "dadger", register = "CQ", item = "estagio" },
     { file = "dadger", register = "CV", item = "coeficiente" },
     { file = "dadger", register = "CV", item = "estagio" },
+    { file = "dadger", register = "AC", item = "JUSENA" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
   ]
-  when = "somente nas entradas `per_stage` (`pct_rhe{código}` e `coef_…`)"
+  when = "somente nas entradas `per_stage` (`pct_rhe{código}`, `coef_…` e `rho_eq_mwh_plant{código}`)"
   status = "derived"
-  how = "Pares [estágio, valor] para todos os estágios. `pct_rhe{código}`: o `limite` (%) do `HE` dividido por 100 nos estágios do registro, 0 nos demais. `coef_…`: o coeficiente do termo declarado no estágio mais recente até aquele estágio, 0 antes da primeira declaração do termo, como o modelo de origem lê."
+  how = "Pares [estágio, valor] para todos os estágios. `pct_rhe{código}`: o `limite` (%) do `HE` dividido por 100 nos estágios do registro, 0 nos demais. `coef_…`: o coeficiente do termo declarado no estágio mais recente até aquele estágio, 0 antes da primeira declaração do termo, como o modelo de origem lê. `rho_eq_mwh_plant{código}`: a produtibilidade da usina fora da configuração que um `AC JUSENA` põe na cadeia energética (como COMP PAF-MOX), calculada como a de uma usina operada, em MWh/hm³ (× 10⁶/3600)."
 
   [[output.field]]
   path = "scalar_parameters[].expression"
   from = [
     { file = "dadger", register = "UH", item = "codigo_ree" },
-    { file = "hidr", item = "posto" },
-    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "dadger", register = "AC", item = "JUSENA" },
+    { file = "dadger", register = "EZ", item = "codigo_usina" },
+    { file = "dadger", register = "EZ", item = "volume" },
     { file = "hidr", item = "codigo_usina_jusante" },
-    { file = "hidr", item = "volume_minimo" },
-    { file = "hidr", item = "volume_maximo" },
+    { file = "dadger", register = "AC", item = "NUMJUS" },
   ]
-  when = "somente nas entradas `expression`, de reservatórios cuja cascata é cortada entre dois REEs"
+  when = "somente nas entradas `expression`, de reservatórios cuja cadeia energética difere da rota hídrica ou é cortada por um registro `EZ`"
   status = "derived"
-  how = "Aritmética sobre os parâmetros calculados. `rho_cut_mwh_h{id}`: soma dos `@rho_eq_mwh_h<c>` das usinas `c` da cascata, do reservatório até a usina de acoplamento. `earm_max_cut_mwh_h{id}`: `<volume útil> * @rho_cut_mwh_h{id}`. `earm_max_fict_mwh_h{id}`: `<volume útil> * @rho_acum_mwh_h<jusante>`, com a primeira usina operada na cascata da gêmea fictícia. O volume útil é o da envoltória de armazenamento da própria usina."
+  how = "Aritmética sobre os parâmetros calculados. A cadeia energética de uma usina segue o `AC JUSENA` onde declarado e, nas demais, a jusante operada (`codigo_usina_jusante` com `AC NUMJUS`). Um reservatório com registro `EZ` tem a cadeia cortada onde ela sai do seu REE; sem registro `EZ` próprio, a cadeia vai até o fim, qualquer que seja o registro das demais usinas. `rho_chain_mwh_h{id}`: soma dos `@rho_eq_mwh_h<c>` das usinas da cadeia (e de `@rho_eq_mwh_plant<código>` para usina fora da configuração), com o trecho final que coincide com a rota hídrica do `hydros.json` lido como `@rho_acum_mwh_h<c>`; uma cadeia de uma só usina usa o `@rho_eq_mwh_h<id>` direto. `earm_max_chain_mwh_h{id}`: `(@max_storage_h{id} - @min_storage_h{id}) * <produtibilidade>`. `earm_max_ez_mwh_h{id}`: `<EZ / 100> * (@max_storage_h{id} - @min_storage_h{id}) * <produtibilidade da cadeia da primeira usina abaixo do corte>`, com o fator omitido quando o `EZ` é 100."
 
 # ---------------------------------------------------------------------------
 # constraints/line_bounds.parquet
@@ -2539,6 +2545,7 @@ reads = [
   { file = "dadger", register = "LV" },
   { file = "dadger", register = "CV" },
   { file = "dadger", register = "HE" },
+  { file = "dadger", register = "EZ" },
   { file = "dadger", register = "CM" },
   { file = "dadger", register = "CD" },
   { file = "dadger", register = "IA" },
@@ -2616,10 +2623,11 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "CM", item = "codigo_ree" },
     { file = "dadger", register = "CM", item = "coeficiente" },
     { file = "dadger", register = "UH", item = "codigo_ree" },
-    { file = "hidr", item = "posto" },
-    { file = "hidr", item = "produtibilidade_especifica" },
     { file = "hidr", item = "codigo_usina_jusante" },
     { file = "dadger", register = "AC", item = "NUMJUS" },
+    { file = "dadger", register = "AC", item = "JUSENA" },
+    { file = "dadger", register = "EZ", item = "codigo_usina" },
+    { file = "dadger", register = "EZ", item = "volume" },
     { file = "dadger", register = "IA", item = "nome_submercado_de" },
     { file = "dadger", register = "IA", item = "nome_submercado_para" },
     { file = "dadger", register = "UE", item = "codigo_usina" },
@@ -2629,7 +2637,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
     { file = "renovaveis", item = "PEE-CAD · codigo_pee" },
   ]
-  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)` (um `FU` com `frequencia` numa restrição de vários termos descarta a restrição com `decomp-re-frequency-split-deferred`), `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`. Cada linha `FU`/`FT`/`FI`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`) em `@rho_acum_mwh_h<id> * hydro_useful_volume_final(id)` (energia armazenada útil em MWh, a base do `%EAMAX`) sobre os reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, com o sinal do `CM`. Acoplamento entre REEs (a primeira usina da cascata cuja jusante operada está em outro REE e que tem gêmea fictícia no `hidr` — usina fora da configuração, `produtibilidade_especifica` 0 e mesmo `posto`, como TRES MARIAS → SOBRADINHO): no REE da usina entra o termo `@rho_cut_mwh_h<id> * hydro_useful_volume_final(<id>)`, cuja energia máxima é `@earm_max_cut_mwh_h<id>`; se o reservatório tem gêmea fictícia, o REE da primeira usina operada na cascata da gêmea recebe `@rho_acum_mwh_h<jusante> * hydro_useful_volume_final(<id>)`, com energia máxima `@earm_max_fict_mwh_h<id>` (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`); uma travessia de REE sem gêmea (como para ITAIPU) não corta a cascata. Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `disp_usih`) são dobrados no limite."
+  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)` (um `FU` com `frequencia` numa restrição de vários termos descarta a restrição com `decomp-re-frequency-split-deferred`), `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`. Cada linha `FU`/`FT`/`FI`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`), com o sinal do `CM`, na energia armazenada útil em MWh (a base do `%EAMAX`) dos reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, cada um valorado pela produtibilidade da sua cadeia energética, como o modelo de origem calcula: a cadeia segue o `AC JUSENA` onde declarado e, nas demais usinas, a jusante operada; uma usina fora da configuração nomeada pelo `AC JUSENA` (como COMP PAF-MOX) entra com a sua própria produtibilidade. Quando a cadeia é a rota hídrica do `hydros.json`, o termo é `@rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>)`; senão, `@rho_chain_mwh_h<id> * hydro_useful_volume_final(<id>)`. Acoplamento entre REEs: um reservatório com registro `EZ` próprio tem a cadeia cortada onde a jusante operada está em outro REE (como TRES MARIAS → SOBRADINHO); o REE da usina conta só o trecho até o corte, e o REE da primeira usina abaixo do corte recebe o volume do reservatório valorado pela cadeia dessa usina, com energia máxima de `EZ`% do volume útil (`@earm_max_ez_mwh_h<id>`). Sem `EZ` próprio, a cadeia inteira conta no REE do reservatório. O limite `min(V, EZ · Vu)` da parcela de jusante não é representável: o termo conta o volume inteiro, e o aviso `decomp-rhe-ez-cap-unmodeled` nomeia os estágios em que isso pode afrouxar o piso (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`). Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `disp_usih`) são dobrados no limite."
 
   [[output.field]]
   path = "constraints[].slack.enabled"
@@ -2879,12 +2887,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
 
   [[source.item]]
   register = "AC"
-  item = "JUSENA"
-  status = "deferred"
-  note = "Alteração do índice de aproveitamento de jusante para o cálculo de energia armazenada e afluente. Lido pelo `check decomp`, sem consumidor: o Novomodelo não agrega energia por REE."
-
-  [[source.item]]
-  register = "AC"
   item = "NCHAVE"
   status = "deferred"
   note = "Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`."
@@ -3003,11 +3005,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "ES"
   status = "unread"
   note = "ENA das semanas anteriores ao estudo, por REE. Não lido, pelo mesmo motivo de `EA`."
-
-  [[source.item]]
-  register = "EZ"
-  status = "unread"
-  note = "Percentual máximo do volume útil para acoplamento com o NEWAVE. O `check decomp` tenta inventariá-lo, mas o leitor idecomp não expõe acessor `ez`, então o registro nunca é lido."
 
   [[source.item]]
   register = "FP"
