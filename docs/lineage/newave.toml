@@ -1061,7 +1061,7 @@ summary = "Declara, para toda usina hidráulica ativa, os parâmetros calculados
   path = "scalar_parameters[].name"
   from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}` e `earm_max_mwh_h{id}` com o id Novomodelo da usina, `pct_vminop_ree{código}` com o código do REE e, numa cascata acoplada, `rho_cut_mwh_h{id}`, `earm_max_cut_mwh_h{id}` e `earm_max_fict_mwh_h{id}` com o id do reservatório; são os tokens `@name` usados em `constraints/generic_constraints.json`."
+  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}` e `earm_max_mwh_h{id}` com o id Novomodelo da usina e `pct_vminop_ree{código}` com o código do REE; são os tokens `@name` usados em `constraints/generic_constraints.json`."
 
   [[output.field]]
   path = "scalar_parameters[].kind"
@@ -1069,7 +1069,7 @@ summary = "Declara, para toda usina hidráulica ativa, os parâmetros calculados
     { file = "curva", item = "curva_seguranca · codigo_ree" },
     { file = "dger", item = "curva_aversao" },
   ]
-  how = "`computed` para os cinco parâmetros de usina; `per_stage` para as frações da curva de segurança (`curva.dat` presente, `curva_aversao` ≠ 0); `expression` para as parcelas das cascatas acopladas."
+  how = "`computed` para os cinco parâmetros de usina; `per_stage` para as frações da curva de segurança (`curva.dat` presente, `curva_aversao` ≠ 0)."
 
   [[output.field]]
   path = "scalar_parameters[].computed_spec.tag"
@@ -1094,22 +1094,6 @@ summary = "Declara, para toda usina hidráulica ativa, os parâmetros calculados
   when = "somente nas entradas `per_stage` (`pct_vminop_ree{código}`)"
   how = "Pares [estágio, valor] para todos os estágios. `pct_vminop_ree{código}`: `valor` (%) do REE dividido por 100; meses do estudo sem registro repetem o mesmo mês-calendário; no pós-estudo a curva é sazonalizada ou congelada no último valor do estudo, conforme o terceiro campo de penalização de `curva.dat`; 0 nos estágios sem curva."
 
-  [[output.field]]
-  path = "scalar_parameters[].expression"
-  from = [
-    { file = "confhd", item = "usinas · ree" },
-    { file = "hidr", item = "posto" },
-    { file = "hidr", item = "codigo_usina_jusante" },
-    { file = "hidr", item = "volume_minimo" },
-    { file = "hidr", item = "volume_maximo" },
-  ]
-  when = "somente nas entradas `expression`, de reservatórios cuja cascata é cortada entre dois REEs"
-  status = "derived"
-  how = "Aritmética sobre os parâmetros calculados. `rho_cut_mwh_h{id}`: soma dos `@rho_eq_mwh_h<c>` das usinas `c` da cascata, do reservatório até a usina de acoplamento. `earm_max_cut_mwh_h{id}`: `<volume útil> * @rho_cut_mwh_h{id}`. `earm_max_fict_mwh_h{id}`: `<volume útil> * @rho_acum_mwh_h<jusante>`, com a primeira usina real na cascata da fictícia. O volume útil é o da própria usina, após VOLMAX/VOLMIN de `modif.dat`."
-
-# =============================================================================
-# constraints/line_bounds.parquet
-# =============================================================================
 [[output]]
 path = "constraints/line_bounds.parquet"
 kind = "parquet"
@@ -2750,7 +2734,7 @@ summary = "Restrições genéricas de três famílias concatenadas nesta ordem: 
     { file = "sistema", item = "limites_intercambio · submercado_de" },
     { file = "sistema", item = "limites_intercambio · submercado_para" },
   ]
-  how = "Curva de segurança: `Σ @rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>) >= @pct_vminop_ree<código> * (Σ @earm_max_mwh_h<id>)` sobre as usinas do REE (`ree` de `confhd.dat`) que são reservatório de regularização mensal (`tipo_regulacao` M) com volume útil positivo (após VOLMAX/VOLMIN de `modif.dat`) e produtibilidade acumulada positiva — energia armazenada útil em MWh de pelo menos a fração da curva da energia útil máxima. Acoplamento entre REEs (usina com `codigo_usina_jusante` = 0 e fictícia de mesmo `posto` em outro REE, como TRES MARIAS → FICT.TRES MA): no REE da usina entra o termo `@rho_cut_mwh_h<id> * hydro_useful_volume_final(<id>)`, cuja energia máxima é `@earm_max_cut_mwh_h<id>`; o REE da fictícia recebe `@rho_acum_mwh_h<jusante> * hydro_useful_volume_final(<id>)`, com a primeira usina real na cascata da fictícia, e energia máxima `@earm_max_fict_mwh_h<id>` (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`); o limite usa o volume útil da própria usina (a faixa de volume da fictícia, como o `VOLMAX %` de `modif.dat`, não entra). Restrição elétrica: termos `ger_usih(cod)` da fórmula viram `hydro_generation(id)` e `ener_interc(A, B)` viram `line_direct(id)` ou `line_reverse(id)` conforme A < B, com o coeficiente e o sinal preservados; termos com usina fora do caso ou par sem linha em `sistema.dat` são descartados. Restrição só em `re.dat`: soma de `hydro_generation` das usinas do conjunto. Agrupamento: soma ponderada por `coeficiente` de `line_direct`/`line_reverse` do par de submercados."
+  how = "Curva de segurança: `Σ @rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>) >= @pct_vminop_ree<código> * (Σ @earm_max_mwh_h<id>)` sobre as usinas do REE (`ree` de `confhd.dat`) que são reservatório de regularização mensal (`tipo_regulacao` M) com volume útil positivo (após VOLMAX/VOLMIN de `modif.dat`) e produtibilidade acumulada positiva — energia armazenada útil em MWh de pelo menos a fração da curva da energia útil máxima. Acoplamento entre REEs (usina com `codigo_usina_jusante` = 0 e fictícia de mesmo `posto` em outro REE, como TRES MARIAS → FICT.TRES MA → SOBRADINHO): a cascata inteira conta no REE da usina, como na energia armazenada do NEWAVE (`pmo.dat`, energia armazenável máxima por REE), e nada no REE da fictícia. Restrição elétrica: termos `ger_usih(cod)` da fórmula viram `hydro_generation(id)` e `ener_interc(A, B)` viram `line_direct(id)` ou `line_reverse(id)` conforme A < B, com o coeficiente e o sinal preservados; termos com usina fora do caso ou par sem linha em `sistema.dat` são descartados. Restrição só em `re.dat`: soma de `hydro_generation` das usinas do conjunto. Agrupamento: soma ponderada por `coeficiente` de `line_direct`/`line_reverse` do par de submercados."
 
   [[output.field]]
   path = "constraints[].slack.enabled"

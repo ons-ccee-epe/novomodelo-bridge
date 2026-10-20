@@ -1675,14 +1675,11 @@ class TestConstraintResultTypes:
         from novomodelo_bridge.newave.converters.constraints import VminopResult
 
         bounds = pa.table({"constraint_id": [0]})
-        r = VminopResult(
-            {"constraints": [1, 2]}, bounds, [3, 4], {"p": [1.0]}, {"e": "@p"}
-        )
+        r = VminopResult({"constraints": [1, 2]}, bounds, [3, 4], {"p": [1.0]})
         assert r.constraints_dict == {"constraints": [1, 2]}
         assert r.bounds is bounds
         assert r.referenced_hydro_ids == [3, 4]
         assert r.per_stage_parameters == {"p": [1.0]}
-        assert r.expression_parameters == {"e": "@p"}
         assert r[2] == [3, 4]
 
     def test_generic_constraint_result_named_and_tuple_access(self) -> None:
@@ -1913,9 +1910,8 @@ def _make_coupled_vminop_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
 
 class TestVminopReeCoupling:
     """A reservoir cascade the source model cuts between two REEs (e.g. TRES
-    MARIAS -> FICT.TRES MA -> SOBRADINHO) is split: its own REE weights it by the
-    equivalent productivities down to the cut, the downstream REE by the
-    accumulated productivity of the first real plant below the cut."""
+    MARIAS -> FICT.TRES MA -> SOBRADINHO) counts whole in the reservoir's own
+    REE, as the source model's stored energy does."""
 
     def _convert(self, tmp_path: Path):
         case, id_map = _make_coupled_vminop_case(tmp_path)
@@ -1923,23 +1919,27 @@ class TestVminopReeCoupling:
         assert result is not None
         return {c["name"]: c for c in result.constraints_dict["constraints"]}, result
 
-    def test_own_ree_uses_equivalent_productivities_down_to_the_cut(
+    def test_own_ree_counts_the_whole_cascade_below_the_cut(
         self, tmp_path: Path
     ) -> None:
         by_name, _ = self._convert(tmp_path)
 
+        assert by_name["VminOP_SUDESTE"]["expression"] == (
+            "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+            " + @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
+            " >= @pct_vminop_ree1 * (@earm_max_mwh_h0 + @earm_max_mwh_h1)"
+        )
+
+    def test_downstream_ree_counts_only_its_own_reservoirs(
+        self, tmp_path: Path
+    ) -> None:
         by_name, result = self._convert(tmp_path)
 
-        assert by_name["VminOP_SUDESTE"]["expression"] == (
-            "@rho_cut_mwh_h0 * hydro_useful_volume_final(0)"
-            " + @rho_cut_mwh_h1 * hydro_useful_volume_final(1)"
-            " >= @pct_vminop_ree1 * (@earm_max_cut_mwh_h0 + @earm_max_cut_mwh_h1)"
+        assert by_name["VminOP_NORDESTE"]["expression"] == (
+            "@rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
+            " >= @pct_vminop_ree2 * @earm_max_mwh_h2"
         )
-        params = result.expression_parameters
-        assert params["rho_cut_mwh_h0"] == "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"
-        assert params["rho_cut_mwh_h1"] == "@rho_eq_mwh_h1"
-        assert params["earm_max_cut_mwh_h0"] == "900.0 * @rho_cut_mwh_h0"
-        assert params["earm_max_cut_mwh_h1"] == "1800.0 * @rho_cut_mwh_h1"
+        assert result.referenced_hydro_ids == [0, 1, 2]
 
     def test_only_the_curve_fraction_is_a_per_stage_parameter(
         self, tmp_path: Path
@@ -1950,33 +1950,6 @@ class TestVminopReeCoupling:
             "pct_vminop_ree1",
             "pct_vminop_ree2",
         }
-
-    def test_downstream_ree_counts_the_coupled_volume_below_the_cut(
-        self, tmp_path: Path
-    ) -> None:
-        by_name, result = self._convert(tmp_path)
-
-        assert by_name["VminOP_NORDESTE"]["expression"] == (
-            "@rho_acum_mwh_h2 * hydro_useful_volume_final(0)"
-            " + @rho_acum_mwh_h2 * hydro_useful_volume_final(1)"
-            " + @rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
-            " >= @pct_vminop_ree2 * (@earm_max_fict_mwh_h0 + @earm_max_fict_mwh_h1"
-            " + @earm_max_mwh_h2)"
-        )
-        params = result.expression_parameters
-        assert params["earm_max_fict_mwh_h0"] == "900.0 * @rho_acum_mwh_h2"
-        assert params["earm_max_fict_mwh_h1"] == "1800.0 * @rho_acum_mwh_h2"
-        assert result.referenced_hydro_ids == [0, 1, 2]
-
-    def test_coupling_is_reported(self, tmp_path: Path) -> None:
-        with dx.collect() as collected:
-            self._convert(tmp_path)
-
-        [diag] = [d for d in collected if d.code == "vminop-ree-hydraulic-coupling"]
-        assert diag.severity is Severity.INFO
-        assert diag.table is not None
-        assert diag.table.rows == [[1, 1, 2, 3, 2, 5], [2, 1, 2, 4, 2, 5]]
-        _assert_no_repo_internal_leaks(collected)
 
 
 class TestConstraintsNoLongerBridgesLegacyWarning:
