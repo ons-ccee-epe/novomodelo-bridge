@@ -14,12 +14,12 @@ dependencies = [
     # 1.16.1: first to read modif.dat VAZMINT PRE/POS markers (1.16.0: modif.dat
     # POTEFE/VOLCOTA/COTAREA and vazoes.dat at 600 postos).
     "inewave>=1.16.2",
-    "pyarrow>=25.0.1",
+    "pyarrow>=26.0.0",
     "pandas>=3.0.6",
     "plotly>=7.1.0",
-    "polars>=1.44.2",
+    "polars>=2.0.0",
     "rich>=15.0.0",
-    "typer>=0.27.2",
+    "typer>=0.27.3",
     # REQUIRED runtime dep, not an optional extra: `convert decomp` imports the
     # boundary FCF by default and `convert --validate` / `compare` load novomodelo
     # output, so `import novomodelo` must work out of the box. Pinned exactly to
@@ -30,7 +30,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "ty>=0.0.84",
+    "ty>=0.0.90",
     "pytest-cov",
     "ruff",
     "jsonschema",

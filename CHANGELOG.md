@@ -61,6 +61,9 @@ boundary FCF an earlier bridge imported must be converted again.
 
 - **`novomodelo-python` is pinned to 0.19.0**, and `MIN_NOVOMODELO_VERSION`
   moves with it.
+- **The bridge requires polars 2, pyarrow 26 and typer 0.27.3 or newer**, the
+  releases it is tested with, so installing it into an existing environment
+  upgrades them.
 - **Both tracks simulate with the cuts active when training ended.**
   `config.json` now sets `simulation.cut_set` to `active` rather than leaving
   it to novomodelo's default, `all`, which also loads the cuts the selection
