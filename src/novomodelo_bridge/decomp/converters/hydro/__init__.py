@@ -21,6 +21,9 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
     _ITAIPU_CODE as _ITAIPU_CODE,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
+    ITAIPU_GROUP_BY_FREQUENCY_HZ as ITAIPU_GROUP_BY_FREQUENCY_HZ,
+)
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
     _build_split_unit_groups as _build_split_unit_groups,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
@@ -31,6 +34,9 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
     convert_itaipu_frequency_min_generation as convert_itaipu_frequency_min_generation,
+)
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
+    split_plant_group_id as split_plant_group_id,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
     _downstream_operated as _downstream_operated,

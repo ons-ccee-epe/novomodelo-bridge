@@ -2078,6 +2078,57 @@ class TestMiniDeckDiversionChannels:
         assert unlimited.table.rows == [[314, "PIMENTAL", 288, "BELO MONTE", "9999999"]]
 
 
+class TestMiniDeckItaipuFrequencyBounds:
+    """The mini deck's 50/60 Hz ``RE`` records on Itaipu bound its two unit
+    groups; the plant row carries no generation bound, so novomodelo's plant cap
+    never limits the sum of both halves to one half's limit."""
+
+    def test_frequency_records_land_on_the_unit_groups(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        import json
+
+        import pyarrow.parquet as pq
+
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        out = tmp_path / "out"
+        convert_decomp_case(decomp_mini_deck, out)
+        (itaipu,) = [
+            h["id"]
+            for h in json.loads(
+                (out / "system" / "hydros.json").read_text(encoding="utf-8")
+            )["hydros"]
+            if h["name"] == "ITAIPU"
+        ]
+        plant = [
+            row
+            for row in pq.read_table(
+                out / "constraints" / "hydro_bounds.parquet"
+            ).to_pylist()
+            if row["hydro_id"] == itaipu
+        ]
+        groups = [
+            row
+            for row in pq.read_table(
+                out / "constraints" / "hydro_unit_group_bounds.parquet"
+            ).to_pylist()
+            if row["hydro_id"] == itaipu and row["stage_id"] == 0
+        ]
+
+        assert plant
+        assert all(
+            row["min_generation_mw"] is None and row["max_generation_mw"] is None
+            for row in plant
+        )
+        by_group_block = {
+            (row["hydro_unit_group_id"], row["block_id"]): row for row in groups
+        }
+        assert by_group_block[(0, 2)]["max_generation_mw"] == 6310.5
+        assert by_group_block[(1, 0)]["min_generation_mw"] == 2000.0
+        assert by_group_block[(1, 0)]["max_generation_mw"] == 7000.0
+
+
 def _fc_line(tipo: str, caminho: str) -> str:
     """One fixed-width ``FC`` register line: identifier at columns 0:4,
     ``tipo`` mnemonic at 4:10, ``caminho`` from column 14 -- matching

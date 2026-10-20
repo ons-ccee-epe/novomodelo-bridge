@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
+from novomodelo_bridge.decomp.converters.hydro import split_plant_group_id
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -206,33 +207,125 @@ def _re_generation_contributions(
     contributions = _per_block_contributions(
         record, "hydro", hydro_id, "generation", f"RE_{record.constraint_id}", calendar
     )
-
     clamped_contributions, clamp_ceilings = _clamp_upper_to_capacity(contributions, cap)
-
-    if clamp_ceilings:
-        emit(
-            Diagnostic(
-                code="decomp-re-generation-clamped",
-                severity=Severity.WARNING,
-                category="Special constraints",
-                title="RE generation ceiling clamped to declared capacity",
-                summary=(
-                    f"Hydro {hydro_id} (source code {code}) carries an RE "
-                    f"generation ceiling (constraint {record.constraint_id}) "
-                    f"of {max(clamp_ceilings)} MW across "
-                    f"{len(clamp_ceilings)} stage/block cell(s), above its "
-                    f"declared max_generation_mw of {cap} MW; the emitted "
-                    "upper bound is clamped down to the declared capacity."
-                ),
-                remediation=(
-                    "The RE ceiling is looser than the plant's declared "
-                    "capacity, so the clamp is LP-neutral. Reconcile the "
-                    "two sources (e.g. nameplate vs. head-derated capacity) "
-                    "if this mismatch is unexpected."
-                ),
-            )
-        )
+    _emit_re_generation_clamped(
+        f"Hydro {hydro_id}", code, [record.constraint_id], clamp_ceilings, cap
+    )
     return clamped_contributions
+
+
+def _emit_re_generation_clamped(
+    subject: str,
+    code: int,
+    constraint_ids: Sequence[int],
+    ceilings: list[float],
+    cap: float,
+) -> None:
+    """Report RE generation ceilings clamped to *subject*'s declared capacity;
+    a no-op when *ceilings* is empty."""
+    if not ceilings:
+        return
+    constraints = (
+        f"constraint {constraint_ids[0]}"
+        if len(constraint_ids) == 1
+        else f"constraints {', '.join(str(c) for c in constraint_ids)}"
+    )
+    emit(
+        Diagnostic(
+            code="decomp-re-generation-clamped",
+            severity=Severity.WARNING,
+            category="Special constraints",
+            title="RE generation ceiling clamped to declared capacity",
+            summary=(
+                f"{subject} (source code {code}) carries an RE "
+                f"generation ceiling ({constraints}) "
+                f"of {max(ceilings)} MW across "
+                f"{len(ceilings)} stage/block cell(s), above its "
+                f"declared max_generation_mw of {cap} MW; the emitted "
+                "upper bound is clamped down to the declared capacity."
+            ),
+            remediation=(
+                "The RE ceiling is looser than the declared capacity, so "
+                "the clamp is LP-neutral. Reconcile the "
+                "two sources (e.g. nameplate vs. head-derated capacity) "
+                "if this mismatch is unexpected."
+            ),
+        )
+    )
+
+
+def split_plant_group_contributions(
+    case: DecompCase,
+    id_map: DecompIdMap,
+    *,
+    census: ConstraintCensus,
+    group_capacities: Mapping[tuple[int, int], float],
+) -> dict[int, list[BoundContribution]]:
+    """Frequency-tagged single-term RE records -> unit-group ``generation`` bounds.
+
+    An ``FU`` term's frequency names one half of the split plant, so its bound
+    lands on that half's unit group (family ``hydro_unit_group``), never on
+    the plant: a plant-level bound would cap the sum of both halves at one
+    half's limit. Each upper is clamped to the group's declared
+    ``max_generation_mw`` in *group_capacities*, keyed ``(hydro_id,
+    group_id)``, since novomodelo rejects a group bound above it.
+
+    Returns the contributions keyed by hydro id, because a group id is scoped
+    within its plant.
+
+    Raises
+    ------
+    ValueError
+        From :func:`~novomodelo_bridge.decomp.converters.hydro.split_plant_group_id`
+        when a tagged term names a plant or frequency with no unit group.
+    KeyError
+        When *group_capacities* has no entry for the resolved group.
+    """
+    calendar = case.calendar
+    by_hydro: dict[int, list[BoundContribution]] = {}
+    clamped: dict[tuple[int, int, int], tuple[list[int], list[float]]] = {}
+    for record in census.to_bounds:
+        if not _is_frequency_tagged_generation(record):
+            continue
+        term = record.terms[0]
+        assert term.frequency is not None
+        hydro_id = id_map.hydro_id(term.code)
+        group_id = split_plant_group_id(term.code, term.frequency)
+        contributions, ceilings = _clamp_upper_to_capacity(
+            _per_block_contributions(
+                record,
+                "hydro_unit_group",
+                group_id,
+                "generation",
+                f"RE_{record.constraint_id}",
+                calendar,
+            ),
+            group_capacities[(hydro_id, group_id)],
+        )
+        by_hydro.setdefault(hydro_id, []).extend(contributions)
+        if ceilings:
+            ids, all_ceilings = clamped.setdefault(
+                (hydro_id, group_id, term.code), ([], [])
+            )
+            ids.append(record.constraint_id)
+            all_ceilings.extend(ceilings)
+    for (hydro_id, group_id, code), (ids, ceilings) in sorted(clamped.items()):
+        _emit_re_generation_clamped(
+            f"Unit group {group_id} of hydro {hydro_id}",
+            code,
+            ids,
+            ceilings,
+            group_capacities[(hydro_id, group_id)],
+        )
+    return by_hydro
+
+
+def _is_frequency_tagged_generation(record: ConstraintRecord) -> bool:
+    return (
+        record.family == "RE"
+        and record.terms[0].variable == "generation"
+        and record.terms[0].frequency is not None
+    )
 
 
 def _ft_thermal_contributions(
@@ -466,7 +559,9 @@ def single_term_bound_contributions(
 
     Dispatches on ``record.family``: ``"RE"`` lowers to a ``generation`` bound
     on either the hydro (``FU``/``generation``) or the thermal
-    (``FT``/``thermal_generation``) entity named by its single term — any
+    (``FT``/``thermal_generation``) entity named by its single term, except a
+    frequency-tagged ``FU`` record, which bounds a unit group and is lowered
+    by :func:`split_plant_group_contributions` instead — any
     other bounded RE variable raises ``ValueError`` naming it. ``"HQ"``
     further dispatches on its single term's variable: ``QBOM`` lowers to a
     pumping ``flow`` bound via :func:`_qbom_pumping_contributions` (resolved
@@ -505,6 +600,8 @@ def single_term_bound_contributions(
     calendar = case.calendar
     contributions: list[BoundContribution] = []
     for record in census.to_bounds:
+        if _is_frequency_tagged_generation(record):
+            continue
         if record.family == "RE":
             variable = record.terms[0].variable
             if variable == "generation":

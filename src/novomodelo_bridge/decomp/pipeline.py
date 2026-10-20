@@ -1446,6 +1446,10 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     itaipu_operated = artifacts.itaipu_operated
     block_counts = artifacts.block_counts
     assert block_counts is not None
+    census = artifacts.census
+    assert census is not None
+    hydros_dict = artifacts.hydros_dict
+    assert hydros_dict is not None
 
     # Per-group per-stage availability (installed × MP ×
     # FD, capped by the ρ_eq·q_max hydraulic ceiling) for every plant,
@@ -1486,17 +1490,30 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     group_rows_by_hydro: defaultdict[int, list[dict]] = defaultdict(list)
     for row in group_bounds.to_pylist():
         group_rows_by_hydro[row["hydro_id"]].append(row)
+    frequency_contribs = single_term_bounds.split_plant_group_contributions(
+        case,
+        id_map,
+        census=census,
+        group_capacities={
+            (hydro["id"], group["id"]): group["max_generation_mw"]
+            for hydro in hydros_dict["hydros"]
+            for group in hydro["unit_groups"]
+        },
+    )
     resolved_group_entries: list[
         tuple[tuple[int, int, int, int | None], bounds_accumulator.ResolvedRow]
     ] = []
-    for hydro_id, rows in group_rows_by_hydro.items():
-        per_hydro_contribs = _row_group_contributions(
-            rows,
-            family="hydro_unit_group",
-            id_column="hydro_unit_group_id",
-            axes=("turbined", "generation"),
-            contributor="group_bounds",
-        )
+    for hydro_id in sorted(group_rows_by_hydro.keys() | frequency_contribs.keys()):
+        per_hydro_contribs = [
+            *_row_group_contributions(
+                group_rows_by_hydro[hydro_id],
+                family="hydro_unit_group",
+                id_column="hydro_unit_group_id",
+                axes=("turbined", "generation"),
+                contributor="group_bounds",
+            ),
+            *frequency_contribs.get(hydro_id, []),
+        ]
         for resolved in bounds_accumulator.resolve(per_hydro_contribs, block_counts):
             resolved_group_entries.append(
                 (

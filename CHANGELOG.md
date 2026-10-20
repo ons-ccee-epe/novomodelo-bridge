@@ -174,6 +174,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **DECOMP: Itaipu's 50 Hz and 60 Hz `RE` limits bound only their own half.**
+  A single-term `RE` whose `FU` term names a frequency now bounds that
+  frequency's unit group in `constraints/hydro_unit_group_bounds.parquet`.
+  Before, it bounded the whole plant in `constraints/hydro_bounds.parquet`,
+  which capped Itaipu's total at one half's limit once cobre started capping
+  a plant's total across its buses, and made cobre warn that the plant
+  minimum had no effect. A ceiling above the half's installed capacity is
+  clamped to it with one warning per unit group, and a frequency on any plant
+  other than Itaipu stops the conversion.
 - **NEWAVE: `CFUGA`/`CMONT` levels after the last record now follow the
   source model.** During the study, each `modif.dat` record holds until the
   next one. With the `dger.dat` seasonal flag on, the post-study repeats the

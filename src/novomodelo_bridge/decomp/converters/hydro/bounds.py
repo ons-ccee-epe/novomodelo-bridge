@@ -49,6 +49,34 @@ if TYPE_CHECKING:
 #: takes the ordinary single-group path.
 _ITAIPU_CODE = 66
 
+#: Itaipu's unit-group id per frequency half (Hz). Groups follow the ascending
+#: ``MP``/``FD`` frequencies (:func:`_split_plant_frequencies`), so 50 Hz is
+#: group 0; the ``RI`` floors and the frequency-tagged ``RE`` bounds both key
+#: on this map.
+ITAIPU_GROUP_BY_FREQUENCY_HZ: dict[float, int] = {50.0: 0, 60.0: 1}
+
+
+def split_plant_group_id(code: int, frequency_hz: float) -> int:
+    """The unit-group id of plant *code*'s *frequency_hz* half.
+
+    Raises
+    ------
+    ValueError
+        When *code* is not Itaipu or *frequency_hz* is not one of its halves:
+        Itaipu is the only plant split into per-frequency unit groups, so a
+        frequency anywhere else names no group to bound.
+    """
+    group_id = (
+        ITAIPU_GROUP_BY_FREQUENCY_HZ.get(frequency_hz) if code == _ITAIPU_CODE else None
+    )
+    if group_id is None:
+        raise ValueError(
+            f"plant {code}: a {frequency_hz:g} Hz generation term names no "
+            f"frequency half; only plant {_ITAIPU_CODE} (Itaipu) is split "
+            "into 50 Hz and 60 Hz unit groups"
+        )
+    return group_id
+
 
 def _conjunto_rated_ac_adjusted(
     hreg: pd.Series,
@@ -752,13 +780,12 @@ def convert_hydro_group_availability(
 
 
 #: The two Itaipu frequency-half minimum-generation floors on the ``RI``
-#: register, keyed by the split-plant group id they bound (0 = 50 Hz, 1 =
-#: 60 Hz, matching :func:`_build_split_unit_groups`'s ascending-frequency
-#: ordering). Each value is the ``RI`` column prefix whose per-patamar slots
-#: (``…_1``.. ``…_5``) carry that half's floor.
+#: register, keyed by the split-plant group id they bound. Each value is the
+#: ``RI`` column prefix whose per-patamar slots (``…_1``.. ``…_5``) carry that
+#: half's floor.
 _ITAIPU_MIN_GENERATION_PREFIXES: tuple[tuple[int, str], ...] = (
-    (0, "geracao_minima_50_hz"),
-    (1, "geracao_minima_60_hz"),
+    (ITAIPU_GROUP_BY_FREQUENCY_HZ[50.0], "geracao_minima_50_hz"),
+    (ITAIPU_GROUP_BY_FREQUENCY_HZ[60.0], "geracao_minima_60_hz"),
 )
 
 
