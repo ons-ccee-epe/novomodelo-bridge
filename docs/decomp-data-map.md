@@ -641,7 +641,7 @@ Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hy
 | `min_diversion_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente`, `hidr.dat` › `desvio`, `dadger.rvN` › `AC` › `DESVIO` | Piso de vazão desviada de uma RHQ de termo único sobre `QDES`: `limite_inferior` do `LQ` por patamar. Um `desvio` de base sem limite RHQ recebe piso 0.0 em todos os estágios junto com o teto de canal. Um piso positivo obriga o bloco `diversion` em `system/hydros.json`. |
 | `max_diversion_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente`, `hidr.dat` › `desvio`, `dadger.rvN` › `AC` › `DESVIO` | Teto de vazão desviada de uma RHQ de termo único sobre `QDES`: `limite_superior` do `LQ` por patamar. Para um `desvio` de base (`hidr.dat` ou `AC DESVIO`) sem limite RHQ, o teto é o `limite_vazao` do `AC DESVIO` ou, na falta dele, o `generation.max_turbined_m3s` da usina receptora, em todos os estágios, para que a água desviada não fique presa em [0, 0]. Fechado em 0 quando a usina receptora do desvio está fora do caso (diagnóstico `decomp-diversion-channel-dropped`). |
 | `min_spillage_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente` | Piso de vertimento de uma RHQ de termo único sobre `QVER`: `limite_inferior` do `LQ` por patamar, herdado entre estágios. |
-| `max_spillage_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente` | Teto de vertimento de uma RHQ de termo único sobre `QVER`: `limite_superior` do `LQ` por patamar, herdado entre estágios. |
+| `max_spillage_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente`, `dadger.rvN` › `UH` › `limite_superior_vertimento` | Teto de vertimento de uma RHQ de termo único sobre `QVER` (`limite_superior` do `LQ` por patamar, herdado entre estágios) e/ou o teto estático do `UH` (campo 9, `limite_superior_vertimento`, em m³/s), um teto por estágio constante no horizonte. O default 1.0e+21 é tratado como ilimitado. O menor teto prevalece. |
 | `water_withdrawal_m3s` | `dadger.rvN` › `TI` › `codigo_usina`, `dadger.rvN` › `TI` › `taxa` | Retirada consuntiva de irrigação (m³/s, positiva = água removida) do registro `TI`, `taxa_k` → estágio k−1, sempre de estágio (sem patamar); estágios além das colunas declaradas repetem a última taxa e uma taxa nula não gera valor. Resolvida em tabela própria e anexada à linha da célula, pois não é um eixo de faixa (só piso). |
 
 ### `constraints/hydro_unit_group_bounds.parquet`
@@ -1599,6 +1599,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `codigo_usina` → `constraints/hydro_bounds.parquet` › `hydro_id`
 - `vazao_defluente_minima` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `codigo_ree` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
+- `limite_superior_vertimento` → `constraints/hydro_bounds.parquet` › `max_spillage_m3s`
 - `codigo_usina` → `constraints/hydro_unit_group_bounds.parquet` › `hydro_id`
 - `codigo_usina` → `scenarios/inflow_seasonal_stats.parquet` › `hydro_id`
 - `codigo_usina` → `scenarios/external_inflow_scenarios.parquet` › `hydro_id`
@@ -1606,7 +1607,6 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `balanco_hidrico_patamar` — *não lido.* Sinalizador de balanço hídrico por patamar. Não lido: o Novomodelo faz o balanço por estágio.
 - `configuracao_newave` — *não lido.* Índice da configuração do NEWAVE para acoplamento. Não lido: a FCF de fronteira é acoplada por código de usina e por `CX`.
 - `estagio_inicio_producao` — *não lido.* Estágio em que a usina começa a produzir. Não lido: o conversor não emite `entry_stage_id` para hidrelétricas (fica no padrão nulo do esquema). Converter exige mapear este estágio para `entry_stage_id`.
-- `limite_superior_vertimento` — *não lido.* Limite superior de vertimento. Não lido; converter exige emiti-lo como `max_spillage_m3s` em `hydro_bounds.parquet`.
 
 ### `dadger.rvN` › `VA`
 
@@ -2074,7 +2074,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `UH` › `balanco_hidrico_patamar` — *não lido.* Sinalizador de balanço hídrico por patamar. Não lido: o Novomodelo faz o balanço por estágio.
 - `dadger.rvN` › `UH` › `configuracao_newave` — *não lido.* Índice da configuração do NEWAVE para acoplamento. Não lido: a FCF de fronteira é acoplada por código de usina e por `CX`.
 - `dadger.rvN` › `UH` › `estagio_inicio_producao` — *não lido.* Estágio em que a usina começa a produzir. Não lido: o conversor não emite `entry_stage_id` para hidrelétricas (fica no padrão nulo do esquema). Converter exige mapear este estágio para `entry_stage_id`.
-- `dadger.rvN` › `UH` › `limite_superior_vertimento` — *não lido.* Limite superior de vertimento. Não lido; converter exige emiti-lo como `max_spillage_m3s` em `hydro_bounds.parquet`.
 - `dadger.rvN` › `RI` › `geracao_maxima_50_hz_1..5` — *não lido.* Geração máxima do setor de 50 Hz de Itaipu por patamar. Não lida: o conversor usa a geração máxima de 60 Hz e as mínimas de 50 e 60 Hz. Converter exige emiti-la como teto do grupo de unidades de 50 Hz.
 - `dadger.rvN` › `CD` › `nome_curva` — *não lido.* Nome da curva de déficit. Não lido; apenas identificação.
 - `dadger.rvN` › `NI` › `tipo_limite` — *não lido.* Tipo do limite de iterações. Não lido: só `iteracoes` é usado no critério `iteration_limit`.

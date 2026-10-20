@@ -2001,8 +2001,9 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "CQ", item = "codigo_usina" },
     { file = "dadger", register = "CQ", item = "tipo" },
     { file = "dadger", register = "CQ", item = "coeficiente" },
+    { file = "dadger", register = "UH", item = "limite_superior_vertimento" },
   ]
-  how = "Teto de vertimento de uma RHQ de termo único sobre `QVER`: `limite_superior` do `LQ` por patamar, herdado entre estágios."
+  how = "Teto de vertimento de uma RHQ de termo único sobre `QVER` (`limite_superior` do `LQ` por patamar, herdado entre estágios) e/ou o teto estático do `UH` (campo 9, `limite_superior_vertimento`, em m³/s), um teto por estágio constante no horizonte. O default 1.0e+21 é tratado como ilimitado. O menor teto prevalece."
 
   [[output.field]]
   path = "water_withdrawal_m3s"
@@ -2944,12 +2945,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   item = "estagio_inicio_producao"
   status = "unread"
   note = "Estágio em que a usina começa a produzir. Não lido: o conversor não emite `entry_stage_id` para hidrelétricas (fica no padrão nulo do esquema). Converter exige mapear este estágio para `entry_stage_id`."
-
-  [[source.item]]
-  register = "UH"
-  item = "limite_superior_vertimento"
-  status = "unread"
-  note = "Limite superior de vertimento. Não lido; converter exige emiti-lo como `max_spillage_m3s` em `hydro_bounds.parquet`."
 
   [[source.item]]
   register = "RI"

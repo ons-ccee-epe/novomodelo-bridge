@@ -1302,6 +1302,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         ),
         *bounds_conv.convert_storage_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_volume_espera_bounds(case, id_map, effective=effective),
+        *bounds_conv.convert_spillage_upper_bounds(case, id_map),
         *thermal_generation_contribs,
         *single_term_bounds.single_term_bound_contributions(
             case,
