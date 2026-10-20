@@ -9,11 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`export dessem` command** exports a solved Cobre case's policy checkpoint
+  to the DECOMP-format `mapcut`/`cortdeco` binaries DESSEM reads as its future
+  cost function. The command takes the DECOMP deck the case was converted
+  from, `export dessem DECOMP_DIR CASE_DIR`. The deck supplies the output
+  revision, the `hidr.dat` plant codes and each GNL plant's lag months from
+  its `NL` record, and a deck whose operated hydro or GNL plants differ from
+  the case's is refused. The checkpoint is read through
+  `cobre-python`, cut values are converted from the run's cost scale to R$
+  and then to DECOMP's 10³ R$, and each export records the conversion premises it applied in
+  `export_manifest.json`; `--audit-csv` adds per-pool CSVs of the cuts as read
+  and as written. GNL coefficients are written as zeros, and a policy carrying
+  travel-time state is refused.
+- **DECOMP: the `UH` spillage ceiling is converted.** Field 9 of the `UH`
+  register, the plant's maximum spillage in m³/s, becomes a
+  `max_spillage_m3s` bound in `constraints/hydro_bounds.parquet` for every
+  stage; the field was ignored before. A blank field or DECOMP's default of
+  1.0e+21 adds no bound, and where a single-plant `HQ` restriction on `QVER`
+  also limits the plant, the lower ceiling applies. A zero ceiling is kept,
+  so a plant fed only through a diversion channel, such as BELO MONTE, spills
+  nothing, as in DECOMP.
 - **NEWAVE: Pumping station conversion.** When the deck declares
   `ESTACAO-BOMBEAMENTO` and `ESTACAO-BOMBEAMENTO-SUBMERCADO` in `indices.csv`
   and the `ESTACOES BOMBEAMENTO` switch is on, the converter generates
   `system/pumping_stations.json` and `constraints/pumping_bounds.parquet`.
   Open-ended limit periods (blank `data_fim`) extend to the last stage.
+- **NEWAVE: diversion channels.** A `CDESVIO` record in a plant's `USINA`
+  block of `modif.dat` now gives that plant a diversion channel in
+  `hydros.json`, to the record's target plant and up to its maximum flow, when
+  the `CANAL DE DESVIO` switch of `dger.dat` is on. A maximum flow of
+  9 999 999 m³/s or more, NEWAVE's value for no limit, gives a channel
+  without a limit and is reported. Plants fed only by a
+  channel, such as BELO MONTE below PIMENTAL, now receive that water. The
+  `desvio` code of `hidr.dat` alone declares no channel. A record without a
+  maximum flow, or whose target plant is not in the case, converts to no
+  channel and is reported; with the switch off the records are ignored and
+  reported.
 - **`check` and `convert` warn about tabs in fixed-column inputs**, on both
   tracks. The NEWAVE text files `arquivos.dat` names and DECOMP's
   `dadger`/`dadgnl` are read by column position, so a tab where the layout
@@ -24,6 +55,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Both tracks simulate with every trained cut.** `config.json` now sets
+  `simulation.cut_set` to `all` rather than leaving it to cobre's default.
+  The source models' cut selection only speeds up the LP solves, and their
+  final simulation evaluates the policy of all the cuts; cobre's `active`
+  set would keep only the cuts its selection kept at the last iteration.
+  `convert newave` warns when `dger.dat` turns on the cut window
+  (`janela_de_cortes`), which Cobre does not have: every cut is kept.
+- **Both tracks supply each plant's own stored-energy productivity to
+  cobre.** `system/hydro_energy_productivity.parquet` has a new
+  `integrated_equivalent_productivity_mw_per_m3s` column, which cobre now
+  requires. cobre sums it down the cascade for the integrated accumulated
+  productivity and the maximum stored energy that VminOP and RHE read. The
+  value is the source model's own convention: NEWAVE integrates the head of
+  monthly reservoirs between minimum and maximum volume and takes the point
+  at `volume_referencia` for the other plants, with each stage's `CFUGA` and
+  `CMONT`, matching `pmo.dat`; DECOMP integrates the head of `M` and `S`
+  reservoirs and takes the point for `D` plants, with each stage's `AC`
+  overrides. The `equivalent_productivity_mw_per_m3s` column now sets only
+  the generation productivity, so without the new column VminOP and RHE
+  would weigh storage by cobre's integral of the plant geometry. A DECOMP
+  FPHA plant now has a row as well, with a NULL generation productivity.
 - **LIBS files are read from the files the deck declares, not by name.** The
   CSV inputs of the LIBS family were found by fixed file name or prefix; now
   each record is read from the file the deck's LIBS index lists for its key,
@@ -34,13 +86,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disagrees with the index, or renewable records spread over several files
   now fail the conversion. A file with a usual LIBS name that nothing declares
   is ignored, and `check` and `convert` warn about it on both tracks.
-- **`convert decomp` sets the inflow non-negativity method.** `config.json`
-  now carries `modeling.inflow_non_negativity.method` =
-  `"truncation_with_penalty"`, the method `convert newave` already sets,
-  instead of leaving it to cobre's default, `penalty`. cobre now truncates a
-  negative incremental inflow of the tree to zero before it enters the LP; the
-  penalised inflow slack stays as before. DECOMP results can change where a
-  node's incremental inflow is negative.
+- **`convert decomp` pins the inflow non-negativity method to `penalty`.**
+  `config.json` now carries `modeling.inflow_non_negativity.method` =
+  `"penalty"`, cobre's current default, instead of leaving it unset. Its
+  unbounded, priced inflow correction keeps the first forward pass feasible
+  when a single-plant volume target (`HV`) becomes a hard storage floor at a
+  later stage; under a bounded correction the boundary FCF import's
+  one-iteration run can fail with an infeasible subproblem. `convert newave`
+  keeps `truncation_with_penalty`.
+- **NEWAVE results change where a historical incremental inflow is
+  negative.** Under `truncation_with_penalty` cobre now keeps the negative
+  value instead of raising it to zero; the penalised inflow slack may add back
+  at most the missing water.
 - **VminOP (NEWAVE) and RHE (DECOMP) bound stored energy in MWh with cobre's
   MWh parameters.** The bridge no longer computes the integrated
   accumulated productivity itself: expressions reference cobre's
@@ -102,8 +159,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `integrated_accumulated_productivity_mwh_per_hm3` and `max_stored_energy_mwh`),
   and `rho_acum_h{id}` is always cobre's computed point productivity.
 
+- **`convert newave` turns cut selection on with `level1`.** cobre removed
+  the `lml1` method; the converted `config.json` now names `level1`, checked
+  every iteration over the trial states of the whole run. Level-1 selection
+  keeps exactly the cuts that are highest at some stored trial state, so
+  results can differ from a run made with `lml1`.
+
+- **`convert decomp` writes the boundary FCF in cobre's current policy
+  format.** The checkpoint no longer carries a cut id or a pool's list of
+  active cuts; each cut states its own activity.
+
+- **`dashboard` reads cobre's per-pool cut-selection report.** The cut counts
+  of a stage now sum the row pools of its nodes, and the pool size is read
+  from `cuts_in_pool`.
+
 ### Fixed
 
+- **DECOMP: Itaipu's 50 Hz and 60 Hz `RE` limits bound only their own half.**
+  A single-term `RE` whose `FU` term names a frequency now bounds that
+  frequency's unit group in `constraints/hydro_unit_group_bounds.parquet`.
+  Before, it bounded the whole plant in `constraints/hydro_bounds.parquet`,
+  which capped Itaipu's total at one half's limit once cobre started capping
+  a plant's total across its buses, and made cobre warn that the plant
+  minimum had no effect. A ceiling above the half's installed capacity is
+  clamped to it with one warning per unit group, and a frequency on any plant
+  other than Itaipu stops the conversion.
+- **NEWAVE: `CFUGA`/`CMONT` levels after the last record now follow the
+  source model.** During the study, each `modif.dat` record holds until the
+  next one. With the `dger.dat` seasonal flag on, the post-study repeats the
+  last study year month by month. Previously, every month after the last
+  record took the latest record naming that calendar month in any year, so a
+  month declared only in an early year came back in the last study year and
+  in every post-study year. That record could be, for example, Tucuruí's
+  September and October tailrace in the first year. Per-stage productivity in
+  `hydro_energy_productivity.parquet`, the generation caps and the
+  stored-energy productivity change for those plants and stages.
+- **`convert newave` gives every plant on a shared gauging station its own
+  inflow series, and zero inflow on the artificial gauge.** Inflows were
+  attributed per station, so when several plants shared one, only the last
+  received a history and the others failed Cobre's validation, and the upstream
+  stations of all of them were subtracted from that one plant. A deck that puts
+  several plants on posto 300, NEWAVE's artificial gauge for plants without
+  natural inflow, gave one plant a negative series and left the rest without
+  history. Each plant now subtracts only its own upstream stations; a plant on
+  posto 300 gets zero history, seasonal statistics and recent inflows, and an
+  artificial plant upstream is not subtracted. Both tracks list the plants on
+  the artificial gauge, and warn when a gauged plant sits below an artificial
+  plant that has gauged plants further upstream. Cases without shared stations
+  convert as before.
+- **NEWAVE: every record of `modif.dat` is read.** The last record of the
+  file was dropped, a plant with more than one `USINA` block kept only its
+  first, and a file with a single block failed to convert. The records of all
+  blocks now apply in file order, so PIMENTAL in a deck whose second block
+  carries the `VAZMINT` series now gets those minimum outflows. A dated
+  record that repeats a month now replaces the earlier one, where the larger
+  value used to win, and before the study start the latest record is the one
+  in force.
+- **`convert decomp` routes bounded diversions to their target plant.** A
+  plant whose single-term `QDES` restriction allowed a positive diversion but
+  set no positive floor got diversion bounds and no Cobre diversion channel,
+  so Cobre removed the diverted water from the system instead of passing it
+  to the plant that receives it (such as TOCOS to LAJES and VIGARIO to
+  FONTES AB). Every plant whose diversion can be positive now gets the
+  channel to its `AC DESVIO` or `hidr.dat` target, limited by the `AC DESVIO`
+  flow, and the `QDES` bounds still apply stage by stage. A floored plant
+  whose target has no `AC DESVIO` limit now gets its channel instead of being
+  reported. When the target plant is not in the case, the diversion ceiling
+  is closed and reported, so the water stays in the plant's own river.
+- **`convert decomp` leaves a diversion channel unlimited when DECOMP does.**
+  A `desvio` without an `AC DESVIO` limit, or with the "no limit" value of
+  9 999 999 m³/s or more, was capped at the receiving plant's turbine
+  capacity, which DECOMP's own solutions exceed (MOXOTO to P.AFONSO 4). The
+  channel now carries no limit, and a base `desvio` no longer writes a
+  `max_diversion_m3s` bound. Channels given the "no limit" value are reported
+  on both tracks.
+- **`convert` refuses a case where diverted water reaches no plant.** Both
+  `convert newave` and `convert decomp` now fail before writing when a plant
+  can divert water (a positive diversion floor or ceiling) but has no
+  diversion channel to a receiving plant, which Cobre rejects. The failure
+  names each plant, the bound and its stages.
 - **NEWAVE: Hydro plants referenced by pumping stations are no longer
   classified as fictitious.** Previously, zero-productivity reservoirs used
   for pumped storage (e.g., VIGÁRIO) were removed, which could break cascade
@@ -111,6 +245,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NEWAVE: Cascade cycle detection now raises a clear error instead of
   RecursionError.** The error names the cycle path and points to the fictitious
   classification as the likely cause.
+- **`convert decomp` reads special-constraint coefficients stage by stage.**
+  Each `FU`/`FT`/`FI`, `CQ` and `CV` line declares a coefficient from its
+  `estagio` onward, but the reader kept a term's first coefficient for every
+  stage and counted a term from the constraint's first stage even when the
+  deck declares it later. A coefficient that changes between stages, or a
+  term that joins later and is absent before that stage, as DECOMP reads it,
+  is now a `per_stage` parameter `@coef_<family><code>_t<k>` in
+  `generic_parameters.json`; a constant coefficient stays a literal, so decks
+  without such lines convert as before. A single-term constraint lowers to an
+  entity bound only when its coefficient is ±1 at every stage. A `RE`, `HQ`
+  or `HV` with no coefficient at its first stage, a deck DECOMP rejects, now
+  fails the conversion.
 - **`convert newave` applies the FPHA plane reduction only when the case
   declares it.** A `tratamento-fpha.csv` in the case directory set
   `fpha_plane_reduction` even when `indices.csv` left out or commented out

@@ -65,7 +65,7 @@ def _operated_uh(dadger: Dadger) -> pd.DataFrame:
     """The ``UH`` rows carrying an initial volume (the operated plants).
 
     Rows without one (coupling-only registrations) are excluded — their
-    terminal-value treatment is the boundary importer's D3 territory, not the
+    terminal-value treatment is the boundary importer's concern, not the
     registry's. :func:`convert_hydros` reports the excluded set (by name) once.
     """
     uh = dadger.uh(df=True)
@@ -181,8 +181,7 @@ def _evaporation_coefficients_mm(hidr: pd.DataFrame, code: int) -> list[float] |
     novomodelo (>= 0.14) computes the evaporation-outflow model internally from
     these monthly rates and the reservoir area geometry
     (``hydro_geometry.parquet``, emitted by the FPHA path), scaling each stage
-    to its ``stage_hours / month_hours`` share of the calendar month — the C11
-    fix (pre-0.14 deposited a whole month's evaporation on every stage). The
+    to its ``stage_hours / month_hours`` share of the calendar month. The
     bridge supplies only the monthly mm rates.
     """
     if code not in hidr.index or not all(
@@ -238,7 +237,7 @@ def convert_hydros(
     (:func:`convert_hydro_group_availability`), never a change to the
     declared envelope itself. The production model is constant
     productivity, with the value emitted separately
-    (:func:`convert_energy_productivity`).
+    (:func:`convert_hydro_energy_productivity`).
 
     **``ACALTEFE`` tracked gap:** a plant declaring an ``AC ALTEFE``
     effective-head override is logged (not consumed — see the

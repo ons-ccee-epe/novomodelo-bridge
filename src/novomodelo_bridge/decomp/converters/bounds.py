@@ -298,6 +298,43 @@ def convert_volume_espera_bounds(
     return contributions
 
 
+def convert_spillage_upper_bounds(
+    case: DecompCase,
+    id_map: DecompIdMap,
+) -> list[BoundContribution]:
+    """One-sided, stage-level ``spillage`` ceiling (m³/s) from ``UH`` field 9.
+
+    One contribution per operated plant and stage, constant across the horizon.
+    """
+    uh = case.dadger.uh(df=True)
+    if uh is None or uh.empty or "limite_superior_vertimento" not in uh.columns:
+        return []
+
+    operated = uh[uh["volume_inicial"].notna()]
+    calendar = case.calendar
+    contributions: list[BoundContribution] = []
+    for _, row in operated.iterrows():
+        ceiling = row["limite_superior_vertimento"]
+        if pd.isna(ceiling):
+            continue
+        hydro_id = id_map.hydro_id(int(row["codigo_usina"]))
+        for stage in calendar:
+            contributions.append(
+                BoundContribution(
+                    family="hydro",
+                    entity_id=hydro_id,
+                    stage_id=stage.index,
+                    block_id=None,
+                    axis="spillage",
+                    lower=None,
+                    upper=float(ceiling),
+                    contributor="UH_vert",
+                )
+            )
+
+    return contributions
+
+
 #: novomodelo ``hydro_bounds`` column for a consumptive water withdrawal, in m³/s
 #: (positive = water removed from the plant's balance). The DECOMP ``TI``
 #: irrigation rate and the source model's ``dsvagua`` file both land here.

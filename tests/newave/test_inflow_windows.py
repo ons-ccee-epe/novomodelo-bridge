@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 
+from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.core.inflow_windows import (
     format_observation_windows,
     month_window,
@@ -20,6 +21,7 @@ from novomodelo_bridge.newave.converters.inflow_windows import (
     convert_inflow_history_windows,
     convert_recent_observation_windows,
 )
+from novomodelo_bridge.newave.converters.stochastic import convert_inflow_stats
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
 
@@ -324,3 +326,134 @@ class TestConvertRecentObservationWindows:
             month = int(entry["start_date"][5:7])
             expected = natural[(2, month)] - natural[(1, month)]
             assert abs(entry["value_m3s"] - expected) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# Artificial gauge (posto 300)
+# ---------------------------------------------------------------------------
+
+# Plant 1 (posto 1) flows into plant 3; plants 2 and 3 share the artificial
+# gauge and flow into plant 4 (posto 4).
+_ARTIFICIAL_CASCADE = ((1, 1, 3), (2, 300, 4), (3, 300, 4), (4, 4, 0))
+_ARTIFICIAL_ID_MAP = NewaveIdMap(
+    subsystem_ids=[], hydro_codes=[1, 2, 3, 4], thermal_codes=[]
+)
+
+
+def _confhd_rows(rows: tuple[tuple[int, int, int], ...]) -> MagicMock:
+    """Confhd mock from ``(code, posto, downstream code)`` rows."""
+    mock = MagicMock()
+    mock.usinas = pd.DataFrame(
+        [
+            {
+                "posto": posto,
+                "codigo_usina": code,
+                "nome_usina": f"PLANT_{code}",
+                "usina_existente": "EX",
+                "codigo_usina_jusante": downstream,
+            }
+            for code, posto, downstream in rows
+        ]
+    )
+    return mock
+
+
+def _artificial_record(*, stored_on_artificial: bool) -> MagicMock:
+    record = _make_vazoes_mock(postos=[1, 4, 300])
+    if not stored_on_artificial:
+        record.vazoes[300] = 0.0
+    return record
+
+
+class TestArtificialGauge:
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
+    def test_every_plant_sharing_the_artificial_gauge_gets_a_zero_history(
+        self, mock_vazoes_cls, tmp_path
+    ) -> None:
+        mock_vazoes_cls.read.return_value = _artificial_record(
+            stored_on_artificial=True
+        )
+        case = _history_case(tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE))
+        df = convert_inflow_history_windows(case, _ARTIFICIAL_ID_MAP).to_pandas()
+        assert sorted(df["hydro_id"].unique()) == [0, 1, 2, 3]
+        for hydro_id in (1, 2):
+            assert (df[df["hydro_id"] == hydro_id]["value_m3s"] == 0.0).all()
+
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
+    def test_gauged_plants_subtract_only_gauged_direct_upstream(
+        self, mock_vazoes_cls, tmp_path
+    ) -> None:
+        record = _artificial_record(stored_on_artificial=True)
+        mock_vazoes_cls.read.return_value = record
+        case = _history_case(tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE))
+        df = convert_inflow_history_windows(case, _ARTIFICIAL_ID_MAP).to_pandas()
+        source = record.vazoes.set_index("data")
+        for hydro_id, posto in ((0, 1), (3, 4)):
+            for row in df[df["hydro_id"] == hydro_id].itertuples():
+                month = datetime.datetime(row.start_date.year, row.start_date.month, 1)
+                assert row.value_m3s == source.loc[month, posto]
+
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
+    def test_artificial_plants_and_double_count_are_reported(
+        self, mock_vazoes_cls, tmp_path
+    ) -> None:
+        mock_vazoes_cls.read.return_value = _artificial_record(
+            stored_on_artificial=False
+        )
+        case = _history_case(tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE))
+        with collect() as diagnostics:
+            convert_inflow_history_windows(case, _ARTIFICIAL_ID_MAP)
+        by_code = {d.code: d for d in diagnostics}
+        assert set(by_code) == {
+            "artificial-gauge-plants",
+            "artificial-gauge-upstream-double-count",
+        }
+        listed = by_code["artificial-gauge-plants"].table
+        assert listed is not None
+        assert [row[0] for row in listed.rows] == [2, 3]
+        pairs = by_code["artificial-gauge-upstream-double-count"].table
+        assert pairs is not None
+        assert [(row[0], row[2]) for row in pairs.rows] == [(4, 3)]
+
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
+    def test_values_stored_on_the_artificial_gauge_are_reported_ignored(
+        self, mock_vazoes_cls, tmp_path
+    ) -> None:
+        mock_vazoes_cls.read.return_value = _artificial_record(
+            stored_on_artificial=True
+        )
+        case = _history_case(tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE))
+        with collect() as diagnostics:
+            convert_inflow_history_windows(case, _ARTIFICIAL_ID_MAP)
+        assert "artificial-gauge-data-ignored" in {d.code for d in diagnostics}
+
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
+    def test_artificial_plants_get_zero_seasonal_statistics(
+        self, mock_vazoes_cls, tmp_path
+    ) -> None:
+        mock_vazoes_cls.read.return_value = _artificial_record(
+            stored_on_artificial=True
+        )
+        case = _history_case(tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE))
+        stats = convert_inflow_stats(case, _ARTIFICIAL_ID_MAP).to_pandas()
+        artificial = stats[stats["hydro_id"].isin([1, 2])]
+        assert not artificial.empty
+        assert (artificial[["mean_m3s", "std_m3s"]] == 0.0).all().all()
+        assert (stats[stats["hydro_id"] == 3]["std_m3s"] > 0.0).all()
+
+    def test_artificial_plants_get_zero_tendency_windows(self, tmp_path) -> None:
+        vazpast = _make_vazpast_mock(postos=[1, 4])
+        case = _tendency_case(
+            tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE), vazpast=vazpast
+        )
+        windows = convert_recent_observation_windows(case, _ARTIFICIAL_ID_MAP)
+        natural = vazpast.tendencia.set_index(["codigo_usina", "mes"])["valor"]
+        by_hydro: dict[int, list[dict]] = {}
+        for entry in windows:
+            by_hydro.setdefault(entry["hydro_id"], []).append(entry)
+        assert sorted(by_hydro) == [0, 1, 2, 3]
+        for hydro_id in (1, 2):
+            assert len(by_hydro[hydro_id]) == 12
+            assert all(w["value_m3s"] == 0.0 for w in by_hydro[hydro_id])
+        for entry in by_hydro[3]:
+            assert entry["value_m3s"] == natural[(4, int(entry["start_date"][5:7]))]

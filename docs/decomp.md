@@ -54,6 +54,15 @@ non-controllable generation per node), pumping stations, energy contracts,
 generic constraints from the deck's restriction registers, and head-dependent
 production planes where the deck uses them.
 
+A plant's diverted flow (`QDES`) reaches its diversion target, the plant named
+by `AC DESVIO` or else by the `desvio` field of `hidr.dat`, through a Novomodelo
+diversion channel. The channel carries the `AC DESVIO` flow limit; a plant
+with no such limit, or with the deck's "no limit" value of 9 999 999 m³/s
+or more, gets a channel without one, as in DECOMP, and the `QDES` bounds
+still apply stage by stage. When that target is not in the case, a diversion
+ceiling is closed and reported, so the water stays in the plant's own river;
+a positive diversion floor cannot be closed, and the conversion fails.
+
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and

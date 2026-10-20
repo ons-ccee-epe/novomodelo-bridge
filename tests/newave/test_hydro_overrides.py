@@ -9,8 +9,8 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
-from tests.conftest import make_case, make_nw_files
-from tests.newave.conftest import _make_hidr_cadastro
+from tests.conftest import make_case, make_nw_files, modif_mock
+from tests.newave.conftest import _make_hidr_cadastro, _read_modif
 
 # The title/summary/remediation/notes strings overrides.py emits reach a
 # pip-installed user with no repo checkout — none may leak a repo-internal
@@ -74,12 +74,7 @@ class TestApplyPermanentOverrides:
         volmax_rec.volume = 2000.0
         volmax_rec.unidade = "'h'"
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [volmax_rec]
+        mock_modif = modif_mock((1, [volmax_rec]))
 
         result = _apply_permanent_overrides(
             self._base_cadastro(), self._modif_case(tmp_path, mock_modif)
@@ -100,11 +95,7 @@ class TestApplyPermanentOverrides:
     def _apply(self, tmp_path, code: int, records: list) -> pd.DataFrame:
         from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = code
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = records
+        mock_modif = modif_mock((code, records))
         return _apply_permanent_overrides(
             self._base_cadastro(), self._modif_case(tmp_path, mock_modif)
         )
@@ -148,12 +139,7 @@ class TestApplyPermanentOverrides:
         type(vazmin_rec).__name__ = "VAZMIN"
         vazmin_rec.vazao = 75.5
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 2
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vazmin_rec]
+        mock_modif = modif_mock((2, [vazmin_rec]))
 
         result = _apply_permanent_overrides(
             self._base_cadastro(), self._modif_case(tmp_path, mock_modif)
@@ -176,12 +162,7 @@ class TestApplyPermanentOverrides:
         nummaq_rec.conjunto = 2
         nummaq_rec.numero_maquinas = 3
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [numcnj_rec, nummaq_rec]
+        mock_modif = modif_mock((1, [numcnj_rec, nummaq_rec]))
 
         result = _apply_permanent_overrides(
             self._base_cadastro(), self._modif_case(tmp_path, mock_modif)
@@ -199,12 +180,7 @@ class TestApplyPermanentOverrides:
         potefe_rec.potencia = 500.0
         potefe_rec.conjunto = 2
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 2
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [potefe_rec]
+        mock_modif = modif_mock((2, [potefe_rec]))
 
         with dx.collect() as collected:
             result = _apply_permanent_overrides(
@@ -251,12 +227,7 @@ class TestApplyPermanentOverrides:
         type(poly_rec).__name__ = type_name
         setattr(poly_rec, attr, raw)
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [poly_rec]
+        mock_modif = modif_mock((1, [poly_rec]))
 
         base = self._base_cadastro()
         columns = [f"a{i}_{prefix}" for i in range(5)]
@@ -273,12 +244,7 @@ class TestApplyPermanentOverrides:
         """Plant code not in cadastro: diagnostic emitted, no crash."""
         from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 999  # not in cadastro
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = []
+        mock_modif = modif_mock((999, []))  # 999 is not in the cadastro
 
         with dx.collect() as collected:
             result = _apply_permanent_overrides(
@@ -308,12 +274,7 @@ class TestApplyPermanentOverrides:
         vazmint_rec.data_inicio = datetime.datetime(2025, 1, 1)
         vazmint_rec.vazao = 999.0  # large value that should NOT be applied
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vazmint_rec]
+        mock_modif = modif_mock((1, [vazmint_rec]))
 
         result = _apply_permanent_overrides(
             self._base_cadastro(), self._modif_case(tmp_path, mock_modif)
@@ -362,12 +323,7 @@ class TestExtractTemporalOverrides:
         vazmint_rec.mes = 1
         vazmint_rec.vazao = 50.0
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vazmint_rec]
+        mock_modif = modif_mock((1, [vazmint_rec]))
 
         result = _extract_temporal_overrides(
             self._modif_case(tmp_path, mock_modif), [1, 2]
@@ -404,11 +360,7 @@ class TestExtractTemporalOverrides:
         vmint_rec.volume = 1500.0
         vmint_rec.unidade = "'h'"
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vmaxt_rec, vmint_rec]
+        mock_modif = modif_mock((1, [vmaxt_rec, vmint_rec]))
 
         with dx.collect() as collected:
             result = _extract_temporal_overrides(
@@ -448,11 +400,7 @@ class TestExtractTemporalOverrides:
         vmaxt_rec.volume = 73.2
         vmaxt_rec.unidade = None
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vmaxt_rec]
+        mock_modif = modif_mock((1, [vmaxt_rec]))
 
         with dx.collect() as collected:
             result = _extract_temporal_overrides(
@@ -481,12 +429,8 @@ class TestExtractTemporalOverrides:
         vazmint_rec.vazao = 40.0
 
         # Plant 99 is NOT in confhd_codes [1, 2].
-        usina_rec = MagicMock()
-        usina_rec.codigo = 99
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vazmint_rec]
+        mock_modif = modif_mock((99, [vazmint_rec]))
 
         result = _extract_temporal_overrides(
             self._modif_case(tmp_path, mock_modif), [1, 2]
@@ -513,12 +457,7 @@ class TestExtractTemporalOverrides:
 
         recs = [_vazmint(1, 50.0), _vazmint(6, 60.0), _vazmint(3, 55.0)]
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = recs
+        mock_modif = modif_mock((1, recs))
 
         result = _extract_temporal_overrides(
             self._modif_case(tmp_path, mock_modif), [1]
@@ -542,12 +481,7 @@ class TestExtractTemporalOverrides:
         cfuga_rec.data_inicio = datetime.datetime(2025, 6, 1)
         cfuga_rec.nivel = 75.4
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 2
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((2, [cfuga_rec]))
 
         result = _extract_temporal_overrides(
             self._modif_case(tmp_path, mock_modif), [2]
@@ -581,12 +515,7 @@ class TestExtractTemporalOverrides:
         turbmaxt_rec.data_inicio = datetime.datetime(2025, 3, 1)
         turbmaxt_rec.turbinamento = 322.0
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [turbmint_rec, turbmaxt_rec]
+        mock_modif = modif_mock((1, [turbmint_rec, turbmaxt_rec]))
 
         result = _extract_temporal_overrides(
             self._modif_case(tmp_path, mock_modif), [1]
@@ -638,12 +567,7 @@ class TestExtractTemporalOverrides:
         pos_rec.mes = 6
         pos_rec.vazao = 300.0
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [pre_rec, study_rec, pos_rec]
+        mock_modif = modif_mock((1, [pre_rec, study_rec, pos_rec]))
 
         result = _extract_temporal_overrides(
             self._modif_case(tmp_path, mock_modif), [1]
@@ -843,16 +767,7 @@ class TestApplyPermanentOverridesDiagnostics:
         unknown_rec = MagicMock()
         type(unknown_rec).__name__ = "SOME_FUTURE_TYPE"
 
-        usina_rec_1 = MagicMock()
-        usina_rec_1.codigo = 1
-        usina_rec_2 = MagicMock()
-        usina_rec_2.codigo = 2
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec_1, usina_rec_2]
-        mock_modif.modificacoes_usina.side_effect = lambda code: (
-            [volcota_rec] if code == 1 else [unknown_rec]
-        )
+        mock_modif = modif_mock((1, [volcota_rec]), (2, [unknown_rec]))
 
         with dx.collect() as collected:
             _apply_permanent_overrides(
@@ -882,12 +797,7 @@ class TestApplyPermanentOverridesDiagnostics:
         default_rec = MagicMock()
         type(default_rec).__name__ = "DefaultRegister"
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [default_rec]
+        mock_modif = modif_mock((1, [default_rec]))
 
         with (
             dx.collect() as collected,
@@ -913,12 +823,7 @@ class TestApplyPermanentOverridesDiagnostics:
 
         from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 999  # not in cadastro
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = []
+        mock_modif = modif_mock((999, []))  # 999 is not in the cadastro
 
         with caplog.at_level(logging.WARNING):
             _apply_permanent_overrides(
@@ -935,12 +840,8 @@ class TestApplyPermanentOverridesDiagnostics:
         type(volmax_rec).__name__ = "VOLMAX"
         volmax_rec.volume = 2000.0
         volmax_rec.unidade = "??"
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [volmax_rec]
+        mock_modif = modif_mock((1, [volmax_rec]))
 
         with dx.collect() as collected:
             result = _apply_permanent_overrides(
@@ -959,12 +860,8 @@ class TestApplyPermanentOverridesDiagnostics:
         type(volmax_rec).__name__ = "VOLMAX"
         volmax_rec.volume = 2000.0
         volmax_rec.unidade = "'h'"
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [volmax_rec]
+        mock_modif = modif_mock((1, [volmax_rec]))
 
         with dx.collect() as collected:
             _apply_permanent_overrides(
@@ -979,11 +876,7 @@ class TestExtractTemporalOverridesDiagnostics:
     marker, is skipped and reported once."""
 
     def _modif_case(self, tmp_path, records):
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = records
+        mock_modif = modif_mock((1, records))
         return make_case(
             make_nw_files(tmp_path, modif=tmp_path / "modif.dat"),
             modif=mock_modif,
@@ -1047,12 +940,7 @@ class TestOverridesResidualLegacyWarning:
     def test_hydro_finding_carries_no_legacy_warning(self, tmp_path) -> None:
         from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 999  # not in cadastro
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = []
+        mock_modif = modif_mock((999, []))  # 999 is not in the cadastro
 
         with dx.collect() as collected:
             _apply_permanent_overrides(
@@ -1071,3 +959,149 @@ class TestOverridesResidualLegacyWarning:
         assert len(result) == 1
         assert result[0].code == "legacy-warning"
         assert result[0].summary == "some other warning"
+
+
+class TestReadDiversionRecords:
+    """``CDESVIO`` records of ``modif.dat``, read through inewave's own parser."""
+
+    def _records(self, tmp_path, *lines: str):
+        from novomodelo_bridge.newave.converters.hydro.overrides import (
+            read_diversion_records,
+        )
+
+        return read_diversion_records(
+            make_case(tmp_path, modif=_read_modif(tmp_path, *lines))
+        )
+
+    def test_each_record_belongs_to_the_usina_above_it(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro.overrides import DiversionRecord
+
+        records = self._records(
+            tmp_path,
+            " USINA    118                               BILLINGS",
+            " VAZMIN       34",
+            " CDESVIO 119 100. ",
+            " USINA    119                               HENRY BORDEN",
+            " VAZMIN       10",
+            " USINA    314                               PIMENTAL",
+            " CDESVIO 288 9999999. ",
+        )
+        assert records == {
+            118: DiversionRecord(target=119, max_flow_m3s=100.0),
+            314: DiversionRecord(target=288, max_flow_m3s=9999999.0),
+        }
+
+    def test_the_flow_is_optional_and_the_keyword_case_free(self, tmp_path) -> None:
+        records = self._records(
+            tmp_path,
+            " USINA    118                               BILLINGS",
+            " cdesvio 119",
+        )
+        assert records[118].target == 119
+        assert records[118].max_flow_m3s is None
+
+    def test_the_last_record_of_a_plant_wins(self, tmp_path) -> None:
+        records = self._records(
+            tmp_path,
+            " USINA    118                               BILLINGS",
+            " CDESVIO 119 100.",
+            " CDESVIO 120 50.",
+        )
+        assert (records[118].target, records[118].max_flow_m3s) == (120, 50.0)
+
+    def test_no_modif_and_no_record_read_as_empty(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro.overrides import (
+            read_diversion_records,
+        )
+
+        assert read_diversion_records(make_case(tmp_path, modif=None)) == {}
+        assert (
+            self._records(
+                tmp_path, " USINA    118                               BILLINGS"
+            )
+            == {}
+        )
+
+    @pytest.mark.parametrize(
+        ("lines", "reason"),
+        [
+            ((" CDESVIO 119 100.",), "before any USINA"),
+            ((" USINA    118    BILLINGS", " CDESVIO"), "no integer target"),
+            ((" USINA    118    BILLINGS", " CDESVIO X 100."), "no integer target"),
+            ((" USINA    118    BILLINGS", " CDESVIO 118 100."), "diverts to itself"),
+            ((" USINA    118    BILLINGS", " CDESVIO 119 -1."), "'-1.'"),
+            ((" USINA    118    BILLINGS", " CDESVIO 119 abc"), "'abc'"),
+        ],
+    )
+    def test_a_malformed_record_fails_naming_the_problem(
+        self, tmp_path, lines: tuple[str, ...], reason: str
+    ) -> None:
+        from novomodelo_bridge.core.errors import FieldParseError
+
+        with pytest.raises(FieldParseError, match=reason) as excinfo:
+            self._records(tmp_path, *lines)
+        assert excinfo.value.path == "modif.dat"
+        assert excinfo.value.field == "CDESVIO"
+
+
+class TestModifFileOrder:
+    """Records come from every ``USINA`` block of a real ``modif.dat``, in file
+    order, including the file's last record."""
+
+    _USINA_A = " USINA      1                               USINA_A"
+    _USINA_B = " USINA      2                               USINA_B"
+
+    @staticmethod
+    def _case(tmp_path, *lines: str):
+        return make_case(
+            make_nw_files(tmp_path, modif=tmp_path / "modif.dat"),
+            modif=_read_modif(tmp_path, *lines),
+        )
+
+    def test_a_file_with_a_single_block_applies_its_records(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
+
+        case = self._case(tmp_path, self._USINA_A, " VAZMIN       71")
+        result = _apply_permanent_overrides(_make_hidr_cadastro(), case)
+        assert float(result.loc[1, "vazao_minima_historica"]) == 71.0
+
+    def test_the_last_record_of_the_file_is_read(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro import (
+            _extract_temporal_overrides,
+        )
+
+        case = self._case(
+            tmp_path,
+            self._USINA_A,
+            " CMONT     1 2026   96.90",
+            " CMONT    12 2026   96.78",
+        )
+        overrides = _extract_temporal_overrides(case, [1])
+        assert [(o["month"], o["value"]) for o in overrides[1]] == [
+            (1, pytest.approx(96.90)),
+            (12, pytest.approx(96.78)),
+        ]
+
+    def test_every_block_of_a_plant_is_read_in_file_order(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro import (
+            _apply_permanent_overrides,
+            _extract_temporal_overrides,
+        )
+
+        case = self._case(
+            tmp_path,
+            self._USINA_A,
+            " VAZMIN       71",
+            self._USINA_B,
+            " VAZMIN        5",
+            self._USINA_A,
+            " VAZMINT   1 2026 1100.00",
+            " VAZMIN       80",
+        )
+        cadastro = _apply_permanent_overrides(_make_hidr_cadastro(), case)
+        assert float(cadastro.loc[1, "vazao_minima_historica"]) == 80.0
+        assert float(cadastro.loc[2, "vazao_minima_historica"]) == 5.0
+        temporal = _extract_temporal_overrides(case, [1, 2])
+        assert [(o["type"], o["month"], o["value"]) for o in temporal[1]] == [
+            ("VAZMINT", 1, 1100.0)
+        ]

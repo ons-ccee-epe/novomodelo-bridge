@@ -773,7 +773,21 @@ _OUTPUT_COLUMN_ALIASES: dict[str, str] = {
     "stage_id": "stage",
     "opening_index": "opening",
     "upper_bound": "upper_bound_mean",
+    "cuts_in_pool": "cuts_populated",
 }
+
+
+def _cut_selection_per_stage(cut_selection: pd.DataFrame) -> pd.DataFrame:
+    """One ``cut_selection`` row per ``(iteration, stage)``, summing its pools.
+
+    novomodelo writes one row per row pool, and a stage of a scenario tree has one
+    pool per node; the charts read one row per stage. A column novomodelo leaves
+    null where no selection pass ran stays null when every pool is null.
+    """
+    if cut_selection.empty or "pool_id" not in cut_selection.columns:
+        return cut_selection
+    counts = cut_selection.drop(columns=["pool_id", "node_id"], errors="ignore")
+    return counts.groupby(["iteration", "stage"], as_index=False).sum(min_count=1)
 
 
 def _normalize_output_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -842,8 +856,10 @@ def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerform
     else:
         scaling_report = {}
     cs_path = case_dir / "output" / "training" / "cut_selection" / "iterations.parquet"
-    cut_selection = _normalize_output_columns(
-        pq.read_table(cs_path).to_pandas() if cs_path.exists() else pd.DataFrame()
+    cut_selection = _cut_selection_per_stage(
+        _normalize_output_columns(
+            pq.read_table(cs_path).to_pandas() if cs_path.exists() else pd.DataFrame()
+        )
     )
     retry_path = case_dir / "output" / "training" / "solver" / "retry_histogram.parquet"
     retry_histogram = _normalize_output_columns(
@@ -1039,7 +1055,7 @@ class GenericConstraintData:
 
     ``resolved`` is the comparison-ready view (see
     :func:`novomodelo_bridge.novomodelo.constraint_expr.resolve_generic_constraints`):
-    coefficients and bounds read from the run's echo. F3 shape:
+    coefficients and bounds read from the run's echo. Sense-free shape:
     ``constraints`` dicts carry no ``sense`` key, and ``bounds`` has nullable
     ``bound_lower``/``bound_upper`` endpoint columns instead of a single
     ``bound`` column (see

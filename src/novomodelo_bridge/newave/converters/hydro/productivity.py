@@ -11,6 +11,7 @@ seasonal reference volumes, FICT-cascade fold-in) around that math.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 import pandas as pd
 import pyarrow as pa
@@ -20,6 +21,7 @@ from novomodelo_bridge.core.productivity import (
     compute_productivity,
     equivalent_productivity,
     integrated_productivity,
+    stored_energy_productivity,
 )
 from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.newave.case import NewaveCase
@@ -390,15 +392,44 @@ def _per_stage_equivalent_productivities(
     the only per-stage driver is the CFUGA/CMONT tailrace/forebay. Plants with no
     such override get a flat list at ``base_prodt``.
     """
+    return _per_stage_drop_series(
+        hreg, base_prodt, drop_overrides, case, total_stages, _equivalent_productivity
+    )
+
+
+def _per_stage_stored_energy_productivities(
+    hreg: pd.Series,
+    base: float,
+    drop_overrides: list[dict],
+    case: NewaveCase,
+    total_stages: int,
+) -> list[float]:
+    """Per-stage :func:`stored_energy_productivity`, applying CFUGA/CMONT.
+
+    Like PRODT it ignores VOLREF_SAZ: the stored-energy head does not depend on
+    the operating volume.
+    """
+    return _per_stage_drop_series(
+        hreg, base, drop_overrides, case, total_stages, stored_energy_productivity
+    )
+
+
+def _per_stage_drop_series(
+    hreg: pd.Series,
+    base: float,
+    drop_overrides: list[dict],
+    case: NewaveCase,
+    total_stages: int,
+    evaluate: Callable[..., float],
+) -> list[float]:
+    """*evaluate* at each stage's effective CFUGA/CMONT, *base* where none applies."""
     if not drop_overrides:
-        return [base_prodt] * total_stages
+        return [base] * total_stages
     drops = _per_stage_drop_overrides(drop_overrides, case, total_stages)
     return [
-        base_prodt
+        base
         if cfuga is None and cmont is None
-        else _equivalent_productivity(
-            hreg, canal_fuga_override=cfuga, cmont_override=cmont
-        )
+        else evaluate(hreg, canal_fuga_override=cfuga, cmont_override=cmont)
         for cfuga, cmont in drops
     ]
 
@@ -462,21 +493,29 @@ def _per_stage_productivities(
 def convert_hydro_energy_productivity(
     case: NewaveCase, id_map: NewaveIdMap
 ) -> pa.Table:
-    """Build the per-(hydro, stage) equivalent-productivity (ρ_eq) parquet table.
+    """Build the per-(hydro, stage) productivity parquet table.
 
-    **Every** plant gets an ``equivalent_productivity_mw_per_m3s`` value here,
-    FPHA and non-FPHA alike. `convert_production_models` emits no numeric
-    productivity, so this parquet is the single ρ_eq source. Plants without
+    Every plant, FPHA and non-FPHA alike, gets two values:
+
+    - ``equivalent_productivity_mw_per_m3s`` — the reference-point ρ_eq, the
+      ``gen = ρ·Q`` coefficient at v_65 or the VOLREF_SAZ volume with any
+      CFUGA/CMONT override. `convert_production_models` emits no numeric
+      productivity, so this is the plant's single ρ_eq source. novomodelo could
+      derive an FPHA plant's value from its VHA geometry, but not with the
+      source model's seasonal reference volume or tailrace overrides.
+    - ``integrated_equivalent_productivity_mw_per_m3s`` — the plant's own
+      stored-energy productivity, :func:`stored_energy_productivity` with the
+      CFUGA/CMONT overrides of each stage. novomodelo sums it down the cascade for
+      the integrated tags and the maximum stored energy that VminOP reads. It
+      is always supplied: novomodelo's own integral over the VHA geometry also
+      integrates ``D``/``S`` plants (the source model takes their point head
+      at ``volume_referencia``), evaluates the tailrace model at maximum
+      turbined flow rather than the mean tailrace level, and applies no
+      CFUGA/CMONT override.
+
+    Both values carry the fictitious plants' ρ folded in. Plants without
     CFUGA/CMONT/seasonal overrides emit one ``stage_id = NULL`` default row;
     plants with overrides emit one row per study stage.
-
-    FPHA plants are **not** excluded: novomodelo's energy-conversion build derives
-    their ρ_eq from this parquet override, because ``build_energy_and_templates``
-    feeds the alternative "VHA geometry + ρ_esp" derivation path an *empty*
-    geometry map — so the parquet override is the only working source. (The FPHA
-    production function φ itself is fit separately by novomodelo from geometry +
-    tailrace + efficiency.) Excluding FPHA plants makes novomodelo fail at load with
-    "FPHA hydro '…' cannot derive ρ_eq".
 
     ``reference_outflow_m3s`` and ``specific_productivity_mw_per_m3s_per_m`` are
     left NULL. The reference volume V_ref is declared in
@@ -516,6 +555,7 @@ def convert_hydro_energy_productivity(
     hydro_ids: list[int] = []
     stage_ids: list[int | None] = []
     equiv_prods: list[float] = []
+    integrated_prods: list[float] = []
 
     for newave_code in sorted(confhd_codes):
         if newave_code not in cadastro.index:
@@ -531,10 +571,13 @@ def convert_hydro_energy_productivity(
         overrides = plants_with_drop_overrides.get(newave_code, [])
         plant_seasonal = seasonal_volref.get(newave_code)
 
+        stored_base = stored_energy_productivity(hreg)
+
         if not overrides and not plant_seasonal:
             hydro_ids.append(hydro_id)
             stage_ids.append(None)
             equiv_prods.append(legacy_base + fict_extra)
+            integrated_prods.append(stored_base + fict_extra)
         else:
             per_stage = _per_stage_productivities(
                 hreg,
@@ -544,10 +587,16 @@ def convert_hydro_energy_productivity(
                 total_stages,
                 seasonal_volref_by_month=plant_seasonal,
             )
-            for stage_id, value in enumerate(per_stage):
+            per_stage_stored = _per_stage_stored_energy_productivities(
+                hreg, stored_base, overrides, case, total_stages
+            )
+            for stage_id, (value, stored) in enumerate(
+                zip(per_stage, per_stage_stored, strict=True)
+            ):
                 hydro_ids.append(hydro_id)
                 stage_ids.append(stage_id)
                 equiv_prods.append(value + fict_extra)
+                integrated_prods.append(stored + fict_extra)
 
     nulls = [None] * len(hydro_ids)
     return pa.table(
@@ -560,6 +609,9 @@ def convert_hydro_energy_productivity(
             "reference_outflow_m3s": pa.array(nulls, type=pa.float64()),
             "specific_productivity_mw_per_m3s_per_m": pa.array(
                 nulls, type=pa.float64()
+            ),
+            "integrated_equivalent_productivity_mw_per_m3s": pa.array(
+                integrated_prods, type=pa.float64()
             ),
         }
     )

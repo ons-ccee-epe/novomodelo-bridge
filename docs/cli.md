@@ -21,6 +21,7 @@ $ novomodelo-bridge [OPTIONS] COMMAND [ARGS]...
 * `convert`: Convert data from a source format to Novomodelo...
 * `compare`: Compare source model inputs/results...
 * `check`: Validate source-model inputs without...
+* `export`: Export Novomodelo artifacts to external formats...
 
 ## `novomodelo-bridge dashboard`
 
@@ -280,4 +281,63 @@ $ novomodelo-bridge check decomp [OPTIONS] {src}
 * `--log-file PATH`: Write the full DEBUG log to PATH (the console verbosity is unaffected).
 * `--no-color`: Disable coloured output (also honoured via the NO_COLOR env var).
 * `--quiet`: Suppress the summary and info notes; warnings/errors still show.
+* `--help`: Show this message and exit.
+
+## `novomodelo-bridge export`
+
+Export Novomodelo artifacts to external formats (DESSEM, etc.).
+
+**Usage**:
+
+```console
+$ novomodelo-bridge export [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `dessem`: Export Novomodelo FCF to DESSEM-compatible...
+
+### `novomodelo-bridge export dessem`
+
+Export Novomodelo FCF to DESSEM-compatible mapcut/cortdeco format.
+
+Reads a Novomodelo policy checkpoint from a solved case directory and writes
+DECOMP-format mapcut and cortdeco binary files that DESSEM can consume.
+
+DECOMP_DIR is the deck the case was converted from. Its caso.dat names the
+revision, which sets the output file extension (mapcut.rv0, cortdeco.rv0,
+etc.), its hidr.dat codes label the hydro plants in the cut files, and
+its dadgnl NL records give each GNL plant&#x27;s lag in months.
+
+
+Warnings logged during export:
+- P3: travel-time (tempo de viagem) coefficients not yet supported
+- P14: GNL (anticipated thermal) coefficients emitted as zeros
+
+**Usage**:
+
+```console
+$ novomodelo-bridge export dessem [OPTIONS] {decomp_dir} {case_dir}
+```
+
+**Arguments**:
+
+* `decomp_dir`: Path to the DECOMP deck directory the case was converted from.  [required]
+* `case_dir`: Path to the solved Novomodelo case directory.  [required]
+
+**Options**:
+
+* `-o, --output <path>`: Output directory. Default: CASE_DIR/dessem_fcf/
+* `--force`: Overwrite existing outputs.
+* `--include-terminal`: Include terminal pool in ECO CSV output.
+* `--audit-csv`: Emit audit CSVs (eco/ and content/ directories).
+* `--json`: Emit a single machine-readable JSON verdict to stdout.
+* `-v, --verbose`: Increase console log verbosity (-v INFO, -vv DEBUG).  [default: 0]
+* `--log-file PATH`: Write the full DEBUG log to PATH.
+* `--no-color`: Disable coloured output.
+* `--quiet`: Suppress info messages; warnings/errors still show.
 * `--help`: Show this message and exit.

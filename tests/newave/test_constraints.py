@@ -845,7 +845,7 @@ class TestConvertElectricConstraints:
         self, tmp_path: Path
     ) -> None:
         """A constraint code with both a lower and upper limit produces two
-        F3 constraint objects sharing one expression/name (the reader's
+        sense-free constraint objects sharing one expression/name (the reader's
         ``lim_inf``/``lim_sup`` are independent declarations, not one band —
         unlike the DECOMP ``_GenericBuilder``, which does collapse a genuine
         band into one id). Each keeps today's row semantics: one endpoint
@@ -1357,7 +1357,7 @@ class TestConvertAgrintConstraints:
         assert len(constraints) == 2
 
     def test_constraint_has_no_sense_key(self, tmp_path: Path) -> None:
-        """AGRINT constraint objects have exactly novomodelo's F3 sense-free keys."""
+        """AGRINT constraint objects have exactly novomodelo's sense-free keys."""
         agrint_path = tmp_path / "agrint.dat"
         agrint_path.write_text(_AGRINT_CONTENT, encoding="latin-1")
         (tmp_path / "dger.dat").touch()
@@ -1404,7 +1404,7 @@ class TestConvertAgrintConstraints:
         assert ids_5 == [i + 5 for i in ids_0]
 
     def test_bounds_table_schema(self, tmp_path: Path) -> None:
-        """Bounds table has the F3 schema (bound_lower/bound_upper, no bound)."""
+        """Bounds table has the interval schema (bound_lower/bound_upper, no bound)."""
         agrint_path = tmp_path / "agrint.dat"
         agrint_path.write_text(_AGRINT_CONTENT, encoding="latin-1")
         (tmp_path / "dger.dat").touch()

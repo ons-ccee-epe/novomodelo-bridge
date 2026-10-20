@@ -6,10 +6,10 @@ _add_type_filter_and_row_attrs helpers, and the full render() path using
 MagicMock data with real polars/pandas objects for fields that get accessed
 as LazyFrames/DataFrames.
 
-Also covers the F3 sense-free migration: constraint
-dicts here carry no ``sense`` key and ``gc_bounds`` fixtures carry the F3
+Also covers the sense-free shape: constraint
+dicts here carry no ``sense`` key and ``gc_bounds`` fixtures carry the
 ``bound_lower``/``bound_upper`` endpoint pair instead of a single ``bound``
-column, matching what the current constraint-bounds writers now emit.
+column, matching what the constraint-bounds writers emit.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from novomodelo_bridge.dashboard.tabs.constraints_utils import (
 
 
 def _make_constraints(n: int = 2, ctype: str = "VminOP") -> list[dict]:
-    """Return a list of minimal constraint dicts (F3 sense-free shape)."""
+    """Return a list of minimal constraint dicts (sense-free shape)."""
     return [
         {
             "id": i,
@@ -63,10 +63,10 @@ def _make_gc_bounds(
     sense: str = ">=",
     value: float = 100.0,
 ) -> pd.DataFrame:
-    """Return a minimal gc_bounds DataFrame in the F3 endpoint shape.
+    """Return a minimal gc_bounds DataFrame in the interval endpoint shape.
 
-    *sense*/*value* describe the pre-F3 ``(sense, bound)`` pair this fixture
-    is migrated from; :func:`sense_to_interval` maps it to the F3
+    *sense*/*value* describe a ``(sense, bound)`` pair;
+    :func:`sense_to_interval` maps it to the
     ``bound_lower``/``bound_upper`` endpoints actually stored on disk.
     """
     lower, upper = sense_to_interval(sense, value)
@@ -410,8 +410,7 @@ def test_compute_violation_zones_empty_inputs() -> None:
 def test_compute_violation_zones_two_sided_range_flags_both_directions() -> None:
     """A genuine distinct-endpoint range (``bound_lower`` != ``bound_upper``) flags
     a below-floor breach AND an above-ceiling breach independently, in one call —
-    the two-sided test this fix adds in place of the single-sense ``>=``/``<=``
-    branch (the F3 range-mishandling case this fixes)."""
+    not a single-sense ``>=``/``<=`` branch."""
     p10 = [5.0, 50.0, 50.0]
     p90 = [5.0, 50.0, 95.0]
     bound_lower = [10.0, 10.0, 10.0]
@@ -534,14 +533,14 @@ def test_build_constraint_lhs_data_missing_bounds_gives_none_bound() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Derived sense + bound value parity with a pre-F3 case
+# Derived sense + bound value parity with a legacy (sense, bound) case
 # ---------------------------------------------------------------------------
 
 
 def test_build_constraint_lhs_data_derives_ge_from_lower_endpoint() -> None:
-    """A VminOP-style floor (F3 lower-only) renders exactly like a pre-F3
+    """A VminOP-style floor (lower-only) renders exactly like a legacy
     ``sense=">="`` case: same ``">="`` label, same numeric bound."""
-    constraints = [{"id": 0, "name": "VminOP_c0"}]  # sense-free (F3)
+    constraints = [{"id": 0, "name": "VminOP_c0"}]  # sense-free
     lhs_df = _make_lhs_df([0], n_scenarios=2, n_stages=2, lhs_value=120.0)
     gc_bounds = _make_gc_bounds([0], n_stages=2, sense=">=", value=500.0)
     stage_labels = {0: "S0", 1: "S1"}
@@ -554,9 +553,9 @@ def test_build_constraint_lhs_data_derives_ge_from_lower_endpoint() -> None:
 
 
 def test_build_constraint_lhs_data_derives_le_from_upper_endpoint() -> None:
-    """An RE/AGRINT-style ceiling (F3 upper-only) renders exactly like a
-    pre-F3 ``sense="<="`` case: same ``"<="`` label, same numeric bound."""
-    constraints = [{"id": 1, "name": "RE_c1"}]  # sense-free (F3)
+    """An RE/AGRINT-style ceiling (upper-only) renders exactly like a
+    legacy ``sense="<="`` case: same ``"<="`` label, same numeric bound."""
+    constraints = [{"id": 1, "name": "RE_c1"}]  # sense-free
     lhs_df = _make_lhs_df([1], n_scenarios=2, n_stages=2, lhs_value=120.0)
     gc_bounds = _make_gc_bounds([1], n_stages=2, sense="<=", value=200.0)
     stage_labels = {0: "S0", 1: "S1"}
@@ -883,13 +882,13 @@ def test_render_evaluates_lhs_from_the_resolved_view() -> None:
 
 # ---------------------------------------------------------------------------
 # build_constraints_summary_table derives its "Sense"
-# column + "Bound Range" from F3 endpoints
+# column + "Bound Range" from the interval endpoints
 # ---------------------------------------------------------------------------
 
 
 class TestSummaryTableDerivesSenseFromBounds:
     """``build_constraints_summary_table`` shows the same Sense + Bound Range
-    a pre-F3 case showed, now sourced from ``bound_lower``/``bound_upper``."""
+    a legacy (sense, bound) case shows, sourced from ``bound_lower``/``bound_upper``."""
 
     @staticmethod
     def _violations() -> pd.DataFrame:
@@ -967,14 +966,14 @@ class TestSummaryTableDerivesSenseFromBounds:
 
 
 # ---------------------------------------------------------------------------
-# dashboard/data.py's generic-constraint bounds loader reads the F3
+# dashboard/data.py's generic-constraint bounds loader reads the
 # bound_lower/bound_upper columns straight through
 # ---------------------------------------------------------------------------
 
 
 class TestLoadGenericConstraintsF3Shape:
     """``load_generic_constraints`` takes the bounds from the run's echo — the
-    F3 ``bound_lower``/``bound_upper`` pair — with no ``bound`` column."""
+    ``bound_lower``/``bound_upper`` pair — with no ``bound`` column."""
 
     def test_loads_f3_bounds_from_the_echo(self, tmp_path: Path) -> None:
         from novomodelo_bridge.dashboard.data import load_generic_constraints

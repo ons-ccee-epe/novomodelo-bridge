@@ -21,7 +21,7 @@ one such string into a flat list of :class:`ParsedTerm`, expanding
 references (multiplying through the enclosing coefficient) while keeping
 ``ALIAS-ELETRICO`` references and ``se(cond, X, Y)`` conditionals unresolved
 for a later resolver; :func:`classify_term`/:func:`classify_terms` then sort
-each parsed term into the source model's A/B/C bucket trichotomy (spec §0).
+each parsed term into the source model's A/B/C bucket trichotomy.
 The activation-rule engine (:class:`ActivationRule`, :class:`Comparison`,
 :func:`parse_activation_rule`, :func:`evaluate_rule`) builds on this model
 and reuses this same parser for its comparison operands. This module only
@@ -595,7 +595,7 @@ def read_carga_ande(
     }
 
 
-#: Built-in bare (argument-less) input-data tokens (spec §0/§3). A bare name not
+#: Built-in bare (argument-less) input-data tokens. A bare name not
 #: declared by ``EXPRESSAO-ELETRICA`` or ``ALIAS-ELETRICO``, and not in this set,
 #: is an unrecognized identifier.
 _BUILTIN_BARE_TOKENS = frozenset({"demanda_sin", "val_demanda_sin", "carga_ande"})
@@ -664,7 +664,7 @@ class AssembledBound:
     bucket-A terms plus its RHS bucket-A terms moved over and sign-flipped,
     a ``disp_usih`` reserve's ``ger_usih`` terms sign-flipped to match the
     reserve->gen-cap rewrite's operator flip — so a caller reading ``terms``
-    never has to know which shape produced it, and never reproduces the A1
+    never has to know which shape produced it, and never reproduces the
     sign hazard of reading ``restriction.lhs``/``.rhs`` verbatim instead.
     """
 
@@ -679,7 +679,7 @@ def _negate(term: ParsedTerm) -> ParsedTerm:
 
 
 class UnrecognizedElectricalToken(ValueError):
-    """A well-formed but undeclared bare identifier (spec §3): neither a
+    """A well-formed but undeclared bare identifier: neither a
     declared ``EXPRESSAO-ELETRICA`` named expression, a declared
     ``ALIAS-ELETRICO`` data alias, nor a member of
     :data:`_BUILTIN_BARE_TOKENS`.
@@ -894,7 +894,7 @@ class _ExpressionParser:
         ]
 
     def _parse_bare_name(self, name: str, scale: float) -> list[ParsedTerm]:
-        """Disambiguate a bare name per spec §3: a named expression, else a data
+        """Disambiguate a bare name: a named expression, else a data
         alias, else a built-in bare token — else an unrecognized identifier."""
         if name in self._model.expressions:
             return self._expand_reference(
@@ -993,7 +993,7 @@ class Bucket(Enum):
     C = "C"
 
 
-#: Bucket A (spec §0) — novomodelo decision tokens that stay structural LP terms.
+#: Bucket A — novomodelo decision tokens that stay structural LP terms.
 #: ``re(X)`` is not listed here: the parser already inlines a restriction
 #: reference into its own terms (multiplying through the enclosing
 #: coefficient), so no :class:`ParsedTerm` ever carries a bare ``"re"`` token.
@@ -1001,7 +1001,7 @@ _BUCKET_A_TOKENS = frozenset(
     {"ger_usih", "ger_usit", "ger_pee", "ger_conjh", "ener_interc", "ener_comerc"}
 )
 
-#: Bucket B (spec §0) — input-data tokens the bridge evaluates to a number and
+#: Bucket B — input-data tokens the bridge evaluates to a number and
 #: folds into the bound: the built-in demand/load tokens, plus the parser's
 #: three reserved structural tokens (a bare numeric constant, an unresolved
 #: ``ALIAS-ELETRICO`` reference, and a ``se(cond, X, Y)`` conditional).
@@ -1018,10 +1018,10 @@ _BUCKET_B_TOKENS = frozenset(
     }
 )
 
-#: Bucket C (spec §0) — ``disp_usih`` is the sole member (see :class:`Bucket`).
+#: Bucket C — ``disp_usih`` is the sole member (see :class:`Bucket`).
 _BUCKET_C_TOKENS = frozenset({"disp_usih"})
 
-#: The closed token -> :class:`Bucket` map (spec §0), the sole source of truth
+#: The closed token -> :class:`Bucket` map, the sole source of truth
 #: for :func:`classify_term`. Mirrors
 #: ``constraint_registers._BOUNDS_AXIS``'s module-level membership-map shape.
 _TOKEN_BUCKET: dict[str, Bucket] = {
@@ -1075,7 +1075,7 @@ def classify_terms(terms: Sequence[ParsedTerm]) -> dict[Bucket, list[ParsedTerm]
     return partition
 
 
-#: The activation-rule grammar's six comparison operators (spec §4a),
+#: The activation-rule grammar's six comparison operators,
 #: longest-match: the two-character operators must be tried before their
 #: single-character prefix (``<=``/``>=`` before ``<``/``>``).
 _COMPARISON_TWO_CHAR_OPS = frozenset({"<=", ">=", "==", "!="})
@@ -1106,8 +1106,8 @@ class Comparison:
     :class:`ParsedTerm` from :func:`parse_linear_expression`; every term on
     either side classifies as :attr:`Bucket.B` (:func:`parse_activation_rule`
     enforces this — an activation rule gates on input data, never a novomodelo
-    decision term). ``op`` is one of the six recognized comparison operators
-    (spec §4a), verbatim.
+    decision term). ``op`` is one of the six recognized comparison
+    operators, verbatim.
     """
 
     left: list[ParsedTerm]
@@ -1259,7 +1259,7 @@ def parse_activation_rule(text: str, model: LibsElectricalModel) -> ActivationRu
     novomodelo decision term.
 
     This is the closed six-operator + ``&`` grammar verified against every
-    rule in the source model's decks (spec §4a) — it has no ``|``
+    rule in the source model's decks — it has no ``|``
     (disjunction) and no ``se`` literal at the rule-text level, so neither is
     supported here; a deck that needs either is out of scope, not a silent
     extension.
@@ -1350,7 +1350,7 @@ def is_always_active(rule: ActivationRule) -> bool:
 
 class _UnresolvableBucketBTerm(Exception):
     """Internal control-flow signal: one bucket-B term's data lookup failed
-    at a (stage, block) cell (spec §4c requirement 4) — a ``carga_ande``
+    at a (stage, block) cell — a ``carga_ande``
     reference with no ``RI`` register, a ``demanda``/``val_demanda``
     reference to an unknown submarket, or an ``alias`` reference with no
     value at or before the cell.
@@ -1411,8 +1411,7 @@ def _submarket_bus_id(id_map: DecompIdMap, term: ParsedTerm) -> int:
     ------
     _UnresolvableBucketBTerm
         When the code is not a declared subsystem (:meth:`DecompIdMap.
-        bus_id` raises ``KeyError``) — spec §4c requirement 4's "unknown
-        submarket" case.
+        bus_id` raises ``KeyError``) — the "unknown submarket" case.
     """
     code = term.args[0]
     try:
@@ -1443,7 +1442,7 @@ def build_data_context(
     captured — along with *model* — in the returned closure, rather than
     re-read per cell.
 
-    Resolves every bucket-B token (spec §4c):
+    Resolves every bucket-B token:
 
     - ``demanda(X)``/``val_demanda(X)`` — submarket ``X``'s (the deck's
       ``codigo_submercado``) block load, ``0.0`` when ``DP`` declares no row
@@ -1540,7 +1539,7 @@ def evaluate_se(
     entirely bucket B (input data): folding a branch that carries a
     bucket-A (novomodelo decision) or bucket-C (``disp_usih``) term would fold
     that term into a plain number and silently drop it from the LP. ``se``
-    does not appear on the target deck (spec §2b: gating is via
+    does not appear on the target deck (gating is via
     ``REGRA-ATIVACAO``, not inline ``se()``), so this guard is defensive
     hardening, not a gap in coverage — keeping a decision-bearing branch's
     bucket-A/-C terms structural (folding only its bucket-B terms, the way
@@ -1591,7 +1590,7 @@ def _fold_formula_bound(
     patamar) two-sided limit, keeping its LHS bucket-A terms verbatim as the
     surviving structural expression — a FORMULA restriction is already in
     novomodelo's single-LHS ``lower <= expr <= upper`` shape, so no sign flip is
-    ever needed here (spec §1).
+    ever needed here.
 
     ``restriction.limits`` is looked up at an exact ``(stage_index,
     patamar)`` match, falling back to the ``NA`` (all-blocks,
@@ -1634,7 +1633,7 @@ def _effective_inequacao_sides(
     restriction: ElectricalRestriction, stage_index: int, patamar: int
 ) -> tuple[str, str, str]:
     """The ``(lhs, operator, rhs)`` DSL strings in effect for one INEQUACAO
-    restriction's ``(stage_index, patamar)`` cell (spec §3's precedence:
+    restriction's ``(stage_index, patamar)`` cell (precedence:
     ``période-patamar > data-patamar > constante``).
 
     Scans :attr:`ElectricalRestriction.overrides` for rows whose
@@ -1676,9 +1675,9 @@ def _fold_inequacao_bound(
     rhs_partition: Mapping[Bucket, list[ParsedTerm]],
 ) -> AssembledBound:
     """Fold an INEQUACAO restriction's bucket-B terms — both sides,
-    sign-aware — into its operator's F3 interval, and move any RHS bucket-A
-    term onto the LHS, sign-flipped, so the surviving expression is novomodelo's
-    single-LHS form (spec §1 — the A1 sign hazard's plain-INEQUACAO half:
+    sign-aware — into its operator's ``(lower, upper)`` interval, and move any
+    RHS bucket-A term onto the LHS, sign-flipped, so the surviving expression
+    is novomodelo's single-LHS form (the sign hazard's plain-INEQUACAO half:
     ``lhs op rhs`` with a bucket-A term on the RHS must not be read as if it
     were already on the LHS).
 
@@ -1686,7 +1685,7 @@ def _fold_inequacao_bound(
     combines them with bucket-A normalized onto the LHS:
     ``bound = Σ_{B∩RHS} − Σ_{B∩LHS}``. :func:`~novomodelo_bridge.
     generic_constraint_format.sense_to_interval` then maps *restriction*'s
-    operator onto the F3 ``(lower, upper)`` shape (``>=`` lower-only, ``<=``
+    operator onto the ``(lower, upper)`` shape (``>=`` lower-only, ``<=``
     upper-only, ``==`` both endpoints equal to *bound*).
 
     *lhs_partition*/*rhs_partition* are already-parsed-and-classified sides
@@ -1721,7 +1720,7 @@ def assemble_bound(
     """Fold *restriction*'s bucket-B (input-data) and bucket-C (``disp_usih``,
     available power) terms into its per-(stage,block) numeric bound, leaving
     only its bucket-A (decision) terms structural — and sign-canonical for
-    novomodelo — in the returned :class:`AssembledBound` (spec §4c; the bucket-C
+    novomodelo — in the returned :class:`AssembledBound` (the bucket-C
     fold is the reserve->gen-cap rewrite — see this module's header).
 
     Classifies *restriction.lhs* (and, for a FORMULA restriction, only
@@ -1735,13 +1734,14 @@ def assemble_bound(
     raises, below). An INEQUACAO restriction classifies its *effective*
     ``(lhs, operator, rhs)`` instead — :func:`_effective_inequacao_sides`
     resolves any ``RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`` override
-    in effect at this cell (spec §3's precedence: exact-patamar >
+    in effect at this cell (precedence: exact-patamar >
     NA-patamar > the restriction's own constant sides) before classification
     ever runs, so a cell with no matching override classifies the constant
     sides verbatim and one with a matching override classifies that
     override's sides instead. With no bucket-C term, the effective sides
-    fold sign-aware into the effective operator's F3 interval, moving any
-    RHS bucket-A term onto the LHS negated (:func:`_fold_inequacao_bound`);
+    fold sign-aware into the effective operator's ``(lower, upper)``
+    interval, moving any RHS bucket-A term onto the LHS negated
+    (:func:`_fold_inequacao_bound`);
     with a ``disp_usih`` term (on either side), they fold via
     :func:`_fold_reserve_disp_usih` instead, which requires *a_h* and
     negates the surviving ``ger_usih`` terms to match its operator flip —
@@ -2082,10 +2082,10 @@ def build_available_power(
     term by that same deck code, never by ``hydro_id``. A group with no entry
     at a given stage contributes nothing to the sum: *overlay* is sparse by
     construction (only stores a value where the maintenance-derated figure
-    falls below that group's own declared envelope — spec's B8 "only where it
-    differs" convention), so a stage/group absent from it means "no further
-    restriction beyond the rated envelope", not "zero" — which is exactly
-    what the :meth:`AvailablePower.resolve` fallback then supplies.
+    falls below that group's own declared envelope), so a stage/group absent
+    from it means "no further restriction beyond the rated envelope", not
+    "zero" — which is exactly what the :meth:`AvailablePower.resolve`
+    fallback then supplies.
 
     Precomputes the FALLBACK tier for every declared hydro plant
     (:attr:`~novomodelo_bridge.decomp.id_map.DecompIdMap.hydro_codes`) via
@@ -2226,7 +2226,7 @@ def _fold_reserve_disp_usih(
     ``disp_usih(h) -> A_h`` (:func:`resolve_disp_usih`) and multiplying the
     whole relation by ``-1`` — realized on the returned
     :class:`AssembledBound` by negating every surviving ``ger_usih`` term
-    (this is the A1 fix: a caller reading ``restriction.lhs`` verbatim would
+    (this is the sign fix: a caller reading ``restriction.lhs`` verbatim would
     keep its original negative coefficient, silently inverting the bound) —
     flips the operator's sense; any bucket-B terms on either side fold into
     the same bound.

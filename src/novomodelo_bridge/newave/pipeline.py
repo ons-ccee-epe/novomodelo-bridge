@@ -427,6 +427,7 @@ def _convert_newave_case_impl(
         emission_checks.check_unit_group_envelope(hydros_dict)
         emission_checks.check_bound_row_uniqueness(bound_families)
         emission_checks.check_bound_block_id_range(stages_dict, bound_families)
+        emission_checks.check_diversion_has_channel(hydros_dict, hydro_bounds_table)
 
     emission_checks.run_and_gate(_run_checks)
 

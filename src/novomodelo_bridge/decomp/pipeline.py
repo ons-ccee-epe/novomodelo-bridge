@@ -29,6 +29,11 @@ from novomodelo_bridge.core.conversion import (
     clear_dst_contents,
     run_conversion,
 )
+from novomodelo_bridge.core.diversion import (
+    channel_flow_limit,
+    is_unlimited_flow,
+    unlimited_channels_diagnostic,
+)
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.decomp import (
@@ -600,90 +605,175 @@ def _first_diversion_channel(
     return None
 
 
+@dataclass(frozen=True)
+class DiversionChannels:
+    """The ``diversion`` channels coupled to the resolved diversion bounds.
+
+    ``channels`` maps a novomodelo hydro id to its ``{downstream_id, max_flow_m3s}``
+    entry. ``dropped`` lists the hydros with only a positive diversion ceiling
+    whose channel does not resolve; their ceiling must be closed to 0, or the
+    diverted water reaches no plant. A floored hydro whose channel does not
+    resolve is in neither: the floor cannot be closed, so it stays without a
+    channel and fails the emission check
+    :func:`~novomodelo_bridge.core.emission_checks.check_diversion_has_channel`.
+    """
+
+    channels: dict[int, dict]
+    dropped: list[int]
+
+
 def _diversion_channels(
     hydro_bounds: pa.Table,
     id_map: DecompIdMap,
     effective: cadastro_conv.EffectiveCadastro,
-) -> tuple[dict[int, dict], list[int]]:
-    """Novomodelo ``diversion`` channels for hydros carrying a positive diversion floor.
+) -> DiversionChannels:
+    """Channels for every hydro whose resolved diversion can be positive.
 
-    A single-term QDES limit lowers to a ``min_diversion_m3s`` row; novomodelo couples
-    a positive floor to a declared diversion channel (without one, diversion is
-    pinned ``[0, 0]`` and any positive floor is infeasible). The source deck
-    already declares the channel — read into ``effective.diversions`` — so this
-    returns, keyed by novomodelo hydro id, the ``{downstream_id, max_flow_m3s}`` entry
-    for every floored hydro whose channel resolves (a numeric limit and a
-    downstream plant that survives into the case). Its second element lists the
-    novomodelo ids of any floored hydro whose channel does NOT resolve — a genuine
-    gap the caller surfaces rather than emitting an invalid case silently.
-
-    Only floored hydros get a channel: an unconstrained diverter keeps
-    ``diversion = null`` (its diversion stays pinned ``[0, 0]``, unchanged), so
-    no plant's LP feasible region moves except the ones the floor already binds.
+    novomodelo takes the diversion out of the plant's water balance but credits it
+    to a receiving plant only through the ``diversion`` channel, so a positive
+    ``min_diversion_m3s`` or ``max_diversion_m3s`` needs one. The source model
+    sends ``QDES`` to the plant's ``desvio`` target (``AC DESVIO``, else
+    ``hidr.dat``) and rejects a ``QDES`` restriction on a plant without one, so
+    the target comes from ``effective.diversions``. The channel carries the
+    ``AC DESVIO`` limit, or none when the deck gives none or its "no limit"
+    value; the resolved bounds still cap each stage. A target outside the case
+    leaves the hydro without a channel.
     """
-    if "min_diversion_m3s" not in hydro_bounds.column_names:
-        return {}, []
-    columns = hydro_bounds.select(["hydro_id", "min_diversion_m3s"]).to_pydict()
-    floored_ids = {
-        int(hydro_id)
-        for hydro_id, floor in zip(
-            columns["hydro_id"], columns["min_diversion_m3s"], strict=True
-        )
-        if floor is not None and floor > 0.0
-    }
-    if not floored_ids:
-        return {}, []
+    floored: set[int] = set()
+    opened: set[int] = set()
+    columns = hydro_bounds.column_names
+    rows = len(hydro_bounds)
+    hydro_ids = hydro_bounds.column("hydro_id").to_pylist()
+    floors = (
+        hydro_bounds.column("min_diversion_m3s").to_pylist()
+        if "min_diversion_m3s" in columns
+        else [None] * rows
+    )
+    uppers = (
+        hydro_bounds.column("max_diversion_m3s").to_pylist()
+        if "max_diversion_m3s" in columns
+        else [None] * rows
+    )
+    for hydro_id, floor, upper in zip(hydro_ids, floors, uppers, strict=True):
+        if floor is not None and floor > 0.0:
+            floored.add(int(hydro_id))
+        if upper is not None and upper > 0.0:
+            opened.add(int(hydro_id))
     code_by_id = {id_map.hydro_id(code): code for code in id_map.hydro_codes}
     operated_codes = set(id_map.hydro_codes)
     channels: dict[int, dict] = {}
-    unresolved: list[int] = []
-    for hydro_id in sorted(floored_ids):
+    dropped: list[int] = []
+    for hydro_id in sorted(floored | opened):
         code = code_by_id.get(hydro_id)
         channel = (
             _first_diversion_channel(effective, code) if code is not None else None
         )
         if (
             channel is None
-            or channel.limit is None
             or channel.downstream not in operated_codes
+            or (channel.limit is not None and channel.limit <= 0.0)
         ):
-            unresolved.append(hydro_id)
+            if hydro_id not in floored:
+                dropped.append(hydro_id)
             continue
         channels[hydro_id] = {
             "downstream_id": id_map.hydro_id(channel.downstream),
-            "max_flow_m3s": float(channel.limit),
+            "max_flow_m3s": channel_flow_limit(channel.limit),
         }
-    return channels, unresolved
+    return DiversionChannels(channels, dropped)
+
+
+def _close_diversion(hydro_bounds: pa.Table, hydro_ids: Sequence[int]) -> pa.Table:
+    """*hydro_bounds* with the ``max_diversion_m3s`` of *hydro_ids* set to 0."""
+    if not hydro_ids or "max_diversion_m3s" not in hydro_bounds.column_names:
+        return hydro_bounds
+    closed = set(hydro_ids)
+    upper = [
+        0.0 if hydro_id in closed and value is not None else value
+        for hydro_id, value in zip(
+            hydro_bounds.column("hydro_id").to_pylist(),
+            hydro_bounds.column("max_diversion_m3s").to_pylist(),
+            strict=True,
+        )
+    ]
+    index = hydro_bounds.column_names.index("max_diversion_m3s")
+    return hydro_bounds.set_column(
+        index,
+        hydro_bounds.schema.field(index),
+        pa.array(upper, type=hydro_bounds.schema.field(index).type),
+    )
+
+
+def _diversion_channel_dropped_diagnostic(
+    hydro_bounds: pa.Table,
+    dropped: Sequence[int],
+    id_map: DecompIdMap,
+    effective: cadastro_conv.EffectiveCadastro,
+    hydros_dict: dict,
+) -> dx.Diagnostic:
+    """The WARNING for diversion ceilings closed because no channel resolves."""
+    names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
+    ceilings: dict[int, float] = defaultdict(float)
+    for hydro_id, upper in zip(
+        hydro_bounds.column("hydro_id").to_pylist(),
+        hydro_bounds.column("max_diversion_m3s").to_pylist(),
+        strict=True,
+    ):
+        if hydro_id in dropped and upper is not None:
+            ceilings[hydro_id] = max(ceilings[hydro_id], upper)
+    rows: list[list[object]] = []
+    for hydro_id in dropped:
+        code = id_map.hydro_codes[hydro_id]
+        channel = _first_diversion_channel(effective, code)
+        rows.append(
+            [
+                names.get(hydro_id, ""),
+                code,
+                channel.downstream if channel is not None else "-",
+                ceilings[hydro_id],
+            ]
+        )
+    return dx.Diagnostic(
+        code="decomp-diversion-channel-dropped",
+        severity=dx.Severity.WARNING,
+        category="Diversion",
+        title="Diversion closed: target plant not in the case",
+        summary=(
+            f"{len(dropped)} hydro(s) allow a positive diverted flow, but the "
+            "plant that receives it is not in the case; their diversion is "
+            "closed, so the water stays in the plant's own river."
+        ),
+        table=dx.DiagnosticTable(
+            columns=["Plant", "Code", "Target code", "Max diversion (m³/s)"],
+            rows=rows,
+        ),
+        remediation=(
+            "Include the receiving plant in the case if the diversion should "
+            "be modeled; otherwise this is informational."
+        ),
+    )
 
 
 def _base_diversion_channels(
     effective: cadastro_conv.EffectiveCadastro,
     id_map: DecompIdMap,
-    hydro_capacities: Mapping[int, single_term_bounds.HydroCapacities],
     already_bounded_ids: set[int],
-    stage_ids: Sequence[int],
-) -> tuple[dict[int, dict], list[bounds_accumulator.BoundContribution]]:
-    """Diversion channels + ``max_diversion`` bounds for BASE ``desvio`` diverters.
+) -> dict[int, dict]:
+    """Diversion channels for the ``desvio`` plants without a ``QDES`` bound.
 
-    A base ``desvio`` (the ``hidr`` field) with neither an ``AC DESVIO`` limit
-    nor a QDES single-term bound leaves novomodelo's diversion column pinned
-    ``[0, 0]`` (``max_diversion_m3s`` defaults to 0), stranding any downstream
+    Without a channel novomodelo closes a plant's diversion column, stranding any
     plant fed *solely* by that diversion -- e.g. MOXOTO's spill-side split to
-    P.AFONSO 4, which otherwise receives no water and generates 0 MW. This
-    declares the channel and opens the diversion column up to the receiving
-    plant's turbine capacity (the flow it can actually pass to generation), so
-    the diverted water reaches the downstream plant.
+    P.AFONSO 4, which otherwise receives no water and generates 0 MW. The
+    channel carries the ``AC DESVIO`` limit, or none when the deck gives none
+    or its "no limit" value, as in the source model.
 
     Skips any diverter whose diversion axis is already bounded
-    (``already_bounded_ids`` -- a QDES/``AC DESVIO`` floor already handled by
-    :func:`_diversion_channels`), so this only *adds* the previously-unmodelled
-    base channels and never overrides an explicit source limit. Returns the
-    ``{downstream_id, max_flow_m3s}`` channel per source novomodelo id and the
-    per-stage ``diversion`` bound contributions to fold into the accumulator.
+    (``already_bounded_ids`` -- a ``QDES`` bound, whose channel
+    :func:`_diversion_channels` resolves). Returns the ``{downstream_id,
+    max_flow_m3s}`` channel per source novomodelo id.
     """
     operated = set(id_map.hydro_codes)
     channels: dict[int, dict] = {}
-    contribs: list[bounds_accumulator.BoundContribution] = []
     for code in sorted(id_map.hydro_codes):
         if not effective.has_diversion(code):
             continue
@@ -693,30 +783,13 @@ def _base_diversion_channels(
         channel = _first_diversion_channel(effective, code)
         if channel is None or channel.downstream not in operated:
             continue
-        downstream_id = id_map.hydro_id(channel.downstream)
-        # A base `desvio` carries no explicit flow limit; cap the channel at the
-        # receiving plant's turbine capacity (what it can turn into generation).
-        cap = channel.limit
-        if cap is None:
-            cap = hydro_capacities[downstream_id].max_turbined_m3s
-        if cap is None or cap <= 0.0:
+        if channel.limit is not None and channel.limit <= 0.0:
             continue
-        cap = float(cap)
-        channels[source_id] = {"downstream_id": downstream_id, "max_flow_m3s": cap}
-        contribs.extend(
-            bounds_accumulator.BoundContribution(
-                family="hydro",
-                entity_id=source_id,
-                stage_id=stage_id,
-                block_id=None,
-                axis="diversion",
-                lower=0.0,
-                upper=cap,
-                contributor="base-desvio",
-            )
-            for stage_id in stage_ids
-        )
-    return channels, contribs
+        channels[source_id] = {
+            "downstream_id": id_map.hydro_id(channel.downstream),
+            "max_flow_m3s": channel_flow_limit(channel.limit),
+        }
+    return channels
 
 
 def _libs_electrical_census_diagnostic(
@@ -917,14 +990,11 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         }
         reference_volumes[code] = {"volume_hm3": v_init}
 
-    # penalties.json takes the full per-plant ρ_eq list (system ρ_avg/ρ_max);
-    # the parquet omits FPHA plants (novomodelo computes their ρ_eq, so a parquet row
-    # would double-supply it).
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
     )
-    productivity_parquet = hydro_conv.convert_energy_productivity(
-        effective, id_map, initial_volumes, exclude_codes=fpha_codes
+    productivity_parquet = hydro_conv.convert_hydro_energy_productivity(
+        effective, id_map, initial_volumes, fpha_codes
     )
     deficit_costs = network_conv._bus_deficit_costs(dadger)
     deficit_cost = max(deficit_costs.values()) if deficit_costs else 0.0
@@ -968,11 +1038,8 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         case, id_map, effective=effective, fpha_codes=fpha_codes
     )
     artifacts.hydros_dict = hydros_dict
-    # hydros.json is written after the bound tables are resolved (below): a
-    # plant carrying a positive QDES diversion floor (min_diversion_m3s > 0)
-    # must also declare its diversion channel, or novomodelo rejects the floor as
-    # infeasible against the channel-less [0, 0] pin. That coupling can only be
-    # applied once the resolved hydro_bounds are in hand.
+    # hydros.json is written after the bound tables are resolved (below): its
+    # diversion channels follow the resolved diversion bounds.
     lines_doc, line_bounds = network_conv.convert_lines(case, id_map)
     if itaipu_operated:
         # When Itaipu is operated (the split-plant topology relocates its 60 Hz
@@ -1235,6 +1302,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         ),
         *bounds_conv.convert_storage_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_volume_espera_bounds(case, id_map, effective=effective),
+        *bounds_conv.convert_spillage_upper_bounds(case, id_map),
         *thermal_generation_contribs,
         *single_term_bounds.single_term_bound_contributions(
             case,
@@ -1245,23 +1313,15 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             hydro_capacities=hydro_capacities,
         ),
     ]
-    # Base `desvio` diverters carry no QDES flow bound, so novomodelo pins their
-    # diversion column to [0, 0] and strands any plant fed solely by the
-    # diversion (e.g. MOXOTO -> P.AFONSO 4, which otherwise generates 0 MW).
-    # Give the still-unbounded ones a max_diversion bound + a routed channel.
-    _diversion_bounded_ids = {
-        contrib.entity_id
-        for contrib in contribs
-        if contrib.family == "hydro" and contrib.axis == "diversion"
-    }
-    base_diversion_channels, base_diversion_contribs = _base_diversion_channels(
+    base_diversion_channels = _base_diversion_channels(
         effective,
         id_map,
-        hydro_capacities,
-        _diversion_bounded_ids,
-        [stage.index for stage in calendar],
+        {
+            contrib.entity_id
+            for contrib in contribs
+            if contrib.family == "hydro" and contrib.axis == "diversion"
+        },
     )
-    contribs.extend(base_diversion_contribs)
     block_counts = {stage.index: len(stage.block_hours) for stage in calendar}
     bound_tables = bounds_accumulator.build_bound_tables(
         bounds_accumulator.resolve(contribs, block_counts)
@@ -1278,22 +1338,41 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         bounds_conv.convert_irrigation_withdrawal(case, id_map),
         block_counts,
     )
-    # Attach the diversion channel to every hydro that carries a positive
-    # diversion floor, then write hydros.json (its write was deferred from
-    # `_convert_core_entities`'s system-file block for exactly this). novomodelo
-    # couples the two: a `min_diversion_m3s > 0` row is infeasible unless the
-    # hydro also declares a `diversion` channel. The source deck already
-    # carries the channel (read into `effective.diversions`); this is the
-    # only place both the resolved floor and the channel are in hand.
-    diversion_channels, diversion_floor_no_channel = _diversion_channels(
-        hydro_bounds, id_map, effective
-    )
+    diversion = _diversion_channels(hydro_bounds, id_map, effective)
+    if diversion.dropped:
+        dx.emit(
+            _diversion_channel_dropped_diagnostic(
+                hydro_bounds, diversion.dropped, id_map, effective, hydros_dict
+            ),
+            logger=_LOG,
+        )
+        hydro_bounds = _close_diversion(hydro_bounds, diversion.dropped)
+    names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
+    unlimited: list[tuple[int, str, int, str, float]] = []
     for hydro in hydros_dict["hydros"]:
-        channel = diversion_channels.get(hydro["id"]) or base_diversion_channels.get(
+        channel = diversion.channels.get(hydro["id"]) or base_diversion_channels.get(
             hydro["id"]
         )
-        if channel is not None:
-            hydro["diversion"] = channel
+        if channel is None:
+            continue
+        hydro["diversion"] = channel
+        code = id_map.hydro_codes[hydro["id"]]
+        source = _first_diversion_channel(effective, code)
+        if source is not None and is_unlimited_flow(source.limit):
+            unlimited.append(
+                (
+                    code,
+                    hydro["name"],
+                    source.downstream,
+                    names.get(id_map.hydro_id(source.downstream), ""),
+                    source.limit,
+                )
+            )
+    if unlimited:
+        dx.emit(
+            unlimited_channels_diagnostic(unlimited, source="AC DESVIO"),
+            logger=_LOG,
+        )
     if base_diversion_channels:
         dx.emit(
             dx.Diagnostic(
@@ -1303,28 +1382,11 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
                 title="Base diversion channels modeled",
                 summary=(
                     f"{len(base_diversion_channels)} hydro(s) "
-                    f"({sorted(base_diversion_channels)}) carry a base diversion "
-                    "channel with no explicit flow limit; each was given a "
-                    "diversion channel capped at the receiving plant's turbine "
-                    "capacity so the diverted water reaches the downstream plant "
-                    "(otherwise that plant is stranded with no inflow)."
-                ),
-            ),
-            logger=_LOG,
-        )
-    if diversion_floor_no_channel:
-        dx.emit(
-            dx.Diagnostic(
-                code="decomp-diversion-floor-no-channel",
-                severity=dx.Severity.WARNING,
-                category="Diversion",
-                title="Diversion floor without a resolvable channel",
-                summary=(
-                    f"{len(diversion_floor_no_channel)} hydro(s) "
-                    f"({sorted(diversion_floor_no_channel)}) carry a positive "
-                    "min_diversion_m3s floor but no resolvable diversion channel "
-                    "(absent/limitless channel or an unmapped downstream plant); "
-                    "novomodelo rejects the case until the channel is supplied."
+                    f"({sorted(base_diversion_channels)}) divert water through "
+                    "their hidr.dat or AC DESVIO desvio with no QDES restriction; "
+                    "each was given a diversion channel to the receiving plant, "
+                    "limited only by an AC DESVIO flow, so the diverted water "
+                    "reaches that plant."
                 ),
             ),
             logger=_LOG,
@@ -1384,6 +1446,10 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     itaipu_operated = artifacts.itaipu_operated
     block_counts = artifacts.block_counts
     assert block_counts is not None
+    census = artifacts.census
+    assert census is not None
+    hydros_dict = artifacts.hydros_dict
+    assert hydros_dict is not None
 
     # Per-group per-stage availability (installed × MP ×
     # FD, capped by the ρ_eq·q_max hydraulic ceiling) for every plant,
@@ -1424,17 +1490,30 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     group_rows_by_hydro: defaultdict[int, list[dict]] = defaultdict(list)
     for row in group_bounds.to_pylist():
         group_rows_by_hydro[row["hydro_id"]].append(row)
+    frequency_contribs = single_term_bounds.split_plant_group_contributions(
+        case,
+        id_map,
+        census=census,
+        group_capacities={
+            (hydro["id"], group["id"]): group["max_generation_mw"]
+            for hydro in hydros_dict["hydros"]
+            for group in hydro["unit_groups"]
+        },
+    )
     resolved_group_entries: list[
         tuple[tuple[int, int, int, int | None], bounds_accumulator.ResolvedRow]
     ] = []
-    for hydro_id, rows in group_rows_by_hydro.items():
-        per_hydro_contribs = _row_group_contributions(
-            rows,
-            family="hydro_unit_group",
-            id_column="hydro_unit_group_id",
-            axes=("turbined", "generation"),
-            contributor="group_bounds",
-        )
+    for hydro_id in sorted(group_rows_by_hydro.keys() | frequency_contribs.keys()):
+        per_hydro_contribs = [
+            *_row_group_contributions(
+                group_rows_by_hydro[hydro_id],
+                family="hydro_unit_group",
+                id_column="hydro_unit_group_id",
+                axes=("turbined", "generation"),
+                contributor="group_bounds",
+            ),
+            *frequency_contribs.get(hydro_id, []),
+        ]
         for resolved in bounds_accumulator.resolve(per_hydro_contribs, block_counts):
             resolved_group_entries.append(
                 (
@@ -1461,7 +1540,7 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
 
     # The CI/CE energy-contract model, read once and
     # shared by both emitters. Real decks carry no usable contract data
-    # (rv0's single placeholder is skipped by D6, rv3 has none), so the
+    # (rv0's single placeholder row is skipped, rv3 has none), so the
     # visible effect on a real conversion is: no contract files written, no
     # self-check finding, no regression.
     contracts = contracts_conv.read_contracts(dadger, calendar)
@@ -1590,6 +1669,7 @@ def _emit_and_write(
         emission_checks.check_block_id_not_on_anticipated_thermal(
             thermals_dict, thermal_bounds_table
         )
+        emission_checks.check_diversion_has_channel(hydros_dict, hydro_bounds)
 
     emission_checks.run_and_gate(_run_emission_checks)
 
@@ -1614,7 +1694,7 @@ def _emit_and_write(
     # entity bound (`census.to_generic`, resolved once in `_resolve_bounds`)
     # as a Novomodelo generic constraint, over one shared 0-based constraint-id
     # allocator so ids never collide across emitters regardless of which
-    # family produced them. The three emitters run in this fixed order (E7);
+    # family produced them. The emitters run in this fixed order;
     # `big_m`, `line_map`, and `hydro_to_ree` are shared inputs every emitter
     # needs but none of them reads the deck to build for itself.
     big_m = constraints_conv.big_m_penalty(deficit_cost)
@@ -1633,7 +1713,7 @@ def _emit_and_write(
     # so neither can disagree about whether the deck's long-form subset
     # converted. `read_libs_electrical` returns `None` for a short-form-only
     # (RE/RE-* or date-indexed) file -- that fallback stays on
-    # detect_libs_electrical's flat warning (OQ-4).
+    # detect_libs_electrical's flat warning.
     libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None = None
     if case.libs_restricao_eletrica is not None:
         libs_electrical_model = libs_electrical_conv.read_libs_electrical(
@@ -1678,8 +1758,8 @@ def _emit_and_write(
         allocator=allocator,
     )
     if rhe_generics is not None:
-        generic_constraints.extend(rhe_generics.generic.constraints)
-        generic_bound_tables.append(rhe_generics.generic.bounds)
+        generic_constraints.extend(rhe_generics.constraints)
+        generic_bound_tables.append(rhe_generics.bounds)
 
     # The 4th generic-constraint emitter link -- every
     # LIBs-era long-form electrical restriction that resolved
@@ -1733,21 +1813,32 @@ def _emit_and_write(
             pa.concat_tables(generic_bound_tables),
         )
 
-    # Every `@name` a surviving RHE expression references must resolve, or
-    # novomodelo fails to load the case -- write generic_parameters.json whenever
-    # any RHE constraint survives, never only when another generic family
-    # also happens to be present.
-    if rhe_generics is not None:
+    # Every `@name` a surviving expression references must resolve, or novomodelo
+    # fails to load the case.
+    if any("@" in constraint["expression"] for constraint in generic_constraints):
+        parameterized = [
+            result
+            for result in (re_generics, rhq_rhv_generics, rhe_generics)
+            if result is not None
+        ]
         write_scalar_parameters(
             writer,
             build_decomp_scalar_parameters(
                 [id_map.hydro_id(code) for code in id_map.hydro_codes],
-                per_stage=rhe_generics.per_stage_parameters,
-                expressions=rhe_generics.expression_parameters,
+                per_stage={
+                    name: values
+                    for result in parameterized
+                    for name, values in result.per_stage_parameters.items()
+                },
+                expressions={
+                    name: body
+                    for result in parameterized
+                    for name, body in result.expression_parameters.items()
+                },
             ),
         )
 
-    # E1: the FE/RHA/LIBs-electrical detection diagnostics each surface
+    # The FE/RHA/LIBs-electrical detection diagnostics each surface
     # once, through the structured sink, alongside the flat deferral warning
     # below (the matching clause is deduped out of that warning).
     for detection in constraint_registers.detect_unreadable_electrical(
@@ -1757,7 +1848,7 @@ def _emit_and_write(
     # The flat presence warning is narrowed to the subset
     # `libs_electrical_model` (read once above) did NOT convert -- a
     # short-form-only (RE/RE-*, date-indexed) file, or no long-form card at
-    # all despite the indices.csv entry (OQ-4). Once the long-form subset
+    # all despite the indices.csv entry. Once the long-form subset
     # converts, the census INFO below is authoritative and this flat warning
     # would otherwise be a stale "not converted" claim over that subset.
     libs_detection = constraint_registers.detect_libs_electrical(
@@ -1770,7 +1861,7 @@ def _emit_and_write(
 
     # Milestone-deferral warning. Boundary FCF is imported by default now (the
     # CLI runs the importer after this converter returns), reservoir evaporation
-    # is converted (novomodelo >= 0.14's C11 fix), and windowed inflow inputs are a
+    # is converted, and windowed inflow inputs are a
     # source-model concept that does not apply to the external explicit tree the
     # DECOMP path emits — so none of those are deferred. Only VI water travel
     # time remains deferred (a tracked novomodelo-gap; see the note in

@@ -18,31 +18,35 @@ holds the plant's own local increment — see
 must be incrementalized to the same basis before it can be subtracted from the
 raw incremental lag state:
 
-    mu_incr[posto] = mu_nat[posto] - Σ_{upstream postos} mu_nat[upstream]
+    mu_incr[plant] = mu_nat[posto] - Σ_{upstream postos} mu_nat[upstream]
 
-The upstream set is built in **posto space** off the *effective* operated
-cascade (mirroring the source-model side's
-:func:`novomodelo_bridge.newave.converters.stochastic._build_upstream_postos`): every
-operated plant's ``posto -> downstream-operated posto`` edge, deduplicated (plants
-sharing a station collapse to one node) and self-loops skipped. DECOMP operates
-every plant (no fictitious/non-operated intermediates), so the operated cascade
-*is* the full topology — no walk-through step is needed, unlike the source-model
-map.
+The attribution is :func:`novomodelo_bridge.core.incremental_inflow.
+incremental_by_plant`, the one the source-model track uses, over the
+*effective* operated cascade. DECOMP operates every plant (no
+fictitious/non-operated intermediates), so the operated cascade *is* the full
+topology.
 
-**Zero-inflow (artificial) stations.** A diversion-fed plant is gauged on an
-artificial station whose natural MLT is identically zero (e.g. the Billings /
-Paraíba-do-Sul light system and the Belo Monte / Volta-Grande diversion all
-share one such station): its water arrives via routing/``desvio`` channels, not
-natural drainage, so its incremental inflow is zero. Subtracting a real upstream
-station from that zero base would fabricate a spurious negative increment, so a
-station whose MLT is zero across all twelve months is pinned to ``mu_incr = 0``
-(validated against the deck's ``observacoes``: those plants read exactly 0).
+**Zero-inflow stations.** A plant on the artificial gauge, which a
+diversion-fed plant uses, has zero incremental inflow. So does a plant on a
+station whose MLT is zero across all twelve months: subtracting a real
+upstream station from that zero base would fabricate a spurious negative
+increment (validated
+against the deck's ``observacoes``: those plants read exactly 0).
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
+import numpy as np
+
+from novomodelo_bridge.core.diagnostics import emit
+from novomodelo_bridge.core.incremental_inflow import (
+    artificial_pass_through,
+    artificial_pass_through_diagnostic,
+    incremental_by_plant,
+)
 from novomodelo_bridge.decomp.scenarios import _incremental_context
 
 if TYPE_CHECKING:
@@ -50,6 +54,8 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
+
+_LOG = logging.getLogger(__name__)
 
 #: The twelve calendar months an MLT table carries, in ``mes`` order.
 _MONTHS: tuple[int, ...] = tuple(range(1, 13))
@@ -79,32 +85,6 @@ def _natural_by_posto(mlt_valores: pd.DataFrame) -> dict[int, dict[int, float]]:
     return natural
 
 
-def _posto_upstream(
-    effective: EffectiveCadastro, id_map: DecompIdMap
-) -> dict[int, set[int]]:
-    """``{downstream_posto: {upstream_posto, ...}}`` for the operated cascade.
-
-    Built in posto space off :func:`_incremental_context`'s per-plant station
-    column and direct operated-upstream links: for every operated plant with a
-    direct operated-upstream sibling, add the edge ``upstream_posto ->
-    downstream_posto`` (self-loops — a plant sharing its upstream's station —
-    skipped, and duplicate edges collapsed by the ``set``). Mirrors the
-    source-model side's :func:`novomodelo_bridge.newave.converters.stochastic.
-    _build_upstream_postos`, minus its NE/NC walk-through step (DECOMP operates
-    every plant, so no non-inflow intermediates sit between operated nodes).
-    """
-    station_by_code, parents = _incremental_context(effective, id_map)
-    posto_of = {code: int(station_by_code[code]) for code in id_map.hydro_codes}
-    upstream: dict[int, set[int]] = {}
-    for downstream_code, upstream_codes in parents.items():
-        downstream_posto = posto_of[downstream_code]
-        for upstream_code in upstream_codes:
-            upstream_posto = posto_of[upstream_code]
-            if upstream_posto != downstream_posto:
-                upstream.setdefault(downstream_posto, set()).add(upstream_posto)
-    return upstream
-
-
 def build_incremental_mlt(
     mlt_valores: pd.DataFrame,
     effective: EffectiveCadastro,
@@ -114,43 +94,46 @@ def build_incremental_mlt(
 
     Returns the seasonal mean *incremental* inflow (m³/s) for every operated
     plant (0-based novomodelo ``hydro_id``) and calendar month (1..12), the ``mu`` the
-    boundary FCF fold subtracts from the raw inflow-lag state. Computed as
-    ``mu_nat[posto] - Σ_{upstream postos} mu_nat`` (see the module docstring),
-    with a station whose natural MLT is zero across all twelve months pinned to
-    ``0`` (an artificial diversion-fed station carries no natural increment).
+    boundary FCF fold subtracts from the raw inflow-lag state
+    (:func:`novomodelo_bridge.core.incremental_inflow.incremental_by_plant`). A plant
+    on the artificial gauge, or on a station whose natural MLT is zero across
+    all twelve months, is pinned to ``0``.
 
     A plant whose station is absent from ``mlt_valores`` is omitted from the
     result: the fold then leaves its lag terms unshifted (``mu = 0``), the same
     conservative default as an unmatched station downstream.
     """
-    natural = _natural_by_posto(mlt_valores)
-    upstream = _posto_upstream(effective, id_map)
-    station_by_code, _ = _incremental_context(effective, id_map)
-
-    zero_posto = {
-        posto
-        for posto, months in natural.items()
-        if all(value == 0.0 for value in months.values())
+    natural = {
+        posto: np.array([months.get(month, 0.0) for month in _MONTHS])
+        for posto, months in _natural_by_posto(mlt_valores).items()
     }
+    zero_gauges = {posto for posto, series in natural.items() if not series.any()}
+    station_by_code, parents = _incremental_context(effective, id_map)
+    posto_of = {code: int(station) for code, station in station_by_code.items()}
 
-    means: dict[int, dict[int, float]] = {}
-    for code in id_map.hydro_codes:
-        posto = int(station_by_code[code])
-        posto_natural = natural.get(posto)
-        if posto_natural is None:
-            continue
-        hydro_id = id_map.hydro_id(code)
-        if posto in zero_posto:
-            means[hydro_id] = {month: 0.0 for month in _MONTHS}
-            continue
-        incremental: dict[int, float] = {}
-        for month in _MONTHS:
-            value = posto_natural.get(month, 0.0)
-            for upstream_posto in upstream.get(posto, ()):
-                value -= natural.get(upstream_posto, {}).get(month, 0.0)
-            incremental[month] = value
-        means[hydro_id] = incremental
-    return means
+    pairs = artificial_pass_through(posto_of, parents, id_map.hydro_codes)
+    if pairs:
+        name_of = {
+            code: str(effective.base.loc[code, "nome_usina"]).strip()
+            for pair in pairs
+            for code in pair
+        }
+        emit(
+            artificial_pass_through_diagnostic(
+                [(code, name_of[code], up, name_of[up]) for code, up in pairs]
+            ),
+            logger=_LOG,
+        )
+
+    by_code = incremental_by_plant(
+        natural, posto_of, parents, id_map.hydro_codes, zero_gauges=zero_gauges
+    )
+    return {
+        id_map.hydro_id(code): {
+            month: float(value) for month, value in zip(_MONTHS, series, strict=True)
+        }
+        for code, series in by_code.items()
+    }
 
 
 def coupling_lag_means(

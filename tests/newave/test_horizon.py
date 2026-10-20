@@ -167,3 +167,17 @@ def test_seasonal_step_function_big_m_steps_clear_their_months():
     )
     assert all(s not in out for s in range(12))
     assert [s for s in range(12, 24) if s in out] == list(range(12, 18))
+
+
+def test_seasonal_step_function_a_later_record_for_the_same_month_wins():
+    h = study_horizon(_dger(num_anos_pos=0))
+    recs = [(2024, 10, 300.0), (2024, 10, 200.0)]
+    out = seasonal_step_function(recs, lambda v: v, seasonalize=False, horizon=h)
+    assert out[1] == 200.0
+
+
+def test_seasonal_step_function_the_latest_record_before_the_study_holds():
+    h = study_horizon(_dger(num_anos_pos=0))  # study starts Sept-2024
+    recs = [(2024, 7, 300.0), (2024, 8, 200.0)]
+    out = seasonal_step_function(recs, lambda v: v, seasonalize=False, horizon=h)
+    assert out[0] == 200.0

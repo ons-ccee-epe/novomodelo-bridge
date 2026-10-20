@@ -287,6 +287,53 @@ class TestGenericConstraintLhsDecomp:
         assert row["stage_id"] == 0
         assert row["lhs_value"] == pytest.approx(6077.78)
 
+    def test_late_joining_term_counts_only_from_its_stage(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        record = _re_record(
+            402,
+            (
+                ConstraintTerm(code=155, coefficient=1.0, variable="generation"),
+                ConstraintTerm(
+                    code=157,
+                    coefficient=1.0,
+                    variable="generation",
+                    schedule=((1, 1.0),),
+                ),
+            ),
+        )
+        census = ConstraintCensus(
+            by_family={"RE": (record,), "HQ": (), "HV": (), "HE": ()}
+        )
+        id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(155, 157))
+        case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
+        monkeypatch.setattr(
+            "novomodelo_bridge.decomp.constraint_registers.read_constraints",
+            lambda *_a, **_k: census,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
+            lambda *_a, **_k: _usih_frame(
+                [
+                    {"codigo_usina": code, "estagio": stage, "geracao_MW": mw}
+                    for code, mw in ((155, 300.0), (157, 100.0))
+                    for stage in (1, 2)
+                ]
+            ),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
+            _no_dec_oper,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            lambda *_a, **_k: pl.DataFrame(),
+        )
+
+        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(0, "RE_402")])
+
+        assert [r["lhs_value"] for r in result.to_dicts()] == [300.0, 400.0]
+
     def test_hv_varm_term_uses_absolute_storage_floor(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

@@ -134,7 +134,7 @@ def _compute_violation_zones(
     breached (``bound_lower[i] is not None and p10[i] < bound_lower[i]``) OR
     its ceiling is breached (``bound_upper[i] is not None and p90[i] >
     bound_upper[i]``) — either condition alone flags the stage, and both may
-    fire simultaneously. This one test correctly covers every F3 shape a
+    fire simultaneously. This one test correctly covers every shape a
     per-row bound can take: ``">="`` (lower-only — only the floor term can
     fire), ``"<="`` (upper-only — only the ceiling term can fire), ``"=="``
     (both populated and equal — either deviation direction is a violation),
@@ -199,8 +199,8 @@ def _build_constraint_lhs_data(
     own ``gc_bounds`` row, and computes violation zone intervals.
 
     Args:
-        constraints: List of constraint dicts with keys ``id``, ``name``. F3
-            constraints are sense-free; the displayed ``sense`` label is
+        constraints: List of constraint dicts with keys ``id``, ``name``.
+            Constraints are sense-free; the displayed ``sense`` label is
             derived from *gc_bounds* via :func:`derive_constraint_shape` for
             the dropdown/legend only — it does not drive which endpoint(s)
             are plotted or violation-tested (see ``bound_lower``/
@@ -208,7 +208,7 @@ def _build_constraint_lhs_data(
         lhs_df: DataFrame with columns ``constraint_id``, ``scenario_id``,
             ``stage_id``, ``block_id``, ``lhs_value``.
         gc_bounds: DataFrame with columns ``constraint_id``, ``stage_id``,
-            ``block_id``, ``bound_lower``, ``bound_upper`` (the F3 sense-free
+            ``block_id``, ``bound_lower``, ``bound_upper`` (the sense-free
             interval; see :mod:`novomodelo_bridge.core.generic_constraint_format`).
         stage_labels: Stage id to human-readable label mapping.
 

@@ -57,7 +57,7 @@ def _evaporation_hidr(rows: dict[int, list[float]]) -> pd.DataFrame:
 
 
 class TestEvaporationEmission:
-    """Reservoir-evaporation conversion (C11 fixed in novomodelo 0.14): the per-plant
+    """Reservoir-evaporation conversion: the per-plant
     UH ``evaporacao`` flag switches it on; the 12 monthly mm rates come from
     ``hidr.dat`` in calendar order (Jan..Dec)."""
 

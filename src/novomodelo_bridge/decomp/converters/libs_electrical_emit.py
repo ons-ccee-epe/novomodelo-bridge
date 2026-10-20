@@ -7,10 +7,10 @@ terms as a sign-canonical :class:`~novomodelo_bridge.decomp.converters.libs_elec
 AssembledBound` — a source-model :class:`~novomodelo_bridge.decomp.
 libs_electrical.ParsedTerm` sequence, not yet a novomodelo token. This module
 owns that last mile: :func:`_novomodelo_token` maps one such term to its novomodelo
-``VariableRef`` string (spec §2), and :func:`build_electrical_expression`
+``VariableRef`` string, and :func:`build_electrical_expression`
 joins a whole :class:`AssembledBound`'s terms into one expression via
 ``constraints._format_expression`` — the same coefficient-formatting rules
-the E1–E7 emitter already uses.
+the other special-constraint emitters already use.
 
 This mirrors the codebase's existing read/emit split
 (``constraint_registers.py`` reads/classifies, ``constraints.py`` emits):
@@ -23,7 +23,7 @@ last mile: for each restriction, it drives ``active_cells``/``assemble_bound``
 over every active ``(stage, block)`` cell, renders the cell-invariant
 expression once via :func:`build_electrical_expression`, and synthesizes a
 per-restriction :class:`~novomodelo_bridge.decomp.constraint_registers.
-ConstraintRecord` that feeds the **existing** E1–E7
+ConstraintRecord` that feeds the **existing**
 :class:`~novomodelo_bridge.core.generic_constraint_builder.GenericConstraintBuilder` —
 never a new emitter. The pipeline wiring that builds *id_map*/*ncs_id_by_pee_code*/
 *conjh_bus_by_code_group*/*line_map* from a real deck lives in the pipeline
@@ -99,7 +99,7 @@ def _emit_ener_comerc_deferred(term: ParsedTerm) -> None:
     """Emit the shared ``decomp-electrical-ener-comerc-deferred`` WARNING.
 
     ``ener_comerc`` (bilateral commercial energy) does not appear on the
-    target deck (spec §2) and has no novomodelo ``VariableRef`` counterpart yet;
+    target deck and has no novomodelo ``VariableRef`` counterpart yet;
     a restriction carrying one is skipped rather than guessed at.
     """
     emit(
@@ -173,7 +173,7 @@ def _novomodelo_token(
     conjh_bus_by_code_group: Mapping[tuple[int, int], int],
     line_map: Mapping[tuple[int, int], int],
 ) -> str | None:
-    """The novomodelo ``VariableRef`` expression token for one bucket-A term (spec §2).
+    """The novomodelo ``VariableRef`` expression token for one bucket-A term.
 
     - ``ger_usih(h)`` -> ``hydro_generation(id_map.hydro_id(h))``.
     - ``ger_usit(t)`` -> ``thermal_generation(id_map.thermal_id(t))``.
@@ -275,13 +275,13 @@ def build_electrical_expression(
     line_map: Mapping[tuple[int, int], int],
 ) -> str | None:
     """Render *assembled*'s sign-canonical bucket-A terms into one novomodelo
-    expression string (spec §4).
+    expression string.
 
     Maps every term via :func:`_novomodelo_token` to ``(term.coefficient,
     token)`` and joins the result with ``constraints._format_expression``
     (the same coefficient-formatting rules — unit coefficients render bare,
-    fractional ones as ``{coeff} * {token}`` — the E1–E7 emitter already
-    uses). Any single unresolved token (:func:`_novomodelo_token` returning
+    fractional ones as ``{coeff} * {token}`` — the other special-constraint
+    emitters already use). Any single unresolved token (:func:`_novomodelo_token` returning
     ``None``, having already emitted its own WARNING) drops the **whole**
     expression — ``None``, skip-not-partial — never a partial string built
     from only the resolvable terms.
@@ -298,14 +298,14 @@ def build_electrical_expression(
 
 
 # ---------------------------------------------------------------------------
-# Emit resolved restrictions through the E1–E7 GenericConstraintBuilder
+# Emit resolved restrictions through the shared GenericConstraintBuilder
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class LibsElectricalResult:
     """The outcome of emitting every resolved electrical restriction as one
-    novomodelo generic constraint (spec §5).
+    novomodelo generic constraint.
 
     ``generic`` is the surviving :class:`~novomodelo_bridge.decomp.converters.constraints.
     GenericConstraintResult` (``None`` when no restriction survives).
@@ -364,7 +364,7 @@ def _synthesize_stage_bounds(
 def _resolve_violation_penalty(
     restriction: ElectricalRestriction, big_m: float
 ) -> float:
-    """The slack penalty for one restriction's generic constraint (spec §4d).
+    """The slack penalty for one restriction's generic constraint.
 
     ``restriction.violation.penalty`` overrides *big_m* exactly when a
     ``TRATAMENTO-VIOLACAO`` row is present and its penalty is a positive
@@ -395,8 +395,8 @@ def emit_libs_electrical_generics(
     allocator: ConstraintIdAllocator | None = None,
 ) -> LibsElectricalResult:
     """Emit every resolved electrical restriction as one novomodelo generic
-    constraint, feeding the **existing** E1–E7 ``GenericConstraintBuilder`` —
-    never a new emitter (spec §5).
+    constraint, feeding the **existing** ``GenericConstraintBuilder`` the
+    other special-constraint emitters use — never a new emitter.
 
     Iterates ``sorted(model.restrictions)`` (deterministic order). For each
     restriction:
@@ -435,10 +435,10 @@ def emit_libs_electrical_generics(
 
     The slack penalty is *big_m* unless the restriction's own
     ``TRATAMENTO-VIOLACAO`` penalty overrides it (:func:`
-    _resolve_violation_penalty`, spec §4d) — slack stays enabled either way,
+    _resolve_violation_penalty`) — slack stays enabled either way,
     so a negative generation-cap bound (heavy maintenance shrinking
     available power below the reserve requirement) stays a priced
-    violation, never a hard LP infeasibility (A3).
+    violation, never a hard LP infeasibility.
 
     Reads no deck: every input — *id_map*, *context_factory*, *a_h*,
     *calendar*, the three id maps, *big_m* — arrives from the caller.

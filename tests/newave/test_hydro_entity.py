@@ -11,7 +11,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import hydro_with_group
+from tests.conftest import hydro_with_group, modif_mock
 from tests.newave.conftest import (
     _ee_expansion_case,
     _hydro_case,
@@ -25,6 +25,7 @@ from tests.newave.conftest import (
     _make_penalid_df,
     _ne_filling_case,
     _ne_filling_id_map,
+    _read_modif,
 )
 
 
@@ -50,13 +51,7 @@ class TestConvertHydros:
         potefe_rec.potencia = 100.0
         potefe_rec.conjunto = 1
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.side_effect = lambda code: (
-            [potefe_rec] if code == 1 else []
-        )
+        mock_modif = modif_mock((1, [potefe_rec]))
 
         with dx.collect():
             base = convert_hydros(_hydro_case(tmp_path), self._make_id_map())["hydros"]
@@ -953,10 +948,10 @@ class TestLegacyHydroShapeRejectedBy013:
     emits it anymore.
 
     novomodelo 0.13's ``hydros.schema.json`` rejects that shape on load:
-    ``additionalProperties: false`` denies the stray top-level ``bus_id``
-    (decision 14 → §7.8), and ``unit_groups`` is a required, non-empty array
-    (decision 13 → §7.6). This test asserts the *shape difference* only — it
-    does not load either dict into novomodelo or a jsonschema validator (E4 owns
+    ``additionalProperties: false`` denies the stray top-level ``bus_id``,
+    and ``unit_groups`` is a required, non-empty array. This test asserts the
+    *shape difference* only — it does not load either dict into novomodelo or a
+    jsonschema validator (the tier-2 schema tests under ``tests/novomodelo/`` own
     real schema loads).
     """
 
@@ -1047,3 +1042,99 @@ class TestExpansionPlantAdmission:
             ee = self._plant_b(case)
         assert ee["generation"]["max_generation_mw"] == pytest.approx(690.0)
         assert [d for d in collected if d.code == "ee-expansion-ramped"] == []
+
+
+class TestConvertHydrosDiversion:
+    """``hydros.json`` diversion channels come only from ``CDESVIO`` records."""
+
+    _USINA_A = " USINA      1                               USINA_A"
+
+    def _convert(self, tmp_path, *lines: str, cadastro=None, dger=None):
+        from novomodelo_bridge.newave.converters.hydro import convert_hydros
+
+        case = _hydro_case(
+            tmp_path,
+            modif=_read_modif(tmp_path, *lines),
+            cadastro=cadastro,
+            dger=dger,
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
+        with dx.collect() as collected:
+            hydros = convert_hydros(case, id_map)["hydros"]
+        return {h["name"]: h["diversion"] for h in hydros}, collected
+
+    def test_cdesvio_declares_the_channel_with_its_flow(self, tmp_path) -> None:
+        channels, collected = self._convert(tmp_path, self._USINA_A, " CDESVIO 2 100.")
+        assert channels == {
+            "USINA_A": {"downstream_id": 1, "max_flow_m3s": 100.0},
+            "USINA_B": None,
+        }
+        (diag,) = [d for d in collected if d.code == "diversion-channels"]
+        assert diag.severity is Severity.INFO
+        assert diag.table is not None
+        assert diag.table.rows == [[1, "USINA_A", 2, "USINA_B", "100"]]
+
+    @pytest.mark.parametrize("flow", ["9999999.", "12000000."])
+    def test_the_no_limit_value_converts_to_no_limit(self, tmp_path, flow) -> None:
+        channels, collected = self._convert(
+            tmp_path, self._USINA_A, f" CDESVIO 2 {flow}"
+        )
+        assert channels["USINA_A"] == {"downstream_id": 1, "max_flow_m3s": None}
+        (modeled,) = [d for d in collected if d.code == "diversion-channels"]
+        assert modeled.table is not None
+        assert modeled.table.rows == [[1, "USINA_A", 2, "USINA_B", "no limit"]]
+        (unlimited,) = [d for d in collected if d.code == "diversion-channel-unlimited"]
+        assert unlimited.severity is Severity.INFO
+        assert unlimited.table is not None
+        assert unlimited.table.rows == [
+            [1, "USINA_A", 2, "USINA_B", f"{float(flow):.0f}"]
+        ]
+
+    def test_a_finite_flow_is_not_reported_as_unlimited(self, tmp_path) -> None:
+        _, collected = self._convert(tmp_path, self._USINA_A, " CDESVIO 2 100.")
+        assert not [d for d in collected if d.code == "diversion-channel-unlimited"]
+
+    def test_the_registry_desvio_code_alone_declares_no_channel(self, tmp_path) -> None:
+        cadastro = _make_hidr_cadastro()
+        cadastro["desvio"] = [2, 0]
+        channels, collected = self._convert(tmp_path, self._USINA_A, cadastro=cadastro)
+        assert channels == {"USINA_A": None, "USINA_B": None}
+        assert not [d for d in collected if d.category == "Diversion channels"]
+
+    def test_switch_off_ignores_the_records_and_says_so(self, tmp_path) -> None:
+        dger = _make_hydro_dger_mock()
+        dger.canal_desvio = 0
+        channels, collected = self._convert(
+            tmp_path, self._USINA_A, " CDESVIO 2 100.", dger=dger
+        )
+        assert channels == {"USINA_A": None, "USINA_B": None}
+        (diag,) = [d for d in collected if d.code == "dger-switch-off"]
+        assert "CDESVIO records of modif.dat" in diag.title
+        assert "CANAL DE DESVIO = 0" in diag.title
+
+    @pytest.mark.parametrize(
+        ("record", "reason"),
+        [
+            (" CDESVIO 9 100.", "target plant not in the case"),
+            (" CDESVIO 2", "no maximum flow given"),
+        ],
+    )
+    def test_an_unconvertible_record_is_dropped_and_reported(
+        self, tmp_path, record: str, reason: str
+    ) -> None:
+        channels, collected = self._convert(tmp_path, self._USINA_A, record)
+        assert channels["USINA_A"] is None
+        (diag,) = [d for d in collected if d.code == "diversion-channel-dropped"]
+        assert diag.severity is Severity.WARNING
+        assert diag.table is not None
+        assert diag.table.rows[0][0] == 1
+        assert diag.table.rows[0][-1] == reason
+
+    def test_a_record_on_a_plant_outside_the_case_is_ignored(self, tmp_path) -> None:
+        channels, collected = self._convert(
+            tmp_path,
+            " USINA      9                               OUTRA",
+            " CDESVIO 2 100.",
+        )
+        assert channels == {"USINA_A": None, "USINA_B": None}
+        assert not [d for d in collected if d.category == "Diversion channels"]

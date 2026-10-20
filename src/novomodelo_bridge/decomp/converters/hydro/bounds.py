@@ -1,6 +1,6 @@
 """DECOMP hydro capacity caps: AC-adjusted rated capability, head-corrected
 engolimento envelopes, the per-frequency split plant (Itaipu) unit groups,
-and the B8 per-group per-stage availability overlay.
+and the per-group per-stage availability overlay.
 
 Imports the equivalent-productivity helper from ``.productivity``; imports
 nothing from ``.entity`` -- kept acyclic so the entity
@@ -48,6 +48,34 @@ if TYPE_CHECKING:
 #: not per-plant, availability overlay) special-case it; every other plant
 #: takes the ordinary single-group path.
 _ITAIPU_CODE = 66
+
+#: Itaipu's unit-group id per frequency half (Hz). Groups follow the ascending
+#: ``MP``/``FD`` frequencies (:func:`_split_plant_frequencies`), so 50 Hz is
+#: group 0; the ``RI`` floors and the frequency-tagged ``RE`` bounds both key
+#: on this map.
+ITAIPU_GROUP_BY_FREQUENCY_HZ: dict[float, int] = {50.0: 0, 60.0: 1}
+
+
+def split_plant_group_id(code: int, frequency_hz: float) -> int:
+    """The unit-group id of plant *code*'s *frequency_hz* half.
+
+    Raises
+    ------
+    ValueError
+        When *code* is not Itaipu or *frequency_hz* is not one of its halves:
+        Itaipu is the only plant split into per-frequency unit groups, so a
+        frequency anywhere else names no group to bound.
+    """
+    group_id = (
+        ITAIPU_GROUP_BY_FREQUENCY_HZ.get(frequency_hz) if code == _ITAIPU_CODE else None
+    )
+    if group_id is None:
+        raise ValueError(
+            f"plant {code}: a {frequency_hz:g} Hz generation term names no "
+            f"frequency half; only plant {_ITAIPU_CODE} (Itaipu) is split "
+            "into 50 Hz and 60 Hz unit groups"
+        )
+    return group_id
 
 
 def _conjunto_rated_ac_adjusted(
@@ -128,7 +156,7 @@ def _rated_envelope(
 
     The entity ``generation``/mirror-``unit_groups`` envelope for every
     non-split plant (:func:`convert_hydros`) and the per-plant comparison
-    base for the B8 availability overlay
+    base for the per-group availability overlay
     (:func:`convert_hydro_group_availability`) — mirrors
     :func:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     storage_envelope`'s outer-bound construction: the widest each of
@@ -159,7 +187,7 @@ def _conjunto_rated_envelope(
 
     The split plant's own per-group declared envelope
     (:func:`_build_split_unit_groups`) and the per-group comparison base
-    for its own B8 availability overlay
+    for its own availability overlay
     (:func:`convert_hydro_group_availability`) — the per-conjunto mirror of
     :func:`_rated_envelope`.
     """
@@ -255,7 +283,7 @@ def _conjunto_head_corrected_ac_adjusted(
     ``KTURB_BY_TIPO_TURBINA`` by the plant's ``tipo_turbina`` (0.5 for
     Francis/Pelton, 0.2 for Kaplan). No TEIF/IP availability derating is
     applied (validated worse: 8.2% vs 1.3% median error vs ``Qtur Maxima`` —
-    availability lives on the MP×FD/B8 path instead) and no
+    availability lives on the MP×FD overlay path instead) and no
     ``tipo_regulacao`` head-branch (the full-range-mean *h_op* fits every
     class). ``h_nom ≤ 0`` skips the affinity correction for this conjunto
     (falls back to the rated ``n·q_nom``) but the power cap still applies;
@@ -357,7 +385,7 @@ def _conjunto_head_corrected_envelope(
 ) -> float:
     """Max-over-stages head-corrected flow for one conjunto — the per-group
     mirror of :func:`_head_corrected_envelope`, used for the split plant's
-    own groups (:func:`_build_split_unit_groups`) and their own B8 overlay
+    own groups (:func:`_build_split_unit_groups`) and their own overlay
     (:func:`convert_hydro_group_availability`'s Itaipu branch).
 
     Same per-stage defensive fallback as :func:`_head_corrected_envelope`:
@@ -575,7 +603,7 @@ def _availability_bound_entry(
     q_envelope: float,
     p_envelope: float,
 ) -> GroupBoundEntry | None:
-    """One ``(hydro/group, stage)``'s B8 overlay entry, or ``None`` if
+    """One ``(hydro/group, stage)``'s availability-overlay entry, or ``None`` if
     neither bound column falls below that group's own declared envelope.
 
     ``max_generation_mw`` is *availability_mw* (installed × MP × FD — the
@@ -613,7 +641,7 @@ def convert_hydro_group_availability(
     *,
     effective: EffectiveCadastro,
 ) -> dict[tuple[int, int, int], GroupBoundEntry]:
-    """B8 per-group per-stage available capacity.
+    """Per-group per-stage available capacity.
 
     For the single-group majority (every plant but Itaipu):
     ``availability_mw(stage) = installed(stage) × MP(stage) × FD(stage)`` —
@@ -636,7 +664,7 @@ def convert_hydro_group_availability(
     *other* plant whose ``MP``/``FD`` register carries more than one row is
     also dropped from this path (today only Itaipu, code 66, does).
 
-    For Itaipu specifically, the same B8 formula is computed **per
+    For Itaipu specifically, the same formula is computed **per
     conjunto-backed group** rather than per plant —
     ``availability_mw(g, stage) = installed_g(stage) × MP_g(stage) ×
     FD_g(stage)``, ``g`` in ``{0, 1}`` (frequencies sorted ascending,
@@ -752,13 +780,12 @@ def convert_hydro_group_availability(
 
 
 #: The two Itaipu frequency-half minimum-generation floors on the ``RI``
-#: register, keyed by the split-plant group id they bound (0 = 50 Hz, 1 =
-#: 60 Hz, matching :func:`_build_split_unit_groups`'s ascending-frequency
-#: ordering). Each value is the ``RI`` column prefix whose per-patamar slots
-#: (``…_1``.. ``…_5``) carry that half's floor.
+#: register, keyed by the split-plant group id they bound. Each value is the
+#: ``RI`` column prefix whose per-patamar slots (``…_1``.. ``…_5``) carry that
+#: half's floor.
 _ITAIPU_MIN_GENERATION_PREFIXES: tuple[tuple[int, str], ...] = (
-    (0, "geracao_minima_50_hz"),
-    (1, "geracao_minima_60_hz"),
+    (ITAIPU_GROUP_BY_FREQUENCY_HZ[50.0], "geracao_minima_50_hz"),
+    (ITAIPU_GROUP_BY_FREQUENCY_HZ[60.0], "geracao_minima_60_hz"),
 )
 
 
