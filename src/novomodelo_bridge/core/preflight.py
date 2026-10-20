@@ -127,6 +127,17 @@ def optional_input_advisory(  # noqa: UP047
     return checks, diagnostics
 
 
+def unindexed_libs_advisory(
+    diagnostic: Diagnostic | None,
+) -> tuple[list[CheckItem], list[Diagnostic]]:
+    """Passing check + the track's undeclared-LIBS-files WARNING, if any."""
+    detail = "none ignored" if diagnostic is None else "some ignored; see the warning"
+    return (
+        [CheckItem(label="LIBS files declared", passed=True, detail=detail)],
+        [] if diagnostic is None else [diagnostic],
+    )
+
+
 def tab_character_advisory(
     paths: Sequence[Path], *, comment_prefix: str | None = None
 ) -> tuple[list[CheckItem], list[Diagnostic]]:

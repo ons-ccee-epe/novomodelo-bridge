@@ -27,10 +27,12 @@ from novomodelo_bridge.newave.converters import hydro as hydro_conv
 from novomodelo_bridge.newave.converters import inflow_windows
 from novomodelo_bridge.newave.converters import initial_conditions as ic_conv
 from novomodelo_bridge.newave.converters import network as network_conv
+from novomodelo_bridge.newave.converters import pumping as pumping_conv
 from novomodelo_bridge.newave.converters import stochastic as stochastic_conv
 from novomodelo_bridge.newave.converters import tailrace as tailrace_conv
 from novomodelo_bridge.newave.converters import temporal as temporal_conv
 from novomodelo_bridge.newave.converters import thermal as thermal_conv
+from novomodelo_bridge.newave.files import unindexed_libs_diagnostic
 from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -248,6 +250,9 @@ def _convert_newave_case_impl(
     tabs = tab_character_diagnostic(case.files.fixed_column_files)
     if tabs is not None:
         dx.emit(tabs)
+    unindexed = unindexed_libs_diagnostic(case.files)
+    if unindexed is not None:
+        dx.emit(unindexed)
 
     logger.debug("Building NewaveIdMap from %s", src)
     id_map = case.id_map
@@ -271,6 +276,20 @@ def _convert_newave_case_impl(
 
     logger.debug("Converting lines")
     lines_dict = network_conv.convert_lines(case, id_map)
+
+    logger.debug("Converting pumping stations")
+    pumping_inputs = pumping_conv.read_pumping_inputs(case)
+    pumping_station_ids = (
+        pumping_conv.pumping_station_id_map(pumping_inputs)
+        if pumping_inputs is not None
+        else {}
+    )
+    pumping_dict = pumping_conv.convert_pumping_stations(
+        case, id_map, pumping_inputs, pumping_station_ids
+    )
+    pumping_bounds_table = pumping_conv.convert_pumping_bounds(
+        case, pumping_inputs, pumping_station_ids
+    )
 
     logger.debug("Converting penalties")
     # DESVIO ("outros usos") + evaporation use MAX_PRODTACUM_SIN (max accumulated ρ at
@@ -333,10 +352,10 @@ def _convert_newave_case_impl(
         case, id_map, allocator=allocator
     )
     vminop_referenced_ids: list[int] = []
-    rho_acum_overrides: dict[int, list[float]] = {}
+    vminop_per_stage_parameters: dict[str, list[float]] = {}
     if vminop_result is not None:
         vminop_referenced_ids = list(vminop_result.referenced_hydro_ids)
-        rho_acum_overrides = vminop_result.rho_acum_overrides
+        vminop_per_stage_parameters = vminop_result.per_stage_parameters
 
     logger.debug("Converting electric constraints")
     electric_result = constraints_conv.convert_electric_constraints(
@@ -406,6 +425,7 @@ def _convert_newave_case_impl(
         emission_checks.check_unit_group_envelope(hydros_dict)
         emission_checks.check_bound_row_uniqueness(bound_families)
         emission_checks.check_bound_block_id_range(stages_dict, bound_families)
+        emission_checks.check_diversion_has_channel(hydros_dict, hydro_bounds_table)
 
     emission_checks.run_and_gate(_run_checks)
 
@@ -423,19 +443,17 @@ def _convert_newave_case_impl(
     writer.write_json("system/thermals.json", thermals_dict)
     writer.write_json("system/buses.json", buses_dict)
     writer.write_json("system/lines.json", lines_dict)
+    writer.write_json("system/pumping_stations.json", pumping_dict)
     writer.write_json("system/non_controllable_sources.json", ncs_dict)
     writer.write_json("scenarios/load_factors.json", load_factors_dict)
     writer.write_json("scenarios/non_controllable_factors.json", ncs_factors_dict)
 
     writer.write_json("system/hydro_production_models.json", production_models_dict)
 
-    # Declare per-hydro @rho_eq_h{id} / @rho_acum_h{id} computed parameters for
-    # every hydro in the case. novomodelo rejects any @name token that has not been
-    # declared, so we always emit the file so handwritten or generated
-    # constraint expressions can reference any per-hydro productivity. The
-    # ids set is the union of the VminOP-referenced ids (covers the values we
-    # currently emit) and every hydro that has a production-model entry
-    # (covers future references).
+    # novomodelo rejects an undeclared @name, so the file always declares the
+    # per-hydro computed parameters of every hydro a VminOP share references
+    # or a production model names (for handwritten constraints), plus the
+    # VminOP curve fractions and coupled-cascade shares.
     all_hydro_ids = sorted(
         set(vminop_referenced_ids)
         | {
@@ -445,7 +463,7 @@ def _convert_newave_case_impl(
     )
     scalar_parameters_dict = scalar_params_conv.build_scalar_parameters(
         all_hydro_ids,
-        rho_acum_per_stage_overrides=rho_acum_overrides or None,
+        per_stage=vminop_per_stage_parameters,
     )
     writer.write_json("constraints/generic_parameters.json", scalar_parameters_dict)
 
@@ -477,6 +495,9 @@ def _convert_newave_case_impl(
 
     if thermal_bounds_table is not None:
         writer.write_parquet("constraints/thermal_bounds.parquet", thermal_bounds_table)
+
+    if pumping_bounds_table is not None and pumping_bounds_table.num_rows > 0:
+        writer.write_parquet("constraints/pumping_bounds.parquet", pumping_bounds_table)
 
     # Per-bus excess-cost override: forbid energy excess at fictitious
     # submarkets (pure transshipment nodes) by pricing it prohibitively.

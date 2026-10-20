@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,15 +17,14 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
 )
 from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
-from novomodelo_bridge.core.units import C_M3S2HM3
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.constraints import (
+    _cascade_sum,
     _curve_seasonalizes,
     _ElectricTermSkip,
     _is_stored_energy_reservoir,
     _parse_formula,
     _parse_re_dat,
-    _vminop_energy_factor,
     _warn_if_non_fixa_penalization,
     compute_accumulated_integrated_productivities,
     compute_accumulated_productivities,
@@ -240,7 +240,9 @@ class TestAccumulatedProductivity:
     def test_sink_plant_has_own_productivity_only(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         # Plant 3 is the sink (downstream=None).
         # Its own productivity: 0.03 * (500 + 0.02*1500 - 400) = 0.03 * 130 = 3.9
@@ -250,7 +252,9 @@ class TestAccumulatedProductivity:
     def test_middle_plant_accumulates_downstream(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_3 = 0.03 * ((500.0 + 0.02 * 1500.0) - 400.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -259,7 +263,9 @@ class TestAccumulatedProductivity:
     def test_upstream_plant_accumulates_full_chain(self) -> None:
         cadastro = _make_cadastro()
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_3 = 0.03 * ((500.0 + 0.02 * 1500.0) - 400.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -273,7 +279,9 @@ class TestAccumulatedProductivity:
         # Break the cascade: all plants have downstream=0
         confhd_df["codigo_usina_jusante"] = [0, 0, 0]
 
-        acc = compute_accumulated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
 
         own_1 = 0.01 * ((300.0 + 0.1 * 500.0) - 200.0)
         own_2 = 0.02 * ((400.0 + 0.05 * 1000.0) - 300.0)
@@ -369,7 +377,9 @@ class TestAccumulatedIntegratedProductivities:
         cadastro = _make_cadastro()
         cadastro["tipo_regulacao"] = "M"
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_integrated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_integrated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
         # PLANT_A: 0.01 · (300 + 0.1·550 − 200) = 0.01 · 155 = 1.55
         # PLANT_B: 0.02 · (400 + 0.05·(200+2000)/2 − 300) = 0.02 · 155 = 3.1
         # PLANT_C: 0.03 · (500 + 0.02·(300+3000)/2 − 400) = 0.03 · 133 = 3.99
@@ -385,7 +395,9 @@ class TestAccumulatedIntegratedProductivities:
         # matching the source model's EARM convention for them.
         cadastro = _make_cadastro()  # all tipo_regulacao == "D"
         confhd_df = _make_confhd_df()
-        acc = compute_accumulated_integrated_productivities(cadastro, confhd_df)
+        acc = compute_accumulated_integrated_productivities(
+            cadastro, confhd_df, fictitious=frozenset()
+        )
         # PLANT_A @vref=500: 0.01 · (300 + 0.1·500 − 200) = 0.01 · 150 = 1.5
         # PLANT_B @vref=1000: 0.02 · (400 + 0.05·1000 − 300) = 0.02 · 150 = 3.0
         # PLANT_C @vref=1500: 0.03 · (500 + 0.02·1500 − 400) = 0.03 · 130 = 3.9
@@ -397,120 +409,72 @@ class TestAccumulatedIntegratedProductivities:
         assert acc[1] == pytest.approx(own_a + own_b + own_c)
 
 
-class TestBuildScalarParametersOverride:
-    """build_scalar_parameters switches rho_acum_h{id} to kind=per_stage
-    only for hydros present in the override map."""
+class TestBuildScalarParameters:
+    """build_scalar_parameters declares the per-hydro computed family for every
+    hydro, then the caller's per_stage and expression entries."""
 
-    def test_no_overrides_emits_only_computed(self) -> None:
-        d = build_scalar_parameters([0, 1])
-        # 4 entries (rho_eq + rho_acum) × 2 plants; all computed.
-        assert len(d["scalar_parameters"]) == 4
-        assert all(e["kind"] == "computed" for e in d["scalar_parameters"])
-        names = [e["name"] for e in d["scalar_parameters"]]
-        assert names == ["rho_eq_h0", "rho_acum_h0", "rho_eq_h1", "rho_acum_h1"]
-
-    def test_override_switches_only_rho_acum_to_per_stage(self) -> None:
-        d = build_scalar_parameters(
-            [0, 1, 2], rho_acum_per_stage_overrides={1: [1.5, 1.6, 1.7]}
-        )
-        by_name = {e["name"]: e for e in d["scalar_parameters"]}
-        # Only plant 1's rho_acum becomes per_stage; everything else is computed.
-        assert by_name["rho_acum_h1"]["kind"] == "per_stage"
-        assert by_name["rho_acum_h1"]["values"] == [
-            [0, 1.5],
-            [1, 1.6],
-            [2, 1.7],
+    def test_declares_the_computed_family_per_hydro(self) -> None:
+        d = build_scalar_parameters([1, 0, 1])
+        entries = d["scalar_parameters"]
+        assert [e["name"] for e in entries] == [
+            "rho_eq_h0",
+            "rho_acum_h0",
+            "rho_eq_mwh_h0",
+            "rho_acum_mwh_h0",
+            "earm_max_mwh_h0",
+            "min_storage_h0",
+            "max_storage_h0",
+            "rho_eq_h1",
+            "rho_acum_h1",
+            "rho_eq_mwh_h1",
+            "rho_acum_mwh_h1",
+            "earm_max_mwh_h1",
+            "min_storage_h1",
+            "max_storage_h1",
         ]
-        assert "computed_spec" not in by_name["rho_acum_h1"]
-        # rho_eq_h1 is still computed — the override is only for ρ_acum.
-        assert by_name["rho_eq_h1"]["kind"] == "computed"
-        assert by_name["rho_eq_h1"]["computed_spec"]["tag"] == "equivalent_productivity"
-        # Plants without overrides stay computed.
-        assert by_name["rho_acum_h0"]["kind"] == "computed"
-        assert by_name["rho_acum_h2"]["kind"] == "computed"
+        assert all(e["kind"] == "computed" for e in entries)
+        assert [e["computed_spec"]["tag"] for e in entries[:7]] == [
+            "equivalent_productivity",
+            "accumulated_productivity",
+            "integrated_equivalent_productivity_mwh_per_hm3",
+            "integrated_accumulated_productivity_mwh_per_hm3",
+            "max_stored_energy_mwh",
+            "min_storage",
+            "max_storage",
+        ]
+        assert {e["computed_spec"]["hydro_id"] for e in entries[7:]} == {1}
 
-    def test_overrides_preserve_unique_ids(self) -> None:
+    def test_per_stage_entries_follow_the_computed_family(self) -> None:
+        d = build_scalar_parameters([0], per_stage={"pct_vminop_ree1": [0.2, 0.25]})
+        entries = d["scalar_parameters"]
+        assert entries[-1] == {
+            "id": 7,
+            "name": "pct_vminop_ree1",
+            "kind": "per_stage",
+            "values": [[0, 0.2], [1, 0.25]],
+        }
+
+    def test_expression_entries_follow_the_per_stage_entries(self) -> None:
         d = build_scalar_parameters(
-            [0, 1], rho_acum_per_stage_overrides={0: [2.0], 1: [3.0]}
+            [0],
+            per_stage={"p": [1.0]},
+            expressions={"rho_chain_mwh_h0": "@rho_eq_mwh_h0 + @p"},
+        )
+        entries = d["scalar_parameters"]
+        assert [e["kind"] for e in entries[-2:]] == ["per_stage", "expression"]
+        assert entries[-1] == {
+            "id": 8,
+            "name": "rho_chain_mwh_h0",
+            "kind": "expression",
+            "expression": "@rho_eq_mwh_h0 + @p",
+        }
+
+    def test_ids_are_contiguous_from_zero(self) -> None:
+        d = build_scalar_parameters(
+            [0, 1], per_stage={"p": [1.0]}, expressions={"e": "2.0 * @p"}
         )
         ids = [e["id"] for e in d["scalar_parameters"]]
-        assert ids == sorted(set(ids))
-
-
-class TestPerStageAccumulatedProductivities:
-    """Per-stage cascade-sum of own ρ_eq for the VminOP RHS bound."""
-
-    def test_no_overrides_yields_flat_lists(self) -> None:
-        """Without CFUGA/CMONT inputs every plant has a constant ρ_acum across
-        stages."""
-        from novomodelo_bridge.newave.converters.constraints import (
-            compute_per_stage_acc_productivities,
-        )
-
-        confhd_df = _make_confhd_df()
-        # Three plants, two stages, all own ρ_eq constant in time.
-        per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.9, 0.9]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
-
-        # Plant 3 is the sink → ρ_acum(3) = own(3) at every stage.
-        assert acc[3] == pytest.approx([0.9, 0.9])
-        # Plant 2 → ρ_acum(2) = own(2) + ρ_acum(3) = 1.6
-        assert acc[2] == pytest.approx([1.6, 1.6])
-        # Plant 1 → ρ_acum(1) = own(1) + ρ_acum(2) = 2.1
-        assert acc[1] == pytest.approx([2.1, 2.1])
-
-    def test_override_on_downstream_propagates_upstream_only_after_stage(
-        self,
-    ) -> None:
-        """A CFUGA-style change in plant 3's own ρ_eq at stage 1 shifts every
-        upstream plant's ρ_acum from that stage on. Stage 0 stays unchanged.
-        """
-        from novomodelo_bridge.newave.converters.constraints import (
-            compute_per_stage_acc_productivities,
-        )
-
-        confhd_df = _make_confhd_df()
-        # Plant 3 ρ_eq drops from 0.9 to 0.6 starting at stage 1.
-        per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.9, 0.6]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
-
-        # Stage 0: unchanged baselines.
-        assert acc[3][0] == pytest.approx(0.9)
-        assert acc[2][0] == pytest.approx(1.6)
-        assert acc[1][0] == pytest.approx(2.1)
-        # Stage 1: ρ_acum shifts everywhere in plant 3's upstream cone.
-        assert acc[3][1] == pytest.approx(0.6)
-        assert acc[2][1] == pytest.approx(0.7 + 0.6)
-        assert acc[1][1] == pytest.approx(0.5 + 0.7 + 0.6)
-
-    def test_sibling_branch_unaffected_by_override(self) -> None:
-        """Sibling branches stay untouched when a leaf in another branch shifts."""
-        from novomodelo_bridge.newave.converters.constraints import (
-            compute_per_stage_acc_productivities,
-        )
-
-        # Two independent branches: 1→2 (sink), 3→4 (sink). 1 and 3 are headwaters.
-        confhd_df = pd.DataFrame(
-            {
-                "codigo_usina": [1, 2, 3, 4],
-                "nome_usina": ["A", "B", "C", "D"],
-                "usina_existente": ["EX", "EX", "EX", "EX"],
-                "codigo_usina_jusante": [2, 0, 4, 0],
-                "ree": [1, 1, 1, 1],
-                "posto": [1, 2, 3, 4],
-                "volume_inicial_percentual": [50.0, 50.0, 50.0, 50.0],
-            }
-        )
-        # Branch 1→2: constant. Branch 3→4: plant 4 ρ_eq drops at stage 1.
-        per_stage_own = {1: [0.5, 0.5], 2: [0.7, 0.7], 3: [0.4, 0.4], 4: [0.8, 0.5]}
-        acc = compute_per_stage_acc_productivities(confhd_df, per_stage_own)
-
-        # Branch 1→2 unchanged across stages.
-        assert acc[1] == pytest.approx([1.2, 1.2])
-        assert acc[2] == pytest.approx([0.7, 0.7])
-        # Branch 3→4 shifts at stage 1.
-        assert acc[3][0] == pytest.approx(1.2)
-        assert acc[3][1] == pytest.approx(0.9)
+        assert ids == list(range(len(ids)))
 
 
 class TestConvertVminopConstraints:
@@ -818,15 +782,10 @@ class TestParseFormula:
 
 def _make_electric_re_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
     """Return a ``(case, id_map)`` pair for a single-code electric constraint:
-    ``indices.csv`` -> ``restricao-eletrica.csv`` declaring a two-sided
+    ``restricao-eletrica.csv`` declaring a two-sided
     ``[50, 200]`` limit on ``ger_usih(10)`` over 2020, with ``dger``/``sistema``
     mocked to a 1-year 2020 study carrying no exchange/deficit data.
     """
-    indices = tmp_path / "indices.csv"
-    indices.write_text(
-        "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-        encoding="latin-1",
-    )
     re_path = tmp_path / "restricao-eletrica.csv"
     re_path.write_text(
         "RE;1;1.0ger_usih(10)\n"
@@ -845,7 +804,12 @@ def _make_electric_re_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
     sistema.limites_intercambio = None
     sistema.custo_deficit = None
 
-    case = make_case(tmp_path, dger=dger, sistema=sistema, re_dat=None)
+    case = make_case(
+        make_nw_files(tmp_path, restricao_eletrica=re_path),
+        dger=dger,
+        sistema=sistema,
+        re_dat=None,
+    )
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
     return case, id_map
 
@@ -878,19 +842,7 @@ class TestConvertElectricConstraints:
         assert [d.code for d in collected] == ["dger-switch-off"]
         assert "re.dat" in collected[0].title
 
-    def test_returns_none_when_no_indices_csv(self, tmp_path: Path) -> None:
-        """Return None gracefully when indices.csv is absent."""
-        case = make_case(tmp_path, re_dat=None)
-        id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[], thermal_codes=[])
-        assert convert_electric_constraints(case, id_map) is None
-
-    def test_returns_none_when_re_file_missing(self, tmp_path: Path) -> None:
-        """Return None when indices.csv exists but points to a missing file."""
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL; ; does-not-exist.csv\n", encoding="latin-1"
-        )
-
+    def test_returns_none_when_the_deck_declares_no_csv(self, tmp_path: Path) -> None:
         case = make_case(tmp_path, re_dat=None)
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[], thermal_codes=[])
         assert convert_electric_constraints(case, id_map) is None
@@ -899,7 +851,7 @@ class TestConvertElectricConstraints:
         self, tmp_path: Path
     ) -> None:
         """A constraint code with both a lower and upper limit produces two
-        F3 constraint objects sharing one expression/name (the reader's
+        sense-free constraint objects sharing one expression/name (the reader's
         ``lim_inf``/``lim_sup`` are independent declarations, not one band —
         unlike the DECOMP ``_GenericBuilder``, which does collapse a genuine
         band into one id). Each keeps today's row semantics: one endpoint
@@ -980,11 +932,6 @@ class TestConvertElectricConstraintsEmission:
         """One hydro-unmapped term from a formula and one from an
         RE.DAT-only constraint both land in the same diagnostic, with the
         Source column distinguishing them."""
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10) + 1.0ger_usih(9999)\n"
@@ -1019,7 +966,9 @@ class TestConvertElectricConstraintsEmission:
         sistema.limites_intercambio = None
         sistema.custo_deficit = None
 
-        files = make_nw_files(tmp_path, re_dat=tmp_path / "RE.DAT")
+        files = make_nw_files(
+            tmp_path, re_dat=tmp_path / "RE.DAT", restricao_eletrica=re_path
+        )
         case = make_case(
             files,
             dger=dger,
@@ -1045,11 +994,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_interchange_no_line_recorded(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10) + 1.0ener_interc(2,3)\n"
@@ -1069,7 +1013,7 @@ class TestConvertElectricConstraintsEmission:
         sistema.custo_deficit = None
 
         case = make_case(
-            tmp_path,
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
             dger=dger,
             sistema=sistema,
             re_dat=None,
@@ -1091,11 +1035,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_malformed_term_recorded(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10) + 1.0ener_interc(2)\n"
@@ -1115,7 +1054,7 @@ class TestConvertElectricConstraintsEmission:
         sistema.custo_deficit = None
 
         case = make_case(
-            tmp_path,
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
             dger=dger,
             sistema=sistema,
             re_dat=None,
@@ -1141,11 +1080,6 @@ class TestConvertElectricConstraintsEmission:
         """Two constraint codes hit the two ``electric-constraint-skipped``
         reasons: code 1 has only an unmapped hydro term (no valid terms);
         code 2 has a valid expression but a horizon carrying no bound rows."""
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(9999)\n"
@@ -1167,7 +1101,7 @@ class TestConvertElectricConstraintsEmission:
         sistema.custo_deficit = None
 
         case = make_case(
-            tmp_path,
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
             dger=dger,
             sistema=sistema,
             re_dat=None,
@@ -1207,13 +1141,10 @@ class TestConvertElectricConstraintsEmission:
         sistema.limites_intercambio = None
         sistema.custo_deficit = None
 
-        files = make_nw_files(tmp_path, penalid=tmp_path / "penalid.dat")
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
+        files = make_nw_files(
+            tmp_path, penalid=tmp_path / "penalid.dat", restricao_eletrica=re_path
+        )
         re_path.write_text(
             "RE;1;1.0ger_usih(10)\n"
             "RE-HORIZ-PER;1;2020/01;2020/12\n"
@@ -1244,11 +1175,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_re_dat_unreadable_records_diagnostic(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10)\n"
@@ -1267,7 +1193,9 @@ class TestConvertElectricConstraintsEmission:
         sistema.limites_intercambio = None
         sistema.custo_deficit = None
 
-        files = make_nw_files(tmp_path, re_dat=tmp_path / "RE.DAT")
+        files = make_nw_files(
+            tmp_path, re_dat=tmp_path / "RE.DAT", restricao_eletrica=re_path
+        )
         case = NewaveCase(files=files)
         case.__dict__["dger"] = dger
         case.__dict__["sistema"] = sistema
@@ -1293,11 +1221,6 @@ class TestConvertElectricConstraintsEmission:
         _assert_no_repo_internal_leaks(collected)
 
     def test_individualizado_cutoff_unknown_no_entries(self, tmp_path: Path) -> None:
-        indices = tmp_path / "indices.csv"
-        indices.write_text(
-            "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-            encoding="latin-1",
-        )
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
             "RE;1;1.0ger_usih(10)\n"
@@ -1320,7 +1243,11 @@ class TestConvertElectricConstraintsEmission:
         empty_ree.rees = pd.DataFrame()
 
         case = make_case(
-            tmp_path, dger=dger, sistema=sistema, re_dat=None, ree=empty_ree
+            make_nw_files(tmp_path, restricao_eletrica=re_path),
+            dger=dger,
+            sistema=sistema,
+            re_dat=None,
+            ree=empty_ree,
         )
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
@@ -1436,7 +1363,7 @@ class TestConvertAgrintConstraints:
         assert len(constraints) == 2
 
     def test_constraint_has_no_sense_key(self, tmp_path: Path) -> None:
-        """AGRINT constraint objects have exactly novomodelo's F3 sense-free keys."""
+        """AGRINT constraint objects have exactly novomodelo's sense-free keys."""
         agrint_path = tmp_path / "agrint.dat"
         agrint_path.write_text(_AGRINT_CONTENT, encoding="latin-1")
         (tmp_path / "dger.dat").touch()
@@ -1483,7 +1410,7 @@ class TestConvertAgrintConstraints:
         assert ids_5 == [i + 5 for i in ids_0]
 
     def test_bounds_table_schema(self, tmp_path: Path) -> None:
-        """Bounds table has the F3 schema (bound_lower/bound_upper, no bound)."""
+        """Bounds table has the interval schema (bound_lower/bound_upper, no bound)."""
         agrint_path = tmp_path / "agrint.dat"
         agrint_path.write_text(_AGRINT_CONTENT, encoding="latin-1")
         (tmp_path / "dger.dat").touch()
@@ -1754,17 +1681,12 @@ class TestConstraintResultTypes:
         from novomodelo_bridge.newave.converters.constraints import VminopResult
 
         bounds = pa.table({"constraint_id": [0]})
-        r = VminopResult({"constraints": [1, 2]}, bounds, [3, 4], {5: [1.0]})
-        # Named access (new).
+        r = VminopResult({"constraints": [1, 2]}, bounds, [3, 4], {"p": [1.0]})
         assert r.constraints_dict == {"constraints": [1, 2]}
         assert r.bounds is bounds
         assert r.referenced_hydro_ids == [3, 4]
-        assert r.rho_acum_overrides == {5: [1.0]}
-        # Legacy index / destructure still works (backward compatible).
+        assert r.per_stage_parameters == {"p": [1.0]}
         assert r[2] == [3, 4]
-        cdict, b, ids, overrides = r
-        assert cdict == {"constraints": [1, 2]}
-        assert ids == [3, 4]
 
     def test_generic_constraint_result_named_and_tuple_access(self) -> None:
         from novomodelo_bridge.newave.converters.constraints import (
@@ -1779,38 +1701,261 @@ class TestConstraintResultTypes:
         assert constraints == [{"id": 0}]
 
 
-class TestVminopEnergyFactor:
-    """Guard the VminOP unit conversion: ρ_acum·hm³ → MWmonth must use each
-    stage's *real* month length, not the source model's fixed 730 h.
+def _make_vminop_case(
+    tmp_path: Path,
+    *,
+    curve: list[tuple[datetime, float]],
+    penalty: float = 1488.0,
+    num_anos_pos_estudo: int = 0,
+    seasonalize: bool = False,
+) -> tuple[NewaveCase, NewaveIdMap]:
+    """REE 1 (SUDESTE) over the three-plant monthly-reservoir cascade."""
+    cadastro = _make_cadastro()
+    cadastro["tipo_regulacao"] = "M"
 
-    Regression for the security-curve bug: leaving the VminOP LHS in
-    ρ_acum·hm³ (≈ 2.628× true MWmonth) while novomodelo prices the slack
-    ``× block_hours`` made the effective curve-violation penalty exceed the
-    deficit cost, so novomodelo deficited instead of drawing reservoirs down.
+    dger = MagicMock()
+    dger.mes_inicio_estudo = 1
+    dger.ano_inicio_estudo = 2020
+    dger.num_anos_estudo = 1
+    dger.num_anos_pos_estudo = num_anos_pos_estudo
+    dger.curva_aversao = 1
+
+    curva = MagicMock()
+    curva.curva_seguranca = pd.DataFrame(
+        {
+            "codigo_ree": [1] * len(curve),
+            "data": [d for d, _ in curve],
+            "valor": [v for _, v in curve],
+        }
+    )
+    curva.configuracoes_penalizacao = [0, 11, 1 if seasonalize else 0]
+    curva.custos_penalidades = pd.DataFrame(
+        {"codigo_ree": [1], "penalidade": [penalty]}
+    )
+
+    confhd = MagicMock()
+    confhd.usinas = _make_confhd_df()
+    hidr = MagicMock()
+    hidr.cadastro = cadastro
+    ree = MagicMock()
+    ree.rees = pd.DataFrame({"codigo": [1], "nome": ["SUDESTE"]})
+
+    case = make_case(
+        tmp_path, dger=dger, curva=curva, confhd=confhd, hidr=hidr, ree=ree
+    )
+    id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[1, 2, 3], thermal_codes=[])
+    return case, id_map
+
+
+class TestVminopStoredEnergy:
+    """VminOP bounds useful stored energy (MWh) with novomodelo's MWh parameters,
+    one constraint per REE whose per_unit slack is a price per MWh."""
+
+    def test_expression_bounds_useful_energy_by_curve_fraction(
+        self, tmp_path: Path
+    ) -> None:
+        case, id_map = _make_vminop_case(tmp_path, curve=[(datetime(2020, 1, 1), 30.0)])
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        constraint = result.constraints_dict["constraints"][0]
+        assert constraint["expression"] == (
+            "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+            " + @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
+            " + @rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
+            " >= @pct_vminop_ree1 * (@earm_max_mwh_h0 + @earm_max_mwh_h1"
+            " + @earm_max_mwh_h2)"
+        )
+        assert result.referenced_hydro_ids == [0, 1, 2]
+
+    def test_one_constraint_per_ree_bounded_on_every_curve_stage(
+        self, tmp_path: Path
+    ) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, m, 1), 20.0 + m) for m in range(1, 13)],
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        [constraint] = result.constraints_dict["constraints"]
+        assert constraint["name"] == "VminOP_SUDESTE"
+        rows = result.bounds.to_pylist()
+        assert [(r["constraint_id"], r["stage_id"]) for r in rows] == [
+            (constraint["id"], s) for s in range(12)
+        ]
+        assert all(r["bound_lower"] == 0.0 for r in rows)
+        assert all(r["bound_upper"] is None and r["block_id"] is None for r in rows)
+
+    def test_penalty_is_a_per_unit_price_per_mwh(self, tmp_path: Path) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, m, 1), 20.0) for m in (1, 2)],
+            penalty=1488.0,
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        [constraint] = result.constraints_dict["constraints"]
+        assert constraint["slack"] == {
+            "enabled": True,
+            "penalty": 1488.0,
+            "penalty_basis": "per_unit",
+        }
+
+    def test_curve_fraction_parameter_covers_every_stage(self, tmp_path: Path) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, 1, 1), 30.0), (datetime(2020, 12, 1), 45.0)],
+            num_anos_pos_estudo=1,
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        values = result.per_stage_parameters["pct_vminop_ree1"]
+        assert len(values) == 24
+        # Percent becomes a fraction; uncovered in-study months stay 0 (no
+        # constraint there); the post-study tail freezes at December.
+        assert values[0] == pytest.approx(0.30)
+        assert values[1] == 0.0
+        assert values[11] == pytest.approx(0.45)
+        assert values[12:] == pytest.approx([0.45] * 12)
+        stages = [r["stage_id"] for r in result.bounds.to_pylist()]
+        assert stages == [0, 11, *range(12, 24)]
+
+    def test_seasonalized_tail_repeats_the_study_year(self, tmp_path: Path) -> None:
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(2020, m, 1), float(m)) for m in range(1, 13)],
+            num_anos_pos_estudo=1,
+            seasonalize=True,
+        )
+
+        result = convert_vminop_constraints(case, id_map)
+
+        assert result is not None
+        values = result.per_stage_parameters["pct_vminop_ree1"]
+        assert values[12:] == pytest.approx([m / 100.0 for m in range(1, 13)])
+
+
+def _make_coupled_vminop_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
+    """REE 1 (UP -> CUT, terminal) coupled to REE 2 through FICT.UP/FICT.CUT -> DOWN.
+
+    FICT.UP stores less than its twin UP; the downstream REE's bound still
+    uses UP's useful volume, since the twin does not operate.
     """
+    codes = [1, 2, 3, 4, 5]
+    cadastro = pd.DataFrame(
+        {
+            "nome_usina": ["UP", "CUT", "FICT.UP", "FICT.CUT", "DOWN"],
+            "produtibilidade_especifica": [0.01, 0.02, 0.0, 0.0, 0.03],
+            "volume_minimo": [100.0, 200.0, 100.0, 200.0, 300.0],
+            "volume_maximo": [1000.0, 2000.0, 600.0, 2000.0, 3000.0],
+            "volume_referencia": [500.0, 1000.0, 500.0, 1000.0, 1500.0],
+            "canal_fuga_medio": [200.0, 300.0, 200.0, 300.0, 400.0],
+            "tipo_perda": [0] * 5,
+            "perdas": [0.0] * 5,
+            "tipo_regulacao": ["M"] * 5,
+            "a0_volume_cota": [300.0, 400.0, 300.0, 400.0, 500.0],
+            "a1_volume_cota": [0.1, 0.05, 0.1, 0.05, 0.02],
+            "a2_volume_cota": [0.0] * 5,
+            "a3_volume_cota": [0.0] * 5,
+            "a4_volume_cota": [0.0] * 5,
+        },
+        index=pd.Index(codes, name="codigo_usina"),
+    )
+    confhd_df = pd.DataFrame(
+        {
+            "codigo_usina": codes,
+            "nome_usina": list(cadastro["nome_usina"]),
+            "usina_existente": ["EX"] * 5,
+            "codigo_usina_jusante": [2, 0, 4, 5, 0],
+            "ree": [1, 1, 2, 2, 2],
+            "posto": [1, 2, 1, 2, 5],
+            "volume_inicial_percentual": [50.0] * 5,
+        }
+    )
 
-    def test_factor_matches_real_month_hours(self) -> None:
-        # Study starting Sep 2024 (the example horizon).
-        #   stage 0 = Sep 2024 (30 d = 720 h)
-        #   stage 3 = Dec 2024 (31 d = 744 h)
-        #   stage 5 = Feb 2025 (28 d = 672 h)
-        assert _vminop_energy_factor(2024, 9, 0) == pytest.approx(720 * 3600 / 1e6)
-        assert _vminop_energy_factor(2024, 9, 3) == pytest.approx(744 * 3600 / 1e6)
-        assert _vminop_energy_factor(2024, 9, 5) == pytest.approx(672 * 3600 / 1e6)
+    dger = MagicMock()
+    dger.mes_inicio_estudo = 1
+    dger.ano_inicio_estudo = 2020
+    dger.num_anos_estudo = 1
+    dger.num_anos_pos_estudo = 0
+    dger.curva_aversao = 1
 
-    def test_factor_differs_from_fixed_constant_off_730(self) -> None:
-        # Short/long months must NOT use the fixed 730 h constant — that was the
-        # bug. February (672 h) is ~8% below C_M3S2HM3.
-        feb = _vminop_energy_factor(2024, 9, 5)
-        assert feb != pytest.approx(C_M3S2HM3)
-        assert feb / C_M3S2HM3 == pytest.approx(672 / 730)
+    curva = MagicMock()
+    curva.curva_seguranca = pd.DataFrame(
+        {
+            "codigo_ree": [1, 2],
+            "data": [datetime(2020, 1, 1)] * 2,
+            "valor": [30.0, 40.0],
+        }
+    )
+    curva.configuracoes_penalizacao = [0, 11, 0]
+    curva.custos_penalidades = pd.DataFrame(
+        {"codigo_ree": [1, 2], "penalidade": [1488.0, 1488.0]}
+    )
 
-    def test_factor_equals_constant_for_730h_month(self) -> None:
-        # A hypothetical 730 h month (the source model's convention) reproduces
-        # C_M3S2HM3. No real calendar month is 730 h, so assert the relationship holds
-        # via the month-hours ratio instead (April = 30 d = 720 h).
-        apr = _vminop_energy_factor(2025, 4, 0)
-        assert apr == pytest.approx(C_M3S2HM3 * 720 / 730)
+    confhd = MagicMock()
+    confhd.usinas = confhd_df
+    hidr = MagicMock()
+    hidr.cadastro = cadastro
+    ree = MagicMock()
+    ree.rees = pd.DataFrame({"codigo": [1, 2], "nome": ["SUDESTE", "NORDESTE"]})
+
+    case = make_case(
+        tmp_path, dger=dger, curva=curva, confhd=confhd, hidr=hidr, ree=ree
+    )
+    id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[1, 2, 5], thermal_codes=[])
+    return case, id_map
+
+
+class TestVminopReeCoupling:
+    """A reservoir cascade the source model cuts between two REEs (e.g. TRES
+    MARIAS -> FICT.TRES MA -> SOBRADINHO) counts whole in the reservoir's own
+    REE, as the source model's stored energy does."""
+
+    def _convert(self, tmp_path: Path):
+        case, id_map = _make_coupled_vminop_case(tmp_path)
+        result = convert_vminop_constraints(case, id_map)
+        assert result is not None
+        return {c["name"]: c for c in result.constraints_dict["constraints"]}, result
+
+    def test_own_ree_counts_the_whole_cascade_below_the_cut(
+        self, tmp_path: Path
+    ) -> None:
+        by_name, _ = self._convert(tmp_path)
+
+        assert by_name["VminOP_SUDESTE"]["expression"] == (
+            "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+            " + @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
+            " >= @pct_vminop_ree1 * (@earm_max_mwh_h0 + @earm_max_mwh_h1)"
+        )
+
+    def test_downstream_ree_counts_only_its_own_reservoirs(
+        self, tmp_path: Path
+    ) -> None:
+        by_name, result = self._convert(tmp_path)
+
+        assert by_name["VminOP_NORDESTE"]["expression"] == (
+            "@rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
+            " >= @pct_vminop_ree2 * @earm_max_mwh_h2"
+        )
+        assert result.referenced_hydro_ids == [0, 1, 2]
+
+    def test_only_the_curve_fraction_is_a_per_stage_parameter(
+        self, tmp_path: Path
+    ) -> None:
+        _, result = self._convert(tmp_path)
+
+        assert set(result.per_stage_parameters) == {
+            "pct_vminop_ree1",
+            "pct_vminop_ree2",
+        }
 
 
 class TestConstraintsNoLongerBridgesLegacyWarning:
@@ -1878,11 +2023,8 @@ def test_re_dat_bound_covers_only_its_declared_window(tmp_path: Path) -> None:
 def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> None:
     # Declared for the first quarter of a three-year horizon whose
     # individualizado period ends in December 2020.
-    (tmp_path / "indices.csv").write_text(
-        "RESTRICAO-ELETRICA-ESPECIAL;Descricao;restricao-eletrica.csv\n",
-        encoding="latin-1",
-    )
-    (tmp_path / "restricao-eletrica.csv").write_text(
+    re_path = tmp_path / "restricao-eletrica.csv"
+    re_path.write_text(
         "RE;1;1.0ger_usih(10)\n"
         "RE-HORIZ-PER;1;2020/01;2020/03\n"
         "RE-LIM-FORM-PER-PAT;1;2020/01;2020/03;1;50.;200.\n",
@@ -1896,7 +2038,10 @@ def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> N
     )
     sistema = MagicMock(limites_intercambio=None, custo_deficit=None)
     case = make_case(
-        make_nw_files(tmp_path), dger=dger, sistema=sistema, ree=_valid_ree_reader()
+        make_nw_files(tmp_path, restricao_eletrica=re_path),
+        dger=dger,
+        sistema=sistema,
+        ree=_valid_ree_reader(),
     )
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
@@ -1906,3 +2051,42 @@ def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> N
     df = result[1].to_pandas()
     assert set(df[df["bound_upper"].notna()]["stage_id"]) == {0, 1, 2}
     assert set(df[df["bound_lower"].notna()]["stage_id"]) == {0, 1, 2}
+
+
+# ---------------------------------------------------------------------------
+# _cascade_sum cycle detection
+# ---------------------------------------------------------------------------
+
+
+def test_cascade_sum_detects_cycle() -> None:
+    """A cycle in the downstream map raises BridgeError with the path."""
+    from novomodelo_bridge.core.errors import BridgeError
+
+    # Crafted cycle: 1 → 2 → 1
+    downstream_map: dict[int, int | None] = {1: 2, 2: 1}
+    values = {1: 10.0, 2: 20.0}
+
+    with pytest.raises(BridgeError, match=r"Cascade cycle detected.*1.*2.*1"):
+        _cascade_sum(downstream_map, values)
+
+
+def test_cascade_sum_cycle_path_is_ordered_and_excludes_the_approach() -> None:
+    """The message names the cycle in flow order, without the plant above it."""
+    from novomodelo_bridge.core.errors import BridgeError
+
+    downstream_map: dict[int, int | None] = {5: 1, 1: 2, 2: 3, 3: 1}
+
+    with pytest.raises(BridgeError, match=r"detected: 1 → 2 → 3 → 1\."):
+        _cascade_sum(downstream_map, {})
+
+
+def test_cascade_sum_no_cycle() -> None:
+    """Normal cascade without cycle works correctly."""
+    # Linear cascade: 1 → 2 → 3 → None (sea sink)
+    downstream_map: dict[int, int | None] = {1: 2, 2: 3, 3: None}
+    values = {1: 10.0, 2: 20.0, 3: 30.0}
+
+    result = _cascade_sum(downstream_map, values)
+
+    # result[3] = 30, result[2] = 20 + 30 = 50, result[1] = 10 + 50 = 60
+    assert result == {1: 60.0, 2: 50.0, 3: 30.0}

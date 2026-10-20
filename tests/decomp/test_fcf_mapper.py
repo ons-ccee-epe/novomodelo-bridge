@@ -307,7 +307,7 @@ def test_map_complexo_replicates_coefficients_onto_components() -> None:
 
 def test_map_complexo_dropped_when_no_operated_component() -> None:
     # A complexo whose CX components are all unknown to id_map resolves onto no
-    # live target -> dropped (D3), like any source-only plant.
+    # live target -> dropped, like any source-only plant.
     id_map = make_id_map((10,))
     manifest = make_manifest([make_slot(_HYDRO_STORAGE, 0, 0)])
     cuts = make_boundary_cuts((99,), (make_cut_record(pi_varm=(2.0,)),))
@@ -529,7 +529,7 @@ def test_resolve_gnl_targets_docstring_keys_on_interval_start() -> None:
 
 
 def test_map_gnl_all_dated_slots_covered_drops_nothing() -> None:
-    """The post-GAP-2 shape: `post_horizon_start` is enabled
+    """`post_horizon_start` is enabled
     (non-`None`) but both targets' dated slots are `>= post_horizon_start`,
     so the covered-lane filter drops nothing. Locks the invariant that
     enabling the filter on an all-covered ring is a no-op versus

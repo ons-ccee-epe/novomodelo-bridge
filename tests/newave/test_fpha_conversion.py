@@ -27,7 +27,7 @@ from novomodelo_bridge.newave.converters.hydro import (
     fpha_eligible_codes,
 )
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import make_case, make_nw_files
+from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
     _make_confhd_df,
     _make_ee_exph_mock,
@@ -267,11 +267,7 @@ class TestFphaConverters:
         type(nummaq_rec).__name__ = "NUMMAQ"
         nummaq_rec.conjunto = 1
         nummaq_rec.numero_maquinas = 0
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        modif = MagicMock()
-        modif.usina.return_value = [usina_rec]
-        modif.modificacoes_usina.return_value = [nummaq_rec]
+        modif = modif_mock((1, [nummaq_rec]))
 
         with dx.collect() as collected:
             codes = fpha_eligible_codes(self._case(tmp_path, modif=modif))
@@ -291,11 +287,7 @@ class TestFphaConverters:
         type(nummaq_rec).__name__ = "NUMMAQ"
         nummaq_rec.conjunto = 1
         nummaq_rec.numero_maquinas = 0
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        modif = MagicMock()
-        modif.usina.return_value = [usina_rec]
-        modif.modificacoes_usina.return_value = [nummaq_rec]
+        modif = modif_mock((1, [nummaq_rec]))
         confhd = _make_confhd_df()
         confhd["usina_existente"] = ["EE", "EX"]
         case = self._case(

@@ -71,16 +71,18 @@ _NEWAVE_LABELS: dict[str, tuple[str, str | None]] = {
     "volref_saz": ("volref_saz.dat", "volume_referencia_sazonal"),
     "shist": ("shist.dat", "shist"),
     "adterm": ("adterm.dat", "adterm"),
+    "libs_index": ("indices.csv", None),
     "polinjus": ("polinjus.csv", None),
     "tratamento_fpha": ("tratamento-fpha.csv", None),
+    "restricao_eletrica": ("restricao-eletrica.csv", None),
+    "estacao_bombeamento": ("estacao-bombeamento.csv", None),
+    "estacao_bombeamento_submercado": ("estacao-bombeamento-submercado.csv", None),
 }
 # Deck files the converter reads without a ``NewaveFiles`` field: the index
-# files and the LIBs electric-constraint file found by directory scan.
+# files that name the others.
 _NEWAVE_EXTRAS: dict[str, tuple[str, str | None]] = {
     "caso": ("caso.dat", None),
     "arquivos": ("arquivos.dat", "arquivos"),
-    "restricao_eletrica": ("restricao-eletrica.csv", None),
-    "indices": ("indices.csv", None),
 }
 _DECOMP_LABELS: dict[str, str] = {
     "dadger": "dadger.rvN",
@@ -92,12 +94,12 @@ _DECOMP_LABELS: dict[str, str] = {
     "libs_restricao_eletrica": "lib_restricao-eletrica-especial*.csv",
     "cortesh": "cortesh.dat",
     "cortes": "cortes*.dat",
+    "libs_index": "indices.csv",
 }
-# Deck files the converter reads without a ``DecompFiles`` field: the index
-# files and ``mlt.dat``, which the boundary import locates itself.
+# Deck files the converter reads without a ``DecompFiles`` field: the case
+# index and ``mlt.dat``, which the boundary import locates itself.
 _DECOMP_EXTRAS: dict[str, str] = {
     "caso": "caso.dat",
-    "indices": "indices.csv",
     "mlt": "mlt.dat",
 }
 

@@ -145,7 +145,7 @@ def test_generic_constraints_json_emit_matches_registry(tmp_path) -> None:
         constraints_dict={"$schema": "http://example", "constraints": [{"id": 0}]},
         bounds=fake_bounds,
         referenced_hydro_ids=[],
-        rho_acum_overrides={},
+        per_stage_parameters={},
     )
 
     fake_id_map = MagicMock()

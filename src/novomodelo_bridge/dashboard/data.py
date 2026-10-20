@@ -20,7 +20,13 @@ import pyarrow.parquet as pq
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.errors import NovomodeloOutputError
 from novomodelo_bridge.novomodelo.case_io import resolve_hydro_productivities
+from novomodelo_bridge.novomodelo.constraint_expr import (
+    ResolvedGenericConstraints,
+    resolve_generic_constraints,
+)
 from novomodelo_bridge.novomodelo.readers import (
+    read_novomodelo_generic_constraint_echo,
+    read_novomodelo_hydro_metadata,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
     read_novomodelo_training_metadata,
@@ -767,7 +773,21 @@ _OUTPUT_COLUMN_ALIASES: dict[str, str] = {
     "stage_id": "stage",
     "opening_index": "opening",
     "upper_bound": "upper_bound_mean",
+    "cuts_in_pool": "cuts_populated",
 }
+
+
+def _cut_selection_per_stage(cut_selection: pd.DataFrame) -> pd.DataFrame:
+    """One ``cut_selection`` row per ``(iteration, stage)``, summing its pools.
+
+    novomodelo writes one row per row pool, and a stage of a scenario tree has one
+    pool per node; the charts read one row per stage. A column novomodelo leaves
+    null where no selection pass ran stays null when every pool is null.
+    """
+    if cut_selection.empty or "pool_id" not in cut_selection.columns:
+        return cut_selection
+    counts = cut_selection.drop(columns=["pool_id", "node_id"], errors="ignore")
+    return counts.groupby(["iteration", "stage"], as_index=False).sum(min_count=1)
 
 
 def _normalize_output_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -836,8 +856,10 @@ def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerform
     else:
         scaling_report = {}
     cs_path = case_dir / "output" / "training" / "cut_selection" / "iterations.parquet"
-    cut_selection = _normalize_output_columns(
-        pq.read_table(cs_path).to_pandas() if cs_path.exists() else pd.DataFrame()
+    cut_selection = _cut_selection_per_stage(
+        _normalize_output_columns(
+            pq.read_table(cs_path).to_pandas() if cs_path.exists() else pd.DataFrame()
+        )
     )
     retry_path = case_dir / "output" / "training" / "solver" / "retry_histogram.parquet"
     retry_histogram = _normalize_output_columns(
@@ -1029,27 +1051,32 @@ def load_output_metadata(case_dir: Path) -> OutputMetadata:
 
 @dataclasses.dataclass
 class GenericConstraintData:
-    """Generic-constraint definitions and their resolved bounds (optional).
+    """Generic constraints as novomodelo resolved them (optional).
 
-    F3 shape: ``constraints`` dicts carry no ``sense`` key, and ``bounds``
-    has nullable ``bound_lower``/``bound_upper`` endpoint columns instead of
-    a single ``bound`` column (see
+    ``resolved`` is the comparison-ready view (see
+    :func:`novomodelo_bridge.novomodelo.constraint_expr.resolve_generic_constraints`):
+    coefficients and bounds read from the run's echo. Sense-free shape:
+    ``constraints`` dicts carry no ``sense`` key, and ``bounds`` has nullable
+    ``bound_lower``/``bound_upper`` endpoint columns instead of a single
+    ``bound`` column (see
     :mod:`novomodelo_bridge.core.generic_constraint_format`). Readers derive the
     displayed direction from the endpoints via
     :func:`novomodelo_bridge.dashboard.tabs.constraints_utils.derive_constraint_shape`.
     """
 
-    constraints: list[dict]
-    bounds: pd.DataFrame
+    resolved: ResolvedGenericConstraints
+
+    @property
+    def constraints(self) -> list[dict]:
+        return self.resolved.constraints
+
+    @property
+    def bounds(self) -> pd.DataFrame:
+        return self.resolved.bounds.to_pandas()
 
 
 def load_generic_constraints(case_dir: Path) -> GenericConstraintData:
-    """Load constraints/generic_constraints.json and the bounds parquet.
-
-    The bounds parquet is read verbatim (whatever columns the converter
-    wrote — the F3 ``bound_lower``/``bound_upper`` pair, not a single
-    ``bound`` column); no column selection happens here.
-    """
+    """Load ``constraints/generic_constraints.json`` resolved against the run's echo."""
     gc_path = case_dir / "constraints" / "generic_constraints.json"
     constraints: list[dict] = []
     if gc_path.exists():
@@ -1057,13 +1084,20 @@ def load_generic_constraints(case_dir: Path) -> GenericConstraintData:
             gc_data = json.load(f)
         constraints = gc_data.get("constraints", [])
 
-    gc_bounds_path = case_dir / "constraints" / "generic_constraint_bounds.parquet"
-    bounds = (
-        pq.read_table(gc_bounds_path).to_pandas()
-        if gc_bounds_path.exists()
-        else pd.DataFrame()
+    output_dir = case_dir / "output"
+    min_storage = {
+        hid: float(meta.get("min_storage_hm3") or 0.0)
+        for hid, meta in read_novomodelo_hydro_metadata(output_dir).items()
+    }
+    return GenericConstraintData(
+        resolve_generic_constraints(
+            constraints,
+            read_novomodelo_generic_constraint_echo(output_dir)
+            if constraints
+            else None,
+            min_storage,
+        )
     )
-    return GenericConstraintData(constraints=constraints, bounds=bounds)
 
 
 def _phase_note(training_available: bool, simulation_available: bool) -> str:
@@ -1388,6 +1422,10 @@ class DashboardData:
     @property
     def gc_bounds(self) -> pd.DataFrame:
         return self.gc.bounds
+
+    @property
+    def gc_resolved(self) -> ResolvedGenericConstraints:
+        return self.gc.resolved
 
     @property
     def gc_violations(self) -> pd.DataFrame:

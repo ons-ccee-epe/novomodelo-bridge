@@ -13,6 +13,22 @@ File-name lookups are case-insensitive. The two binary registries the index
 does not list, `hidr.dat` and `vazoes.dat`, are found by scanning the
 directory.
 
+The CSV inputs of the LIBS family are found through their own index,
+`indices.csv` in the case directory. Each line of it names a record key and the
+file that holds it, and the converter reads each LIBS record from the file
+listed for its key: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` (the
+tailrace curves), `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` (the FPHA plane
+reduction method) and `RESTRICAO-ELETRICA-ESPECIAL` (the electrical
+constraints). Lines starting with `&` are comments. Without `indices.csv`, or
+with a key left out or commented out, that record is not part of the case: no
+tailrace curves, no electrical constraints from the CSV, and no plane
+reduction, which Novomodelo then leaves off. A key whose file is not in the
+directory makes the case fail to convert. A file with a usual LIBS name, such
+as `polinjus.csv`, that the index does not list is ignored, and `check newave`
+and `convert newave` warn about it. `indices.csv`, the plane-reduction file and
+the electrical-constraint file are each read as UTF-8 when they are valid UTF-8
+and as Latin-1 otherwise.
+
 Many inputs are optional (`modif.dat`, `cvar.dat`, `curva.dat`, `agrint.dat`,
 and others). `check newave` prints one line per optional input that is absent
 and states that the conversion proceeds without it. A required input that is
@@ -24,8 +40,8 @@ Several optional inputs are also gated by a switch line in `dger.dat`, such
 as `CONSIDERA GHMIN` for `ghmin.dat`, `AGRUPAMENTO LIVRE` for `agrint.dat`,
 `CONS. CARGA ADICIONAL` for `c_adic.dat`, the two `RESTRICOES ELETRICAS`
 lines for `re.dat` and `restricao-eletrica.csv`, `DESCONSIDERA VAZMIN` for
-minimum outflow, and `REST. TURBINAMENTO` for the dated turbining records of
-`modif.dat`. A file that is present but switched off is ignored, as NEWAVE
+minimum outflow, `REST. TURBINAMENTO` for the dated turbining records of
+`modif.dat`, and `CANAL DE DESVIO` for its `CDESVIO` records. A file that is present but switched off is ignored, as NEWAVE
 ignores it, and both `check newave` and `convert newave` say so with an
 informational diagnostic. A switch line absent from `dger.dat` counts as on.
 
@@ -72,6 +88,16 @@ the same output.
   NEWAVE provides only for the study years (loads, block factors, some bounds)
   is extended into the post-study years by repeating the last study year's
   seasonal values.
+- **Diversion channels.** A `CDESVIO` record in a plant's block of
+  `modif.dat` becomes that plant's Novomodelo diversion channel, to the record's
+  target plant and capped at its maximum flow; a maximum flow of 9 999 999
+  m³/s or more, NEWAVE's "no limit" value, gives a channel without a limit
+  and is reported. Only `CDESVIO`
+  declares a channel; the `desvio` code of `hidr.dat` alone does not. A record
+  with no maximum flow, or whose target plant is not in the case, converts to
+  no channel and is reported, and so the plant releases only to its
+  downstream plant. The minimum storage for operating the channel
+  (`volume_desvio` in `hidr.dat`) is not converted.
 - **Constraints.** The minimum-storage security curve (`curva.dat`), electric
   constraints (`restricao-eletrica.csv`), and interchange group limits
   (`agrint.dat`) all become Novomodelo generic constraints: linear expressions over
@@ -87,10 +113,75 @@ the same output.
 - **Stochastic data.** Historical inflows (`vazoes.dat`, `vazpast.dat`), load
   (`sistema.dat`, `c_adic.dat`), and block factors (`patamar.dat`) are written
   under `scenarios/`, stage-varying tables as Parquet.
+- **Incremental inflows.** NEWAVE records natural inflow per gauging station
+  (posto); Novomodelo takes each plant's incremental inflow. The converter
+  subtracts, for each plant, the natural inflow of the stations of the plants
+  directly upstream of it. Plants that share a station each get their own
+  series. A plant on posto 300, NEWAVE's artificial gauge, has no natural
+  inflow: it gets a zero series, so Novomodelo treats its inflow as deterministic
+  zero, and an artificial plant upstream is not subtracted. `convert newave`
+  lists these plants, and warns when a gauged plant sits below an artificial
+  plant that has gauged plants further upstream, since their inflow may then
+  be counted twice.
 
 Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,
 `--diagnostics-json` saves them, and `--json` includes them in the verdict.
+
+## Pumping stations
+
+The converter reads pumping station data from LIBS files declared in
+`indices.csv`:
+
+| Index key | Content |
+|-----------|---------|
+| `ESTACAO-BOMBEAMENTO` | Station definitions and temporal limits |
+| `ESTACAO-BOMBEAMENTO-SUBMERCADO` | Station-to-subsystem mapping |
+
+Both keys must be listed for pumping conversion to proceed. Files present
+in the deck directory but not declared in `indices.csv` are ignored (with
+a warning).
+
+### Switch
+
+The feature respects the `ESTACOES BOMBEAMENTO` register in `dger.dat`:
+
+| Value | Behavior |
+|-------|----------|
+| `1` (or absent) | Pumping converted |
+| `0` | Pumping skipped; `pumping_stations.json` has an empty list |
+
+When the switch is off but the files are present, a diagnostic notes that
+the input was skipped.
+
+### Fictitious filter exemption
+
+Hydro plants referenced as origin or destination by a pumping station are
+excluded from the fictitious-plant filter. Without this exemption, a
+zero-productivity reservoir used for pumped storage would be removed,
+potentially breaking cascade topology.
+
+### Open-ended periods
+
+A temporal limit row with a blank `data_fim` applies from `data_inicio`
+to the last stage of the study horizon.
+
+### Validation
+
+The converter raises `SourceFileError` when:
+
+- A station has no entry (or multiple entries) in the submercado file
+- `codigo_usina_origem` or `codigo_usina_destino` references a hydro not
+  in `confhd.dat`
+- A limits row references an undefined station
+- `patamar` is outside the horizon's block range
+
+### Output files
+
+| File | When written |
+|------|--------------|
+| `system/pumping_stations.json` | Always (empty list when no stations) |
+| `constraints/pumping_bounds.parquet` | Only when temporal limits exist |
 
 ## Comparing results
 

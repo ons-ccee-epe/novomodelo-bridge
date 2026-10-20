@@ -31,6 +31,8 @@ semantic validation layer):
   (``block_bounds.rs::check_bound_block_id_range``).
 - Rule 38 — :func:`check_block_id_not_on_anticipated_thermal`
   (``block_bounds.rs::check_block_id_on_anticipated_thermal``).
+- Rule 46 — :func:`check_diversion_has_channel`
+  (``hydro.rs::check_diversion_requires_channel``).
 
 This module must not import either pipeline — they import it — so it stays
 unit-testable against hand-built artifacts.
@@ -963,6 +965,88 @@ def check_block_id_not_on_anticipated_thermal(
             remediation=(
                 "Drop the per-block override row(s) for this thermal; an "
                 "anticipated thermal's bounds must stay stage-level."
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
+#: The ``hydro_bounds`` columns that let a hydro divert water.
+_DIVERSION_COLUMNS: tuple[str, ...] = ("min_diversion_m3s", "max_diversion_m3s")
+
+
+def check_diversion_has_channel(
+    hydros: Mapping[str, object],
+    hydro_bounds: pa.Table | None,
+) -> None:
+    """No hydro may divert water without a ``diversion`` channel to receive it.
+
+    novomodelo takes a hydro's diversion out of that hydro's water balance and adds
+    it to another plant only through the hydro's ``diversion`` channel in
+    ``hydros.json``. A positive ``min_diversion_m3s`` or ``max_diversion_m3s``
+    row on a hydro without one is an ERROR, as novomodelo rejects it (rule 46).
+    """
+    if hydro_bounds is None or hydro_bounds.num_rows == 0:
+        return
+    columns = [c for c in _DIVERSION_COLUMNS if c in hydro_bounds.column_names]
+    if not columns:
+        return
+    names: dict[int, str] = {}
+    with_channel: set[int] = set()
+    raw_hydros = hydros.get("hydros")
+    for hydro in raw_hydros if isinstance(raw_hydros, list) else []:
+        if not isinstance(hydro, Mapping) or not isinstance(hydro.get("id"), int):
+            continue
+        names[hydro["id"]] = str(hydro.get("name", ""))
+        if hydro.get("diversion") is not None:
+            with_channel.add(hydro["id"])
+
+    hydro_ids = hydro_bounds["hydro_id"].to_pylist()
+    stage_ids = hydro_bounds["stage_id"].to_pylist()
+    violations: dict[tuple[int, str], list[tuple[int, float]]] = {}
+    for column in columns:
+        for hydro_id, stage_id, value in zip(
+            hydro_ids, stage_ids, hydro_bounds[column].to_pylist(), strict=True
+        ):
+            if value is not None and value > 0.0 and hydro_id not in with_channel:
+                violations.setdefault((hydro_id, column), []).append((stage_id, value))
+    if not violations:
+        return
+
+    rows = [
+        [
+            hydro_id,
+            names.get(hydro_id, ""),
+            column,
+            format_stage_ranges(stage for stage, _ in occurrences),
+            round(max(value for _, value in occurrences), 6),
+        ]
+        for (hydro_id, column), occurrences in sorted(
+            violations.items(),
+            key=lambda item: (item[0][0], _DIVERSION_COLUMNS.index(item[0][1])),
+        )
+    ]
+    plants = len({hydro_id for hydro_id, _ in violations})
+    emit(
+        Diagnostic(
+            code="hydro-diversion-without-channel",
+            severity=Severity.ERROR,
+            category=_CATEGORY,
+            title=f"Diversion without a receiving plant ({plants} hydro(s))",
+            summary=(
+                f"{plants} hydro(s) may divert water but declare no diversion "
+                "channel in system/hydros.json, so the diverted water would "
+                "reach no plant"
+            ),
+            table=DiagnosticTable(
+                columns=["Hydro ID", "Name", "Column", "Stages", "Largest value"],
+                rows=rows,
+                justify=["right", "left", "left", "left", "right"],
+            ),
+            remediation=(
+                "Each listed plant needs the plant that receives its diverted "
+                "water in the case; include that plant, or remove the "
+                "diversion restriction from the source deck."
             ),
         ),
         logger=_LOG,

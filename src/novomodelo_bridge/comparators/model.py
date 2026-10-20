@@ -92,7 +92,7 @@ class PercentileData:
     novomodelo_iteration_timing: pl.DataFrame = field(default_factory=pl.DataFrame)
 
     # --- Generic constraints (RE, AGRINT, VminOP) — LHS comparison --- Constraint
-    # definitions (F3, sense-free) and per-(stage, block) bound table (F3 nullable
+    # definitions (sense-free) and per-(stage, block) bound table (nullable
     # ``bound_lower``/``bound_upper`` endpoints) read straight from the converted
     # Novomodelo case. ``lhs_newave`` evaluates each constraint's LHS against the source
     # model outputs (MEDIAS-USIH GHIDUH + int*.out interchanges) at stage_0based

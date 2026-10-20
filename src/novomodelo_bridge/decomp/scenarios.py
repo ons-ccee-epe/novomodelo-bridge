@@ -29,6 +29,11 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.diagnostics import emit
+from novomodelo_bridge.core.incremental_inflow import (
+    artificial_gauge_plants_diagnostic,
+    is_artificial_gauge,
+)
 from novomodelo_bridge.core.inflow_windows import (
     format_observation_windows,
     month_window,
@@ -239,6 +244,22 @@ def _tree_values(
     return values
 
 
+def _report_artificial_gauge_plants(
+    effective: EffectiveCadastro, id_map: DecompIdMap
+) -> None:
+    plants = [
+        (
+            code,
+            str(effective.base.loc[code, "nome_usina"]).strip(),
+            id_map.hydro_id(code),
+        )
+        for code in id_map.hydro_codes
+        if is_artificial_gauge(effective.inflow_gauge(code, 0))
+    ]
+    if plants:
+        emit(artificial_gauge_plants_diagnostic(plants), logger=_LOG)
+
+
 def convert_external_inflows(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -249,6 +270,7 @@ def convert_external_inflows(
     """``external_inflow_scenarios.parquet``: the tree of per-plant incremental
     inflows, read off each plant's *effective* (post-``AC NUMPOS``) gauge
     column."""
+    _report_artificial_gauge_plants(effective, id_map)
     values = _tree_values(vazoes, effective, id_map, case.calendar)
 
     stage_ids: list[int] = []

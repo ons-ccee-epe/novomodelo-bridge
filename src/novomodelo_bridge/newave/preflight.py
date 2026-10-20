@@ -29,8 +29,9 @@ from novomodelo_bridge.core.preflight import (
     PreflightVerdict,
     optional_input_advisory,
     tab_character_advisory,
+    unindexed_libs_advisory,
 )
-from novomodelo_bridge.newave.files import NewaveFiles
+from novomodelo_bridge.newave.files import NewaveFiles, unindexed_libs_diagnostic
 from novomodelo_bridge.newave.switches import (
     DgerSwitches,
     switch_off_diagnostic,
@@ -111,6 +112,10 @@ def run_preflight(src: Path) -> PreflightResult:
     checks.extend(tab_checks)
     diagnostics.extend(tab_diags)
 
+    libs_checks, libs_diags = unindexed_libs_advisory(unindexed_libs_diagnostic(files))
+    checks.extend(libs_checks)
+    diagnostics.extend(libs_diags)
+
     switch_checks, switch_diags = _switch_advisory(files)
     checks.extend(switch_checks)
     diagnostics.extend(switch_diags)
@@ -136,8 +141,6 @@ def _switch_advisory(
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """INFO advisory per optional input that is present but switched off in
     ``dger.dat``; a ``dger.dat`` that does not parse is a failed check."""
-    from novomodelo_bridge.newave.converters.constraints import _find_restricao_eletrica
-
     try:
         switches = _read_switches(files)
     except Exception as exc:  # noqa: BLE001
@@ -146,12 +149,7 @@ def _switch_advisory(
             [CheckItem(label="dger.dat readable", passed=False, detail=str(exc))],
             [diagnostic_from_exception(exc, context=_PREFLIGHT_CONTEXT)],
         )
-    off = switched_off_inputs(
-        files,
-        switches,
-        restricao_eletrica_present=_find_restricao_eletrica(files.directory)
-        is not None,
-    )
+    off = switched_off_inputs(files, switches)
     detail = (
         f"{len(off)} present input(s) switched off"
         if off

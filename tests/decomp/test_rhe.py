@@ -2,12 +2,12 @@
 
 Synthetic ``ConstraintRecord``/``ConstraintTerm``/``StageBounds``/
 ``EffectiveCadastro``/``DecompIdMap``/``OperativeStage`` only — no deck, no
-``example/`` read, no ``import novomodelo``. One test per acceptance criterion:
-absolute (``tipo_limite=1``) round-trip, percentage (``tipo_limite=2``) RHS,
-two-reservoir cascade override, run-of-river exclusion, weekly-regulating
-(``"S"``) reservoir participation with the integrated ρ, no-storage
-skip+WARNING (under ``diagnostics.collect()``), weekly-vs-monthly
-energy-factor scaling, and the negative-CM sign path.
+``example/`` read, no ``import novomodelo``. Covers the absolute (``tipo_limite=1``)
+MWh bound, the percentage (``tipo_limite=2``) useful-energy RHS, the reservoir
+plant set (cascade, run-of-river exclusion, weekly-regulating ``"S"``
+participation), the no-storage skip+WARNING, the single constraint per
+record with its per_unit penalty, the coupled-cascade expression parameters,
+and the negative-CM sign path.
 """
 
 from __future__ import annotations
@@ -97,7 +97,14 @@ def _hydro_row(
 
 
 def _hidr_frame(rows: dict[int, dict[str, object]]) -> pd.DataFrame:
-    """A synthetic ``hidr``-shaped frame, indexed by ``codigo_usina``."""
+    """A synthetic ``hidr``-shaped frame, indexed by ``codigo_usina``.
+
+    A row without a ``posto`` gets its own code, so no two plants share one.
+    """
+    rows = {
+        code: {"posto": code, "nome_usina": f"PLANT {code}", **row}
+        for code, row in rows.items()
+    }
     df = pd.DataFrame(rows).T
     df.index.name = "codigo_usina"
     return df
@@ -127,18 +134,25 @@ def _he_record(
     )
 
 
+def _single_reservoir(
+    tipo_regulacao: str = "M", n_stages: int = 1
+) -> tuple[DecompIdMap, EffectiveCadastro]:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
+    effective = EffectiveCadastro(
+        base=_hidr_frame({5: _hydro_row(tipo_regulacao=tipo_regulacao)}),
+        n_stages=n_stages,
+        stage_varying={},
+    )
+    return id_map, effective
+
+
 # ---------------------------------------------------------------------------
 # Single-REE, single monthly reservoir, tipo_limite=1 (absolute)
 # ---------------------------------------------------------------------------
 
 
-def test_emit_rhe_generics_absolute_round_trip() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
-    effective = EffectiveCadastro(
-        base=_hidr_frame({5: _hydro_row(tipo_regulacao="M")}),
-        n_stages=1,
-        stage_varying={},
-    )
+def test_emit_rhe_generics_absolute_limit_becomes_mwh_bound() -> None:
+    id_map, effective = _single_reservoir()
     record = _he_record(
         constraint_id=100,
         ree_code=1,
@@ -147,47 +161,45 @@ def test_emit_rhe_generics_absolute_round_trip() -> None:
         tipo_limite=1,
         valor_penalidade=250.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     result = emit_rhe_generics(
-        _case(calendar),
+        _case([_stage(0, 730.0)]),
         id_map,
-        census=census,
+        census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
-    assert result.result is not None
-    assert len(result.result.constraints) == 1
-    constraint = result.result.constraints[0]
-    assert constraint["expression"] == "@rho_acum_h0 * hydro_storage(0)"
+    assert result is not None
+    [constraint] = result.constraints
+    assert constraint["name"] == "RHE_100"
+    assert constraint["expression"] == "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
     assert set(constraint) == {"id", "name", "description", "expression", "slack"}
-    assert constraint["slack"] == {"enabled": True, "penalty": 250.0}
+    assert constraint["slack"] == {
+        "enabled": True,
+        "penalty": 250.0,
+        "penalty_basis": "per_unit",
+    }
+    assert result.per_stage_parameters == {}
+    assert result.expression_parameters == {}
 
-    rows = result.result.bounds.to_pylist()
+    rows = result.bounds.to_pylist()
     assert len(rows) == 1
-    assert rows[0]["bound_lower"] == 50.0
+    # 50 MWmes (stage-average MW) over a 730 h stage.
+    assert rows[0]["bound_lower"] == pytest.approx(50.0 * 730.0)
     assert rows[0]["bound_upper"] is None
     assert rows[0]["block_id"] is None
     assert rows[0]["stage_id"] == 0
 
-    expected_rho = 0.01 * 100 / (3600.0 * 730.0 / 1e6)
-    assert result.rho_acum_overrides[0][0] == pytest.approx(expected_rho)
-
 
 # ---------------------------------------------------------------------------
-# Same record, tipo_limite=2 (percentage of rho_acum * volume_maximo)
+# Same record, tipo_limite=2 (percentage of the maximum useful stored energy)
 # ---------------------------------------------------------------------------
 
 
-def test_emit_rhe_generics_percentage_rhs() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
-    effective = EffectiveCadastro(
-        base=_hidr_frame({5: _hydro_row(tipo_regulacao="M")}),
-        n_stages=1,
-        stage_varying={},
-    )
+def test_emit_rhe_generics_percentage_rhs_is_the_maximum_useful_energy() -> None:
+    id_map, effective = _single_reservoir()
     record = _he_record(
         constraint_id=101,
         ree_code=1,
@@ -196,50 +208,40 @@ def test_emit_rhe_generics_percentage_rhs() -> None:
         tipo_limite=2,
         valor_penalidade=250.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     result = emit_rhe_generics(
-        _case(calendar),
+        _case([_stage(0, 730.0)]),
         id_map,
-        census=census,
+        census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
-    assert result.result is not None
-    rows = result.result.bounds.to_pylist()
-    assert len(rows) == 1
-    expected_rho = 0.01 * 100 / (3600.0 * 730.0 / 1e6)
-    expected_bound = 0.20 * expected_rho * 1000.0
-    assert rows[0]["bound_lower"] == pytest.approx(expected_bound)
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+        " >= @pct_rhe101 * @earm_max_mwh_h0"
+    )
+    # 20 % of novomodelo's maximum useful stored energy.
+    assert result.per_stage_parameters == {"pct_rhe101": [pytest.approx(0.2)]}
+    rows = result.bounds.to_pylist()
+    assert rows[0]["bound_lower"] == 0.0
     assert rows[0]["bound_upper"] is None
 
 
 # ---------------------------------------------------------------------------
-# Two-reservoir cascade (code 5 -> code 6 -> sink), both "M"
+# Reservoir plant set
 # ---------------------------------------------------------------------------
 
 
-def test_emit_rhe_generics_two_reservoir_cascade_override() -> None:
+def test_emit_rhe_generics_two_reservoir_cascade() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
-    # produtibilidade_especifica=1.0, a0=1.0, no tailrace/loss -> own rho == 1.0
-    # MW/(m^3/s) for both plants (constant head, either regulation branch).
     effective = EffectiveCadastro(
         base=_hidr_frame(
             {
-                5: _hydro_row(
-                    tipo_regulacao="M",
-                    a0=1.0,
-                    produtibilidade_especifica=1.0,
-                    codigo_usina_jusante=6,
-                ),
-                6: _hydro_row(
-                    tipo_regulacao="M",
-                    a0=1.0,
-                    produtibilidade_especifica=1.0,
-                    codigo_usina_jusante=0,
-                ),
+                5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=6),
+                6: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
             }
         ),
         n_stages=1,
@@ -249,36 +251,26 @@ def test_emit_rhe_generics_two_reservoir_cascade_override() -> None:
         constraint_id=102,
         ree_code=1,
         coefficient=1.0,
-        bounds={0: StageBounds(lower=(50.0,), upper=(None,))},
-        tipo_limite=1,
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        tipo_limite=2,
         valor_penalidade=250.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     result = emit_rhe_generics(
-        _case(calendar),
+        _case([_stage(0, 730.0)]),
         id_map,
-        census=census,
+        census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1, 6: 1},
+        ez_fractions={},
     )
 
-    assert result.result is not None
-    constraint = result.result.constraints[0]
-    assert (
-        constraint["expression"]
-        == "@rho_acum_h0 * hydro_storage(0) + @rho_acum_h1 * hydro_storage(1)"
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+        " + @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
+        " >= @pct_rhe102 * (@earm_max_mwh_h0 + @earm_max_mwh_h1)"
     )
-
-    factor = 3600.0 * 730.0 / 1e6
-    assert result.rho_acum_overrides[0][0] == pytest.approx(2.0 / factor)  # 5 acc. 6
-    assert result.rho_acum_overrides[1][0] == pytest.approx(1.0 / factor)
-
-
-# ---------------------------------------------------------------------------
-# Run-of-river ("D") plant excluded from the stored-energy sum
-# ---------------------------------------------------------------------------
 
 
 def test_emit_rhe_generics_run_of_river_excluded() -> None:
@@ -301,39 +293,24 @@ def test_emit_rhe_generics_run_of_river_excluded() -> None:
         tipo_limite=1,
         valor_penalidade=250.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     result = emit_rhe_generics(
-        _case(calendar),
+        _case([_stage(0, 730.0)]),
         id_map,
-        census=census,
+        census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1, 7: 1},
+        ez_fractions={},
     )
 
-    assert result.result is not None
-    constraint = result.result.constraints[0]
-    assert constraint["expression"] == "@rho_acum_h0 * hydro_storage(0)"
-    assert "hydro_storage(1)" not in constraint["expression"]
-    assert 1 not in result.rho_acum_overrides
-
-
-# ---------------------------------------------------------------------------
-# Weekly-regulating ("S") plant is a reservoir: participates, integrated rho
-# ---------------------------------------------------------------------------
-
-
-def test_emit_rhe_generics_weekly_regulating_reservoir_uses_integrated_rho() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
-    row = _hydro_row(tipo_regulacao="S", volume_referencia=200.0)
-    # A linear cota polynomial separates the integrated mean head over
-    # [0, 1000] (100 + 0.01 * 500 = 105 m) from the point head at
-    # volume_referencia (100 + 0.01 * 200 = 102 m).
-    row["a1_volume_cota"] = 0.01
-    effective = EffectiveCadastro(
-        base=_hidr_frame({5: row}), n_stages=1, stage_varying={}
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
     )
+
+
+def test_emit_rhe_generics_weekly_regulating_reservoir_participates() -> None:
+    id_map, effective = _single_reservoir(tipo_regulacao="S")
     record = _he_record(
         constraint_id=105,
         ree_code=1,
@@ -342,22 +319,20 @@ def test_emit_rhe_generics_weekly_regulating_reservoir_uses_integrated_rho() -> 
         tipo_limite=1,
         valor_penalidade=250.0,
     )
-    calendar = [_stage(0, 730.0)]
 
     result = emit_rhe_generics(
-        _case(calendar),
+        _case([_stage(0, 730.0)]),
         id_map,
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
-    assert result.result is not None
-    assert result.result.constraints[0]["expression"] == (
-        "@rho_acum_h0 * hydro_storage(0)"
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
     )
-    expected_rho = 0.01 * 105.0 / (3600.0 * 730.0 / 1e6)
-    assert result.rho_acum_overrides[0][0] == pytest.approx(expected_rho)
 
 
 # ---------------------------------------------------------------------------
@@ -380,20 +355,18 @@ def test_emit_rhe_generics_no_storage_plants_skips_and_warns() -> None:
         tipo_limite=1,
         valor_penalidade=250.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     with dx.collect() as collected:
         result = emit_rhe_generics(
-            _case(calendar),
+            _case([_stage(0, 730.0)]),
             id_map,
-            census=census,
+            census=_census(record),
             effective=effective,
             hydro_to_ree={7: 1},
+            ez_fractions={},
         )
 
-    assert result.result is None
-    assert result.rho_acum_overrides == {}
+    assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-no-storage-plants"
@@ -412,65 +385,89 @@ def test_emit_rhe_generics_unmapped_ree_skips_and_warns() -> None:
         tipo_limite=1,
         valor_penalidade=250.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     with dx.collect() as collected:
         result = emit_rhe_generics(
-            _case(calendar),
+            _case([_stage(0, 730.0)]),
             id_map,
-            census=census,
+            census=_census(record),
             effective=effective,
             hydro_to_ree={},
+            ez_fractions={},
         )
 
-    assert result.result is None
-    assert result.rho_acum_overrides == {}
+    assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-no-storage-plants"
 
 
 # ---------------------------------------------------------------------------
-# Weekly vs monthly energy-factor scaling
+# One constraint per record over its weekly and monthly stages
 # ---------------------------------------------------------------------------
 
 
-def test_emit_rhe_generics_energy_factor_scales_with_stage_hours() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
-    effective = EffectiveCadastro(
-        base=_hidr_frame({5: _hydro_row(tipo_regulacao="M")}),
-        n_stages=1,
-        stage_varying={},
-    )
+def test_emit_rhe_generics_one_constraint_spans_weekly_and_monthly_stages() -> None:
+    id_map, effective = _single_reservoir(n_stages=3)
     record = _he_record(
         constraint_id=106,
         ree_code=1,
         coefficient=1.0,
-        bounds={0: StageBounds(lower=(50.0,), upper=(None,))},
+        bounds={
+            0: StageBounds(lower=(50.0,), upper=(None,)),
+            1: StageBounds(lower=(60.0,), upper=(None,)),
+            2: StageBounds(lower=(None,), upper=(None,)),
+        },
         tipo_limite=1,
         valor_penalidade=250.0,
     )
-    census = _census(record)
 
-    weekly_result = emit_rhe_generics(
-        _case([_stage(0, 168.0)]),
+    result = emit_rhe_generics(
+        _case([_stage(0, 168.0), _stage(1, 730.0), _stage(2, 730.0)]),
         id_map,
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
-    )
-    monthly_result = emit_rhe_generics(
-        _case([_stage(0, 730.0)]),
-        id_map,
-        census=census,
-        effective=effective,
-        hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
-    override_weekly = weekly_result.rho_acum_overrides[0][0]
-    override_monthly = monthly_result.rho_acum_overrides[0][0]
-    assert override_weekly == pytest.approx(override_monthly * 730.0 / 168.0)
+    assert result is not None
+    [constraint] = result.constraints
+    assert constraint["name"] == "RHE_106"
+    rows = result.bounds.to_pylist()
+    assert [(r["constraint_id"], r["stage_id"]) for r in rows] == [
+        (constraint["id"], 0),
+        (constraint["id"], 1),
+    ]
+    # Stage-average MW over each stage's own hours.
+    assert [r["bound_lower"] for r in rows] == pytest.approx(
+        [50.0 * 168.0, 60.0 * 730.0]
+    )
+
+
+def test_emit_rhe_generics_percentage_fraction_is_zero_off_the_record_stages() -> None:
+    id_map, effective = _single_reservoir(n_stages=3)
+    record = _he_record(
+        constraint_id=110,
+        ree_code=1,
+        coefficient=1.0,
+        bounds={1: StageBounds(lower=(30.0,), upper=(None,))},
+        tipo_limite=2,
+        valor_penalidade=250.0,
+    )
+
+    result = emit_rhe_generics(
+        _case([_stage(0, 168.0), _stage(1, 168.0), _stage(2, 730.0)]),
+        id_map,
+        census=_census(record),
+        effective=effective,
+        hydro_to_ree={5: 1},
+        ez_fractions={},
+    )
+
+    assert result is not None
+    assert result.per_stage_parameters == {"pct_rhe110": pytest.approx([0.0, 0.3, 0.0])}
+    assert [r["stage_id"] for r in result.bounds.to_pylist()] == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -504,22 +501,20 @@ def test_emit_rhe_generics_negative_cm_sign_subtracts() -> None:
         tipo_limite=1,
         he_meta=HeMeta(valor_penalidade=250.0),
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     result = emit_rhe_generics(
-        _case(calendar),
+        _case([_stage(0, 730.0)]),
         id_map,
-        census=census,
+        census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1, 6: 2},
+        ez_fractions={},
     )
 
-    assert result.result is not None
-    constraint = result.result.constraints[0]
-    assert (
-        constraint["expression"]
-        == "@rho_acum_h0 * hydro_storage(0) - @rho_acum_h1 * hydro_storage(1)"
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "@rho_acum_mwh_h0 * hydro_useful_volume_final(0)"
+        " - @rho_acum_mwh_h1 * hydro_useful_volume_final(1)"
     )
 
 
@@ -529,12 +524,7 @@ def test_emit_rhe_generics_negative_cm_sign_subtracts() -> None:
 
 
 def test_emit_rhe_generics_non_positive_penalty_falls_back_and_warns() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
-    effective = EffectiveCadastro(
-        base=_hidr_frame({5: _hydro_row(tipo_regulacao="M")}),
-        n_stages=1,
-        stage_varying={},
-    )
+    id_map, effective = _single_reservoir()
     record = _he_record(
         constraint_id=108,
         ree_code=1,
@@ -543,32 +533,26 @@ def test_emit_rhe_generics_non_positive_penalty_falls_back_and_warns() -> None:
         tipo_limite=1,
         valor_penalidade=0.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     with dx.collect() as collected:
         result = emit_rhe_generics(
-            _case(calendar),
+            _case([_stage(0, 730.0)]),
             id_map,
-            census=census,
+            census=_census(record),
             effective=effective,
             hydro_to_ree={5: 1},
+            ez_fractions={},
         )
 
-    assert result.result is not None
-    assert result.result.constraints[0]["slack"] == {"enabled": True, "penalty": 1000.0}
+    assert result is not None
+    assert result.constraints[0]["slack"]["penalty"] == 1000.0
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-default-penalty"
 
 
 def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
-    effective = EffectiveCadastro(
-        base=_hidr_frame({5: _hydro_row(tipo_regulacao="M")}),
-        n_stages=1,
-        stage_varying={},
-    )
+    id_map, effective = _single_reservoir()
     record = _he_record(
         constraint_id=109,
         ree_code=1,
@@ -577,28 +561,27 @@ def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -
         tipo_limite=3,
         valor_penalidade=250.0,
     )
-    census = _census(record)
-    calendar = [_stage(0, 730.0)]
 
     with dx.collect() as collected:
         result = emit_rhe_generics(
-            _case(calendar),
+            _case([_stage(0, 730.0)]),
             id_map,
-            census=census,
+            census=_census(record),
             effective=effective,
             hydro_to_ree={5: 1},
+            ez_fractions={},
         )
 
-    assert result.result is not None
-    rows = result.result.bounds.to_pylist()
-    assert rows[0]["bound_lower"] == 50.0
+    assert result is not None
+    rows = result.bounds.to_pylist()
+    assert rows[0]["bound_lower"] == pytest.approx(50.0 * 730.0)
     assert rows[0]["bound_upper"] is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-unknown-tipo-limite"
 
 
-def test_rhe_result_is_named_tuple_with_expected_fields() -> None:
+def test_emit_rhe_generics_empty_census_returns_none() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     effective = EffectiveCadastro(base=_hidr_frame({}), n_stages=1, stage_varying={})
 
@@ -609,7 +592,195 @@ def test_rhe_result_is_named_tuple_with_expected_fields() -> None:
             census=_census(),
             effective=effective,
             hydro_to_ree={},
+            ez_fractions={},
         )
 
-    assert result.result is None
-    assert result.rho_acum_overrides == {}
+    assert result is None
+
+
+def _coupled_cascade() -> tuple[DecompIdMap, EffectiveCadastro, dict[int, int]]:
+    """REE 1 (UP -> CUT) drains into REE 2 (DOWN); SIDE in REE 1 drains into DOWN.
+
+    UP and CUT carry ``EZ`` records (:data:`_COUPLED_EZ`); SIDE does not, so
+    its cascade is not cut.
+    """
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 2, 5, 7))
+    effective = EffectiveCadastro(
+        base=_hidr_frame(
+            {
+                1: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=2),
+                2: _hydro_row(
+                    tipo_regulacao="M", codigo_usina_jusante=5, volume_maximo=2000.0
+                ),
+                5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
+                7: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=5),
+            }
+        ),
+        n_stages=1,
+        stage_varying={},
+    )
+    return id_map, effective, {1: 1, 2: 1, 5: 2, 7: 1}
+
+
+_COUPLED_EZ = {1: 0.5, 2: 1.0}
+
+
+def _emit_coupled(
+    tipo_limite: int, limite: float = 10.0, ez_fractions: dict[int, float] | None = None
+) -> tuple[dict[str, dict], dict[str, str]]:
+    id_map, effective, hydro_to_ree = _coupled_cascade()
+    records = [
+        _he_record(
+            constraint_id=200 + ree_code,
+            ree_code=ree_code,
+            coefficient=1.0,
+            bounds={0: StageBounds(lower=(limite,), upper=(None,))},
+            tipo_limite=tipo_limite,
+            valor_penalidade=250.0,
+        )
+        for ree_code in (1, 2)
+    ]
+    result = emit_rhe_generics(
+        _case([_stage(0, 730.0)]),
+        id_map,
+        census=_census(*records),
+        effective=effective,
+        hydro_to_ree=hydro_to_ree,
+        ez_fractions=_COUPLED_EZ if ez_fractions is None else ez_fractions,
+    )
+    assert result is not None
+    by_name = {c["name"]: c for c in result.constraints}
+    return by_name, result.expression_parameters
+
+
+def test_emit_rhe_generics_coupled_own_ree_stops_at_the_cut() -> None:
+    by_name, params = _emit_coupled(tipo_limite=1)
+
+    assert by_name["RHE_201"]["expression"] == (
+        "@rho_chain_mwh_h0 * hydro_useful_volume_final(0)"
+        " + @rho_eq_mwh_h1 * hydro_useful_volume_final(1)"
+        " + @rho_acum_mwh_h3 * hydro_useful_volume_final(3)"
+    )
+    assert params["rho_chain_mwh_h0"] == "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"
+
+
+def test_emit_rhe_generics_reservoir_without_ez_is_not_cut() -> None:
+    by_name, _ = _emit_coupled(tipo_limite=1)
+
+    assert "hydro_useful_volume_final(3)" not in by_name["RHE_202"]["expression"]
+
+
+def test_emit_rhe_generics_coupled_downstream_ree_counts_the_cut_reservoirs() -> None:
+    by_name, _ = _emit_coupled(tipo_limite=1)
+
+    assert by_name["RHE_202"]["expression"] == (
+        "@rho_acum_mwh_h2 * hydro_useful_volume_final(0)"
+        " + @rho_acum_mwh_h2 * hydro_useful_volume_final(1)"
+        " + @rho_acum_mwh_h2 * hydro_useful_volume_final(2)"
+    )
+
+
+def test_emit_rhe_generics_coupled_maximum_scales_the_useful_range_by_ez() -> None:
+    by_name, params = _emit_coupled(tipo_limite=2)
+
+    assert by_name["RHE_202"]["expression"].split(" >= ")[1] == (
+        "@pct_rhe202 * (@earm_max_ez_mwh_h0 + @earm_max_ez_mwh_h1 + @earm_max_mwh_h2)"
+    )
+    assert params["earm_max_ez_mwh_h0"] == (
+        "0.5 * (@max_storage_h0 - @min_storage_h0) * @rho_acum_mwh_h2"
+    )
+    assert params["earm_max_ez_mwh_h1"] == (
+        "(@max_storage_h1 - @min_storage_h1) * @rho_acum_mwh_h2"
+    )
+    assert params["earm_max_chain_mwh_h0"] == (
+        "(@max_storage_h0 - @min_storage_h0) * @rho_chain_mwh_h0"
+    )
+
+
+def test_emit_rhe_generics_zero_ez_gives_the_downstream_ree_no_share() -> None:
+    by_name, _ = _emit_coupled(tipo_limite=1, ez_fractions={1: 0.0, 2: 1.0})
+
+    assert "hydro_useful_volume_final(0)" not in by_name["RHE_202"]["expression"]
+    assert by_name["RHE_201"]["expression"].startswith(
+        "@rho_chain_mwh_h0 * hydro_useful_volume_final(0)"
+    )
+
+
+def test_emit_rhe_generics_coupling_is_reported() -> None:
+    with dx.collect() as collected:
+        _emit_coupled(tipo_limite=1)
+
+    [diag] = [d for d in collected if d.code == "decomp-rhe-ree-hydraulic-coupling"]
+    assert diag.severity is Severity.INFO
+    assert diag.table is not None
+    assert diag.table.rows == [[1, 1, 2, "50", 2, 5], [2, 1, 2, "100", 2, 5]]
+
+
+def test_emit_rhe_generics_ez_cap_below_the_floor_warns() -> None:
+    # UP's capped share stores 0.5 * 1000 hm³ * (1e6 / 3600) MWh/hm³ ≈ 138,889
+    # MWh in REE 2, below a 500 MWmes floor over 730 h (365,000 MWh).
+    with dx.collect() as collected:
+        _emit_coupled(tipo_limite=1, limite=500.0)
+
+    warned = [d for d in collected if d.code == "decomp-rhe-ez-cap-unmodeled"]
+    assert len(warned) == 1
+    assert "HE constraint 202" in warned[0].summary
+
+
+def test_emit_rhe_generics_ez_cap_above_the_floor_is_silent() -> None:
+    # 10% of REE 2's maximum (UP's cap + CUT + DOWN ≈ 972,222 MWh) stays below
+    # UP's capped share (≈ 138,889 MWh), so the cap cannot bind.
+    with dx.collect() as collected:
+        _emit_coupled(tipo_limite=2, limite=10.0)
+
+    assert not [d for d in collected if d.code == "decomp-rhe-ez-cap-unmodeled"]
+
+
+def test_emit_rhe_generics_energy_link_through_a_plant_outside_the_configuration() -> (
+    None
+):
+    # UP's AC JUSENA names AGG, outside the configuration, whose water reaches
+    # DOWN; UP's chain is UP + AGG + DOWN's own cascade.
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 5))
+    effective = EffectiveCadastro(
+        base=_hidr_frame(
+            {
+                1: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=5),
+                9: _hydro_row(
+                    tipo_regulacao="D",
+                    codigo_usina_jusante=5,
+                    produtibilidade_especifica=0.02,
+                ),
+                5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
+            }
+        ),
+        n_stages=1,
+        stage_varying={},
+        energy_links={1: (9,)},
+    )
+    record = _he_record(
+        constraint_id=300,
+        ree_code=1,
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        tipo_limite=2,
+        valor_penalidade=250.0,
+    )
+
+    result = emit_rhe_generics(
+        _case([_stage(0, 730.0)]),
+        id_map,
+        census=_census(record),
+        effective=effective,
+        hydro_to_ree={1: 1, 5: 1},
+        ez_fractions={},
+    )
+
+    assert result is not None
+    assert result.expression_parameters["rho_chain_mwh_h0"] == (
+        "@rho_eq_mwh_h0 + @rho_eq_mwh_plant9 + @rho_acum_mwh_h1"
+    )
+    # AGG's ρ = 0.02 × 100 m head = 2 MW/(m³/s), in MWh/hm³ (× 1e6 / 3600).
+    assert result.per_stage_parameters["rho_eq_mwh_plant9"] == [
+        pytest.approx(2.0 * 1e6 / 3600.0)
+    ]

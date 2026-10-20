@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import make_case, make_nw_files
+from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
     _make_confhd_df,
     _make_hidr_cadastro,
@@ -104,11 +104,7 @@ class TestConvertInitialConditions:
         volmin_rec = MagicMock()
         type(volmin_rec).__name__ = "VOLMIN"
         volmin_rec.volume = 400.0
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [volmin_rec]
+        mock_modif = modif_mock((1, [volmin_rec]))
 
         mock_hidr = MagicMock()
         mock_hidr.cadastro = _make_hidr_cadastro()

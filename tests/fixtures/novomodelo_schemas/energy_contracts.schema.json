@@ -2,7 +2,7 @@
   "$defs": {
     "RawContract": {
       "additionalProperties": false,
-      "description": "Intermediate type for a single energy contract entry.",
+      "description": "A single energy contract entry.",
       "properties": {
         "bus_id": {
           "description": "Bus at which the contracted power is injected or withdrawn.",
@@ -45,13 +45,13 @@
           "type": "string"
         },
         "price_per_mwh": {
-          "description": "Contract price per `MWh`. May be negative for export revenue \\[$/`MWh`\\].",
+          "description": "Contract price per `MWh`. May be negative for export revenue ($/`MWh`).",
           "format": "double",
           "type": "number"
         },
         "type": {
           "$ref": "#/$defs/RawContractType",
-          "description": "Direction of energy flow. Uses `#[serde(rename = \"type\")]` since `type`\nis a Rust keyword."
+          "description": "Direction of energy flow."
         }
       },
       "required": [
@@ -67,15 +67,15 @@
     },
     "RawContractLimits": {
       "additionalProperties": false,
-      "description": "Intermediate type for the nested limits sub-object.",
+      "description": "The nested limits sub-object.",
       "properties": {
         "max_mw": {
-          "description": "Maximum contracted power \\[MW\\].",
+          "description": "Maximum contracted power (MW).",
           "format": "double",
           "type": "number"
         },
         "min_mw": {
-          "description": "Minimum contracted power \\[MW\\].",
+          "description": "Minimum contracted power (MW).",
           "format": "double",
           "type": "number"
         }
@@ -87,7 +87,7 @@
       "type": "object"
     },
     "RawContractType": {
-      "description": "Raw intermediate enum for contract direction.\n\nUses `#[serde(rename_all = \"snake_case\")]` to map JSON `\"import\"`/`\"export\"`\nto Rust `Import`/`Export` variants. The core `ContractType` enum does not\ncarry `rename_all`, so we use this intermediate.",
+      "description": "Direction of energy flow of a contract.",
       "oneOf": [
         {
           "const": "import",
@@ -104,7 +104,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Top-level intermediate type for `energy_contracts.json` (serde only, not re-exported).",
+  "description": "Root object of `energy_contracts.json`.",
   "properties": {
     "$schema": {
       "description": "`$schema` field — informational, not validated.",

@@ -75,11 +75,6 @@ from novomodelo_bridge.newave.converters.hydro.productivity import (
     compute_base_productivities as compute_base_productivities,
 )
 from novomodelo_bridge.newave.converters.hydro.productivity import (
-    # Self-alias re-export (constraints.py imports it): the name itself, doubled
-    # by the mandatory re-export idiom, exceeds line-length.
-    compute_per_stage_own_integrated_productivities as compute_per_stage_own_integrated_productivities,  # noqa: E501
-)
-from novomodelo_bridge.newave.converters.hydro.productivity import (
     compute_per_stage_prodt_sin_mean as compute_per_stage_prodt_sin_mean,
 )
 from novomodelo_bridge.newave.converters.hydro.productivity import (

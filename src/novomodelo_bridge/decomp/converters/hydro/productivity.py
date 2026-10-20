@@ -1,5 +1,5 @@
 """Hydro productivity: per-plant/per-stage equivalent-productivity (rho_eq)
-machinery and the production-model JSON.
+machinery, the productivity-override parquet, and the production-model JSON.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 
 from novomodelo_bridge.core.productivity import equivalent_productivity_from_coeffs
+from novomodelo_bridge.decomp.converters.cadastro.effective import is_reservoir
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -31,7 +32,7 @@ def _equivalent_productivity_mw_per_m3s(
     * ``None`` (the engolimento anchor) — the volume-averaged cota over the
       **full** operating range (``volume_minimo``..``volume_maximo``). This is
       the value the head-aware ``max_turbined`` envelope and
-      :func:`convert_hydro_group_availability`'s B8 hydraulic cap consume,
+      :func:`convert_hydro_group_availability`'s hydraulic cap consume,
       validated against the source model's ``Qtur Maxima``; it stays on the
       full-range mean so that path is unchanged.
     * a volume (the **generation** anchor) — the cota at that single volume.
@@ -69,11 +70,30 @@ def _equivalent_productivity_mw_per_m3s(
     )
 
 
+def _stored_energy_productivity_mw_per_m3s(
+    effective: EffectiveCadastro, code: int, stage_index: int
+) -> float:
+    """The source model's own stored-energy ρ for plant *code* at one stage.
+
+    A reservoir (:func:`is_reservoir`, ``"M"`` or ``"S"``) averages the head
+    over the stage's ``[volume_minimo, volume_maximo]``; a run-of-river ``"D"``
+    plant takes the point head at ``volume_referencia``. Every other input is
+    the stage's effective value, as in :func:`_equivalent_productivity_mw_per_m3s`.
+    """
+    reference = (
+        None
+        if is_reservoir(effective, code)
+        else effective.value(code, "volume_referencia", stage_index)
+    )
+    return _equivalent_productivity_mw_per_m3s(
+        effective, code, stage_index, reference_volume_hm3=reference
+    )
+
+
 def convert_energy_productivity(
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     initial_volumes: dict[int, float] | None = None,
-    exclude_codes: set[int] | None = None,
 ) -> pa.Table:
     """Per-plant equivalent generation productivity, anchored at initial volume.
 
@@ -85,40 +105,96 @@ def convert_energy_productivity(
     back to the full-range mean anchor (``reference_volume_hm3=None``), the
     pre-FPHA-fix behaviour.
 
-    *exclude_codes* omits those plants from the emitted table — used for the
-    ``hydro_energy_productivity.parquet`` write to drop the FPHA plants, which
-    carry ``model: "fpha"`` and would be a double-supply (novomodelo rejects a plant
-    that has both a computed FPHA and a parquet ρ_eq). Left ``None`` (every
-    plant emitted) the full list still feeds :func:`convert_penalties`' system
-    ρ_avg/ρ_max, so the penalty scale is unchanged by the FPHA split. The
-    per-stage head variation instead feeds
-    :func:`convert_hydro_group_availability`'s own hydraulic ceiling.
+    Every operated plant is listed, FPHA included, so :func:`convert_penalties`'
+    system ρ_avg/ρ_max covers the whole fleet; the case parquet is
+    :func:`convert_hydro_energy_productivity`. The per-stage head variation
+    instead feeds :func:`convert_hydro_group_availability`'s own hydraulic
+    ceiling.
     """
     vols = initial_volumes or {}
-    excluded = exclude_codes or set()
-    hydro_ids: list[int] = []
-    values: list[float] = []
-    for code in id_map.hydro_codes:
-        if code in excluded:
-            continue
-        hydro_ids.append(id_map.hydro_id(code))
-        values.append(
-            _equivalent_productivity_mw_per_m3s(
-                effective, code, 0, reference_volume_hm3=vols.get(code)
-            )
+    hydro_ids = [id_map.hydro_id(code) for code in id_map.hydro_codes]
+    values = [
+        _equivalent_productivity_mw_per_m3s(
+            effective, code, 0, reference_volume_hm3=vols.get(code)
         )
-
+        for code in id_map.hydro_codes
+    ]
     return pa.table(
         {
             "hydro_id": pa.array(hydro_ids, type=pa.int32()),
             "stage_id": pa.array([None] * len(hydro_ids), type=pa.int32()),
             "equivalent_productivity_mw_per_m3s": pa.array(values, type=pa.float64()),
-            # Present-but-null: the reader requires the full column set.
-            "reference_outflow_m3s": pa.array(
-                [None] * len(hydro_ids), type=pa.float64()
-            ),
+        }
+    )
+
+
+def convert_hydro_energy_productivity(
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+    initial_volumes: dict[int, float] | None = None,
+    fpha_codes: set[int] | None = None,
+) -> pa.Table:
+    """The ``hydro_energy_productivity.parquet`` table, one or more rows per plant.
+
+    Each plant has a ``stage_id = NULL`` default row carrying:
+
+    - ``equivalent_productivity_mw_per_m3s`` — the generation ρ_eq of
+      :func:`convert_energy_productivity`; NULL for a plant in *fpha_codes*,
+      which carries ``model: "fpha"`` and whose ρ_eq novomodelo derives from the
+      geometry it fits the production function on.
+    - ``integrated_equivalent_productivity_mw_per_m3s`` — the plant's own
+      stored-energy ρ (:func:`_stored_energy_productivity_mw_per_m3s`), which
+      novomodelo sums down the cascade for the integrated tags and the maximum
+      stored energy that RHE reads. novomodelo's own integral over the VHA geometry
+      ignores the per-stage ``AC`` overrides and integrates ``"D"`` plants, so
+      the value is always supplied.
+
+    When an ``AC`` override makes the stored-energy ρ vary by stage, the
+    default row's integrated value is NULL and one row per stage carries it
+    instead; novomodelo resolves each column per stage before the default.
+    """
+    vols = initial_volumes or {}
+    fpha = fpha_codes or set()
+    hydro_ids: list[int] = []
+    stage_ids: list[int | None] = []
+    rho_eq: list[float | None] = []
+    integrated: list[float | None] = []
+    for code in id_map.hydro_codes:
+        hydro_id = id_map.hydro_id(code)
+        series = [
+            _stored_energy_productivity_mw_per_m3s(effective, code, stage)
+            for stage in range(effective.n_stages)
+        ]
+        varies = len(set(series)) > 1
+        hydro_ids.append(hydro_id)
+        stage_ids.append(None)
+        rho_eq.append(
+            None
+            if code in fpha
+            else _equivalent_productivity_mw_per_m3s(
+                effective, code, 0, reference_volume_hm3=vols.get(code)
+            )
+        )
+        integrated.append(None if varies or not series else series[0])
+        if varies:
+            for stage, value in enumerate(series):
+                hydro_ids.append(hydro_id)
+                stage_ids.append(stage)
+                rho_eq.append(None)
+                integrated.append(value)
+
+    nulls = [None] * len(hydro_ids)
+    return pa.table(
+        {
+            "hydro_id": pa.array(hydro_ids, type=pa.int32()),
+            "stage_id": pa.array(stage_ids, type=pa.int32()),
+            "equivalent_productivity_mw_per_m3s": pa.array(rho_eq, type=pa.float64()),
+            "reference_outflow_m3s": pa.array(nulls, type=pa.float64()),
             "specific_productivity_mw_per_m3s_per_m": pa.array(
-                [None] * len(hydro_ids), type=pa.float64()
+                nulls, type=pa.float64()
+            ),
+            "integrated_equivalent_productivity_mw_per_m3s": pa.array(
+                integrated, type=pa.float64()
             ),
         }
     )

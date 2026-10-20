@@ -102,7 +102,7 @@ def _gnl_targets_from(
     A plant absent from ``model.nl_lag_months`` has no dispatch-anticipation
     lag to key its ring slot(s) on (no ``pi_gnl`` lag axis), so it is
     *skipped* — its ring stays at coefficient ``0.0`` via the mapper's own
-    D3-like drop path — with a single INFO log line naming every skipped
+    source-only drop path — with a single INFO log line naming every skipped
     plant, never raised on. Returns ``None`` when every plant is skipped (no
     live target at all).
 
@@ -381,7 +381,7 @@ def _build_gnl_ring_plan(case_dir: Path, deck_files: DecompFiles) -> GnlRingPlan
     Deck-reading wrapper around :func:`_gnl_targets_from`: returns ``None``
     when the deck carries no ``dadgnl`` file at all, or when
     :func:`~novomodelo_bridge.decomp.converters.anticipated.read_gnl_model` reports the deck
-    is GNL-off (no committed dispatch, the G6 gate) — reconciled with that
+    is GNL-off (no committed dispatch) — reconciled with that
     reader's own gate, never re-derived here. Otherwise threads
     :func:`_post_horizon_start` into the resolved plan so
     ``fcf/mapper.py::_resolve_gnl_targets`` restricts placement to covered
@@ -481,7 +481,7 @@ def _emit_import_diagnostics(
     re-implemented here) is always informative. Additionally emits
     ``boundary-fcf-source-only-plants-dropped`` when ``mapping.dropped`` is
     non-empty — a source-only plant has no target ``HydroStorage`` slot, so
-    its storage/lag terms are omitted (D3: dropped, never folded). When
+    its storage/lag terms are omitted (dropped, never folded). When
     ``gnl_plan`` is given and the boundary carries a GNL block
     (``cuts.header.lag_maximo_gnl > 0``), additionally emits
     ``boundary-fcf-gnl-anticipated-deviation`` — the per-``(submercado, lag)``
@@ -698,7 +698,7 @@ def import_boundary_fcf(
        regardless.
     5. Surfaces the mapping's documented approximations as ``Diagnostic``s
        (:func:`_emit_import_diagnostics`): the always-on cut-family triage,
-       the D3-dropped source-only plants (gated on non-empty), and — when the
+       the dropped source-only plants (gated on non-empty), and — when the
        deck carries a GNL block — the per-``(submercado, lag)`` deviation the
        ring's chain-rule sum collapses.
     6. Assembles and writes ``case_dir/boundary/{manifest.bin,

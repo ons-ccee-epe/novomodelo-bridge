@@ -32,6 +32,7 @@ from novomodelo_bridge.core.preflight import (
     PreflightVerdict,
     optional_input_advisory,
     tab_character_advisory,
+    unindexed_libs_advisory,
 )
 from novomodelo_bridge.decomp import constraint_registers
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -41,6 +42,7 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
     discover_decomp_files,
+    unindexed_libs_diagnostic,
 )
 
 if TYPE_CHECKING:
@@ -204,26 +206,6 @@ def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
     )
 
 
-def _deferred_inventory(dadger: Dadger) -> list[Diagnostic]:
-    """Name what the conversion will not carry, so it is never a surprise."""
-    try:
-        frame = dadger.ez(df=True)
-    except (AttributeError, TypeError, ValueError):
-        return []
-    if frame is None or frame.empty:
-        return []
-    return [
-        _deferred(
-            "decomp-ez-ignored",
-            "Coupling volume limit ignored",
-            "The deck carries maximum-useful-volume records for the boundary "
-            f"coupling; they are read and ignored by decision ({len(frame)} "
-            "record(s)).",
-            "Tracked in the conversion roadmap; no action needed to convert.",
-        )
-    ]
-
-
 def _ac_present(dadger: Dadger, classes: frozenset[type]) -> list[type]:
     """The subset of *classes* present in *dadger*'s deck, name-sorted.
 
@@ -381,18 +363,18 @@ def _special_constraint_coverage(
 
     A pure read of *dadger* (through the same census
     :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints` the
-    pipeline consumes) and *files* (whose ``dadger`` path feeds the E1
-    unreadable-electrical scan, and whose parent deck directory feeds the
-    LIBs-electrical scan) — no conversion, no emitter.
+    pipeline consumes) and *files* (whose ``dadger`` path feeds the
+    unreadable-electrical scan, and whose LIBs electrical-constraint file
+    feeds the LIBs-electrical scan) — no conversion, no emitter.
 
     Always returns exactly one passing summary :class:`CheckItem` (coverage
     never blocks conversion, mirroring :func:`_ac_coverage`) plus a
     diagnostic per bucket that is non-empty: an ``INFO`` for the converted
     split — present whenever the deck declares at least one special
     constraint — reporting the bounds-lowered/generic-emitted counts as
-    probes (per spec §10, never a hard-coded oracle), plus a ``WARNING`` per
+    probes (never a hard-coded oracle), plus a ``WARNING`` per
     present deferred surface. The deferred diagnostics are produced verbatim
-    by the E1 detection helpers
+    by the detection helpers
     (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unreadable_electrical`
     / :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`)
     — never re-derived here.
@@ -448,7 +430,9 @@ def _special_constraint_coverage(
 
     dadger_path = files.dadger
     diagnostics.extend(constraint_registers.detect_unreadable_electrical(dadger_path))
-    libs_diagnostic = constraint_registers.detect_libs_electrical(dadger_path.parent)
+    libs_diagnostic = constraint_registers.detect_libs_electrical(
+        files.libs_restricao_eletrica
+    )
     if libs_diagnostic is not None:
         diagnostics.append(libs_diagnostic)
 
@@ -501,6 +485,10 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
     )
     checks.extend(tab_checks)
     diagnostics.extend(tab_diags)
+
+    libs_checks, libs_diags = unindexed_libs_advisory(unindexed_libs_diagnostic(files))
+    checks.extend(libs_checks)
+    diagnostics.extend(libs_diags)
 
     try:
         # RegisterFile.read() is annotated to return the base RegisterFile,
@@ -583,8 +571,6 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         sc_checks, sc_diags = _special_constraint_coverage(dadger, files)
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)
-
-    diagnostics.extend(_deferred_inventory(dadger))
 
     return PreflightResult(
         verdict=_verdict(checks, diagnostics),

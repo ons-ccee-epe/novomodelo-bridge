@@ -13,7 +13,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import make_case, make_nw_files
+from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
     _ee_expansion_case,
     _hydro_case,
@@ -143,13 +143,9 @@ def _head_corrected_two_plant_cadastro() -> pd.DataFrame:
 
 def _cfuga_modif_mock(code: int, *, month: int, year: int, nivel: float) -> MagicMock:
     """A MODIF.DAT mock carrying a single CFUGA record for *code* only."""
-    usina_rec = MagicMock()
-    usina_rec.codigo = code
-    mock_modif = MagicMock()
-    mock_modif.usina.return_value = [usina_rec]
-    mock_modif.modificacoes_usina.return_value = [
-        _make_cfuga_rec(month=month, year=year, nivel=nivel)
-    ]
+    mock_modif = modif_mock(
+        (code, [_make_cfuga_rec(month=month, year=year, nivel=nivel)])
+    )
     return mock_modif
 
 
@@ -1412,9 +1408,7 @@ class TestExpansionRampBounds:
     def _run(self, tmp_path) -> pd.DataFrame:
         from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
 
-        modif = MagicMock()
-        modif.usina.return_value = []
-        case = _ee_expansion_case(tmp_path, modif=modif)
+        case = _ee_expansion_case(tmp_path, modif=modif_mock())
         case.files = dataclasses.replace(case.files, modif=tmp_path / "modif.dat")
         with patch(
             "novomodelo_bridge.newave.converters.hydro.bounds._extract_temporal_overrides",

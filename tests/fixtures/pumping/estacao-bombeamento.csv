@@ -1,0 +1,3 @@
+codigo_estacao;nome_estacao;codigo_usina_origem;codigo_usina_destino;bombeamento_maximo;consumo_estacao
+1;STATION_A;156;162;150.0;1.5
+2;STATION_B;131;141;120.0;1.2

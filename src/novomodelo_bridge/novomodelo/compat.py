@@ -12,7 +12,7 @@ from __future__ import annotations
 #: The manifest records it (single source of truth), and the ``--validate``
 #: gate treats it as the minimum an installed novomodelo-python must reach to
 #: validate the output.
-MIN_NOVOMODELO_VERSION = "0.18.1"
+MIN_NOVOMODELO_VERSION = "0.19.0"
 
 
 def _installed_novomodelo_python_version() -> str | None:

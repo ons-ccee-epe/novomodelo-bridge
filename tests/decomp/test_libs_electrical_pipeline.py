@@ -1,7 +1,7 @@
 """The LIBs-era electrical-constraint emitter spliced into
-``convert_decomp_case`` -- discovery of the deck's ``lib_restricao-eletrica-
-especial.csv`` file, the narrowed ``detect_libs_electrical`` warn, and the
-census INFO diagnostic.
+``convert_decomp_case`` -- the narrowed ``detect_libs_electrical`` warn and the
+census INFO diagnostic. Discovering the file is covered with the rest of file
+discovery, in ``tests/decomp/test_files.py``.
 
 Synthetic stub decks only, mirroring the ``test_pipeline`` module's own
 ``_run_cadastro_pipeline`` convention -- no ``import novomodelo`` at module scope.
@@ -26,7 +26,6 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
-    resolve_libs_electrical_path,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     ElectricalRestriction,
@@ -42,133 +41,6 @@ from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.pipeline import ConversionReport
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
-
-# ---------------------------------------------------------------------------
-# resolve_libs_electrical_path -- pure path resolution, no pipeline involved
-# ---------------------------------------------------------------------------
-
-
-def _write_indices_csv(deck_dir: Path, entries: list[tuple[str, str]]) -> None:
-    lines = [
-        "&**** ID ; Descricao ; Caminho",
-        *(
-            f" {entry_id} ;description here;{filename}"
-            for entry_id, filename in entries
-        ),
-    ]
-    (deck_dir / "indices.csv").write_text("\n".join(lines) + "\n", encoding="latin-1")
-
-
-class TestResolveLibsElectricalPath:
-    def test_indices_entry_resolves_to_its_own_filename(self, tmp_path: Path) -> None:
-        _write_indices_csv(
-            tmp_path,
-            [("RESTRICAO-ELETRICA-ESPECIAL", "lib_restricao-eletrica-especial.csv")],
-        )
-        target = tmp_path / "lib_restricao-eletrica-especial.csv"
-        target.write_text("", encoding="latin-1")
-
-        assert resolve_libs_electrical_path(tmp_path) == target
-
-    def test_exact_entry_match_not_the_ativacao_sibling(self, tmp_path: Path) -> None:
-        """The ``-ATIVACAO``/``-VIOLACAO`` sibling entries must never be
-        mistaken for the base entry -- only an exact ``ID`` match resolves."""
-        _write_indices_csv(
-            tmp_path,
-            [
-                ("RESTRICAO-ELETRICA-ESPECIAL-ATIVACAO", "other-file.csv"),
-                ("RESTRICAO-ELETRICA-ESPECIAL", "lib_restricao-eletrica-especial.csv"),
-            ],
-        )
-        target = tmp_path / "lib_restricao-eletrica-especial.csv"
-        target.write_text("", encoding="latin-1")
-        (tmp_path / "other-file.csv").write_text("", encoding="latin-1")
-
-        assert resolve_libs_electrical_path(tmp_path) == target
-
-    def test_no_indices_csv_falls_back_to_glob(self, tmp_path: Path) -> None:
-        target = tmp_path / "lib_restricao-eletrica-especial.csv"
-        target.write_text("", encoding="latin-1")
-
-        assert resolve_libs_electrical_path(tmp_path) == target
-
-    def test_indices_entry_pointing_at_missing_file_falls_back_to_glob(
-        self, tmp_path: Path
-    ) -> None:
-        _write_indices_csv(
-            tmp_path,
-            [("RESTRICAO-ELETRICA-ESPECIAL", "does-not-exist.csv")],
-        )
-        target = tmp_path / "lib_restricao-eletrica-especial.csv"
-        target.write_text("", encoding="latin-1")
-
-        assert resolve_libs_electrical_path(tmp_path) == target
-
-    def test_nothing_present_returns_none(self, tmp_path: Path) -> None:
-        assert resolve_libs_electrical_path(tmp_path) is None
-
-    def test_indices_csv_present_but_no_matching_entry_and_no_glob_returns_none(
-        self, tmp_path: Path
-    ) -> None:
-        _write_indices_csv(tmp_path, [("SOME-OTHER-CARD", "other.csv")])
-        (tmp_path / "other.csv").write_text("", encoding="latin-1")
-
-        assert resolve_libs_electrical_path(tmp_path) is None
-
-
-class TestDiscoverDecompFilesLibsElectrical:
-    """``discover_decomp_files`` threads :func:`resolve_libs_electrical_path`
-    into ``DecompFiles.libs_restricao_eletrica`` (Requirement 1)."""
-
-    @staticmethod
-    def _minimal_deck(deck_dir: Path) -> None:
-        (deck_dir / "caso.dat").write_text("rv0", encoding="latin-1")
-        (deck_dir / "dadger.rv0").write_text("", encoding="latin-1")
-        (deck_dir / "vazoes.rv0").write_text("", encoding="latin-1")
-        (deck_dir / "hidr.dat").write_text("", encoding="latin-1")
-
-    def test_libs_restricao_eletrica_resolved_via_indices_csv(
-        self, tmp_path: Path
-    ) -> None:
-        from novomodelo_bridge.decomp.files import discover_decomp_files
-
-        self._minimal_deck(tmp_path)
-        _write_indices_csv(
-            tmp_path,
-            [("RESTRICAO-ELETRICA-ESPECIAL", "lib_restricao-eletrica-especial.csv")],
-        )
-        (tmp_path / "lib_restricao-eletrica-especial.csv").write_text(
-            "", encoding="latin-1"
-        )
-
-        files = discover_decomp_files(tmp_path)
-        assert files.libs_restricao_eletrica == (
-            tmp_path / "lib_restricao-eletrica-especial.csv"
-        )
-
-    def test_libs_restricao_eletrica_none_when_absent(self, tmp_path: Path) -> None:
-        from novomodelo_bridge.decomp.files import discover_decomp_files
-
-        self._minimal_deck(tmp_path)
-
-        files = discover_decomp_files(tmp_path)
-        assert files.libs_restricao_eletrica is None
-
-    def test_decomp_files_still_constructs_without_the_new_field(self) -> None:
-        """Every pre-existing ``DecompFiles(...)`` call site in other test
-        modules keeps constructing unchanged -- the new field defaults to
-        ``None``."""
-        files = DecompFiles(
-            revision="rv0",
-            dadger=Path("dadger.rv0"),
-            vazoes=Path("vazoes.rv0"),
-            hidr=Path("hidr.dat"),
-            dadgnl=None,
-            renovaveis=None,
-            polinjus=None,
-        )
-        assert files.libs_restricao_eletrica is None
-
 
 # ---------------------------------------------------------------------------
 # Tier-1 pipeline wiring -- a fully synthetic mock deck, mirroring
@@ -311,6 +183,9 @@ class _MockDadger:
         return self._dp
 
     def ri(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+        return None
+
+    def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
         return None
 
     def ac(

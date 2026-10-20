@@ -1629,8 +1629,8 @@ def test_report_thermal_productivity_tab_matches_golden(
 
 def _constraints_perf_fixture_pct() -> PercentileData:
     """PercentileData with non-empty constraint + performance frames."""
-    # F3, sense-free: both constraints are ``>=`` (lower-only endpoint), matching
-    # the pre-F3 fixture's sense so the golden HTML label stays unchanged.
+    # Sense-free: both constraints are ``>=`` (lower-only endpoint), so the
+    # golden HTML label stays ``>=``.
     gc_constraints = [
         {"id": 0, "name": "RE_1"},
         {"id": 1, "name": "AGRINT_1"},

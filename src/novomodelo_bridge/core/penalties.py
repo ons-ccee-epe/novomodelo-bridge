@@ -63,13 +63,16 @@ _STORAGE_VIOLATION_DEFICIT_MULT = 10.0
 _FILLING_TARGET_DEFICIT_FRACTION = 0.9
 
 # --- Inflow non-negativity -------------------------------------------------
-#: ``modeling.inflow_non_negativity.method`` for both tracks. It caps the inflow
-#: slack per solve at the truncation amount ``max(−r, 0)``, so the slack can only
-#: lift a negative incremental inflow to zero; under ``penalty`` it is an unbounded
-#: source of water that the LP trades against any violation priced above it.
+#: ``modeling.inflow_non_negativity.method`` for the source-model track, pinned
+#: whatever novomodelo's default is; the DECOMP track pins ``penalty``. A negative
+#: incremental inflow keeps its value, in the water balance and in the inflow
+#: lags; the priced slack may add back at most the missing water,
+#: ``max(-inflow, 0)``.
+#: With the anchor below the LP buys that water only when the alternative costs
+#: more, so a negative inflow mostly acts as a water loss.
 INFLOW_NON_NEGATIVITY_METHOD = "truncation_with_penalty"
 
-# inflow_nonnegativity_cost prices that lift at ``water_withdrawal_violation_cost
+# inflow_nonnegativity_cost prices that slack at ``water_withdrawal_violation_cost
 # + 1`` (R$/m³/s). The slack *generates* water where every other flow slack only
 # *absorbs* a violation, so pricing it even infinitesimally below withdrawal would
 # make lifting the inflow a cheaper substitute for failing the withdrawal
@@ -131,8 +134,8 @@ def hydro_penalty_costs(
     # prices these Family-D slots with NO time multiplier (`objective = penalty`).
     # If they are ever wired into the LP with a `× block_hours` term (like the
     # generic/VminOP slack), this conversion becomes wrong: the slack would then
-    # need per-stage hours, exactly like
-    # `constraints.py:_vminop_energy_factor`. Keep these two facts in lockstep.
+    # need per-stage hours, exactly like the VminOP per-stage penalty in
+    # `convert_vminop_constraints`. Keep these two facts in lockstep.
     #
     # storage_violation_below_cost is priced at the evaporation tier
     # (10 × MAX_CUSTO_DEFICIT) — the greatest hydro penalty. With no PENALID

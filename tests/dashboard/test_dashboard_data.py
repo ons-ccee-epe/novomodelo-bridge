@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -24,7 +25,9 @@ from typer.testing import CliRunner
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.dashboard.data import (
     DashboardData,
+    _cut_selection_per_stage,
     _load_policy_metadata,
+    _normalize_output_columns,
     load_temporal_context,
 )
 from tests.conftest import (
@@ -1019,3 +1022,41 @@ class TestLoadPolicyMetadataHappyPath:
         result = _load_policy_metadata(case_dir)
 
         assert result == {"state_dimension": state_dimension}
+
+
+class TestCutSelectionPerStage:
+    """novomodelo writes one ``cut_selection/iterations.parquet`` row per row pool;
+    the dashboard sums the pools of a stage into one row."""
+
+    @staticmethod
+    def _frame() -> pd.DataFrame:
+        return _normalize_output_columns(
+            pd.DataFrame(
+                {
+                    "iteration": [3, 3, 3],
+                    "pool_id": [0, 1, 2],
+                    "stage_id": [1, 1, 2],
+                    "node_id": [4, 5, None],
+                    "cuts_in_pool": [10, 6, 8],
+                    "cuts_active_after": [7, 5, 8],
+                    "cuts_deactivated": [None, None, 2],
+                }
+            )
+        )
+
+    def test_pools_of_a_stage_are_summed(self) -> None:
+        result = _cut_selection_per_stage(self._frame())
+        assert result["stage"].tolist() == [1, 2]
+        assert result["cuts_populated"].tolist() == [16, 8]
+        assert result["cuts_active_after"].tolist() == [12, 8]
+        assert "pool_id" not in result.columns
+        assert "node_id" not in result.columns
+
+    def test_a_column_null_in_every_pool_stays_null(self) -> None:
+        result = _cut_selection_per_stage(self._frame())
+        assert pd.isna(result["cuts_deactivated"].iloc[0])
+        assert result["cuts_deactivated"].iloc[1] == 2
+
+    def test_a_frame_without_pools_is_returned_unchanged(self) -> None:
+        frame = pd.DataFrame({"iteration": [1], "stage": [0], "cuts_populated": [3]})
+        assert _cut_selection_per_stage(frame) is frame
