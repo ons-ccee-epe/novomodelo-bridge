@@ -531,7 +531,7 @@ class TestCliInProcess:
         """The manifest's ``min_novomodelo_version`` tracks the CLI constant, pinned.
 
         A manifest written after the bump must record the real
-        floor (``"0.18.1"``), not a stale value — the manifest is provenance,
+        floor (``"0.19.0"``), not a stale value — the manifest is provenance,
         and a wrong floor there is false provenance. Pinning the literal (not
         just equality with the constant) catches an accidental revert of the
         constant itself.
@@ -540,7 +540,7 @@ class TestCliInProcess:
         from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
         from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_NOVOMODELO_VERSION == "0.18.1"
+        assert MIN_NOVOMODELO_VERSION == "0.19.0"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -559,7 +559,7 @@ class TestCliInProcess:
 
         assert code == 0
         manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")
-        assert manifest.min_novomodelo_version == "0.18.1"
+        assert manifest.min_novomodelo_version == "0.19.0"
         assert manifest.min_novomodelo_version == MIN_NOVOMODELO_VERSION
 
     def test_manifest_not_in_json_verdict(
@@ -1261,7 +1261,7 @@ class TestCliInProcess:
         from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
         from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_NOVOMODELO_VERSION == "0.18.1"
+        assert MIN_NOVOMODELO_VERSION == "0.19.0"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1291,7 +1291,7 @@ class TestCliInProcess:
         # validation did not run (not that it ran and passed).
         assert "skipping novomodelo-python validation" in stderr
         assert "0.12.0" in stderr
-        assert "0.18.1" in stderr
+        assert "0.19.0" in stderr
         assert MIN_NOVOMODELO_VERSION in stderr
         doc = json.loads(stdout)
         assert doc["status"] == "ok"

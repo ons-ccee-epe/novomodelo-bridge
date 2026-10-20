@@ -14,6 +14,10 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+Pairs the bridge with the **novomodelo 0.19.0** release. novomodelo loads a
+policy checkpoint only in the version that wrote it, so a DECOMP case whose
+boundary FCF an earlier bridge imported must be converted again.
+
 ### Added
 
 - **`export dessem` command** exports a solved Novomodelo case's policy checkpoint
@@ -55,6 +59,8 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **`novomodelo-python` is pinned to 0.19.0**, and `MIN_NOVOMODELO_VERSION`
+  moves with it.
 - **Both tracks simulate with the cuts active when training ended.**
   `config.json` now sets `simulation.cut_set` to `active` rather than leaving
   it to novomodelo's default, `all`, which also loads the cuts the selection
