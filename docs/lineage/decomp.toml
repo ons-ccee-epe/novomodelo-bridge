@@ -1295,7 +1295,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
   path = "hydros[].generation.min_generation_mw"
   from = []
   status = "constant"
-  how = "Sempre 0.0: o cadastro não traz geração mínima; pisos de `RE`/`FU` de termo único vão para `constraints/hydro_bounds.parquet` e os pisos `RI` de Itaipu para `constraints/hydro_unit_group_bounds.parquet`."
+  how = "Sempre 0.0: o cadastro não traz geração mínima; pisos de `RE`/`FU` de termo único vão para `constraints/hydro_bounds.parquet`, e os pisos `RI` de Itaipu e os de `RE`/`FU` com `frequencia` para `constraints/hydro_unit_group_bounds.parquet`."
 
   [[output.field]]
   path = "hydros[].generation.max_generation_mw"
@@ -1904,7 +1904,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "FU", item = "codigo_usina" },
     { file = "dadger", register = "FU", item = "coeficiente" },
   ]
-  how = "Piso de geração de uma RE de termo único com `FU` de coeficiente ±1 (sem termos `FT`/`FI`): `limite_inferior` do `LU` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]."
+  how = "Piso de geração de uma RE de termo único com `FU` de coeficiente ±1 (sem termos `FT`/`FI`): `limite_inferior` do `LU` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]. Um `FU` com `frequencia` (meia-usina de 50 ou 60 Hz de Itaipu) não entra aqui: vai para o grupo da frequência em `constraints/hydro_unit_group_bounds.parquet`."
 
   [[output.field]]
   path = "max_generation_mw"
@@ -1916,7 +1916,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "FU", item = "codigo_usina" },
     { file = "dadger", register = "FU", item = "coeficiente" },
   ]
-  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar, truncado ao `generation.max_generation_mw` declarado da usina (caso BELO MONTE, RE de 11000 MW acima da capacidade); um truncamento material gera aviso."
+  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar, truncado ao `generation.max_generation_mw` declarado da usina (caso BELO MONTE, RE de 11000 MW acima da capacidade); um truncamento material gera aviso. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina."
 
   [[output.field]]
   path = "min_storage_hm3"
@@ -2028,9 +2028,12 @@ reads = [
   { file = "dadger", register = "MP" },
   { file = "dadger", register = "FD" },
   { file = "dadger", register = "RI" },
+  { file = "dadger", register = "RE" },
+  { file = "dadger", register = "LU" },
+  { file = "dadger", register = "FU" },
   { file = "hidr" },
 ]
-summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `unit_groups` de `system/hydros.json`, esparsas: só onde a disponibilidade por estágio (instalada × `MP` × `FD`) ou o engolimento corrigido pela queda do estágio fica abaixo do envelope do grupo, mais os pisos por frequência `RI` de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
+summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `unit_groups` de `system/hydros.json`, esparsas: só onde a disponibilidade por estágio (instalada × `MP` × `FD`) ou o engolimento corrigido pela queda do estágio fica abaixo do envelope do grupo, mais os pisos por frequência `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
 
   [[output.field]]
   path = "hydro_id"
@@ -2057,7 +2060,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
   path = "block_id"
   from = [ { file = "dadger", register = "DP", item = "numero_patamares" } ]
   status = "derived"
-  how = "Nulo na linha-base; 0..n−1 só quando o piso `RI` de Itaipu difere entre patamares do estágio (a linha-base recebe então a média ponderada pelas horas). Disponibilidade e engolimento são valores de estágio."
+  how = "Nulo na linha-base; 0..n−1 quando o piso `RI` de Itaipu difere entre patamares do estágio (a linha-base recebe então a média ponderada pelas horas) ou quando uma `RE` por frequência limita o grupo, por patamar. Disponibilidade e engolimento são valores de estágio."
 
   [[output.field]]
   path = "min_turbined_m3s"
@@ -2096,13 +2099,15 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
 
   [[output.field]]
   path = "min_generation_mw"
-  when = "somente para Itaipu (código 66) operada com registro `RI`"
+  when = "somente para Itaipu (código 66) operada com registro `RI` ou com `RE` por frequência"
   from = [
     { file = "dadger", register = "RI", item = "estagio" },
     { file = "dadger", register = "RI", item = "geracao_minima_50_hz" },
     { file = "dadger", register = "RI", item = "geracao_minima_60_hz" },
+    { file = "dadger", register = "LU", item = "limite_inferior" },
+    { file = "dadger", register = "FU", item = "frequencia" },
   ]
-  how = "Piso de geração por frequência de Itaipu: `geracao_minima_50_hz` no grupo 0 e `geracao_minima_60_hz` no grupo 1, por patamar (colunas `_1`..`_5`), com estágios não declarados herdando o anterior (o `RI` precisa declarar o estágio 1). Os campos `geracao_maxima_*` do `RI` não são consumidos."
+  how = "Piso de geração por frequência de Itaipu: `geracao_minima_50_hz` no grupo 0 e `geracao_minima_60_hz` no grupo 1, por patamar (colunas `_1`..`_5`), com estágios não declarados herdando o anterior (o `RI` precisa declarar o estágio 1). Os campos `geracao_maxima_*` do `RI` não são consumidos. Uma `RE` de termo único cujo `FU` traz `frequencia` 50 ou 60 limita o grupo dessa frequência com o `limite_inferior` do `LU`; vale o maior dos pisos. `frequencia` em outra usina interrompe a conversão."
 
   [[output.field]]
   path = "max_generation_mw"
@@ -2118,7 +2123,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "FD", item = "codigo_usina" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida só quando fica abaixo do envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória). O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
+  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida só quando fica abaixo do envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória), e o `limite_superior` do `LU` de uma `RE` por frequência também limita o grupo, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
 
 # ===== frag_F_dc_scenarios_constraints_fcf =====
 # Fragment F — DECOMP: cenários, restrições genéricas e função de custo futuro de fronteira.
@@ -2624,7 +2629,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
     { file = "renovaveis", item = "PEE-CAD · codigo_pee" },
   ]
-  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)`, `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`. Cada linha `FU`/`FT`/`FI`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`) em `@rho_acum_mwh_h<id> * hydro_useful_volume_final(id)` (energia armazenada útil em MWh, a base do `%EAMAX`) sobre os reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, com o sinal do `CM`. Acoplamento entre REEs (a primeira usina da cascata cuja jusante operada está em outro REE e que tem gêmea fictícia no `hidr` — usina fora da configuração, `produtibilidade_especifica` 0 e mesmo `posto`, como TRES MARIAS → SOBRADINHO): no REE da usina entra o termo `@rho_cut_mwh_h<id> * hydro_useful_volume_final(<id>)`, cuja energia máxima é `@earm_max_cut_mwh_h<id>`; se o reservatório tem gêmea fictícia, o REE da primeira usina operada na cascata da gêmea recebe `@rho_acum_mwh_h<jusante> * hydro_useful_volume_final(<id>)`, com energia máxima `@earm_max_fict_mwh_h<id>` (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`); uma travessia de REE sem gêmea (como para ITAIPU) não corta a cascata. Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `disp_usih`) são dobrados no limite."
+  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)` (um `FU` com `frequencia` numa restrição de vários termos descarta a restrição com `decomp-re-frequency-split-deferred`), `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`. Cada linha `FU`/`FT`/`FI`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`) em `@rho_acum_mwh_h<id> * hydro_useful_volume_final(id)` (energia armazenada útil em MWh, a base do `%EAMAX`) sobre os reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, com o sinal do `CM`. Acoplamento entre REEs (a primeira usina da cascata cuja jusante operada está em outro REE e que tem gêmea fictícia no `hidr` — usina fora da configuração, `produtibilidade_especifica` 0 e mesmo `posto`, como TRES MARIAS → SOBRADINHO): no REE da usina entra o termo `@rho_cut_mwh_h<id> * hydro_useful_volume_final(<id>)`, cuja energia máxima é `@earm_max_cut_mwh_h<id>`; se o reservatório tem gêmea fictícia, o REE da primeira usina operada na cascata da gêmea recebe `@rho_acum_mwh_h<jusante> * hydro_useful_volume_final(<id>)`, com energia máxima `@earm_max_fict_mwh_h<id>` (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`); uma travessia de REE sem gêmea (como para ITAIPU) não corta a cascata. Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `disp_usih`) são dobrados no limite."
 
   [[output.field]]
   path = "constraints[].slack.enabled"
@@ -2913,12 +2918,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   item = "fator_perdas"
   status = "deferred"
   note = "Fator de perdas do contrato de importação; mesmo tratamento do `CE`."
-
-  [[source.item]]
-  register = "FU"
-  item = "frequencia"
-  status = "deferred"
-  note = "Frequência (50/60 Hz) do termo de geração hidráulica de uma `RE`. Uma restrição genérica com termo dividido por frequência é descartada com `decomp-re-frequency-split-deferred`, pois o conversor não constrói o mapa frequência-barra; no caminho de limite simples a frequência é ignorada e o termo vale para a usina inteira."
 
   [[source.item]]
   register = "CV"
