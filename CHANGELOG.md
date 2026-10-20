@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `export_manifest.json`; `--audit-csv` adds per-pool CSVs of the cuts as read
   and as written. GNL coefficients are written as zeros, and a policy carrying
   travel-time state is refused.
+- **DECOMP: the `UH` spillage ceiling is converted.** Field 9 of the `UH`
+  register, the plant's maximum spillage in m³/s, becomes a
+  `max_spillage_m3s` bound in `constraints/hydro_bounds.parquet` for every
+  stage; the field was ignored before. A blank field or DECOMP's default of
+  1.0e+21 adds no bound, and where a single-plant `HQ` restriction on `QVER`
+  also limits the plant, the lower ceiling applies. A zero ceiling is kept,
+  so a plant fed only through a diversion channel, such as BELO MONTE, spills
+  nothing, as in DECOMP.
 - **NEWAVE: Pumping station conversion.** When the deck declares
   `ESTACAO-BOMBEAMENTO` and `ESTACAO-BOMBEAMENTO-SUBMERCADO` in `indices.csv`
   and the `ESTACOES BOMBEAMENTO` switch is on, the converter generates
