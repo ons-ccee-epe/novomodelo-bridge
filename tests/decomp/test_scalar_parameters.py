@@ -25,7 +25,7 @@ def test_build_decomp_scalar_parameters_matches_converter() -> None:
     converter_result = build_scalar_parameters([0, 1])
 
     assert decomp_result == converter_result
-    assert len(decomp_result["scalar_parameters"]) == 10
+    assert len(decomp_result["scalar_parameters"]) == 14
     assert all(e["kind"] == "computed" for e in decomp_result["scalar_parameters"])
 
 
@@ -42,7 +42,7 @@ def test_write_scalar_parameters_round_trip(tmp_path: Path) -> None:
 
 def test_build_decomp_scalar_parameters_forwards_per_stage_and_expressions() -> None:
     per_stage = {"pct_rhe7": [0.5, 0.0]}
-    expressions = {"rho_cut_mwh_h0": "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"}
+    expressions = {"rho_chain_mwh_h0": "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"}
 
     assert build_decomp_scalar_parameters(
         [0, 1], per_stage=per_stage, expressions=expressions

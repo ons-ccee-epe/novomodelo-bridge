@@ -44,20 +44,16 @@ once per block, so ``emit_rhq_rhv_generics`` skips such a constraint with a
 ``WARNING``.
 
 ``HE`` (RHE stored-energy) constraints are emitted by
-``emit_rhe_generics``: the LHS weights each reservoir's useful volume by
-novomodelo's integrated accumulated productivity in MWh/hm³
-(:mod:`novomodelo_bridge.core.stored_energy`), so the constraint is a whole-REE
-stored-energy bound in MWh rather than a per-plant limit read off the
-register. A cascade the source model splits between two REEs is weighted per
-REE instead (:func:`_rhe_ree_terms`).
+``emit_rhe_generics``: the LHS weights each reservoir's useful volume by its
+energy-chain productivity in MWh/hm³ (:mod:`novomodelo_bridge.decomp.converters.
+rhe_shares`), so the constraint is a whole-REE stored-energy bound in MWh
+rather than a per-plant limit read off the register.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import logging
-from collections import defaultdict
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
 from novomodelo_bridge.core.diagnostics import (
@@ -74,21 +70,16 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     soft_slack,
 )
 from novomodelo_bridge.core.stored_energy import (
-    StoredEnergyShare,
-    cascade_share,
-    cut_cascade_share,
-    downstream_share,
     share_parameters,
     stored_energy_floor,
     stored_energy_lhs,
 )
 from novomodelo_bridge.decomp.constraint_registers import StageBounds
-from novomodelo_bridge.decomp.converters.cadastro import (
-    effective_storage_range,
-    is_reservoir,
-    storage_envelope,
+from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
+from novomodelo_bridge.decomp.converters.rhe_shares import (
+    build_rhe_shares,
+    ez_cap_unmodeled_stages,
 )
-from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -103,6 +94,7 @@ if TYPE_CHECKING:
         ConstraintTerm,
     )
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.converters.rhe_shares import RheCoupling
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -856,152 +848,8 @@ def emit_rhq_rhv_generics(
 _RHE_DEFAULT_PENALTY = 1000.0
 
 
-def _is_stored_energy_reservoir(effective: EffectiveCadastro, code: int) -> bool:
-    """True iff DECOMP counts plant *code*'s storage in a REE's stored energy.
-
-    A reservoir under the DECOMP predicate (:func:`~novomodelo_bridge.decomp.
-    converters.cadastro.is_reservoir`: ``"M"`` or ``"S"``) with usable
-    storage (``volume_maximo > volume_minimo``), read off the *base*
-    cadastro. Run-of-river (``"D"``) plants are excluded even when their
-    accumulated cascade productivity is positive.
-    """
-    if not is_reservoir(effective, code):
-        return False
-    vol_min = float(effective.base.loc[code, "volume_minimo"])
-    vol_max = float(effective.base.loc[code, "volume_maximo"])
-    return vol_max - vol_min > 0.0
-
-
-@dataclass(frozen=True)
-class _RheCoupling:
-    """One reservoir whose cascade the source model splits between two REEs."""
-
-    plant_code: int
-    ree_code: int
-    cut_code: int
-    fict_code: int | None
-    fict_ree_code: int | None
-    downstream_code: int | None
-
-
-def _fictitious_twins(
-    effective: EffectiveCadastro, operated: set[int]
-) -> dict[int, int]:
-    """Map each operated plant to the fictitious twin sharing its ``hidr`` posto.
-
-    The source model keeps, outside the configuration, a non-generating
-    (``produtibilidade_especifica == 0``) ``hidr.dat`` plant on a real plant's
-    posto to account the energy below a REE cut — the same structural rule as
-    the NEWAVE track's ``fictitious_codes``. Read off the *base* cadastro.
-    """
-    base = effective.base
-    real_by_posto: dict[int, int] = {}
-    for code in operated:
-        if code in base.index:
-            real_by_posto.setdefault(int(base.loc[code, "posto"]), code)
-    twins: dict[int, int] = {}
-    for code in base.index:
-        code = int(code)
-        if code in operated or float(base.loc[code, "produtibilidade_especifica"]):
-            continue
-        real = real_by_posto.get(int(base.loc[code, "posto"]))
-        if real is not None:
-            twins.setdefault(real, code)
-    return twins
-
-
-def _rhe_ree_terms(
-    effective: EffectiveCadastro,
-    id_map: DecompIdMap,
-    hydro_to_ree: Mapping[int, int],
-) -> tuple[dict[int, list[StoredEnergyShare]], list[_RheCoupling]]:
-    """Build every REE's RHE shares, splitting the cascades the REEs couple.
-
-    The source model cuts a reservoir's cascade at the first plant whose
-    downstream lies in another REE **and** that has a fictitious twin
-    (:func:`_fictitious_twins`), and accounts the water below the cut in the
-    twin's downstream REE; ``hydros.json`` keeps the physical link, so novomodelo's
-    whole-cascade parameters would over-count the reservoir's REE. A reservoir
-    whose cascade reaches such a cut gets a
-    :func:`~novomodelo_bridge.core.stored_energy.cut_cascade_share` in its own REE
-    and, when it has a fictitious twin, a
-    :func:`~novomodelo_bridge.core.stored_energy.downstream_share` in the REE of
-    the first operated plant on the twin's cascade. Both use the reservoir's
-    useful volume (its ``hydros.json`` storage envelope). A cascade that
-    crosses a REE boundary without a twin at the crossing (e.g. into ITAIPU)
-    is not cut. Every other reservoir gets a
-    :func:`~novomodelo_bridge.core.stored_energy.cascade_share`. Returns the shares
-    by REE code (in plant-code order) and the split reservoirs.
-    """
-    operated = set(id_map.hydro_codes)
-    twins = _fictitious_twins(effective, operated)
-    downstream = {
-        code: _downstream_operated(effective, code, operated) for code in operated
-    }
-
-    def _cut_at(code: int, ree_code: int) -> bool:
-        below = downstream[code]
-        return (
-            code in twins and below is not None and hydro_to_ree.get(below) != ree_code
-        )
-
-    terms: dict[int, list[StoredEnergyShare]] = defaultdict(list)
-    couplings: list[_RheCoupling] = []
-    for code, ree_code in sorted(hydro_to_ree.items()):
-        if code not in operated or not _is_stored_energy_reservoir(effective, code):
-            continue
-        hid = id_map.hydro_id(code)
-        min_storage, max_storage = storage_envelope(effective, code)
-        useful = max_storage - min_storage
-
-        chain = [code]
-        while not _cut_at(chain[-1], ree_code):
-            below = downstream[chain[-1]]
-            if below is None or below in chain:
-                chain = []
-                break
-            chain.append(below)
-
-        if not chain:
-            terms[ree_code].append(cascade_share(hid))
-            continue
-
-        terms[ree_code].append(
-            cut_cascade_share(hid, useful, [id_map.hydro_id(c) for c in chain])
-        )
-
-        twin = twins.get(code)
-        twin_downstream = (
-            _downstream_operated(effective, twin, operated)
-            if twin is not None
-            else None
-        )
-        twin_ree = hydro_to_ree.get(twin_downstream) if twin_downstream else None
-        lands = (
-            twin is not None
-            and twin_ree is not None
-            and twin_ree != ree_code
-            and _is_stored_energy_reservoir(effective, twin)
-        )
-        if lands:
-            terms[twin_ree].append(
-                downstream_share(hid, useful, id_map.hydro_id(twin_downstream))
-            )
-        couplings.append(
-            _RheCoupling(
-                plant_code=code,
-                ree_code=ree_code,
-                cut_code=chain[-1],
-                fict_code=twin if lands else None,
-                fict_ree_code=twin_ree if lands else None,
-                downstream_code=twin_downstream if lands else None,
-            )
-        )
-    return terms, couplings
-
-
-def _emit_rhe_hydraulic_coupling(couplings: Sequence[_RheCoupling]) -> None:
-    """Emit the ``decomp-rhe-ree-hydraulic-coupling`` INFO listing split reservoirs."""
+def _emit_rhe_hydraulic_coupling(couplings: Sequence[RheCoupling]) -> None:
+    """Emit the ``decomp-rhe-ree-hydraulic-coupling`` INFO listing cut reservoirs."""
     emit(
         Diagnostic(
             code="decomp-rhe-ree-hydraulic-coupling",
@@ -1009,16 +857,17 @@ def _emit_rhe_hydraulic_coupling(couplings: Sequence[_RheCoupling]) -> None:
             category="Special constraints",
             title=f"RHE split across coupled REEs ({len(couplings)} plant(s))",
             summary=(
-                f"{len(couplings)} reservoir(s) drain into another REE; their "
-                "stored energy counts in their own REE only down to the coupling "
-                "plant, and the rest counts in the downstream REE."
+                f"{len(couplings)} reservoir(s) with an EZ record drain into "
+                "another REE; their stored energy counts in their own REE down "
+                "to the coupling plant, and up to the EZ share of their useful "
+                "volume counts in the downstream REE."
             ),
             table=DiagnosticTable(
                 columns=[
                     "Plant",
                     "REE",
                     "Coupling plant",
-                    "Fictitious twin",
+                    "EZ %",
                     "Downstream REE",
                     "Downstream plant",
                 ],
@@ -1027,13 +876,33 @@ def _emit_rhe_hydraulic_coupling(couplings: Sequence[_RheCoupling]) -> None:
                         c.plant_code,
                         c.ree_code,
                         c.cut_code,
-                        c.fict_code if c.fict_code is not None else "-",
-                        c.fict_ree_code if c.fict_ree_code is not None else "-",
-                        c.downstream_code if c.downstream_code is not None else "-",
+                        f"{c.ez_percent:g}",
+                        c.downstream_ree_code,
+                        c.downstream_code,
                     ]
                     for c in couplings
                 ],
                 justify=["right"] * 6,
+            ),
+        )
+    )
+
+
+def _emit_rhe_ez_cap_unmodeled(record: ConstraintRecord, stages: Sequence[int]) -> None:
+    """Emit the ``decomp-rhe-ez-cap-unmodeled`` WARNING, naming the stages."""
+    emit(
+        Diagnostic(
+            code="decomp-rhe-ez-cap-unmodeled",
+            severity=Severity.WARNING,
+            category="Special constraints",
+            title="RHE constraint may be looser than the source model",
+            summary=(
+                f"HE constraint {record.constraint_id} counts a reservoir whose "
+                "EZ record caps the volume it stores in this REE; the converted "
+                "constraint counts the whole volume, so at stage(s) "
+                f"{', '.join(str(s + 1) for s in stages)} it is satisfied more "
+                "easily than in the source model while that reservoir is above "
+                "its cap."
             ),
         )
     )
@@ -1054,8 +923,8 @@ def _emit_rhe_no_storage_plants(record: ConstraintRecord) -> None:
             title="RHE constraint's REE has no stored-energy reservoir",
             summary=(
                 f"HE constraint {record.constraint_id} bounds the stored "
-                "energy of a REE with no monthly-regulating ('M') "
-                "reservoir carrying usable storage; the constraint cannot "
+                "energy of a REE with no reservoir ('M' or 'S') carrying "
+                "usable storage; the constraint cannot "
                 "be lowered to a generic constraint."
             ),
             remediation=(
@@ -1123,6 +992,7 @@ def emit_rhe_generics(
     census: ConstraintCensus,
     effective: EffectiveCadastro,
     hydro_to_ree: Mapping[int, int],
+    ez_fractions: Mapping[int, float],
     allocator: ConstraintIdAllocator | None = None,
 ) -> DecompGenericResult | None:
     """Emit every generic ``HE`` (RHE stored-energy) constraint.
@@ -1130,8 +1000,9 @@ def emit_rhe_generics(
     Iterates ``census.to_generic`` filtered to ``record.family == "HE"``.
     Each record's ``energy`` terms name a REE (``term.code``) with a CM ±1
     sign (``term.coefficient``); the participating shares for that REE are
-    the ones :func:`_rhe_ree_terms` builds over its stored-energy reservoirs
-    (:func:`_is_stored_energy_reservoir`) operated in ``id_map``. A record
+    the ones :func:`~novomodelo_bridge.decomp.converters.rhe_shares.
+    build_rhe_shares` builds over its stored-energy reservoirs operated in
+    ``id_map``, with *ez_fractions* from the deck's ``EZ`` records. A record
     whose terms yield **no** participating reservoir at all is skipped whole
     (:func:`_emit_rhe_no_storage_plants`, skip-not-partial) — never a partial
     constraint.
@@ -1155,14 +1026,14 @@ def emit_rhe_generics(
     per its own penalty, never ``BIG_M``. It is ``per_unit``, a price per MWh
     of violation on weekly and monthly stages alike.
 
-    Reads no ``dadger``; *hydro_to_ree* arrives from the caller.
-    *allocator* defaults to a fresh :class:`ConstraintIdAllocator` (ids from
-    0) when omitted; the pipeline threads one shared instance across every
-    emitter. Returns ``None`` when no RHE constraint survives.
+    Reads no ``dadger``; *hydro_to_ree* and *ez_fractions* arrive from the
+    caller. *allocator* defaults to a fresh :class:`ConstraintIdAllocator`
+    (ids from 0) when omitted; the pipeline threads one shared instance
+    across every emitter. Returns ``None`` when no RHE constraint survives.
     """
     calendar = case.calendar
 
-    ree_terms, couplings = _rhe_ree_terms(effective, id_map, hydro_to_ree)
+    rhe_shares = build_rhe_shares(effective, id_map, hydro_to_ree, ez_fractions)
 
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
@@ -1176,7 +1047,7 @@ def emit_rhe_generics(
         shares = [
             (term.coefficient, share)
             for term in record.terms
-            for share in ree_terms.get(term.code, [])
+            for share in rhe_shares.by_ree.get(term.code, [])
         ]
         if not shares:
             _emit_rhe_no_storage_plants(record)
@@ -1198,21 +1069,29 @@ def emit_rhe_generics(
             for stage_index, stage_bounds in sorted(record.bounds.items())
             if stage_bounds.lower[0] is not None
         }
+        energy_shares = [(sign, rhe.share) for sign, rhe in shares]
         record_parameters: dict[str, list[float]] = {}
         if tipo_limite == 2:
             pct_name = rhe_pct_name(record.constraint_id)
-            expression = stored_energy_floor(shares, pct_name)
+            expression = stored_energy_floor(energy_shares, pct_name)
             lowers = dict.fromkeys(limits, 0.0)
             record_parameters[pct_name] = [
                 limits.get(stage_index, 0.0) / 100.0
                 for stage_index in range(len(calendar))
             ]
+            floors = {
+                stage_index: limite
+                / 100.0
+                * sum(sign * rhe.max_energy_mwh(stage_index) for sign, rhe in shares)
+                for stage_index, limite in limits.items()
+            }
         else:
-            expression = stored_energy_lhs(shares)
+            expression = stored_energy_lhs(energy_shares)
             lowers = {
                 stage_index: limite * calendar[stage_index].total_hours
                 for stage_index, limite in limits.items()
             }
+            floors = lowers
 
         added = builder.add(
             name=f"RHE_{record.constraint_id}",
@@ -1230,12 +1109,23 @@ def emit_rhe_generics(
                 calendar,
             ),
         )
-        if added is not None:
-            per_stage_parameters.update(record_parameters)
-            expression_parameters.update(share_parameters(s for _, s in shares))
+        if added is None:
+            continue
+        # TRACKED NOVOMODELO-GAP (C23): a generic constraint cannot cap one volume
+        # term at a constant, min(V, EZ·Vu); the share counts the whole volume
+        # and the warning names the stages where that can loosen the floor.
+        unmodeled = ez_cap_unmodeled_stages(shares, floors)
+        if unmodeled:
+            _emit_rhe_ez_cap_unmodeled(record, unmodeled)
+        per_stage_parameters.update(record_parameters)
+        for _, rhe in shares:
+            per_stage_parameters.update(
+                {name: list(values) for name, values in rhe.constants.items()}
+            )
+        expression_parameters.update(share_parameters(s for _, s in energy_shares))
 
-    if couplings:
-        _emit_rhe_hydraulic_coupling(couplings)
+    if rhe_shares.couplings:
+        _emit_rhe_hydraulic_coupling(rhe_shares.couplings)
     return _with_parameters(
         builder.result(), per_stage_parameters, expression_parameters
     )

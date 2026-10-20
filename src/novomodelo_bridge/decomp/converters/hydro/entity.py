@@ -12,9 +12,9 @@ attribution) and ``scenarios.py``'s inflow-gauge attribution both read
 :class:`~novomodelo_bridge.decomp.converters.cadastro.effective.EffectiveCadastro`'s
 ``downstream_plant``/``inflow_gauge`` accessors -- the post-``AC
 NUMJUS``/``NUMPOS`` link/gauge -- rather than the base ``hidr`` columns
-directly. ``AC JUSENA`` (a downstream-energy coupling, not a water-routing
-link) and ``AC NPOSNW`` (the other source family's own inflow gauge) are
-deliberately not ingested -- no DECOMP consumer.
+directly. ``AC JUSENA`` is a stored-energy link, not a water-routing one:
+only the RHE stored energy reads it. ``AC NPOSNW`` (the other source family's
+own inflow gauge) is deliberately not ingested -- no DECOMP consumer.
 """
 
 from __future__ import annotations

@@ -119,16 +119,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `per_hour`, cobre's previous charge of penalty × the row's hours, so their
   costs do not change. The constraint families emitted after VminOP and RHE
   get lower ids than with one constraint per stage.
-- **RHE (DECOMP) splits the reservoir cascades that couple two REEs.** The
-  source model cuts a cascade where it leaves the REE at a plant with a
-  fictitious twin in `hidr.dat` (a non-generating, unconfigured plant on its
-  posto) and counts the rest in the twin's downstream REE (e.g. TRES MARIAS →
-  SOBRADINHO). The RHE now counts such a reservoir's cascade down to the
-  coupling plant in its own REE and the rest in the downstream REE, through
-  `expression` parameters in `generic_parameters.json` and the physical
-  plant's useful volume, instead of the whole cascade in its own REE. A crossing without a
-  twin (into ITAIPU) is not cut. A `decomp-rhe-ree-hydraulic-coupling` note
-  lists the split reservoirs.
+- **RHE (DECOMP) values each reservoir along its energy chain, as DECOMP
+  does.** The chain follows the `AC JUSENA` energy link where the deck
+  declares one, else the water route, so the Paraíba do Sul reservoirs count
+  through NILO PECANHA, GUARAPIRANGA and BILLINGS through HENRY BORDEN, and
+  ITAPARICA through COMP PAF-MOX (176), a plant outside the configuration
+  that enters as a `per_stage` constant. A reservoir with an `EZ` record has
+  its chain cut where it leaves its REE: the plants above the cut count in its
+  own REE, and up to `EZ` % of its useful volume counts in the REE below the
+  cut (SERRA MESA 55% in NORTE). A reservoir without its own `EZ` record
+  counts its whole chain in its own REE. Chains that depart from the
+  `hydros.json` water route are `expression` parameters over cobre's
+  productivities, and their maximum stored energy reads the new computed
+  `min_storage`/`max_storage` parameters (`@min_storage_h{id}`,
+  `@max_storage_h{id}`, declared for every hydro on both tracks) instead of
+  volumes written into the expression. On mar-26-rv2 every REE's maximum
+  stored energy matches DECOMP's to within 0.01%; before, SUDESTE was 8.6% and NORDESTE 2.4% low and NORTE 37% high. A
+  `decomp-rhe-ree-hydraulic-coupling` note lists the cut reservoirs with
+  their `EZ` %. Because a generic constraint cannot cap a volume term, the
+  share counts the whole volume; a `decomp-rhe-ez-cap-unmodeled` warning names
+  any stage where that can make the constraint looser than DECOMP's. The
+  `check decomp` note that `EZ` records are ignored is gone.
 - **`compare` and `dashboard` read generic constraints from cobre's echo.**
   The Constraints tabs take each term's coefficient and each row's bounds
   from `output/generic_constraints/resolved_echo.parquet`, as the LP received

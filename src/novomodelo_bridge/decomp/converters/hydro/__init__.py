@@ -60,6 +60,9 @@ from novomodelo_bridge.decomp.converters.hydro.entity import (
     read_hidr as read_hidr,
 )
 from novomodelo_bridge.decomp.converters.hydro.productivity import (
+    _stored_energy_productivity_mw_per_m3s as _stored_energy_productivity_mw_per_m3s,
+)
+from novomodelo_bridge.decomp.converters.hydro.productivity import (
     convert_energy_productivity as convert_energy_productivity,
 )
 from novomodelo_bridge.decomp.converters.hydro.productivity import (

@@ -206,26 +206,6 @@ def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
     )
 
 
-def _deferred_inventory(dadger: Dadger) -> list[Diagnostic]:
-    """Name what the conversion will not carry, so it is never a surprise."""
-    try:
-        frame = dadger.ez(df=True)
-    except (AttributeError, TypeError, ValueError):
-        return []
-    if frame is None or frame.empty:
-        return []
-    return [
-        _deferred(
-            "decomp-ez-ignored",
-            "Coupling volume limit ignored",
-            "The deck carries maximum-useful-volume records for the boundary "
-            f"coupling; they are read and ignored by decision ({len(frame)} "
-            "record(s)).",
-            "Tracked in the conversion roadmap; no action needed to convert.",
-        )
-    ]
-
-
 def _ac_present(dadger: Dadger, classes: frozenset[type]) -> list[type]:
     """The subset of *classes* present in *dadger*'s deck, name-sorted.
 
@@ -591,8 +571,6 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         sc_checks, sc_diags = _special_constraint_coverage(dadger, files)
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)
-
-    diagnostics.extend(_deferred_inventory(dadger))
 
     return PreflightResult(
         verdict=_verdict(checks, diagnostics),

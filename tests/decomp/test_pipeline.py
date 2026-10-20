@@ -662,6 +662,9 @@ class _CadastroDadger:
     def ti(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
         return None
 
+    def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+        return None
+
     def ac(
         self,
         codigo_usina: int | None = None,  # noqa: ARG002

@@ -1049,19 +1049,19 @@ reads = [
   { file = "dger" },
   { file = "ree" },
 ]
-summary = "Declara, para toda usina hidráulica ativa, os parâmetros calculados pelo Novomodelo `rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}` e `earm_max_mwh_h{id}`, uma fração da curva de segurança `pct_vminop_ree{código}` por estágio para cada REE com restrição VminOP de `curva.dat` e, para cada reservatório cuja cascata é cortada entre dois REEs, os parâmetros de expressão da sua parcela de energia armazenada."
+summary = "Declara, para toda usina hidráulica ativa, os parâmetros calculados pelo Novomodelo `rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}`, `earm_max_mwh_h{id}`, `min_storage_h{id}` e `max_storage_h{id}`, e uma fração da curva de segurança `pct_vminop_ree{código}` por estágio para cada REE com restrição VminOP de `curva.dat`."
 
   [[output.field]]
   path = "scalar_parameters[].id"
   from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "Sequencial de 0: cinco por usina, em ordem crescente de id Novomodelo, seguidos das frações da curva de segurança (ordem crescente de `codigo_ree`) e dos parâmetros de expressão das cascatas acopladas."
+  how = "Sequencial de 0: sete por usina, em ordem crescente de id Novomodelo, seguidos das frações da curva de segurança (ordem crescente de `codigo_ree`)."
 
   [[output.field]]
   path = "scalar_parameters[].name"
   from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
   status = "derived"
-  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}` e `earm_max_mwh_h{id}` com o id Novomodelo da usina e `pct_vminop_ree{código}` com o código do REE; são os tokens `@name` usados em `constraints/generic_constraints.json`."
+  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}`, `earm_max_mwh_h{id}`, `min_storage_h{id}` e `max_storage_h{id}` com o id Novomodelo da usina e `pct_vminop_ree{código}` com o código do REE; são os tokens `@name` usados em `constraints/generic_constraints.json`."
 
   [[output.field]]
   path = "scalar_parameters[].kind"
@@ -1069,13 +1069,13 @@ summary = "Declara, para toda usina hidráulica ativa, os parâmetros calculados
     { file = "curva", item = "curva_seguranca · codigo_ree" },
     { file = "dger", item = "curva_aversao" },
   ]
-  how = "`computed` para os cinco parâmetros de usina; `per_stage` para as frações da curva de segurança (`curva.dat` presente, `curva_aversao` ≠ 0)."
+  how = "`computed` para os sete parâmetros de usina; `per_stage` para as frações da curva de segurança (`curva.dat` presente, `curva_aversao` ≠ 0)."
 
   [[output.field]]
   path = "scalar_parameters[].computed_spec.tag"
   from = []
   status = "constant"
-  how = "`equivalent_productivity` (ρ_eq pontual), `accumulated_productivity` (ρ_acum pontual), `integrated_equivalent_productivity_mwh_per_hm3` e `integrated_accumulated_productivity_mwh_per_hm3` (ρ integrado no volume útil em MWh/hm³) e `max_stored_energy_mwh` (energia armazenada útil máxima em MWh); o Novomodelo calcula o valor a partir da geometria em tempo de solução."
+  how = "`equivalent_productivity` (ρ_eq pontual), `accumulated_productivity` (ρ_acum pontual), `integrated_equivalent_productivity_mwh_per_hm3` e `integrated_accumulated_productivity_mwh_per_hm3` (ρ integrado no volume útil em MWh/hm³) `max_stored_energy_mwh` (energia armazenada útil máxima em MWh) e `min_storage`/`max_storage` (faixa de armazenamento da usina em hm³); o Novomodelo calcula o valor a partir da geometria em tempo de solução."
 
   [[output.field]]
   path = "scalar_parameters[].computed_spec.hydro_id"

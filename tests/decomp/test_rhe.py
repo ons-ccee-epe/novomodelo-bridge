@@ -101,7 +101,10 @@ def _hidr_frame(rows: dict[int, dict[str, object]]) -> pd.DataFrame:
 
     A row without a ``posto`` gets its own code, so no two plants share one.
     """
-    rows = {code: {"posto": code, **row} for code, row in rows.items()}
+    rows = {
+        code: {"posto": code, "nome_usina": f"PLANT {code}", **row}
+        for code, row in rows.items()
+    }
     df = pd.DataFrame(rows).T
     df.index.name = "codigo_usina"
     return df
@@ -132,12 +135,12 @@ def _he_record(
 
 
 def _single_reservoir(
-    tipo_regulacao: str = "M",
+    tipo_regulacao: str = "M", n_stages: int = 1
 ) -> tuple[DecompIdMap, EffectiveCadastro]:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
     effective = EffectiveCadastro(
         base=_hidr_frame({5: _hydro_row(tipo_regulacao=tipo_regulacao)}),
-        n_stages=1,
+        n_stages=n_stages,
         stage_varying={},
     )
     return id_map, effective
@@ -165,6 +168,7 @@ def test_emit_rhe_generics_absolute_limit_becomes_mwh_bound() -> None:
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -211,6 +215,7 @@ def test_emit_rhe_generics_percentage_rhs_is_the_maximum_useful_energy() -> None
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -257,6 +262,7 @@ def test_emit_rhe_generics_two_reservoir_cascade() -> None:
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1, 6: 1},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -294,6 +300,7 @@ def test_emit_rhe_generics_run_of_river_excluded() -> None:
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1, 7: 1},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -319,6 +326,7 @@ def test_emit_rhe_generics_weekly_regulating_reservoir_participates() -> None:
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -355,6 +363,7 @@ def test_emit_rhe_generics_no_storage_plants_skips_and_warns() -> None:
             census=_census(record),
             effective=effective,
             hydro_to_ree={7: 1},
+            ez_fractions={},
         )
 
     assert result is None
@@ -384,6 +393,7 @@ def test_emit_rhe_generics_unmapped_ree_skips_and_warns() -> None:
             census=_census(record),
             effective=effective,
             hydro_to_ree={},
+            ez_fractions={},
         )
 
     assert result is None
@@ -398,7 +408,7 @@ def test_emit_rhe_generics_unmapped_ree_skips_and_warns() -> None:
 
 
 def test_emit_rhe_generics_one_constraint_spans_weekly_and_monthly_stages() -> None:
-    id_map, effective = _single_reservoir()
+    id_map, effective = _single_reservoir(n_stages=3)
     record = _he_record(
         constraint_id=106,
         ree_code=1,
@@ -418,6 +428,7 @@ def test_emit_rhe_generics_one_constraint_spans_weekly_and_monthly_stages() -> N
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -435,7 +446,7 @@ def test_emit_rhe_generics_one_constraint_spans_weekly_and_monthly_stages() -> N
 
 
 def test_emit_rhe_generics_percentage_fraction_is_zero_off_the_record_stages() -> None:
-    id_map, effective = _single_reservoir()
+    id_map, effective = _single_reservoir(n_stages=3)
     record = _he_record(
         constraint_id=110,
         ree_code=1,
@@ -451,6 +462,7 @@ def test_emit_rhe_generics_percentage_fraction_is_zero_off_the_record_stages() -
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -496,6 +508,7 @@ def test_emit_rhe_generics_negative_cm_sign_subtracts() -> None:
         census=_census(record),
         effective=effective,
         hydro_to_ree={5: 1, 6: 2},
+        ez_fractions={},
     )
 
     assert result is not None
@@ -528,6 +541,7 @@ def test_emit_rhe_generics_non_positive_penalty_falls_back_and_warns() -> None:
             census=_census(record),
             effective=effective,
             hydro_to_ree={5: 1},
+            ez_fractions={},
         )
 
     assert result is not None
@@ -555,6 +569,7 @@ def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -
             census=_census(record),
             effective=effective,
             hydro_to_ree={5: 1},
+            ez_fractions={},
         )
 
     assert result is not None
@@ -577,17 +592,17 @@ def test_emit_rhe_generics_empty_census_returns_none() -> None:
             census=_census(),
             effective=effective,
             hydro_to_ree={},
+            ez_fractions={},
         )
 
     assert result is None
 
 
 def _coupled_cascade() -> tuple[DecompIdMap, EffectiveCadastro, dict[int, int]]:
-    """REE 1 (UP -> CUT) drains into REE 2 (DOWN); UP and CUT have twins.
+    """REE 1 (UP -> CUT) drains into REE 2 (DOWN); SIDE in REE 1 drains into DOWN.
 
-    FICT.UP and FICT.CUT are the non-generating, non-operated ``hidr`` plants
-    on UP's and CUT's postos, chained to DOWN. FICT.UP stores less than UP.
-    SIDE crosses into REE 2 too, but with no twin, so its cascade is not cut.
+    UP and CUT carry ``EZ`` records (:data:`_COUPLED_EZ`); SIDE does not, so
+    its cascade is not cut.
     """
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 2, 5, 7))
     effective = EffectiveCadastro(
@@ -597,24 +612,6 @@ def _coupled_cascade() -> tuple[DecompIdMap, EffectiveCadastro, dict[int, int]]:
                 2: _hydro_row(
                     tipo_regulacao="M", codigo_usina_jusante=5, volume_maximo=2000.0
                 ),
-                3: {
-                    **_hydro_row(
-                        tipo_regulacao="M",
-                        codigo_usina_jusante=4,
-                        produtibilidade_especifica=0.0,
-                        volume_maximo=500.0,
-                    ),
-                    "posto": 1,
-                },
-                4: {
-                    **_hydro_row(
-                        tipo_regulacao="M",
-                        codigo_usina_jusante=5,
-                        produtibilidade_especifica=0.0,
-                        volume_maximo=2000.0,
-                    ),
-                    "posto": 2,
-                },
                 5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
                 7: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=5),
             }
@@ -625,14 +622,19 @@ def _coupled_cascade() -> tuple[DecompIdMap, EffectiveCadastro, dict[int, int]]:
     return id_map, effective, {1: 1, 2: 1, 5: 2, 7: 1}
 
 
-def _emit_coupled(tipo_limite: int) -> tuple[dict[str, dict], dict[str, str]]:
+_COUPLED_EZ = {1: 0.5, 2: 1.0}
+
+
+def _emit_coupled(
+    tipo_limite: int, limite: float = 10.0, ez_fractions: dict[int, float] | None = None
+) -> tuple[dict[str, dict], dict[str, str]]:
     id_map, effective, hydro_to_ree = _coupled_cascade()
     records = [
         _he_record(
             constraint_id=200 + ree_code,
             ree_code=ree_code,
             coefficient=1.0,
-            bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+            bounds={0: StageBounds(lower=(limite,), upper=(None,))},
             tipo_limite=tipo_limite,
             valor_penalidade=250.0,
         )
@@ -644,6 +646,7 @@ def _emit_coupled(tipo_limite: int) -> tuple[dict[str, dict], dict[str, str]]:
         census=_census(*records),
         effective=effective,
         hydro_to_ree=hydro_to_ree,
+        ez_fractions=_COUPLED_EZ if ez_fractions is None else ez_fractions,
     )
     assert result is not None
     by_name = {c["name"]: c for c in result.constraints}
@@ -654,15 +657,20 @@ def test_emit_rhe_generics_coupled_own_ree_stops_at_the_cut() -> None:
     by_name, params = _emit_coupled(tipo_limite=1)
 
     assert by_name["RHE_201"]["expression"] == (
-        "@rho_cut_mwh_h0 * hydro_useful_volume_final(0)"
-        " + @rho_cut_mwh_h1 * hydro_useful_volume_final(1)"
+        "@rho_chain_mwh_h0 * hydro_useful_volume_final(0)"
+        " + @rho_eq_mwh_h1 * hydro_useful_volume_final(1)"
         " + @rho_acum_mwh_h3 * hydro_useful_volume_final(3)"
     )
-    assert params["rho_cut_mwh_h0"] == "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"
-    assert params["rho_cut_mwh_h1"] == "@rho_eq_mwh_h1"
+    assert params["rho_chain_mwh_h0"] == "@rho_eq_mwh_h0 + @rho_eq_mwh_h1"
 
 
-def test_emit_rhe_generics_coupled_downstream_ree_counts_the_twins() -> None:
+def test_emit_rhe_generics_reservoir_without_ez_is_not_cut() -> None:
+    by_name, _ = _emit_coupled(tipo_limite=1)
+
+    assert "hydro_useful_volume_final(3)" not in by_name["RHE_202"]["expression"]
+
+
+def test_emit_rhe_generics_coupled_downstream_ree_counts_the_cut_reservoirs() -> None:
     by_name, _ = _emit_coupled(tipo_limite=1)
 
     assert by_name["RHE_202"]["expression"] == (
@@ -672,18 +680,30 @@ def test_emit_rhe_generics_coupled_downstream_ree_counts_the_twins() -> None:
     )
 
 
-def test_emit_rhe_generics_coupled_percentage_uses_the_physical_volume() -> None:
+def test_emit_rhe_generics_coupled_maximum_scales_the_useful_range_by_ez() -> None:
     by_name, params = _emit_coupled(tipo_limite=2)
 
     assert by_name["RHE_202"]["expression"].split(" >= ")[1] == (
-        "@pct_rhe202 * (@earm_max_fict_mwh_h0 + @earm_max_fict_mwh_h1"
-        " + @earm_max_mwh_h2)"
+        "@pct_rhe202 * (@earm_max_ez_mwh_h0 + @earm_max_ez_mwh_h1 + @earm_max_mwh_h2)"
     )
-    # The shares use UP's own 1000 hm³ (not FICT.UP's 500 hm³) and CUT's
-    # 2000 hm³; DOWN, uncoupled, keeps novomodelo's maximum useful stored energy.
-    assert params["earm_max_fict_mwh_h0"] == "1000.0 * @rho_acum_mwh_h2"
-    assert params["earm_max_fict_mwh_h1"] == "2000.0 * @rho_acum_mwh_h2"
-    assert params["earm_max_cut_mwh_h0"] == "1000.0 * @rho_cut_mwh_h0"
+    assert params["earm_max_ez_mwh_h0"] == (
+        "0.5 * (@max_storage_h0 - @min_storage_h0) * @rho_acum_mwh_h2"
+    )
+    assert params["earm_max_ez_mwh_h1"] == (
+        "(@max_storage_h1 - @min_storage_h1) * @rho_acum_mwh_h2"
+    )
+    assert params["earm_max_chain_mwh_h0"] == (
+        "(@max_storage_h0 - @min_storage_h0) * @rho_chain_mwh_h0"
+    )
+
+
+def test_emit_rhe_generics_zero_ez_gives_the_downstream_ree_no_share() -> None:
+    by_name, _ = _emit_coupled(tipo_limite=1, ez_fractions={1: 0.0, 2: 1.0})
+
+    assert "hydro_useful_volume_final(0)" not in by_name["RHE_202"]["expression"]
+    assert by_name["RHE_201"]["expression"].startswith(
+        "@rho_chain_mwh_h0 * hydro_useful_volume_final(0)"
+    )
 
 
 def test_emit_rhe_generics_coupling_is_reported() -> None:
@@ -693,4 +713,74 @@ def test_emit_rhe_generics_coupling_is_reported() -> None:
     [diag] = [d for d in collected if d.code == "decomp-rhe-ree-hydraulic-coupling"]
     assert diag.severity is Severity.INFO
     assert diag.table is not None
-    assert diag.table.rows == [[1, 1, 2, 3, 2, 5], [2, 1, 2, 4, 2, 5]]
+    assert diag.table.rows == [[1, 1, 2, "50", 2, 5], [2, 1, 2, "100", 2, 5]]
+
+
+def test_emit_rhe_generics_ez_cap_below_the_floor_warns() -> None:
+    # UP's capped share stores 0.5 * 1000 hm³ * (1e6 / 3600) MWh/hm³ ≈ 138,889
+    # MWh in REE 2, below a 500 MWmes floor over 730 h (365,000 MWh).
+    with dx.collect() as collected:
+        _emit_coupled(tipo_limite=1, limite=500.0)
+
+    warned = [d for d in collected if d.code == "decomp-rhe-ez-cap-unmodeled"]
+    assert len(warned) == 1
+    assert "HE constraint 202" in warned[0].summary
+
+
+def test_emit_rhe_generics_ez_cap_above_the_floor_is_silent() -> None:
+    # 10% of REE 2's maximum (UP's cap + CUT + DOWN ≈ 972,222 MWh) stays below
+    # UP's capped share (≈ 138,889 MWh), so the cap cannot bind.
+    with dx.collect() as collected:
+        _emit_coupled(tipo_limite=2, limite=10.0)
+
+    assert not [d for d in collected if d.code == "decomp-rhe-ez-cap-unmodeled"]
+
+
+def test_emit_rhe_generics_energy_link_through_a_plant_outside_the_configuration() -> (
+    None
+):
+    # UP's AC JUSENA names AGG, outside the configuration, whose water reaches
+    # DOWN; UP's chain is UP + AGG + DOWN's own cascade.
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 5))
+    effective = EffectiveCadastro(
+        base=_hidr_frame(
+            {
+                1: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=5),
+                9: _hydro_row(
+                    tipo_regulacao="D",
+                    codigo_usina_jusante=5,
+                    produtibilidade_especifica=0.02,
+                ),
+                5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
+            }
+        ),
+        n_stages=1,
+        stage_varying={},
+        energy_links={1: (9,)},
+    )
+    record = _he_record(
+        constraint_id=300,
+        ree_code=1,
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        tipo_limite=2,
+        valor_penalidade=250.0,
+    )
+
+    result = emit_rhe_generics(
+        _case([_stage(0, 730.0)]),
+        id_map,
+        census=_census(record),
+        effective=effective,
+        hydro_to_ree={1: 1, 5: 1},
+        ez_fractions={},
+    )
+
+    assert result is not None
+    assert result.expression_parameters["rho_chain_mwh_h0"] == (
+        "@rho_eq_mwh_h0 + @rho_eq_mwh_plant9 + @rho_acum_mwh_h1"
+    )
+    # AGG's ρ = 0.02 × 100 m head = 2 MW/(m³/s), in MWh/hm³ (× 1e6 / 3600).
+    assert result.per_stage_parameters["rho_eq_mwh_plant9"] == [
+        pytest.approx(2.0 * 1e6 / 3600.0)
+    ]
