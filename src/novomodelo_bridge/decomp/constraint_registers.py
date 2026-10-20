@@ -14,21 +14,23 @@ register, and a coefficient/participation register naming the entities:
 RE spreads its participation over up to three coefficient registers — ``FU``
 (hydro generation), ``FT`` (thermal generation), ``FI`` (interchange between two
 submarkets) — any combination of which may be present; a fourth, ``FE``, is not
-readable via idecomp. Participation (FU/FT/FI, CQ, CV) is declared at a base
-stage and inherited forward across the constraint's
-``[estagio_inicial, estagio_final]`` range; the limit registers (LU/LQ/LV) are
-likewise sparse per stage and inherited forward — the same sparse-stage
-convention the ``CT`` reader uses.
+readable via idecomp. Each participation row (FU/FT/FI, CQ, CV) declares a
+term's coefficient from its stage onward, across the constraint's
+``[estagio_inicial, estagio_final]`` range, so a coefficient may change from
+stage to stage; a term first declared after the constraint's first stage is
+absent before it. The limit registers (LU/LQ/LV) are likewise sparse per stage
+and inherited forward — the same sparse-stage convention the ``CT`` reader
+uses.
 
 Each *term* carries its own variable: an ``HQ`` constraint may mix flow variables
 (e.g. ``QDEF`` on one plant and ``QDES`` on another), so the variable is a
 per-term property, not a per-constraint one. A constraint therefore lowers to an
-entity **bound** only when it is a *single term*, its coefficient is ``±1``, and
-its variable has a novomodelo bounds axis — this covers hydro generation (``FU``),
-thermal generation (``FT``), pumping flow (``QBOM``), and the ``HQ`` flow
-family (``QDEF``/``QTUR``/``QDES``/``QVER``); every other shape (multiple
-terms, a non-unit coefficient, or the ``HE`` energy sum) becomes a **generic
-constraint**.
+entity **bound** only when it is a *single term*, its coefficient is ``±1`` at
+every stage, and its variable has a novomodelo bounds axis — this covers hydro
+generation (``FU``), thermal generation (``FT``), pumping flow (``QBOM``), and
+the ``HQ`` flow family (``QDEF``/``QTUR``/``QDES``/``QVER``); every other shape
+(multiple terms, a non-unit coefficient, or the ``HE`` energy sum) becomes a
+**generic constraint**.
 
 This module only reads, joins, and classifies. The lowering itself lives in the
 bounds emitters and the generic-constraints emitter.
@@ -37,12 +39,13 @@ bounds emitters and the generic-constraints emitter.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.errors import FieldParseError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -92,6 +95,13 @@ class ConstraintTerm:
     interchange pair's submarket mnemonics — an interchange term has no plant
     code, so ``code`` carries the documented sentinel ``0`` for it; resolving
     the pair to a novomodelo ``line_id`` is a later stage's job, not this reader's.
+
+    ``schedule`` is empty when ``coefficient`` holds at every stage of the
+    constraint. Otherwise it lists ascending ``(stage_index, coefficient)``
+    pairs (0-based), each holding until the next; the term is absent
+    (coefficient ``0``) before the first pair, and ``coefficient`` is the
+    first pair's value. Read a stage's coefficient through
+    :meth:`coefficient_at`.
     """
 
     code: int
@@ -101,6 +111,35 @@ class ConstraintTerm:
     submarket: int | None = None
     submarket_de: str | None = None
     submarket_para: str | None = None
+    schedule: tuple[tuple[int, float], ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.schedule:
+            return
+        stages = [stage for stage, _ in self.schedule]
+        if stages != sorted(set(stages)):
+            raise ValueError(f"schedule stages must be strictly ascending: {stages}")
+        if self.coefficient != self.schedule[0][1]:
+            raise ValueError(
+                f"coefficient {self.coefficient} differs from the first "
+                f"scheduled coefficient {self.schedule[0][1]}"
+            )
+
+    def coefficient_at(self, stage: int) -> float:
+        """The coefficient at 0-based *stage*."""
+        if not self.schedule:
+            return self.coefficient
+        value = 0.0
+        for start, coefficient in self.schedule:
+            if start > stage:
+                break
+            value = coefficient
+        return value
+
+
+#: ``{constraint_id: [(term, {stage_index: coefficient})]}`` — every distinct
+#: participation of a constraint with the coefficient each of its rows declares.
+_DeclaredTerms = dict[int, list[tuple[ConstraintTerm, dict[int, float]]]]
 
 
 @dataclass(frozen=True)
@@ -123,8 +162,9 @@ class HeMeta:
     ``forma_calculo_produtibilidades``/``tipo_valores_produtibilidades``/
     ``arquivo_produtibilidades`` describe how the REE cascade's productivity
     feeds the energy sum; ``valor_penalidade``/``tipo_penalidade`` are the
-    constraint's soft-penalty. This reader only captures them raw — E5
-    interprets them (percentage-vs-absolute RHS, energy factor, penalty).
+    constraint's soft-penalty. This reader only captures them raw; the RHE
+    emitter interprets them (percentage-vs-absolute RHS, energy factor,
+    penalty).
     """
 
     forma_calculo_produtibilidades: int | None = None
@@ -182,20 +222,21 @@ class ConstraintRecord:
 
 def lowers_to_bound(record: ConstraintRecord) -> bool:
     """A constraint lowers to an entity bound iff it is a single ``(entity,
-    variable)`` term, its coefficient is ``±1``, and the variable has a novomodelo
-    bounds axis; otherwise it is a generic constraint.
+    variable)`` term, its coefficient is ``±1`` at every stage, and the
+    variable has a novomodelo bounds axis; otherwise it is a generic constraint.
 
     A non-unit coefficient (e.g. ``0.5·QDEF``) is not a face-value bound — it
     must reach the generic emitter, which honours the coefficient. The ``HE``
     energy sum has no bound column, so it always stays generic. Pumping
-    (``QBOM``, M2), diversion (``QDES``, M3), and spillage (``QVER``, M5)
-    each have one and lower to their respective entity axis as a single unit
-    term.
+    (``QBOM``), diversion (``QDES``), and spillage (``QVER``) each have one
+    and lower to their respective entity axis as a single unit term.
     """
-    return (
-        record.is_single_term
-        and abs(record.terms[0].coefficient) == 1.0
-        and record.terms[0].variable in _BOUNDS_AXIS
+    if not record.is_single_term:
+        return False
+    term = record.terms[0]
+    return term.variable in _BOUNDS_AXIS and all(
+        abs(term.coefficient_at(stage)) == 1.0
+        for stage in range(record.stage_start, record.stage_end + 1)
     )
 
 
@@ -213,10 +254,10 @@ class _FamilyConfig:
     fixed_variable: str | None
     has_frequency: bool  # RE carries a 50/60 Hz tag on FU
     #: Override for reading participation terms, given ``dadger`` and returning
-    #: ``{constraint_id: [terms]}``. ``None`` uses the generic single-register
+    #: its declared terms. ``None`` uses the generic single-register
     #: path (:func:`_read_terms` against ``coeff_attr``); RE sets this to
     #: :func:`_read_re_terms` to merge its three coefficient registers.
-    term_reader: Callable[[Dadger], dict[int, list[ConstraintTerm]]] | None = None
+    term_reader: Callable[[Dadger], _DeclaredTerms] | None = None
 
 
 def _df(dadger: Dadger, attr: str) -> pd.DataFrame | None:
@@ -287,22 +328,37 @@ def _forward_fill_bounds(
     return dense
 
 
-def _read_terms(
-    coeff: pd.DataFrame,
-    config: _FamilyConfig,
-) -> dict[int, list[ConstraintTerm]]:
-    """Group a coefficient register into ``{constraint_id: [terms]}``.
+class _TermCollector:
+    """Group participation rows into one term per ``(constraint, identity)``.
 
-    Each ``(entity, variable, frequency)`` identity contributes one term; a
-    repeated identity (declared at several stages) collapses to its first
-    coefficient — the source coefficients are pure ``±1``/``1`` signs, constant
-    across stages.
+    The identity is every term field except the coefficient, so a term
+    declared at several stages is one term with several declarations. A
+    repeated row at the same stage keeps its first coefficient.
     """
-    terms: dict[int, list[ConstraintTerm]] = {}
-    seen: dict[int, set[tuple[int, str, float | None]]] = {}
+
+    def __init__(self) -> None:
+        self._terms: dict[
+            int, dict[ConstraintTerm, tuple[ConstraintTerm, dict[int, float]]]
+        ] = {}
+
+    def add(self, cid: int, stage: int, term: ConstraintTerm) -> None:
+        identity = replace(term, coefficient=0.0)
+        _, declared = self._terms.setdefault(cid, {}).setdefault(identity, (term, {}))
+        declared.setdefault(stage, term.coefficient)
+
+    def result(self) -> _DeclaredTerms:
+        return {cid: list(terms.values()) for cid, terms in self._terms.items()}
+
+
+def _row_stage(row: pd.Series) -> int:
+    """A coefficient row's 0-based stage (the register's ``estagio`` is 1-based)."""
+    return int(row["estagio"]) - 1
+
+
+def _read_terms(coeff: pd.DataFrame, config: _FamilyConfig) -> _DeclaredTerms:
+    """Group a coefficient register into its declared terms per constraint."""
+    collector = _TermCollector()
     for _, row in coeff.iterrows():
-        cid = int(row["codigo_restricao"])
-        code = int(row["codigo_usina"])
         variable = (
             config.fixed_variable
             if config.fixed_variable is not None
@@ -313,51 +369,29 @@ def _read_terms(
             if config.has_frequency and "frequencia" in row.index
             else None
         )
-        identity = (code, variable, frequency)
-        if identity in seen.setdefault(cid, set()):
-            continue
-        seen[cid].add(identity)
-        terms.setdefault(cid, []).append(
+        collector.add(
+            int(row["codigo_restricao"]),
+            _row_stage(row),
             ConstraintTerm(
-                code=code,
+                code=int(row["codigo_usina"]),
                 coefficient=float(row["coeficiente"]),
                 variable=variable,
                 frequency=frequency,
-            )
+            ),
         )
-    return terms
+    return collector.result()
 
 
-def _read_re_terms(dadger: Dadger) -> dict[int, list[ConstraintTerm]]:
-    """Group RE's three participation registers into ``{constraint_id: [terms]}``.
+def _read_re_terms(dadger: Dadger) -> _DeclaredTerms:
+    """Group RE's three participation registers into its declared terms.
 
     Unlike HQ/HV, an RE's participation is not confined to one coefficient
     register: it may carry ``FU`` (hydro generation), ``FT`` (thermal
     generation), ``FI`` (submarket interchange), or any combination of the
     three, so all three are read and merged by ``codigo_restricao``. A
-    missing/empty register contributes no terms; an RE named in at least one of
-    the three has terms. Each ``(entity, variable, frequency, submarket,
-    submarket_de, submarket_para)`` identity contributes one term — the same
-    dedup-by-identity rule :func:`_read_terms` applies to a single register.
+    missing/empty register contributes no terms.
     """
-    terms: dict[int, list[ConstraintTerm]] = {}
-    seen: dict[
-        int, set[tuple[int, str, float | None, int | None, str | None, str | None]]
-    ] = {}
-
-    def _add(cid: int, term: ConstraintTerm) -> None:
-        identity = (
-            term.code,
-            term.variable,
-            term.frequency,
-            term.submarket,
-            term.submarket_de,
-            term.submarket_para,
-        )
-        if identity in seen.setdefault(cid, set()):
-            return
-        seen[cid].add(identity)
-        terms.setdefault(cid, []).append(term)
+    collector = _TermCollector()
 
     fu = _df(dadger, "fu")
     if fu is not None:
@@ -365,8 +399,9 @@ def _read_re_terms(dadger: Dadger) -> dict[int, list[ConstraintTerm]]:
             frequency = (
                 _opt_float(row["frequencia"]) if "frequencia" in row.index else None
             )
-            _add(
+            collector.add(
                 int(row["codigo_restricao"]),
+                _row_stage(row),
                 ConstraintTerm(
                     code=int(row["codigo_usina"]),
                     coefficient=float(row["coeficiente"]),
@@ -378,8 +413,9 @@ def _read_re_terms(dadger: Dadger) -> dict[int, list[ConstraintTerm]]:
     ft = _df(dadger, "ft")
     if ft is not None:
         for _, row in ft.iterrows():
-            _add(
+            collector.add(
                 int(row["codigo_restricao"]),
+                _row_stage(row),
                 ConstraintTerm(
                     code=int(row["codigo_usina"]),
                     coefficient=float(row["coeficiente"]),
@@ -391,8 +427,9 @@ def _read_re_terms(dadger: Dadger) -> dict[int, list[ConstraintTerm]]:
     fi = _df(dadger, "fi")
     if fi is not None:
         for _, row in fi.iterrows():
-            _add(
+            collector.add(
                 int(row["codigo_restricao"]),
+                _row_stage(row),
                 ConstraintTerm(
                     code=0,  # interchange has no plant code — documented sentinel
                     coefficient=float(row["coeficiente"]),
@@ -402,7 +439,38 @@ def _read_re_terms(dadger: Dadger) -> dict[int, list[ConstraintTerm]]:
                 ),
             )
 
-    return terms
+    return collector.result()
+
+
+def _scheduled_term(
+    term: ConstraintTerm,
+    declared: Mapping[int, float],
+    stage_start: int,
+    stage_end: int,
+) -> ConstraintTerm | None:
+    """*term* with its coefficient schedule over ``[stage_start, stage_end]``.
+
+    A declaration holds until the next one. A term first declared after
+    ``stage_start`` is absent before that stage, as the source model reads
+    it; a declaration before ``stage_start`` holds from ``stage_start``.
+    Returns ``None`` for a term declared only after ``stage_end``.
+    """
+    schedule: list[tuple[int, float]] = []
+    for declared_stage in sorted(declared):
+        stage = max(declared_stage, stage_start)
+        if stage > stage_end:
+            break
+        coefficient = declared[declared_stage]
+        if schedule and schedule[-1][0] == stage:
+            schedule[-1] = (stage, coefficient)
+        elif not schedule or schedule[-1][1] != coefficient:
+            schedule.append((stage, coefficient))
+    if not schedule:
+        return None
+    first_stage, first_coefficient = schedule[0]
+    if len(schedule) == 1 and first_stage == stage_start:
+        return replace(term, coefficient=first_coefficient, schedule=())
+    return replace(term, coefficient=first_coefficient, schedule=tuple(schedule))
 
 
 _TRIPLE_FAMILIES: tuple[_FamilyConfig, ...] = (
@@ -418,7 +486,14 @@ def _read_triple_family(
     dadger: Dadger,
     config: _FamilyConfig,
 ) -> list[ConstraintRecord]:
-    """Join one RE/HQ/HV register triple into classified constraint records."""
+    """Join one RE/HQ/HV register triple into classified constraint records.
+
+    Raises
+    ------
+    FieldParseError
+        A constraint has no term at its first stage, a deck the source model
+        rejects.
+    """
     decl = _df(dadger, config.decl_attr)
     if decl is None:
         return []
@@ -444,12 +519,24 @@ def _read_triple_family(
     skipped_no_terms = 0
     for _, row in decl.iterrows():
         cid = int(row["codigo_restricao"])
-        terms = terms_by_cid.get(cid)
+        stage_start = int(row["estagio_inicial"]) - 1
+        stage_end = int(row["estagio_final"]) - 1
+        terms = [
+            scheduled
+            for term, declared in terms_by_cid.get(cid, [])
+            if (scheduled := _scheduled_term(term, declared, stage_start, stage_end))
+            is not None
+        ]
         if not terms:
             skipped_no_terms += 1
             continue
-        stage_start = int(row["estagio_inicial"]) - 1
-        stage_end = int(row["estagio_final"]) - 1
+        if all(term.schedule and term.schedule[0][0] > stage_start for term in terms):
+            raise FieldParseError(
+                f"{config.family} constraint {cid} has no coefficient at its "
+                f"first stage ({stage_start + 1}); the source model rejects "
+                "such a deck.",
+                field=f"{config.family} constraint {cid}",
+            )
         bounds = _forward_fill_bounds(
             limits_by_cid.get(cid, {}), stage_start, stage_end
         )
@@ -482,7 +569,8 @@ def _read_energy_constraints(dadger: Dadger) -> list[ConstraintRecord]:
     side selector) — plus the five productivity/penalty columns captured onto
     :class:`HeMeta`; ``CM`` carries the per-REE productivity coefficients. Every
     HE is a generic constraint — the ``energy`` variable expands to
-    ``Σ ρ_acum · storage`` over the REE's plants downstream (E5, RHE energy).
+    ``Σ ρ_acum · storage`` over the REE's plants downstream (RHE energy).
+    ``CM`` has no stage column, so every HE term has a constant coefficient.
     """
     he = _df(dadger, "he")
     cm = _df(dadger, "cm")
@@ -611,11 +699,6 @@ _MNEMONIC_FE = "FE"
 #: The whole ``RHA`` family (``HA``/``LA``/``CA``) has no idecomp accessor.
 _RHA_MNEMONICS = frozenset({"HA", "LA", "CA"})
 
-#: The ``indices.csv`` entry a LIBs-era deck uses to point at its richer
-#: electrical-constraint file (``lib_restricao-eletrica-especial.csv``), E9
-#: (blocked).
-_LIBS_ELECTRICAL_TOKEN = "RESTRICAO-ELETRICA-ESPECIAL"
-
 
 def detect_unreadable_electrical(dadger_path: Path) -> list[Diagnostic]:
     """Detect ``FE``/``RHA`` register lines the reader cannot ingest and warn
@@ -631,7 +714,7 @@ def detect_unreadable_electrical(dadger_path: Path) -> list[Diagnostic]:
     most two ``WARNING`` diagnostics: one for ``FE`` presence, one for ``RHA``
     presence. It does not parse a constraint id out of either family and does
     not drop any ``RE`` record — the per-id ``FE`` skip this would require is
-    deferred (E8).
+    not implemented.
 
     Parameters
     ----------
@@ -694,45 +777,21 @@ def detect_unreadable_electrical(dadger_path: Path) -> list[Diagnostic]:
     return diagnostics
 
 
-def detect_libs_electrical(deck_dir: Path) -> Diagnostic | None:
+def detect_libs_electrical(libs_file: Path | None) -> Diagnostic | None:
     """Warn when a LIBs-era deck moves its electrical constraints out of
     ``dadger``.
 
-    A deck using the LIBs electrical-constraint family declares it in
-    ``indices.csv`` under a ``RESTRICAO-ELETRICA-ESPECIAL`` entry; that
-    richer format is unconverted only for its short-form ``RE``/``RE-*`` and
-    date-indexed ``-HORIZONTE-DATA``/``-FORMULA-DATA-PATAMAR`` variants (the
-    period-keyed long-form cards ARE converted — see
-    :mod:`novomodelo_bridge.decomp.converters.libs_electrical`). This reads
-    ``indices.csv`` (when present) and reports the entry's presence; it does
-    not parse or convert the LIBs file itself, and does not know whether the
-    long-form subset converted — the caller (:func:`~novomodelo_bridge.decomp.
-    pipeline.convert_decomp_case`) is the one that reads
-    :func:`~novomodelo_bridge.decomp.converters.libs_electrical.read_libs_electrical` and
-    decides whether this diagnostic's return value is still worth emitting:
-    it suppresses it once the long-form subset converts (the census INFO
-    diagnostic, ``decomp-libs-electrical-converted``, is authoritative
-    then), and still emits it for a short-form-only entry. This function
-    itself is unchanged either way — always returning the same diagnostic
-    for the same *deck_dir*.
+    *libs_file* is the deck's ``RESTRICAO-ELETRICA-ESPECIAL`` file
+    (``DecompFiles.libs_restricao_eletrica``). Only that format's long-form
+    period-keyed cards are converted (:mod:`novomodelo_bridge.decomp.converters.
+    libs_electrical`), so the caller suppresses this warning once that subset
+    converts and the ``decomp-libs-electrical-converted`` census is
+    authoritative.
 
-    Parameters
-    ----------
-    deck_dir:
-        The deck's source directory (holding ``indices.csv`` alongside
-        ``caso.dat``).
-
-    Returns
-    -------
-    A ``WARNING`` diagnostic when ``indices.csv`` lists a
-    ``RESTRICAO-ELETRICA-ESPECIAL`` entry (case-insensitive), else ``None`` —
-    including when ``indices.csv`` itself is absent.
+    Returns:
+        A ``WARNING`` when the deck declares the file, else ``None``.
     """
-    indices_path = deck_dir / "indices.csv"
-    if not indices_path.is_file():
-        return None
-    text = indices_path.read_text(encoding="latin-1")
-    if not any(_LIBS_ELECTRICAL_TOKEN in line.upper() for line in text.splitlines()):
+    if libs_file is None:
         return None
     return Diagnostic(
         code="decomp-libs-electrical-present",
@@ -740,7 +799,7 @@ def detect_libs_electrical(deck_dir: Path) -> Diagnostic | None:
         category=_CATEGORY,
         title="LIBs electrical constraints present",
         summary=(
-            "The deck's indices.csv lists a RESTRICAO-ELETRICA-ESPECIAL "
+            "The deck's LIBS index lists a RESTRICAO-ELETRICA-ESPECIAL "
             "entry (the LIBs-era electrical-constraint family); this richer "
             "format is not converted, so the electrical model on this deck "
             "is not authoritative."
@@ -750,43 +809,3 @@ def detect_libs_electrical(deck_dir: Path) -> Diagnostic | None:
             "needed to convert."
         ),
     )
-
-
-def resolve_libs_electrical_path(deck_dir: Path) -> Path | None:
-    """Resolve the deck's LIBs electrical-constraint file path.
-
-    Reads *deck_dir*'s ``indices.csv`` for the ``RESTRICAO-ELETRICA-ESPECIAL``
-    entry's own ``Caminho`` (the third ``;``-delimited field), matched by its
-    first field **exactly** — never the ``-ATIVACAO``/``-VIOLACAO`` sibling
-    entries :func:`detect_libs_electrical`'s substring scan also matches —
-    and resolved relative to *deck_dir*. Falls back to a
-    ``lib_restricao-eletrica-especial*.csv`` glob in *deck_dir* when
-    ``indices.csv`` is absent, carries no such entry, or the entry's own path
-    does not resolve to an existing file — mirroring
-    :func:`~novomodelo_bridge.decomp.files.discover_decomp_files`'s own
-    ``find`` fallback idiom for the deck's other optional files.
-
-    Parameters
-    ----------
-    deck_dir:
-        The deck's source directory (holding ``indices.csv`` alongside
-        ``caso.dat``).
-
-    Returns
-    -------
-    The resolved file path, or ``None`` when neither resolves.
-    """
-    indices_path = deck_dir / "indices.csv"
-    if indices_path.is_file():
-        for line in indices_path.read_text(encoding="latin-1").splitlines():
-            fields = line.split(";")
-            if len(fields) < 3 or fields[0].strip().upper() != _LIBS_ELECTRICAL_TOKEN:
-                continue
-            filename = fields[2].strip()
-            if not filename:
-                continue
-            candidate = deck_dir / filename
-            if candidate.is_file():
-                return candidate
-    matches = sorted(deck_dir.glob("lib_restricao-eletrica-especial*.csv"))
-    return matches[0] if matches else None

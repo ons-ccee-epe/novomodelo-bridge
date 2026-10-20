@@ -686,13 +686,13 @@ def _corridor_line_alignment(
 
     Keyed by novomodelo bus-id pair ``(bus_de, bus_para)`` -- built over every
     ordered pair of *declared* subsystem buses (the transhipment bus is
-    never a corridor endpoint in its own right, D-UNITS) -- to the ordered
+    never a corridor endpoint in its own right) -- to the ordered
     list of novomodelo ``(line_id, sign)`` legs realizing it:
 
     - a single leg when a direct novomodelo line connects the pair, in either
-      direction (requirement 3's "direct" branch);
+      direction;
     - else the two-leg ``bus_de -> transhipment_bus_id -> bus_para`` path,
-      when both legs exist (requirement 3's transhipment branch);
+      when both legs exist;
     - else the pair is simply absent from the returned mapping.
 
     :func:`_corridor_line_alignment` itself never raises and never reports:
@@ -1075,7 +1075,7 @@ def _energy_balance_frames(
     such translation since it sums across every submarket rather than
     keying per-bus.
 
-    D-STAGE-OFFSET: ``stage`` stays the raw 1-based ``estagio`` (unlike
+    ``stage`` stays the raw 1-based ``estagio`` (unlike
     :func:`_map_entities`, this does *not* rebase to Novomodelo's 0-based
     ``stage_id``), so the consuming charts' own stage-alignment (``nw_offset
     = 1``, set on ``PercentileData`` by ``build_decomp_dataset``) lines up.
@@ -1155,10 +1155,10 @@ def _energy_balance_frames(
         nw_net_load = _empty_market_frame()
 
     # nw_sin: EARMF / ENA summed across every submarket the deck declares. The
-    # transhipment bus never appears among ``codigo_submercado`` values
-    # (D-UNITS) — referenced only by name in ``IA`` records — so the sum
-    # already excludes it, no filter needed (``TestBusSideExcludesTranshipment``
-    # pins this down). ``newave_code`` is the SIN placeholder ``0``, matching
+    # transhipment bus never appears among ``codigo_submercado`` values —
+    # referenced only by name in ``IA`` records — so the sum already excludes
+    # it, no filter needed (``TestBusSideExcludesTranshipment`` pins this down).
+    # ``newave_code`` is the SIN placeholder ``0``, matching
     # ``read_medias_sin``'s newave-side convention.
     system_energy = {"earm_final_MWmes", "ena_MWmes"}
     if system_energy <= present:
@@ -1496,7 +1496,7 @@ def _map_entities(
     """Translate source codes to Novomodelo ids; report the codes with no mapping.
 
     Keeps the original code alongside the mapped ``entity_id`` (renamed to
-    the generic ``newave_code`` — D-SOURCE-TOKEN: the field name means "the
+    the generic ``newave_code`` — the field name means "the
     reference model's code", not NEWAVE-specific) so callers that need the
     reference code back (:func:`_result_comparisons`) don't have to invert
     ``mapping`` themselves.
@@ -2261,20 +2261,11 @@ def _evaporation_result_comparisons(
     Novomodelo id) as the second element instead of being silently dropped, with
     a WARNING diagnostic recording the count.
 
-    TRACKED NOVOMODELO-GAP WORKAROUND (C11): Novomodelo's own evaporation model
-    over-scales the volume it deposits on a sub-monthly stage -- it applies
-    (pre-fix) a full calendar month's worth of evaporation regardless of the
-    stage's actual duration (see
-    `decomp.converters.hydro.entity._evaporation_coefficients_mm`'s
-    docstring; its removal condition is
-    registered in the novomodelo repository's conversion-found-improvements
-    registry). The reconciliation below ONLY rescales the source model's own
-    hm³ volume into
-    a directly comparable m³/s flow via :func:`_hm3_to_m3s`; Novomodelo's
-    ``evaporation_m3s`` value is compared UNCHANGED. Any residual divergence
-    this surfaces on a sub-monthly stage is that known Novomodelo gap (C11), not a
-    conversion error -- it must not be "corrected away" by rescaling Novomodelo's
-    side to match.
+    The reconciliation below ONLY rescales the source model's own hm³ volume
+    into a directly comparable m³/s flow via :func:`_hm3_to_m3s`; Novomodelo's
+    ``evaporation_m3s`` value is compared UNCHANGED, so a divergence on a
+    sub-monthly stage is reported, never "corrected away" by rescaling
+    Novomodelo's side to match.
 
     Returns ``([], [])`` when *id_map* is ``None`` (deck unreadable). A
     missing/empty `dec_oper_evap` table, an absent ``evaporation_m3s`` column
@@ -2466,7 +2457,7 @@ def _stage_frame_to_lookup(
     *frame* is already collapsed to one row per (code, stage) by
     `_scenario_mean`; this only reshapes it into a lookup and converts the
     source model's 1-based ``estagio`` to the 0-based ``stage_id`` every
-    other ``gc_*`` frame uses (D-STAGE-OFFSET, offset=1).
+    other ``gc_*`` frame uses (offset=1).
     """
     if (
         frame.is_empty()
@@ -2497,9 +2488,9 @@ def _storage_lookup(
     the same floor `_novomodelo_hydro` subtracts in the other direction for the
     Hydro Operation tab's own storage row -- rather than rebuilding
     ``EffectiveCadastro`` from the deck a second time. A single static value
-    per plant, not per-stage: the same simplification
-    `constraints_compare._load_hydro_min_storage` already accepts on the
-    source-model side.
+    per plant, not per-stage: the same simplification the shared generic
+    constraint view (`novomodelo.constraint_expr.resolve_generic_constraints`)
+    accepts for its useful-volume terms.
     """
     useful = _stage_frame_to_lookup(hydro_frame, "volume_util_final_hm3")
     out: dict[tuple[int, int], float] = {}
@@ -2564,9 +2555,9 @@ def _rhe_lhs_lookup(
 
     RHE constraints report their achieved LHS directly in
     ``DecOperRheSoft``: ``valor_MW`` is the achieved Σρ_acum·storage in the
-    operation -- the same raw physical quantity novomodelo's own (slack-free)
-    expression evaluation produces, so the two overlaid series compare on
-    the same basis. Read it directly rather than re-deriving the
+    operation, as a stage-average MW -- the stored energy novomodelo's own
+    (slack-free) expression evaluation produces in MWh, once the caller
+    multiplies it by the stage's hours. Read it directly rather than re-deriving the
     ρ_acum-weighted cascade sum ``decomp.converters.constraints.emit_rhe_generics``
     computes at conversion time, which would duplicate a large, easily
     drifting piece of machinery.
@@ -2645,7 +2636,9 @@ def _generic_constraint_lhs_decomp(
       ``dec_oper_usih``'s *useful* stage-final volume, floor-adjusted to
       novomodelo's absolute basis (see `_storage_lookup`).
     - **RHE** (soft stored-energy): read directly from ``DecOperRheSoft``
-      (see `_rhe_lhs_lookup`) -- no register/census lookup needed.
+      (see `_rhe_lhs_lookup`) -- no register/census lookup needed -- and
+      converted from stage-average MW to MWh with the stage's hours, the unit
+      of novomodelo's RHE row.
 
     Deferred (novomodelo-only render, logged, never fabricated): RE
     ``interchange`` (FI) and HQ ``QBOM`` (pumping) terms -- see
@@ -2692,6 +2685,7 @@ def _generic_constraint_lhs_decomp(
     rhe_lhs = _rhe_lhs_lookup(
         _dec_oper_rhesoft_frame(decomp_dir), probabilities=probabilities
     )
+    stage_hours = novomodelo_readers.read_novomodelo_stage_hours(novomodelo_output_dir)
 
     rows: list[dict[str, object]] = []
     n_skipped = 0
@@ -2722,8 +2716,13 @@ def _generic_constraint_lhs_decomp(
                 n_skipped += 1
                 continue
             rows.extend(
-                {"constraint_id": novomodelo_cid, "stage_id": stage, "lhs_value": value}
+                {
+                    "constraint_id": novomodelo_cid,
+                    "stage_id": stage,
+                    "lhs_value": value * stage_hours[stage],
+                }
                 for stage, value in stage_values.items()
+                if stage in stage_hours
             )
             continue
 
@@ -2766,7 +2765,7 @@ def _generic_constraint_lhs_decomp(
                 if value is None:
                     complete = False
                     break
-                lhs += term.coefficient * value
+                lhs += term.coefficient_at(stage) * value
             if complete:
                 rows.append(
                     {
@@ -2810,7 +2809,7 @@ def build_decomp_dataset(
     shape and assembles it through the shared, source-agnostic
     :func:`~novomodelo_bridge.comparators.analyze.build_results_dataset` kernel.
 
-    Per D-PERCENTILEDATA, the returned dataset's ``PercentileData`` carries:
+    The returned dataset's ``PercentileData`` carries:
 
     - Entity-name dicts (``nw_bus_names``/``nw_hydro_names``) and the
       novomodelo-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, read
@@ -2847,12 +2846,12 @@ def build_decomp_dataset(
     three have no dedicated ``PercentileData`` field and flow through
     ``results``/``dataset.metadata["unmapped"]``.
 
-    Unit reconciliations (D2): REE EARM MWh -> MWmês via
+    Unit reconciliations: REE EARM MWh -> MWmês via
     :data:`_EARM_MWH_TO_MWMES`, REE ENA (a stage-mean MW) -> MWmês via the
     stage's own hours, and evaporation hm³ -> m³/s via the stage's actual
-    hours -- the last surfaces a TRACKED NOVOMODELO-GAP WORKAROUND (C11) rather
-    than correcting it away (see `_evaporation_result_comparisons`).
-    ``nw_offset=1`` (D-STAGE-OFFSET): DECOMP's ``estagio`` is 1-based from the
+    hours, comparing Novomodelo's value unchanged (see
+    `_evaporation_result_comparisons`).
+    ``nw_offset=1``: DECOMP's ``estagio`` is 1-based from the
     deck's first stage, so the offset is fixed at 1, not derived from the data.
 
     Nothing is fabricated to fill a gap: ``bus``/``hydro``/``thermal``/
@@ -2986,7 +2985,7 @@ def build_decomp_dataset(
 
     # --- evaporation comparison (hydro, "evaporation_m3s"). See
     # ``_evaporation_result_comparisons``'s docstring for the hm³ -> m³/s
-    # reconciliation and the TRACKED NOVOMODELO-GAP WORKAROUND (C11) it surfaces.
+    # reconciliation.
     evaporation_results, unmapped_evaporation = _evaporation_result_comparisons(
         decomp_dir,
         novomodelo_output_dir,
@@ -3004,24 +3003,17 @@ def build_decomp_dataset(
     # docstring for the per-family derivation.
     from novomodelo_bridge.comparators.constraints import (
         evaluate_lhs_novomodelo,
-        load_generic_constraint_bounds,
-        load_generic_constraints,
+        load_resolved_generic_constraints,
     )
-    from novomodelo_bridge.novomodelo.constraint_expr import load_rho_acum_overrides
 
     novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
-    gc_constraints = load_generic_constraints(novomodelo_case_dir)
-    gc_bounds_df = load_generic_constraint_bounds(novomodelo_case_dir)
+    gc_resolved = load_resolved_generic_constraints(
+        novomodelo_case_dir, novomodelo_output_dir
+    )
+    gc_constraints = gc_resolved.constraints
+    gc_bounds_df = gc_resolved.bounds
     if gc_constraints:
-        # RHE's ``@rho_acum_h{id}`` resolves against the LP's per-stage
-        # override (same mechanism as VminOP), not the simulation's default
-        # productivity column -- unlike the source-model VminOP path, RHE's
-        # bound is never useful-energy-shifted (dead volume can exceed the
-        # bound here), so only the LHS scaling is corrected.
-        rho_acum_overrides = load_rho_acum_overrides(novomodelo_case_dir)
-        gc_lhs_cb = evaluate_lhs_novomodelo(
-            gc_constraints, novomodelo_output_dir, rho_acum_overrides
-        )
+        gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
         gc_lhs_nw = _generic_constraint_lhs_decomp(
             case, novomodelo_output_dir, gc_constraints, probabilities=probabilities
         )
@@ -3036,7 +3028,7 @@ def build_decomp_dataset(
         nw_market=aligned.nw_market,
         nw_net_load=aligned.nw_net_load,
         nw_sin=nw_sin,
-        # D-STAGE-OFFSET: fixed at 1, not derived — see the docstring above.
+        # Fixed at 1, not derived — see the docstring above.
         nw_offset=1,
         # Overview tab's Convergence overlay.
         nw_convergence=_decomp_convergence_frame(decomp_dir),
@@ -3104,7 +3096,7 @@ def build_decomp_dataset(
         fpha_metrics=fpha_metrics,
         # Constraints tab LHS-vs-bound metadata. ``nw_max_stage``
         # is unchanged (already set above by `_decomp_max_stage`) and
-        # doubles as this section's stage clamp (D-STAGE-OFFSET).
+        # doubles as this section's stage clamp.
         gc_constraints=gc_constraints,
         gc_bounds=gc_bounds_df,
         gc_lhs_newave=gc_lhs_nw,

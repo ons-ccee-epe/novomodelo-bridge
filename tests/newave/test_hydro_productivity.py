@@ -11,7 +11,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import make_case, make_nw_files
+from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
     _make_cfuga_rec,
     _make_confhd_df,
@@ -50,14 +50,11 @@ def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
 
 
 class TestPerStageProductivitiesSazonalCfugaCmont:
-    """Verify that CFUGA/CMONT step-function carries vs. seasonal cycling.
+    """CFUGA/CMONT records are a step function over the study period.
 
-    The source model's Dger ``sazonaliza_cfuga_cmont`` flag changes how CFUGA/CMONT
-    overrides are extended beyond their last explicit
-    entry: when ``0`` the last applied value carries forward
-    indefinitely (pure step function); when ``1`` each calendar
-    month picks up the value from the latest year that defined it
-    and that seasonal pattern repeats month-by-month thereafter.
+    The source model's Dger ``sazonaliza_cfuga_cmont`` flag governs only the
+    static post-study period: when ``1`` it repeats the last study year's
+    levels month by month, when ``0`` it holds the last study stage's level.
     """
 
     def _hreg(self) -> pd.Series:
@@ -120,7 +117,7 @@ class TestPerStageProductivitiesSazonalCfugaCmont:
         assert vals[1] == pytest.approx(640.0)
         assert vals[12] == pytest.approx(640.0)
 
-    def test_seasonal_cycle_after_last_event_when_sazonaliza_one(
+    def test_study_period_holds_the_last_record_when_sazonaliza_one(
         self, tmp_path
     ) -> None:
         from novomodelo_bridge.newave.converters.hydro import _per_stage_productivities
@@ -134,42 +131,54 @@ class TestPerStageProductivitiesSazonalCfugaCmont:
             base_productivity=0.0,
             drop_overrides=overrides,
             case=self._dger_case(tmp_path, sazonaliza=1),
-            total_stages=24,
+            total_stages=28,
         )
 
-        # See test_step_function_carries_when_sazonaliza_zero for the
-        # head computation: prod = 650 - cfuga at every stage.
-        # Stage 0 = Sep 2024 = explicit 5.0 → 645.
-        # Stage 1 = Oct 2024 = explicit 10.0 → 640.
-        # Stage 12 = Sep 2025 → AFTER last_event_stage (1, Oct 2024) →
-        # seasonal cfuga[9] = 5.0 → 645.
-        # Stage 13 = Oct 2025 → seasonal cfuga[10] = 10.0 → 640.
+        # prod = 650 - cfuga (see test_step_function_carries_when_sazonaliza_zero).
+        # Stage 12 = Sep 2025 is in the study, so the Oct 2024 level holds.
         assert vals[0] == pytest.approx(645.0)
         assert vals[1] == pytest.approx(640.0)
-        assert vals[12] == pytest.approx(645.0)
-        assert vals[13] == pytest.approx(640.0)
+        assert vals[12] == pytest.approx(640.0)
+        assert vals[24] == pytest.approx(640.0)
 
-    def test_seasonal_picks_latest_year_value_per_month(self, tmp_path) -> None:
-        """When the same calendar month appears in multiple years, the
-        latest year's value becomes the seasonal value."""
+    def test_post_study_repeats_the_last_study_year_not_earlier_months(
+        self, tmp_path
+    ) -> None:
+        """Months declared only in an early year never return.
+
+        The record pattern of Tucurui (275) in a real deck: Sep-Nov of the
+        first year, then Jan-Jul of each later year. The source model's
+        post-study pattern holds the last study year's levels, so Sep and Oct
+        stay at Jul's 5.45 m in that year and after it.
+        """
         from novomodelo_bridge.newave.converters.hydro import _per_stage_productivities
 
+        first_year = [(2024, 9, 5.0), (2024, 10, 4.9), (2024, 11, 5.45)]
+        yearly = [7.34, 9.15, 10.86, 11.49, 9.99, 6.87, 5.45]
+        later_years = [
+            (year, month, value)
+            for year in (2025, 2026)
+            for month, value in enumerate(yearly, start=1)
+        ]
         overrides = [
-            {"type": "CFUGA", "year": 2024, "month": 9, "value": 5.0},
-            {"type": "CFUGA", "year": 2025, "month": 9, "value": 7.0},  # newer
-            {"type": "CFUGA", "year": 2025, "month": 10, "value": 10.0},
+            {"type": "CFUGA", "year": year, "month": month, "value": value}
+            for year, month, value in first_year + later_years
         ]
         vals = _per_stage_productivities(
             self._hreg(),
             base_productivity=0.0,
             drop_overrides=overrides,
             case=self._dger_case(tmp_path, sazonaliza=1),
-            total_stages=36,
+            total_stages=28 + 12,
         )
 
-        # Stage 24 = Sep 2026 → AFTER last_event_stage → seasonal cfuga[9]
-        # = 7.0 (Sep 2025 won over Sep 2024) → prod = 650 - 7 = 643.
-        assert vals[24] == pytest.approx(643.0)
+        # Study = Sep 2024..Dec 2026 (stages 0-27); post-study from stage 28.
+        assert vals[24] == pytest.approx(650.0 - 5.45)  # Sep 2026
+        assert vals[25] == pytest.approx(650.0 - 5.45)  # Oct 2026
+        assert vals[28] == pytest.approx(650.0 - 7.34)  # Jan, post-study
+        assert vals[34] == pytest.approx(650.0 - 5.45)  # Jul, post-study
+        assert vals[36] == pytest.approx(650.0 - 5.45)  # Sep, post-study
+        assert vals[37] == pytest.approx(650.0 - 5.45)  # Oct, post-study
 
     def test_no_overrides_returns_base(self, tmp_path) -> None:
         """Without any CFUGA/CMONT overrides the base value is returned
@@ -186,12 +195,10 @@ class TestPerStageProductivitiesSazonalCfugaCmont:
         assert vals == [42.0] * 12
 
     def test_post_study_continues_seasonal_cycle(self, tmp_path) -> None:
-        """Post-study continues the seasonal CFUGA/CMONT cycle (no freeze).
+        """With ``sazonaliza_cfuga_cmont == 1`` post-study cycles, not freezes.
 
-        VOLREF_SAZ / CFUGA-CMONT seasonal patterns are re-applied every year,
-        including post-study, when ``sazonaliza_cfuga_cmont == 1`` — only the
-        no-flag bounds (outflow / turbined) freeze. With study_months = 4,
-        stages 4+ are post-study and must keep cycling Sep=645 / Oct=640.
+        With study_months = 4 (Sep-Dec 2024), stages 4+ are post-study and
+        repeat the study's Sep=645 / Oct=640 rather than holding Dec's 640.
         """
         from novomodelo_bridge.newave.converters.hydro import _per_stage_productivities
 
@@ -935,12 +942,7 @@ class TestConvertProductionModels:
         vazmint_rec.data_inicio = datetime.datetime(2025, 3, 1)
         vazmint_rec.vazao = 50.0
 
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [vazmint_rec]
+        mock_modif = modif_mock((1, [vazmint_rec]))
 
         case = self._base_case(tmp_path, modif=mock_modif)
 
@@ -960,12 +962,8 @@ class TestConvertProductionModels:
     def test_single_cfuga_override_two_ranges(self, tmp_path: Path) -> None:
         """One CFUGA override at stage 3 -> two stage_ranges (base then overridden)."""
         cfuga_rec = _make_cfuga_rec(month=4, year=2025, nivel=60.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((1, [cfuga_rec]))
 
         # Study: start Jan 2025, 5 years -> 60 stages total.
         case = self._base_case(
@@ -997,12 +995,8 @@ class TestConvertProductionModels:
     def test_cmont_override_bypasses_polynomial(self, tmp_path: Path) -> None:
         """CMONT override at stage 0 -> single stage_range using cmont as height."""
         cmont_rec = _make_cmont_rec(month=1, year=2025, nivel=400.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cmont_rec]
+        mock_modif = modif_mock((1, [cmont_rec]))
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1029,12 +1023,8 @@ class TestConvertProductionModels:
             _make_cfuga_rec(month=6, year=2025, nivel=55.0),  # stage 5
             _make_cfuga_rec(month=1, year=2026, nivel=65.0),  # stage 12
         ]
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
 
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = recs
+        mock_modif = modif_mock((1, recs))
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1056,19 +1046,10 @@ class TestConvertProductionModels:
     def test_output_sorted_by_hydro_id(self, tmp_path: Path) -> None:
         """production_models list is sorted ascending by hydro_id."""
         # Both plants have CFUGA overrides; plant codes 1 and 2 -> ids 0 and 1.
-        usina_rec1 = MagicMock()
-        usina_rec1.codigo = 1
-        usina_rec2 = MagicMock()
-        usina_rec2.codigo = 2
-
-        def _mods(code: int) -> list:
-            if code == 1:
-                return [_make_cfuga_rec(month=3, year=2025, nivel=55.0)]
-            return [_make_cfuga_rec(month=6, year=2025, nivel=55.0)]
-
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec2, usina_rec1]  # reversed order
-        mock_modif.modificacoes_usina.side_effect = _mods
+        mock_modif = modif_mock(  # plant 2's block first
+            (2, [_make_cfuga_rec(month=6, year=2025, nivel=55.0)]),
+            (1, [_make_cfuga_rec(month=3, year=2025, nivel=55.0)]),
+        )
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1163,11 +1144,7 @@ class TestConvertHydroEnergyProductivity:
         """CFUGA at stage 3 → per-stage rows for the full horizon; stages [0..2] use
         base."""
         cfuga_rec = _make_cfuga_rec(month=4, year=2025, nivel=60.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((1, [cfuga_rec]))
 
         case = self._base_case(
             tmp_path, modif=mock_modif, ano_inicio=2025, mes_inicio=1, num_anos=5
@@ -1338,11 +1315,7 @@ class TestConvertHydroEnergyProductivity:
         month's reference volume AND the active canal_fuga override."""
         # CFUGA effective from month 6 (stage 5) onward — canal_fuga 50 → 60.
         cfuga_rec = _make_cfuga_rec(month=6, year=2025, nivel=60.0)
-        usina_rec = MagicMock()
-        usina_rec.codigo = 1
-        mock_modif = MagicMock()
-        mock_modif.usina.return_value = [usina_rec]
-        mock_modif.modificacoes_usina.return_value = [cfuga_rec]
+        mock_modif = modif_mock((1, [cfuga_rec]))
 
         # Seasonal volref: every month useful=200 → V=300, h=330.
         volref_df = pd.DataFrame(
@@ -1380,6 +1353,87 @@ class TestConvertHydroEnergyProductivity:
         assert by_stage[4] == pytest.approx(pre)
         assert by_stage[5] == pytest.approx(post)
         assert by_stage[11] == pytest.approx(post)
+
+    def test_integrated_column_is_the_mean_head_productivity(
+        self, tmp_path: Path
+    ) -> None:
+        """A monthly reservoir's integrated value averages the head over
+        [vmin, vmax], not the v_65 point of the ρ_eq column."""
+        case = self._base_case(tmp_path)
+
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_hydro_energy_productivity,
+        )
+
+        rows = convert_hydro_energy_productivity(case, self._make_id_map()).to_pylist()
+
+        integrated = {
+            r["hydro_id"]: r["integrated_equivalent_productivity_mw_per_m3s"]
+            for r in rows
+        }
+        # h(v) = 300 + 0.1·v is linear, so the mean head is h at mid-range.
+        assert integrated[0] == pytest.approx(0.9 * (300.0 + 0.1 * 550.0 - 50.0))
+        assert integrated[1] == pytest.approx(0.85 * (300.0 + 0.1 * 275.0 - 50.0))
+
+    def test_integrated_column_takes_run_of_river_point_head(
+        self, tmp_path: Path
+    ) -> None:
+        """A "D" plant's integrated value is the point head at volume_referencia."""
+        case = self._base_case(tmp_path)
+        case.hidr.cadastro.loc[2, "tipo_regulacao"] = "D"
+        case.hidr.cadastro.loc[2, "volume_referencia"] = 400.0
+
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_hydro_energy_productivity,
+        )
+
+        rows = convert_hydro_energy_productivity(case, self._make_id_map()).to_pylist()
+
+        b_row = next(r for r in rows if r["hydro_id"] == 1)
+        assert b_row["integrated_equivalent_productivity_mw_per_m3s"] == pytest.approx(
+            0.85 * (300.0 + 0.1 * 400.0 - 50.0)
+        )
+
+    def test_integrated_column_follows_cfuga_but_not_volref_saz(
+        self, tmp_path: Path
+    ) -> None:
+        """CFUGA moves the integrated value from its stage on; VOLREF_SAZ moves
+        only the point ρ_eq."""
+        cfuga_rec = _make_cfuga_rec(month=4, year=2025, nivel=60.0)
+        mock_modif = modif_mock((1, [cfuga_rec]))
+        volref_df = pd.DataFrame(
+            {
+                "codigo_usina": [1] * 12,
+                "nome_usina": ["USINA_A"] * 12,
+                "mes": list(range(1, 13)),
+                "valor": [float(100 * m) for m in range(1, 13)],
+            }
+        )
+        case = self._base_case(
+            tmp_path,
+            modif=mock_modif,
+            volref_volumes=volref_df,
+            ano_inicio=2025,
+            mes_inicio=1,
+            num_anos=1,
+        )
+
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_hydro_energy_productivity,
+        )
+
+        rows = convert_hydro_energy_productivity(case, self._make_id_map()).to_pylist()
+
+        by_stage = {
+            r["stage_id"]: r["integrated_equivalent_productivity_mw_per_m3s"]
+            for r in rows
+            if r["hydro_id"] == 0
+        }
+        assert len(by_stage) == 12
+        base = 0.9 * (355.0 - 50.0)
+        override = 0.9 * (355.0 - 60.0)
+        assert [by_stage[s] for s in range(3)] == pytest.approx([base] * 3)
+        assert [by_stage[s] for s in range(3, 12)] == pytest.approx([override] * 9)
 
     def test_other_override_columns_are_null(self, tmp_path: Path) -> None:
         """reference_outflow_m3s / ρ_esp columns remain NULL.

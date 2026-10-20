@@ -43,15 +43,16 @@ def build_stage_cuts_payload(
     """Assemble one ``stage_cuts`` entry from `mapping` over `manifest`.
 
     Each ``cuts[]`` entry carries the source ``MappedCut``'s real provenance
-    verbatim — ``cut_id``, ``iteration``, ``forward_pass_index``, and
-    ``is_active`` are never re-synthesized — with ``slot_index`` set to the
-    cut's dense 0-based position in the pool (its `enumerate` index here, not
-    the source ``cut_id``). ``entity_manifest`` is `manifest.entity_manifest`
-    copied verbatim (never re-derived) so a future novomodelo layout change breaks
-    loudly at load, not silently, and so each slot's own date fields
+    verbatim — ``iteration``, ``forward_pass_index``, and ``is_active`` are
+    never re-synthesized — with ``slot_index`` set to the cut's dense 0-based
+    position in the pool (its `enumerate` index here, not the source
+    ``cut_id``, which the checkpoint format does not hold).
+    ``entity_manifest`` is `manifest.entity_manifest` copied verbatim
+    (never re-derived) so a future novomodelo layout change breaks loudly at
+    load, not silently, and so each slot's own date fields
     (``reference_date``/``interval_start``/``interval_end``) round-trip.
-    ``active_cut_indices`` lists the pool positions whose `MappedCut.is_active`
-    is `True`; ``populated_count`` is `len(cuts)`. ``cost_scale_factor``,
+    A cut's activity rides on its own ``is_active``; ``populated_count`` is
+    `len(cuts)`. ``cost_scale_factor``,
     ``node_id``, ``graph_stage_id``, and ``priced_state_date`` are copied
     verbatim into the payload — the boundary loader reads them per pool to
     select the source pool by calendar date (matching ``priced_state_date``
@@ -82,7 +83,6 @@ def build_stage_cuts_payload(
         )
 
     cuts: list[dict[str, Any]] = []
-    active_cut_indices: list[int] = []
     for slot_index, mapped in enumerate(mapping.cuts):
         if len(mapped.coefficients) != manifest.state_dimension:
             raise ValueError(
@@ -92,7 +92,6 @@ def build_stage_cuts_payload(
             )
         cuts.append(
             {
-                "cut_id": mapped.cut_id,
                 "slot_index": slot_index,
                 "iteration": mapped.iteration,
                 "forward_pass_index": mapped.forward_pass_index,
@@ -110,15 +109,12 @@ def build_stage_cuts_payload(
                 },
             }
         )
-        if mapped.is_active:
-            active_cut_indices.append(slot_index)
 
     return {
         "stage_id": stage_id,
         "state_dimension": manifest.state_dimension,
         "capacity": len(cuts),
         "cuts": cuts,
-        "active_cut_indices": active_cut_indices,
         "populated_count": len(cuts),
         "entity_manifest": list(manifest.entity_manifest),
         "cost_scale_factor": cost_scale_factor,

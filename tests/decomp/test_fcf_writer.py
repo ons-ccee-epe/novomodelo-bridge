@@ -56,16 +56,15 @@ def test_build_stage_cuts_payload_shape() -> None:
         assert len(cut["coefficients"]) == 4
 
     first, second = payload["cuts"]
-    assert first["cut_id"] == active_cut.cut_id
     assert first["iteration"] == active_cut.iteration
     assert first["forward_pass_index"] == active_cut.forward_pass_index
     assert first["is_active"] is True
-    assert second["cut_id"] == inactive_cut.cut_id
     assert second["iteration"] == inactive_cut.iteration
     assert second["forward_pass_index"] == inactive_cut.forward_pass_index
     assert second["is_active"] is False
 
-    assert payload["active_cut_indices"] == [0]
+    assert all("cut_id" not in cut for cut in payload["cuts"])
+    assert "active_cut_indices" not in payload
     assert payload["populated_count"] == 2
 
 

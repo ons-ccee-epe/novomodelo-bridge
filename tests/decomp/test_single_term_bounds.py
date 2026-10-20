@@ -13,6 +13,7 @@ warning-skip), and the fail-loud dispatcher on an unhandled family.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.single_term_bounds import (
     HydroCapacities,
     single_term_bound_contributions,
+    split_plant_group_contributions,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -167,6 +169,38 @@ def test_re_negative_coefficient_flips_sides(
     assert contributions[0].upper == -50.0
 
 
+def test_re_sign_change_between_stages_flips_that_stage_only(
+    id_map: DecompIdMap, effective: EffectiveCadastro
+) -> None:
+    bounds = {s: StageBounds(lower=(50.0,), upper=(212.0,)) for s in range(2)}
+    record = dataclasses.replace(
+        _re_record(constraint_id=12, coefficient=1.0, bounds=bounds),
+        terms=(
+            ConstraintTerm(
+                code=5,
+                coefficient=1.0,
+                variable="generation",
+                schedule=((0, 1.0), (1, -1.0)),
+            ),
+        ),
+    )
+    calendar = [_stage(0, 1), _stage(1, 1)]
+
+    contributions = single_term_bound_contributions(
+        _case(calendar),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=effective,
+        hydro_capacities=_capacities(max_generation_mw=1_000.0),
+    )
+
+    assert [(c.stage_id, c.lower, c.upper) for c in contributions] == [
+        (0, 50.0, 212.0),
+        (1, -212.0, -50.0),
+    ]
+
+
 def test_re_two_block_emits_per_block_contributions(
     id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
@@ -220,8 +254,7 @@ def test_ft_thermal_single_block_generation_bound(
     id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
     """A single-term ``FT`` RE lowers to a ``family="thermal"`` contribution
-    on the novomodelo ``generation`` axis, resolved via ``id_map.thermal_id``
-    (M1)."""
+    on the novomodelo ``generation`` axis, resolved via ``id_map.thermal_id``."""
     record = _ft_record(
         constraint_id=30,
         bounds={0: StageBounds(lower=(50.0,), upper=(212.0,))},
@@ -493,6 +526,115 @@ def test_re_missing_capacity_entry_raises(
             pumping_station_ids={},
             effective=effective,
             hydro_capacities={},
+        )
+
+
+_ITAIPU_CODE = 66
+
+
+@pytest.fixture
+def itaipu_id_map() -> DecompIdMap:
+    return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, _ITAIPU_CODE))
+
+
+def _frequency_record(
+    *, constraint_id: int, frequency: float, lower: float, upper: float, code: int = 66
+) -> ConstraintRecord:
+    record = _re_record(
+        constraint_id=constraint_id,
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(lower,), upper=(upper,))},
+        code=code,
+    )
+    term = dataclasses.replace(record.terms[0], frequency=frequency)
+    return dataclasses.replace(record, terms=(term,))
+
+
+def _itaipu_group_capacities(cap: float = 7_000.0) -> dict[tuple[int, int], float]:
+    return {(1, 0): cap, (1, 1): cap}
+
+
+def test_frequency_tagged_re_bounds_its_unit_group_not_the_plant(
+    itaipu_id_map: DecompIdMap, effective: EffectiveCadastro
+) -> None:
+    records = (
+        _frequency_record(
+            constraint_id=461, frequency=50.0, lower=4267.2, upper=6800.0
+        ),
+        _frequency_record(
+            constraint_id=462, frequency=60.0, lower=2000.0, upper=6900.0
+        ),
+    )
+    calendar = [_stage(0, 1)]
+    case = _case(calendar)
+
+    plant = single_term_bound_contributions(
+        case,
+        itaipu_id_map,
+        census=_census(*records),
+        pumping_station_ids={},
+        effective=effective,
+        hydro_capacities={},
+    )
+    groups = split_plant_group_contributions(
+        case,
+        itaipu_id_map,
+        census=_census(*records),
+        group_capacities=_itaipu_group_capacities(),
+    )
+
+    assert plant == []
+    assert list(groups) == [1]
+    assert [
+        (c.family, c.entity_id, c.axis, c.lower, c.upper, c.contributor)
+        for c in groups[1]
+    ] == [
+        ("hydro_unit_group", 0, "generation", 4267.2, 6800.0, "RE_461"),
+        ("hydro_unit_group", 1, "generation", 2000.0, 6900.0, "RE_462"),
+    ]
+
+
+def test_frequency_tagged_re_clamps_to_group_capacity_with_one_warning_per_group(
+    itaipu_id_map: DecompIdMap,
+) -> None:
+    records = (
+        _frequency_record(
+            constraint_id=461, frequency=50.0, lower=4267.2, upper=7086.0
+        ),
+        _frequency_record(
+            constraint_id=561, frequency=50.0, lower=4267.2, upper=7086.0
+        ),
+    )
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        groups = split_plant_group_contributions(
+            _case(calendar),
+            itaipu_id_map,
+            census=_census(*records),
+            group_capacities=_itaipu_group_capacities(),
+        )
+
+    assert [c.upper for c in groups[1]] == [7_000.0, 7_000.0]
+    (clamped,) = [d for d in collected if d.code == "decomp-re-generation-clamped"]
+    assert "Unit group 0 of hydro 1" in clamped.summary
+    assert "constraints 461, 561" in clamped.summary
+    assert "7086.0" in clamped.summary
+
+
+def test_frequency_tag_on_an_unsplit_plant_raises(
+    itaipu_id_map: DecompIdMap,
+) -> None:
+    record = _frequency_record(
+        constraint_id=12, frequency=60.0, lower=0.0, upper=100.0, code=5
+    )
+
+    with pytest.raises(ValueError, match="plant 5: a 60 Hz generation term"):
+        split_plant_group_contributions(
+            _case([_stage(0, 1)]),
+            itaipu_id_map,
+            census=_census(record),
+            group_capacities=_itaipu_group_capacities(),
         )
 
 
@@ -1048,7 +1190,7 @@ def test_hq_qbom_lowers_to_pumping_flow_bound(
     qbom_id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
     """A single-term ``QBOM`` RHQ lowers to a pumping ``flow`` bound resolved
-    through ``pumping_station_ids`` (M2)."""
+    through ``pumping_station_ids``."""
     record = _qbom_record(
         constraint_id=166,
         bounds={0: StageBounds(lower=(5.0,), upper=(80.0,))},

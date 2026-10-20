@@ -42,7 +42,9 @@ class Switch:
 @dataclass(frozen=True)
 class DgerSwitches:
     agrint: Switch
+    bombeamento: Switch
     c_adic: Switch
+    canal_desvio: Switch
     ghmin: Switch
     re_dat: Switch
     restricao_eletrica: Switch
@@ -68,8 +70,14 @@ class DgerSwitches:
         drop_min_outflow = read("desconsidera_vazao_minima")
         return cls(
             agrint=plain("agrupamento_livre", "AGRUPAMENTO LIVRE", "agrint.dat"),
+            bombeamento=plain(
+                "estacoes_bombeamento", "ESTACOES BOMBEAMENTO", "pumping stations"
+            ),
             c_adic=plain(
                 "considera_carga_adicional", "CONS. CARGA ADICIONAL", "c_adic.dat"
+            ),
+            canal_desvio=plain(
+                "canal_desvio", "CANAL DE DESVIO", "CDESVIO records of modif.dat"
             ),
             ghmin=plain("considera_ghmin", "CONSIDERA GHMIN", "ghmin.dat"),
             re_dat=plain("restricoes_eletricas", "RESTRICOES ELETRICAS", "re.dat"),
@@ -128,24 +136,22 @@ def switch_off_diagnostic(switch: Switch) -> Diagnostic:
     )
 
 
-def switched_off_inputs(
-    files: NewaveFiles,
-    switches: DgerSwitches,
-    *,
-    restricao_eletrica_present: bool,
-) -> list[Switch]:
+def switched_off_inputs(files: NewaveFiles, switches: DgerSwitches) -> list[Switch]:
     """The switches that are off while the input they gate is present.
 
     Minimum outflow needs no file (``hidr.dat`` carries it for every plant);
     the two turbining switches only matter when ``modif.dat`` exists, since
-    they gate its dated records.
+    they gate its dated records. The diversion-channel switch is left out:
+    only reading ``modif.dat`` tells whether it carries ``CDESVIO`` records,
+    so the conversion reports it instead.
     """
     present = {
         "agrint": files.agrint is not None,
+        "bombeamento": files.estacao_bombeamento is not None,
         "c_adic": files.c_adic is not None,
         "ghmin": files.ghmin is not None,
         "re_dat": files.re_dat is not None,
-        "restricao_eletrica": restricao_eletrica_present,
+        "restricao_eletrica": files.restricao_eletrica is not None,
         "min_outflow": True,
         "turbined_max": files.modif is not None,
         "turbined_min": files.modif is not None,

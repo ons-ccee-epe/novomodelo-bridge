@@ -1,7 +1,8 @@
 """Tests for the topology/gauge ``AC`` override family.
 
-Covers the two plant-keyed, ``int``-valued mnemonics (``ACNUMJUS`` — the
-water-routing downstream plant — and ``ACNUMPOS`` — the inflow gauge),
+Covers the plant-keyed, ``int``-valued mnemonics (``ACNUMJUS`` — the
+water-routing downstream plant — ``ACNUMPOS`` — the inflow gauge — and
+``ACJUSENA`` — the stored-energy downstream plant),
 flowing through the shared
 :func:`~novomodelo_bridge.decomp.converters.cadastro.overrides._read_keyed_overrides`
 reader (with ``_plant_code_key``), and their effect on the re-sourced
@@ -21,8 +22,9 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
-from idecomp.decomp.modelos.dadger import ACNUMJUS, ACNUMPOS
+from idecomp.decomp.modelos.dadger import ACJUSENA, ACNUMJUS, ACNUMPOS
 
+from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
@@ -206,6 +208,27 @@ def test_numjus_override_relinks_downstream() -> None:
     base_b_downstream = int(hidr.loc[2, "codigo_usina_jusante"])
     assert all(effective.downstream_plant(2, s) == base_b_downstream for s in range(3))
     assert report.applied["codigo_usina_jusante"] == 1
+
+
+def test_jusena_override_sets_the_energy_link_only() -> None:
+    hidr = _abc_hidr()
+    dadger = _FakeDadger({ACJUSENA: _numjus_override(1, 3)})
+    effective, report = build_effective_cadastro(dadger, hidr, _calendar())
+
+    assert [effective.energy_link(1, s) for s in range(3)] == [3, 3, 3]
+    assert effective.energy_link(2, 0) is None
+    assert effective.downstream_plant(1, 0) == 2
+    assert effective.energy_link_varies(1) is False
+    assert report.applied["jusante_energia"] == 1
+
+
+def test_temporal_jusena_override_varies() -> None:
+    hidr = _abc_hidr()
+    dadger = _FakeDadger({ACJUSENA: _numjus_override(1, 3, mes="AGO", semana=1.0)})
+    effective, _ = build_effective_cadastro(dadger, hidr, _calendar())
+
+    assert [effective.energy_link(1, s) for s in range(3)] == [None, None, 3]
+    assert effective.energy_link_varies(1) is True
 
 
 # ---------------------------------------------------------------------------
@@ -403,3 +426,22 @@ def test_temporal_gauge_warns_uses_stage0(caplog: pytest.LogCaptureFixture) -> N
 
     assert any("varies across stages" in record.message for record in caplog.records)
     assert station_by_code[1] == "11"
+
+
+def test_plants_on_the_artificial_gauge_are_reported() -> None:
+    hidr = _hidr_frame(
+        {
+            1: _plant_row(jusante=3, posto=300, name="A"),
+            2: _plant_row(jusante=3, posto=300, name="B"),
+            3: _plant_row(jusante=0, posto=13, name="C"),
+        }
+    )
+    effective, _ = build_effective_cadastro(_FakeDadger({}), hidr, _calendar())
+    vazoes = _StubVazoes({"300": (0.0, 0.0), "13": (300.0, 310.0)})
+    case = make_decomp_case(Path("unused"), calendar=_calendar())
+    with collect() as diagnostics:
+        convert_external_inflows(case, _ABC_ID_MAP, vazoes=vazoes, effective=effective)
+    reported = [d for d in diagnostics if d.code == "artificial-gauge-plants"]
+    assert len(reported) == 1
+    assert reported[0].table is not None
+    assert reported[0].table.rows == [[1, "A", 0], [2, "B", 1]]

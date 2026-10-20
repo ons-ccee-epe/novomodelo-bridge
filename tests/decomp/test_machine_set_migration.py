@@ -2,7 +2,7 @@
 per-stage-effective machine-set view.
 
 The entity/mirror-group capacity converter (``convert_hydros``) and
-the B8 per-group per-stage availability overlay
+the per-group per-stage availability overlay
 (``convert_hydro_group_availability``) used to read the machine-set
 overrides through a date-blind ``_read_ac_machine_overrides``/
 ``_AcOverrides`` pair. This migration re-sources both consumers onto
@@ -49,7 +49,7 @@ def _plant_row() -> dict:
     ``_equivalent_productivity_mw_per_m3s`` a trivial constant (rho_eq =
     0.009 x (100 - 20) = 0.72 MW per m3/s) so the hydraulic ceiling
     (0.72 x 200 = 144 MW) never binds below the 100 MW installed power —
-    the fixtures below isolate the machine-set/MP/FD behaviour from B8's
+    the fixtures below isolate the machine-set/MP/FD behaviour from the overlay's
     hydraulic-cap behaviour, which is already covered elsewhere
     (``test_decomp_availability_rule.py``).
 
@@ -111,7 +111,7 @@ class _StubDadger:
     """Never carries an ``AC`` machine-configuration override: both
     consumers under test source the machine set from ``EffectiveCadastro``
     exclusively now, never from the deck — the whole point of the
-    migration. ``mp``/``fd`` default to ``None`` (no register at all, B8's
+    migration. ``mp``/``fd`` default to ``None`` (no register at all, the overlay's
     own ``1.0``-factor default); pass a frame to exercise the MP/FD path.
     """
 
@@ -244,7 +244,7 @@ def test_mid_horizon_nummaq_drop_overlay_only_at_reduced_stage() -> None:
 
 def test_constant_machine_set_availability_matches_mp_fd_product() -> None:
     """Regression guard: with a constant (un-overridden) machine set, the
-    B8 overlay still reproduces the plain ``installed x MP x FD`` formula,
+    availability overlay still reproduces the plain ``installed x MP x FD`` formula,
     capped by the (here, non-binding) hydraulic ceiling — unchanged from
     the date-blind behaviour, now sourced through ``effective``.
     A stage whose MP/FD factors do not move installed capacity below the

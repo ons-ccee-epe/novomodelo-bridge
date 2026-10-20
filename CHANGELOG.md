@@ -14,11 +14,258 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`export dessem` command** exports a solved Novomodelo case's policy checkpoint
+  to the DECOMP-format `mapcut`/`cortdeco` binaries DESSEM reads as its future
+  cost function. The command takes the DECOMP deck the case was converted
+  from, `export dessem DECOMP_DIR CASE_DIR`. The deck supplies the output
+  revision, the `hidr.dat` plant codes and each GNL plant's lag months from
+  its `NL` record, and a deck whose operated hydro or GNL plants differ from
+  the case's is refused. The checkpoint is read through
+  `novomodelo-python`, cut values are converted from the run's cost scale to R$
+  and then to DECOMP's 10³ R$, and each export records the conversion premises it applied in
+  `export_manifest.json`; `--audit-csv` adds per-pool CSVs of the cuts as read
+  and as written. GNL coefficients are written as zeros, and a policy carrying
+  travel-time state is refused.
+- **DECOMP: the `UH` spillage ceiling is converted.** Field 9 of the `UH`
+  register, the plant's maximum spillage in m³/s, becomes a
+  `max_spillage_m3s` bound in `constraints/hydro_bounds.parquet` for every
+  stage; the field was ignored before. A blank field or DECOMP's default of
+  1.0e+21 adds no bound, and where a single-plant `HQ` restriction on `QVER`
+  also limits the plant, the lower ceiling applies. A zero ceiling is kept,
+  so a plant fed only through a diversion channel, such as BELO MONTE, spills
+  nothing, as in DECOMP.
+- **NEWAVE: Pumping station conversion.** When the deck declares
+  `ESTACAO-BOMBEAMENTO` and `ESTACAO-BOMBEAMENTO-SUBMERCADO` in `indices.csv`
+  and the `ESTACOES BOMBEAMENTO` switch is on, the converter generates
+  `system/pumping_stations.json` and `constraints/pumping_bounds.parquet`.
+  Open-ended limit periods (blank `data_fim`) extend to the last stage.
+- **NEWAVE: diversion channels.** A `CDESVIO` record in a plant's `USINA`
+  block of `modif.dat` now gives that plant a diversion channel in
+  `hydros.json`, to the record's target plant and up to its maximum flow, when
+  the `CANAL DE DESVIO` switch of `dger.dat` is on. A maximum flow of
+  9 999 999 m³/s or more, NEWAVE's value for no limit, gives a channel
+  without a limit and is reported. Plants fed only by a
+  channel, such as BELO MONTE below PIMENTAL, now receive that water. The
+  `desvio` code of `hidr.dat` alone declares no channel. A record without a
+  maximum flow, or whose target plant is not in the case, converts to no
+  channel and is reported; with the switch off the records are ignored and
+  reported.
+
+### Changed
+
+- **Both tracks simulate with every trained cut.** `config.json` now sets
+  `simulation.cut_set` to `all` rather than leaving it to novomodelo's default.
+  The source models' cut selection only speeds up the LP solves, and their
+  final simulation evaluates the policy of all the cuts; novomodelo's `active`
+  set would keep only the cuts its selection kept at the last iteration.
+  `convert newave` warns when `dger.dat` turns on the cut window
+  (`janela_de_cortes`), which Novomodelo does not have: every cut is kept.
+- **Both tracks supply each plant's own stored-energy productivity to
+  novomodelo.** `system/hydro_energy_productivity.parquet` has a new
+  `integrated_equivalent_productivity_mw_per_m3s` column, which novomodelo now
+  requires. novomodelo sums it down the cascade for the integrated accumulated
+  productivity and the maximum stored energy that VminOP and RHE read. The
+  value is the source model's own convention: NEWAVE integrates the head of
+  monthly reservoirs between minimum and maximum volume and takes the point
+  at `volume_referencia` for the other plants, with each stage's `CFUGA` and
+  `CMONT`, matching `pmo.dat`; DECOMP integrates the head of `M` and `S`
+  reservoirs and takes the point for `D` plants, with each stage's `AC`
+  overrides. The `equivalent_productivity_mw_per_m3s` column now sets only
+  the generation productivity, so without the new column VminOP and RHE
+  would weigh storage by novomodelo's integral of the plant geometry. A DECOMP
+  FPHA plant now has a row as well, with a NULL generation productivity.
+- **LIBS files are read from the files the deck declares, not by name.** The
+  CSV inputs of the LIBS family were found by fixed file name or prefix; now
+  each record is read from the file the deck's LIBS index lists for its key,
+  as the source models read them. The index is `indices.csv` in a NEWAVE case
+  directory and the file the `FA` register names in a DECOMP deck (the `FJ`
+  register still names the tailrace-curve file on its own). A deck without an
+  index has no LIBS records; an index key whose file is missing, an `FJ` that
+  disagrees with the index, or renewable records spread over several files
+  now fail the conversion. A file with a usual LIBS name that nothing declares
+  is ignored, and `check` and `convert` warn about it on both tracks.
+- **`convert decomp` pins the inflow non-negativity method to `penalty`.**
+  `config.json` now carries `modeling.inflow_non_negativity.method` =
+  `"penalty"` instead of `"truncation_with_penalty"`, the method 0.18.1 set
+  and novomodelo's default. Its unbounded, priced inflow correction keeps the
+  first forward pass feasible when a single-plant volume target (`HV`)
+  becomes a hard storage floor at a later stage; under the bounded correction
+  the boundary FCF import's one-iteration run can fail with an infeasible
+  subproblem. `convert newave` keeps `truncation_with_penalty`.
+- **VminOP (NEWAVE) and RHE (DECOMP) bound stored energy in MWh with novomodelo's
+  MWh parameters.** The bridge no longer computes the integrated
+  accumulated productivity itself: expressions reference novomodelo's
+  `integrated_accumulated_productivity_mwh_per_hm3` (`@rho_acum_mwh_h{id}`,
+  MWh/hm³) and `max_stored_energy_mwh` (`@earm_max_mwh_h{id}`, MWh). VminOP
+  bounds useful stored energy,
+  `Σ @rho_acum_mwh_h{id} * hydro_useful_volume_final(id) >=
+  @pct_vminop_ree{code} * (Σ @earm_max_mwh_h{id})`, with the curve as a
+  per-stage fraction. RHE bounds useful stored energy the same way, the base
+  of the source model's `%EAMAX`: a percentage limit is a per-stage fraction
+  `@pct_rhe{code}` of the maximum, and an absolute limit is converted from
+  MWmês to MWh with the stage hours.
+- **Every generic-constraint slack declares how novomodelo charges its penalty.**
+  Each soft constraint now carries `slack.penalty_basis`, which novomodelo
+  requires. VminOP and RHE are `per_unit`: the source model's penalty is
+  charged per MWh of violation, so each stays one constraint per REE or
+  record (`VminOP_<REE>`, `RHE_<code>`) on months of 672–744 h and on weekly
+  DECOMP stages alike. Electric, `RE`, `HQ`, `HV` and LIBS constraints are
+  `per_hour`, novomodelo's previous charge of penalty × the row's hours, so their
+  costs do not change. The constraint families emitted after VminOP and RHE
+  get lower ids than with one constraint per stage.
+- **RHE (DECOMP) values each reservoir along its energy chain, as DECOMP
+  does.** The chain follows the `AC JUSENA` energy link where the deck
+  declares one, else the water route, so the Paraíba do Sul reservoirs count
+  through NILO PECANHA, GUARAPIRANGA and BILLINGS through HENRY BORDEN, and
+  ITAPARICA through COMP PAF-MOX (176), a plant outside the configuration
+  that enters as a `per_stage` constant. A reservoir with an `EZ` record has
+  its chain cut where it leaves its REE: the plants above the cut count in its
+  own REE, and up to `EZ` % of its useful volume counts in the REE below the
+  cut (SERRA MESA 55% in NORTE). A reservoir without its own `EZ` record
+  counts its whole chain in its own REE. Chains that depart from the
+  `hydros.json` water route are `expression` parameters over novomodelo's
+  productivities, and their maximum stored energy reads the new computed
+  `min_storage`/`max_storage` parameters (`@min_storage_h{id}`,
+  `@max_storage_h{id}`, declared for every hydro on both tracks) instead of
+  volumes written into the expression. On mar-26-rv2 every REE's maximum
+  stored energy matches DECOMP's to within 0.01%; before, SUDESTE was 8.6% and NORDESTE 2.4% low and NORTE 37% high. A
+  `decomp-rhe-ree-hydraulic-coupling` note lists the cut reservoirs with
+  their `EZ` %. Because a generic constraint cannot cap a volume term, the
+  share counts the whole volume; a `decomp-rhe-ez-cap-unmodeled` warning names
+  any stage where that can make the constraint looser than DECOMP's. The
+  `check decomp` note that `EZ` records are ignored is gone.
+- **`compare` and `dashboard` read generic constraints from novomodelo's echo.**
+  The Constraints tabs take each term's coefficient and each row's bounds
+  from `output/generic_constraints/resolved_echo.parquet`, as the LP received
+  them, instead of re-deriving them from the expression text and
+  `generic_parameters.json`. VminOP and RHE are shown as one constraint per
+  REE or record across their stages, and each penalty says whether it is
+  charged per hour or per unit; VminOP reads as useful stored energy in MWh
+  against the curve fraction of its maximum, and the source-model side
+  weights `VARMUH` by the same coefficients. The DECOMP RHE achieved value is
+  converted from stage-average MW to MWh. A constraint with a term the
+  simulation output cannot value is left out of the novomodelo-side LHS instead of
+  being evaluated partially.
+- **`generic_parameters.json` declares the MWh per-hydro parameters.** Every
+  hydro also gets `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}` and
+  `earm_max_mwh_h{id}` (novomodelo's `integrated_equivalent_productivity_mwh_per_hm3`,
+  `integrated_accumulated_productivity_mwh_per_hm3` and `max_stored_energy_mwh`),
+  and `rho_acum_h{id}` is always novomodelo's computed point productivity.
+- **`convert newave` turns cut selection on with `level1`.** novomodelo removed
+  the `lml1` method; the converted `config.json` now names `level1`, checked
+  every iteration over the trial states of the whole run. Level-1 selection
+  keeps exactly the cuts that are highest at some stored trial state, so
+  results can differ from a run made with `lml1`.
+- **`convert decomp` writes the boundary FCF in novomodelo's current policy
+  format.** The checkpoint no longer carries a cut id or a pool's list of
+  active cuts; each cut states its own activity.
+- **`dashboard` reads novomodelo's per-pool cut-selection report.** The cut counts
+  of a stage now sum the row pools of its nodes, and the pool size is read
+  from `cuts_in_pool`.
+
 ### Fixed
 
 - **The README links the published novomodelo documentation**,
   <https://docs.modelossetoreletrico.org.br/>, which the package's PyPI page
   shows too.
+- **DECOMP: Itaipu's 50 Hz and 60 Hz `RE` limits bound only their own half.**
+  A single-term `RE` whose `FU` term names a frequency now bounds that
+  frequency's unit group in `constraints/hydro_unit_group_bounds.parquet`.
+  Before, it bounded the whole plant in `constraints/hydro_bounds.parquet`,
+  which capped Itaipu's total at one half's limit once novomodelo started capping
+  a plant's total across its buses, and made novomodelo warn that the plant
+  minimum had no effect. A ceiling above the half's installed capacity is
+  clamped to it with one warning per unit group, and a frequency on any plant
+  other than Itaipu stops the conversion.
+- **NEWAVE: `CFUGA`/`CMONT` levels after the last record now follow the
+  source model.** During the study, each `modif.dat` record holds until the
+  next one. With the `dger.dat` seasonal flag on, the post-study repeats the
+  last study year month by month. Previously, every month after the last
+  record took the latest record naming that calendar month in any year, so a
+  month declared only in an early year came back in the last study year and
+  in every post-study year. That record could be, for example, Tucuruí's
+  September and October tailrace in the first year. Per-stage productivity in
+  `hydro_energy_productivity.parquet`, the generation caps and the
+  stored-energy productivity change for those plants and stages.
+- **`convert newave` gives every plant on a shared gauging station its own
+  inflow series, and zero inflow on the artificial gauge.** Inflows were
+  attributed per station, so when several plants shared one, only the last
+  received a history and the others failed Novomodelo's validation, and the upstream
+  stations of all of them were subtracted from that one plant. A deck that puts
+  several plants on posto 300, NEWAVE's artificial gauge for plants without
+  natural inflow, gave one plant a negative series and left the rest without
+  history. Each plant now subtracts only its own upstream stations; a plant on
+  posto 300 gets zero history, seasonal statistics and recent inflows, and an
+  artificial plant upstream is not subtracted. Both tracks list the plants on
+  the artificial gauge, and warn when a gauged plant sits below an artificial
+  plant that has gauged plants further upstream. Cases without shared stations
+  convert as before.
+- **NEWAVE: every record of `modif.dat` is read.** The last record of the
+  file was dropped, a plant with more than one `USINA` block kept only its
+  first, and a file with a single block failed to convert. The records of all
+  blocks now apply in file order, so PIMENTAL in a deck whose second block
+  carries the `VAZMINT` series now gets those minimum outflows. A dated
+  record that repeats a month now replaces the earlier one, where the larger
+  value used to win, and before the study start the latest record is the one
+  in force.
+- **`convert decomp` routes bounded diversions to their target plant.** A
+  plant whose single-term `QDES` restriction allowed a positive diversion but
+  set no positive floor got diversion bounds and no Novomodelo diversion channel,
+  so Novomodelo removed the diverted water from the system instead of passing it
+  to the plant that receives it (such as TOCOS to LAJES and VIGARIO to
+  FONTES AB). Every plant whose diversion can be positive now gets the
+  channel to its `AC DESVIO` or `hidr.dat` target, limited by the `AC DESVIO`
+  flow, and the `QDES` bounds still apply stage by stage. A floored plant
+  whose target has no `AC DESVIO` limit now gets its channel instead of being
+  reported. When the target plant is not in the case, the diversion ceiling
+  is closed and reported, so the water stays in the plant's own river.
+- **`convert decomp` leaves a diversion channel unlimited when DECOMP does.**
+  A `desvio` without an `AC DESVIO` limit, or with the "no limit" value of
+  9 999 999 m³/s or more, was capped at the receiving plant's turbine
+  capacity, which DECOMP's own solutions exceed (MOXOTO to P.AFONSO 4). The
+  channel now carries no limit, and a base `desvio` no longer writes a
+  `max_diversion_m3s` bound. Channels given the "no limit" value are reported
+  on both tracks.
+- **`convert` refuses a case where diverted water reaches no plant.** Both
+  `convert newave` and `convert decomp` now fail before writing when a plant
+  can divert water (a positive diversion floor or ceiling) but has no
+  diversion channel to a receiving plant, which Novomodelo rejects. The failure
+  names each plant, the bound and its stages.
+- **NEWAVE: Hydro plants referenced by pumping stations are no longer
+  classified as fictitious.** Previously, zero-productivity reservoirs used
+  for pumped storage (e.g., VIGÁRIO) were removed, which could break cascade
+  topology and cause a RecursionError.
+- **NEWAVE: Cascade cycle detection now raises a clear error instead of
+  RecursionError.** The error names the cycle path and points to the fictitious
+  classification as the likely cause.
+- **`convert decomp` reads special-constraint coefficients stage by stage.**
+  Each `FU`/`FT`/`FI`, `CQ` and `CV` line declares a coefficient from its
+  `estagio` onward, but the reader kept a term's first coefficient for every
+  stage and counted a term from the constraint's first stage even when the
+  deck declares it later. A coefficient that changes between stages, or a
+  term that joins later and is absent before that stage, as DECOMP reads it,
+  is now a `per_stage` parameter `@coef_<family><code>_t<k>` in
+  `generic_parameters.json`; a constant coefficient stays a literal, so decks
+  without such lines convert as before. A single-term constraint lowers to an
+  entity bound only when its coefficient is ±1 at every stage. A `RE`, `HQ`
+  or `HV` with no coefficient at its first stage, a deck DECOMP rejects, now
+  fails the conversion.
+- **`convert newave` applies the FPHA plane reduction only when the case
+  declares it.** A `tratamento-fpha.csv` in the case directory set
+  `fpha_plane_reduction` even when `indices.csv` left out or commented out
+  `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES`, the line that makes NEWAVE use
+  it. Such a case now converts without the block, so Novomodelo keeps every FPHA
+  plane, and FPHA results change for those cases.
+- **A commented-out LIBS index line no longer triggers the DECOMP
+  electrical-constraint warning.** The check scanned the raw index text, so
+  an `&RESTRICAO-ELETRICA-ESPECIAL` line counted as present.
+- **`convert newave` reads a Latin-1 `tratamento-fpha.csv`.** The file was
+  read as UTF-8 only, so a Latin-1 one failed the conversion, while the
+  electrical-constraint file was read as Latin-1 only. Decks mix the two
+  encodings, so each of these files, and the LIBS index on both tracks, is
+  now read as UTF-8 when it is valid UTF-8 and as Latin-1 otherwise.
 
 ## [0.18.1] - 2026-10-15
 

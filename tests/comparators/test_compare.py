@@ -1198,13 +1198,13 @@ class TestCompareResultsReturnsDataset:
         monkeypatch.setattr(
             "novomodelo_bridge.novomodelo.case_io.case_dir_for", lambda _d: tmp_path
         )
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.constraints.load_generic_constraints",
-            lambda _d: [],
+        from novomodelo_bridge.novomodelo.constraint_expr import (
+            resolve_generic_constraints,
         )
+
         monkeypatch.setattr(
-            "novomodelo_bridge.comparators.constraints.load_generic_constraint_bounds",
-            lambda _d: empty_pl(),
+            "novomodelo_bridge.comparators.constraints.load_resolved_generic_constraints",
+            lambda *_a: resolve_generic_constraints([], None, {}),
         )
 
     def test_compare_results_returns_validated_dataset(
@@ -1235,6 +1235,59 @@ class TestCompareResultsReturnsDataset:
         written = json.loads(paths[2].read_text(encoding="utf-8"))
         assert "results" not in written
         assert "top_divergences" in written
+
+    def test_productivity_tab_uses_the_case_fictitious_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The tab's accumulated productivities are computed with the case's
+        fictitious set and reach the tab; a failure there is swallowed into a
+        warning, so only the delivered values show it."""
+        import pandas as pd
+
+        from novomodelo_bridge.comparators.newave.results import compare_results
+
+        self._patch_all_readers(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            "novomodelo_bridge.newave.converters.hydro.read_cadastro",
+            lambda _case: pd.DataFrame({"produtibilidade_especifica": [0.01]}),
+        )
+        seen: dict[str, object] = {}
+
+        def _accumulated(
+            cadastro: pd.DataFrame, confhd_df: pd.DataFrame, *, fictitious: object
+        ) -> dict[int, float]:
+            seen["fictitious"] = fictitious
+            return {1: 2.5}
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.newave.converters.constraints."
+            "compute_accumulated_integrated_productivities",
+            _accumulated,
+        )
+        import novomodelo_bridge.comparators.analyze as analyze
+
+        real_detail = analyze.build_productivity_detail
+
+        def _detail(*args: object) -> object:
+            seen["accumulated"] = args[4]
+            return real_detail(*args)
+
+        monkeypatch.setattr(analyze, "build_productivity_detail", _detail)
+
+        case = MagicMock()
+        case.files.directory = tmp_path
+        case.fictitious_codes = frozenset({7})
+
+        compare_results(
+            case=case,
+            id_map=MagicMock(),
+            alignment=MagicMock(),
+            novomodelo_output_dir=tmp_path,
+            tolerance=0.05,
+        )
+
+        assert seen["fictitious"] == frozenset({7})
+        assert seen["accumulated"] == {1: 2.5}
 
 
 class TestProductivityDetail:
@@ -1608,16 +1661,29 @@ class TestEvaluateLhsNovomodelo:
     """
 
     @staticmethod
-    def _storage_constraint() -> list[dict]:
-        return [
+    def _storage_constraint():
+        from novomodelo_bridge.novomodelo.constraint_expr import (
+            resolve_generic_constraints,
+        )
+
+        echo = pl.DataFrame(
             {
-                "id": 0,
-                "name": "VminOP_0",
-                "expression": "hydro_storage(0)",
-                "sense": ">=",
-                "slack": {"enabled": False},
-            }
-        ]
+                "stage_id": [0, 1],
+                "block_id": [None, None],
+                "constraint_id": [0, 0],
+                "constraint_name": ["HV_1", "HV_1"],
+                "term_index": [0, 0],
+                "variable_kind": ["hydro_storage", "hydro_storage"],
+                "variable": ["hydro_storage(id=0)", "hydro_storage(id=0)"],
+                "coefficient": [1.0, 1.0],
+                "bound_lower": [50.0, 50.0],
+                "bound_upper": [None, None],
+            },
+            schema_overrides={"block_id": pl.Int32, "bound_upper": pl.Float64},
+        )
+        return resolve_generic_constraints(
+            [{"id": 0, "name": "HV_1", "slack": {"enabled": False}}], echo, {}
+        )
 
     def test_evaluates_lhs_from_a_real_simulation_lazyframe(self) -> None:
         """A present simulation (LazyFrame, not None) must evaluate, not raise."""
@@ -1663,18 +1729,27 @@ class TestEvaluateLhsNovomodelo:
 
     def test_no_constraints_returns_empty_without_scanning(self) -> None:
         from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
+        from novomodelo_bridge.novomodelo.constraint_expr import (
+            resolve_generic_constraints,
+        )
 
-        result = evaluate_lhs_novomodelo([], Path("/out"))
+        with patch(
+            "novomodelo_bridge.comparators.constraints.scan_simulation_entity"
+        ) as scan:
+            result = evaluate_lhs_novomodelo(
+                resolve_generic_constraints([], None, {}), Path("/out")
+            )
         assert result.is_empty()
+        scan.assert_not_called()
 
 
 # -------------------------------------------------------------------
-# comparator readers -> F3 (derive shape from the interval)
+# comparator readers derive shape from the interval
 # -------------------------------------------------------------------
 
 
 class TestShapeFromBounds:
-    """Unit tests for the F3 inverse-mapping helper."""
+    """Unit tests for the interval -> shape inverse-mapping helper."""
 
     def test_lower_only_is_ge(self) -> None:
         from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
@@ -1704,45 +1779,7 @@ class TestShapeFromBounds:
 
 
 class TestGenericConstraintF3Loaders:
-    """The loaders consume F3's sense-free JSON + interval parquet."""
-
-    def test_bounds_loader_missing_file_has_no_bound_column(
-        self, tmp_path: Path
-    ) -> None:
-        from novomodelo_bridge.comparators.constraints import (
-            load_generic_constraint_bounds,
-        )
-
-        df = load_generic_constraint_bounds(tmp_path)
-        assert "bound" not in df.columns
-        assert {"bound_lower", "bound_upper"}.issubset(set(df.columns))
-
-    def test_bounds_loader_reads_f3_parquet_endpoints(self, tmp_path: Path) -> None:
-        import pyarrow.parquet as pq
-
-        from novomodelo_bridge.comparators.constraints import (
-            load_generic_constraint_bounds,
-        )
-
-        constraints_dir = tmp_path / "constraints"
-        constraints_dir.mkdir()
-        pq.write_table(
-            pa.table(
-                {
-                    "constraint_id": pa.array([0], type=pa.int32()),
-                    "stage_id": pa.array([0], type=pa.int32()),
-                    "block_id": pa.array([0], type=pa.int32()),
-                    "bound_lower": pa.array([10.0], type=pa.float64()),
-                    "bound_upper": pa.array([None], type=pa.float64()),
-                }
-            ),
-            constraints_dir / "generic_constraint_bounds.parquet",
-        )
-
-        df = load_generic_constraint_bounds(tmp_path)
-        assert "bound" not in df.columns
-        assert df["bound_lower"].to_list() == [10.0]
-        assert df["bound_upper"].to_list() == [None]
+    """The constraints loader consumes sense-free JSON."""
 
     def test_constraints_loader_parses_sense_free_json(self, tmp_path: Path) -> None:
         from novomodelo_bridge.comparators.constraints import (
@@ -1773,8 +1810,8 @@ class TestGenericConstraintF3Loaders:
 
 
 class TestPerStageBoundsResolution:
-    """per_stage_bounds resolves the endpoint the pre-F3
-    single ``bound`` column used to hold, for every constraint direction."""
+    """per_stage_bounds resolves the endpoint a legacy
+    single ``bound`` column held, for every constraint direction."""
 
     @staticmethod
     def _f3_bounds() -> pl.DataFrame:
@@ -1816,24 +1853,21 @@ class TestPerStageBoundsResolution:
 
 
 class TestAC3NumericRegressionAcrossF3Migration:
-    """An F3 case whose constraints round-trip
-    unchanged from the pre-F3 ``(sense, bound)`` content produces identical
-    per-stage evaluated limits and pass/fail verdicts to the pre-F3
-    comparison — same numbers, new column layout."""
+    """A sense-free case whose constraints round-trip
+    unchanged from legacy ``(sense, bound)`` content produces identical
+    per-stage evaluated limits and pass/fail verdicts to a legacy
+    comparison — same numbers, interval column layout."""
 
     def test_f3_limits_and_verdicts_match_pre_f3_content(self, tmp_path: Path) -> None:
         import pyarrow.parquet as pq
 
-        from novomodelo_bridge.comparators.constraints import (
-            load_generic_constraint_bounds,
-            per_stage_bounds,
-        )
+        from novomodelo_bridge.comparators.constraints import per_stage_bounds
         from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 
-        # Pre-F3 ground truth this case is migrated from: constraint 0 is a
+        # Legacy ground truth this case is built from: constraint 0 is a
         # VminOP-style `>=` security-curve floor; constraint 1 is an
         # AGRINT-style `<=` ceiling. These are the exact (sense, value) pairs
-        # a pre-F3 case would have carried in its single `bound` column.
+        # a legacy case carries in its single `bound` column.
         pre_f3_bound = {
             (0, 0): (">=", 500.0),
             (0, 1): (">=", 520.0),
@@ -1869,18 +1903,20 @@ class TestAC3NumericRegressionAcrossF3Migration:
             constraints_dir / "generic_constraint_bounds.parquet",
         )
 
-        gc_bounds = load_generic_constraint_bounds(tmp_path)
+        gc_bounds = pl.read_parquet(
+            constraints_dir / "generic_constraint_bounds.parquet"
+        )
         assert "bound" not in gc_bounds.columns
         resolved = per_stage_bounds(gc_bounds)
 
         for (cid, stage), (sense, value) in pre_f3_bound.items():
             rb = resolved[cid][stage]
-            # Identical per-stage evaluated limit to the pre-F3 single
+            # Identical per-stage evaluated limit to the legacy single
             # `bound` column value.
             assert rb.value == value
             assert rb.shape == sense
-            # Identical pass/fail verdict to what a pre-F3 comparison
-            # (LHS vs. the single (sense, bound) pair) would have reached.
+            # Identical pass/fail verdict to what a legacy comparison
+            # (LHS vs. the single (sense, bound) pair) reaches.
             lhs_value = lhs[(cid, stage)]
             pre_f3_pass = lhs_value >= value if sense == ">=" else lhs_value <= value
             f3_pass = (
@@ -1898,7 +1934,7 @@ class TestConstraintsChartShapeLabelFromBounds:
         from novomodelo_bridge.comparators.charts import constraints_comparison_chart
         from novomodelo_bridge.comparators.constraints import ResolvedBound
 
-        constraints = [{"id": 0, "name": "VminOP_X"}]  # sense-free (F3)
+        constraints = [{"id": 0, "name": "VminOP_X"}]  # sense-free
         lhs_newave = pl.DataFrame(
             {"constraint_id": [0], "stage_id": [0], "lhs_value": [510.0]}
         )

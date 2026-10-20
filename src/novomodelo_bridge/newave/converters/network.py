@@ -95,9 +95,9 @@ _LOG = logging.getLogger(__name__)
 # its LHS `Σ ρ_acum·storage` was left in ρ_acum·hm³ (≈ 2.628× the true MWmonth)
 # while novomodelo priced the slack `× block_hours`, pushing the effective curve
 # penalty above the deficit cost so novomodelo deficited instead of drawing down.
-# Fixed by converting ρ_acum to MWmonth/hm³ *per stage* — see
-# `converters/constraints.py:_vminop_energy_factor`. Any future LP constraint or
-# penalty on a stock (storage/energy) priced `× block_hours` must do the same.
+# Fixed by pricing each VminOP stage at R$/MWh ÷ that stage's real hours — see
+# `convert_vminop_constraints`. Any future LP constraint or penalty on a stock
+# (storage/energy) priced `× block_hours` must do the same.
 #
 # Merit order from the source model micro-penalty values ("the source model
 # individualizado"

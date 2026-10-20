@@ -42,6 +42,13 @@ _DERIVED: dict[str, dict[str, tuple[Token, ...]]] = {
         "horizon": (("dger", None),),
         "fpha_enabled": (("dger", None),),
         "switches": (("dger", None),),
+        "pumping_related_codes": (("estacao_bombeamento", None), ("dger", None)),
+        "fictitious_codes": (
+            ("confhd", None),
+            ("hidr", None),
+            ("estacao_bombeamento", None),
+            ("dger", None),
+        ),
     },
     "decomp": {
         "id_map": (("dadger", "SB"), ("dadger", "CT"), ("dadger", "UH")),
@@ -51,7 +58,7 @@ _DERIVED: dict[str, dict[str, tuple[Token, ...]]] = {
 }
 # ``case.files.<attr>`` reads that are not files-dataclass fields.
 _FILES_ATTR: dict[str, dict[str, Token]] = {
-    "newave": {"directory": ("restricao_eletrica", None)},
+    "newave": {},
     "decomp": {},
 }
 _RECEIVERS = {"dadger": "dadger", "dg": "dadger", "dadgnl": "dadgnl", "gnl": "dadgnl"}

@@ -1,12 +1,27 @@
-"""Deck file discovery via caso.dat -> the revision index file."""
+"""Deck file discovery via caso.dat -> the revision index file.
+
+LIBS files come only from the LIBS index that ``dadger``'s ``FA`` register
+names (:mod:`novomodelo_bridge.core.libs_index`); a deck without ``FA`` has none.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
+from novomodelo_bridge.core.diagnostics import Diagnostic
 from novomodelo_bridge.core.errors import SourceFileError
-from novomodelo_bridge.decomp import constraint_registers
+from novomodelo_bridge.core.libs_index import (
+    HIDRELETRICA_CURVAJUSANTE,
+    INDEX_FILENAME,
+    PARQUE_EOLICO_EQUIVALENTE_PREFIX,
+    RESTRICAO_ELETRICA_ESPECIAL,
+    ConventionalFile,
+    ignored_files,
+    read_libs_index,
+    unindexed_files_diagnostic,
+)
+from novomodelo_bridge.core.paths import find_case_insensitive
 
 #: Opens a comment line in the deck's register and index files.
 REGISTER_COMMENT_PREFIX = "&"
@@ -23,10 +38,9 @@ class DecompFiles:
     dadgnl: Path | None
     renovaveis: Path | None
     polinjus: Path | None
-    #: The deck's LIBs-era electrical-constraint file, resolved
-    #: via :func:`constraint_registers.resolve_libs_electrical_path`; ``None``
-    #: when the deck carries none. Defaults to ``None`` so every pre-existing
-    #: ``DecompFiles(...)`` call site keeps constructing without it.
+    #: The deck's LIBs-era electrical-constraint file, from the LIBS index;
+    #: ``None`` when the index lists none. Defaults to ``None`` so every
+    #: pre-existing ``DecompFiles(...)`` call site keeps constructing without it.
     libs_restricao_eletrica: Path | None = None
     #: The deck's boundary-FCF header file (``cortesh.dat``), resolved via
     #: :func:`_resolve_fc_record_path` (the deck's ``FC NEWV21`` record) or,
@@ -40,6 +54,8 @@ class DecompFiles:
     #: (the deck's ``FC NEWCUT`` record) or the glob idiom; ``None`` when
     #: absent.
     cortes: Path | None = None
+    #: The LIBS index file ``FA`` names; ``None`` when ``dadger`` has no ``FA``.
+    libs_index: Path | None = None
 
     @property
     def fixed_column_files(self) -> list[Path]:
@@ -56,11 +72,9 @@ _FC_TIPO_CORTES = "NEWCUT"
 def _resolve_fc_record_path(dadger: Path, deck_dir: Path, *, tipo: str) -> Path | None:
     """Resolve one boundary-FCF file named by the deck's ``FC`` register.
 
-    A lightweight fixed-width text scan of *dadger* — mirroring
-    :func:`~novomodelo_bridge.decomp.constraint_registers.resolve_libs_electrical_path`'s
-    own text-scan idiom for a deck-relative file named by an index entry —
-    rather than a full :class:`idecomp.decomp.Dadger` parse (the caller
-    re-parses *dadger* structurally right after discovery returns;
+    A lightweight fixed-width text scan of *dadger*, as :func:`_libs_registers`
+    does for ``FA``/``FJ``, rather than a full :class:`idecomp.decomp.Dadger`
+    parse (the caller re-parses *dadger* structurally right after discovery returns;
     duplicating that heavier, structured parse here would be wasted work and
     would need to guard against whatever exception surface a malformed
     dadger raises through it). The ``FC`` register
@@ -95,6 +109,75 @@ def _resolve_fc_record_path(dadger: Path, deck_dir: Path, *, tipo: str) -> Path 
         if candidate.is_file():
             return candidate
     return None
+
+
+#: ``FA``/``FJ`` registers (``idecomp.decomp.modelos.dadger.FA``/``FJ``):
+#: identifier at columns 0:4, file name at columns 4:54 and 4:16.
+_FA_IDENTIFIER, _FA_NAME = "FA  ", slice(4, 54)
+_FJ_IDENTIFIER, _FJ_NAME = "FJ  ", slice(4, 16)
+
+
+def _libs_registers(dadger: Path) -> tuple[list[str], list[str]]:
+    """The file names *dadger*'s ``FA`` and ``FJ`` lines give, in deck order.
+
+    Empty when *dadger* cannot be read; the full parse right after discovery
+    reports that.
+    """
+    try:
+        text = dadger.read_text(encoding="latin-1")
+    except OSError:
+        return [], []
+    fa: list[str] = []
+    fj: list[str] = []
+    for line in text.splitlines():
+        if line[:4] == _FA_IDENTIFIER and (name := line[_FA_NAME].strip()):
+            fa.append(name)
+        elif line[:4] == _FJ_IDENTIFIER and (name := line[_FJ_NAME].strip()):
+            fj.append(name)
+    return fa, fj
+
+
+def _register_file(names: list[str], register: str, src: Path) -> Path | None:
+    """The deck file *register* names, or ``None`` when *dadger* has none.
+
+    Raises:
+        SourceFileError: the register names two different files, or a file not
+            in the deck folder.
+    """
+    distinct = sorted({name.lower() for name in names})
+    if not distinct:
+        return None
+    if len(distinct) > 1:
+        raise SourceFileError(
+            f"dadger has {register} registers naming different files: "
+            f"{', '.join(distinct)}",
+            path=str(src),
+            field=register,
+        )
+    path = find_case_insensitive(src, names[0])
+    if path is None:
+        raise SourceFileError(
+            f"dadger's {register} register names {names[0]}, which is not in {src}",
+            path=str(src / names[0]),
+            field=register,
+        )
+    return path
+
+
+def _polinjus(fj: Path | None, indexed: Path | None) -> Path | None:
+    """The polinjus file ``FJ`` and the LIBS index declare.
+
+    Raises:
+        SourceFileError: they name different files.
+    """
+    if fj is not None and indexed is not None and fj != indexed:
+        raise SourceFileError(
+            f"dadger's FJ register names {fj.name}, but the LIBS index lists "
+            f"{HIDRELETRICA_CURVAJUSANTE} in {indexed.name}",
+            path=str(fj),
+            field="FJ",
+        )
+    return fj if fj is not None else indexed
 
 
 def discover_decomp_files(src: Path) -> DecompFiles:
@@ -145,9 +228,10 @@ def discover_decomp_files(src: Path) -> DecompFiles:
     vazoes = find("vazoes", required=True)
     hidr = find("hidr", required=True)
     dadgnl = find("dadgnl", required=False)
-    renovaveis = find("renovaveis", required=False)
-    polinjus = find("polinjus", required=False)
     assert dadger is not None and vazoes is not None and hidr is not None
+    fa_names, fj_names = _libs_registers(dadger)
+    libs_index = _register_file(fa_names, "FA", src)
+    libs = read_libs_index(src, libs_index)
     # Prefer the deck's own FC record over the glob: its caminho may point
     # outside `src` (e.g. `../../cortesh.dat`), which the glob can never find.
     # The `cortes-` prefix is tried before the broader `cortes` so a
@@ -169,9 +253,36 @@ def discover_decomp_files(src: Path) -> DecompFiles:
         vazoes=vazoes,
         hidr=hidr,
         dadgnl=dadgnl,
-        renovaveis=renovaveis,
-        polinjus=polinjus,
-        libs_restricao_eletrica=constraint_registers.resolve_libs_electrical_path(src),
+        renovaveis=libs.path_for_family(PARQUE_EOLICO_EQUIVALENTE_PREFIX),
+        polinjus=_polinjus(
+            _register_file(fj_names, "FJ", src), libs.path(HIDRELETRICA_CURVAJUSANTE)
+        ),
+        libs_restricao_eletrica=libs.path(RESTRICAO_ELETRICA_ESPECIAL),
         cortesh=cortesh,
         cortes=cortes,
+        libs_index=libs_index,
+    )
+
+
+def unindexed_libs_diagnostic(files: DecompFiles) -> Diagnostic | None:
+    """WARNING naming the deck files that look like LIBS inputs but that the
+    deck does not declare, or ``None`` when there are none."""
+    conventional = [
+        ConventionalFile("polinjus*", HIDRELETRICA_CURVAJUSANTE, files.polinjus),
+        ConventionalFile(
+            "renovaveis*", f"{PARQUE_EOLICO_EQUIVALENTE_PREFIX}*", files.renovaveis
+        ),
+        ConventionalFile(
+            "lib_restricao-eletrica-especial*.csv",
+            RESTRICAO_ELETRICA_ESPECIAL,
+            files.libs_restricao_eletrica,
+        ),
+        ConventionalFile(INDEX_FILENAME, "FA register (dadger)", files.libs_index),
+    ]
+    return unindexed_files_diagnostic(
+        ignored_files(files.dadger.parent, conventional),
+        remediation=(
+            "To have a file read, list its record in the LIBS index, and name the "
+            "index itself in a dadger FA register; otherwise this is informational."
+        ),
     )

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pandas as pd
-from idecomp.decomp.modelos.dadger import ACCOTVOL, ACNUMJUS, ACNUMPOS
+from idecomp.decomp.modelos.dadger import ACCOTVOL, ACJUSENA, ACNUMJUS, ACNUMPOS
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -56,6 +56,7 @@ class EffectiveCadastro:
     )
     downstream_links: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     inflow_gauges: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    energy_links: Mapping[int, tuple[int | None, ...]] = field(default_factory=dict)
 
     def value(self, code: int, param: str, stage_index: int) -> float:
         """Effective value of *param* for plant *code* at *stage_index*."""
@@ -162,6 +163,24 @@ class EffectiveCadastro:
         if code not in self.downstream_links:
             return False
         series = self.downstream_links[code]
+        return any(value != series[0] for value in series)
+
+    def energy_link(self, code: int, stage_index: int) -> int | None:
+        """The ``AC JUSENA`` plant below *code* at *stage_index*, if one is in force.
+
+        The source model accounts *code*'s stored energy through this plant
+        instead of its water-routing :meth:`downstream_plant` (a pumping or
+        diversion route, or a non-operated plant that aggregates a complex);
+        ``0`` is the sink and ``None`` means no link is declared.
+        """
+        series = self.energy_links.get(code)
+        return None if series is None else series[stage_index]
+
+    def energy_link_varies(self, code: int) -> bool:
+        """Whether *code*'s ``AC JUSENA`` link varies across stages."""
+        if code not in self.energy_links:
+            return False
+        series = self.energy_links[code]
         return any(value != series[0] for value in series)
 
     def inflow_gauge(self, code: int, stage_index: int) -> int:
@@ -392,9 +411,10 @@ def build_effective_cadastro(
     stage-representative (stage 0) value off these, never per-stage, so a
     temporal ``NUMJUS``/``NUMPOS`` is a tracked gap
     (:meth:`EffectiveCadastro.downstream_plant_varies`/``inflow_gauge_varies``),
-    not a silent per-stage cascade. ``AC JUSENA``/``AC NPOSNW`` are
-    deliberately **not** ingested here — no DECOMP consumer; see the
-    deferred-fidelity warning in :mod:`novomodelo_bridge.decomp.converters.hydro`.
+    not a silent per-stage cascade. ``energy_links`` holds the ``AC JUSENA``
+    stored-energy links (:meth:`EffectiveCadastro.energy_link`),
+    seeded with ``None`` (follow the water-routing link). ``AC NPOSNW`` is
+    deliberately **not** ingested here — no DECOMP consumer.
 
     Raises
     ------
@@ -402,8 +422,8 @@ def build_effective_cadastro(
         If an override references a plant *code* absent from ``hidr.index``
         — the registry has no cadastro row to override. Applies to the
         scalar overrides, the source plant of an ``AC DESVIO`` (the
-        downstream plant it names is not validated here — that is M2.1's
-        concern), and every machine-set override.
+        downstream plant it names is not validated here), and every
+        machine-set override.
     """
     records, out_of_horizon = _read_scalar_overrides(dadger, calendar)
     diversion_records, diversion_out_of_horizon = _read_diversion_overrides(
@@ -431,6 +451,15 @@ def build_effective_cadastro(
     gauge_records, gauge_out_of_horizon = _read_keyed_overrides(
         dadger, calendar, ACNUMPOS, "codigo_posto", "posto", int, _plant_code_key
     )
+    energy_records, energy_out_of_horizon = _read_keyed_overrides(
+        dadger,
+        calendar,
+        ACJUSENA,
+        "codigo_usina_jusante",
+        "jusante_energia",
+        int,
+        _plant_code_key,
+    )
     out_of_horizon = (
         out_of_horizon
         + diversion_out_of_horizon
@@ -438,6 +467,7 @@ def build_effective_cadastro(
         + cota_out_of_horizon
         + topology_out_of_horizon
         + gauge_out_of_horizon
+        + energy_out_of_horizon
     )
 
     n_stages = len(calendar)
@@ -545,6 +575,15 @@ def build_effective_cadastro(
     if gauge_records:
         applied["posto"] = len(gauge_records)
 
+    energy_links: dict[int, tuple[int | None, ...]] = {}
+    for code, energy_overrides in energy_records.items():
+        _require_cadastro_row(hidr, code)
+        energy_links[code] = tuple(
+            _forward_fill_series(None, energy_overrides, n_stages)
+        )
+    if energy_records:
+        applied["jusante_energia"] = len(energy_records)
+
     effective = EffectiveCadastro(
         base=hidr,
         n_stages=n_stages,
@@ -555,6 +594,7 @@ def build_effective_cadastro(
         cota_polynomials=cota_polynomials,
         downstream_links=downstream_links,
         inflow_gauges=inflow_gauges,
+        energy_links=energy_links,
     )
     report = CadastroResolutionReport(
         applied=applied, out_of_horizon=tuple(out_of_horizon)

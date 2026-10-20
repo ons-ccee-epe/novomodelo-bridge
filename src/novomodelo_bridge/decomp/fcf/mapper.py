@@ -10,7 +10,7 @@ terms join 1:1 by calendar-month lag slot, and — when the caller supplies a
 *covered* dated ring slot(s) via a chain-rule patamar sum over ``pi_gnl``
 (narrowed to the class-3 signaled, month-anchored lanes novomodelo's excised ring
 actually carries). A source plant with no match in the target manifest is
-dropped (D3), never folded into a neighbour, and recorded in
+dropped, never folded into a neighbour, and recorded in
 :class:`MappingResult.dropped` for the diagnostics layer to render; a GNL
 source/target term with no live counterpart — including a dated ring slot
 whose delivery falls before :attr:`GnlRingPlan.post_horizon_start` (an
@@ -126,8 +126,8 @@ class MappedCut:
     ``coefficients`` is a full-length vector aligned to
     ``TerminalManifest.state_dimension`` — every target slot has an
     explicit coefficient, never merely unset. ``intercept`` is the source
-    record's ``rhs`` (the ``alpha - beta'xhat`` form; never re-derived, per
-    §2.1), scaled to novomodelo's cost units and — when :func:`map_boundary_cuts`
+    record's ``rhs`` (the ``alpha - beta'xhat`` form; never re-derived),
+    scaled to novomodelo's cost units and — when :func:`map_boundary_cuts`
     is given ``inflow_lag_means`` — reduced by the seasonal-mean fold
     ``Σ placed_lag_coef · mu`` (see the module header). The intercept and every
     coefficient are scaled to novomodelo's cost units by :func:`map_boundary_cuts` —
@@ -161,7 +161,7 @@ class MappedCut:
 
 @dataclass(frozen=True)
 class DroppedTerm:
-    """A source-only plant's storage term, dropped rather than folded (D3).
+    """A source-only plant's storage term, dropped rather than folded.
 
     ``beta`` is that plant's ``pi_varm`` coefficient in the source's first
     cut record — a representative value for the diagnostics layer
@@ -230,7 +230,7 @@ class GnlDroppedTerm:
     the representative summed ``pi_gnl`` coefficient that WOULD have been
     placed had the slot been covered (see ``_first_active_gnl_sum``).
     Recorded once per unresolvable (submercado, lag) or target, never
-    folded into a neighbour (D3-like).
+    folded into a neighbour.
     """
 
     thermal_id: int | None
@@ -242,7 +242,7 @@ class GnlDroppedTerm:
 
 @dataclass(frozen=True)
 class MappingResult:
-    """The mapped cuts plus every D3-dropped source-only term.
+    """The mapped cuts plus every dropped source-only term.
 
     ``dropped`` carries storage/lag source-only plants; ``gnl_dropped``
     (defaulted, so existing constructions keep working) carries GNL
@@ -398,7 +398,7 @@ def _resolve_storage_targets(
     module header). Each component gets the *full* coefficient (a
     sum-decomposition, not a split).
 
-    A source plant/complexo is dropped (D3) only when it resolves onto no live
+    A source plant/complexo is dropped only when it resolves onto no live
     target at all — an unknown code that is neither operated nor a complexo, or
     a complexo whose every component is unknown to `id_map` or lacks a
     `HydroStorage` slot. Its storage *and* inflow-lag terms are then omitted
@@ -578,7 +578,7 @@ def _resolve_gnl_targets(
                 )
             )
 
-    # Source-submercado drops (D3-like): a submercado no target claims, but
+    # Source-submercado drops: a submercado no target claims, but
     # whose pi_gnl carries a nonzero coefficient on some active record, has
     # a source term with no live GNL thermal to receive it.
     active_records = tuple(record for record in cuts.records if record.is_active)
@@ -639,7 +639,7 @@ def map_boundary_cuts(
     price on a flat-power ring state, so the coupling stage's total hours would
     over-count it by `n_patamares` (see the module header's derivation).
 
-    Storage terms join by plant code (`HydroStorage`, D3-drop on a
+    Storage terms join by plant code (`HydroStorage`, dropped on a
     source-only plant); inflow-lag terms join 1:1 by `lag_slot_of` onto
     `HydroInflowLag`. When `gnl_plan` is given, each `AnticipatedThermalState`
     ring slot named by one of its targets' *covered* dated slot(s) — i.e.

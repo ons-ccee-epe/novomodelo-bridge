@@ -192,11 +192,17 @@ def seasonal_step_function(
     study_months = horizon.study_months
     total_stages = horizon.total_stages
 
-    changepoints: list[tuple[int, float]] = []
-    for year, month, value in recs:
-        sid = (year - horizon.start_year) * 12 + (month - sm)
-        changepoints.append((max(0, sid), value))
-    changepoints.sort()
+    # By date alone: a stable sort keeps file order between records for the
+    # same month, so the later one wins, and the latest record before the
+    # study is the one in force at stage 0.
+    dated = sorted(
+        (
+            ((year - horizon.start_year) * 12 + (month - sm), value)
+            for year, month, value in recs
+        ),
+        key=lambda cp: cp[0],
+    )
+    changepoints = [(max(0, sid), value) for sid, value in dated]
     pre = _repeating_year_steps(pre_recs, transform)
     pos = _repeating_year_steps(pos_recs, transform)
 

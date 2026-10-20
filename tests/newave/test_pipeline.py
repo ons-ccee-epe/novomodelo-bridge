@@ -73,6 +73,7 @@ class TestConvertNewaweCasePipeline:
             dst / "system" / "thermals.json",
             dst / "system" / "buses.json",
             dst / "system" / "lines.json",
+            dst / "system" / "pumping_stations.json",
             dst / "scenarios" / "inflow_seasonal_stats.parquet",
             dst / "scenarios" / "load_seasonal_stats.parquet",
             dst / "scenarios" / "inflow_history.parquet",

@@ -19,6 +19,7 @@ from tests.conftest import make_nw_files
 _PLAIN = {
     "agrint": "agrupamento_livre",
     "c_adic": "considera_carga_adicional",
+    "canal_desvio": "canal_desvio",
     "ghmin": "considera_ghmin",
     "re_dat": "restricoes_eletricas",
     "restricao_eletrica": "restricoes_eletricas_especiais",
@@ -102,24 +103,75 @@ class TestSwitchedOffInputs:
                 considera_ghmin=0,
                 agrupamento_livre=0,  # agrint.dat absent: not reported
                 restricao_turbinamento=3,  # modif present: TURBMAXT reported
+                canal_desvio=0,  # modif present, CDESVIO unknown: not reported
                 restricoes_eletricas_especiais=0,  # csv absent: not reported
             )
         )
-        off = switched_off_inputs(files, switches, restricao_eletrica_present=False)
+        off = switched_off_inputs(files, switches)
         assert [s.ignored for s in off] == [
             "ghmin.dat",
             "TURBMAXT records of modif.dat",
         ]
 
-    def test_min_outflow_needs_no_file_and_csv_presence_is_an_argument(
+    def test_min_outflow_needs_no_file_and_csv_presence_comes_from_the_index(
         self, tmp_path: Path
     ) -> None:
-        files = make_nw_files(tmp_path)
+        files = make_nw_files(
+            tmp_path, restricao_eletrica=tmp_path / "restricao-eletrica.csv"
+        )
         switches = DgerSwitches.from_dger(
             _dger(desconsidera_vazao_minima=1, restricoes_eletricas_especiais=0)
         )
-        off = switched_off_inputs(files, switches, restricao_eletrica_present=True)
+        off = switched_off_inputs(files, switches)
         assert [s.ignored for s in off] == [
             "restricao-eletrica.csv",
             "minimum outflow (VAZMIN, VAZMINT)",
         ]
+
+
+# ---------------------------------------------------------------------------
+# Pumping station (bombeamento) switch
+# ---------------------------------------------------------------------------
+
+
+class TestBombeamentoSwitch:
+    def test_bombeamento_switch_uses_plain_pattern(self) -> None:
+        """bombeamento switch follows plain() pattern: off at 0, on otherwise."""
+        switches_on = DgerSwitches.from_dger(_dger(estacoes_bombeamento=1))
+        switches_off = DgerSwitches.from_dger(_dger(estacoes_bombeamento=0))
+        switches_absent = DgerSwitches.from_dger(_dger())
+
+        assert switches_on.bombeamento.on is True
+        assert switches_off.bombeamento.on is False
+        assert switches_absent.bombeamento.on is True  # absent = on
+
+    def test_bombeamento_switch_label_and_ignored(self) -> None:
+        """bombeamento switch has correct label and ignored description."""
+        switches = DgerSwitches.from_dger(_dger(estacoes_bombeamento=1))
+
+        assert switches.bombeamento.label == "ESTACOES BOMBEAMENTO"
+        assert switches.bombeamento.ignored == "pumping stations"
+
+    def test_bombeamento_in_switched_off_inputs(self, tmp_path: Path) -> None:
+        """bombeamento appears in switched_off_inputs when file present and switch off."""
+        files = make_nw_files(
+            tmp_path, estacao_bombeamento=tmp_path / "estacao-bombeamento.csv"
+        )
+        switches = DgerSwitches.from_dger(_dger(estacoes_bombeamento=0))
+
+        off = switched_off_inputs(files, switches)
+
+        ignored_names = [s.ignored for s in off]
+        assert "pumping stations" in ignored_names
+
+    def test_bombeamento_not_in_switched_off_when_file_absent(
+        self, tmp_path: Path
+    ) -> None:
+        """bombeamento not reported when file is absent, even if switch is off."""
+        files = make_nw_files(tmp_path)  # No pumping file
+        switches = DgerSwitches.from_dger(_dger(estacoes_bombeamento=0))
+
+        off = switched_off_inputs(files, switches)
+
+        ignored_names = [s.ignored for s in off]
+        assert "pumping stations" not in ignored_names

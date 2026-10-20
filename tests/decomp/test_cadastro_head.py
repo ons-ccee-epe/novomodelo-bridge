@@ -65,7 +65,7 @@ class _FakeDadger:
 class _StubDadger:
     """A ``Dadger`` double exposing only ``mp``/``fd``, both empty — every
     plant here defaults to a maintenance/availability factor of ``1.0`` so
-    the B8 hydraulic ceiling is the only thing under test.
+    the overlay's hydraulic ceiling is the only thing under test.
     """
 
     def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
@@ -452,7 +452,7 @@ def test_no_override_is_byte_identical() -> None:
     equals the base-registry formula bit-for-bit — reconstructed
     here independently via the same shared coeffs-keyed primitives
     (``mean_cota``, ``apply_hydraulic_loss``) the production code now calls.
-    The head no longer feeds a generation cap, so the B8 overlay emits no
+    The head no longer feeds a generation cap, so the availability overlay emits no
     lowered ``max_generation_mw`` (availability, at the rated envelope here,
     owns that column).
     """

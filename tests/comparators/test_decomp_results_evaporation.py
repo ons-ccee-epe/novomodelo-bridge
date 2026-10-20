@@ -117,7 +117,7 @@ def _evap_dec_oper_evap_fixture() -> pl.DataFrame:
 
 def _evap_aligned_fixture() -> _AlignedDecompFrames:
     """``_aligned_fixture()`` with its ``novomodelo_hydro`` extended to carry
-    ``evaporation_m3s`` -- the base fixture only carries E1's
+    ``evaporation_m3s`` -- the base fixture only carries the
     ``_HYDRO_VARIABLES`` columns. Plant 0 (code 10) = 2.5 m³/s, plant 1
     (code 20) = 3.0 m³/s."""
     base = _aligned_fixture()

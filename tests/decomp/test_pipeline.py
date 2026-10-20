@@ -34,7 +34,6 @@ from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
 )
 from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
-from novomodelo_bridge.decomp.converters.single_term_bounds import HydroCapacities
 from novomodelo_bridge.decomp.converters.thermal import (
     _THERMAL_COST_SCHEMA,
     ThermalBounds,
@@ -42,7 +41,10 @@ from novomodelo_bridge.decomp.converters.thermal import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.pipeline import (
     ConversionReport,
+    DiversionChannels,
     _base_diversion_channels,
+    _close_diversion,
+    _diversion_channel_dropped_diagnostic,
     _diversion_channels,
 )
 from novomodelo_bridge.decomp.scenarios import (
@@ -443,7 +445,7 @@ class TestEmissionCheckWiring:
 
 
 class TestBoundAccumulatorWiring:
-    """The E2 accumulator is the *single* merge point
+    """The bounds accumulator is the *single* merge point
     for every per-entity bound, and the new pumping family is wired
     end-to-end."""
 
@@ -513,7 +515,7 @@ class TestCli:
         self, tmp_path: Path
     ) -> None:
         """The ``ValueError`` ``convert_decomp_case`` raises on an
-        ERROR-severity post-emission self-check finding (Finding 1) is caught
+        ERROR-severity post-emission self-check finding is caught
         by the same except tuple as a missing/existing-destination failure —
         no dedicated CLI branch is needed."""
         runner = CliRunner()
@@ -660,6 +662,9 @@ class _CadastroDadger:
     def ti(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
         return None
 
+    def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+        return None
+
     def ac(
         self,
         codigo_usina: int | None = None,  # noqa: ARG002
@@ -695,7 +700,7 @@ def _run_cadastro_pipeline(
     generic-constraint emitters consume, none of which the mock deck's
     ``Dadger`` can produce for real (it exposes no
     ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors).
-    *unreadable_electrical*/*libs_electrical* feed the E1
+    *unreadable_electrical*/*libs_electrical* feed the
     detection helpers the same way — both otherwise patched to their
     empty/absent default so this shared fixture keeps regressing the
     bound-combine logic it was built for, undisturbed.
@@ -850,7 +855,7 @@ def _run_cadastro_pipeline(
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
         # The mock deck exposes no real files (DecompCase.from_directory
         # is patched wholesale above, so no real file I/O happens anywhere in this
-        # fixture) — the E1 detection helpers read the raw deck files directly, so
+        # fixture) — the detection helpers read the raw deck files directly, so
         # they must be patched here too, the same way the special-constraint
         # reader above is.
         "novomodelo_bridge.decomp.pipeline"
@@ -1233,8 +1238,8 @@ def _synthetic_rhv_record() -> ConstraintRecord:
 
 #: The RHE record's percentage limit — deliberately a *percentage*
 #: (``tipo_limite=2``) rather than an absolute MWmes limit, so its RHS
-#: genuinely depends on ρ_acum (an absolute limit would not exercise the
-#: "LHS sigil == the RHS ρ_acum it drove" wiring at all).
+#: genuinely references the maximum-energy and fraction sigils (an absolute
+#: limit would not exercise the RHS wiring at all).
 _RHE_LIMITE_PCT = 40.0
 
 
@@ -1259,7 +1264,7 @@ def _synthetic_rhe_record() -> ConstraintRecord:
 
 
 def _all_synthetic_generics() -> tuple[ConstraintRecord, ...]:
-    """RE, then the combined RHQ/RHV family, then RHE — the E7 emission
+    """RE, then the combined RHQ/RHV family, then RHE — the fixed emission
     order, in one census, for the cross-emitter id-allocation tests."""
     return (
         _synthetic_re_record(),
@@ -1270,7 +1275,7 @@ def _all_synthetic_generics() -> tuple[ConstraintRecord, ...]:
 
 
 class TestGenericConstraintWiring:
-    """The E4/E5 generic-constraint emitters wired
+    """The generic-constraint emitters wired
     into ``convert_decomp_case`` over one shared 0-based id allocator.
     Tier-1 synthetic only — the ``_run_cadastro_pipeline`` mock deck,
     extended with a ``to_generic`` census; no real deck, no ``import novomodelo``.
@@ -1278,10 +1283,11 @@ class TestGenericConstraintWiring:
 
     def test_ids_are_dense_and_unique_across_the_emitters(self, tmp_path: Path) -> None:
         """RE (one upper-only id) -> the combined RHQ/RHV emitter (one
-        genuinely two-sided HQ id under novomodelo's F3 interval model + one
-        lower-only HV id) -> RHE (one id) share a single running allocator,
-        so the 4 emitted ids form a gap-free ``range(4)`` with no
-        collision, regardless of which emitter produced which id."""
+        genuinely two-sided HQ id under novomodelo's sense-free interval model + one
+        lower-only HV id) -> RHE (one id over its three stages) share a
+        single running allocator, so the 4 emitted ids form a gap-free
+        ``range(4)`` with no collision, regardless of which emitter produced
+        which id."""
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, to_generic=_all_synthetic_generics()
         )
@@ -1290,8 +1296,8 @@ class TestGenericConstraintWiring:
         assert len(ids) == 4
         assert sorted(ids) == list(range(len(ids)))
         assert len(ids) == len(set(ids))
-        # E7's fixed order: RE, then HQ/HV (combined), then RHE. The
-        # genuinely two-sided HQ record is one F3 constraint, not two.
+        # Fixed emission order: RE, then HQ/HV (combined), then RHE. The
+        # genuinely two-sided HQ record is one interval constraint, not two.
         by_family = [c["name"].split("_")[0] for c in doc["constraints"]]
         assert by_family == ["RE", "HQ", "HV", "RHE"]
 
@@ -1316,64 +1322,104 @@ class TestGenericConstraintWiring:
         assert not (dst / "constraints" / "generic_constraints.json").exists()
         assert not (dst / "constraints" / "generic_constraint_bounds.parquet").exists()
 
-    def test_rhe_rho_acum_sigil_matches_the_rhs_it_drove(self, tmp_path: Path) -> None:
-        """The ``@rho_acum_h{id}`` LHS sigil ``generic_parameters.json``
-        declares for a referenced hydro resolves to the SAME per-stage value
-        ``emit_rhe_generics`` used to compute that same constraint's own RHS
-        (a percentage-of-EARM limit, so the RHS genuinely depends on it) —
-        proving the pipeline wires the scalar-parameters half and the
-        RHE emitter half together, not two independently
-        computed values that merely happen to look alike."""
+    def test_stage_varying_coefficient_is_declared_without_rhe(
+        self, tmp_path: Path
+    ) -> None:
+        """A per-stage coefficient alone, with no RHE constraint, still writes
+        ``generic_parameters.json`` declaring the parameter it reads."""
+        base = _synthetic_rhv_record()
+        varying = dataclasses.replace(
+            base,
+            terms=(
+                base.terms[0],
+                dataclasses.replace(base.terms[1], schedule=((0, 1.0), (2, 2.0))),
+            ),
+        )
+        dst = _run_cadastro_pipeline(
+            tmp_path, ac_volmax_frame=None, to_generic=(varying,)
+        )
+
+        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        assert "@coef_hv903_t1" in doc["constraints"][0]["expression"]
+        params = {
+            p["name"]: p
+            for p in json.loads(
+                (dst / "constraints" / "generic_parameters.json").read_text()
+            )["scalar_parameters"]
+        }
+        values = dict(params["coef_hv903_t1"]["values"])
+        assert params["coef_hv903_t1"]["kind"] == "per_stage"
+        assert [values[s] for s in range(3)] == [1.0, 1.0, 2.0]
+
+    def test_no_parameters_file_when_no_expression_reads_one(
+        self, tmp_path: Path
+    ) -> None:
+        dst = _run_cadastro_pipeline(
+            tmp_path, ac_volmax_frame=None, to_generic=(_synthetic_rhv_record(),)
+        )
+        assert (dst / "constraints" / "generic_constraints.json").is_file()
+        assert not (dst / "constraints" / "generic_parameters.json").exists()
+
+    def test_rhe_sigils_are_declared_and_drive_the_rhs(self, tmp_path: Path) -> None:
+        """Every ``@name`` an RHE expression references is declared in
+        ``generic_parameters.json``: the stored-energy terms as novomodelo's
+        computed MWh parameters, and the percentage limit as a per-stage
+        ``limite/100`` fraction — proving the pipeline wires the
+        scalar-parameters half and the RHE emitter half together."""
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, to_generic=(_synthetic_rhe_record(),)
         )
 
         doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
-        [rhe] = doc["constraints"]
-        assert rhe["name"].startswith("RHE_")
-        referenced_hids = sorted(
-            int(hid) for hid in re.findall(r"rho_acum_h(\d+)", rhe["expression"])
-        )
-        assert referenced_hids == [0, 1]  # both fixture plants (REE 1)
+        rhe = doc["constraints"]
+        assert [c["name"] for c in rhe] == ["RHE_904"]
 
-        params = json.loads(
-            (dst / "constraints" / "generic_parameters.json").read_text()
-        )["scalar_parameters"]
-        per_stage_by_hid = {
-            hid: dict(
-                next(
-                    p
-                    for p in params
-                    if p["name"] == f"rho_acum_h{hid}" and p["kind"] == "per_stage"
-                )["values"]
-            )
-            for hid in referenced_hids
+        params = {
+            p["name"]: p
+            for p in json.loads(
+                (dst / "constraints" / "generic_parameters.json").read_text()
+            )["scalar_parameters"]
         }
+        referenced = set(re.findall(r"@(\w+)", rhe[0]["expression"]))
+        assert referenced == {
+            "rho_acum_mwh_h0",
+            "rho_acum_mwh_h1",
+            "earm_max_mwh_h0",
+            "earm_max_mwh_h1",
+            "pct_rhe904",
+        }
+        assert {
+            name: params[name]["computed_spec"]["tag"]
+            for name in referenced
+            if name != "pct_rhe904"
+        } == {
+            "rho_acum_mwh_h0": "integrated_accumulated_productivity_mwh_per_hm3",
+            "rho_acum_mwh_h1": "integrated_accumulated_productivity_mwh_per_hm3",
+            "earm_max_mwh_h0": "max_stored_energy_mwh",
+            "earm_max_mwh_h1": "max_stored_energy_mwh",
+        }
+        assert params["pct_rhe904"]["kind"] == "per_stage"
+        assert [v for _, v in params["pct_rhe904"]["values"]] == pytest.approx(
+            [_RHE_LIMITE_PCT / 100.0] * 3
+        )
+
+        # Fixture plants (codes 1, 2 -> hids 0, 1) share no coupled cascade.
+        assert rhe[0]["expression"].endswith(
+            " >= @pct_rhe904 * (@earm_max_mwh_h0 + @earm_max_mwh_h1)"
+        )
 
         bounds = pq.read_table(
             dst / "constraints" / "generic_constraint_bounds.parquet"
         ).to_pylist()
-        [bound_row] = [
-            row
-            for row in bounds
-            if row["constraint_id"] == rhe["id"] and row["stage_id"] == 0
+        rows = [row for row in bounds if row["constraint_id"] == rhe[0]["id"]]
+        assert [(r["stage_id"], r["bound_lower"], r["bound_upper"]) for r in rows] == [
+            (s, 0.0, None) for s in range(3)
         ]
-
-        # volume_maximo per fixture plant (codes 1, 2 -> hids 0, 1) — no
-        # ACVOLMAX override active in this test (ac_volmax_frame=None), so
-        # the effective value equals the base _cadastro_plant_row vmax.
-        volume_maximo_by_hid = {0: 100.0, 1: 50.0}
-        expected_rhs = (_RHE_LIMITE_PCT / 100.0) * sum(
-            per_stage_by_hid[hid][0] * volume_maximo_by_hid[hid]
-            for hid in referenced_hids
-        )
-        assert bound_row["bound_lower"] == pytest.approx(expected_rhs)
-        assert bound_row["bound_upper"] is None
 
     def test_detection_diagnostics_flow_through_the_dx_sink(
         self, tmp_path: Path
     ) -> None:
-        """The E1 FE/RHA/LIBs-electrical detection diagnostics are
+        """The FE/RHA/LIBs-electrical detection diagnostics are
         captured on the returned ``ConversionReport``, not only logged.
 
         ``convert_decomp_case`` now owns its own top-level
@@ -1685,7 +1731,7 @@ class TestDeferralWarning:
     """The flat ``deferred at this milestone`` warning now names ONLY water
     travel time, and only when the deck actually carries a ``VI`` register.
     Boundary FCF is imported by default, reservoir evaporation is converted
-    (novomodelo >= 0.14's C11 fix), and windowed inflow inputs do not apply to the
+    and windowed inflow inputs do not apply to the
     external explicit tree the DECOMP path emits — so none of those are
     deferred, and a deck with no travel time emits no deferral warning at all.
     """
@@ -1796,9 +1842,9 @@ class TestDeferralWarning:
 
 
 class TestDiversionChannels:
-    """``_diversion_channels`` couples a positive QDES diversion floor to the
-    source-model diversion channel novomodelo requires for it (BILLINGS/PIMENTAL in
-    the real decks)."""
+    """``_diversion_channels`` gives every hydro whose resolved diversion can be
+    positive the channel to its source-model diversion target, so novomodelo credits
+    the diverted water to the receiving plant."""
 
     @staticmethod
     def _id_map() -> DecompIdMap:
@@ -1815,74 +1861,144 @@ class TestDiversionChannels:
         )
 
     @staticmethod
-    def _bounds(hydro_id: int, min_diversion: float | None) -> pa.Table:
+    def _bounds(
+        rows: list[tuple[int, float | None, float | None]],
+    ) -> pa.Table:
         return pa.table(
             {
-                "hydro_id": pa.array([hydro_id], type=pa.int32()),
-                "min_diversion_m3s": pa.array([min_diversion], type=pa.float64()),
+                "hydro_id": pa.array([r[0] for r in rows], type=pa.int32()),
+                "min_diversion_m3s": pa.array([r[1] for r in rows], type=pa.float64()),
+                "max_diversion_m3s": pa.array([r[2] for r in rows], type=pa.float64()),
             }
         )
 
-    def test_floored_hydro_with_channel_gets_the_channel(self) -> None:
-        channel = DiversionChannel(downstream=119, limit=100.0)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0),
+    def _resolve(self, rows: list, diversions: dict) -> DiversionChannels:
+        return _diversion_channels(
+            self._bounds(rows),
             self._id_map(),
-            self._effective({118: (channel, channel)}),
+            self._effective(diversions),
         )
-        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": 100.0}}
-        assert unresolved == []
 
-    def test_floored_hydro_without_channel_is_unresolved(self) -> None:
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0), self._id_map(), self._effective({})
+    def test_floored_hydro_with_limit_gets_the_limit(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=100.0)
+        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        assert result == DiversionChannels(
+            {0: {"downstream_id": 1, "max_flow_m3s": 100.0}}, []
         )
-        assert channels == {}
-        assert unresolved == [0]
 
-    def test_channel_with_no_limit_is_unresolved(self) -> None:
+    def test_ceiling_only_hydro_gets_a_channel(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=100.0)
+        result = self._resolve([(0, 0.0, 25.0)], {118: (channel, channel)})
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": 100.0}}
+        assert result.dropped == []
+
+    def test_target_without_limit_gets_an_unlimited_channel(self) -> None:
         channel = DiversionChannel(downstream=119, limit=None)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0),
-            self._id_map(),
-            self._effective({118: (channel, channel)}),
+        result = self._resolve(
+            [(0, 0.0, 25.0), (0, 0.0, 34.0), (0, None, None)],
+            {118: (channel, channel)},
         )
-        assert channels == {}
-        assert unresolved == [0]
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
 
-    def test_channel_to_unmapped_downstream_is_unresolved(self) -> None:
+    def test_floor_with_target_without_limit_resolves(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=None)
+        result = self._resolve([(0, 6.0, None)], {118: (channel, channel)})
+        assert result == DiversionChannels(
+            {0: {"downstream_id": 1, "max_flow_m3s": None}}, []
+        )
+
+    def test_no_limit_value_gets_an_unlimited_channel(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=9_999_999.0)
+        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        assert result.channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
+
+    def test_zero_limit_closes_a_ceiling(self) -> None:
+        channel = DiversionChannel(downstream=119, limit=0.0)
+        result = self._resolve([(0, 0.0, 25.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [0])
+
+    def test_floored_hydro_without_target_gets_no_channel_and_is_kept(self) -> None:
+        result = self._resolve([(0, 6.0, 6.0)], {})
+        assert result == DiversionChannels({}, [])
+
+    def test_floor_with_target_outside_the_case_gets_no_channel(self) -> None:
         channel = DiversionChannel(downstream=999, limit=100.0)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 6.0),
-            self._id_map(),
-            self._effective({118: (channel, channel)}),
-        )
-        assert channels == {}
-        assert unresolved == [0]
+        result = self._resolve([(0, 6.0, 6.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [])
 
-    def test_zero_floor_gets_no_channel(self) -> None:
+    def test_ceiling_with_target_outside_the_case_is_dropped(self) -> None:
+        channel = DiversionChannel(downstream=999, limit=None)
+        result = self._resolve([(0, 0.0, 25.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [0])
+
+    def test_closed_diversion_gets_no_channel(self) -> None:
         channel = DiversionChannel(downstream=119, limit=100.0)
-        channels, unresolved = _diversion_channels(
-            self._bounds(0, 0.0),
-            self._id_map(),
-            self._effective({118: (channel, channel)}),
-        )
-        assert channels == {}
-        assert unresolved == []
+        result = self._resolve([(0, 0.0, 0.0)], {118: (channel, channel)})
+        assert result == DiversionChannels({}, [])
 
-    def test_absent_diversion_column_returns_empty(self) -> None:
+    def test_absent_diversion_columns_return_empty(self) -> None:
         table = pa.table({"hydro_id": pa.array([0], type=pa.int32())})
-        channels, unresolved = _diversion_channels(
-            table, self._id_map(), self._effective({})
+        result = _diversion_channels(table, self._id_map(), self._effective({}))
+        assert result == DiversionChannels({}, [])
+
+
+class TestCloseDiversion:
+    """``_close_diversion`` zeroes the ceiling of a hydro whose diversion
+    target is outside the case, so novomodelo keeps that water in its own river."""
+
+    def test_closes_only_the_listed_hydros(self) -> None:
+        table = pa.table(
+            {
+                "hydro_id": pa.array([0, 0, 1], type=pa.int32()),
+                "max_diversion_m3s": pa.array([25.0, None, 34.0], type=pa.float64()),
+            }
         )
-        assert channels == {}
-        assert unresolved == []
+        closed = _close_diversion(table, [0])
+        assert closed.column("max_diversion_m3s").to_pylist() == [0.0, None, 34.0]
+        assert closed.schema == table.schema
+
+
+class TestDiversionChannelDroppedDiagnostic:
+    """The WARNING for a closed diversion names the plant, its target and the
+    ceiling that was closed, in text a pip-installed user can act on."""
+
+    def _diagnostic(self) -> Diagnostic:
+        channel = DiversionChannel(downstream=999, limit=None)
+        table = pa.table(
+            {
+                "hydro_id": pa.array([0, 0], type=pa.int32()),
+                "max_diversion_m3s": pa.array([25.0, 20.0], type=pa.float64()),
+            }
+        )
+        return _diversion_channel_dropped_diagnostic(
+            table,
+            [0],
+            DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(180,)),
+            EffectiveCadastro(
+                base=pd.DataFrame(),
+                n_stages=1,
+                stage_varying={},
+                diversions={180: (channel,)},
+            ),
+            {"hydros": [{"id": 0, "name": "TOCOS"}]},
+        )
+
+    def test_table_names_plant_target_and_ceiling(self) -> None:
+        diagnostic = self._diagnostic()
+        assert diagnostic.code == "decomp-diversion-channel-dropped"
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [["TOCOS", 180, 999, 25.0]]
+
+    def test_remediation_has_no_repo_internal_references(self) -> None:
+        text = f"{self._diagnostic().summary} {self._diagnostic().remediation}"
+        for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
+            assert leak not in text
 
 
 class TestBaseDiversionChannels:
     """``_base_diversion_channels`` models the BASE ``desvio`` diversions that
-    carry no QDES flow bound (e.g. MOXOTO -> P.AFONSO 4): without them novomodelo pins
-    the diversion column to ``[0, 0]`` and the downstream plant is stranded."""
+    carry no QDES flow bound (e.g. MOXOTO -> P.AFONSO 4): without a channel
+    novomodelo closes the diversion column and the downstream plant is stranded."""
 
     @staticmethod
     def _id_map() -> DecompIdMap:
@@ -1898,77 +2014,122 @@ class TestBaseDiversionChannels:
             diversions=diversions,
         )
 
-    @staticmethod
-    def _caps() -> dict[int, HydroCapacities]:
-        return {
-            0: HydroCapacities(max_generation_mw=400.0, max_turbined_m3s=2120.5),
-            1: HydroCapacities(max_generation_mw=2462.4, max_turbined_m3s=2406.8),
-        }
-
-    def test_base_channel_capped_at_receiver_turbine(self) -> None:
-        channel = DiversionChannel(downstream=175, limit=None)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
+    def _channels(self, diversions: dict, already_bounded_ids: set[int]) -> dict:
+        return _base_diversion_channels(
+            self._effective(diversions), self._id_map(), already_bounded_ids
         )
-        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": 2406.8}}
-        # one diversion contribution per stage, opened [0, receiver-turbine]
-        assert [
-            (c.entity_id, c.stage_id, c.axis, c.lower, c.upper) for c in contribs
-        ] == [
-            (0, 0, "diversion", 0.0, 2406.8),
-            (0, 1, "diversion", 0.0, 2406.8),
-        ]
+
+    def test_base_channel_has_no_limit(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=None)
+        channels = self._channels({173: (channel, channel)}, set())
+        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
 
     def test_ac_limit_channel_uses_the_explicit_limit(self) -> None:
         channel = DiversionChannel(downstream=175, limit=500.0)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
-        )
+        channels = self._channels({173: (channel, channel)}, set())
         assert channels == {0: {"downstream_id": 1, "max_flow_m3s": 500.0}}
-        assert all(c.upper == 500.0 for c in contribs)
+
+    def test_no_limit_value_has_no_limit(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=10_000_000.0)
+        channels = self._channels({173: (channel, channel)}, set())
+        assert channels == {0: {"downstream_id": 1, "max_flow_m3s": None}}
+
+    def test_zero_limit_is_skipped(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=0.0)
+        assert self._channels({173: (channel, channel)}, set()) == {}
 
     def test_already_bounded_source_is_skipped(self) -> None:
         channel = DiversionChannel(downstream=175, limit=None)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids={0},
-            stage_ids=[0, 1],
-        )
-        assert channels == {}
-        assert contribs == []
+        assert self._channels({173: (channel, channel)}, {0}) == {}
 
     def test_unmapped_downstream_is_skipped(self) -> None:
         channel = DiversionChannel(downstream=999, limit=None)
-        channels, contribs = _base_diversion_channels(
-            self._effective({173: (channel, channel)}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
-        )
-        assert channels == {}
-        assert contribs == []
+        assert self._channels({173: (channel, channel)}, set()) == {}
 
     def test_no_diversion_returns_empty(self) -> None:
-        channels, contribs = _base_diversion_channels(
-            self._effective({}),
-            self._id_map(),
-            self._caps(),
-            already_bounded_ids=set(),
-            stage_ids=[0, 1],
+        assert self._channels({}, set()) == {}
+
+
+class TestMiniDeckDiversionChannels:
+    """The committed mini deck converts its diversions with the source model's
+    limits: an ``AC DESVIO`` flow stays, its "no limit" value and a base
+    ``desvio`` carry none."""
+
+    def test_channels_and_their_limits(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        import json
+
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        report = convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+        hydros = json.loads(
+            (tmp_path / "out" / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"]
+        limits = {
+            h["name"]: h["diversion"]["max_flow_m3s"]
+            for h in hydros
+            if h.get("diversion") is not None
+        }
+        assert limits["BILLINGS"] == 100.0
+        assert limits["PIMENTAL"] is None
+        assert limits["MOXOTO"] is None
+        (unlimited,) = [
+            d for d in report.diagnostics if d.code == "diversion-channel-unlimited"
+        ]
+        assert unlimited.table is not None
+        assert unlimited.table.rows == [[314, "PIMENTAL", 288, "BELO MONTE", "9999999"]]
+
+
+class TestMiniDeckItaipuFrequencyBounds:
+    """The mini deck's 50/60 Hz ``RE`` records on Itaipu bound its two unit
+    groups; the plant row carries no generation bound, so novomodelo's plant cap
+    never limits the sum of both halves to one half's limit."""
+
+    def test_frequency_records_land_on_the_unit_groups(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        import json
+
+        import pyarrow.parquet as pq
+
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        out = tmp_path / "out"
+        convert_decomp_case(decomp_mini_deck, out)
+        (itaipu,) = [
+            h["id"]
+            for h in json.loads(
+                (out / "system" / "hydros.json").read_text(encoding="utf-8")
+            )["hydros"]
+            if h["name"] == "ITAIPU"
+        ]
+        plant = [
+            row
+            for row in pq.read_table(
+                out / "constraints" / "hydro_bounds.parquet"
+            ).to_pylist()
+            if row["hydro_id"] == itaipu
+        ]
+        groups = [
+            row
+            for row in pq.read_table(
+                out / "constraints" / "hydro_unit_group_bounds.parquet"
+            ).to_pylist()
+            if row["hydro_id"] == itaipu and row["stage_id"] == 0
+        ]
+
+        assert plant
+        assert all(
+            row["min_generation_mw"] is None and row["max_generation_mw"] is None
+            for row in plant
         )
-        assert channels == {}
-        assert contribs == []
+        by_group_block = {
+            (row["hydro_unit_group_id"], row["block_id"]): row for row in groups
+        }
+        assert by_group_block[(0, 2)]["max_generation_mw"] == 6310.5
+        assert by_group_block[(1, 0)]["min_generation_mw"] == 2000.0
+        assert by_group_block[(1, 0)]["max_generation_mw"] == 7000.0
 
 
 def _fc_line(tipo: str, caminho: str) -> str:

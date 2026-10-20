@@ -10,6 +10,7 @@ from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
     ACCOTVOL,
     ACDESVIO,
+    ACJUSENA,
     ACJUSMED,
     ACNUMCON,
     ACNUMJUS,
@@ -68,6 +69,9 @@ _SCALAR_AC_SPECS: tuple[_ScalarAcSpec, ...] = (
     _ScalarAcSpec(ACVOLMIN, "volume", "volume_minimo"),
     _ScalarAcSpec(ACVOLMAX, "volume", "volume_maximo"),
     _ScalarAcSpec(ACVAZMIN, "vazao", "vazao_minima_historica"),
+    # Loaded but not emitted: the storage-conditional sill is non-convex and
+    # is not modeled, so diversion and spillage stay open at any storage, as
+    # in the source model with `RT DESVIO`/`RT CRISTA`.
     _ScalarAcSpec(ACVMDESV, "volume", "volume_desvio"),
     _ScalarAcSpec(ACVSVERT, "volume", "volume_vertedouro"),
     _ScalarAcSpec(ACPROESP, "produtibilidade", "produtibilidade_especifica"),
@@ -94,6 +98,7 @@ APPLIED_AC_CLASSES: frozenset[type] = frozenset(
         ACCOTVOL,
         ACNUMJUS,
         ACNUMPOS,
+        ACJUSENA,
     }
 )
 

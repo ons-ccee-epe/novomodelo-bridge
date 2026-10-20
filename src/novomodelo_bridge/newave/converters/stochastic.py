@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -20,12 +21,25 @@ from inewave.newave import Cadic, Dger, Vazoes
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.incremental_inflow import (
+    ARTIFICIAL_GAUGE,
+    artificial_gauge_data_ignored_diagnostic,
+    artificial_gauge_plants_diagnostic,
+    artificial_pass_through,
+    artificial_pass_through_diagnostic,
+    incremental_by_plant,
+    is_artificial_gauge,
+)
 from novomodelo_bridge.newave import plants
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, study_horizon
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.switches import switch_off_diagnostic
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from collections.abc import Set as AbstractSet
 
 logger = logging.getLogger(__name__)
 
@@ -136,122 +150,123 @@ def _read_vazoes(path: Path, dger: Dger) -> Vazoes:
     return Vazoes.read(path, postos=count)
 
 
-def _build_upstream_postos(
+class _InflowCascade(NamedTuple):
+    """The cascade's inflow nodes: in-service and admitted filling plants."""
+
+    posto_of: dict[int, int]
+    upstream_of: dict[int, list[int]]
+
+
+def _inflow_cascade(
     confhd_df: pd.DataFrame,
     *,
-    filling_codes: set[int] | None = None,
-) -> dict[int, list[int]]:
-    """Return ``{posto: [upstream_posto, ...]}`` for the hydro cascade.
+    filling_codes: AbstractSet[int] = frozenset(),
+) -> _InflowCascade:
+    """Return each inflow node's station and directly upstream inflow nodes.
 
-    Builds a DAG in **posto space** from the full confhd cascade.  Multiple
-    plants that share the same posto collapse into a single DAG node,
-    which naturally deduplicates upstream contributions.
-
-    The algorithm:
-
-    1. Map every in-service plant code → posto.  NE/NC plants are not in the
-       LP and contribute no inflow series, but their ``codigo_usina_jusante``
-       links are still authoritative topology — see step 2.
-    2. For every in-service plant ``P``, follow ``P.codigo_usina_jusante`` and
-       walk through any NE/NC plants in the chain until reaching the next
-       in-service plant ``D`` (or the cascade terminates).  Add a posto edge
-       ``P.posto → D.posto``.  Without this walk-through, an NE/NC plant
-       sitting between two in-service plants silently disconnects the upstream
-       contribution from the downstream's incremental inflow.
-    3. Invert the edge direction: for each ``src_posto → dst_posto`` edge,
-       record ``dst_posto ← src_posto`` (upstream).
-
-    Because FICT plants share postos with real plants, and their cascade
-    edges resolve to the same posto-level edges, no duplicates arise.
-
-    Parameters
-    ----------
-    confhd_df:
-        The full ``Confhd.usinas`` cascade.
-    filling_codes:
-        Codes of admitted ``NE``-with-filling plants
-        (:func:`novomodelo_bridge.newave.plants.filling_hydro_codes`).  Such a plant
-        *receives* inflow during filling and operation, so its posto enters
-        the map as a real node rather than being walked through: an upstream
-        plant forms a posto edge **to** the filling plant instead of stepping
-        past it.  ``None`` (the default) is normalised to the empty set, in
-        which case behaviour is byte-identical to the in-service-only map.
+    A plant out of service (``NE``/``NC``, unless admitted for filling) is
+    not an inflow node, but its downstream link is still the cascade's
+    topology: the walk steps through it to the next inflow node, or the
+    upstream plant's water would never reach the plant below. An admitted
+    filling plant receives inflow, so it is a node and is not stepped past.
+    A node whose ``posto`` is NaN is left out.
     """
-    filling: set[int] = filling_codes if filling_codes is not None else set()
-
-    # Index every row so the cascade walker can step through NE/NC plants
-    # without losing the link to the next in-service plant downstream.
     row_by_code: dict[int, pd.Series] = {}
-    code_to_posto: dict[int, int] = {}
+    posto_of: dict[int, int] = {}
     for _, row in confhd_df.iterrows():
         code = int(row["codigo_usina"])
         row_by_code[code] = row
-        # An in-service plant — or an admitted NE-with-filling plant — is a
-        # real inflow node.  A filling plant whose posto is NaN is skipped
-        # (the in-service path relies on posto always being present).
         status = str(row["usina_existente"]).strip()
-        if status in plants.IN_SERVICE_STATUSES or code in filling:
-            posto_raw = row["posto"]
-            if pd.isna(posto_raw):
+        if status in plants.IN_SERVICE_STATUSES or code in filling_codes:
+            if pd.isna(row["posto"]):
                 continue
-            code_to_posto[code] = int(posto_raw)
+            posto_of[code] = int(row["posto"])
 
-    def _walk_to_next_in_service(start_code: int) -> int | None:
-        """Follow the cascade through NE/NC plants to the next in-service plant.
+    def _downstream_code(code: int) -> int:
+        raw = row_by_code[code].get("codigo_usina_jusante")
+        return int(raw) if raw is not None and not pd.isna(raw) else 0
 
-        Returns that plant's code, or ``None`` when the chain terminates
-        (downstream 0, unknown code, or a cycle is detected).
-        """
-        cur: int = start_code
+    def _next_node(start_code: int) -> int | None:
+        current = start_code
         seen: set[int] = set()
-        while cur != 0 and cur not in seen:
-            seen.add(cur)
-            if cur in code_to_posto:
-                return cur
-            row = row_by_code.get(cur)
-            if row is None:
+        while current != 0 and current not in seen:
+            seen.add(current)
+            if current in posto_of:
+                return current
+            if current not in row_by_code:
                 return None
-            ds_raw = row.get("codigo_usina_jusante")
-            cur = int(ds_raw) if ds_raw is not None and not pd.isna(ds_raw) else 0
+            current = _downstream_code(current)
         return None
 
-    # Collect directed edges in posto space (src_posto → dst_posto).
-    edges: set[tuple[int, int]] = set()
-    for code, src_posto in code_to_posto.items():
-        ds_raw = row_by_code[code].get("codigo_usina_jusante")
-        if ds_raw is None or pd.isna(ds_raw) or int(ds_raw) == 0:
-            continue
-        ds_code: int | None = int(ds_raw)
-        if ds_code not in code_to_posto:
-            # Downstream is NE/NC (or otherwise absent) — walk through to
-            # the next in-service plant so the posto graph stays connected.
-            ds_code = _walk_to_next_in_service(ds_code)
-            if ds_code is None:
-                continue
-        dst_posto = code_to_posto[ds_code]
-        if src_posto != dst_posto:  # skip self-loops (FICT/real share postos)
-            edges.add((src_posto, dst_posto))
-
-    upstream: dict[int, list[int]] = {}
-    for src, dst in edges:
-        upstream.setdefault(dst, []).append(src)
-
-    return upstream
+    upstream_of: dict[int, list[int]] = {}
+    for code in posto_of:
+        downstream = _next_node(_downstream_code(code))
+        if downstream is not None:
+            upstream_of.setdefault(downstream, []).append(code)
+    return _InflowCascade(posto_of, upstream_of)
 
 
-def _case_filling_codes(case: NewaveCase) -> set[int]:
-    """Return the admitted ``NE``-with-filling codes for *case*.
-
-    Reads the filling set from ``case`` exactly once via
-    :func:`novomodelo_bridge.newave.plants.filling_hydro_codes`, tolerating an absent
-    ``exph.dat`` (``case.exph is None`` → empty set).  The result is passed
-    to :func:`_build_upstream_postos` so admitted filling postos enter the
-    inflow map as real nodes.
-    """
-    return plants.filling_hydro_codes(
+def _case_cascade(case: NewaveCase) -> _InflowCascade:
+    """The inflow cascade of *case*, with its admitted filling plants."""
+    filling = plants.filling_hydro_codes(
         case.confhd.usinas,
         case.exph.expansoes if case.exph is not None else None,
     )
+    return _inflow_cascade(case.confhd.usinas, filling_codes=filling)
+
+
+def _incremental_by_hydro(
+    cascade: _InflowCascade,
+    id_map: NewaveIdMap,
+    natural_by_posto: Mapping[int, np.ndarray],
+) -> dict[int, np.ndarray]:
+    """Incremental series keyed by Novomodelo hydro id, one per converted plant."""
+    codes = [code for code in id_map.all_hydro_codes if code in cascade.posto_of]
+    by_code = incremental_by_plant(
+        natural_by_posto, cascade.posto_of, cascade.upstream_of, codes
+    )
+    return {id_map.hydro_id(code): series for code, series in by_code.items()}
+
+
+def _report_artificial_gauge(
+    case: NewaveCase,
+    cascade: _InflowCascade,
+    id_map: NewaveIdMap,
+    natural_by_posto: Mapping[int, np.ndarray],
+) -> None:
+    """Report the plants on the artificial gauge and the pairs that may double
+    count upstream inflow."""
+    codes = [code for code in id_map.all_hydro_codes if code in cascade.posto_of]
+    artificial = [code for code in codes if is_artificial_gauge(cascade.posto_of[code])]
+    if not artificial:
+        return
+    name_of = {
+        int(row["codigo_usina"]): str(row["nome_usina"]).strip()
+        for _, row in case.confhd.usinas.iterrows()
+    }
+    emit(
+        artificial_gauge_plants_diagnostic(
+            [
+                (code, name_of.get(code, ""), id_map.hydro_id(code))
+                for code in artificial
+            ]
+        ),
+        logger=logger,
+    )
+    stored = natural_by_posto.get(ARTIFICIAL_GAUGE)
+    if stored is not None and np.any(stored != 0.0):
+        emit(artificial_gauge_data_ignored_diagnostic("vazoes.dat"), logger=logger)
+    pairs = artificial_pass_through(cascade.posto_of, cascade.upstream_of, codes)
+    if pairs:
+        emit(
+            artificial_pass_through_diagnostic(
+                [
+                    (code, name_of.get(code, ""), up, name_of.get(up, ""))
+                    for code, up in pairs
+                ]
+            ),
+            logger=logger,
+        )
 
 
 # Parquet schema for inflow seasonal statistics.
@@ -299,44 +314,30 @@ def _vazpast_incremental(
     if df_tend is None or df_tend.empty:
         return {}
 
-    # The vazpast "codigo_usina" column is actually the posto (gauging station),
-    # same convention as vazoes.dat.  Map posto -> hydro_code -> novomodelo_id.
-    confhd_df = case.confhd.usinas
-    posto_to_novomodelo_id: dict[int, int] = {}
-    for _, row in confhd_df.iterrows():
-        code = int(row["codigo_usina"])
-        posto = int(row["posto"])
-        try:
-            posto_to_novomodelo_id[posto] = id_map.hydro_id(code)
-        except KeyError:
-            pass
+    # The tendency's "codigo_usina" column holds the posto, as in vazoes.dat.
+    months = list(range(1, 13))
+    natural: dict[int, np.ndarray] = {}
+    present: dict[int, set[int]] = {}
+    for posto, posto_df in df_tend.groupby("codigo_usina"):
+        values = dict(zip(posto_df["mes"].astype(int), posto_df["valor"].astype(float)))
+        natural[int(posto)] = np.array([values.get(m, 0.0) for m in months])
+        present[int(posto)] = set(values)
 
-    # Collect natural inflow values by posto: {posto: {cal_month: value}}.
-    natural: dict[int, dict[int, float]] = {}
-    for posto, plant_df in df_tend.groupby("codigo_usina"):
-        posto = int(posto)
-        if posto not in posto_to_novomodelo_id:
-            continue
-        month_vals: dict[int, float] = {}
-        for _, row in plant_df.iterrows():
-            month_vals[int(row["mes"])] = float(row["valor"])
-        natural[posto] = month_vals
-
-    # Convert natural → incremental: subtract each upstream posto's values.
-    upstream_map = _build_upstream_postos(
-        confhd_df, filling_codes=_case_filling_codes(case)
-    )
-
-    incremental: dict[int, dict[int, float]] = {}
-    for posto, nat_vals in natural.items():
-        inc_vals: dict[int, float] = dict(nat_vals)
-        for up_posto in upstream_map.get(posto, []):
-            up_nat = natural.get(up_posto, {})
-            for m in inc_vals:
-                inc_vals[m] -= up_nat.get(m, 0.0)
-        incremental[posto_to_novomodelo_id[posto]] = inc_vals
-
-    return incremental
+    cascade = _case_cascade(case)
+    posto_by_hydro = {
+        id_map.hydro_id(code): cascade.posto_of[code]
+        for code in id_map.all_hydro_codes
+        if code in cascade.posto_of
+    }
+    all_months = set(months)
+    return {
+        hydro_id: {
+            m: float(series[m - 1])
+            for m in months
+            if m in present.get(posto_by_hydro[hydro_id], all_months)
+        }
+        for hydro_id, series in _incremental_by_hydro(cascade, id_map, natural).items()
+    }
 
 
 def _incremental_history(
@@ -372,19 +373,16 @@ def _incremental_history(
     cutoff_months = (study_start_year - hist_start_year) * 12 + (study_start_month - 1)
     n_rows = min(cutoff_months, n_total_rows)
 
-    confhd_df = case.confhd.usinas
+    natural_by_posto = _natural_by_posto(df_vazoes, n_rows)
+    cascade = _case_cascade(case)
+    _report_artificial_gauge(case, cascade, id_map, natural_by_posto)
+    incremental = _incremental_by_hydro(cascade, id_map, natural_by_posto)
+    return hist_start_year, n_rows, incremental
 
-    posto_to_hydro: dict[int, int] = {}
-    for _, row in confhd_df.iterrows():
-        code = int(row["codigo_usina"])
-        posto = int(row["posto"])
-        try:
-            posto_to_hydro[posto] = id_map.hydro_id(code)
-        except KeyError:
-            pass
 
-    # Read natural inflow arrays by posto (truncated to history window).
-    natural_by_posto: dict[int, np.ndarray] = {}
+def _natural_by_posto(df_vazoes: pd.DataFrame, n_rows: int) -> dict[int, np.ndarray]:
+    """The first ``n_rows`` months of every posto column of ``vazoes.dat``."""
+    natural: dict[int, np.ndarray] = {}
     for col in df_vazoes.columns:
         if col == "data":
             continue
@@ -392,23 +390,8 @@ def _incremental_history(
             posto = int(col)
         except (ValueError, TypeError):
             continue
-        if posto in posto_to_hydro:
-            natural_by_posto[posto] = df_vazoes[col].to_numpy(dtype=float)[:n_rows]
-
-    # Convert natural → incremental: subtract upstream postos' series.
-    upstream_map = _build_upstream_postos(
-        confhd_df, filling_codes=_case_filling_codes(case)
-    )
-    incremental: dict[int, np.ndarray] = {}
-    for posto, nat in natural_by_posto.items():
-        inc = nat.copy()
-        for up_posto in upstream_map.get(posto, []):
-            up_nat = natural_by_posto.get(up_posto)
-            if up_nat is not None:
-                inc = inc - up_nat
-        incremental[posto_to_hydro[posto]] = inc
-
-    return hist_start_year, n_rows, incremental
+        natural[posto] = df_vazoes[col].to_numpy(dtype=float)[:n_rows]
+    return natural
 
 
 def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
@@ -448,8 +431,6 @@ def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
     if df_vazoes is None or df_vazoes.empty:
         raise FileNotFoundError("vazoes.dat not found or empty")
 
-    confhd_df: pd.DataFrame = case.confhd.usinas
-
     # Truncate to months before the study start (same window as inflow_history).
     hist_start_year: int = dger.ano_inicial_historico
     study_start_year: int = dger.ano_inicio_estudo
@@ -463,35 +444,9 @@ def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
     else:
         cal_months = np.array([(i % 12) + 1 for i in range(n_rows)])
 
-    # Build posto -> hydro_code mapping and read natural series.
-    posto_for_hydro: dict[int, int] = {}
-    for _, row in confhd_df.iterrows():
-        code = int(row["codigo_usina"])
-        posto = int(row["posto"])
-        posto_for_hydro[code] = posto
-
-    natural_by_posto: dict[int, np.ndarray] = {}
-    for col in df_vazoes.columns:
-        if col == "data":
-            continue
-        try:
-            posto = int(col)
-        except (ValueError, TypeError):
-            continue
-        natural_by_posto[posto] = df_vazoes[col].to_numpy(dtype=float)[:n_rows]
-
-    # Convert natural → incremental.
-    upstream_map = _build_upstream_postos(
-        confhd_df, filling_codes=_case_filling_codes(case)
+    incremental = _incremental_by_hydro(
+        _case_cascade(case), id_map, _natural_by_posto(df_vazoes, n_rows)
     )
-    incremental_by_posto: dict[int, np.ndarray] = {}
-    for posto, nat in natural_by_posto.items():
-        inc = nat.copy()
-        for up_posto in upstream_map.get(posto, []):
-            up_nat = natural_by_posto.get(up_posto)
-            if up_nat is not None:
-                inc = inc - up_nat
-        incremental_by_posto[posto] = inc
 
     hydro_codes = id_map.all_hydro_codes
     study_months = _derive_study_stage_months(dger)
@@ -503,8 +458,7 @@ def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
 
     for hydro_code in hydro_codes:
         novomodelo_hydro_id = id_map.hydro_id(hydro_code)
-        posto = posto_for_hydro.get(hydro_code)
-        inc_series = incremental_by_posto.get(posto) if posto is not None else None
+        inc_series = incremental.get(novomodelo_hydro_id)
 
         seasonal_mean: dict[int, float] = {}
         seasonal_std: dict[int, float] = {}

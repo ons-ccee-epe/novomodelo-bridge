@@ -51,7 +51,7 @@ from novomodelo_bridge.newave.filling import (
 )
 from novomodelo_bridge.newave.horizon import seasonal_step_function
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from novomodelo_bridge.newave.plants import fictitious_codes, filling_hydro_codes
+from novomodelo_bridge.newave.plants import filling_hydro_codes
 from novomodelo_bridge.newave.switches import DgerSwitches, switch_off_diagnostic
 
 _LOG = logging.getLogger(__name__)
@@ -519,7 +519,7 @@ def convert_water_withdrawal(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table 
     # to the next real plant in the cascade, while FICT entries are not propagated and
     # are silently dropped.
     confhd_df = case.confhd.usinas
-    fict_set = fictitious_codes(confhd_df, case.hidr.cadastro)
+    fict_set = case.fictitious_codes
     plant_downstream: dict[int, int] = {}
     for _, r in confhd_df.iterrows():
         code = int(r["codigo_usina"])

@@ -118,7 +118,7 @@ class TestStageRecords:
             assert "num_scenarios" not in record
 
     def test_stage_records_inflow_lags_false(self) -> None:
-        """Locks the P3 lag-blind convention on EVERY stage, not
+        """Locks the lag-blind convention on EVERY stage, not
         just the first: ``inflow_lags`` disabled, ``storage`` enabled. This is
         the exact shape that trips novomodelo's non-fatal external-solver-interop
         validation warning on purpose — ``convert decomp --validate``
@@ -341,13 +341,12 @@ class TestConvertConfigStoppingRules:
         assert rules[1]["limit"] == 500
 
 
-def test_convert_config_pins_truncation_with_penalty() -> None:
-    """The method is emitted, not left to novomodelo's default, and it is the
-    one the NEWAVE track emits."""
+def test_convert_config_pins_penalty_inflow_non_negativity() -> None:
+    """The method is emitted, not left to novomodelo's default, and is the
+    unbounded ``penalty`` correction rather than the other track's
+    ``truncation_with_penalty``."""
     dadger = MagicMock()
     dadger.ni.iteracoes = 500
     dadger.gp.data = [0.001]
     cfg = convert_config(make_decomp_case(Path("unused"), dadger=dadger))
-    assert cfg["modeling"]["inflow_non_negativity"] == {
-        "method": "truncation_with_penalty"
-    }
+    assert cfg["modeling"]["inflow_non_negativity"] == {"method": "penalty"}

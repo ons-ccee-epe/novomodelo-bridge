@@ -1,11 +1,11 @@
 """Shared generic-constraint builder + id allocator for both conversion tracks.
 
 The NEWAVE track (``newave/converters/constraints.py``) and the DECOMP track
-(``decomp/converters/constraints.py``) each assemble novomodelo F3 generic constraints
+(``decomp/converters/constraints.py``) each assemble novomodelo generic constraints
 (``generic_constraint_format.py``'s sense-free interval shape). This module is
 the single model-agnostic home both tracks use for that stateful assembly —
 :class:`ConstraintIdAllocator`, :class:`GenericConstraintBuilder`,
-:class:`GenericConstraintResult`, :data:`GENERIC_BOUNDS_SCHEMA`, and the F3
+:class:`GenericConstraintResult`, :data:`GENERIC_BOUNDS_SCHEMA`, and the
 slot/sentinel helpers (:data:`UNBOUNDED`, :func:`is_bounded`,
 :func:`slot_endpoints`) — built on the pure mapping leaf
 :mod:`novomodelo_bridge.core.generic_constraint_format`.
@@ -14,7 +14,7 @@ slot/sentinel helpers (:data:`UNBOUNDED`, :func:`is_bounded`,
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import pyarrow as pa
 
@@ -51,7 +51,7 @@ class GenericConstraintResult(NamedTuple):
     """Result of a generic-constraint emitter.
 
     ``constraints`` is the list of constraint dicts (``{"id", "name",
-    "description", "expression", "slack"}`` — novomodelo's F3 sense-free shape,
+    "description", "expression", "slack"}`` — novomodelo's sense-free shape,
     see :mod:`novomodelo_bridge.core.generic_constraint_format`); ``bounds`` is the
     per-``(constraint_id, stage_id, block_id)`` bounds table honouring
     :data:`GENERIC_BOUNDS_SCHEMA` (nullable ``bound_lower``/``bound_upper``
@@ -62,7 +62,7 @@ class GenericConstraintResult(NamedTuple):
     bounds: pa.Table
 
 
-#: Schema for the generic-constraint bounds table (F3 shape: see
+#: Schema for the generic-constraint bounds table (interval shape: see
 #: :data:`~novomodelo_bridge.core.generic_constraint_format.GENERIC_BOUNDS_COLUMNS`).
 #: ``block_id`` is nullable: ``None`` means "all blocks" (a stage-level
 #: constraint, or a per-block one whose bound applies uniformly).
@@ -78,7 +78,7 @@ GENERIC_BOUNDS_SCHEMA = pa.schema(
         pa.field("bound_upper", pa.float64(), nullable=True),
     ]
 )
-# Keep this schema's field names in lockstep with the shared F3 column list —
+# Keep this schema's field names in lockstep with the shared column list —
 # a silent drift here would desync this module from the shared mapping helper.
 # A plain `assert` is stripped under `python -O`, which would silently drop
 # this load-bearing drift guard, so it is an explicit raise instead.
@@ -105,7 +105,7 @@ def is_bounded(value: float | None) -> bool:
 def slot_endpoints(
     lower: float | None, upper: float | None
 ) -> tuple[float | None, float | None]:
-    """Resolve one (stage, block) slot's raw (lower, upper) to F3 endpoints.
+    """Resolve one (stage, block) slot's raw (lower, upper) to interval endpoints.
 
     Each bounded side is independent — this is not a single ``sense``, it is
     the union of an optional ``">="`` floor and an optional ``"<="``
@@ -122,6 +122,42 @@ def slot_endpoints(
     if is_bounded(upper):
         bound_upper = sense_to_interval("<=", upper)[1]
     return bound_lower, bound_upper
+
+
+#: How novomodelo charges a generic-constraint slack penalty: ``per_hour`` multiplies
+#: it by the hours the violated row covers (a price per MWh on a MW row),
+#: ``per_unit`` charges it once per unit of violation (a price per MWh on a MWh
+#: row, whatever the stage length).
+PenaltyBasis = Literal["per_hour", "per_unit"]
+
+
+def hard_slack() -> dict[str, object]:
+    """A disabled slack: the constraint is hard.
+
+    novomodelo rejects a disabled slack that carries a ``penalty`` or a
+    ``penalty_basis``.
+    """
+    return {"enabled": False}
+
+
+def soft_slack(penalty: float, basis: PenaltyBasis) -> dict[str, object]:
+    """An enabled slack charging *penalty* on *basis*."""
+    return {"enabled": True, "penalty": float(penalty), "penalty_basis": basis}
+
+
+def _check_slack(name: str, slack: Mapping[str, object]) -> None:
+    if not slack.get("enabled"):
+        if set(slack) != {"enabled"}:
+            raise ValueError(f"{name}: a disabled slack carries {sorted(slack)}")
+        return
+    if "penalty" not in slack or slack.get("penalty_basis") not in (
+        "per_hour",
+        "per_unit",
+    ):
+        raise ValueError(
+            f"{name}: an enabled slack needs a penalty and a penalty_basis, "
+            f"got {dict(slack)}"
+        )
 
 
 class GenericConstraintBuilder:
@@ -149,7 +185,13 @@ class GenericConstraintBuilder:
         expression: str,
         slack: Mapping[str, object],
     ) -> int:
-        """Append one constraint dict and return its allocated id."""
+        """Append one constraint dict and return its allocated id.
+
+        Raises:
+            ValueError: *slack* is not a shape novomodelo loads (see
+                :func:`soft_slack` and :func:`hard_slack`).
+        """
+        _check_slack(name, slack)
         constraint_id = self._allocator.next_id
         self._constraints.append(
             {

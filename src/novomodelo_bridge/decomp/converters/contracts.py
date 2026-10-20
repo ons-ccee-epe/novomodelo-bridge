@@ -65,7 +65,7 @@ def _register_label(kind: str) -> str:
 
 
 def _is_placeholder_row(row: pd.Series) -> bool:
-    """D6: a blank-name row whose limits are all zero/NaN is a placeholder.
+    """A blank-name row whose limits are all zero/NaN is a placeholder.
 
     Some decks carry a leftover ``CI``/``CE`` row with no real contract
     behind it — a blank name and every bound at zero. A blank-name row
@@ -186,7 +186,7 @@ def read_contracts(
 
 
 def warn_nonnull_loss_factor(contracts: Sequence[Contract]) -> None:
-    """D2: WARN (never fold, never reject) on a non-null, non-zero ``fator_perdas``.
+    """WARN (never fold, never reject) on a non-null, non-zero ``fator_perdas``.
 
     novomodelo's ``energy_contracts`` entity has no loss-factor field, so the
     source model's per-stage ``fator_perdas`` is intentionally excluded from
@@ -237,7 +237,7 @@ def warn_nonnull_loss_factor(contracts: Sequence[Contract]) -> None:
 
 
 def _signed_price(custo: float, kind: str) -> float:
-    """D3: export revenue is negative; import cost stays positive."""
+    """Export revenue is negative; import cost stays positive."""
     return -custo if kind == "export" else custo
 
 
@@ -249,7 +249,7 @@ def convert_energy_contracts(
 ) -> dict:
     """Build ``energy_contracts.json`` from ``CI``/``CE`` (stage-1 base values).
 
-    D1: every contract is emitted always-active — ``entry_stage_id`` and
+    Every contract is emitted always-active — ``entry_stage_id`` and
     ``exit_stage_id`` are omitted, matching the schema's null default and the
     d41 import-contract shape. Total over ``contracts``: an empty list yields
     an empty ``"contracts"`` array without raising.
@@ -302,10 +302,10 @@ def convert_contract_bounds(
     """Contract bounds: a stage-level base row plus sparse per-block overrides.
 
     Every ``(contract, stage)`` gets a base row (``block_id = None``) carrying
-    the hours-weighted ``min_mw``/``max_mw`` and the D3-signed hours-weighted
+    the hours-weighted ``min_mw``/``max_mw`` and the signed hours-weighted
     ``price_per_mwh``. Unlike ``convert_thermal_bounds`` — whose
     ``cost_per_mwh`` stays stage-level only (novomodelo rule 37) — all three value
-    columns here are block-eligible (decision 6: contract price legitimately
+    columns here are block-eligible (contract price legitimately
     varies per block), so the uniformity test spans ``min_mw``, ``max_mw``,
     *and* the signed per-block price. Where the stage is not uniform across
     all three, one override row per block is emitted carrying that block's

@@ -26,6 +26,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.generic_constraint_builder import soft_slack
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -440,7 +441,7 @@ def test_emit_re_generics_mixed_hydro_interchange_round_trip(
     assert len(result.constraints) == 1
     constraint = result.constraints[0]
     assert constraint["expression"] == "hydro_generation(0) - line_direct(3)"
-    assert constraint["slack"] == {"enabled": True, "penalty": 45000.0}
+    assert constraint["slack"] == soft_slack(45000.0, "per_hour")
     assert set(constraint) == {"id", "name", "description", "expression", "slack"}
 
     rows = result.bounds.to_pylist()
@@ -667,7 +668,7 @@ def test_emit_rhq_rhv_generics_rhq_multi_term_round_trip(
     assert len(result.constraints) == 1
     constraint = result.constraints[0]
     assert constraint["expression"] == "hydro_outflow(0) + hydro_diversion(0)"
-    assert constraint["slack"] == {"enabled": True, "penalty": 45000.0}
+    assert constraint["slack"] == soft_slack(45000.0, "per_hour")
 
     rows = result.bounds.to_pylist()
     assert len(rows) == 1
@@ -846,3 +847,119 @@ def test_emit_rhq_rhv_generics_rhv_volume_tipo_deferred_skips_and_warns(
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhv-volume-tipo-deferred"
+
+
+def test_format_expression_parameter_weight() -> None:
+    assert (
+        _format_expression([(-1.0, "hydro_outflow(0)"), ("coef_x", "hydro_outflow(1)")])
+        == "- hydro_outflow(0) + @coef_x * hydro_outflow(1)"
+    )
+    assert _format_expression([("coef_x", "hydro_outflow(1)")]) == (
+        "@coef_x * hydro_outflow(1)"
+    )
+
+
+def test_emit_rhq_rhv_generics_late_term_reads_a_per_stage_parameter(
+    unused_effective: EffectiveCadastro,
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("N",), hydro_codes=(275, 277))
+    record = ConstraintRecord(
+        family="HQ",
+        constraint_id=119,
+        stage_start=0,
+        stage_end=2,
+        terms=(
+            ConstraintTerm(code=275, coefficient=1.0, variable="QTUR"),
+            ConstraintTerm(
+                code=277, coefficient=1.0, variable="QTUR", schedule=((1, 1.0),)
+            ),
+        ),
+        bounds={s: StageBounds(lower=(None,), upper=(11000.0,)) for s in range(3)},
+        per_block=True,
+    )
+    calendar = [_stage(s, 1) for s in range(3)]
+
+    result = emit_rhq_rhv_generics(
+        _case(calendar),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=unused_effective,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "hydro_turbined(0) + @coef_hq119_t1 * hydro_turbined(1)"
+    )
+    assert result.per_stage_parameters == {"coef_hq119_t1": [0.0, 1.0, 1.0]}
+
+
+def test_emit_rhq_rhv_generics_rhv_varm_floor_uses_the_stage_coefficient() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=2, stage_varying={}
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=1,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),
+            ConstraintTerm(
+                code=6, coefficient=1.0, variable="VARM", schedule=((0, 1.0), (1, 2.0))
+            ),
+        ),
+        bounds={s: StageBounds(lower=(10.0,), upper=(None,)) for s in range(2)},
+        per_block=False,
+    )
+    calendar = [_stage(s, 1) for s in range(2)]
+
+    result = emit_rhq_rhv_generics(
+        _case(calendar),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=effective,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "hydro_storage(0) + @coef_hv7_t1 * hydro_storage(1)"
+    )
+    assert result.per_stage_parameters == {"coef_hv7_t1": [1.0, 2.0]}
+    lowers = [row["bound_lower"] for row in result.bounds.to_pylist()]
+    assert lowers == [10.0 + 100.0 + 200.0, 10.0 + 100.0 + 2.0 * 200.0]
+
+
+def test_emit_rhq_rhv_generics_constant_coefficients_declare_no_parameter(
+    unused_effective: EffectiveCadastro,
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(182,))
+    record = ConstraintRecord(
+        family="HQ",
+        constraint_id=164,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=182, coefficient=0.5, variable="QDEF"),
+            ConstraintTerm(code=182, coefficient=1.0, variable="QDES"),
+        ),
+        bounds={0: StageBounds(lower=(50.0,), upper=(200.0,))},
+        per_block=True,
+    )
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(0, 1)]),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=unused_effective,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    assert result.per_stage_parameters == {}
+    assert "@" not in result.constraints[0]["expression"]

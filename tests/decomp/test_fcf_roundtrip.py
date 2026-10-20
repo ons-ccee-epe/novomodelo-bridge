@@ -64,7 +64,7 @@ _STORAGE_SUBINDEX = 0
 _N_RANDOM_STATES = 8
 
 #: The tier-2 synthetic case's two resolved plant codes (joining hydro ids 0
-#: and 1) and its one source-only, D3-dropped plant code.
+#: and 1) and its one source-only, dropped plant code.
 _RESOLVED_PLANT_CODES = (10, 20)
 _DROPPED_PLANT_CODE = 30
 
@@ -118,7 +118,7 @@ def _resolve(
     storage_position, {lag_depth: lag_position})`` for a plant that both
     resolves via ``id_map.hydro_id`` and has a ``HydroStorage`` slot in
     ``manifest``; ``dropped`` is the set of plant indices excluded for
-    either reason (D3 — a source-only plant absent from ``id_map``, or
+    either reason (a source-only plant absent from ``id_map``, or
     missing its ``HydroStorage`` slot in ``manifest``).
     ``lag_positions`` only carries depths 1..12 whose
     ``(HydroInflowLag, hydro_id, depth-1)`` slot is actually present — a
@@ -225,7 +225,7 @@ def _synthetic_two_plant_case() -> tuple[
 
     Plant codes 10 and 20 resolve to hydro ids 0 and 1 (each with a full
     12-slot ``HydroInflowLag`` family); plant code 30 is source-only —
-    absent from ``id_map``, so ``map_boundary_cuts`` drops it (D3). One
+    absent from ``id_map``, so ``map_boundary_cuts`` drops it. One
     trailing ``HydroTransitBucket`` slot is never targeted by the mapper,
     giving the coefficient-identity test below an unmapped slot to check
     against 0.0.
@@ -420,7 +420,7 @@ def test_synthetic_roundtrip_theta_sweep(tmp_path: Path) -> None:
 def test_synthetic_roundtrip_carries_slot_dates_and_priced_date(
     tmp_path: Path,
 ) -> None:
-    """D5 — the write->load round trip carries the dated self-describing
+    """The write->load round trip carries the dated self-describing
     schema, no deck and no novomodelo binary.
 
     Authors a one-plant, one-cut synthetic checkpoint via

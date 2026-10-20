@@ -1,5 +1,5 @@
 """Tests for the bucket-A -> novomodelo token map and the
-E1-E7 ``GenericConstraintBuilder`` emit pipeline.
+``GenericConstraintBuilder`` emit pipeline.
 
 Synthetic fixtures only, mirroring the ``test_libs_electrical`` module's own
 convention: no ``import novomodelo`` at module scope.
@@ -16,7 +16,10 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.generic_constraint_builder import (
+    ConstraintIdAllocator,
+    soft_slack,
+)
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     AssembledBound,
     AvailablePower,
@@ -41,7 +44,7 @@ from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 # ---------------------------------------------------------------------------
-# _novomodelo_token — one bucket-A token kind at a time (spec §2)
+# _novomodelo_token — one bucket-A token kind at a time
 # ---------------------------------------------------------------------------
 
 
@@ -67,7 +70,7 @@ def test_novomodelo_token_ger_pee_resolved_via_map_not_code() -> None:
 
 
 def test_novomodelo_token_ger_conjh_frequency_split_bus() -> None:
-    # Itaipu (66,1) -> IV bus, (66,2) -> SE bus (spec §4e), both hitting the
+    # Itaipu (66,1) -> IV bus, (66,2) -> SE bus, both hitting the
     # same underlying hydro id.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     conjh_bus_by_code_group = {(66, 1): 3, (66, 2): 0}
@@ -203,7 +206,7 @@ def test_novomodelo_token_unrecognized_bucket_a_token_raises_value_error() -> No
 
 
 # ---------------------------------------------------------------------------
-# build_electrical_expression (spec §4)
+# build_electrical_expression
 # ---------------------------------------------------------------------------
 
 
@@ -386,7 +389,7 @@ def test_build_pee_ncs_id_map_no_declared_parks_returns_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# emit_libs_electrical_generics -- the E1-E7 _GenericBuilder emit pipeline
+# emit_libs_electrical_generics -- the _GenericBuilder emit pipeline
 # ---------------------------------------------------------------------------
 
 
@@ -456,7 +459,7 @@ def _reserve_restriction(
     code: int, plant_code: int, threshold: float
 ) -> ElectricalRestriction:
     """The documented ``disp_usih(h) - ger_usih(h) >= R`` reserve pattern
-    (the A1/A3 sign proof) for one plant, active across the whole
+    (the sign-and-feasibility proof) for one plant, active across the whole
     (single-stage) calendar -- no ``habilita``, no horizon override."""
     return _restriction(
         code,
@@ -482,7 +485,7 @@ def test_libs_electrical_result_is_frozen_with_expected_fields() -> None:
 def test_emit_reserve_a1_end_to_end_generation_cap() -> None:
     # disp_usih(1) - ger_usih(1) >= 300, A_h(1) = 1000 -> ger_usih(1)
     # <= 700, a POSITIVE bare generation-cap token -- never an inverted
-    # lower bound (the A1 sign fix, proven end to end through the emitter).
+    # lower bound (the sign fix, proven end to end through the emitter).
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
     calendar = _emit_calendar(1, n_blocks=1)
     restriction = _reserve_restriction(407, plant_code=1, threshold=300.0)
@@ -523,7 +526,7 @@ def test_emit_reserve_a1_end_to_end_generation_cap() -> None:
 
 def test_emit_reserve_a3_negative_cap_stays_feasible_via_slack() -> None:
     # A_h(1) = 200 < R = 300 -> ger_usih(1) <= -100, a negative
-    # generation cap that must stay feasible via slack (A3), never a hard
+    # generation cap that must stay feasible via slack, never a hard
     # LP infeasibility.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
     calendar = _emit_calendar(1, n_blocks=1)
@@ -547,7 +550,7 @@ def test_emit_reserve_a3_negative_cap_stays_feasible_via_slack() -> None:
 
     assert result.generic is not None
     [constraint] = result.generic.constraints
-    assert constraint["slack"] == {"enabled": True, "penalty": 999.0}
+    assert constraint["slack"] == soft_slack(999.0, "per_hour")
     rows = result.generic.bounds.to_pylist()
     assert len(rows) == 1
     assert rows[0]["bound_upper"] == -100.0

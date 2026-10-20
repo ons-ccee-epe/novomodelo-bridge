@@ -1,4 +1,4 @@
-"""Tier-1 tests for the LIBs-era electrical special-constraint reader (E9-1).
+"""Tier-1 tests for the LIBs-era electrical special-constraint reader.
 
 Synthetic-fixture only — a fake ``Restricoes`` returns pandas DataFrames shaped
 like idecomp's ``df=True`` accessors, so these run in CI with no real deck.
@@ -1053,10 +1053,10 @@ def test_assemble_bound_negates_a_lhs_bucket_b_term_sign_discipline() -> None:
 
 
 def test_assemble_bound_moves_rhs_bucket_a_term_to_lhs_negated() -> None:
-    # a plain INEQUACAO carrying a bucket-A term on the RHS (spec §2b's
+    # a plain INEQUACAO carrying a bucket-A term on the RHS (here
     # +0.06*ger_pee(11)) must surface it on AssembledBound.terms with its
     # sign flipped -- reading restriction.rhs verbatim would reproduce the
-    # A1 sign hazard for this shape too.
+    # sign hazard for this shape too.
     restriction = _inequacao(403, "ger_usih(1)", "<=", "1000 + 0.06*ger_pee(11)")
     result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
     assert result == AssembledBound(
@@ -1070,7 +1070,7 @@ def test_assemble_bound_moves_rhs_bucket_a_term_to_lhs_negated() -> None:
 
 
 def test_assemble_bound_reserve_single_plant_sign_proof() -> None:
-    # The A1 fix: disp_usih(1) - ger_usih(1) >= R, A_h(1) = 1000,
+    # The sign fix: disp_usih(1) - ger_usih(1) >= R, A_h(1) = 1000,
     # R = 300 -> ger_usih(1) <= 700, with a POSITIVE surviving coefficient --
     # a generation cap, never an inverted lower bound.
     restriction = _inequacao(407, "disp_usih(1) - ger_usih(1)", ">=", "300")
@@ -1414,7 +1414,7 @@ _RESERVE_LHS = "disp_usih(261) + disp_usih(262) - ger_usih(261) - ger_usih(262)"
 def test_assemble_bound_disp_usih_reserve_rewrites_to_gen_cap() -> None:
     # disp_usih(261)+disp_usih(262)-ger_usih(261)-ger_usih(262) >= 500,
     # A_h = {261: 1000, 262: 800} -> ger_usih(261)+ger_usih(262) <= 1300, with
-    # both surviving ger_usih terms carrying a POSITIVE coefficient (the A1
+    # both surviving ger_usih terms carrying a POSITIVE coefficient (the sign
     # fix: restriction.lhs itself carries them negative).
     restriction = _inequacao(402, _RESERVE_LHS, ">=", "500")
     a_h = AvailablePower(overlay={(261, 0): 1000.0, (262, 0): 800.0}, rated_envelope={})
