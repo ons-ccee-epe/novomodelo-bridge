@@ -55,13 +55,14 @@ links are cobre-bridge's.
 
 ### Changed
 
-- **Both tracks simulate with every trained cut.** `config.json` now sets
-  `simulation.cut_set` to `all` rather than leaving it to novomodelo's default.
-  The source models' cut selection only speeds up the LP solves, and their
-  final simulation evaluates the policy of all the cuts; novomodelo's `active`
-  set would keep only the cuts its selection kept at the last iteration.
-  `convert newave` warns when `dger.dat` turns on the cut window
-  (`janela_de_cortes`), which Novomodelo does not have: every cut is kept.
+- **Both tracks simulate with the cuts active when training ended.**
+  `config.json` now sets `simulation.cut_set` to `active` rather than leaving
+  it to novomodelo's default, `all`, which also loads the cuts the selection
+  deactivated and makes the simulation LPs larger than the training ones.
+  `convert decomp` turns on no cut selection, so its simulation loads every
+  trained cut either way. `convert newave` warns when `dger.dat` turns on the
+  cut window (`janela_de_cortes`), which Novomodelo does not have: every cut is
+  kept.
 - **Both tracks supply each plant's own stored-energy productivity to
   novomodelo.** `system/hydro_energy_productivity.parquet` has a new
   `integrated_equivalent_productivity_mw_per_m3s` column, which novomodelo now

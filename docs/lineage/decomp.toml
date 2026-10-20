@@ -46,7 +46,7 @@ summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de it
   path = "simulation.cut_set"
   from = []
   status = "constant"
-  how = "Sempre `all`: a simulação usa todos os cortes gerados no treinamento; a conversão não ativa seleção de cortes."
+  how = "Sempre `active`: a simulação usa os cortes ativos ao fim do treinamento. A conversão não ativa seleção de cortes, então todos os cortes gerados no treinamento estão ativos."
 
   [[output.field]]
   path = "training.scenario_source.inflow.scheme"

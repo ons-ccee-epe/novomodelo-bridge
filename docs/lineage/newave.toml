@@ -71,7 +71,7 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   path = "simulation.cut_set"
   from = []
   status = "constant"
-  how = "Sempre `all`: a simulação usa todos os cortes gerados no treinamento. A seleção de cortes do NEWAVE é exata e só reduz o tempo de solução dos PLs; a simulação final avalia a política de todos os cortes. A janela de cortes (`janela_de_cortes` = 1 em `dger.dat`), que descarta os cortes não usados nas iterações recentes, não tem equivalente no Novomodelo: a conversão emite um aviso e mantém todos os cortes, a política exata que a janela aproxima."
+  how = "Sempre `active`: a simulação usa os cortes ativos ao fim do treinamento, os que a seleção Level-1 manteve quando a seleção de cortes está ligada e todos os gerados quando está desligada. Com `all`, a simulação carregaria também os cortes desativados pela seleção, e seus PLs ficariam maiores que os do treinamento. A janela de cortes (`janela_de_cortes` = 1 em `dger.dat`), que descarta os cortes não usados nas iterações recentes, não tem equivalente no Novomodelo: a conversão emite um aviso e mantém todos os cortes, a política exata que a janela aproxima."
 
   [[output.field]]
   path = "simulation.selection.num_scenarios"

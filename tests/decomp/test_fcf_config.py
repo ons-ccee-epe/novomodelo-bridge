@@ -65,7 +65,7 @@ class TestConvertConfigStateSpace:
         expected_simulation = {
             "enabled": True,
             "selection": {"method": "enumerated"},
-            "cut_set": "all",
+            "cut_set": "active",
         }
 
         assert result["training"] == expected_training

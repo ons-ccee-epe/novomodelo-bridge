@@ -497,7 +497,9 @@ class TestConvertConfig:
         result = convert_config(case)
         assert result["simulation"]["enabled"] is True
 
-    def test_simulation_uses_every_cut(self, tmp_path) -> None:
+    def test_simulation_uses_the_cuts_active_when_training_ended(
+        self, tmp_path
+    ) -> None:
         dger = _make_dger_mock(
             selecao_de_cortes_forward=1, selecao_de_cortes_backward=1
         )
@@ -506,12 +508,12 @@ class TestConvertConfig:
         from novomodelo_bridge.newave.converters.temporal import convert_config
 
         result = convert_config(case)
-        assert result["simulation"]["cut_set"] == "all"
+        assert result["simulation"]["cut_set"] == "active"
 
     @pytest.mark.parametrize(
         ("janela", "warned"), [(1, True), (0, False), (None, False)]
     )
-    def test_the_cut_window_is_warned_about_and_every_cut_kept(
+    def test_the_cut_window_is_warned_about_and_changes_no_cut_setting(
         self, tmp_path, caplog, janela: int | None, warned: bool
     ) -> None:
         dger = _make_dger_mock(janela_de_cortes=janela)
@@ -523,7 +525,7 @@ class TestConvertConfig:
             result = convert_config(case)
 
         assert ("janela_de_cortes=1" in caplog.text) is warned
-        assert result["simulation"]["cut_set"] == "all"
+        assert result["simulation"]["cut_set"] == "active"
 
     def test_num_scenarios_from_num_series(self, tmp_path) -> None:
         dger = _make_dger_mock(num_series=500)
