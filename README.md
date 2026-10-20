@@ -27,8 +27,10 @@ cost-to-go import work without further setup. `novomodelo-python` ships prebuilt
 wheels for common platforms; if pip reports that none matches yours, see the
 [novomodelo repository](https://github.com/ons-ccee-epe/novomodelo) for build options.
 
-The `novomodelo` solver itself is a separate install, built from the novomodelo
-repository (see its README). novomodelo-bridge does not need it to convert or
+The `novomodelo` solver itself is a separate install: `cargo install --locked
+novomodelo-cli`, or a prebuilt archive from the
+[novomodelo releases](https://github.com/ons-ccee-epe/novomodelo/releases)
+(see the novomodelo README). novomodelo-bridge does not need it to convert or
 compare. You need it to solve the converted case between those two steps.
 
 ### Versions
