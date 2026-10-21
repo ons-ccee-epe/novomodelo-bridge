@@ -1,22 +1,27 @@
 """Scenario conversion for DECOMP-like decks (the explicit inflow tree).
 
-The inflow file carries the deterministic trunk (weekly forecasts, one
-scenario per weekly stage) and the terminal fan (generated scenarios with
-per-node probabilities). DECOMP's inflow file is the *arquivo de vazões
-incrementais*: each gauging-station column already holds the plant's own
-incremental (local) inflow, so each plant's value is read straight through
-from its (post-``AC NUMPOS``) gauge column — no upstream subtraction.
-novomodelo re-derives the natural flow at each plant by routing upstream
-releases down the ``downstream_id`` cascade.
+The inflow file carries the deterministic trunk and the terminal fan:
+
+- **Weekly stages** (first operative month): ``previsoes`` holds one row per
+  stage, each a deterministic forecast (scenario 0).
+- **Monthly stages** (later months): ``cenarios_gerados`` holds one row per
+  (stage, scenario). Deterministic trunk stages have a single row (scenario 1
+  → index 0); the terminal fan has one row per opening.
+
+DECOMP's inflow file is the *arquivo de vazões incrementais*: each
+gauging-station column already holds the plant's own incremental (local)
+inflow, so each plant's value is read straight through from its (post-``AC
+NUMPOS``) gauge column — no upstream subtraction. novomodelo re-derives the natural
+flow at each plant by routing upstream releases down the ``downstream_id``
+cascade.
 
 The tree is emitted node-natively: every stage draws its openings from
-``external_inflow_scenarios.parquet`` (trunk column 0, terminal fan
-columns ``0..N-1``), and the per-scenario weights become the terminal
-branch-edge probabilities on the ``policy_graph`` (see
-``temporal.convert_stages``). Under the identity stochastic convention
-(μ = 0, σ = 1, order 0) the standardized noise equals the natural value.
-``terminal_fan_probabilities`` supplies those fan weights;
-``convert_scenario_probabilities`` remains a validation view for
+``external_inflow_scenarios.parquet`` (trunk column 0, terminal fan columns
+``0..N-1``), and the per-scenario weights become the terminal branch-edge
+probabilities on the ``policy_graph`` (see ``temporal.convert_stages``). Under
+the identity stochastic convention (μ = 0, σ = 1, order 0) the standardized
+noise equals the natural value. ``terminal_fan_probabilities`` supplies those
+fan weights; ``convert_scenario_probabilities`` remains a validation view for
 ``check decomp`` and is no longer written to the case directory.
 """
 
@@ -194,31 +199,58 @@ def convert_recent_observation_windows(
     return format_observation_windows(rows)
 
 
+def _weekly_stage_count(calendar: Sequence[OperativeStage]) -> int:
+    """Number of weekly (168 h) stages at the start of the calendar.
+
+    Weekly stages form a contiguous prefix; once a monthly stage appears, all
+    remaining stages are monthly.
+    """
+    count = 0
+    for stage in calendar:
+        if stage.total_hours == 168.0:
+            count += 1
+        else:
+            break
+    return count
+
+
 def _tree_values(
     vazoes: Vazoes,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
 ) -> dict[tuple[int, int], list[float]]:
-    """``{(stage_index, scenario_index): incrementals}`` for the whole tree."""
+    """``{(stage_index, scenario_index): incrementals}`` for the whole tree.
+
+    DECOMP's inflow file splits forecasts across two tables:
+
+    - ``previsoes`` — one row per **weekly** stage (the first operative month)
+    - ``cenarios_gerados`` — one row per (stage, scenario) for **monthly**
+      stages (the deterministic monthly trunk stages + the terminal fan)
+
+    For a multi-month deck the monthly trunk stages (deterministic, scenario 1)
+    come from ``cenarios_gerados``, not ``previsoes``. The terminal fan's
+    multiple scenarios also come from ``cenarios_gerados``.
+    """
     station_by_code, _ = _incremental_context(effective, id_map)
     terminal = len(calendar) - 1
+    n_weekly = _weekly_stage_count(calendar)
 
     previsoes = vazoes.previsoes
     if previsoes is None or previsoes.empty:
         raise ValueError("the inflow file has no trunk forecasts (previsoes)")
-    if len(previsoes) != terminal:
+    if len(previsoes) != n_weekly:
         raise ValueError(
-            f"{len(previsoes)} trunk forecast rows for {terminal} weekly stages"
+            f"{len(previsoes)} trunk forecast rows for {n_weekly} weekly stages"
         )
 
     values: dict[tuple[int, int], list[float]] = {}
     for _, row in previsoes.iterrows():
         stage_index = int(row["estagio"]) - 1
-        if not 0 <= stage_index < terminal:
+        if not 0 <= stage_index < n_weekly:
             raise ValueError(
                 f"trunk forecast stage {int(row['estagio'])} outside the "
-                f"weekly range (1..{terminal})"
+                f"weekly range (1..{n_weekly})"
             )
         values[(stage_index, 0)] = _incremental_values(row, id_map, station_by_code)
 
@@ -227,13 +259,18 @@ def _tree_values(
         raise ValueError("the inflow file has no terminal fan (cenarios_gerados)")
     for _, row in cenarios.iterrows():
         stage_index = int(row["estagio"]) - 1
-        if stage_index != terminal:
+        scenario_index = int(row["cenario"]) - 1
+        if not n_weekly <= stage_index <= terminal:
             raise ValueError(
-                f"fan scenario at stage {int(row['estagio'])}; expected only "
-                f"the terminal stage {terminal + 1} — a pre-terminal branching "
-                "deck needs the node-graph work"
+                f"cenarios_gerados row at stage {int(row['estagio'])} outside "
+                f"the monthly range ({n_weekly + 1}..{terminal + 1})"
             )
-        values[(stage_index, int(row["cenario"]) - 1)] = _incremental_values(
+        if stage_index < terminal and scenario_index != 0:
+            raise ValueError(
+                f"monthly trunk stage {int(row['estagio'])} has scenario "
+                f"{int(row['cenario'])}; only the terminal stage may fan"
+            )
+        values[(stage_index, scenario_index)] = _incremental_values(
             row, id_map, station_by_code
         )
     return values

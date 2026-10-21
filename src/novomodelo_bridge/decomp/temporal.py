@@ -50,9 +50,10 @@ if TYPE_CHECKING:
 _SATURDAY = 5
 _WEEK_HOURS = 168.0
 _HOURS_PER_DAY = 24.0
-# Only the first operative month is split into weeks, and a civil month spans
-# at most five of them; every later month is a single monthly stage.
-_MAX_FIRST_MONTH_WEEKS = 5
+# Only the first operative month is split into weeks, and it spans four to six
+# of them depending on where the Saturday start falls in the civil month; every
+# later month is a single monthly stage.
+_MAX_FIRST_MONTH_WEEKS = 6
 
 
 @dataclass(frozen=True)
