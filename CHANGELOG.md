@@ -52,6 +52,8 @@ links are cobre-bridge's.
   decomp` caps turbined flow stage by stage at DECOMP's own limit. `convert
   newave` caps generation at the plant's available power on every stage.
 - **idecomp 1.17.0 or newer is required.**
+- **`convert decomp` lets `centralizado` renewable parks be curtailed**, from
+  their `PEE-CONFIG-PER` state; results change for decks with such parks.
 
 ### Fixed
 

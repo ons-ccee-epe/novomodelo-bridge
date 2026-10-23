@@ -318,6 +318,20 @@ class _StubRenovaveis:
     def pee_ger_per_pat(self, df: bool = False) -> pd.DataFrame:
         return self._ger_deterministic
 
+    def pee_config_per(self, df: bool = False) -> pd.DataFrame:
+        """Every ``cad`` park declared ``fixo``."""
+        return pd.DataFrame(
+            [
+                {
+                    "codigo_pee": int(code),
+                    "estagio_inicial": 1,
+                    "estagio_final": 1,
+                    "estado_operacao": "fixo",
+                }
+                for code in self._cad.get("codigo_pee", [])
+            ]
+        )
+
 
 def _pq_frame(n_series: int, *, n_blocks: int) -> pd.DataFrame:
     rows = []

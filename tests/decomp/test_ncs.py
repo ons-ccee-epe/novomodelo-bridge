@@ -93,6 +93,38 @@ class TestRegistry:
         assert entries[0]["max_generation_mw"] == 1475.0
         assert entries[0]["operational_start_date"] == "2026-07-18"
 
+    def test_park_curtailment_follows_operating_state(self) -> None:
+        cad, subm = _pee_registry(3, 8)
+        det = pd.DataFrame(
+            _deterministic_rows(3, 1, (10.0, 20.0, 30.0))
+            + _deterministic_rows(8, 1, (10.0, 20.0, 30.0))
+        )
+        renov = _StubRenovaveis(
+            cad,
+            subm,
+            pd.DataFrame(),
+            det,
+            _config_frame({3: "centralizado", 8: "fixo"}),
+        )
+        case = make_decomp_case(
+            Path("unused"),
+            dadger=_StubDadger(_pq_frame()),
+            calendar=_calendar(),
+            renovaveis=renov,
+        )
+
+        entries = convert_non_controllable_sources(case, _ID_MAP)[
+            "non_controllable_sources"
+        ]
+
+        assert [(e["name"], e["allow_curtailment"]) for e in entries] == [
+            ("SECO_PCH_1", False),
+            ("S_PCT_2", False),
+            ("N_EOL_4", False),
+            ("PARK3_1", True),
+            ("PARK8_1", False),
+        ]
+
     def test_empty_pq_gives_empty_registry(self) -> None:
         doc = convert_non_controllable_sources(_case(_StubDadger(None)), _ID_MAP)
         assert doc["non_controllable_sources"] == []
@@ -148,10 +180,17 @@ class _StubRenovaveis:
         subm: pd.DataFrame,
         ger: pd.DataFrame,
         ger_deterministic: pd.DataFrame | None = None,
+        config: pd.DataFrame | None = None,
     ) -> None:
+        """*config* defaults to every ``cad`` park declared ``fixo``."""
         self._cad, self._subm, self._ger = cad, subm, ger
         self._ger_deterministic = (
             pd.DataFrame() if ger_deterministic is None else ger_deterministic
+        )
+        self._config = (
+            _config_frame({int(c): "fixo" for c in cad.get("codigo_pee", [])})
+            if config is None
+            else config
         )
 
     def pee_cad(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
@@ -165,6 +204,23 @@ class _StubRenovaveis:
 
     def pee_ger_per_pat(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
         return self._ger_deterministic
+
+    def pee_config_per(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+        return self._config
+
+
+def _config_frame(states: dict[int, str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "codigo_pee": code,
+                "estagio_inicial": 1,
+                "estagio_final": 3,
+                "estado_operacao": state,
+            }
+            for code, state in states.items()
+        ]
+    )
 
 
 def test_pee_series_deterministic_typo_uses_modal_value(
@@ -322,3 +378,46 @@ def test_pee_series_park_on_both_cards_raises() -> None:
 
     with pytest.raises(ValueError, match=r"park\(s\) \[4\] declared on both"):
         _pee_series(renov, _ID_MAP, _calendar(), 0)
+
+
+def test_pee_series_park_with_two_operating_states_raises() -> None:
+    from novomodelo_bridge.decomp.converters.ncs import _pee_series
+
+    cad, subm = _pee_registry(4)
+    config = pd.concat(
+        [_config_frame({4: "centralizado"}), _config_frame({4: "fixo"})],
+        ignore_index=True,
+    )
+    det = pd.DataFrame(_deterministic_rows(4, 1, (10.0, 20.0, 30.0)))
+    renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det, config)
+
+    with pytest.raises(ValueError, match="more than one PEE-CONFIG-PER"):
+        _pee_series(renov, _ID_MAP, _calendar(), 0)
+
+
+def test_pee_series_park_without_operating_state_is_must_run_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from novomodelo_bridge.decomp.converters.ncs import _pee_series
+
+    cad, subm = _pee_registry(4, 6)
+    det = pd.DataFrame(
+        _deterministic_rows(4, 1, (10.0, 20.0, 30.0))
+        + _deterministic_rows(6, 1, (10.0, 20.0, 30.0))
+    )
+    renov = _StubRenovaveis(
+        cad, subm, pd.DataFrame(), det, _config_frame({4: "centralizado"})
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.ncs"
+    ):
+        series = _pee_series(renov, _ID_MAP, _calendar(), 0)
+
+    assert [(s.name, s.allow_curtailment) for s in series] == [
+        ("PARK4_1", True),
+        ("PARK6_1", False),
+    ]
+    assert any("no PEE-CONFIG-PER operating state" in r.message for r in caplog.records)

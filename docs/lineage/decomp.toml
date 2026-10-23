@@ -777,9 +777,9 @@ summary = "Uma fonte não controlável por série `PQ` (par submercado + nome), 
 
   [[output.field]]
   path = "non_controllable_sources[].allow_curtailment"
-  from = []
-  status = "constant"
-  how = "Sempre `false`: a geração é abatida da carga na origem, logo é must-run e fixada na disponibilidade."
+  from = [ { file = "renovaveis", item = "PEE-CONFIG-PER · estado_operacao" } ]
+  status = "derived"
+  how = "Séries `PQ`: sempre `false`, porque a geração é abatida da carga na origem e fica fixada na disponibilidade. Parques: `true` quando o estado de operação é `centralizado` (o Novomodelo pode cortar a geração, com o valor informado como limite máximo) e `false` em qualquer outro estado, como `fixo`. O estado vale para todos os estágios do parque; um parque com mais de um estado interrompe a conversão, e um parque com geração sem estado é convertido sem corte, com aviso."
 
 # ---------------------------------------------------------------------------
 # constraints/generic_parameters.json
@@ -3415,12 +3415,7 @@ note = "Famílias de curvas de jusante das LIBs. O conversor lê o cadastro das 
 # ---------------------------------------------------------------------------
 [[source]]
 file = "renovaveis"
-note = "Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o submercado e a geração por período e patamar, do card `PEE-GER-PER-PAT-CEN` (com cenários, reduzidos a um valor) ou do card determinístico `PEE-GER-PER-PAT`; um parque declarado nos dois é rejeitado. O `PerFin` dos dois cards não é lido: cada linha vale só para o seu `PerIni`."
-
-  [[source.item]]
-  item = "pee_config_per"
-  status = "unread"
-  note = "Configuração de operação do parque por período. Não lida: a geração por cenário já é o valor emitido como fonte não controlável."
+note = "Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o submercado, o estado de operação (`PEE-CONFIG-PER`, que decide se o parque pode ter a geração cortada) e a geração por período e patamar, do card `PEE-GER-PER-PAT-CEN` (com cenários, reduzidos a um valor) ou do card determinístico `PEE-GER-PER-PAT`; um parque declarado nos dois é rejeitado. O `PerFin` dos dois cards não é lido: cada linha vale só para o seu `PerIni`."
 
   [[source.item]]
   item = "pee_pot_inst_per"
