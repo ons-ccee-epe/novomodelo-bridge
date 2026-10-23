@@ -109,6 +109,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | Boundary coupling convention | Run with `IR ACOPLA` and `IR CORTES` added to a copy of `dadger.rvN`, DECOMP reports each boundary cut's terms and the inflows it evaluates them on. In each terminal scenario, the largest cut re-evaluated from the deck alone reproduces the cost-to-go value DECOMP reports to within a relative 5×10⁻⁷: the constant term, plus the storage terms of the `M` and `S` plants above their minimum volume, plus the inflow-lag terms on the coupling gauges, all scaled by the mean month, plus the GNL terms. Copying a downstream reservoir's storage price onto in-transit water breaks the match, so that deck's boundary prices no water in transit. Captured with DECOMP 32.0.1 in October 2026. |
 
+### The reduced DECOMP deck with water travel time, exported back to DECOMP's cut files
+
+| Check | Verified |
+| --- | --- |
+| `export dessem` against DECOMP's own `mapcut` and `cortdeco` | DECOMP run on the reduced deck writes its own pair, and `convert decomp`, `novomodelo run` and `export dessem` on the same deck write the bridge's. Record 6's integers through the lag-start array and every travel-time record match byte for byte, and each node's latest cut values the in-transit water within 0.2% of DECOMP's. Two runs on edited copies of `dadger.rvN`, one with a `VI` travel time of 100 h and one with the two `VI` records swapped, fixed the conventions the unit tests pin in `test_travel_time.py`, `test_layout.py` and `test_mapcut_writer.py`: the lag array is stage-major with plants inner, the plants are numbered in `VI` record order, and the in-transit coefficients are lag-major with plants inner. Captured with DECOMP 32.0.1 in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the

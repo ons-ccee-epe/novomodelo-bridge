@@ -13,7 +13,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -27,8 +27,12 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     assert_mapcut_layout,
     mapcut_record_count,
     sync_directory,
+    travel_time_lag_starts,
     write_durably,
 )
+
+if TYPE_CHECKING:
+    from novomodelo_bridge.dessem.exporters.fcf.core.travel_time import TravelTimePlant
 
 _LOG = logging.getLogger(__name__)
 
@@ -49,7 +53,6 @@ class MapcutHeader:
     numero_cenarios: int
     numero_estagios: int
     numero_semanas: int
-    n_utv: int
     dia: int
     mes: int
     ano: int
@@ -63,7 +66,30 @@ class MapcutHeader:
     lag_meses_gnl: tuple[int, ...]
     patamares_gnl: tuple[int, ...]
     taxa_desconto: tuple[float, ...]
-    max_lag: int = 0
+    tempo_viagem: tuple[TravelTimePlant, ...] = ()
+
+    @property
+    def n_utv(self) -> int:
+        """Plants with a travel time, each with its own regs 7/8."""
+        return len(self.tempo_viagem)
+
+    @property
+    def travel_time_lags(self) -> tuple[int, ...]:
+        """Reg 6's last lag per stage and plant, stage-major with plants inner.
+
+        Regs 7/8 run plant-major instead: reading this array plant-major
+        swaps plants' lags wherever two plants' travel times differ.
+        """
+        return tuple(
+            plant.stage_lags[stage]
+            for stage in range(self.numero_estagios)
+            for plant in self.tempo_viagem
+        )
+
+    @property
+    def max_lag(self) -> int:
+        """The largest of `travel_time_lags`, 0 without travel time."""
+        return max(self.travel_time_lags, default=0)
 
 
 def _validate(header: MapcutHeader) -> None:
@@ -125,12 +151,17 @@ def _validate(header: MapcutHeader) -> None:
                 f"{field} has {actual} entries but {against} is {expected}; "
                 f"the header is internally inconsistent"
             )
-    if header.n_utv:
-        raise LayoutError(
-            f"n_utv is {header.n_utv}; mapcut regs 7/8 are unimplemented (P3)"
-        )
-    if header.max_lag < 0:
-        raise LayoutError(f"max_lag is {header.max_lag}; cannot be negative")
+    for plant in header.tempo_viagem:
+        if len(plant.arrival_shares) != header.numero_estagios:
+            raise LayoutError(
+                f"travel-time plant {plant.code} has arrival shares for "
+                f"{len(plant.arrival_shares)} stages but numero_estagios is "
+                f"{header.numero_estagios}"
+            )
+        if plant.hours <= 0:
+            raise LayoutError(
+                f"travel-time plant {plant.code} has {plant.hours} h of travel time"
+            )
 
 
 def _record(index: int, *segments: _Segment) -> bytes:
@@ -183,9 +214,37 @@ def _stage_record(header: MapcutHeader) -> bytes:
                 header.max_lag,
                 *header.indice_primeiro_no_estagio,
                 *header.patamares_por_estagio,
+                *header.travel_time_lags,
+                *travel_time_lag_starts(
+                    header.travel_time_lags, header.n_utv, header.numero_estagios
+                ),
             ),
         ),
     )
+
+
+def _travel_time_records(header: MapcutHeader, first_index: int) -> list[bytes]:
+    """Regs 7/8: per plant, stage and lag, the share of that release arriving.
+
+    Reg 7 opens each plant's run with its code and travel hours; reg 8 carries
+    every later lag.
+    """
+    records: list[bytes] = []
+    for plant in header.tempo_viagem:
+        for stage, shares in enumerate(plant.arrival_shares):
+            for lag, share in enumerate(shares):
+                index = first_index + len(records)
+                if stage == 0 and lag == 0:
+                    records.append(
+                        _record(
+                            index,
+                            ("<i4", (plant.code, plant.hours, lag)),
+                            ("<f8", (share,)),
+                        )
+                    )
+                else:
+                    records.append(_record(index, ("<i4", (lag,)), ("<f8", (share,))))
+    return records
 
 
 def _gnl_record(header: MapcutHeader, index: int) -> bytes:
@@ -219,10 +278,7 @@ def write_mapcut(header: MapcutHeader, path: Path) -> int:
     """
     _validate(header)
     expected = mapcut_record_count(
-        header.n_utv,
-        header.numero_estagios,
-        header.max_lag,
-        header.numero_cenarios,
+        header.travel_time_lags, header.numero_estagios, header.numero_cenarios
     )
 
     records: list[bytes] = [
@@ -234,6 +290,7 @@ def write_mapcut(header: MapcutHeader, path: Path) -> int:
     records.extend(b"\x00" * RECORD_SIZE for _ in range(PHYSICAL_RECORD_COUNT))
     records.append(_record(18, ("<i4", header.indice_no_arvore)))
     records.append(_stage_record(header))
+    records.extend(_travel_time_records(header, len(records)))
 
     for stage in range(header.numero_estagios):
         records.append(_gnl_record(header, len(records)))
@@ -262,18 +319,17 @@ def write_mapcut(header: MapcutHeader, path: Path) -> int:
         PHYSICAL_RECORD_FIRST,
         PHYSICAL_RECORD_LAST,
     )
-    _LOG.warning(
-        "P3: travel-time (tempo de viagem) coefficients not yet supported — "
-        "n_utv=0, pi_qdefp block empty"
-    )
     _LOG.warning("P11: reg 10 cost fields emitted as zeros except taxa_desconto")
     _LOG.warning("P12: reg 9 trailing GNL block emitted as zeros")
     _LOG.info(
-        "wrote mapcut %s: records=%d bytes=%d numero_cortes=%d numero_cenarios=%d",
+        "wrote mapcut %s: records=%d bytes=%d numero_cortes=%d numero_cenarios=%d "
+        "n_utv=%d max_lag=%d",
         path,
         expected,
         expected * RECORD_SIZE,
         header.numero_cortes,
         header.numero_cenarios,
+        header.n_utv,
+        header.max_lag,
     )
     return expected

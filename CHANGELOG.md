@@ -27,14 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the DECOMP-format `mapcut`/`cortdeco` binaries DESSEM reads as its future
   cost function. The command takes the DECOMP deck the case was converted
   from, `export dessem DECOMP_DIR CASE_DIR`. The deck supplies the output
-  revision, the `hidr.dat` plant codes and each GNL plant's lag months from
-  its `NL` record, and a deck whose operated hydro or GNL plants differ from
-  the case's is refused. The checkpoint is read through
+  revision, the `hidr.dat` plant codes, each GNL plant's lag months from
+  its `NL` record and the `VI` record order that numbers the travel-time
+  plants, and a deck whose operated hydro or GNL plants differ from the
+  case's is refused. The checkpoint is read through
   `cobre-python`, cut values are converted from the run's cost scale to R$
   and then to DECOMP's 10³ R$, and each export records the conversion premises it applied in
   `export_manifest.json`; `--audit-csv` adds per-pool CSVs of the cuts as read
-  and as written. GNL coefficients are written as zeros, and a policy carrying
-  travel-time state is refused.
+  and as written. GNL coefficients are written as zeros. A case with water
+  travel time exports it the way DECOMP lays it out: `mapcut` gives each
+  travel-time plant the share of every lagged release arriving in each stage,
+  and each `cortdeco` cut values the water still in transit by stage of
+  release, from the transit-bucket coefficients of the cut.
 - **DECOMP: the `UH` spillage ceiling is converted.** Field 9 of the `UH`
   register, the plant's maximum spillage in m³/s, becomes a
   `max_spillage_m3s` bound in `constraints/hydro_bounds.parquet` for every

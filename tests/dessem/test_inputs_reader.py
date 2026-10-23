@@ -1,5 +1,6 @@
 """Tests for dessem/exporters/fcf/inputs_reader.py."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,26 @@ class TestReadCaseInputs:
 
         for hydro in inputs.hydros:
             assert hydro.max_storage_hm3 >= hydro.min_storage_hm3
+
+    def test_travel_time_is_read_where_the_case_declares_it(
+        self, travel_time_case_dir: Path
+    ) -> None:
+        inputs = read_case_inputs(travel_time_case_dir)
+
+        assert [hydro.travel_time_hours for hydro in inputs.hydros] == [
+            None,
+            240.0,
+            None,
+        ]
+
+    def test_negative_travel_time_raises(self, synthetic_case_dir: Path) -> None:
+        hydros_path = synthetic_case_dir / "system" / "hydros.json"
+        hydros = json.loads(hydros_path.read_text())
+        hydros["hydros"][0]["travel_time_hours"] = -1.0
+        hydros_path.write_text(json.dumps(hydros))
+
+        with pytest.raises(InputReadError, match="must be non-negative"):
+            read_case_inputs(synthetic_case_dir)
 
     def test_missing_stages_file(self, tmp_path: Path) -> None:
         case_dir = tmp_path / "empty_case"

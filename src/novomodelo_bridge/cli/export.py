@@ -137,12 +137,12 @@ def _export_dessem(
 
     DECOMP_DIR is the deck the case was converted from. Its caso.dat names the
     revision, which sets the output file extension (mapcut.rv0, cortdeco.rv0,
-    etc.), its hidr.dat codes label the hydro plants in the cut files, and
-    its dadgnl NL records give each GNL plant's lag in months.
+    etc.), its hidr.dat codes label the hydro plants in the cut files, its
+    dadgnl NL records give each GNL plant's lag in months, and the order of
+    its VI records numbers the plants with a water travel time.
 
     \b
     Warnings logged during export:
-    - P3: travel-time (tempo de viagem) coefficients not yet supported
     - P14: GNL (anticipated thermal) coefficients emitted as zeros
     """
     _configure_logging(verbose, log_file)
