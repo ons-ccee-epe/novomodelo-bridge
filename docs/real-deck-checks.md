@@ -3,7 +3,8 @@
 This page is for contributors. It catalogues the end-to-end checks that used
 to live in the test suite as tests guarded on real NEWAVE and DECOMP decks,
 explains why they were removed, and records what each one needs so it can be
-brought back in a form that runs for everyone.
+brought back in a form that runs for everyone. It also records checks that
+were only ever run by hand on a real deck.
 
 ## Why they were removed
 
@@ -68,7 +69,6 @@ anywhere any more; treat each as "a deck with these properties".
 | One end-to-end test in `test_fcf_importer.py` | The bootstrap resolves a real terminal node id (never the -1 sentinel), `policy.boundary.source_stage` equals that graph stage, and the already-committed months carry no dated ring slot while a signalled month does. |
 | Two tests in `test_anticipated.py` | The already-committed set derived from the `gl` records matches the prior-revision markers in `relgnl` for SANTA CRUZ; a full conversion emits the seven-stage post-study calendar, prunes the post-study thermal bounds to the signalled stages, tiles the committed windows with the deck's own MW, and keeps the lead uncapped. |
 | `test_anticipated_e2e.py` (whole module; also needs `novomodelo-python`'s checkpoint writer) | The CLI conversion with boundary import trains and simulates in-process; the anticipated-lanes output partition is populated; the post-horizon split matches the deck's declaration and the run reaches every post-study delivery. |
-| One test in `test_inflow_mlt.py` | Incremental long-term-mean inflows cover every operated plant, read zero for the diversion-fed plant on the artificial station (code 288), and carry no increment below -30 m³/s. |
 | Nine result-reader tests in `tests/comparators/test_decomp_readers.py` | Each reader returns rows with the expected columns on the deck's real result files. Three of them (`dec_oper_gnl.csv`, `dec_oper_ree.csv`, `decomp.tim`) now run against committed excerpts; the rest are listed under "Excerpts still to capture". |
 
 ### The reduced deck plus its solved novomodelo case (`novomodelo-mar-26-rv2-reduced`)
@@ -92,6 +92,16 @@ checkout under the developer's home directory. Those files are now vendored
 under `tests/fixtures/novomodelo_schemas/` and `tests/fixtures/novomodelo_d41/`, so the
 tests run everywhere. Refresh both copies from the novomodelo repository whenever
 `MIN_NOVOMODELO_VERSION` moves.
+
+## Checks run by hand
+
+These were never tests. They are recorded so they can be repeated.
+
+### The reduced DECOMP deck, run by DECOMP with its coupling report
+
+| Check | Verified |
+| --- | --- |
+| Boundary coupling convention | Run with `IR ACOPLA` and `IR CORTES` added to a copy of `dadger.rvN`, DECOMP reports each boundary cut's terms and the inflows it evaluates them on. In each terminal scenario, the largest cut re-evaluated from the deck alone reproduces the cost-to-go value DECOMP reports to within a relative 5×10⁻⁷: the constant term, plus the storage terms of the `M` and `S` plants above their minimum volume, plus the inflow-lag terms on the coupling gauges, all scaled by the mean month, plus the GNL terms. Copying a downstream reservoir's storage price onto in-transit water breaks the match, so that deck's boundary prices no water in transit. Captured with DECOMP 32.0.1 in October 2026. |
 
 ## Excerpts still to capture
 

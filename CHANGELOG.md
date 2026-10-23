@@ -174,6 +174,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert decomp` couples the boundary cuts plant by plant, as DECOMP
+  does.** The cut values are scaled by the mean month of the DECOMP manual
+  (365.25 days × 24 h / 12) instead of the last stage's hours, and the
+  inflow-lag terms no longer subtract a long-term mean inflow, so `mlt.dat`
+  is no longer read. Only a reservoir (`M` or `S` in `hidr.dat`) takes a
+  storage term, priced above its minimum volume. A plant without its own
+  cut row takes its `CX` complex's row or else the first downstream plant's,
+  and a `boundary-fcf-coefficient-owners` note lists those plants; a plant
+  that finds no row is a `boundary-fcf-unowned-plants` error. The
+  inflow-lag terms are read on each plant's coupling gauge (`AC NPOSNW`,
+  else the `hidr.dat` gauge) with the artificial gauges computed, and so are
+  the pre-study observations that seed the lag state, which are now written
+  whenever the boundary is imported. The known difference from the operated
+  inflow and the lag terms of cut plants outside the case are folded into
+  each cut's constant term; what cannot be folded is reported by the
+  `boundary-fcf-coupling-inflow-unrepresented` and
+  `boundary-fcf-coupling-lag-carried-share` warnings. GNL deliveries are
+  priced in the month the `GS` register books their week to, with
+  `cortesh.dat`'s patamar shares of that month, and deliveries the deck has
+  already committed fold into the constant term.
 - **DECOMP: Itaipu's 50 Hz and 60 Hz `RE` limits bound only their own half.**
   A single-term `RE` whose `FU` term names a frequency now bounds that
   frequency's unit group in `constraints/hydro_unit_group_bounds.parquet`.

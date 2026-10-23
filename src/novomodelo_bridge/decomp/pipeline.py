@@ -1098,15 +1098,11 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         )
     artifacts.thermals_dict = thermals_dict
     writer.write_json("system/thermals.json", thermals_dict)
-    # The PAR inflow-lag seed (initial_conditions.recent_observations) is NOT
-    # written here. The boundary cuts price the inflow-lag *deviation from the
-    # seasonal mean* (MLT), not the absolute inflow, so a raw observation seed is
-    # only correct once the cut RHS is folded by that same mean. Both the mean
-    # fold and the raw seed are authored together by the boundary-FCF importer
-    # (`fcf/importer.py::import_boundary_fcf`, which has the mlt.dat the fold
-    # needs), patched onto this file after conversion -- so they can never ship
-    # apart. A plain conversion (no boundary FCF) keeps the lag state at 0: its
-    # inflow model is order 0 (no autoregression), so the lags are inert anyway.
+    # The PAR inflow-lag seed (initial_conditions.recent_observations) is
+    # written by `fcf/importer.py::import_boundary_fcf`, not here: it is read on
+    # the boundary cut's coupling postos and feeds only that cut's inflow-lag
+    # terms. Without a boundary FCF the inflow model is order 0, so the lags
+    # are inert.
     writer.write_json("initial_conditions.json", initial_conditions_doc)
     writer.write_json(
         "system/hydro_production_models.json",

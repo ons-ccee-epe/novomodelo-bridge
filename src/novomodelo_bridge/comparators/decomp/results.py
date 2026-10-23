@@ -2194,8 +2194,8 @@ def _novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:
 
 #: hm³ -> m³/s conversion factor per hour of stage duration -- the inverse of
 #: `core.units.C_M3S2HM3` (``hours * 3600 / 1e6``), generalized to the
-#: stage's own ``hours`` instead of the fixed ``MONTH_HOURS`` (730) that
-#: constant assumes.
+#: stage's own ``hours`` instead of the fixed mean month
+#: (`core.units.MEAN_MONTH_HOURS`) that constant assumes.
 _HM3_TO_M3S_HOUR_FACTOR: float = 3600.0 / 1e6
 
 

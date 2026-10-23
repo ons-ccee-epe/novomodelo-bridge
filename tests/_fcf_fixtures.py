@@ -6,8 +6,9 @@ Every deck-independent FCF test needs the same synthetic building blocks: a
 :class:`~novomodelo_bridge.decomp.fcf.cortes.BoundaryCuts`, a
 :class:`~novomodelo_bridge.decomp.fcf.bootstrap.TerminalManifest` (with
 correctly-shaped slot dicts), a
-:class:`~novomodelo_bridge.decomp.fcf.mapper.MappedCut`, and a minimal
-:class:`~novomodelo_bridge.decomp.id_map.DecompIdMap` — plus, for the tier-2
+:class:`~novomodelo_bridge.decomp.fcf.mapper.MappedCut`, a minimal
+:class:`~novomodelo_bridge.decomp.id_map.DecompIdMap`, the own-row
+:class:`~novomodelo_bridge.decomp.fcf.mapper.HydroCoupling` set — plus, for the tier-2
 round-trip, :func:`synthetic_roundtrip`, which runs
 ``map_boundary_cuts -> build_stage_cuts_payload -> build_metadata ->
 write_boundary_checkpoint -> novomodelo.results.load_policy`` end to end.
@@ -30,7 +31,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from novomodelo_bridge.core.units import MONTH_HOURS
 from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
 from novomodelo_bridge.decomp.fcf.cortes import (
     BoundaryCuts,
@@ -39,6 +39,7 @@ from novomodelo_bridge.decomp.fcf.cortes import (
 )
 from novomodelo_bridge.decomp.fcf.mapper import (
     GnlRingPlan,
+    HydroCoupling,
     MappedCut,
     map_boundary_cuts,
 )
@@ -254,6 +255,26 @@ def make_id_map(
     )
 
 
+def make_couplings(
+    cuts: BoundaryCuts,
+    id_map: DecompIdMap,
+    *,
+    storage_floor_hm3: float | None = 0.0,
+) -> tuple[HydroCoupling, ...]:
+    """Each hydro whose code has a cut row takes that row, all with one floor.
+
+    The default floor ``0.0`` makes every taker a reservoir priced on its total
+    volume, so the storage coefficient is the scaled ``pi_varm`` and the
+    intercept takes no floor fold.
+    """
+    row_of = {code: index for index, code in enumerate(cuts.header.plant_codes)}
+    return tuple(
+        HydroCoupling(hydro_id, row_of[code], storage_floor_hm3)
+        for hydro_id, code in enumerate(id_map.hydro_codes)
+        if code in row_of
+    )
+
+
 def synthetic_roundtrip(
     boundary_dir: Path,
     cuts: BoundaryCuts,
@@ -262,48 +283,25 @@ def synthetic_roundtrip(
     *,
     stage_id: int = 10,
     cost_scale_factor: float = 1.0,
-    cost_unit_hours: float = MONTH_HOURS,
+    couplings: Sequence[HydroCoupling] | None = None,
     gnl_plan: GnlRingPlan | None = None,
-    coupling_block_hours: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """Map, write, and reload a synthetic boundary checkpoint; no deck, no
     novomodelo binary.
 
     Runs `map_boundary_cuts -> build_stage_cuts_payload -> build_metadata ->
     write_boundary_checkpoint -> novomodelo.results.load_policy` against
-    `boundary_dir`, then returns the reloaded policy dict verbatim. `novomodelo`
-    is imported lazily, inside this function body, so the rest of the
-    module stays importable without the novomodelo-python wheel — only
-    call this from a `@requires_novomodelo_python`-guarded test. `gnl_plan`
-    defaults to `None`, forwarded verbatim to `map_boundary_cuts`, so every
-    existing caller keeps leaving the GNL ring at `0.0` unchanged; pass it to
-    exercise a populated ring. `coupling_block_hours` defaults to `None`; when
-    `None` and `gnl_plan` is given, a uniform split
-    `[cost_unit_hours / n_patamares] * n_patamares` is derived so a
-    GNL-exercising caller need not hand-compute the per-block vector for the
-    common uniform case — a storage-only caller (`gnl_plan=None`) is
-    untouched, since the mapper never requires `coupling_block_hours` when no
-    GNL coefficient is placed.
-
-    Raises
-    ------
-    ValueError, RuntimeError
-        Propagated verbatim from `map_boundary_cuts` / `build_stage_cuts_payload`
-        / `build_metadata` / `write_boundary_checkpoint`.
+    `boundary_dir` and returns the reloaded policy dict verbatim. `couplings`
+    defaults to :func:`make_couplings`. `novomodelo` is imported inside the body,
+    so only call this from a `@requires_novomodelo_python`-guarded test.
     """
     import novomodelo
-
-    if coupling_block_hours is None and gnl_plan is not None:
-        n_patamares = cuts.header.n_patamares
-        coupling_block_hours = (cost_unit_hours / n_patamares,) * n_patamares
 
     mapping = map_boundary_cuts(
         cuts,
         manifest,
-        id_map,
-        cost_unit_hours=cost_unit_hours,
+        make_couplings(cuts, id_map) if couplings is None else couplings,
         gnl_plan=gnl_plan,
-        coupling_block_hours=coupling_block_hours,
     )
     stage_cuts_payload = build_stage_cuts_payload(
         mapping,

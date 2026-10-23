@@ -97,10 +97,9 @@ _DECOMP_LABELS: dict[str, str] = {
     "libs_index": "indices.csv",
 }
 # Deck files the converter reads without a ``DecompFiles`` field: the case
-# index and ``mlt.dat``, which the boundary import locates itself.
+# index.
 _DECOMP_EXTRAS: dict[str, str] = {
     "caso": "caso.dat",
-    "mlt": "mlt.dat",
 }
 
 

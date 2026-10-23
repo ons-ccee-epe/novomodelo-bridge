@@ -26,6 +26,7 @@ from novomodelo_bridge.comparators.decomp.results import (
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.units import C_M3S2HM3, MEAN_MONTH_HOURS
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
@@ -60,11 +61,11 @@ class TestHm3ToM3s:
     """`_hm3_to_m3s`: hm³ (stage volume) -> m³/s (mean flow), driven by the
     stage's own hours."""
 
-    def test_matches_the_fixed_monthly_factor_at_730_hours(self) -> None:
-        """1 m³/s sustained over a 730h month deposits exactly
-        ``core.units.C_M3S2HM3`` (2.628 hm³); converting that volume
-        back at 730h must recover 1.0 m³/s exactly."""
-        assert _hm3_to_m3s(2.628, 730.0) == pytest.approx(1.0)
+    def test_matches_the_fixed_monthly_factor_over_a_mean_month(self) -> None:
+        """1 m³/s sustained over a mean month deposits exactly
+        ``core.units.C_M3S2HM3`` hm³; converting that volume back over the
+        same hours must recover 1.0 m³/s exactly."""
+        assert _hm3_to_m3s(C_M3S2HM3, MEAN_MONTH_HOURS) == pytest.approx(1.0)
 
     def test_sub_monthly_stage_uses_its_own_hours_not_730(self) -> None:
         """A 168h (weekly) DECOMP stage: 1 m³/s deposits
@@ -75,11 +76,11 @@ class TestHm3ToM3s:
         assert _hm3_to_m3s(0.6048, 730.0) == pytest.approx(168.0 / 730.0)
 
     def test_hour_factor_matches_the_converter_side_monthly_constant(self) -> None:
-        """`_HM3_TO_M3S_HOUR_FACTOR * 730` reproduces
-        ``core.units.C_M3S2HM3`` (2.628) -- the same physical
-        relationship, generalized from the fixed monthly constant to any
-        stage's own hours."""
-        assert _HM3_TO_M3S_HOUR_FACTOR * 730.0 == pytest.approx(2.628)
+        """`_HM3_TO_M3S_HOUR_FACTOR` over a mean month reproduces
+        ``core.units.C_M3S2HM3`` -- the same physical relationship,
+        generalized from the fixed monthly constant to any stage's own
+        hours."""
+        assert _HM3_TO_M3S_HOUR_FACTOR * MEAN_MONTH_HOURS == pytest.approx(C_M3S2HM3)
 
 
 class TestNovomodeloStageHours:
