@@ -13,9 +13,9 @@ deterministic NCS path:
 - ``non_controllable_factors``: ``factor_b = MW_b / stage_mean`` with the
   ``Σ f_b·h_b = H`` invariant asserted.
 
-NCS ids are assigned by sorted (subsystem code, name); when the renewable
-card file gains its reader, its parks append after the ``PQ`` series in
-this same id space.
+NCS ids are assigned by sorted (subsystem code, name); the renewable
+equivalent parks of the ``renovaveis`` file append after the ``PQ`` series
+in this same id space, sorted by park code.
 """
 
 from __future__ import annotations
@@ -28,6 +28,12 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -261,6 +267,91 @@ def convert_ncs_factors(
     }
 
 
+_PEE_GENERATION_KEY = ["codigo_pee", "estagio", "patamar"]
+_PEE_GENERATION_COLUMNS = [*_PEE_GENERATION_KEY, "cenario", "geracao"]
+
+
+def _non_empty_frame(accessor_result: object) -> pd.DataFrame | None:
+    if isinstance(accessor_result, pd.DataFrame) and not accessor_result.empty:
+        return accessor_result
+    return None
+
+
+def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
+    keys = sorted(
+        {
+            (int(r["codigo_pee"]), int(r["estagio"]), int(r["patamar"]))
+            for _, r in dropped.iterrows()
+        }
+    )
+    emit(
+        Diagnostic(
+            code="decomp-pee-generation-repeated",
+            severity=Severity.WARNING,
+            category="Renewable parks",
+            title="Repeated PEE-GER-PER-PAT generation rows",
+            summary=(
+                f"{len(dropped)} PEE-GER-PER-PAT row(s) repeat a (park, stage, "
+                "load block) already declared; the last row of each is used."
+            ),
+            table=DiagnosticTable(
+                columns=["Park", "Stage", "Load block"],
+                rows=[list(key) for key in keys],
+            ),
+            remediation=(
+                "Check the renewable generation file; each park should declare "
+                "one value per stage and load block."
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
+def _pee_generation_rows(renovaveis: Renovaveis) -> pd.DataFrame | None:
+    """Rows of both renewable generation cards, as
+    ``codigo_pee, estagio, patamar, cenario, geracao``.
+
+    The single reader of the generation cards, so :func:`_sorted_pee_codes`
+    and :func:`_pee_series` always see the same parks. The scenario-free
+    ``PEE-GER-PER-PAT`` card enters as scenario 1. ``estagio_final`` is
+    dropped: every row applies to its ``estagio`` only.
+
+    Returns ``None`` when neither card carries a row.
+
+    Raises
+    ------
+    ValueError
+        When a park is declared on both ``PEE-GER-PER-PAT-CEN`` and
+        ``PEE-GER-PER-PAT``.
+    """
+    per_scenario = _non_empty_frame(renovaveis.pee_ger_per_pat_cen(df=True))
+    deterministic = _non_empty_frame(renovaveis.pee_ger_per_pat(df=True))
+
+    frames: list[pd.DataFrame] = []
+    if per_scenario is not None:
+        frames.append(per_scenario[_PEE_GENERATION_COLUMNS])
+    if deterministic is not None:
+        repeated = deterministic.duplicated(_PEE_GENERATION_KEY, keep="last")
+        if repeated.any():
+            _emit_repeated_pee_generation(deterministic[repeated])
+            deterministic = deterministic[~repeated]
+        frames.append(deterministic.assign(cenario=1)[_PEE_GENERATION_COLUMNS])
+
+    if per_scenario is not None and deterministic is not None:
+        on_both = sorted(
+            int(code)
+            for code in set(per_scenario["codigo_pee"])
+            & set(deterministic["codigo_pee"])
+        )
+        if on_both:
+            raise ValueError(
+                f"renewable park(s) {on_both} declared on both "
+                "PEE-GER-PER-PAT-CEN and PEE-GER-PER-PAT; the generation "
+                "source is ambiguous"
+            )
+    return pd.concat(frames, ignore_index=True) if frames else None
+
+
 def _sorted_pee_codes(
     renovaveis: Renovaveis, calendar: Sequence[OperativeStage]
 ) -> list[int]:
@@ -270,11 +361,11 @@ def _sorted_pee_codes(
     share, so neither enumeration can drift from the other.
 
     A code is "declared" here iff it appears on at least one
-    ``PEE-GER-PER-PAT-CEN`` row (mirrors :func:`_pee_series`'s own
+    :func:`_pee_generation_rows` row (mirrors :func:`_pee_series`'s own
     ``per_park`` keys, without building its per-(stage,block) generation).
 
-    Returns ``[]`` when the deck carries no ``PEE-CAD``/``PEE-GER`` card at
-    all (mirrors :func:`_pee_series`'s own no-op guard).
+    Returns ``[]`` when the deck carries no ``PEE-CAD`` or no generation
+    card at all (mirrors :func:`_pee_series`'s own no-op guard).
 
     Raises
     ------
@@ -282,8 +373,8 @@ def _sorted_pee_codes(
         When a row's ``estagio`` falls outside *calendar*.
     """
     cad = renovaveis.pee_cad(df=True)
-    ger = renovaveis.pee_ger_per_pat_cen(df=True)
-    if cad is None or cad.empty or ger is None or ger.empty:
+    ger = _pee_generation_rows(renovaveis)
+    if cad is None or cad.empty or ger is None:
         return []
 
     n_stages = len(calendar)
@@ -332,15 +423,14 @@ def _pee_series(
 ) -> list[_PqSeries]:
     """Renewable equivalent parks as NCS series, appended after ``PQ``.
 
-    The generation card is scenario-indexed but current production fills
-    it uniformly; the collapse asserts identity per (park, stage, block)
-    and fails loudly if a deck ever carries genuinely per-scenario values
-    (the external availability class becomes the target then).
+    ``PEE-GER-PER-PAT-CEN`` is scenario-indexed but current production
+    fills it uniformly, so its scenarios collapse to one value per (park,
+    stage, block); ``PEE-GER-PER-PAT`` carries that value directly.
     """
     cad = renovaveis.pee_cad(df=True)
     subm = renovaveis.pee_subm(df=True)
-    ger = renovaveis.pee_ger_per_pat_cen(df=True)
-    if cad is None or cad.empty or ger is None or ger.empty:
+    ger = _pee_generation_rows(renovaveis)
+    if cad is None or cad.empty or ger is None:
         return []
 
     sorted_codes = _sorted_pee_codes(renovaveis, calendar)
@@ -357,10 +447,6 @@ def _pee_series(
 
     values: dict[tuple[int, int, int], dict[int, float]] = {}
     for _, row in ger.iterrows():
-        # The PEE-GER-PER-PAT-CEN card is single-período: one `estagio` per row.
-        # (idecomp < 1.14.1 mis-modelled it as an estagio_inicial/estagio_final
-        # range, which left `geracao` unreadable — see the idecomp renovaveis
-        # PEE-GER record layout; requires idecomp >= 1.14.1.)
         estagio = int(row["estagio"])
         stage_index = estagio - 1
         if not 0 <= stage_index < len(calendar):

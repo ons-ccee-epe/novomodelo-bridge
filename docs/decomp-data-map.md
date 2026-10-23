@@ -466,11 +466,11 @@ Uma fonte não controlável por série `PQ` (par submercado + nome), mais um par
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `non_controllable_sources[].id` | `dadger.rvN` › `PQ` › `codigo_submercado, nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee` *(derivado)* | Séries `PQ` ordenadas por (`codigo_submercado`, `nome`) recebem ids 0-based densos; os parques `PEE` continuam a numeração em ordem crescente de `codigo_pee`. |
+| `non_controllable_sources[].id` | `dadger.rvN` › `PQ` › `codigo_submercado, nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee`, `renovaveis*` › `PEE-GER-PER-PAT · codigo_pee` *(derivado)* | Séries `PQ` ordenadas por (`codigo_submercado`, `nome`) recebem ids 0-based densos; os parques `PEE` continuam a numeração em ordem crescente de `codigo_pee`. |
 | `non_controllable_sources[].name` | `dadger.rvN` › `PQ` › `nome, codigo_submercado`, `renovaveis*` › `PEE-CAD · nome_pee`, `renovaveis*` › `PEE-SUBM · codigo_submercado` *(derivado)* | `{nome}_{codigo_submercado}` para `PQ`; `{nome_pee}_{codigo_submercado}` para os parques (`PEE_{codigo}` sem cadastro de nome). |
 | `non_controllable_sources[].operational_start_date` | `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado)* | Data de início do estudo. |
 | `non_controllable_sources[].bus_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `renovaveis*` › `PEE-SUBM · codigo_submercado` | Barra do submercado da série; parques resolvem pelo cartão `PEE-SUBM`. |
-| `non_controllable_sources[].max_generation_mw` | `dadger.rvN` › `PQ` › `geracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao` | Maior geração por patamar (`geracao_k`, em branco lido como 0) em todos os estágios, após preencher estágios não declarados com o último declarado (estágio 1 obrigatório). Parques: o valor modal entre cenários de cada (estágio, patamar), com aviso se os cenários divergirem. O perfil por estágio e patamar vai para as estatísticas e fatores de NCS. |
+| `non_controllable_sources[].max_generation_mw` | `dadger.rvN` › `PQ` › `geracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao`, `renovaveis*` › `PEE-GER-PER-PAT · geracao` | Maior geração por patamar (`geracao_k`, em branco lido como 0) em todos os estágios, após preencher estágios não declarados com o último declarado (estágio 1 obrigatório). Parques: o valor modal entre cenários de cada (estágio, patamar), com aviso se os cenários divergirem. O perfil por estágio e patamar vai para as estatísticas e fatores de NCS. |
 | `non_controllable_sources[].allow_curtailment` | — *(constante)* | Sempre `false`: a geração é abatida da carga na origem, logo é must-run e fixada na disponibilidade. |
 
 ### `system/pumping_stations.json`
@@ -597,9 +597,9 @@ Fração de disponibilidade por fonte não controlável (séries `PQ` e parques 
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
-| `ncs_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `dadger.rvN` › `PQ` › `nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee` *(derivado)* | Id 0-based denso: séries `PQ` ordenadas por (`codigo_submercado`, `nome`), seguidas dos parques `PEE` com geração declarada, em ordem crescente de `codigo_pee`. |
+| `ncs_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `dadger.rvN` › `PQ` › `nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee`, `renovaveis*` › `PEE-GER-PER-PAT · codigo_pee` *(derivado)* | Id 0-based denso: séries `PQ` ordenadas por (`codigo_submercado`, `nome`), seguidas dos parques `PEE` com geração declarada, em ordem crescente de `codigo_pee`. |
 | `stage_id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | Índice 0-based do estágio; uma linha por fonte e estágio do calendário. |
-| `mean` | `dadger.rvN` › `PQ` › `geracao`, `dadger.rvN` › `PQ` › `estagio`, `dadger.rvN` › `DP` › `duracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao` | Média do estágio ponderada pelas horas dos patamares dividida pela maior geração da série em todo o horizonte (o `max_generation_mw` da fonte); estágios não declarados herdam o anterior e o estágio 1 é obrigatório. Limitada a 1.0 pela tolerância do novomodelo; série de máximo zero lê 0. A geração `PEE` é lida do valor modal entre cenários, com aviso se divergirem. |
+| `mean` | `dadger.rvN` › `PQ` › `geracao`, `dadger.rvN` › `PQ` › `estagio`, `dadger.rvN` › `DP` › `duracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao`, `renovaveis*` › `PEE-GER-PER-PAT · geracao` | Média do estágio ponderada pelas horas dos patamares dividida pela maior geração da série em todo o horizonte (o `max_generation_mw` da fonte); estágios não declarados herdam o anterior e o estágio 1 é obrigatório. Limitada a 1.0 pela tolerância do novomodelo; série de máximo zero lê 0. A geração `PEE` é lida do valor modal entre cenários, com aviso se divergirem. |
 | `std` | — *(constante)* | Sempre 0.0: a geração não simulada do DECOMP é determinística. |
 
 ### `scenarios/non_controllable_factors.json`
@@ -612,10 +612,10 @@ Perfil por patamar de cada fonte não controlável nos estágios de média posit
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `non_controllable_factors[].ncs_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `dadger.rvN` › `PQ` › `nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee` *(derivado)* | O mesmo id de `non_controllable_stats.parquet`: séries `PQ` ordenadas por (`codigo_submercado`, `nome`) e depois os parques `PEE` por `codigo_pee`. |
+| `non_controllable_factors[].ncs_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `dadger.rvN` › `PQ` › `nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee`, `renovaveis*` › `PEE-GER-PER-PAT · codigo_pee` *(derivado)* | O mesmo id de `non_controllable_stats.parquet`: séries `PQ` ordenadas por (`codigo_submercado`, `nome`) e depois os parques `PEE` por `codigo_pee`. |
 | `non_controllable_factors[].stage_id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | Índice 0-based do estágio. |
-| `non_controllable_factors[].block_factors[].block_id` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Índice 0-based do patamar, na ordem dos campos `geracao` do `PQ` ou do `patamar` do `PEE-GER-PER-PAT-CEN`. |
-| `non_controllable_factors[].block_factors[].factor` | `dadger.rvN` › `PQ` › `geracao`, `dadger.rvN` › `DP` › `duracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao` | `geracao_b / média do estágio` por patamar; a invariante `Σ_b fator_b·duracao_b = horas do estágio` é verificada. Um patamar de geração zero sob média positiva recebe 1e-9, porque o esquema do novomodelo exige fator > 0 (aviso com a contagem). |
+| `non_controllable_factors[].block_factors[].block_id` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Índice 0-based do patamar, na ordem dos campos `geracao` do `PQ` ou do `patamar` do `PEE-GER-PER-PAT-CEN` / `PEE-GER-PER-PAT`. |
+| `non_controllable_factors[].block_factors[].factor` | `dadger.rvN` › `PQ` › `geracao`, `dadger.rvN` › `DP` › `duracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao`, `renovaveis*` › `PEE-GER-PER-PAT · geracao` | `geracao_b / média do estágio` por patamar; a invariante `Σ_b fator_b·duracao_b = horas do estágio` é verificada. Um patamar de geração zero sob média positiva recebe 1e-9, porque o esquema do novomodelo exige fator > 0 (aviso com a contagem). |
 
 ### `scenarios/external_ncs_scenarios.parquet`
 
@@ -629,8 +629,8 @@ Disponibilidade determinística das fontes não controláveis replicada nas colu
 | --- | --- | --- |
 | `stage_id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | Índice 0-based do estágio, herdado de `non_controllable_stats.parquet`; linhas ordenadas por (estágio, cenário, fonte). |
 | `scenario_id` | `vazoes.rvN` › `probabilidades · cenario` *(derivado)* | 0 em todo estágio do tronco; 0..N−1 no estágio terminal, com N igual ao número de cenários com probabilidade declarada para o último estágio em `vazoes`. |
-| `ncs_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `dadger.rvN` › `PQ` › `nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee` *(derivado)* | O mesmo id de `non_controllable_stats.parquet`. |
-| `availability_factor` | `dadger.rvN` › `PQ` › `geracao`, `dadger.rvN` › `DP` › `duracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao` | O valor de `mean` de `non_controllable_stats.parquet` (fração de disponibilidade do estágio), repetido sem alteração em cada coluna de cenário do estágio. |
+| `ncs_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `dadger.rvN` › `PQ` › `nome`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · codigo_pee`, `renovaveis*` › `PEE-GER-PER-PAT · codigo_pee` *(derivado)* | O mesmo id de `non_controllable_stats.parquet`. |
+| `availability_factor` | `dadger.rvN` › `PQ` › `geracao`, `dadger.rvN` › `DP` › `duracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao`, `renovaveis*` › `PEE-GER-PER-PAT · geracao` | O valor de `mean` de `non_controllable_stats.parquet` (fração de disponibilidade do estágio), repetido sem alteração em cada coluna de cenário do estágio. |
 
 ### `constraints/hydro_bounds.parquet`
 
@@ -2050,19 +2050,27 @@ Médias de longo termo mensais das vazões naturais por posto, lidas só para a 
 
 **Estado:** convertido em parte. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `scenarios/external_ncs_scenarios.parquet`, `scenarios/non_controllable_factors.json`, `scenarios/non_controllable_stats.parquet`, `system/non_controllable_sources.json`.
 
-Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o submercado e a geração por período, patamar e cenário.
+Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o submercado e a geração por período e patamar, do card `PEE-GER-PER-PAT-CEN` (com cenários, reduzidos a um valor) ou do card determinístico `PEE-GER-PER-PAT`; um parque declarado nos dois é rejeitado. O `PerFin` dos dois cards não é lido: cada linha vale só para o seu `PerIni`.
 
 - `PEE-GER-PER-PAT-CEN · codigo_pee` → `system/non_controllable_sources.json` › `non_controllable_sources[].id`
+- `PEE-GER-PER-PAT · codigo_pee` → `system/non_controllable_sources.json` › `non_controllable_sources[].id`
 - `PEE-CAD · nome_pee` → `system/non_controllable_sources.json` › `non_controllable_sources[].name`
 - `PEE-SUBM · codigo_submercado` → `system/non_controllable_sources.json` › `non_controllable_sources[].name`
 - `PEE-SUBM · codigo_submercado` → `system/non_controllable_sources.json` › `non_controllable_sources[].bus_id`
 - `PEE-GER-PER-PAT-CEN · geracao` → `system/non_controllable_sources.json` › `non_controllable_sources[].max_generation_mw`
+- `PEE-GER-PER-PAT · geracao` → `system/non_controllable_sources.json` › `non_controllable_sources[].max_generation_mw`
 - `PEE-GER-PER-PAT-CEN · codigo_pee` → `scenarios/non_controllable_stats.parquet` › `ncs_id`
+- `PEE-GER-PER-PAT · codigo_pee` → `scenarios/non_controllable_stats.parquet` › `ncs_id`
 - `PEE-GER-PER-PAT-CEN · geracao` → `scenarios/non_controllable_stats.parquet` › `mean`
+- `PEE-GER-PER-PAT · geracao` → `scenarios/non_controllable_stats.parquet` › `mean`
 - `PEE-GER-PER-PAT-CEN · codigo_pee` → `scenarios/non_controllable_factors.json` › `non_controllable_factors[].ncs_id`
+- `PEE-GER-PER-PAT · codigo_pee` → `scenarios/non_controllable_factors.json` › `non_controllable_factors[].ncs_id`
 - `PEE-GER-PER-PAT-CEN · geracao` → `scenarios/non_controllable_factors.json` › `non_controllable_factors[].block_factors[].factor`
+- `PEE-GER-PER-PAT · geracao` → `scenarios/non_controllable_factors.json` › `non_controllable_factors[].block_factors[].factor`
 - `PEE-GER-PER-PAT-CEN · codigo_pee` → `scenarios/external_ncs_scenarios.parquet` › `ncs_id`
+- `PEE-GER-PER-PAT · codigo_pee` → `scenarios/external_ncs_scenarios.parquet` › `ncs_id`
 - `PEE-GER-PER-PAT-CEN · geracao` → `scenarios/external_ncs_scenarios.parquet` › `availability_factor`
+- `PEE-GER-PER-PAT · geracao` → `scenarios/external_ncs_scenarios.parquet` › `availability_factor`
 - `PEE-CAD · codigo_pee` → `constraints/generic_constraints.json` › `constraints[].expression`
 - `pee_config_per` — *não lido.* Configuração de operação do parque por período. Não lida: a geração por cenário já é o valor emitido como fonte não controlável.
 - `pee_pot_inst_per` — *não lido.* Potência instalada do parque por período. Não lida: a fonte não controlável do Novomodelo não carrega capacidade instalada.

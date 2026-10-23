@@ -78,6 +78,9 @@ links are cobre-bridge's.
 - **The convergence chart compares the source model's best upper bound with
   Novomodelo's best**, and `compare newave` also compares the per-iteration
   upper bounds.
+- **`convert decomp` keeps the renewable parks of a `renovaveis` file
+  that uses the `PEE-GER-PER-PAT` card**; they used to be dropped with no
+  warning.
 
 ## [0.19.0] - 2026-10-20
 
