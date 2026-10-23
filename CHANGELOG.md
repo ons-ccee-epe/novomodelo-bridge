@@ -160,7 +160,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`convert newave` turns cut selection on with `level1`.** cobre removed
   the `lml1` method; the converted `config.json` now names `level1`, checked
-  every iteration over the trial states of the whole run. Level-1 selection
+  every iteration over the trial states of the last two iterations
+  (`lookback_iterations: 2`), the window `lml1` scored. Level-1 selection
   keeps exactly the cuts that are highest at some stored trial state, so
   results can differ from a run made with `lml1`.
 
