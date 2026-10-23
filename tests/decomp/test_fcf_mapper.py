@@ -18,6 +18,7 @@ from novomodelo_bridge.decomp.fcf.mapper import (
     GnlRingPlan,
     GnlThermalTarget,
     HydroCoupling,
+    TransitPricing,
     map_boundary_cuts,
     month_key,
 )
@@ -79,7 +80,6 @@ def test_map_scales_intercept_and_storage_by_the_mean_month() -> None:
         [
             make_slot(_HYDRO_STORAGE, 0, 0),
             make_slot(_HYDRO_STORAGE, 1, 0),
-            make_slot(_HYDRO_TRANSIT_BUCKET, 1, 2),
         ]
     )
     cuts = make_boundary_cuts(
@@ -90,7 +90,7 @@ def test_map_scales_intercept_and_storage_by_the_mean_month() -> None:
 
     mapped = result.cuts[0]
     assert mapped.coefficients == pytest.approx(
-        (3.0 * MEAN_MONTH_HOURS, 5.0 * MEAN_MONTH_HOURS, 0.0)
+        (3.0 * MEAN_MONTH_HOURS, 5.0 * MEAN_MONTH_HOURS)
     )
     assert mapped.intercept == pytest.approx(100.0 * MEAN_MONTH_HOURS)
     assert result.dropped == ()
@@ -128,6 +128,45 @@ def test_map_coupling_without_floor_takes_no_storage_term() -> None:
         0.5 * _LAG_FACTOR
     )
     assert mapped.intercept == pytest.approx(7.0 * MEAN_MONTH_HOURS)
+
+
+def test_map_transit_bucket_takes_storage_else_the_first_inflow_lag() -> None:
+    """A reservoir's in-transit water takes its storage price, a run-of-river
+    plant's its depth-1 inflow price per hm³; an uncoupled hydro's stays 0."""
+    manifest = make_manifest(
+        [
+            make_slot(_HYDRO_STORAGE, 0, 0),
+            make_slot(_HYDRO_TRANSIT_BUCKET, 0, 1),
+            make_slot(_HYDRO_TRANSIT_BUCKET, 0, 2),
+            make_slot(_HYDRO_TRANSIT_BUCKET, 1, 1),
+            make_slot(_HYDRO_TRANSIT_BUCKET, 2, 1),
+        ]
+    )
+    cuts = make_boundary_cuts(
+        (10, 20),
+        (
+            make_cut_record(
+                pi_varm=(3.0, 5.0), pi_qafl=(_lags(0.4), _lags(0.7, 0.9)), rhs=1.0
+            ),
+        ),
+    )
+    couplings = (HydroCoupling(0, 0, 0.0), HydroCoupling(1, 1, None))
+
+    result = map_boundary_cuts(cuts, manifest, couplings)
+
+    assert result.cuts[0].coefficients == pytest.approx(
+        (
+            3.0 * MEAN_MONTH_HOURS,
+            3.0 * MEAN_MONTH_HOURS,
+            3.0 * MEAN_MONTH_HOURS,
+            0.7 * MEAN_MONTH_HOURS,
+            0.0,
+        )
+    )
+    assert result.transit == (
+        TransitPricing(0, by_storage=True),
+        TransitPricing(1, by_storage=False),
+    )
 
 
 def test_map_shared_cut_row_lands_on_every_taker() -> None:

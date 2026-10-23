@@ -8,6 +8,7 @@ rule 5 / no-future-dating rule 5b), and the operated/downstream filtering.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
@@ -246,3 +247,59 @@ def test_convert_travel_time_skips_unoperated_plant() -> None:
     )
     assert hours == {}  # 999 is not in id_map.hydro_codes
     assert defluences == []
+
+
+# ---------------------------------------------------------------------------
+# pipeline emission (tier-1: convert the committed mini deck, read the JSON)
+# ---------------------------------------------------------------------------
+
+
+def _convert_mini(decomp_mini_deck: Path, tmp_path: Path) -> tuple[dict, dict]:
+    """Convert the committed mini deck and return ``(hydros, initial_conditions)``."""
+    import json
+
+    from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+    hydros = json.loads((dst / "system/hydros.json").read_text(encoding="utf-8"))
+    ic = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))
+    return hydros, ic
+
+
+def test_pipeline_stamps_travel_time_on_vi_plants(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    """The mini deck's two ``VI`` plants (TRES MARIAS, QUEIMADO, each 360 h to
+    a downstream arc) carry ``travel_time_hours``; a plant with no ``VI`` does
+    not emit the key."""
+    hydros, _ = _convert_mini(decomp_mini_deck, tmp_path)
+    by_name = {h["name"].strip(): h for h in hydros["hydros"]}
+
+    assert by_name["TRES MARIAS"]["travel_time_hours"] == 360.0
+    assert by_name["QUEIMADO"]["travel_time_hours"] == 360.0
+    # A plant with no VI register emits no travel_time_hours key at all.
+    assert "travel_time_hours" not in by_name["SOBRADINHO"]
+
+
+def test_pipeline_seeds_past_defluences_covering_the_transit_span(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    """``past_defluences`` seeds the in-transit water for each VI arc plant,
+    keyed by the releasing (upstream) plant's novomodelo id, tiling the 360 h span
+    contiguously back from the study start with no future-dated window."""
+    hydros, ic = _convert_mini(decomp_mini_deck, tmp_path)
+    by_name = {h["name"].strip(): h for h in hydros["hydros"]}
+    study_start = hydros["hydros"][0]["operational_start_date"]
+
+    windows = ic["past_defluences"]
+    arc_ids = {by_name["TRES MARIAS"]["id"], by_name["QUEIMADO"]["id"]}
+    assert {w["hydro_id"] for w in windows} == arc_ids
+
+    for arc_id in arc_ids:
+        plant_windows = [w for w in windows if w["hydro_id"] == arc_id]
+        # Most-recent window ends at the study start (rule 5b: nothing future).
+        assert plant_windows[0]["end_date"] == study_start
+        # Contiguous back from the start, no gap (rule 5).
+        for earlier, later in zip(plant_windows[1:], plant_windows):
+            assert earlier["end_date"] == later["start_date"]

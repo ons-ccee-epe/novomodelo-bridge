@@ -516,6 +516,44 @@ def _emit_gnl_deviation(
     )
 
 
+def _emit_transit_pricing(mapping: MappingResult, hydro_codes: Sequence[int]) -> None:
+    """Surface the boundary's price for water in transit, which the source
+    model's own boundary leaves unpriced."""
+    if not mapping.transit:
+        return
+    dx.emit(
+        dx.Diagnostic(
+            code="boundary-fcf-transit-water-priced",
+            severity=dx.Severity.INFO,
+            category="Boundary FCF",
+            title=(
+                f"{len(mapping.transit)} plant(s) value the water still in "
+                "transit toward them at the boundary"
+            ),
+            summary=(
+                "water released upstream that has not reached the plant when "
+                "the study ends is valued with the plant's boundary storage "
+                "term when it takes one, otherwise with its first inflow-lag "
+                "term; the source model gives that water no value at this "
+                "boundary, so the boundary cost differs from the source "
+                "model's by the value of the water in transit"
+            ),
+            table=dx.DiagnosticTable(
+                columns=["Plant", "Valued as"],
+                rows=[
+                    [
+                        hydro_codes[entry.hydro_id],
+                        "storage" if entry.by_storage else "first inflow lag",
+                    ]
+                    for entry in mapping.transit
+                ],
+                justify=["right", "left"],
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
 def _emit_coupling_diagnostics(
     resolution: CouplingResolution,
     shares: Sequence[TerminalShare],
@@ -786,6 +824,7 @@ def import_boundary_fcf(
         MEAN_MONTH_HOURS,
     )
     _emit_import_diagnostics(cuts, mapping, coupling.gnl_plan)
+    _emit_transit_pricing(mapping, case.id_map.hydro_codes)
     _emit_coupling_diagnostics(
         coupling.resolution, coupling.terminal_shares, coupling.carried_share
     )

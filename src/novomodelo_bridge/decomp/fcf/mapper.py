@@ -24,12 +24,21 @@ m³/s, so:
 - GNL on a ring slot ``Σ_p pi_gnl[s, p, lag] · h_slot · f_p``: ``h_slot`` is the
   slot's own delivery hours in novomodelo's calendar and ``f_p`` the source model's
   patamar share of the delivery month, so one MW committed on the slot is
-  priced as energy spread over the source's patamares.
+  priced as energy spread over the source's patamares;
+- a ``HydroTransitBucket`` slot (hm³ in transit toward its hydro) takes that
+  hydro's storage coefficient when it takes a storage term, else its depth-1
+  inflow coefficient per hm³, ``PIAFL × MEAN_MONTH_HOURS``.
+
+The cuts carry no in-transit term and the source model prices no water in
+transit at this boundary. The transit rule is the in-channel rule the source
+model's documentation gives for the cost-to-go function it hands to a daily
+model; that rule names the inflow coefficient without a depth, and depth 1 (the
+cut's month) is assumed. The converted boundary therefore departs from the
+source model wherever a hydro has transit slots (:class:`MappingResult.transit`).
 
 A cut plant no converted hydro takes is dropped, never folded into a
 neighbour, and recorded in :class:`MappingResult.dropped`; a GNL term with no
 live ring slot is recorded in :class:`MappingResult.gnl_dropped`.
-``HydroTransitBucket`` slots stay at an explicit ``0.0``.
 """
 
 from __future__ import annotations
@@ -201,12 +210,25 @@ class GnlDroppedTerm:
 
 
 @dataclass(frozen=True)
+class TransitPricing:
+    """How a hydro's ``HydroTransitBucket`` slots are priced.
+
+    ``by_storage`` is true when they take the hydro's storage coefficient,
+    false when they take its depth-1 inflow coefficient.
+    """
+
+    hydro_id: int
+    by_storage: bool
+
+
+@dataclass(frozen=True)
 class MappingResult:
     """The mapped cuts plus every dropped source term."""
 
     cuts: tuple[MappedCut, ...]
     dropped: tuple[DroppedTerm, ...]
     gnl_dropped: tuple[GnlDroppedTerm, ...] = ()
+    transit: tuple[TransitPricing, ...] = ()
 
 
 def _default_lag_slot_of(depth: int) -> int:
@@ -481,7 +503,8 @@ def map_boundary_cuts(
     ``Σ_d coef_d · offset_d`` over the depths actually placed.
     `source_only_inflows` (``{plant_index: per-depth m³/s}``) folds the inflow
     terms of a cut plant no hydro takes the same way. Both carry all 12
-    depths.
+    depths. A coupled hydro's ``HydroTransitBucket`` slots are priced by the
+    transit rule of the module header; an uncoupled hydro's stay ``0.0``.
 
     Raises
     ------
@@ -515,6 +538,18 @@ def map_boundary_cuts(
             )
         storage_positions[coupling.hydro_id] = position
 
+    transit_positions: dict[int, list[int]] = {}
+    for (entity_type, entity_id, _), position in slot_positions.items():
+        if entity_type == _HYDRO_TRANSIT_BUCKET:
+            transit_positions.setdefault(entity_id, []).append(position)
+    transit = tuple(
+        TransitPricing(
+            coupling.hydro_id, by_storage=coupling.storage_floor_hm3 is not None
+        )
+        for coupling in couplings
+        if coupling.hydro_id in transit_positions
+    )
+
     coupled = {coupling.plant_index for coupling in couplings}
     representative = cuts.records[0].pi_varm if cuts.records else ()
     dropped = tuple(
@@ -539,6 +574,11 @@ def map_boundary_cuts(
                 storage = record.pi_varm[coupling.plant_index] * MEAN_MONTH_HOURS
                 coefficients[storage_positions[coupling.hydro_id]] = storage
                 folds.append(-storage * coupling.storage_floor_hm3)
+                in_transit = storage
+            else:
+                in_transit = record.pi_qafl[coupling.plant_index][0] * MEAN_MONTH_HOURS
+            for position in transit_positions.get(coupling.hydro_id, ()):
+                coefficients[position] = in_transit
             lags = tuple(
                 value * _INFLOW_LAG_FACTOR
                 for value in record.pi_qafl[coupling.plant_index]
@@ -584,5 +624,8 @@ def map_boundary_cuts(
         )
 
     return MappingResult(
-        cuts=tuple(mapped_cuts), dropped=dropped, gnl_dropped=gnl_dropped
+        cuts=tuple(mapped_cuts),
+        dropped=dropped,
+        gnl_dropped=gnl_dropped,
+        transit=transit,
     )

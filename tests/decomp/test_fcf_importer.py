@@ -33,6 +33,7 @@ from novomodelo_bridge.decomp.fcf.importer import (
     _DeckCoupling,
     _emit_coupling_diagnostics,
     _emit_import_diagnostics,
+    _emit_transit_pricing,
     _gnl_targets_from,
     _plan_gnl_ring,
     _read_complexo_map,
@@ -47,6 +48,7 @@ from novomodelo_bridge.decomp.fcf.mapper import (
     GnlThermalTarget,
     HydroCoupling,
     MappingResult,
+    TransitPricing,
     month_key,
 )
 from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -642,3 +644,27 @@ def test_emit_coupling_diagnostics_lists_unrepresented_coupling_inflows() -> Non
     assert terminal.severity is dx.Severity.WARNING
     assert terminal.table is not None
     assert terminal.table.rows == [[1, 1, 301, 2.5], [260, 260, "-", 40.0]]
+
+
+def test_emit_transit_pricing_names_each_plant_and_its_price() -> None:
+    mapping = MappingResult(
+        cuts=(),
+        dropped=(),
+        transit=(TransitPricing(0, by_storage=True), TransitPricing(2, False)),
+    )
+
+    with dx.collect() as sink:
+        _emit_transit_pricing(mapping, (156, 158, 169))
+
+    (transit,) = sink
+    assert transit.code == "boundary-fcf-transit-water-priced"
+    assert transit.severity is dx.Severity.INFO
+    assert transit.table is not None
+    assert transit.table.rows == [[156, "storage"], [169, "first inflow lag"]]
+
+
+def test_emit_transit_pricing_is_silent_without_transit_slots() -> None:
+    with dx.collect() as sink:
+        _emit_transit_pricing(MappingResult(cuts=(), dropped=()), (156,))
+
+    assert sink == []

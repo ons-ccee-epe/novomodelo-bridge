@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`convert decomp` emits water travel time.** A plant's `VI` register now
+  converts to the delayed cascade arc (`hydros[].travel_time_hours`) and the
+  in-transit water seeding it (`initial_conditions.past_defluences`), instead
+  of being read and deferred. The deferral stood on a cobre cut-generation
+  defect that produced an invalid in-transit cut; that defect is fixed in the
+  paired cobre release, so the emission is restored. A deck with no `VI`
+  register is unaffected (the arc stays instantaneous). At the imported
+  boundary, water still in transit toward a plant is valued with that plant's
+  boundary storage term, or with its first inflow-lag term when it takes no
+  storage term, the in-channel rule CEPEL documents for DECOMP's cost-to-go
+  function handed to DESSEM. DECOMP gives that water no value at the NEWAVE
+  boundary, so the boundary cost differs from DECOMP's by the value of the
+  water in transit; a `boundary-fcf-transit-water-priced` note lists the
+  plants and the term each takes.
 - **`export dessem` command** exports a solved Cobre case's policy checkpoint
   to the DECOMP-format `mapcut`/`cortdeco` binaries DESSEM reads as its future
   cost function. The command takes the DECOMP deck the case was converted

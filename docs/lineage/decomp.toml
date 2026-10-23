@@ -394,13 +394,14 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
+  { file = "dadger", register = "VI" },
   { file = "hidr" },
   { file = "dadgnl", register = "TG" },
   { file = "dadgnl", register = "GL" },
   { file = "dadgnl", register = "GS" },
   { file = "dadgnl", register = "NL" },
 ]
-summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando `dadgnl` declara despacho GNL comprometido, o arquivo também recebe as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
+summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara despacho GNL comprometido, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
 
   [[output.field]]
   path = "storage[].hydro_id"
@@ -418,6 +419,32 @@ summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em 
   from = []
   status = "null"
   how = "Sempre lista vazia: o enchimento de volume morto não é convertido."
+
+  [[output.field]]
+  path = "past_defluences[].hydro_id"
+  from = [ { file = "dadger", register = "VI", item = "codigo_usina" } ]
+  status = "derived"
+  when = "somente quando a usina declara `VI`, está operada e tem arco de jusante"
+  how = "Id Novomodelo da usina que libera a defluência em trânsito (a de montante do arco), uma janela por período de defluência pré-estudo."
+
+  [[output.field]]
+  path = "past_defluences[].start_date"
+  from = [ { file = "dadger", register = "VI", item = "duracao" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
+  status = "derived"
+  when = "somente quando a usina declara `VI`, está operada e tem arco de jusante"
+  how = "Início de cada janela, caminhando para trás a partir do início do estudo em passos de uma semana operativa (duração do estágio 0), com a última janela truncada no intervalo em trânsito `[início − duracao, início)`, para cobri-lo sem lacuna."
+
+  [[output.field]]
+  path = "past_defluences[].end_date"
+  from = [ { file = "dadger", register = "VI", item = "duracao" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
+  status = "derived"
+  when = "somente quando a usina declara `VI`, está operada e tem arco de jusante"
+  how = "Fim de cada janela; a mais recente termina no início do estudo (nada datado no futuro) e cada janela encosta na seguinte, sem lacuna."
+
+  [[output.field]]
+  path = "past_defluences[].value_m3s"
+  from = [ { file = "dadger", register = "VI", item = "vazao_1..vazao_5" } ]
+  how = "Defluência da semana correspondente (`VI.vazao_k`, da mais recente para a mais antiga), em m³/s. Se o intervalo em trânsito precisa de mais janelas que as vazões declaradas, a mais antiga é reutilizada para manter a cobertura."
 
   [[output.field]]
   path = "past_anticipated_commitments[].thermal_id"
@@ -1186,6 +1213,7 @@ reads = [
   { file = "dadger", register = "HQ" },
   { file = "dadger", register = "LQ" },
   { file = "dadger", register = "CQ" },
+  { file = "dadger", register = "VI" },
   { file = "hidr" },
 ]
 summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` preenchido), ordenada pelo id Novomodelo; o cadastro vem do `hidr.dat` com as modificações `AC` já resolvidas por estágio, e o bloco `diversion` é acoplado só depois da resolução dos limites."
@@ -1470,6 +1498,12 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "hidr", item = "evaporacao_JAN..evaporacao_DEZ" },
   ]
   how = "Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido."
+
+  [[output.field]]
+  path = "hydros[].travel_time_hours"
+  when = "somente quando a usina declara um registro `VI`, está operada e tem um arco de jusante (`downstream_id` não nulo) para o atraso atuar"
+  from = [ { file = "dadger", register = "VI", item = "duracao" } ]
+  how = "Tempo de viagem da água, em horas, da defluência da usina até a usina de jusante (`VI.duracao`), sem conversão. A água em trânsito que ele representa no início do estudo é semeada em `past_defluences` de `initial_conditions.json`. Uma usina sem `VI` fica com o arco instantâneo (padrão do Novomodelo)."
 
   [[output.field]]
   path = "hydros[].diversion.downstream_id"
@@ -2817,7 +2851,7 @@ reads = [
   { file = "vazoes" },
   { file = "hidr" },
 ]
-summary = "Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal e mapeia sobre ele cada corte, escrito pelo modelo de origem por mês médio de 730,5 h. Cada usina convertida recebe os termos da sua própria linha do corte, da linha do complexo `CX` que a contém ou, na falta das duas, da primeira usina a jusante que tenha linha (regra inferida do relato do modelo de origem, não do manual); só um reservatório (`tipo_regulacao` `M` ou `S` em `hidr.dat`) recebe o termo de armazenamento, e só pela própria linha ou pelo complexo, cobrado acima do volume mínimo efetivo. Os termos de vazão defasada são avaliados no posto de acoplamento (`AC NPOSNW`, senão o `posto` de `hidr.dat`) sobre as tabelas de `vazoes` com postos artificiais, sem desconto de média; a diferença para a vazão de operação nos estágios determinísticos e os termos de usinas do corte ausentes do caso entram como constante no RHS. Os termos GNL vão para o anel antecipado: cada slot é cobrado pelos preços por patamar do mês de entrega (mês contado pelo `GS`), ponderados pelas durações de patamar de `cortesh.dat`, e as entregas já comandadas (`GL` após o horizonte) entram como constante no RHS. Grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python e reescreve `config.json`, apontando `policy.boundary` (`path = \"boundary\"`) para o checkpoint, e `initial_conditions.json`, com as janelas `recent_observations` das observações mensais e semanais de `vazoes` nos postos de acoplamento; o caso deve ser executado com `novomodelo run <caso> --output <caso>`."
+summary = "Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal e mapeia sobre ele cada corte, escrito pelo modelo de origem por mês médio de 730,5 h. Cada usina convertida recebe os termos da sua própria linha do corte, da linha do complexo `CX` que a contém ou, na falta das duas, da primeira usina a jusante que tenha linha (regra inferida do relato do modelo de origem, não do manual); só um reservatório (`tipo_regulacao` `M` ou `S` em `hidr.dat`) recebe o termo de armazenamento, e só pela própria linha ou pelo complexo, cobrado acima do volume mínimo efetivo. Os termos de vazão defasada são avaliados no posto de acoplamento (`AC NPOSNW`, senão o `posto` de `hidr.dat`) sobre as tabelas de `vazoes` com postos artificiais, sem desconto de média; a diferença para a vazão de operação nos estágios determinísticos e os termos de usinas do corte ausentes do caso entram como constante no RHS. Os termos GNL vão para o anel antecipado: cada slot é cobrado pelos preços por patamar do mês de entrega (mês contado pelo `GS`), ponderados pelas durações de patamar de `cortesh.dat`, e as entregas já comandadas (`GL` após o horizonte) entram como constante no RHS. A água ainda em trânsito para uma usina ao fim do estudo (tempo de viagem `VI`) recebe o termo de armazenamento da usina quando ela o tem e, senão, o seu primeiro termo de vazão defasada por hm³: é a regra do canal que o CEPEL documenta para a FCF do DECOMP usada pelo DESSEM; o DECOMP não valora essa água na fronteira com o NEWAVE, então o custo de fronteira difere do dele pelo valor da água em trânsito. Grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python e reescreve `config.json`, apontando `policy.boundary` (`path = \"boundary\"`) para o checkpoint, e `initial_conditions.json`, com as janelas `recent_observations` das observações mensais e semanais de `vazoes` nos postos de acoplamento; o caso deve ser executado com `novomodelo run <caso> --output <caso>`."
 
 # ===== frag_H_dc_inventory =====
 # Fragment H — DECOMP source inventory: what the bridge does NOT convert.
@@ -2833,11 +2867,6 @@ file = "dadger"
 note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os que o conversor lê sem converter (`deferred`, sempre com diagnóstico) ou nunca lê (`unread`). Registros ausentes desta lista são convertidos e aparecem na matriz de campos."
 
   # --- deferred: read, reported, not emitted ---------------------------------
-
-  [[source.item]]
-  register = "VI"
-  status = "deferred"
-  note = "Tempo de viagem da água até a usina de jusante e defluências das semanas anteriores ao estudo. O conversor lê o registro e monta `travel_time_hours` e `initial_conditions.past_defluences`, mas a emissão está desligada por um defeito na geração de cortes com água em trânsito no novomodelo (gap rastreado C-travel-time): o `convert decomp` apenas avisa `deferred at this milestone: water travel time (VI present)`."
 
   [[source.item]]
   register = "FE"

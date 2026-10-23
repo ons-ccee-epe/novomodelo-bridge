@@ -235,7 +235,7 @@ def _synthetic_two_plant_case() -> tuple[
                 make_slot(_HYDRO_INFLOW_LAG, 1, lag)  # positions 14..25
                 for lag in range(12)
             ],
-            make_slot(_HYDRO_TRANSIT_BUCKET, 0, 0),  # position 26: unmapped
+            make_slot(_HYDRO_TRANSIT_BUCKET, 2, 0),  # position 26
         ]
     )
     return plant_codes, id_map, manifest

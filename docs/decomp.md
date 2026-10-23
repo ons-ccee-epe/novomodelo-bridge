@@ -67,8 +67,9 @@ Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and
 the same diagnostics land in `--diagnostics-json` and the `--json` verdict.
-Examples at the time of writing are water travel time (the `VI` register)
-and a few restriction-register term types; the [DECOMP data map](decomp-data-map.md)
+Examples at the time of writing are the unreadable special-constraint
+families (`FE`, `RHA`) and a few restriction-register term types; the
+[DECOMP data map](decomp-data-map.md)
 lists every register and field the converter leaves out. Each warning's
 remediation line states whether any action is needed; usually none, and the
 conversion proceeds.
@@ -121,6 +122,12 @@ DECOMP. The import couples them plant by plant, as DECOMP does:
   priced in the month the `GS` register of `dadgnl.rvN` books its week to,
   with that month's patamar shares from `cortesh.dat`. A delivery the deck
   has already committed is folded into the constant term.
+- Water still in transit toward a plant when the study ends (the `VI`
+  register's travel time) is valued with that plant's storage term when it
+  takes one, otherwise with its first inflow-lag term. This is the in-channel
+  rule CEPEL documents for the cost-to-go function DECOMP hands to DESSEM.
+  DECOMP gives that water no value at the NEWAVE boundary, so the two
+  boundary costs differ by its value; the import lists the plants concerned.
 
 Two parts of the coupling cannot be represented yet, and the import warns
 about each. In the last stage, the coupling inflow's difference from the

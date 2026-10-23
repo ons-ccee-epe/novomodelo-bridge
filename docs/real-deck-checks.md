@@ -84,6 +84,12 @@ anywhere any more; treat each as "a deck with these properties".
 | --- | --- |
 | One test each in `test_libs_electrical_emit.py` and `test_libs_electrical_pipeline.py` | Conversion emits at least one `LIBS_ELEC_*` generic constraint with matching bound rows, the unresolved-operand census stays below the pre-fix baseline of 20, and `novomodelo validate` exits 0 on the converted case. |
 
+### A DECOMP deck carrying `VI` water travel time, plus a novomodelo binary
+
+| Check | Verifies |
+| --- | --- |
+| Convert a deck with at least one operated `VI` arc, then `novomodelo run` the case to convergence | The transit-bucket cut generation produces a valid policy: training converges on a non-negative gap (no lower bound driven past the upper bound), and the solved case prices the in-transit water. `novomodelo validate` alone does not exercise this — it checks the `past_defluences` coverage rule at config time but not the cut arithmetic — so this needs the solver binary, not just the validator. The emission shape is unit-tested in `test_travel_time.py` and the loadability in `test_convert_decomp_e2e.py` (tier-2, `novomodelo validate`); this whole-deck run is what closed the former novomodelo cut-generation defect (`C-travel-time`). |
+
 ### Sibling novomodelo checkout (replaced, not removed)
 
 Four tests in `tests/decomp/test_contracts.py` read novomodelo's
