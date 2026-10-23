@@ -2,16 +2,15 @@
 (``convert_recent_observation_windows``) — the ``recent_observations`` windows
 that seed novomodelo's PAR inflow-lag accumulator.
 
-Tier 1 — pure Python. ``_incremental_context`` is patched so the test pins the
-window/date construction (the new logic) rather than the posto→plant topology,
-which its own module already covers.
+Tier 1 — pure Python. The cadastro is a stand-in answering only
+``coupling_gauge``, so the tests pin the window/date construction and the
+gauge the windows are read on.
 """
 
 from __future__ import annotations
 
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pandas as pd
 
@@ -34,23 +33,21 @@ def _calendar():
 
 
 def _id_map() -> DecompIdMap:
-    # one operated hydro, code 10, gauged at posto column "1"
     return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
+
+
+def _coupled_on(posto: int) -> SimpleNamespace:
+    return SimpleNamespace(coupling_gauge=lambda _code: posto)
 
 
 def _vazoes(monthly: pd.DataFrame | None, weekly: pd.DataFrame | None):
     return SimpleNamespace(observacoes_mensais=monthly, observacoes_semanais=weekly)
 
 
-def _run(monthly, weekly):
-    # station_by_code maps hydro code 10 -> posto column "1"; no parents.
-    with patch(
-        "novomodelo_bridge.decomp.scenarios._incremental_context",
-        return_value=({10: "1"}, {}),
-    ):
-        return convert_recent_observation_windows(
-            _vazoes(monthly, weekly), object(), _id_map(), _calendar()
-        )
+def _run(monthly, weekly, posto: int = 1):
+    return convert_recent_observation_windows(
+        _vazoes(monthly, weekly), _coupled_on(posto), _id_map(), _calendar()
+    )
 
 
 class TestRecentObservationWindows:
@@ -91,3 +88,9 @@ class TestRecentObservationWindows:
     def test_no_observations_returns_empty(self) -> None:
         assert _run(None, None) == []
         assert _run(pd.DataFrame(), pd.DataFrame()) == []
+
+    def test_windows_are_read_on_the_coupling_gauge(self) -> None:
+        monthly = pd.DataFrame({"mes": [1], "1": [50.0], "7": [5.0]})
+        weekly = pd.DataFrame({"semana": [1], "1": [80.0], "7": [8.0]})
+        out = _run(monthly, weekly, posto=7)
+        assert [o["value_m3s"] for o in out] == [5.0, 8.0]

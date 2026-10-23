@@ -420,8 +420,7 @@ def _compare_hydros(
                 # hm³, not flow. Novomodelo emits m³/s. The source model rounds the
                 # month-length factor to 2.63 in its internal output reporting (≈ 730 h
                 # × 3600 s / 10⁶); using the same rounded constant here makes the
-                # comparison apples-to-apples. The converter side keeps the exact 2.628
-                # (see network.py:C_M3S2HM3) because the input-data conversion has no
+                # comparison apples-to-apples. The input-data conversion has no
                 # analogous rounding. Handled per-variable rather than via a V*-prefix
                 # heuristic to avoid mis-scaling future MEDIAS columns that happen to
                 # start with V.

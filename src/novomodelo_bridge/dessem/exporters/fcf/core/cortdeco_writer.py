@@ -1,7 +1,8 @@
 """Native serializer for the DECOMP `cortdeco` binary.
 
 One record is: an int32 chain pointer at offset 0, then `NCOEF` float64 in
-block order `rhs | pi_varm | pi_gnl`, then zero padding to `TAMANHO_CORTE`.
+block order `rhs | pi_varm | pi_qdefp | pi_gnl`, then zero padding to
+`TAMANHO_CORTE`.
 
 `pi_gnl` carries zeros under premise P14. Reducing Novomodelo's anticipated-thermal
 ring positions to `pi_gnl`'s `(submarket, stage, block)` address is unresolved.
@@ -54,11 +55,14 @@ class CutInput:
     """One `cortdeco` cut, in Novomodelo's raw sign and units, in DECOMP block order.
 
     `pi_varm[i]` is hydro position `i`'s storage coefficient, ordered like
-    `codigos_uhes`. Under premise P14 `pi_gnl` is `zeroed_gnl_block(offsets)`.
+    `codigos_uhes`. `pi_qdefp` prices each travel-time plant's lagged release
+    in R$/hm³ (premise P3). Under premise P14 `pi_gnl` is
+    `zeroed_gnl_block(offsets)`.
     """
 
     intercept: float
     pi_varm: NDArray[np.float64]
+    pi_qdefp: NDArray[np.float64]
     pi_gnl: NDArray[np.float64]
 
 
@@ -96,10 +100,16 @@ def _validate_lengths(cut: CutInput, offsets: CutBlockOffsets) -> None:
             f"NCOEF is {offsets.ncoef} but a {TAMANHO_CORTE}-byte record "
             f"holds at most {capacity} float64 coefficients"
         )
-    expected_varm = offsets.pi_gnl - offsets.pi_varm
+    expected_varm = offsets.pi_qdefp - offsets.pi_varm
     if len(cut.pi_varm) != expected_varm:
         raise LayoutError(
             f"pi_varm has {len(cut.pi_varm)} entries but layout expects {expected_varm}"
+        )
+    expected_qdefp = offsets.pi_gnl - offsets.pi_qdefp
+    if len(cut.pi_qdefp) != expected_qdefp:
+        raise LayoutError(
+            f"pi_qdefp has {len(cut.pi_qdefp)} entries but layout expects "
+            f"{expected_qdefp}"
         )
     expected_gnl = offsets.ncoef - offsets.pi_gnl
     if len(cut.pi_gnl) != expected_gnl:
@@ -111,8 +121,10 @@ def _validate_lengths(cut: CutInput, offsets: CutBlockOffsets) -> None:
 def _convert(cut: CutInput) -> tuple[float, NDArray[np.float64]]:
     """Apply premise P2 (÷1000) and P4 (GNL sign) exactly once."""
     rhs = to_decomp_cost(cut.intercept)
-    coefficients = to_decomp_costs(np.concatenate((cut.pi_varm, cut.pi_gnl)))
-    gnl_start = len(cut.pi_varm)
+    coefficients = to_decomp_costs(
+        np.concatenate((cut.pi_varm, cut.pi_qdefp, cut.pi_gnl))
+    )
+    gnl_start = len(cut.pi_varm) + len(cut.pi_qdefp)
     coefficients[gnl_start:] = negate_gnl_array(coefficients[gnl_start:])
     return rhs, coefficients
 
@@ -139,22 +151,26 @@ def _assert_gnl_input_is_zero(cuts: Sequence[Sequence[CutInput]]) -> None:
 
 
 def _assert_finite(
-    rhs: float, coefficients: NDArray[np.float64], pi_varm_width: int
+    rhs: float, coefficients: NDArray[np.float64], cut: CutInput
 ) -> None:
-    """Reject non-finite values."""
+    """Reject non-finite values, naming the block that holds the first one."""
     if not np.isfinite(rhs):
         raise LayoutError(f"rhs is not finite: {rhs!r}")
     bad = np.flatnonzero(~np.isfinite(coefficients))
     if bad.size:
         position = int(bad[0])
-        if position < pi_varm_width:
-            raise LayoutError(
-                f"pi_varm position {position} is not finite: {coefficients[position]!r}"
-            )
-        raise LayoutError(
-            f"pi_gnl position {position - pi_varm_width} is not finite: "
-            f"{coefficients[position]!r}"
-        )
+        start = 0
+        for block, values in (
+            ("pi_varm", cut.pi_varm),
+            ("pi_qdefp", cut.pi_qdefp),
+            ("pi_gnl", cut.pi_gnl),
+        ):
+            if position < start + len(values):
+                raise LayoutError(
+                    f"{block} position {position - start} is not finite: "
+                    f"{coefficients[position]!r}"
+                )
+            start += len(values)
 
 
 def node_and_iteration(record_index: int, n_nodes: int) -> tuple[int, int]:
@@ -170,7 +186,7 @@ def serialize_cut(cut: CutInput, pointer: int, offsets: CutBlockOffsets) -> byte
     """One fixed `cortdeco` record: pointer, then `NCOEF` float64, zero-padded."""
     _validate_lengths(cut, offsets)
     rhs, coefficients = _convert(cut)
-    _assert_finite(rhs, coefficients, len(cut.pi_varm))
+    _assert_finite(rhs, coefficients, cut)
     rhs, coefficients = _normalize_signed_zero(rhs, coefficients)
 
     body = bytearray(TAMANHO_CORTE)

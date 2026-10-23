@@ -13,8 +13,8 @@ attribution) and ``scenarios.py``'s inflow-gauge attribution both read
 ``downstream_plant``/``inflow_gauge`` accessors -- the post-``AC
 NUMJUS``/``NUMPOS`` link/gauge -- rather than the base ``hidr`` columns
 directly. ``AC JUSENA`` is a stored-energy link, not a water-routing one:
-only the RHE stored energy reads it. ``AC NPOSNW`` (the other source family's
-own inflow gauge) is deliberately not ingested -- no DECOMP consumer.
+only the RHE stored energy reads it. ``AC NPOSNW`` (the boundary-cut coupling
+gauge) is read only by the boundary FCF import, never by the operation.
 """
 
 from __future__ import annotations

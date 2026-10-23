@@ -27,12 +27,12 @@ from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     CaseInputs,
+    StageInfo,
     anticipated_thermals,
     read_case_inputs,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     LayoutError,
-    assert_no_travel_time,
     assert_uniform_blocks,
     cortdeco_block_offsets,
     cut_head_indices,
@@ -62,6 +62,12 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     read_policy,
     select_pools,
 )
+from novomodelo_bridge.dessem.exporters.fcf.core.travel_time import (
+    TravelTimePlant,
+    max_lag,
+    release_lag_weights,
+    travel_time_plants,
+)
 from novomodelo_bridge.dessem.exporters.fcf.eco.audit_raw_cuts import emit_eco_csvs
 from novomodelo_bridge.dessem.exporters.fcf.manifest import (
     build_export_manifest,
@@ -75,30 +81,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def _emit_export_warnings() -> None:
-    """Emit diagnostics for known export limitations (P3 and P14).
-
-    Called once per export run to inform the user that certain coefficients
-    are not yet supported and are emitted as zeros.
-    """
-    emit(
-        Diagnostic(
-            code="dessem-fcf-travel-time-unsupported",
-            severity=Severity.WARNING,
-            category="FCF export limitations",
-            title="Travel-time coefficients not supported",
-            summary=(
-                "Water travel-time (tempo de viagem) coefficients are not yet "
-                "supported: the export writes no travel-time block."
-            ),
-            notes=[
-                "Premise P3: n_utv = 0, so the cuts carry no pi_qdefp coefficients.",
-            ],
-            remediation=(
-                "A policy whose cuts carry travel-time state is refused rather "
-                "than exported without it."
-            ),
-        )
-    )
+    """Emit the diagnostic for the known export limitation P14, once per run."""
     emit(
         Diagnostic(
             code="dessem-fcf-gnl-coefficients-zeroed",
@@ -119,6 +102,35 @@ def _emit_export_warnings() -> None:
                 "The pi_gnl block is structurally valid but zero-filled. "
                 "DESSEM will read the file without errors."
             ),
+        )
+    )
+
+
+def _emit_travel_time_info(plants: tuple[TravelTimePlant, ...]) -> None:
+    """Report the plants whose in-transit water the cuts price (premise P3)."""
+    if not plants:
+        return
+    emit(
+        Diagnostic(
+            code="dessem-fcf-travel-time-exported",
+            severity=Severity.INFO,
+            category="FCF export",
+            title="Travel-time coefficients exported",
+            summary=(
+                f"The cuts value the water in transit from {len(plants)} "
+                "plant(s), by the stage it was released in, up to "
+                f"{max_lag(plants)} stage(s) back."
+            ),
+            notes=[
+                f"Plant {plant.code}: its water reaches the plant downstream "
+                f"{plant.hours} h after release."
+                for plant in plants
+            ]
+            + [
+                "Premise P3: a release spread evenly over its stage arrives "
+                "spread evenly over an equally long span; release periods "
+                "before the study are as long as its first stage."
+            ],
         )
     )
 
@@ -228,6 +240,7 @@ def _assemble_mapcut_header(
     gnl_submarket_codes: tuple[int, ...],
     gnl_lags: tuple[int, ...],
     n_patamares: int,
+    travel_time: tuple[TravelTimePlant, ...],
 ) -> MapcutHeader:
     """Assemble the mapcut header from all sources."""
     from novomodelo_bridge.dessem.exporters.fcf.core.reader import PolicyManifest
@@ -265,7 +278,6 @@ def _assemble_mapcut_header(
         numero_cenarios=numero_cenarios,
         numero_estagios=n_estagios,
         numero_semanas=n_nodes,
-        n_utv=0,  # P3
         dia=dia,
         mes=mes,
         ano=ano,
@@ -279,7 +291,7 @@ def _assemble_mapcut_header(
         lag_meses_gnl=gnl_lags,
         patamares_gnl=patamares_gnl,
         taxa_desconto=factors,
-        max_lag=0,
+        tempo_viagem=travel_time,
     )
 
 
@@ -288,6 +300,8 @@ def _assemble_cuts(
     trunk_pool_ids: tuple[int, ...],
     plant_ids: tuple[int, ...],
     offsets: Any,
+    travel_time: tuple[TravelTimePlant, ...],
+    stages: tuple[StageInfo, ...],
 ) -> list[list[CutInput]]:
     """Assemble cut inputs from pools."""
     from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
@@ -297,17 +311,19 @@ def _assemble_cuts(
     cuts: list[list[CutInput]] = []
     for pool_id in trunk_pool_ids:
         pool = pools[pool_id]
+        release_weights = release_lag_weights(
+            pool.slots, travel_time, stages, pool.graph_stage_id, pool_id
+        )
         node_cuts: list[CutInput] = []
         for piece in pool.pieces:
             if piece.slot_index < pool.warm_start_count:
                 continue
-            pi_varm = storage_coefficients(piece, pool.slots, plant_ids)
-            pi_gnl = zeroed_gnl_block(offsets)
             node_cuts.append(
                 CutInput(
                     intercept=piece.intercept,
-                    pi_varm=pi_varm,
-                    pi_gnl=pi_gnl,
+                    pi_varm=storage_coefficients(piece, pool.slots, plant_ids),
+                    pi_qdefp=release_weights @ piece.coefficients,
+                    pi_gnl=zeroed_gnl_block(offsets),
                 )
             )
         cuts.append(node_cuts)
@@ -372,9 +388,10 @@ def run_export(
         current_step = "validate premises"
         _step(EXPORT_PHASE_LABELS[3])
         with _log_step(current_step):
-            # P3: No travel time
-            first_pool = pools[trunk_pool_ids[0]]
-            assert_no_travel_time(first_pool.slots)
+            travel_time = travel_time_plants(
+                inputs.hydros, source.hydros, source.travel_time_codes, inputs.stages
+            )
+            _emit_travel_time_info(travel_time)
 
             # P8: Audit inflow lag drops
             inflow_lag_drop_audit(pools)
@@ -413,8 +430,8 @@ def run_export(
 
             offsets = cortdeco_block_offsets(
                 n_uhes=len(hydro_codes),
-                n_utv=0,  # P3
-                max_lag=0,
+                n_utv=len(travel_time),
+                max_lag=max_lag(travel_time),
                 n_sbm_gnl=len(gnl_submarket_codes),
                 n_estagios=manifest.num_stages,
                 n_patamares=n_patamares,
@@ -434,6 +451,7 @@ def run_export(
                 gnl_submarket_codes,
                 gnl_lags,
                 n_patamares,
+                travel_time,
             )
 
         current_step = "write mapcut"
@@ -445,7 +463,9 @@ def run_export(
         current_step = "assemble cut inputs"
         _step(EXPORT_PHASE_LABELS[8])
         with _log_step(current_step):
-            cuts = _assemble_cuts(pools, trunk_pool_ids, plant_ids, offsets)
+            cuts = _assemble_cuts(
+                pools, trunk_pool_ids, plant_ids, offsets, travel_time, inputs.stages
+            )
 
         current_step = "write cortdeco"
         _step(EXPORT_PHASE_LABELS[9])
@@ -477,6 +497,8 @@ def run_export(
                     submarket_codes=header.codigos_submercados_gnl,
                     n_estagios=header.numero_estagios,
                     n_patamares=n_patamares,
+                    travel_time_codes=tuple(plant.code for plant in travel_time),
+                    max_lag=header.max_lag,
                 )
 
         current_step = "write export manifest"

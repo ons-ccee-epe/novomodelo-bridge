@@ -122,6 +122,32 @@ def _mapcut_rows(contents: MapcutContents) -> Iterator[tuple[object, ...]]:
         yield (stage_record, "reg6_stage", 1, "patamares_por_estagio", position, blocks)
     for position, lag in enumerate(contents.travel_time_lags):
         yield (stage_record, "reg6_stage", 1, "lag_tempo_viagem", position, lag)
+    for position, start in enumerate(contents.travel_time_lag_starts):
+        yield (
+            stage_record,
+            "reg6_stage",
+            1,
+            "inicio_lag_tempo_viagem",
+            position,
+            start,
+        )
+
+    for record in contents.travel_time_records:
+        if record.codigo_usina is not None:
+            kind = "reg7_travel_time"
+            fields: tuple[tuple[str, object], ...] = (
+                ("codigo_usina", record.codigo_usina),
+                ("numero_horas", record.numero_horas),
+            )
+        else:
+            kind = "reg8_travel_time"
+            fields = ()
+        fields += (
+            ("indice_lag", record.lag),
+            ("coeficiente_amortecimento", record.share),
+        )
+        for position, (field, value) in enumerate(fields):
+            yield (record.record_index, kind, 1, field, position, value)
 
     gnl_record = contents.gnl_record_indices[0]
     repeats = len(contents.gnl_record_indices)
@@ -170,15 +196,15 @@ def cortdeco_columns(
     submarket_codes: Sequence[int],
     n_estagios: int,
     n_patamares: int,
-    n_utv: int = 0,
+    travel_time_codes: Sequence[int] = (),
     max_lag: int = 0,
 ) -> tuple[str, ...]:
-    """Column names mirroring idecomp's own."""
+    """Column names mirroring idecomp's own, `pi_qdefp` lag-major from lag 0."""
     varm = tuple(f"pi_varm_uhe{code}" for code in hydro_codes)
     qdefp = tuple(
-        f"pi_qdefp_utv{index + 1}_lag{lag + 1}"
-        for index in range(n_utv)
+        f"pi_qdefp_uhe{code}_lag{lag}"
         for lag in range(max_lag)
+        for code in travel_time_codes
     )
     gnl = tuple(
         f"pi_gnl_sbm{code}_pat{block + 1}_lag{stage + 1}"
@@ -196,15 +222,20 @@ def write_cortdeco_content_csv(
     submarket_codes: Sequence[int],
     n_estagios: int,
     n_patamares: int,
-    n_utv: int = 0,
+    travel_time_codes: Sequence[int] = (),
     max_lag: int = 0,
 ) -> int:
     """Write the wide cortdeco mirror, returning the row count."""
     columns = cortdeco_columns(
-        hydro_codes, submarket_codes, n_estagios, n_patamares, n_utv, max_lag
+        hydro_codes,
+        submarket_codes,
+        n_estagios,
+        n_patamares,
+        travel_time_codes,
+        max_lag,
     )
     first = contents.cuts[0]
-    width = 4 + len(first.pi_varm) + len(first.pi_gnl)
+    width = 4 + len(first.pi_varm) + len(first.pi_qdefp) + len(first.pi_gnl)
     if len(columns) != width:
         raise ValueError(
             f"{len(columns)} column names for a record carrying {width} fields"
@@ -222,6 +253,7 @@ def write_cortdeco_content_csv(
                     "true" if cut.is_extra_record else "false",
                     _text(cut.rhs),
                     *(_text(float(v)) for v in cut.pi_varm),
+                    *(_text(float(v)) for v in cut.pi_qdefp),
                     *(_text(float(v)) for v in cut.pi_gnl),
                 ]
             )

@@ -18,13 +18,15 @@ class SourceDeck:
     """A deck revision, its operated hydros keyed by novomodelo hydro id, and its GNL plants.
 
     *gnl_thermals* ascend by deck code and are empty when the deck commits no
-    GNL dispatch.
+    GNL dispatch. *travel_time_codes* are the plant codes of the deck's `VI`
+    records, in record order, the order DECOMP numbers travel-time plants in.
     """
 
     directory: Path
     revision: str
     hydros: Mapping[int, SourceHydro]
     gnl_thermals: tuple[SourceGnlThermal, ...]
+    travel_time_codes: tuple[int, ...] = ()
 
 
 def read_source_deck(directory: Path) -> SourceDeck:
@@ -39,6 +41,7 @@ def read_source_deck(directory: Path) -> SourceDeck:
     """
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import read_gnl_model
+    from novomodelo_bridge.decomp.converters.travel_time import read_travel_times
 
     case = DecompCase.from_directory(directory)
     hidr = case.hidr
@@ -69,4 +72,5 @@ def read_source_deck(directory: Path) -> SourceDeck:
         revision=case.files.revision,
         hydros=hydros,
         gnl_thermals=gnl_thermals,
+        travel_time_codes=tuple(read_travel_times(case.dadger)),
     )

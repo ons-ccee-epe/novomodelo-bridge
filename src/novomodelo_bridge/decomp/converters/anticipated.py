@@ -99,15 +99,17 @@ class GnlStageCommitment:
     ``start_date`` is the parsed ``data_inicio`` (the delivery stage's start);
     the emission track compares it against the study horizon to route the
     commitment to the left or right temporal boundary. ``committed_mw`` is the
-    block-duration-weighted mean of that register's ``geracao``; ``hours`` is the
-    stage span (sum of its ``duracao`` blocks), so the emission track can size a
-    post-horizon delivery window ``[start_date, start_date + hours)``.
+    block-duration-weighted mean of that register's ``geracao``, ``block_mw`` the
+    ``geracao`` per patamar itself; ``hours`` is the stage span (sum of its
+    ``duracao`` blocks), so the emission track can size a post-horizon delivery
+    window ``[start_date, start_date + hours)``.
     """
 
     estagio: int
     start_date: date
     committed_mw: float
     hours: float
+    block_mw: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -293,6 +295,7 @@ def _read_gl_commitments(
                 start_date=_parse_data_inicio(register.data_inicio),
                 committed_mw=_block_weighted_mean(geracao, duracao),
                 hours=sum(duracao),
+                block_mw=tuple(geracao),
             )
         )
     return {
@@ -309,6 +312,27 @@ def _read_weeks_per_month(dadgnl: Dadgnl) -> dict[int, int]:
     if frame is None or frame.empty:
         return {}
     return {int(row["mes"]): int(row["semanas"]) for _, row in frame.iterrows()}
+
+
+def operative_week_months(
+    weeks_per_month: Mapping[int, int], study_start: date
+) -> dict[date, tuple[int, int]]:
+    """The ``(year, month)`` the source model books each operative week to.
+
+    Walks the ``gs`` counts in ascending month order from the study's first
+    week, the first count being the study-start month's. A week belongs to the
+    month ``gs`` books it to even when it ends in the next one (mar-26-rv2:
+    the week starting 2026-05-30 is a May week). Empty without a ``gs`` block.
+    """
+    weeks: dict[date, tuple[int, int]] = {}
+    week_start = study_start
+    year, month = study_start.year, study_start.month
+    for key in sorted(weeks_per_month):
+        for _ in range(weeks_per_month[key]):
+            weeks[week_start] = (year, month)
+            week_start += _ONE_OPERATIVE_WEEK
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return weeks
 
 
 def _read_nl_lags(dadgnl: Dadgnl) -> dict[int, int]:

@@ -515,10 +515,10 @@ def test_deferred_note_excludes_head_productivity(caplog) -> None:
     (``_equivalent_productivity_mw_per_m3s``), so it was never listed as
     deferred. The blanket, hand-maintained "deferred hydro fidelity" warning
     is retired entirely — deck-aware, per-family
-    ``AC`` coverage now lives in ``check decomp`` — while the module
-    docstring still documents the genuinely-deferred families (``VI``
-    travel time, ``COTVAZ``/``COTARE``/``COFEVA``) and now points at
-    ``check decomp`` for their per-deck coverage.
+    ``AC`` coverage now lives in ``check decomp``. The module docstring names
+    ``VI`` travel time as converted and still names the genuinely-unconverted
+    evaporation/tailrace families (``COTVAZ``/``COTARE``/``COFEVA``), pointing
+    at ``check decomp`` for their per-deck coverage.
     """
     import novomodelo_bridge.decomp.converters.hydro as hydro_module
 

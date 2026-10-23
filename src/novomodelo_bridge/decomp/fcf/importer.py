@@ -3,12 +3,12 @@ novomodelo policy checkpoint.
 
 :func:`import_boundary_fcf` is the single entry point: it composes the
 cut reader (``fcf/cortes.py``), the terminal-manifest bootstrap
-(``fcf/bootstrap.py``), the manifest-to-manifest mapper (``fcf/mapper.py``),
-and the checkpoint writer (``fcf/writer.py``) in order, then patches the
-converted case's ``config.json`` so novomodelo loads the authored ``boundary/``
-checkpoint at its terminal stage. It is thin orchestration only — every
-algorithm it calls already exists in one of the four modules above; this
-module adds no new cut-mapping or checkpoint-authoring logic of its own.
+(``fcf/bootstrap.py``), the coupling resolution (``fcf/coupling.py``), the
+manifest-to-manifest mapper (``fcf/mapper.py``), and the checkpoint writer
+(``fcf/writer.py``) in order, then patches the converted case's
+``config.json`` so novomodelo loads the authored ``boundary/`` checkpoint at its
+terminal stage. Beyond reading the deck's GNL calendar it is orchestration
+only.
 
 The importer is a **post-conversion** step: it runs against an already
 converted case directory (``convert_decomp_case``'s output), never inside the
@@ -22,38 +22,52 @@ import json
 import logging
 import math
 import re
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
-from idecomp.decomp import Dadgnl, Mlt, Vazoes
+from idecomp.decomp import Dadgnl, Vazoes
 from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.decomp.converters.anticipated import read_gnl_model
+from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
+from novomodelo_bridge.decomp.converters.anticipated import (
+    classify_gnl_windows,
+    operative_week_months,
+    read_gnl_model,
+)
 from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
 from novomodelo_bridge.decomp.fcf.bootstrap import (
     bootstrap_terminal_manifest,
     ensure_writer_binding,
 )
 from novomodelo_bridge.decomp.fcf.cortes import (
+    cut_month,
     read_cortes,
+    read_patamar_fractions,
     required_inflow_lag_depth,
     summarize_cut_families,
 )
+from novomodelo_bridge.decomp.fcf.coupling import (
+    carried_lag_share,
+    coupling_lag_offsets,
+    lag_months,
+    resolve_couplings,
+    source_only_lag_inflows,
+    terminal_shares,
+)
 from novomodelo_bridge.decomp.fcf.mapper import (
+    GnlCommandedDelivery,
+    GnlDeliveryMonth,
     GnlRingPlan,
     GnlThermalTarget,
     map_boundary_cuts,
+    month_key,
 )
 from novomodelo_bridge.decomp.fcf.writer import (
     build_metadata,
     build_stage_cuts_payload,
     write_boundary_checkpoint,
-)
-from novomodelo_bridge.decomp.files import DecompFiles
-from novomodelo_bridge.decomp.inflow_mlt import (
-    build_incremental_mlt,
-    coupling_lag_means,
 )
 from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -64,8 +78,8 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
-    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
+    from novomodelo_bridge.decomp.fcf.coupling import CouplingResolution, TerminalShare
     from novomodelo_bridge.decomp.fcf.mapper import MappingResult
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -82,38 +96,23 @@ _LOG = logging.getLogger(__name__)
 #: HEADLINE only; its per-row table values are unaffected.
 _GNL_DEVIATION_REL_FLOOR = 1e-3
 
+_CARRIED_SHARE_TOLERANCE = 1e-9
+
 
 def _gnl_targets_from(
     model: GnlCommitmentModel, thermals_doc: Mapping[str, object]
-) -> GnlRingPlan | None:
-    """Build the submercado -> GNL-thermal ring plan from the deck + case.
+) -> tuple[GnlThermalTarget, ...]:
+    """Join the ``dadgnl`` plants onto the converted case's GNL thermal ids.
 
-    Joins ``model.thermals`` (ascending by ``code``, read from ``dadgnl``'s
-    ``tg`` registry by
-    :func:`~novomodelo_bridge.decomp.converters.anticipated.read_gnl_model` —
-    reconciled with, never re-derived) onto the converted case's GNL
-    thermal ids: ``thermals_doc["thermals"]`` entries carrying
-    ``anticipated_config``, sorted ascending, are exactly
-    ``convert_decomp_case``'s ``first_thermal_id + i`` assignment (ascending
-    by code — see ``decomp/pipeline.py``/``decomp/anticipated.py::convert_gnl``).
-    Zipping the two ascending-by-code sequences positionally reproduces that
-    assignment exactly, without re-deriving it.
-
-    A plant absent from ``model.nl_lag_months`` has no dispatch-anticipation
-    lag to key its ring slot(s) on (no ``pi_gnl`` lag axis), so it is
-    *skipped* — its ring stays at coefficient ``0.0`` via the mapper's own
-    source-only drop path — with a single INFO log line naming every skipped
-    plant, never raised on. Returns ``None`` when every plant is skipped (no
-    live target at all).
+    ``thermals_doc["thermals"]`` entries carrying ``anticipated_config``,
+    sorted, are ``convert_decomp_case``'s ``first_thermal_id + i`` assignment
+    ascending by code, so zipping them with the codes reproduces it.
 
     Raises
     ------
     ValueError
-        If the converted case's GNL-fleet count (``thermals_doc["thermals"]``
-        entries carrying ``anticipated_config``) disagrees with the
-        ``dadgnl`` registry's thermal count — a converter/reader
-        inconsistency that would otherwise silently mis-zip ids onto the
-        wrong codes.
+        If the case's GNL-fleet count disagrees with the ``dadgnl`` registry's,
+        which would otherwise mis-zip ids onto the wrong codes.
     """
     thermals_entries = thermals_doc["thermals"]
     if not isinstance(thermals_entries, list):
@@ -133,131 +132,109 @@ def _gnl_targets_from(
             f"{len(codes)} thermal(s); the GNL fleet must match exactly"
         )
     id_of = dict(zip(codes, gnl_ids, strict=True))
+    return tuple(
+        GnlThermalTarget(
+            thermal_id=id_of[thermal.code], submercado=thermal.submarket_code
+        )
+        for thermal in model.thermals
+    )
 
-    targets: list[GnlThermalTarget] = []
-    skipped: list[str] = []
-    for thermal in model.thermals:
-        lag = model.nl_lag_months.get(thermal.code)
-        if lag is None:
-            skipped.append(thermal.name)
-            continue
-        targets.append(
-            GnlThermalTarget(
-                thermal_id=id_of[thermal.code],
-                submercado=thermal.submarket_code,
-                nl_lag=lag,
+
+def _date_int(day: date) -> int:
+    return day.year * 10_000 + day.month * 100 + day.day
+
+
+def _commanded_deliveries(
+    model: GnlCommitmentModel,
+    week_months: Mapping[date, tuple[int, int]],
+    horizon_end: date,
+) -> tuple[GnlCommandedDelivery, ...]:
+    """The já-comandada (class-4) weeks with a nonzero ``gl`` dispatch.
+
+    Read off :func:`classify_gnl_windows`, the same windows the conversion
+    hands novomodelo as past commitments; the zero-MW grid stub carries nothing.
+    """
+    submercado_of = {thermal.code: thermal.submarket_code for thermal in model.thermals}
+    block_mw_of = {
+        (code, stage.start_date): stage.block_mw
+        for code, commitment in model.commitments.items()
+        for stage in commitment.stages
+    }
+    deliveries: list[GnlCommandedDelivery] = []
+    classification = classify_gnl_windows(model, horizon_end=horizon_end)
+    for code, plant in sorted(classification.plants.items()):
+        for start, end, _mw in plant.class4_windows:
+            block_mw = block_mw_of.get((code, start), ())
+            if not any(block_mw):
+                continue
+            year, month = week_months.get(start, (start.year, start.month))
+            deliveries.append(
+                GnlCommandedDelivery(
+                    submercado=submercado_of[code],
+                    month=month_key(year, month),
+                    block_mw=block_mw,
+                    hours=(end - start).days * 24.0,
+                )
             )
-        )
-
-    if skipped:
-        _LOG.info(
-            "%d GNL plant(s) declare no nl dispatch-anticipation lag, so "
-            "their AnticipatedThermalState ring slot(s) stay at coefficient "
-            "0.0 (no pi_gnl lag axis to key on): %s",
-            len(skipped),
-            ", ".join(skipped),
-        )
-
-    return GnlRingPlan(tuple(targets)) if targets else None
+    return tuple(deliveries)
 
 
-def _post_horizon_start(case_dir: Path) -> int | None:
-    """The ``YYYYMM01`` month-anchor of the earliest post-study stage start,
-    or ``None``.
-
-    Reads ``case_dir / "post_study_stages.json"`` (the
-    ``decomp/anticipated.py::GnlEmission.post_study_stages`` payload,
-    written by ``decomp/pipeline.py`` only when some GNL delivery lands
-    post-horizon). Returns ``None`` when the file is absent or its
-    ``stages`` list is empty — a case shape as legitimate as "no post-study
-    horizon at all"; the mapper's ``GnlRingPlan.post_horizon_start=None``
-    disables the covered-lane filter entirely for that case.
-
-    The earliest stage's ``year*10000 + month*100 + 1`` month-anchor mirrors
-    the granularity novomodelo's excised anticipated ring dates every surviving
-    slot at (its own ``year_month_day_anchor``): the já-comandada (class-4)
-    window is excised from the ring entirely — novomodelo's ``ring_index`` returns
-    ``None`` for it, so it never reaches the terminal manifest — which under
-    the source model's month-boundary study makes this anchor the first
-    signaled (class-3) month.
-
-    A malformed ``start_date`` string is NOT swallowed here: the
-    ``ValueError`` from ``date.fromisoformat`` propagates verbatim rather
-    than silently disabling the filter — a corrupt horizon is a real
-    problem, never a "no horizon" case.
-    """
-    path = case_dir / "post_study_stages.json"
-    if not path.is_file():
+def _build_gnl_ring_plan(
+    case_dir: Path,
+    case: DecompCase,
+    cortesh: Cortesh,
+    cut: tuple[int, int],
+    lag_maximo_gnl: int,
+) -> GnlRingPlan | None:
+    """The deck's GNL delivery calendar, or ``None`` when the deck has no GNL."""
+    if case.files.dadgnl is None or lag_maximo_gnl == 0:
         return None
-    with path.open(encoding="utf-8") as handle:
-        doc = json.load(handle)
-    stages = doc.get("stages", [])
-    if not stages:
+    model = read_gnl_model(Dadgnl.read(str(case.files.dadgnl)))
+    if model is None:
         return None
-    earliest = min(date.fromisoformat(stage["start_date"]) for stage in stages)
-    return earliest.year * 10000 + earliest.month * 100 + 1
+    with (case_dir / "system" / "thermals.json").open(encoding="utf-8") as handle:
+        targets = _gnl_targets_from(model, json.load(handle))
+    if not targets:
+        return None
+    return _plan_gnl_ring(
+        model,
+        targets,
+        read_patamar_fractions(cortesh),
+        cut,
+        lag_maximo_gnl,
+        case.calendar,
+    )
 
 
-def _final_stage_block_hours(case_dir: Path) -> list[float]:
-    """The coupling (terminal) stage's per-block hours, in file order, from
-    ``stages.json``.
+def _plan_gnl_ring(
+    model: GnlCommitmentModel,
+    targets: tuple[GnlThermalTarget, ...],
+    fractions: Mapping[tuple[int, int], tuple[float, ...]],
+    cut: tuple[int, int],
+    lag_maximo_gnl: int,
+    calendar: Sequence[OperativeStage],
+) -> GnlRingPlan:
+    """Lag ``l`` prices the ``l``-th month after the cut's, ``1..lag_maximo_gnl``.
 
-    The boundary FCF attaches at the end of the last modelled stage, so the
-    coupling period is the final ``stages.json`` stage. Returns its per-block
-    ``hours`` values in file order — patamar order, matching the source
-    model's own cut axis (a weekly deck's ~168 h split across blocks, or the
-    coupling month's post-exclusion hours — e.g. 648 h for a 27-day April) —
-    so :func:`~novomodelo_bridge.decomp.fcf.mapper.map_boundary_cuts`'s GNL branch
-    can weight each ``pi_gnl`` patamar column by its own coupling block's
-    hours, rather than the stage's total.
-    :func:`_coupling_stage_hours` sums this same vector for the
-    intercept/storage/inflow-lag terms.
-
-    Raises
-    ------
-    ValueError
-        If ``stages.json`` is missing, carries no stages, or the final stage
-        has no positive total block-hours — a boundary import cannot scale
-        the cut coefficients to a cost without the coupling stage's duration.
+    Each priced month carries its *fractions* entry (the ``cortesh.dat``
+    patamar shares); a month the file does not cover is left out, so its
+    slots drop.
     """
-    path = case_dir / "stages.json"
-    if not path.is_file():
-        raise ValueError(f"stages.json not found at {path}; cannot scale boundary FCF")
-    with path.open(encoding="utf-8") as handle:
-        doc = json.load(handle)
-    stages = doc.get("stages", [])
-    if not stages:
-        raise ValueError(f"{path} carries no stages; cannot scale boundary FCF")
-    hours = [float(block["hours"]) for block in stages[-1].get("blocks", [])]
-    total = math.fsum(hours)
-    if total <= 0.0:
-        raise ValueError(
-            f"{path} final stage has non-positive total block hours ({total}); "
-            "cannot scale boundary FCF"
-        )
-    return hours
+    cut_key = month_key(*cut)
+    months: dict[int, GnlDeliveryMonth] = {}
+    for lag in range(1, lag_maximo_gnl + 1):
+        year, month_index = divmod(cut_key + lag, 12)
+        shares = fractions.get((year, month_index + 1))
+        if shares is not None:
+            months[cut_key + lag] = GnlDeliveryMonth(lag, shares)
 
-
-def _coupling_stage_hours(case_dir: Path) -> float:
-    """The coupling (terminal) stage's total duration in hours, from ``stages.json``.
-
-    The source model's FCF coefficients are a *per-hour* cost rate (see
-    ``fcf/mapper.py``'s header): the source integrates that rate over its
-    coupling period's actual hours to obtain the future-cost value, so the
-    mapper needs those same hours (``cost_unit_hours``) to reproduce it in
-    novomodelo's plain-$ objective. Using the actual stage hours (not a fixed 730-h
-    month) reproduces the source's ``E(CF)`` to ~2-3 %, where a fixed month
-    overshoots by ~15 % on a short coupling period.
-
-    A thin ``math.fsum`` wrapper over :func:`_final_stage_block_hours` — see
-    that function for the per-block vector and the validation the two share.
-
-    Raises
-    ------
-    ValueError
-        Propagated verbatim from :func:`_final_stage_block_hours`.
-    """
-    return math.fsum(_final_stage_block_hours(case_dir))
+    weeks = operative_week_months(model.weeks_per_month, calendar[0].start_date)
+    return GnlRingPlan(
+        targets=targets,
+        months=months,
+        week_months={_date_int(day): month_key(*ym) for day, ym in weeks.items()},
+        commanded=_commanded_deliveries(model, weeks, calendar[-1].end_date),
+    )
 
 
 #: A ``CX`` register line: ``CX <complexo_code> <component_code>``. idecomp
@@ -268,17 +245,9 @@ _CX_LINE = re.compile(r"^CX\s+(\d+)\s+(\d+)")
 def _read_complexo_map(dadger_path: Path) -> dict[int, list[int]]:
     """Parse the deck's ``CX`` register into ``{complexo_code: [component_codes]}``.
 
-    The ``CX`` register (*acoplamento de usinas que representam complexos no
-    NEWAVE com o DECOMP*) maps a NEWAVE **complexo** — an aggregated plant
-    carrying a single set of future-cost coefficients in the boundary cuts — to
-    the individual DECOMP plants that share it. The boundary cut header prices
-    the complexo (which is absent from the DECOMP model), so
-    :func:`~novomodelo_bridge.decomp.fcf.mapper.map_boundary_cuts` replicates its
-    coefficients onto these components. Each ``CX <complexo> <component>`` line
-    appends ``component`` to ``complexo``'s list; returns an empty map when the
-    deck carries no ``CX`` register or the file is absent (the shared case's
-    ``dadger`` parse validates the deck's presence upstream — this raw pass only
-    reads the ``CX`` lines idecomp does not model).
+    ``CX`` couples a complex of the boundary cut (absent from the DECOMP
+    model) to the individual DECOMP plants inside it. Empty when the deck has
+    no ``CX`` line or the file is absent.
     """
     complexo_map: dict[int, list[int]] = {}
     if not dadger_path.is_file():
@@ -293,139 +262,92 @@ def _read_complexo_map(dadger_path: Path) -> dict[int, list[int]]:
     return complexo_map
 
 
-def _find_mlt(deck_dir: Path) -> Path | None:
-    """Locate the deck's ``mlt.dat`` (média de longo termo), case-insensitively.
+@dataclass(frozen=True)
+class _DeckCoupling:
+    """What the deck adds to the cut: who takes which row, and the constants.
 
-    ``mlt.dat`` is not one of :class:`~novomodelo_bridge.decomp.files.DecompFiles`'
-    resolved inputs (it feeds only the boundary FCF's inflow-lag mean fold, not
-    the conversion), so it is discovered here directly. Returns ``None`` when the
-    deck carries none.
+    ``cut`` is the cut's ``(year, month)``; ``recent_observations`` the
+    ``initial_conditions`` windows read on the coupling postos.
     """
-    for path in deck_dir.iterdir():
-        if path.is_file() and path.name.lower() == "mlt.dat":
-            return path
-    return None
+
+    cut: tuple[int, int]
+    resolution: CouplingResolution
+    inflow_lag_offsets: Mapping[int, tuple[float, ...]]
+    source_only_inflows: Mapping[int, tuple[float, ...]]
+    terminal_shares: tuple[TerminalShare, ...]
+    carried_share: float
+    gnl_plan: GnlRingPlan | None
+    recent_observations: list[dict]
 
 
-def _boundary_inflow_context(
-    case: DecompCase,
-    *,
-    coupling_month: int,
-) -> (
-    tuple[EffectiveCadastro, list[OperativeStage], dict[int, tuple[float, ...]]] | None
-):
-    """The effective cadastro, calendar, and per-plant inflow-lag mean fold.
-
-    Reads the deck's ``mlt.dat`` and builds the seasonal-mean fold vector
-    (:func:`~novomodelo_bridge.decomp.inflow_mlt.build_incremental_mlt` incrementalises
-    the natural MLT, :func:`~novomodelo_bridge.decomp.inflow_mlt.coupling_lag_means`
-    aligns it to the cut's lag-depth axis at ``coupling_month``), returning it
-    alongside the ``effective``/``calendar`` the recent-observation seed also
-    needs — the two ship together (mean fold + raw seed), sharing this one
-    cadastro build.
-
-    Returns ``None`` when the deck carries no ``mlt.dat``: without the seasonal
-    means the deviation fold cannot be applied, so the boundary FCF stays on the
-    unseeded lags-0 approximation (a logged tracked gap) rather than a raw seed
-    the RHS would fail to offset — over-draining the reservoirs.
-    """
-    mlt_path = _find_mlt(case.files.dadger.parent)
-    if mlt_path is None:
-        _LOG.warning(
-            "no mlt.dat in %s; the boundary FCF's inflow-lag mean fold and the "
-            "recent-observation seed are both skipped (the lag state stays at 0 "
-            "-- a near-mean approximation, tracked gap), since seeding raw "
-            "inflows without the seasonal-mean fold over-drains the reservoirs",
-            case.files.dadger.parent,
-        )
-        return None
-    effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
-    incremental_mlt = build_incremental_mlt(
-        Mlt.read(str(mlt_path)).valores, effective, case.id_map
+def _read_deck_coupling(
+    case_dir: Path, case: DecompCase, cortesh: Cortesh, cuts: BoundaryCuts
+) -> _DeckCoupling:
+    cut = cut_month(cortesh, int(cuts.boundary_stage))
+    months = lag_months(*cut)
+    calendar = case.calendar
+    effective, _ = build_effective_cadastro(case.dadger, case.hidr, calendar)
+    vazoes = Vazoes.read(str(case.files.vazoes))
+    plant_codes = cuts.header.plant_codes
+    resolution = resolve_couplings(
+        plant_codes, case.id_map, effective, _read_complexo_map(case.files.dadger)
     )
-    means = coupling_lag_means(incremental_mlt, coupling_month)
-    return effective, case.calendar, means
+    coupled = {coupling.plant_index for coupling in resolution.couplings}
+    source_only = source_only_lag_inflows(
+        vazoes,
+        effective,
+        plant_codes,
+        (index for index in range(len(plant_codes)) if index not in coupled),
+        calendar,
+        months,
+    )
+    return _DeckCoupling(
+        cut=cut,
+        resolution=resolution,
+        inflow_lag_offsets=coupling_lag_offsets(
+            vazoes, effective, case.id_map, calendar, months, resolution.couplings
+        ),
+        source_only_inflows=source_only,
+        terminal_shares=terminal_shares(
+            vazoes,
+            effective,
+            case.id_map,
+            resolution.couplings,
+            (plant_codes[index] for index in source_only),
+        ),
+        carried_share=carried_lag_share(calendar, *cut),
+        gnl_plan=_build_gnl_ring_plan(
+            case_dir, case, cortesh, cut, cuts.header.lag_maximo_gnl
+        ),
+        recent_observations=convert_recent_observation_windows(
+            vazoes, effective, case.id_map, calendar
+        ),
+    )
 
 
 def _seed_recent_observations(
-    writer: CaseWriter,
-    case: DecompCase,
-    effective: EffectiveCadastro,
-    calendar: Sequence[OperativeStage],
-    initial_conditions: dict,
-) -> int:
+    writer: CaseWriter, windows: list[dict], initial_conditions: dict
+) -> None:
     """Add ``recent_observations`` to the case's ``initial_conditions.json``.
 
-    Seeds novomodelo's PAR inflow-lag accumulator with the deck's pre-study observed
-    (already-incremental) inflows
-    (:func:`~novomodelo_bridge.decomp.scenarios.convert_recent_observation_windows`),
-    so the boundary cut's inflow-lag terms are evaluated against the real recent
-    inflows rather than 0. Mutates the pipeline's own in-memory
-    ``initial_conditions`` dict (the one already written to
-    ``initial_conditions.json``) and writes it back through *writer* — rather
-    than re-reading the file — so the raw seed and the RHS mean fold (which
-    offsets it) are authored together and never ship apart. Returns the number of
-    observation windows written (0 when the deck carries no observation tables).
+    Mutates the pipeline's in-memory ``initial_conditions`` (the dict already
+    written) and writes it back through *writer*, rather than re-reading the
+    file.
     """
-    windows = convert_recent_observation_windows(
-        Vazoes.read(str(case.files.vazoes)), effective, case.id_map, calendar
-    )
     initial_conditions["recent_observations"] = windows
     writer.write_json("initial_conditions.json", initial_conditions)
-    return len(windows)
-
-
-def _build_gnl_ring_plan(case_dir: Path, deck_files: DecompFiles) -> GnlRingPlan | None:
-    """Read the deck's ``dadgnl`` and build the GNL ring plan, or ``None``.
-
-    Deck-reading wrapper around :func:`_gnl_targets_from`: returns ``None``
-    when the deck carries no ``dadgnl`` file at all, or when
-    :func:`~novomodelo_bridge.decomp.converters.anticipated.read_gnl_model` reports the deck
-    is GNL-off (no committed dispatch) — reconciled with that
-    reader's own gate, never re-derived here. Otherwise threads
-    :func:`_post_horizon_start` into the resolved plan so
-    ``fcf/mapper.py::_resolve_gnl_targets`` restricts placement to covered
-    post-horizon lanes without itself reading any deck file.
-    """
-    if deck_files.dadgnl is None:
-        return None
-    model = read_gnl_model(Dadgnl.read(str(deck_files.dadgnl)))
-    if model is None:
-        return None
-    thermals_path = case_dir / "system" / "thermals.json"
-    with thermals_path.open(encoding="utf-8") as handle:
-        thermals_doc = json.load(handle)
-    plan = _gnl_targets_from(model, thermals_doc)
-    if plan is None:
-        return None
-    return GnlRingPlan(plan.targets, post_horizon_start=_post_horizon_start(case_dir))
 
 
 def _gnl_deviation_rows(
     cuts: BoundaryCuts, gnl_plan: GnlRingPlan
 ) -> list[tuple[int, int, float, float, float]]:
-    """The pre-fan-out patamar spread carried into each live GNL ring group.
+    """The patamar spread of each priced ``(submercado, lag)`` GNL group.
 
-    Mirrors ``mapper.py::_resolve_gnl_targets``'s ``col(s, p, l)`` flat-column
-    formula exactly — never the placement/drop logic itself, which stays the
-    mapper's job — to recompute, from the raw ``pi_gnl`` coefficients, how
-    far each active cut's per-patamar sensitivities deviate from the uniform
-    rate novomodelo's hours-weighted fan-out reconstructs. For each unique
-    ``(submercado, lag)`` pair named by ``gnl_plan.targets``, returns
-    ``(submercado, lag, carried_sum, relative_spread, absolute_spread)`` from
-    whichever active record maximises the relative spread
-    ``(max_p c_p - min_p c_p) / |sum_p c_p|`` (guarded to ``0.0`` when
-    ``|sum_p c_p| <= 1e-9``) — a worst-case snapshot, not an aggregate across
-    records; ``absolute_spread`` (``max_p c_p - min_p c_p``) is that same
-    selected record's un-normalised spread, so
-    a caller can report it alongside the relative figure without the
-    near-zero-Σ inflation the ratio alone is prone to. Skips a group whose
-    ``(submercado, lag)`` falls outside ``cuts``' own ``pi_gnl`` shape (the
-    mapper already records that as a target-side ``GnlDroppedTerm``).
-
-    Returns rows sorted ascending by ``(submercado, lag)``; empty when
-    ``cuts`` has no active records, or the boundary carries no GNL block
-    (``lag_maximo_gnl == 0`` or an empty/misshapen ``pi_gnl``).
+    Uses ``mapper.py::_GnlLayout.column``'s flat-column layout. Each row is
+    ``(submercado, lag, Σ_p c_p, relative spread, absolute spread)`` from the
+    active record with the largest relative spread
+    ``(max_p c_p - min_p c_p) / |Σ_p c_p|`` (``0.0`` when ``|Σ| <= 1e-9``).
+    Groups outside the ``pi_gnl`` shape are skipped; rows are sorted.
     """
     n_patamares = cuts.header.n_patamares
     lag_maximo_gnl = cuts.header.lag_maximo_gnl
@@ -444,7 +366,13 @@ def _gnl_deviation_rows(
             lag - 1
         )
 
-    groups = sorted({(target.submercado, target.nl_lag) for target in gnl_plan.targets})
+    groups = sorted(
+        {
+            (target.submercado, month.lag)
+            for target in gnl_plan.targets
+            for month in gnl_plan.months.values()
+        }
+    )
     rows: list[tuple[int, int, float, float, float]] = []
     for submercado, lag in groups:
         if not (1 <= submercado <= n_submercados) or not (1 <= lag <= lag_maximo_gnl):
@@ -473,34 +401,12 @@ def _emit_import_diagnostics(
     mapping: MappingResult,
     gnl_plan: GnlRingPlan | None = None,
 ) -> None:
-    """Surface the importer's documented, accepted approximations.
+    """Surface the mapping's accepted approximations.
 
-    Always emits ``boundary-fcf-cut-family-summary`` — the importer always
-    authors cuts, so the family triage (built from
-    :func:`~novomodelo_bridge.decomp.fcf.cortes.summarize_cut_families`, never
-    re-implemented here) is always informative. Additionally emits
-    ``boundary-fcf-source-only-plants-dropped`` when ``mapping.dropped`` is
-    non-empty — a source-only plant has no target ``HydroStorage`` slot, so
-    its storage/lag terms are omitted (dropped, never folded). When
-    ``gnl_plan`` is given and the boundary carries a GNL block
-    (``cuts.header.lag_maximo_gnl > 0``), additionally emits
-    ``boundary-fcf-gnl-anticipated-deviation`` — the per-``(submercado, lag)``
-    pre-fan-out patamar spread the mapper's chain-rule sum collapses (see
-    :func:`_gnl_deviation_rows`), headlined as a relative/absolute spread
-    pair (the relative figure excludes a near-zero-Σ group per
-    ``_GNL_DEVIATION_REL_FLOOR``) plus a
-    dropped-coverage count read verbatim from ``mapping.gnl_dropped``
-    (source-submercado drops plus non-covered
-    dated-slot drops); ``gnl_plan=None`` (the default) gates it off
-    entirely, so 2-arg callers are unchanged.
-
-    Pure side effect via :func:`novomodelo_bridge.core.diagnostics.emit`: reads
-    ``cuts``/``mapping``/``gnl_plan`` but does not alter any of them, so it
-    can run before the checkpoint is written without changing the checkpoint
-    bytes or the importer's return value. Mirrors ``decomp/pipeline.py``'s
-    gated-INFO-``Diagnostic`` idiom; relies on the ambient-sink/log-fallback
-    contract of ``diagnostics.emit`` rather than opening its own
-    ``dx.collect()`` sink.
+    Always emits ``boundary-fcf-cut-family-summary``; adds
+    ``boundary-fcf-source-only-plants-dropped`` when a cut plant has no taker,
+    and ``boundary-fcf-gnl-anticipated-deviation`` when *gnl_plan* is given and
+    the cut carries a GNL block.
     """
     summary = summarize_cut_families(cuts)
     dx.emit(
@@ -509,12 +415,6 @@ def _emit_import_diagnostics(
             severity=dx.Severity.INFO,
             category="Boundary FCF",
             title=f"Boundary FCF authors {summary.n_active_cuts} cut(s)",
-            # `lag_nonzero_by_depth` is
-            # the one fact not already in this string; every other figure a
-            # `notes` bullet used to restate (n_active_cuts, storage_nonzero_
-            # plants, rhs_min/max) is already here, so `notes` is dropped
-            # rather than duplicating them. Full-precision RHS belongs in
-            # `--diagnostics-json`, not a duplicate human bullet.
             summary=(
                 f"{summary.n_active_cuts} active cut(s) authored from the "
                 f"source model's boundary cuts; {summary.storage_nonzero_plants} "
@@ -534,88 +434,242 @@ def _emit_import_diagnostics(
                 category="Boundary FCF",
                 title=(
                     f"{len(mapping.dropped)} source-only plant(s) dropped "
-                    "from the boundary FCF"
+                    "from the boundary FCF state"
                 ),
                 summary=(
-                    f"{len(mapping.dropped)} plant(s) present in the source "
-                    "model's boundary cuts have no target HydroStorage slot "
-                    "in the converted case; their storage and inflow-lag "
-                    "terms are omitted from every authored cut, never "
-                    "folded into a neighbouring plant"
+                    f"{len(mapping.dropped)} plant(s) of the source model's "
+                    "boundary cuts are not in the converted case; their "
+                    "storage terms are omitted, and their inflow-lag terms "
+                    "are folded into each cut's intercept from the deck's "
+                    "inflow history where the plant has a posto (the "
+                    "terminal stage's share stays out)"
                 ),
                 table=dx.DiagnosticTable(
-                    columns=["Plant code", "β (pi_varm)"],
+                    columns=["Plant code", "β (pi_varm)", "Inflow folded"],
                     rows=[
-                        [term.plant_code, round(term.beta, 6)]
+                        [
+                            term.plant_code,
+                            round(term.beta, 6),
+                            "yes" if term.inflow_folded else "no",
+                        ]
                         for term in mapping.dropped
                     ],
-                    justify=["right", "right"],
+                    justify=["right", "right", "left"],
                 ),
             ),
             logger=_LOG,
         )
 
     if gnl_plan is not None and cuts.header.lag_maximo_gnl > 0:
-        rows = _gnl_deviation_rows(cuts, gnl_plan)
-        # "Dropped" is every GNL term that reached no *covered* target: a
-        # source submercado with no live thermal at all (`thermal_id is
-        # None`), or a target's dated slot that fell in-study, priced by
-        # the committed window instead of the ring
-        # (`mapper.py::GnlDroppedTerm.reason` names it) — read straight
-        # from `mapping.gnl_dropped`, never recomputing the covered/
-        # uncovered split independently here. A já-comandada (class-4)
-        # slot is excised from the ring entirely, so it never appears in
-        # `gnl_dropped` and needs no arm of its own.
-        dropped_coverage_terms = [
-            term
-            for term in mapping.gnl_dropped
-            if term.thermal_id is None or "in-study committed window" in term.reason
-        ]
-        # See `_GNL_DEVIATION_REL_FLOOR`'s docstring for the relative-headline
-        # filter. Guard the degenerate case where every group's |Σ| is itself
-        # ~0 (no group carries any real weight at all): no group qualifies for
-        # a meaningful relative headline, which then reports "n/a" rather than
-        # a misleading 0.
-        max_abs_sum = max((abs(row[2]) for row in rows), default=0.0)
-        if max_abs_sum <= 1e-12:
-            headline_rows: list[tuple[int, int, float, float, float]] = []
-        else:
-            headline_rows = [
-                row
-                for row in rows
-                if abs(row[2]) >= _GNL_DEVIATION_REL_FLOOR * max_abs_sum
-            ]
-        relative_headline = (
-            f"{max(row[3] for row in headline_rows):.4g}" if headline_rows else "n/a"
-        )
-        max_absolute_spread = max((row[4] for row in rows), default=0.0)
+        _emit_gnl_deviation(cuts, mapping, gnl_plan)
+
+
+def _emit_gnl_deviation(
+    cuts: BoundaryCuts, mapping: MappingResult, gnl_plan: GnlRingPlan
+) -> None:
+    rows = _gnl_deviation_rows(cuts, gnl_plan)
+    max_abs_sum = max((abs(row[2]) for row in rows), default=0.0)
+    headline_rows = (
+        [row for row in rows if abs(row[2]) >= _GNL_DEVIATION_REL_FLOOR * max_abs_sum]
+        if max_abs_sum > 1e-12
+        else []
+    )
+    relative_headline = (
+        f"{max(row[3] for row in headline_rows):.4g}" if headline_rows else "n/a"
+    )
+    max_absolute_spread = max((row[4] for row in rows), default=0.0)
+    dx.emit(
+        dx.Diagnostic(
+            code="boundary-fcf-gnl-anticipated-deviation",
+            severity=dx.Severity.INFO,
+            category="Boundary FCF",
+            title="GNL anticipated ring prices one MW per slot, not per patamar",
+            summary=(
+                "the source model commits GNL per patamar, the converted case "
+                "one MW per ring slot, so each slot is priced at the patamar "
+                "prices weighted by the source's patamar shares; max patamar "
+                f"spread {relative_headline} relative / "
+                f"{max_absolute_spread:.4g} absolute across {len(rows)} "
+                f"(submercado, lag) group(s) (a group carrying less than "
+                f"{_GNL_DEVIATION_REL_FLOOR:g} of the largest |Σ| is left out "
+                f"of the relative figure); {len(mapping.gnl_dropped)} GNL "
+                "term(s) reach no ring slot"
+            ),
+            table=dx.DiagnosticTable(
+                columns=["Submercado", "Lag", "Σ pi_gnl (carried)", "Patamar spread"],
+                rows=[
+                    [submercado, lag, round(carried_sum, 6), round(spread, 6)]
+                    for submercado, lag, carried_sum, spread, _abs_spread in rows
+                ],
+                justify=["right", "right", "right", "right"],
+            ),
+            notes=[
+                f"thermal {term.thermal_id}, submercado {term.submercado}: "
+                f"{term.reason}"
+                if term.thermal_id is not None
+                else f"submercado {term.submercado}, lag {term.lag}: {term.reason} "
+                f"(Σ pi_gnl {term.coefficient:.6g})"
+                for term in mapping.gnl_dropped
+            ],
+        ),
+        logger=_LOG,
+    )
+
+
+def _emit_transit_pricing(mapping: MappingResult, hydro_codes: Sequence[int]) -> None:
+    """Surface the boundary's price for water in transit, which the source
+    model's own boundary leaves unpriced."""
+    if not mapping.transit:
+        return
+    dx.emit(
+        dx.Diagnostic(
+            code="boundary-fcf-transit-water-priced",
+            severity=dx.Severity.INFO,
+            category="Boundary FCF",
+            title=(
+                f"{len(mapping.transit)} plant(s) value the water still in "
+                "transit toward them at the boundary"
+            ),
+            summary=(
+                "water released upstream that has not reached the plant when "
+                "the study ends is valued with the plant's boundary storage "
+                "term when it takes one, otherwise with its first inflow-lag "
+                "term; the source model gives that water no value at this "
+                "boundary, so the boundary cost differs from the source "
+                "model's by the value of the water in transit"
+            ),
+            table=dx.DiagnosticTable(
+                columns=["Plant", "Valued as"],
+                rows=[
+                    [
+                        hydro_codes[entry.hydro_id],
+                        "storage" if entry.by_storage else "first inflow lag",
+                    ]
+                    for entry in mapping.transit
+                ],
+                justify=["right", "left"],
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
+def _emit_coupling_diagnostics(
+    resolution: CouplingResolution,
+    shares: Sequence[TerminalShare],
+    carried_share: float,
+) -> None:
+    """Surface how the converted hydros take the cut's plant terms."""
+    if resolution.borrowed:
         dx.emit(
             dx.Diagnostic(
-                code="boundary-fcf-gnl-anticipated-deviation",
+                code="boundary-fcf-coefficient-owners",
                 severity=dx.Severity.INFO,
                 category="Boundary FCF",
-                title="GNL anticipated ring carries a per-patamar sum",
+                title=(
+                    f"{len(resolution.borrowed)} plant(s) take another cut "
+                    "plant's boundary terms"
+                ),
                 summary=(
-                    f"max pre-fan-out patamar spread {relative_headline} "
-                    f"relative / {max_absolute_spread:.4g} absolute across "
-                    f"{len(rows)} live GNL ring target group(s) (a group "
-                    f"carrying less than {_GNL_DEVIATION_REL_FLOOR:g} of the "
-                    "panel's max |Σ| is excluded from the relative headline); "
-                    f"{len(dropped_coverage_terms)} GNL term(s) dropped for "
-                    "no covered target (no live thermal in that submercado, "
-                    "or an in-study delivery priced by the committed window, "
-                    "not the anticipated ring)"
+                    "a plant without its own boundary-cut row takes the row of "
+                    "its complex (CX) or, failing that, of the first downstream "
+                    "plant that has one; it takes the storage term only through "
+                    "a complex, and only as a reservoir"
+                ),
+                table=dx.DiagnosticTable(
+                    columns=["Plant", "Owner", "Rule"],
+                    rows=[
+                        [
+                            entry.plant_code,
+                            entry.owner_code,
+                            "complex (CX)" if entry.via_complex else "downstream",
+                        ]
+                        for entry in resolution.borrowed
+                    ],
+                    justify=["right", "right", "left"],
+                ),
+            ),
+            logger=_LOG,
+        )
+
+    if resolution.unowned:
+        dx.emit(
+            dx.Diagnostic(
+                code="boundary-fcf-unowned-plants",
+                severity=dx.Severity.ERROR,
+                category="Boundary FCF",
+                title=(f"{len(resolution.unowned)} plant(s) take no boundary-cut term"),
+                summary=(
+                    "these plants have no row in the boundary cuts, belong to "
+                    "no complex, and reach no downstream plant that has one, so "
+                    "the boundary cost-to-go gives their water no value"
+                ),
+                table=dx.DiagnosticTable(
+                    columns=["Plant"],
+                    rows=[[code] for code in resolution.unowned],
+                    justify=["right"],
+                ),
+            ),
+            logger=_LOG,
+        )
+
+    # TRACKED NOVOMODELO-GAP (C25): the coupling stage's outgoing lag 1 is its own
+    # inflow alone; the share of the month earlier stages carry is left out.
+    if carried_share > _CARRIED_SHARE_TOLERANCE:
+        dx.emit(
+            dx.Diagnostic(
+                code="boundary-fcf-coupling-lag-carried-share",
+                severity=dx.Severity.WARNING,
+                category="Boundary FCF",
+                title="The coupling month starts before the last stage",
+                summary=(
+                    f"{carried_share:.1%} of the boundary cut's month lies in "
+                    "stages before the last one; novomodelo evaluates the cut's "
+                    "first inflow lag on the last stage's inflow alone, so that "
+                    "share is priced at the last stage's inflow instead of the "
+                    "inflow that occurred"
+                ),
+            ),
+            logger=_LOG,
+        )
+
+    # TRACKED NOVOMODELO-GAP (C26): novomodelo's lag state follows each hydro's
+    # operation inflow; the terminal stage's coupling-inflow difference and
+    # the source-only plants' terminal inflow cannot be folded.
+    if shares:
+        dx.emit(
+            dx.Diagnostic(
+                code="boundary-fcf-coupling-inflow-unrepresented",
+                severity=dx.Severity.WARNING,
+                category="Boundary FCF",
+                title=(
+                    f"{len(shares)} plant(s) couple on an inflow novomodelo's lag "
+                    "state does not carry in the last stage"
+                ),
+                summary=(
+                    "the source model evaluates the boundary cut's inflow terms "
+                    "on each plant's coupling posto; the deterministic stages' "
+                    "difference is folded into each cut's intercept, but the "
+                    "last stage's scenario-dependent difference is not "
+                    "represented"
                 ),
                 table=dx.DiagnosticTable(
                     columns=[
-                        "Submercado",
-                        "Lag",
-                        "Σ pi_gnl (carried)",
-                        "Patamar spread",
+                        "Plant",
+                        "Coupling posto",
+                        "Operation posto",
+                        "Max gap (m³/s)",
                     ],
                     rows=[
-                        [submercado, lag, round(carried_sum, 6), round(spread, 6)]
-                        for submercado, lag, carried_sum, spread, _abs_spread in rows
+                        [
+                            share.plant_code,
+                            share.coupling_posto,
+                            "-"
+                            if share.operation_posto is None
+                            else share.operation_posto,
+                            round(share.max_gap_m3s, 3),
+                        ]
+                        for share in shares
                     ],
                     justify=["right", "right", "right", "right"],
                 ),
@@ -685,30 +739,17 @@ def import_boundary_fcf(
        ``novomodelo.run.run`` pass on ``case_dir`` (checkpoint under ``work_dir``,
        the case is never mutated) to read back its terminal state-vector
        layout.
-    4. Builds the deck's GNL ring plan (:func:`_build_gnl_ring_plan`) and the
-       inflow-lag mean fold (:func:`_boundary_inflow_context`: the
-       incrementalised ``mlt.dat`` aligned to the cut's lag-depth axis at the
-       coupling month), then maps every boundary cut onto that layout: storage
-       terms by plant code, inflow-lag terms by calendar-month lag depth (with
-       each cut's RHS reduced by ``Σ lag_coef · mu`` so the loaded cut prices
-       the raw lag state as the *deviation* from the seasonal mean —
-       ``fcf/mapper.py``'s ``inflow_lag_means``), and ``AnticipatedThermalState``
-       GNL-ring terms via the plan's per-block hours-weighted patamar sum;
-       ``HydroTransitBucket`` slots are left at coefficient 0
-       regardless.
-    5. Surfaces the mapping's documented approximations as ``Diagnostic``s
-       (:func:`_emit_import_diagnostics`): the always-on cut-family triage,
-       the dropped source-only plants (gated on non-empty), and — when the
-       deck carries a GNL block — the per-``(submercado, lag)`` deviation the
-       ring's chain-rule sum collapses.
-    6. Assembles and writes ``case_dir/boundary/{manifest.bin,
-       cuts/<pool>.bin, basis/}``, patches ``case_dir/config.json``'s
-       ``["policy"]["boundary"]`` to point at it, and — when the deck carries an
-       ``mlt.dat`` (so the mean fold above was applied) — patches
-       ``case_dir/initial_conditions.json`` with the pre-study
-       ``recent_observations`` seed (:func:`_seed_recent_observations`), the raw
-       inflow-lag values the folded RHS is built to offset. Fold and seed ship
-       together or not at all.
+    4. Resolves which converted hydro takes which cut plant's terms
+       (:func:`~novomodelo_bridge.decomp.fcf.coupling.resolve_couplings`), the
+       inflow-lag constants novomodelo's state cannot carry, and the deck's GNL
+       delivery calendar (:func:`_build_gnl_ring_plan`), then maps every
+       boundary cut onto that layout (:func:`~novomodelo_bridge.decomp.fcf.mapper.
+       map_boundary_cuts`).
+    5. Surfaces the mapping's approximations as ``Diagnostic``s.
+    6. Writes ``case_dir/boundary/``, points ``config.json``'s
+       ``["policy"]["boundary"]`` at it, and seeds ``initial_conditions.json``'s
+       ``recent_observations`` from the coupling postos
+       (:func:`_seed_recent_observations`).
 
     Returns the ``case_dir/boundary`` path, or ``None`` on the no-cut-files
     no-op.
@@ -761,51 +802,32 @@ def import_boundary_fcf(
     # terms onto. The former state_space.inflow_lag_depth override was redundant
     # with that sizing and is rejected by novomodelo >= 0.14.
     manifest = bootstrap_terminal_manifest(case_dir, work_dir=work_dir)
-    gnl_plan = _build_gnl_ring_plan(case_dir, case.files)
-    # Inflow-lag mean fold + recent-observation seed (built together, shipped
-    # together — see `_boundary_inflow_context`). The coupling month is the cut
-    # stage's own calendar month (`boundary_stage` is calendar-anchored as
-    # `(Y - Y0)*12 + M`, so `(boundary_stage - 1) % 12 + 1 == M`); the fold
-    # aligns each `pi_qafl` lag depth to `coupling_month - depth`. `None` (no
-    # mlt.dat) leaves the lag state at 0 — no fold, no seed.
-    coupling_month = ((boundary_stage - 1) % 12) + 1
-    inflow_context = _boundary_inflow_context(case, coupling_month=coupling_month)
-    inflow_lag_means = inflow_context[2] if inflow_context is not None else None
-    # Read stages.json's per-block hours once; cost_unit_hours (the
-    # intercept/storage/inflow-lag scale) is this same vector's sum, never a
-    # second stages.json read.
-    coupling_block_hours = _final_stage_block_hours(case_dir)
-    cost_unit_hours = math.fsum(coupling_block_hours)
-    # CX register (complexo -> DECOMP components): the header prices a NEWAVE
-    # complexo absent from the DECOMP model, so its coefficients replicate onto
-    # the individual plants that share it (see map_boundary_cuts) rather than
-    # being dropped.
-    complexo_components = _read_complexo_map(case.files.dadger)
+    coupling = _read_deck_coupling(case_dir, case, cortesh, cuts)
     # The DECOMP case has no PAR(p) model, so the bootstrap manifest carries no
-    # HydroInflowLag slots; the deepest lag the boundary cuts reference is
-    # declared to the writer, which reserves the canonical slots (novomodelo-side
-    # design B — see the module's cortes.required_inflow_lag_depth). The mapper
-    # then emits the lag terms keyed by hydro rather than into the (absent) slots.
+    # HydroInflowLag slots; the deepest lag the cuts reference is declared to
+    # the writer, which reserves the canonical slots.
     inflow_lag_depth = required_inflow_lag_depth(summarize_cut_families(cuts))
     mapping = map_boundary_cuts(
         cuts,
         manifest,
-        case.id_map,
-        cost_unit_hours=cost_unit_hours,
-        gnl_plan=gnl_plan,
-        coupling_block_hours=coupling_block_hours,
-        inflow_lag_means=inflow_lag_means,
-        complexo_components=complexo_components,
+        coupling.resolution.couplings,
         inflow_lag_depth=inflow_lag_depth,
+        inflow_lag_offsets=coupling.inflow_lag_offsets,
+        source_only_inflows=coupling.source_only_inflows,
+        gnl_plan=coupling.gnl_plan,
     )
     _LOG.info(
-        "scaling boundary FCF coefficients to novomodelo cost units over the "
-        "coupling stage's %.0f h (the source's per-hour cut rate integrated "
-        "over the coupling period; inflow-lag additionally x C_M3S2HM3 for "
+        "boundary FCF coupled at %04d-%02d: cut terms scaled over the source "
+        "model's %.1f h mean month (inflow lags additionally x C_M3S2HM3 for "
         "novomodelo's m3/s lag state)",
-        cost_unit_hours,
+        *coupling.cut,
+        MEAN_MONTH_HOURS,
     )
-    _emit_import_diagnostics(cuts, mapping, gnl_plan)
+    _emit_import_diagnostics(cuts, mapping, coupling.gnl_plan)
+    _emit_transit_pricing(mapping, case.id_map.hydro_codes)
+    _emit_coupling_diagnostics(
+        coupling.resolution, coupling.terminal_shares, coupling.carried_share
+    )
 
     stage_cuts_payload = build_stage_cuts_payload(
         mapping,
@@ -839,23 +861,10 @@ def import_boundary_fcf(
     )
 
     _patch_policy_boundary(writer, config)
-
-    # Seed the pre-study inflow-lag state and record the mean fold — both gated
-    # on the same mlt.dat presence as the fold above, so the raw seed never
-    # ships without the RHS mean that offsets it (`_boundary_inflow_context`).
-    if inflow_context is not None:
-        effective, calendar, _ = inflow_context
-        n_windows = _seed_recent_observations(
-            writer, case, effective, calendar, initial_conditions
-        )
-        _LOG.info(
-            "boundary FCF inflow-lag coupling: folded the seasonal-mean (MLT) "
-            "deviation into %d cut RHS(es) and seeded %d recent-observation "
-            "window(s) at coupling month %d, so the loaded cut prices the raw "
-            "inflow-lag state as the deviation Q - mu",
-            len(mapping.cuts),
-            n_windows,
-            coupling_month,
-        )
+    _seed_recent_observations(writer, coupling.recent_observations, initial_conditions)
+    _LOG.info(
+        "boundary FCF: seeded %d recent-observation window(s) on the coupling postos",
+        len(coupling.recent_observations),
+    )
 
     return boundary_dir

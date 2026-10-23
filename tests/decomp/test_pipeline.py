@@ -327,7 +327,6 @@ class TestDecompCaseArtifacts:
             "line_bounds",
             "initial_conditions",
             "deficit_cost",
-            "has_travel_time",
             "fpha_codes",
         } <= field_names
 
@@ -1722,25 +1721,18 @@ class TestDryRun:
         assert not config.exists()
 
 
-_READ_TRAVEL_TIMES = (
-    "novomodelo_bridge.decomp.pipeline.travel_time_conv.read_travel_times"
-)
-
-
-class TestDeferralWarning:
-    """The flat ``deferred at this milestone`` warning now names ONLY water
-    travel time, and only when the deck actually carries a ``VI`` register.
-    Boundary FCF is imported by default, reservoir evaporation is converted
-    and windowed inflow inputs do not apply to the
-    external explicit tree the DECOMP path emits — so none of those are
-    deferred, and a deck with no travel time emits no deferral warning at all.
+class TestSpecialConstraintSurfaces:
+    """FE/RHA/LIBs special-constraint surfaces are reported through the
+    structured ``Diagnostic`` sink, and the DECOMP pipeline emits no flat
+    ``deferred at this milestone`` warning (nothing, including ``VI`` water
+    travel time, is held back at a milestone).
     """
 
-    def test_no_warning_when_nothing_is_deferred(
+    def test_no_milestone_deferral_warning_is_emitted(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The mock deck carries no VI travel-time register, so nothing is
-        deferred and no ``deferred at this milestone`` warning is emitted."""
+        """No ``deferred at this milestone`` warning fires: nothing is held
+        back at a milestone, including a deck carrying a ``VI`` register."""
         with caplog.at_level(
             logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
         ):
@@ -1750,42 +1742,14 @@ class TestDeferralWarning:
             r for r in caplog.records if "deferred at this milestone" in r.message
         ]
 
-    def test_names_only_water_travel_time_when_present(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """With a VI register present, the warning fires naming water travel
-        time alone — never boundary FCF, windowed inflow inputs, GNL
-        anticipation, or reservoir evaporation (all emitted, not deferred)."""
-        with (
-            caplog.at_level(
-                logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
-            ),
-            patch(_READ_TRAVEL_TIMES, return_value={1: 24.0}),
-        ):
-            _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
+    def test_fe_rha_libs_are_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
+        """A deck with FE/RHA/LIBs surfaces reports each exactly once through
+        the structured ``Diagnostic``s.
 
-        deferral = next(
-            r.message
-            for r in caplog.records
-            if "deferred at this milestone" in r.message
-        )
-        assert "water travel time (VI present)" in deferral
-        for absent in ("boundary FCF", "windowed inflow", "GNL", "evaporation"):
-            assert absent not in deferral
-
-    def test_fe_rha_libs_are_reported_through_the_dx_sink_not_the_warning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A deck with FE/RHA/LIBs surfaces reports them exactly once, through
-        the structured ``Diagnostic``s -- even when the deferral
-        warning fires (VI present here), it names only water travel time,
-        never these special-constraint surfaces (the warning text and the
-        ``dx`` sink are disjoint on these items).
-
-        ``convert_decomp_case`` owns its own top-level
-        ``dx.collect()``, so the diagnostics half reads
-        ``_run_cadastro_pipeline``'s ``diagnostics_out`` rather than an outer
-        ``dx.collect()`` (which would be shadowed and see nothing)."""
+        ``convert_decomp_case`` owns its own top-level ``dx.collect()``, so the
+        assertion reads ``_run_cadastro_pipeline``'s ``diagnostics_out`` rather
+        than an outer ``dx.collect()`` (which would be shadowed and see
+        nothing)."""
         from novomodelo_bridge.core import diagnostics as dx
 
         fe_diagnostic = dx.Diagnostic(
@@ -1811,19 +1775,13 @@ class TestDeferralWarning:
         )
 
         collected: list[dx.Diagnostic] = []
-        with (
-            caplog.at_level(
-                logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
-            ),
-            patch(_READ_TRAVEL_TIMES, return_value={1: 24.0}),
-        ):
-            _run_cadastro_pipeline(
-                tmp_path,
-                ac_volmax_frame=None,
-                unreadable_electrical=(fe_diagnostic, rha_diagnostic),
-                libs_electrical=libs_diagnostic,
-                diagnostics_out=collected,
-            )
+        _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            unreadable_electrical=(fe_diagnostic, rha_diagnostic),
+            libs_electrical=libs_diagnostic,
+            diagnostics_out=collected,
+        )
 
         codes = {d.code for d in collected}
         assert {
@@ -1831,14 +1789,6 @@ class TestDeferralWarning:
             "decomp-rha-family-unconverted",
             "decomp-libs-electrical-present",
         } <= codes
-
-        deferral = next(
-            r.message
-            for r in caplog.records
-            if "deferred at this milestone" in r.message
-        )
-        for needle in ("FE electrical participation", "RHA family", "LIBs electrical"):
-            assert needle not in deferral
 
 
 class TestDiversionChannels:

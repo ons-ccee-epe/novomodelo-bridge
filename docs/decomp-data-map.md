@@ -30,6 +30,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `SB` |  |  | ● | ● | ● |
 | `dadger.rvN` › `TX` |  | ● |  |  |  |
 | `dadger.rvN` › `UH` |  |  | ● | ● | ● |
+| `dadger.rvN` › `VI` |  |  |  | ● |  |
 | `vazoes.rvN` |  | ● |  |  |  |
 | `hidr.dat` |  |  | ● | ● |  |
 | `dadgnl.rvN` › `GL` (opcional) |  |  |  | ● | ● |
@@ -60,6 +61,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `SB` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `UE` |  |  |  |  |  |  |  |  |  | ● |  |
 | `dadger.rvN` › `UH` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
+| `dadger.rvN` › `VI` |  |  |  | ● |  |  |  |  |  |  |  |
 | `hidr.dat` |  | ● |  | ● | ● | ● | ● |  |  |  |  |
 | `dadgnl.rvN` › `GL` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
 | `dadgnl.rvN` › `GS` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
@@ -140,11 +142,9 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `hidr.dat` | ● |
 | `dadgnl.rvN` › `GL` (opcional) | ● |
 | `dadgnl.rvN` › `GS` (opcional) | ● |
-| `dadgnl.rvN` › `NL` (opcional) | ● |
 | `dadgnl.rvN` › `TG` (opcional) | ● |
 | `cortesh.dat` (opcional) | ● |
 | `cortes*.dat` (opcional) | ● |
-| `mlt.dat` | ● |
 
 ## Arquivos gerados
 
@@ -237,17 +237,21 @@ Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco
 
 ### `initial_conditions.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `AC`, `DP`, `DT`), `hidr.dat`, `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`)  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `AC`, `DP`, `DT`, `VI`), `hidr.dat`, `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`)  
 **Quando:** sempre.  
 **Esquema:** [initial_conditions.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/initial_conditions.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/entity.py`
 
-Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando `dadgnl` declara despacho GNL comprometido, o arquivo também recebe as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão.
+Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara despacho GNL comprometido, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
 | `storage[].hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas operadas (linhas `UH` com `volume_inicial`), atribuído na ordem crescente de `codigo_usina`. |
 | `storage[].value_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `hidr.dat` › `volume_minimo, volume_maximo`, `hidr.dat` › `tipo_regulacao, volume_referencia`, `dadger.rvN` › `AC` › `VOLMIN, VOLMAX` | `volume_inicial` (% do volume útil) resolvido sobre a faixa efetiva do estágio inicial: `vmin + pct/100 · (vmax − vmin)`, com `vmin`/`vmax` do cadastro após os `AC VOLMIN`/`VOLMAX` vigentes no estágio 0, limitado à faixa. Usinas a fio d'água (`tipo_regulacao` = `D`) colapsam ao `volume_referencia` independentemente do percentual. Um `volume_morto_inicial` declarado é apenas avisado, não convertido. |
 | `filling_storage` | — *(sempre nulo)* | Sempre lista vazia: o enchimento de volume morto não é convertido. |
+| `past_defluences[].hydro_id` | `dadger.rvN` › `VI` › `codigo_usina` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Id Novomodelo da usina que libera a defluência em trânsito (a de montante do arco), uma janela por período de defluência pré-estudo. |
+| `past_defluences[].start_date` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DP` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Início de cada janela, caminhando para trás a partir do início do estudo em passos de uma semana operativa (duração do estágio 0), com a última janela truncada no intervalo em trânsito `[início − duracao, início)`, para cobri-lo sem lacuna. |
+| `past_defluences[].end_date` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DP` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Fim de cada janela; a mais recente termina no início do estudo (nada datado no futuro) e cada janela encosta na seguinte, sem lacuna. |
+| `past_defluences[].value_m3s` | `dadger.rvN` › `VI` › `vazao_1..vazao_5` | Defluência da semana correspondente (`VI.vazao_k`, da mais recente para a mais antiga), em m³/s. Se o intervalo em trânsito precisa de mais janelas que as vazões declaradas, a mais antiga é reutilizada para manter a cobertura. |
 | `past_anticipated_commitments[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Id da térmica GNL criada em `system/thermals.json` (ids densos após a última térmica de `CT`, em ordem crescente de `codigo_usina` de `TG`). |
 | `past_anticipated_commitments[].start_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead global (soma das semanas `GS` dos meses do estudo × 168 h). Janelas de classe 4 (já comandadas): a `data_inicio` de cada semana `GL` a partir do fim do horizonte, com um stub a 0 MW quando a primeira começa depois dele. |
 | `past_anticipated_commitments[].end_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DP` › `duracao` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Classe 2: a data final do estágio do estudo. Classe 4: a `data_inicio` da semana `GL` seguinte, ou uma semana operativa (168 h) após o início na última janela. Nenhuma janela pode cruzar o fim do horizonte. |
@@ -328,7 +332,7 @@ Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1 ponderados
 
 ### `system/hydros.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`), `hidr.dat`  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`, `VI`), `hidr.dat`  
 **Quando:** sempre.  
 **Esquema:** [hydros.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/hydros.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/entity.py`
 
@@ -365,6 +369,7 @@ Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` pr
 | `hydros[].hydraulic_losses.value` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `hydraulic_losses.type` = `factor`)* | Fração da queda bruta perdida: `perdas`/100 quando `tipo_perda` = 1; 0.0 quando a usina não tem perda modelada. |
 | `hydros[].hydraulic_losses.value_m` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `tipo_perda` = 2 e perda positiva)* | Perda de carga constante em metros, igual ao `perdas` efetivo (`AC PERHID` aplicado). |
 | `hydros[].evaporation.coefficients_mm[]` | `dadger.rvN` › `UH` › `evaporacao`, `hidr.dat` › `evaporacao_JAN..evaporacao_DEZ` *(condicional: somente quando o `UH` da usina liga o flag `evaporacao` e o `hidr.dat` traz ao menos um coeficiente mensal não nulo)* | Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido. |
+| `hydros[].travel_time_hours` | `dadger.rvN` › `VI` › `duracao` *(condicional: somente quando a usina declara um registro `VI`, está operada e tem um arco de jusante (`downstream_id` não nulo) para o atraso atuar)* | Tempo de viagem da água, em horas, da defluência da usina até a usina de jusante (`VI.duracao`), sem conversão. A água em trânsito que ele representa no início do estudo é semeada em `past_defluences` de `initial_conditions.json`. Uma usina sem `VI` fica com o arco instantâneo (padrão do Novomodelo). |
 | `hydros[].diversion.downstream_id` | `hidr.dat` › `desvio`, `dadger.rvN` › `AC` › `DESVIO`, `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo` *(condicional: somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada)* | Id Novomodelo da usina que recebe a água desviada: o `codigo_usina_jusante` do primeiro `AC DESVIO` em vigor ou, na falta dele, o `desvio` do `hidr.dat`, a usina para onde o DECOMP envia o `QDES`. Com a usina receptora fora do caso, um piso positivo deixa o bloco nulo e a conversão falha (`hydro-diversion-without-channel`); um teto sem piso é fechado em 0 com aviso (`decomp-diversion-channel-dropped`), e a água fica no rio da própria usina. Uma usina com desvio fechado em [0, 0] em todos os estágios fica com `diversion` nulo. |
 | `hydros[].diversion.max_flow_m3s` | `dadger.rvN` › `AC` › `DESVIO`, `hidr.dat` › `desvio` *(condicional: somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada)* | `limite_vazao` do `AC DESVIO` em vigor. Nulo (canal sem limite, como no DECOMP) quando não há `AC DESVIO` com limite, como num `desvio` de base (caso MOXOTÓ → P.AFONSO 4), e quando o limite vale 9 999 999 m³/s ou mais, o valor do DECOMP para canal sem limite (diagnóstico `diversion-channel-unlimited`); os tetos `max_diversion_m3s` de `constraints/hydro_bounds.parquet` continuam valendo em cada estágio. |
 
@@ -784,11 +789,11 @@ Declara, para cada usina operada, os parâmetros calculados pelo Novomodelo `@rh
 
 ### `boundary/`
 
-**Lê:** `cortesh.dat` (opcional), `cortes*.dat` (opcional), `dadger.rvN` (`FC`, `CX`, `SB`, `CT`, `UH`, `DP`, `DT`, `AC`), `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`), `vazoes.rvN`, `hidr.dat`, `mlt.dat`  
+**Lê:** `cortesh.dat` (opcional), `cortes*.dat` (opcional), `dadger.rvN` (`FC`, `CX`, `SB`, `CT`, `UH`, `DP`, `DT`, `AC`), `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`), `vazoes.rvN`, `hidr.dat`  
 **Quando:** escrito por padrão pela CLI após a conversão, quando o deck declara `cortesh.dat` e `cortes*.dat` (registro `FC` ou busca por nome) e o novomodelo-python instalado passa na sonda de escrita e releitura do checkpoint; `--no-fcf` e `--dry-run` pulam a importação, e um deck sem arquivos de cortes converte sem fronteira (nota informativa)  
 **Código:** `src/novomodelo_bridge/decomp/fcf/importer.py`
 
-Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal, mapeia os termos de armazenamento por código de usina (replicando complexos `CX`), os termos de vazão defasada por profundidade de mês (com a média de longo termo de `mlt.dat`, incrementalizada pela cascata efetiva, dobrada no RHS) e os termos GNL do `dadgnl` no anel antecipado, e grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python. Reescreve `config.json` apontando `policy.boundary` (`path = "boundary"`, `source_stage`) para o checkpoint e, quando há `mlt.dat`, `initial_conditions.json` com as janelas `recent_observations` das observações mensais e semanais de `vazoes`; o caso deve ser executado com `novomodelo run <caso> --output <caso>`.
+Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal e mapeia sobre ele cada corte, escrito pelo modelo de origem por mês médio de 730,5 h. Cada usina convertida recebe os termos da sua própria linha do corte, da linha do complexo `CX` que a contém ou, na falta das duas, da primeira usina a jusante que tenha linha (regra inferida do relato do modelo de origem, não do manual); só um reservatório (`tipo_regulacao` `M` ou `S` em `hidr.dat`) recebe o termo de armazenamento, e só pela própria linha ou pelo complexo, cobrado acima do volume mínimo efetivo. Os termos de vazão defasada são avaliados no posto de acoplamento (`AC NPOSNW`, senão o `posto` de `hidr.dat`) sobre as tabelas de `vazoes` com postos artificiais, sem desconto de média; a diferença para a vazão de operação nos estágios determinísticos e os termos de usinas do corte ausentes do caso entram como constante no RHS. Os termos GNL vão para o anel antecipado: cada slot é cobrado pelos preços por patamar do mês de entrega (mês contado pelo `GS`), ponderados pelas durações de patamar de `cortesh.dat`, e as entregas já comandadas (`GL` após o horizonte) entram como constante no RHS. A água ainda em trânsito para uma usina ao fim do estudo (tempo de viagem `VI`) recebe o termo de armazenamento da usina quando ela o tem e, senão, o seu primeiro termo de vazão defasada por hm³: é a regra do canal que o CEPEL documenta para a FCF do DECOMP usada pelo DESSEM; o DECOMP não valora essa água na fronteira com o NEWAVE, então o custo de fronteira difere do dele pelo valor da água em trânsito. Grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python e reescreve `config.json`, apontando `policy.boundary` (`path = "boundary"`) para o checkpoint, e `initial_conditions.json`, com as janelas `recent_observations` das observações mensais e semanais de `vazoes` nos postos de acoplamento; o caso deve ser executado com `novomodelo run <caso> --output <caso>`.
 
 ## Índice por origem
 
@@ -897,7 +902,6 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `COTARE` — *adiado.* Alteração de um coeficiente do polinômio cota-área. Lido pelo `check decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA.
 - `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Lido pelo `check decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
-- `NPOSNW` — *adiado.* Alteração do posto de acoplamento com o NEWAVE. Lido pelo `check decomp`, sem consumidor: o acoplamento da FCF de fronteira usa o `posto` de `hidr.dat` (com `NUMPOS`) e o registro `CX`.
 - `TIPERH` — *adiado.* Alteração do tipo de perdas hidráulicas. Lido pelo `check decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade.
 - `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante.
 
@@ -1078,6 +1082,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `numero_patamares` → `stages.json` › `stages[].blocks[].id`
 - `numero_patamares` → `stages.json` › `stages[].blocks[].name`
 - `duracao` → `stages.json` › `stages[].blocks[].hours`
+- `duracao` → `initial_conditions.json` › `past_defluences[].start_date`
+- `duracao` → `initial_conditions.json` › `past_defluences[].end_date`
 - `duracao` → `initial_conditions.json` › `past_anticipated_commitments[].end_date`
 - `duracao` → `system/thermals.json` › `thermals[].cost_per_mwh`
 - `duracao` → `system/thermals.json` › `thermals[].generation.min_mw`
@@ -1133,6 +1139,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `dia, mes, ano` → `stages.json` › `stages[].start_date`
 - `dia, mes, ano` → `stages.json` › `stages[].end_date`
 - `dia, mes, ano` → `stages.json` › `stages[].season_id`
+- `dia, mes, ano` → `initial_conditions.json` › `past_defluences[].start_date`
+- `dia, mes, ano` → `initial_conditions.json` › `past_defluences[].end_date`
 - `dia, mes, ano` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
 - `dia, mes, ano` → `system/buses.json` › `buses[].operational_start_date`
 - `dia, mes, ano` → `system/lines.json` › `lines[].operational_start_date`
@@ -1150,7 +1158,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 **Estado:** não lido.
 
-- todo o registro — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN` e de `mlt.dat`.
+- todo o registro — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN`.
 
 ### `dadger.rvN` › `ES`
 
@@ -1631,9 +1639,13 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `VI`
 
-**Estado:** lido, não convertido.
+**Estado:** convertido. **Lido por:** `initial_conditions.json`, `system/hydros.json`.
 
-- todo o registro — *adiado.* Tempo de viagem da água até a usina de jusante e defluências das semanas anteriores ao estudo. O conversor lê o registro e monta `travel_time_hours` e `initial_conditions.past_defluences`, mas a emissão está desligada por um defeito na geração de cortes com água em trânsito no novomodelo (gap rastreado C-travel-time): o `convert decomp` apenas avisa `deferred at this milestone: water travel time (VI present)`.
+- `codigo_usina` → `initial_conditions.json` › `past_defluences[].hydro_id`
+- `duracao` → `initial_conditions.json` › `past_defluences[].start_date`
+- `duracao` → `initial_conditions.json` › `past_defluences[].end_date`
+- `vazao_1..vazao_5` → `initial_conditions.json` › `past_defluences[].value_m3s`
+- `duracao` → `system/hydros.json` › `hydros[].travel_time_hours`
 
 ### `dadger.rvN` › `VL`
 
@@ -1890,7 +1902,7 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 
 ### `dadgnl.rvN` › `NL`
 
-**Estado:** lido, não convertido. **Lido por:** `boundary/`, `initial_conditions.json`, `post_study_stages.json`, `system/thermals.json`.
+**Estado:** lido, não convertido. **Lido por:** `initial_conditions.json`, `post_study_stages.json`, `system/thermals.json`.
 
 - `codigo_submercado` — *não lido.* Submercado repetido no registro de lag. Não lido: só `codigo_usina` e `lag` são usados.
 
@@ -2017,15 +2029,17 @@ Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de f
 
 Nomeia a revisão (`rv0`, `rv1`, ...) cujo índice lista os arquivos de dados. Lido apenas para localizar os demais arquivos do deck.
 
-### `mlt.dat`
-
-**Estado:** lido, não convertido. **Lido por:** `boundary/`.
-
 ### `prevs.rvN`
 
 **Estado:** não lido.
 
 Previsões de vazão semanais por posto, entrada do GEVAZP. Não lido: o conversor usa as previsões já consolidadas na seção de previsões de `vazoes.rvN`.
+
+### `mlt.dat`
+
+**Estado:** não lido.
+
+Médias de longo termo das vazões por posto. Não lido: o modelo de origem avalia os termos de vazão defasada dos cortes de fronteira sobre a vazão do posto de acoplamento, sem descontar a média.
 
 ### `postos.dat`
 
@@ -2052,13 +2066,13 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 ### Arquivos do deck não lidos
 
 - `prevs.rvN` — *não lido.* Previsões de vazão semanais por posto, entrada do GEVAZP. Não lido: o conversor usa as previsões já consolidadas na seção de previsões de `vazoes.rvN`.
+- `mlt.dat` — *não lido.* Médias de longo termo das vazões por posto. Não lido: o modelo de origem avalia os termos de vazão defasada dos cortes de fronteira sobre a vazão do posto de acoplamento, sem descontar a média.
 - `postos.dat` — *não lido.* Cadastro de postos fluviométricos. Não lido: a ligação usina-posto vem da coluna `posto` de `hidr.dat` (com a alteração `AC NUMPOS`).
 - `cortdeco.rvN / mapcut.rvN` — *não lido.* Cortes e mapa de cortes da própria FCF do DECOMP, gravados por uma execução anterior. Não lidos: o bridge importa apenas a FCF de fronteira do NEWAVE (`cortesh.dat` e `cortes*.dat`) para o checkpoint `boundary/`.
 - `arquivos de saída do DECOMP` — *não lido.* Resultados de uma execução do DECOMP (`relato.rvN`, `dec_oper_*.csv`, `dec_estatfpha.csv`, `sumario.rvN`, `inviab_unic.rvN`, entre outros). Não são entrada da conversão; `compare decomp` lê `relato.rvN`, as tabelas `dec_oper_*.csv` e `dec_estatfpha.csv` para confrontar com a saída do Novomodelo.
 
 ### Registros e campos do deck não convertidos
 
-- `dadger.rvN` › `VI` — *adiado.* Tempo de viagem da água até a usina de jusante e defluências das semanas anteriores ao estudo. O conversor lê o registro e monta `travel_time_hours` e `initial_conditions.past_defluences`, mas a emissão está desligada por um defeito na geração de cortes com água em trânsito no novomodelo (gap rastreado C-travel-time): o `convert decomp` apenas avisa `deferred at this milestone: water travel time (VI present)`.
 - `dadger.rvN` › `FE` — *adiado.* Coeficientes de participação elétrica de uma restrição `RE`. O idecomp não expõe leitor para este registro; o bridge detecta sua presença por varredura textual e emite `decomp-fe-participation-unreadable`, pois uma `RE` com termo `FE` fica sub-lida. Converter exige um leitor próprio e o descarte, por restrição, das `RE` que carregam `FE`.
 - `dadger.rvN` › `HA` — *adiado.* Cadastro da família de restrições `HA`/`LA`/`CA` (declaração, limites e coeficientes), sem leitor no idecomp. Detectada por varredura textual; diagnóstico `decomp-rha-family-unconverted`. Converter exige leitor próprio e um emissor equivalente ao das famílias `RE`/`HQ`/`HV`.
 - `dadger.rvN` › `LA` — *adiado.* Limites por estágio da família `HA`/`LA`/`CA`; ver `HA`.
@@ -2068,7 +2082,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `AC` › `COTARE` — *adiado.* Alteração de um coeficiente do polinômio cota-área. Lido pelo `check decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA.
 - `dadger.rvN` › `AC` › `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Lido pelo `check decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `dadger.rvN` › `AC` › `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
-- `dadger.rvN` › `AC` › `NPOSNW` — *adiado.* Alteração do posto de acoplamento com o NEWAVE. Lido pelo `check decomp`, sem consumidor: o acoplamento da FCF de fronteira usa o `posto` de `hidr.dat` (com `NUMPOS`) e o registro `CX`.
 - `dadger.rvN` › `AC` › `TIPERH` — *adiado.* Alteração do tipo de perdas hidráulicas. Lido pelo `check decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade.
 - `dadger.rvN` › `AC` › `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante.
 - `dadger.rvN` › `CE` › `fator_perdas` — *adiado.* Fator de perdas do contrato de exportação. Lido e ignorado com o diagnóstico `contract-loss-factor-unmapped`: `energy_contracts` do Novomodelo não tem campo equivalente e o fator não é dobrado no preço nem nos limites.
@@ -2085,7 +2098,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `HE` › `arquivo_produtibilidades` — *não lido.* Arquivo externo de produtibilidades da restrição; capturado e não consumido, e o arquivo nunca é aberto.
 - `dadger.rvN` › `HE` › `tipo_penalidade` — *não lido.* Tipo da penalidade da restrição de energia; só `valor_penalidade` é usado como penalidade da folga.
 - `dadger.rvN` › `DA` — *não lido.* Retiradas de água para outros usos (desvios) por UHE: usina de retirada, usina de retorno, vazão desviada, percentual de retorno e custo, por estágio. Não lido. Converter exige mapear a retirada para o canal de desvio da usina no Novomodelo e o retorno como afluência à usina de destino.
-- `dadger.rvN` › `EA` — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN` e de `mlt.dat`.
+- `dadger.rvN` › `EA` — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN`.
 - `dadger.rvN` › `ES` — *não lido.* ENA das semanas anteriores ao estudo, por REE. Não lido, pelo mesmo motivo de `EA`.
 - `dadger.rvN` › `FP` — *não lido.* Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela igual à envoltória de armazenamento da usina.
 - `dadger.rvN` › `IR` — *não lido.* Opções de geração de relatórios de saída do DECOMP. Sem contrapartida no caso Novomodelo.

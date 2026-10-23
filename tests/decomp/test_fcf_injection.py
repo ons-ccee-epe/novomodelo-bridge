@@ -19,7 +19,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from novomodelo_bridge.decomp.fcf.coupling import CouplingResolution
 from novomodelo_bridge.decomp.fcf.importer import (
+    _DeckCoupling,
     _patch_policy_boundary,
     _seed_recent_observations,
     import_boundary_fcf,
@@ -58,11 +60,11 @@ def _mock_deck_and_cut_seams(
     installed — the `"stub sys.modules['novomodelo']"` pattern
     (``tests/decomp/test_fcf_bootstrap.py``), not a module attribute patch.
 
-    Returns a ``DecompCase`` with ``dadger``/``id_map``/``hidr``/``calendar``
-    pre-filled (opaque placeholders — the importer never re-parses them) and
-    ``files.cortesh``/``files.cortes``/``files.vazoes`` set under
-    ``tmp_path``. No real deck and no ``mlt.dat``, so the inflow-lag mean
-    fold and recent-observation seed both stay on their ``None`` no-op branch.
+    The deck-side coupling read is stubbed to an empty coupling (no taker,
+    no fold, no GNL, no observation window). Returns a ``DecompCase`` with
+    ``dadger``/``id_map``/``hidr``/``calendar`` pre-filled (opaque
+    placeholders — the importer never re-parses them) and
+    ``files.cortesh``/``files.cortes``/``files.vazoes`` set under ``tmp_path``.
     """
     monkeypatch.setitem(
         sys.modules, "novomodelo", SimpleNamespace(__version__="0.13.0")
@@ -75,17 +77,18 @@ def _mock_deck_and_cut_seams(
         "novomodelo_bridge.decomp.fcf.importer.read_cortes",
         lambda *_args, **_kwargs: fake_cuts,
     )
-    # The coupling-stage per-block-hours read (case_dir/stages.json) is a
-    # case-reading seam like the deck ones above; these binary-free
-    # orchestration cases carry only a minimal config.json, so stub it to a
-    # single 648 h block rather than author a full stages.json. `import_
-    # boundary_fcf` derives its scalar `cost_unit_hours` as the sum of these,
-    # so a one-element `[648.0]` preserves the prior 648 h; these
-    # storage-only cases place no live GNL ring, so the per-block length is
-    # never validated against `n_patamares`.
     monkeypatch.setattr(
-        "novomodelo_bridge.decomp.fcf.importer._final_stage_block_hours",
-        lambda _case_dir: [648.0],
+        "novomodelo_bridge.decomp.fcf.importer._read_deck_coupling",
+        lambda *_args: _DeckCoupling(
+            cut=(2026, 4),
+            resolution=CouplingResolution((), (), ()),
+            inflow_lag_offsets={},
+            source_only_inflows={},
+            terminal_shares=(),
+            carried_share=0.0,
+            gnl_plan=None,
+            recent_observations=[],
+        ),
     )
     monkeypatch.setattr(
         "novomodelo_bridge.decomp.fcf.importer.ensure_writer_binding", lambda: None
@@ -216,6 +219,7 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     )
 
     config: dict = {}
+    initial_conditions: dict = {}
     with caplog.at_level(logging.WARNING):
         boundary_dir = import_boundary_fcf(
             case_dir,
@@ -223,10 +227,11 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
             work_dir=tmp_path / "work",
             cost_scale_factor=1.0,
             config=config,
-            initial_conditions={},
+            initial_conditions=initial_conditions,
         )
 
     assert boundary_dir == case_dir / "boundary"
+    assert initial_conditions["recent_observations"] == []
 
     patched_config = json.loads((case_dir / "config.json").read_text(encoding="utf-8"))
     assert patched_config["policy"]["boundary"] == {"path": "boundary"}
@@ -373,26 +378,15 @@ def test_import_boundary_fcf_reuses_shared_case_no_reparse(
 
 
 def test_seed_recent_observations_mutates_passed_dict_no_reread(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    """AC 5 (byte-identity) — `_seed_recent_observations` folds
-    `recent_observations` into the passed `initial_conditions` dict and
-    writes it through `CaseWriter` once, never re-reading
-    `initial_conditions.json` off disk: the written file is byte-identical
-    to what a prior read-modify-write produced from the same starting
-    document (indent=2 / ensure_ascii=False / single trailing newline, the
-    `_write_json` style), and every pre-existing key survives untouched.
+    """`_seed_recent_observations` folds `recent_observations` into the passed
+    `initial_conditions` dict and writes it through `CaseWriter` once, never
+    re-reading `initial_conditions.json`: the written file is the
+    `_write_json` style (indent=2 / ensure_ascii=False / single trailing
+    newline), and every pre-existing key survives untouched.
     """
     windows = [{"hydro_id": 1, "values": [10.0, 20.0]}]
-    monkeypatch.setattr(
-        "novomodelo_bridge.decomp.fcf.importer.Vazoes",
-        SimpleNamespace(read=lambda _path: object()),
-    )
-    monkeypatch.setattr(
-        "novomodelo_bridge.decomp.fcf.importer.convert_recent_observation_windows",
-        lambda *_args, **_kwargs: windows,
-    )
-
     ic_path = tmp_path / "initial_conditions.json"
     other_sections = {
         "$schema": "https://example.invalid/initial_conditions.json",
@@ -403,23 +397,9 @@ def test_seed_recent_observations_mutates_passed_dict_no_reread(
     # on disk yet; `_seed_recent_observations` mutates and writes *this*
     # object, never re-reading the file.
     initial_conditions = dict(other_sections)
-    case = make_decomp_case(
-        make_decomp_files(tmp_path),
-        dadger=object(),
-        id_map=make_id_map(()),
-        hidr=object(),
-        calendar=[],
-    )
 
-    n_windows = _seed_recent_observations(
-        CaseWriter(tmp_path),
-        case,
-        effective=object(),
-        calendar=[],
-        initial_conditions=initial_conditions,
-    )
+    _seed_recent_observations(CaseWriter(tmp_path), windows, initial_conditions)
 
-    assert n_windows == 1
     assert initial_conditions["recent_observations"] == windows
     for key, value in other_sections.items():
         assert initial_conditions[key] == value

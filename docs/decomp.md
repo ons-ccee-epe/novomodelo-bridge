@@ -67,8 +67,9 @@ Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and
 the same diagnostics land in `--diagnostics-json` and the `--json` verdict.
-Examples at the time of writing are water travel time (the `VI` register)
-and a few restriction-register term types; the [DECOMP data map](decomp-data-map.md)
+Examples at the time of writing are the unreadable special-constraint
+families (`FE`, `RHA`) and a few restriction-register term types; the
+[DECOMP data map](decomp-data-map.md)
 lists every register and field the converter leaves out. Each warning's
 remediation line states whether any action is needed; usually none, and the
 conversion proceeds.
@@ -91,6 +92,55 @@ did.
   reinstalling or upgrading `novomodelo-python` resolves it.
 - `--no-fcf` skips the import for a quick conversion. `--dry-run` always
   skips it.
+
+### How the cuts attach to the converted plants
+
+The cuts come from NEWAVE, which represents some plants differently from
+DECOMP. The import couples them plant by plant, as DECOMP does:
+
+- A plant with its own row in the cuts takes it. A plant inside a complex
+  that a `CX` register of `dadger.rvN` names takes the complex's row. Any
+  other plant takes the row of the first plant downstream that has one;
+  DECOMP reports this rule in its output, but its manual does not describe
+  it. The import lists every plant that takes another plant's row. A plant
+  that finds no row is reported as an error, because the boundary gives its
+  water no value.
+- Only a reservoir (`tipo_regulacao` `M` or `S` in `hidr.dat`) takes a
+  storage term, through its own row or its complex's, and the term prices
+  the storage above the plant's minimum volume.
+- The inflow-lag terms are read on each plant's coupling gauge: the one an
+  `AC NPOSNW` register names, otherwise the `hidr.dat` gauge, with the
+  artificial gauges computed. Novomodelo's lag state follows the inflow the plant
+  operates on. Over the stages before the last one, the difference between
+  the two is known at conversion and is folded into each cut's constant
+  term, as are the lag terms of cut plants that no converted plant takes.
+  The pre-study observations that seed Novomodelo's lag state are read on the
+  coupling gauges too.
+- The cut values are scaled by the mean month of the DECOMP manual
+  (365.25 days × 24 h / 12), whatever the length of the last stage.
+- For a deck with fuel-constrained thermals, each anticipated delivery is
+  priced in the month the `GS` register of `dadgnl.rvN` books its week to,
+  with that month's patamar shares from `cortesh.dat`. A delivery the deck
+  has already committed is folded into the constant term.
+- Water still in transit toward a plant when the study ends (the `VI`
+  register's travel time) is valued with that plant's storage term when it
+  takes one, otherwise with its first inflow-lag term. This is the in-channel
+  rule CEPEL documents for the cost-to-go function DECOMP hands to DESSEM.
+  DECOMP gives that water no value at the NEWAVE boundary, so the two
+  boundary costs differ by its value; the import lists the plants concerned.
+
+Two parts of the coupling cannot be represented yet, and the import warns
+about each. In the last stage, the coupling inflow's difference from the
+operated inflow, and the inflow of cut plants outside the case, vary by
+scenario and are not folded; the warning names the plants and the largest
+gap. When the cut's month begins before the last
+stage, Novomodelo evaluates the first inflow lag on the last stage's inflow
+alone; the warning states the share of the month this affects. A third note
+reports how far the per-patamar GNL prices spread, since Novomodelo holds one MW
+per delivery window rather than one per patamar.
+
+The [DECOMP data map](decomp-data-map.md) traces each term to the deck
+record it is read from.
 
 ### Running a case with an imported boundary
 

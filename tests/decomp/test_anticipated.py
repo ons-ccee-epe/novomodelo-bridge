@@ -32,6 +32,7 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     classify_gnl_windows,
     convert_gnl,
     is_gnl_enabled,
+    operative_week_months,
     read_gnl_model,
 )
 from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -121,6 +122,7 @@ def test_committed_mw_is_block_duration_weighted() -> None:
     expected = (40 * 107 + 48 * 131 + 80 * 97) / 168
     assert abs(got - expected) < 1e-9
     assert model.commitments[86].stages[0].hours == 168.0  # sum of duracao
+    assert model.commitments[86].stages[0].block_mw == (107.0, 131.0, 97.0)
 
 
 def test_gate_off_when_gl_absent() -> None:
@@ -214,6 +216,21 @@ def test_weeks_per_month_from_gs() -> None:
     assert model is not None
     assert model.weeks_per_month == {1: 3, 2: 4, 3: 5}
     assert isinstance(model, GnlCommitmentModel)
+
+
+def test_operative_week_months_books_weeks_by_gs_counts() -> None:
+    weeks = operative_week_months({1: 3, 2: 4, 3: 5}, date(2026, 3, 14))
+
+    assert len(weeks) == 12
+    assert weeks[date(2026, 3, 28)] == (2026, 3)
+    assert weeks[date(2026, 4, 4)] == (2026, 4)
+    assert weeks[date(2026, 4, 25)] == (2026, 4)
+    # Starts in May, ends in June: booked to May by the count.
+    assert weeks[date(2026, 5, 30)] == (2026, 5)
+
+
+def test_operative_week_months_empty_without_gs() -> None:
+    assert operative_week_months({}, date(2026, 3, 14)) == {}
 
 
 def test_nl_lags_read_per_plant() -> None:
