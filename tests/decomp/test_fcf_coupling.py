@@ -131,6 +131,12 @@ def _trunk(column: str, values: tuple[float, ...]) -> pd.DataFrame:
     return pd.DataFrame({"estagio": [1, 2, 3], column: list(values)})
 
 
+def _terminal_fan(column: str, value: float) -> pd.DataFrame:
+    """A monthly scenario table holding only the terminal stage, whose rows
+    the deterministic trunk never reads."""
+    return pd.DataFrame({"estagio": [4], "cenario": [1], column: [value]})
+
+
 def test_coupling_lag_offsets_month_weights_the_deterministic_stages() -> None:
     """Hydro 0 couples on posto 11 but operates on posto 1; hydro 1's postos
     agree and its offset vanishes."""
@@ -142,6 +148,8 @@ def test_coupling_lag_offsets_month_weights_the_deterministic_stages() -> None:
         previsoes=pd.DataFrame(
             {"estagio": [1, 2, 3], "1": [4.0, 4.0, 4.0], "2": [5.0, 5.0, 5.0]}
         ),
+        cenarios_calculados_com_postos_artificiais=_terminal_fan("11", 900.0),
+        cenarios_gerados=_terminal_fan("1", 0.0),
     )
     couplings = (HydroCoupling(0, 0, 0.0), HydroCoupling(1, 1, None))
 
@@ -161,6 +169,8 @@ def test_coupling_lag_offsets_rejects_a_missing_posto() -> None:
     vazoes = SimpleNamespace(
         previsoes_com_postos_artificiais=_trunk("1", (1.0, 1.0, 1.0)),
         previsoes=_trunk("1", (1.0, 1.0, 1.0)),
+        cenarios_calculados_com_postos_artificiais=_terminal_fan("1", 1.0),
+        cenarios_gerados=_terminal_fan("1", 1.0),
     )
 
     with pytest.raises(ValueError, match="no posto 11 column"):
@@ -179,6 +189,7 @@ def test_source_only_lag_inflows_join_history_and_trunk_on_the_coupling_posto() 
         observacoes_mensais=pd.DataFrame({"mes": [1, 2], "260": [100.0, 200.0]}),
         observacoes_semanais=pd.DataFrame({"semana": [1, 2], "260": [300.0, 400.0]}),
         previsoes_com_postos_artificiais=_trunk("260", (10.0, 20.0, 30.0)),
+        cenarios_calculados_com_postos_artificiais=_terminal_fan("260", 900.0),
     )
 
     inflows = source_only_lag_inflows(
@@ -215,12 +226,69 @@ def test_terminal_shares_lists_differing_and_source_only_plants() -> None:
     )
     couplings = (HydroCoupling(0, 0, 0.0), HydroCoupling(1, 1, None))
 
-    shares = terminal_shares(vazoes, effective, _id_map(1, 2), couplings, (260,))
+    shares = terminal_shares(
+        vazoes, effective, _id_map(1, 2), couplings, (260,), _CALENDAR
+    )
 
     assert shares == (
         TerminalShare(1, 11, 1, pytest.approx(5.0)),
         TerminalShare(260, 260, None, pytest.approx(7.0)),
     )
+
+
+#: Monthly stages only: January is the deterministic trunk, February the fan.
+_MONTHLY_CALENDAR = (
+    _stage(0, date(2026, 1, 1), date(2026, 2, 1)),
+    _stage(1, date(2026, 2, 1), date(2026, 3, 1)),
+)
+
+
+def _monthly_vazoes() -> SimpleNamespace:
+    """No weekly forecasts; January's single scenario and February's two."""
+    empty = pd.DataFrame({"estagio": [], "11": [], "1": []})
+    return SimpleNamespace(
+        previsoes_com_postos_artificiais=empty,
+        previsoes=empty,
+        cenarios_calculados_com_postos_artificiais=pd.DataFrame(
+            {"estagio": [1, 2, 2], "cenario": [1, 1, 2], "11": [30.0, 60.0, 70.0]}
+        ),
+        cenarios_gerados=pd.DataFrame(
+            {"estagio": [1, 2, 2], "cenario": [1, 1, 2], "1": [10.0, 60.0, 70.0]}
+        ),
+    )
+
+
+def test_coupling_lag_offsets_read_a_monthly_trunk_stage() -> None:
+    effective = _effective(coupling_gauges={1: (11, 11)})
+
+    offsets = coupling_lag_offsets(
+        _monthly_vazoes(),
+        effective,
+        _id_map(1),
+        _MONTHLY_CALENDAR,
+        lag_months(2026, 2),
+        (HydroCoupling(0, 0, 0.0),),
+    )
+
+    february, january, *rest = offsets[0]
+    assert february == 0.0
+    assert january == pytest.approx(20.0)
+    assert rest == [0.0] * 10
+
+
+def test_terminal_shares_skip_a_monthly_trunk_stage() -> None:
+    effective = _effective(coupling_gauges={1: (11, 11)})
+
+    shares = terminal_shares(
+        _monthly_vazoes(),
+        effective,
+        _id_map(1),
+        (HydroCoupling(0, 0, 0.0),),
+        (),
+        _MONTHLY_CALENDAR,
+    )
+
+    assert shares == ()
 
 
 def test_carried_lag_share_is_the_cut_month_before_the_last_stage() -> None:

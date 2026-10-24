@@ -434,31 +434,39 @@ def _split_plant_frequencies(
     non-goal, not a silent branch (Itaipu carries no ``NUMCON`` override on
     rv3, so this is base-count = 2 there regardless).
 
+    A register row without ``frequencia`` applies to the whole plant, so to
+    every group (manual §3.4.6.13: the frequency field is optional).
+
     Raises
     ------
     ValueError
         Naming *code*, if the ``MP`` and ``FD`` registers disagree on the
-        set of declared frequencies (or either is empty) — no silent
-        single-group fallback for a mismatched registry — or if the
-        stage-0 AC-adjusted conjunto count does not equal the number of
-        declared frequencies.
+        set of declared frequencies, either has no row for the plant,
+        neither declares a frequency, or one mixes a plant-wide row with
+        per-frequency rows — no silent single-group fallback for a
+        mismatched registry — or if the stage-0 AC-adjusted conjunto count
+        does not equal the number of declared frequencies.
     """
 
-    def _freqs(table: pd.DataFrame | None) -> set[float]:
-        if table is None or table.empty:
-            return set()
-        return {
-            float(f) for f in table.loc[table["codigo_usina"] == code, "frequencia"]
-        }
-
-    mp_freqs, fd_freqs = _freqs(mp), _freqs(fd)
-    if not mp_freqs or mp_freqs != fd_freqs:
+    mp_freqs, mp_plant_wide = _register_frequencies(mp, code)
+    fd_freqs, fd_plant_wide = _register_frequencies(fd, code)
+    if (mp_freqs and mp_plant_wide) or (fd_freqs and fd_plant_wide):
+        raise ValueError(
+            f"plant {code}: an MP or FD register mixes a row without "
+            "frequencia with per-frequency rows"
+        )
+    if (
+        not (mp_freqs or mp_plant_wide)
+        or not (fd_freqs or fd_plant_wide)
+        or not (mp_freqs or fd_freqs)
+        or (mp_freqs and fd_freqs and mp_freqs != fd_freqs)
+    ):
         raise ValueError(
             f"plant {code}: MP frequencia rows {sorted(mp_freqs)} and FD "
-            f"frequencia rows {sorted(fd_freqs)} must agree and be "
-            "non-empty for the per-frequency split plant"
+            f"frequencia rows {sorted(fd_freqs)} must agree, and at least "
+            "one register must declare them, for the per-frequency split plant"
         )
-    frequencies = sorted(mp_freqs)
+    frequencies = sorted(mp_freqs or fd_freqs)
 
     n_sets = effective.machine_conjunto_count(code, 0)
     if n_sets is None:
@@ -469,6 +477,17 @@ def _split_plant_frequencies(
             f"match the number of MP/FD frequencia rows ({len(frequencies)})"
         )
     return frequencies
+
+
+def _register_frequencies(
+    table: pd.DataFrame | None, code: int
+) -> tuple[set[float], bool]:
+    """Plant *code*'s declared ``frequencia`` values in an ``MP``/``FD``
+    register, and whether it also has a row without one."""
+    if table is None or table.empty:
+        return set(), False
+    column = table.loc[table["codigo_usina"] == code, "frequencia"]
+    return {float(f) for f in column.dropna()}, bool(column.isna().any())
 
 
 def _build_split_unit_groups(
@@ -538,20 +557,22 @@ def _build_split_unit_groups(
 def _frequency_row(
     table: pd.DataFrame | None, code: int, frequency: float
 ) -> pd.Series:
-    """The single ``(codigo_usina, frequencia)``-matched register row.
+    """The single ``(codigo_usina, frequencia)``-matched register row, or the
+    plant's row without ``frequencia`` when the register declares none.
 
     Unlike the ordinary single-group case (a missing register defaults its
     factor to ``1.0``), the split plant's two groups each require exactly
-    one ``MP`` row and one ``FD`` row at their own frequency — validated by
-    :func:`_split_plant_frequencies` before this is called, so a missing or
-    duplicated row here means the registers disagree with that validation
-    (defensive; should not happen in practice).
+    one ``MP`` row and one ``FD`` row applying to their own frequency —
+    validated by :func:`_split_plant_frequencies` before this is called, so a
+    missing or duplicated row here means the registers disagree with that
+    validation (defensive; should not happen in practice).
     """
     if table is None:
         raise ValueError(f"plant {code}: no register table for frequencia {frequency}")
-    rows = table.loc[
-        (table["codigo_usina"] == code) & (table["frequencia"] == frequency)
-    ]
+    plant_rows = table.loc[table["codigo_usina"] == code]
+    rows = plant_rows.loc[plant_rows["frequencia"] == frequency]
+    if rows.empty:
+        rows = plant_rows.loc[plant_rows["frequencia"].isna()]
     if len(rows) != 1:
         raise ValueError(
             f"plant {code}: expected exactly one register row at frequencia "

@@ -1,22 +1,28 @@
 """Scenario conversion for DECOMP-like decks (the explicit inflow tree).
 
-The inflow file carries the deterministic trunk (weekly forecasts, one
-scenario per weekly stage) and the terminal fan (generated scenarios with
-per-node probabilities). DECOMP's inflow file is the *arquivo de vazões
-incrementais*: each gauging-station column already holds the plant's own
-incremental (local) inflow, so each plant's value is read straight through
-from its (post-``AC NUMPOS``) gauge column — no upstream subtraction.
-novomodelo re-derives the natural flow at each plant by routing upstream
-releases down the ``downstream_id`` cascade.
+The inflow file carries the deterministic trunk and the terminal fan:
+
+- **Weekly stages** (first operative month, when it is split into weeks):
+  ``previsoes`` holds one row per stage, each a deterministic forecast
+  (scenario 0); it is empty for a deck of monthly stages only.
+- **Monthly stages** (later months): ``cenarios_gerados`` holds one row per
+  (stage, scenario). Deterministic trunk stages have a single row (scenario 1
+  → index 0); the terminal fan has one row per opening.
+
+DECOMP's inflow file is the *arquivo de vazões incrementais*: each
+gauging-station column already holds the plant's own incremental (local)
+inflow, so each plant's value is read straight through from its (post-``AC
+NUMPOS``) gauge column — no upstream subtraction. novomodelo re-derives the natural
+flow at each plant by routing upstream releases down the ``downstream_id``
+cascade.
 
 The tree is emitted node-natively: every stage draws its openings from
-``external_inflow_scenarios.parquet`` (trunk column 0, terminal fan
-columns ``0..N-1``), and the per-scenario weights become the terminal
-branch-edge probabilities on the ``policy_graph`` (see
-``temporal.convert_stages``). Under the identity stochastic convention
-(μ = 0, σ = 1, order 0) the standardized noise equals the natural value.
-``terminal_fan_probabilities`` supplies those fan weights;
-``convert_scenario_probabilities`` remains a validation view for
+``external_inflow_scenarios.parquet`` (trunk column 0, terminal fan columns
+``0..N-1``), and the per-scenario weights become the terminal branch-edge
+probabilities on the ``policy_graph`` (see ``temporal.convert_stages``). Under
+the identity stochastic convention (μ = 0, σ = 1, order 0) the standardized
+noise equals the natural value. ``terminal_fan_probabilities`` supplies those
+fan weights; ``convert_scenario_probabilities`` remains a validation view for
 ``check decomp`` and is no longer written to the case directory.
 """
 
@@ -40,6 +46,7 @@ from novomodelo_bridge.core.inflow_windows import (
     previous_months,
 )
 from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.temporal import weekly_stage_count
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -200,25 +207,37 @@ def _tree_values(
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
 ) -> dict[tuple[int, int], list[float]]:
-    """``{(stage_index, scenario_index): incrementals}`` for the whole tree."""
+    """``{(stage_index, scenario_index): incrementals}`` for the whole tree.
+
+    DECOMP's inflow file splits forecasts across two tables:
+
+    - ``previsoes`` — one row per **weekly** stage (the first operative month)
+    - ``cenarios_gerados`` — one row per (stage, scenario) for **monthly**
+      stages (the deterministic monthly trunk stages + the terminal fan)
+
+    For a multi-month deck the monthly trunk stages (deterministic, scenario 1)
+    come from ``cenarios_gerados``, not ``previsoes``. The terminal fan's
+    multiple scenarios also come from ``cenarios_gerados``.
+    """
     station_by_code, _ = _incremental_context(effective, id_map)
     terminal = len(calendar) - 1
+    n_weekly = weekly_stage_count(calendar)
 
     previsoes = vazoes.previsoes
-    if previsoes is None or previsoes.empty:
-        raise ValueError("the inflow file has no trunk forecasts (previsoes)")
-    if len(previsoes) != terminal:
+    n_forecasts = 0 if previsoes is None else len(previsoes)
+    if n_forecasts != n_weekly:
         raise ValueError(
-            f"{len(previsoes)} trunk forecast rows for {terminal} weekly stages"
+            f"{n_forecasts} weekly forecast rows (previsoes) for {n_weekly} "
+            "weekly stages"
         )
 
     values: dict[tuple[int, int], list[float]] = {}
-    for _, row in previsoes.iterrows():
+    for _, row in () if previsoes is None else previsoes.iterrows():
         stage_index = int(row["estagio"]) - 1
-        if not 0 <= stage_index < terminal:
+        if not 0 <= stage_index < n_weekly:
             raise ValueError(
                 f"trunk forecast stage {int(row['estagio'])} outside the "
-                f"weekly range (1..{terminal})"
+                f"weekly range (1..{n_weekly})"
             )
         values[(stage_index, 0)] = _incremental_values(row, id_map, station_by_code)
 
@@ -227,13 +246,18 @@ def _tree_values(
         raise ValueError("the inflow file has no terminal fan (cenarios_gerados)")
     for _, row in cenarios.iterrows():
         stage_index = int(row["estagio"]) - 1
-        if stage_index != terminal:
+        scenario_index = int(row["cenario"]) - 1
+        if not n_weekly <= stage_index <= terminal:
             raise ValueError(
-                f"fan scenario at stage {int(row['estagio'])}; expected only "
-                f"the terminal stage {terminal + 1} — a pre-terminal branching "
-                "deck needs the node-graph work"
+                f"cenarios_gerados row at stage {int(row['estagio'])} outside "
+                f"the monthly range ({n_weekly + 1}..{terminal + 1})"
             )
-        values[(stage_index, int(row["cenario"]) - 1)] = _incremental_values(
+        if stage_index < terminal and scenario_index != 0:
+            raise ValueError(
+                f"monthly trunk stage {int(row['estagio'])} has scenario "
+                f"{int(row['cenario'])}; only the terminal stage may fan"
+            )
+        values[(stage_index, scenario_index)] = _incremental_values(
             row, id_map, station_by_code
         )
     return values
@@ -289,6 +313,34 @@ def convert_external_inflows(
     )
 
 
+def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
+    """Fail unless every stage before *terminal* is deterministic.
+
+    The node graph fans only at the terminal stage (``build_node_graph``), so
+    the trunk — every 1-based stage ``1..terminal-1`` — must carry a single
+    inflow opening. A trunk stage with more than one ``cenario`` is DECOMP's
+    growing scenario tree (branching before the last month), which this
+    terminal-fan conversion cannot represent and must not silently flatten.
+    """
+    stage = prob["estagio"].astype(int)
+    trunk = prob[(stage >= 1) & (stage < terminal)]
+    branching = sorted(
+        {
+            int(s)
+            for s, n in trunk.groupby("estagio")["cenario"].nunique().items()
+            if n > 1
+        }
+    )
+    if branching:
+        raise ValueError(
+            f"inflow stages {branching} branch into multiple scenarios, but "
+            f"only the terminal stage {terminal} may fan. DECOMP's scenario "
+            f"tree branches from the second month on; a deck that branches "
+            f"before its last stage is not convertible by the terminal-fan "
+            f"model."
+        )
+
+
 def terminal_fan_probabilities(
     vazoes: Vazoes,
     calendar: Sequence[OperativeStage],
@@ -301,12 +353,16 @@ def terminal_fan_probabilities(
     returned list is indexed by 0-based scenario id (``cenario - 1``), the
     same id the external inflow library binds via each fan node's
     ``scenario_id``. Validated to be a contiguous 0-based range summing to 1.
+
+    Rejects (via :func:`_reject_branching_trunk`) a deck whose trunk already
+    branches, since only the terminal stage may fan.
     """
     prob = vazoes.probabilidades
     if prob is None or prob.empty:
         raise ValueError("the inflow file has no probability table")
 
     terminal = len(calendar)  # 1-based id of the terminal (fan) stage
+    _reject_branching_trunk(prob, terminal)
     rows = prob[prob["estagio"].astype(int) == terminal]
     if rows.empty:
         raise ValueError(

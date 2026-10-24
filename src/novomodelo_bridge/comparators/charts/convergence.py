@@ -11,6 +11,28 @@ from novomodelo_bridge.comparators.html_report import (
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
+def _bounds(conv: pl.DataFrame, column: str) -> dict[int, float]:
+    """Per-iteration values of *column*, skipping iterations where it is null
+    (a source-model bound that overflowed its print field)."""
+    return {
+        int(row["iteration"]): float(row[column])
+        for row in conv.iter_rows(named=True)
+        if row[column] is not None
+    }
+
+
+def _line(bound: dict[int, float], name: str, line: dict) -> dict:
+    iters = sorted(bound)
+    return {
+        "x": iters,
+        "y": [bound[i] for i in iters],
+        "name": name,
+        "type": "scatter",
+        "mode": "lines",
+        "line": line,
+    }
+
+
 def convergence_chart(
     nw_conv: pl.DataFrame,
     novomodelo_conv: pl.DataFrame,
@@ -19,76 +41,34 @@ def convergence_chart(
     """Convergence overlay: The source model vs Novomodelo lower/upper bounds.
 
     Accepts raw convergence DataFrames directly so it can show the source model data
-    even when Novomodelo convergence is empty.
+    even when Novomodelo convergence is empty. Each bound is drawn over the
+    iterations where it is present.
     """
-    lb_nw: dict[int, float] = {}
-    ub_nw: dict[int, float] = {}
-    lb_cb: dict[int, float] = {}
-    ub_cb: dict[int, float] = {}
-
-    if not nw_conv.is_empty():
-        for row in nw_conv.iter_rows(named=True):
-            it = int(row["iteration"])
-            lb_nw[it] = float(row["lower_bound"])
-            ub_nw[it] = float(row["upper_bound_mean"])
-
-    if not novomodelo_conv.is_empty():
-        for row in novomodelo_conv.iter_rows(named=True):
-            it = int(row["iteration"])
-            lb_cb[it] = float(row["lower_bound"])
-            ub_cb[it] = float(row["upper_bound_mean"])
-
-    iters = sorted(set(lb_nw) | set(lb_cb))
-    if not iters:
+    series = [
+        (
+            _bounds(nw_conv, "lower_bound"),
+            f"{reference_label} ZINF",
+            {"color": COLOR_NEWAVE},
+        ),
+        (
+            _bounds(nw_conv, "upper_bound_mean"),
+            f"{reference_label} ZSUP",
+            {"color": COLOR_NEWAVE, "dash": "dash"},
+        ),
+        (
+            _bounds(novomodelo_conv, "lower_bound"),
+            "Novomodelo Lower",
+            {"color": COLOR_NOVOMODELO},
+        ),
+        (
+            _bounds(novomodelo_conv, "upper_bound_mean"),
+            "Novomodelo Upper",
+            {"color": COLOR_NOVOMODELO, "dash": "dash"},
+        ),
+    ]
+    traces = [_line(bound, name, line) for bound, name, line in series if bound]
+    if not traces:
         return "<p>No convergence data available.</p>"
-
-    traces: list[dict] = []
-
-    if lb_nw:
-        nw_iters = sorted(lb_nw)
-        traces.append(
-            {
-                "x": nw_iters,
-                "y": [lb_nw[i] for i in nw_iters],
-                "name": f"{reference_label} ZINF",
-                "type": "scatter",
-                "mode": "lines",
-                "line": {"color": COLOR_NEWAVE},
-            }
-        )
-        traces.append(
-            {
-                "x": nw_iters,
-                "y": [ub_nw.get(i) for i in nw_iters],
-                "name": f"{reference_label} ZSUP",
-                "type": "scatter",
-                "mode": "lines",
-                "line": {"color": COLOR_NEWAVE, "dash": "dash"},
-            }
-        )
-
-    if lb_cb:
-        cb_iters = sorted(lb_cb)
-        traces.append(
-            {
-                "x": cb_iters,
-                "y": [lb_cb[i] for i in cb_iters],
-                "name": "Novomodelo Lower",
-                "type": "scatter",
-                "mode": "lines",
-                "line": {"color": COLOR_NOVOMODELO},
-            }
-        )
-        traces.append(
-            {
-                "x": cb_iters,
-                "y": [ub_cb.get(i) for i in cb_iters],
-                "name": "Novomodelo Upper",
-                "type": "scatter",
-                "mode": "lines",
-                "line": {"color": COLOR_NOVOMODELO, "dash": "dash"},
-            }
-        )
 
     layout = {
         "title": f"Convergence: {reference_label} vs Novomodelo",

@@ -228,7 +228,7 @@ def _plan_gnl_ring(
         if shares is not None:
             months[cut_key + lag] = GnlDeliveryMonth(lag, shares)
 
-    weeks = operative_week_months(model.weeks_per_month, calendar[0].start_date)
+    weeks = operative_week_months(model.weeks_per_month, calendar)
     return GnlRingPlan(
         targets=targets,
         months=months,
@@ -314,6 +314,7 @@ def _read_deck_coupling(
             case.id_map,
             resolution.couplings,
             (plant_codes[index] for index in source_only),
+            calendar,
         ),
         carried_share=carried_lag_share(calendar, *cut),
         gnl_plan=_build_gnl_ring_plan(

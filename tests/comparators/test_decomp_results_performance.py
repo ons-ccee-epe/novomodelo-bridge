@@ -248,6 +248,30 @@ class TestBuildDecompDatasetConvergence:
         assert "Convergence" in html
         assert "Novomodelo Lower" in html
 
+    def test_report_renders_when_the_first_source_zinf_overflowed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The source model prints an overflowed ``zinf`` as asterisks, which
+        reads back as null; the chart drops that point and keeps ``zsup``."""
+        self._patch(monkeypatch)
+        overflowed = _relato_convergence_frame().with_columns(
+            pl.when(pl.col("iteracao") == 1)
+            .then(None)
+            .otherwise(pl.col("zinf"))
+            .alias("zinf")
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_convergence",
+            lambda *_args, **_kwargs: overflowed,
+        )
+
+        dataset = build_decomp_dataset(tmp_path, tmp_path)
+        html = build_comparison_report(dataset, reference_label="DECOMP")
+
+        assert dataset.render.nw_convergence["lower_bound"].null_count() == 1
+        assert "DECOMP ZINF" in html
+        assert "DECOMP ZSUP" in html
+
 
 # ---------------------------------------------------------------------------
 # Performance tab timing metadata (Caveat #2 -- no fabricated

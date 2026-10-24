@@ -119,8 +119,9 @@ DECOMP. The import couples them plant by plant, as DECOMP does:
 - The cut values are scaled by the mean month of the DECOMP manual
   (365.25 days × 24 h / 12), whatever the length of the last stage.
 - For a deck with fuel-constrained thermals, each anticipated delivery is
-  priced in the month the `GS` register of `dadgnl.rvN` books its week to,
-  with that month's patamar shares from `cortesh.dat`. A delivery the deck
+  priced in the month the `GS` register of `dadgnl.rvN` books its week to
+  (in a deck of monthly stages only, its own month), with that month's
+  patamar shares from `cortesh.dat`. A delivery the deck
   has already committed is folded into the constant term.
 - Water still in transit toward a plant when the study ends (the `VI`
   register's travel time) is valued with that plant's storage term when it
