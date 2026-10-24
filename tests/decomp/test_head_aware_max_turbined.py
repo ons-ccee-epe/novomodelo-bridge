@@ -6,7 +6,8 @@ Covers the DECOMP-local head-corrected engolimento formula
 ``max_turbined_m3s`` — the affinity correction, the installed-power cap, the
 un-derated (no TEIF/IP) and un-branched (no ``tipo_regulacao``) departures
 from the source-model side's shared helper, the per-stage overlay, the
-Itaipu per-conjunto split, and the ``AC ALTEFE`` tracked gap.
+Itaipu per-conjunto split and its ``MP``/``FD`` rows, and the ``AC ALTEFE``
+tracked gap.
 ``max_generation_mw`` is untouched throughout (asserted explicitly where
 relevant) — only ``max_turbined_m3s`` becomes head-aware.
 
@@ -421,3 +422,65 @@ def test_itaipu_split_groups_use_conjunto_head_corrected_envelope() -> None:
     gen = itaipu["generation"]
     assert gen["max_turbined_m3s"] == pytest.approx(expected_group0 + expected_group1)
     assert gen["max_generation_mw"] == pytest.approx(2000.0)
+
+
+def _itaipu_split_case(fd: pd.DataFrame) -> tuple[DecompCase, EffectiveCadastro]:
+    """Itaipu with two identical 1000 MW conjuntos at their nominal head,
+    per-frequency ``MP`` rows at 1.0 and the given ``FD`` register."""
+    hidr = _hidr_frame(
+        {
+            66: _plant_row(
+                name="ITAIPU",
+                tipo_regulacao="S",
+                conjuntos=[(1, 100.0, 1000.0, _H_OP), (1, 100.0, 1000.0, _H_OP)],
+                tipo_turbina=1,
+            )
+        }
+    )
+    mp = pd.DataFrame(
+        [
+            {"codigo_usina": 66, "frequencia": frequency}
+            | {f"manutencao_{stage}": 1.0 for stage in (1, 2, 3)}
+            for frequency in (50.0, 60.0)
+        ]
+    )
+    dadger = _FakeDadger(uh=_uh_frame([66]), mp=mp, fd=fd)
+    effective = EffectiveCadastro(base=hidr, n_stages=3, stage_varying={})
+    return _case(dadger, hidr), effective
+
+
+def test_itaipu_fd_row_without_frequency_derates_both_groups() -> None:
+    fd = pd.DataFrame(
+        [
+            {
+                "codigo_usina": 66,
+                "frequencia": None,
+                "fator_1": 1.0,
+                "fator_2": 1.0,
+                "fator_3": 0.877,
+            }
+        ]
+    )
+    case, effective = _itaipu_split_case(fd)
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
+
+    values = convert_hydro_group_availability(case, id_map, effective=effective)
+
+    for group_id in (0, 1):
+        assert values[(0, group_id, 2)].max_generation_mw == pytest.approx(877.0)
+        assert (0, group_id, 0) not in values
+
+
+def test_itaipu_fd_mixing_plant_wide_and_frequency_rows_raises() -> None:
+    fd = pd.DataFrame(
+        [
+            {"codigo_usina": 66, "frequencia": frequency}
+            | {f"fator_{stage}": 1.0 for stage in (1, 2, 3)}
+            for frequency in (None, 50.0)
+        ]
+    )
+    case, effective = _itaipu_split_case(fd)
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
+
+    with pytest.raises(ValueError, match="mixes a row without frequencia"):
+        convert_hydro_group_availability(case, id_map, effective=effective)
