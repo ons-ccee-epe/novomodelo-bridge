@@ -15,8 +15,10 @@ import pytest
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.constraint_registers import (
+    BoundConflict,
     ConstraintRecord,
     ConstraintTerm,
+    bound_conflicts_diagnostic,
     detect_libs_electrical,
     detect_unreadable_electrical,
     lowers_to_bound,
@@ -683,3 +685,159 @@ def test_constraint_without_a_term_at_its_first_stage_is_rejected() -> None:
     )
     with pytest.raises(FieldParseError, match="no coefficient at its first stage"):
         read_constraints(dadger)
+
+
+_NAN = float("nan")
+
+
+def _qdef_ceiling_and_floor(*, floor_first: bool = False) -> _FakeDadger:
+    """Plant 118 with ``QDEF <= 0`` (HQ 116) and ``QDEF >= 6`` (HQ 170) over
+    stages 1-2, the floor declared first when *floor_first*."""
+    ceiling = (
+        (116, 1, 2),
+        (116, 118, 1.0, 1, "QDEF"),
+        (116, 1, _NAN, 0.0, _NAN, 0.0, _NAN, 0.0),
+    )
+    floor = (
+        (170, 1, 2),
+        (170, 118, 1.0, 1, "QDEF"),
+        (170, 1, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
+    )
+    first, second = (floor, ceiling) if floor_first else (ceiling, floor)
+    return _FakeDadger(
+        hq=_decl(first[0], second[0]),
+        cq=_coeff(first[1], second[1], tipo=True),
+        lq=_lu(first[2], second[2]),
+    )
+
+
+def test_conflicting_single_plant_flow_restrictions_stay_generic() -> None:
+    census = read_constraints(_qdef_ceiling_and_floor())
+    ids = {r.constraint_id for r in census.to_generic if r.family == "HQ"}
+    assert ids == {116, 170}
+    assert not [r for r in census.to_bounds if r.family == "HQ"]
+    assert census.bound_conflicts == (
+        BoundConflict(
+            family="HQ",
+            code=118,
+            variable="QDEF",
+            constraint_ids=(116, 170),
+            stage_index=0,
+            block=0,
+            floor=6.0,
+            ceiling=0.0,
+        ),
+    )
+
+
+def test_conflicting_flow_restrictions_are_split_whatever_their_order() -> None:
+    """The source model violates the cheaper restriction, not the later one."""
+    floor_first = read_constraints(_qdef_ceiling_and_floor(floor_first=True))
+    assert floor_first.bound_conflicts
+    assert (
+        floor_first.bound_conflicts
+        == read_constraints(_qdef_ceiling_and_floor()).bound_conflicts
+    )
+
+
+def test_overlapping_single_plant_flow_restrictions_stay_bounds() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((116, 1, 2), (170, 1, 2)),
+        cq=_coeff((116, 118, 1.0, 1, "QDEF"), (170, 118, 1.0, 1, "QDEF"), tipo=True),
+        lq=_lu(
+            (116, 1, _NAN, 10.0, _NAN, 10.0, _NAN, 10.0),
+            (170, 1, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
+        ),
+    )
+    census = read_constraints(dadger)
+    assert {r.constraint_id for r in census.to_bounds} == {116, 170}
+    assert census.bound_conflicts == ()
+
+
+def test_negated_floor_conflicts_with_a_ceiling() -> None:
+    """``-QDEF <= -6`` is the floor ``QDEF >= 6``."""
+    dadger = _FakeDadger(
+        hq=_decl((116, 1, 1), (170, 1, 1)),
+        cq=_coeff((116, 118, 1.0, 1, "QDEF"), (170, 118, -1.0, 1, "QDEF"), tipo=True),
+        lq=_lu(
+            (116, 1, _NAN, 0.0, _NAN, 0.0, _NAN, 0.0),
+            (170, 1, _NAN, -6.0, _NAN, -6.0, _NAN, -6.0),
+        ),
+    )
+    [conflict] = read_constraints(dadger).bound_conflicts
+    assert (conflict.floor, conflict.ceiling) == (6.0, 0.0)
+
+
+def test_flow_restrictions_on_disjoint_stages_do_not_conflict() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((116, 1, 1), (170, 2, 2)),
+        cq=_coeff((116, 118, 1.0, 1, "QDEF"), (170, 118, 1.0, 2, "QDEF"), tipo=True),
+        lq=_lu(
+            (116, 1, _NAN, 0.0, _NAN, 0.0, _NAN, 0.0),
+            (170, 2, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
+        ),
+    )
+    assert read_constraints(dadger).bound_conflicts == ()
+
+
+def test_conflict_on_a_later_block_reports_that_block() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((116, 1, 1), (170, 1, 1)),
+        cq=_coeff((116, 118, 1.0, 1, "QDEF"), (170, 118, 1.0, 1, "QDEF"), tipo=True),
+        lq=_lu(
+            (116, 1, _NAN, 10.0, _NAN, 10.0, _NAN, 0.0),
+            (170, 1, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
+        ),
+    )
+    [conflict] = read_constraints(dadger).bound_conflicts
+    assert (conflict.stage_index, conflict.block) == (0, 2)
+
+
+def test_flow_restrictions_on_different_variables_do_not_conflict() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((116, 1, 1), (170, 1, 1)),
+        cq=_coeff((116, 118, 1.0, 1, "QDEF"), (170, 118, 1.0, 1, "QTUR"), tipo=True),
+        lq=_lu(
+            (116, 1, _NAN, 0.0, _NAN, 0.0, _NAN, 0.0),
+            (170, 1, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
+        ),
+    )
+    assert read_constraints(dadger).bound_conflicts == ()
+
+
+def test_conflicting_flow_restrictions_emit_two_soft_generic_constraints() -> None:
+    census = read_constraints(_qdef_ceiling_and_floor())
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(118,))
+    df = pd.DataFrame({118: {}}).T
+    df.index.name = "codigo_usina"
+    effective = EffectiveCadastro(base=df, n_stages=2, stage_varying={})
+    calendar = [_stage(0, 3), _stage(1, 3)]
+
+    result = emit_rhq_rhv_generics(
+        make_decomp_case(Path("unused"), calendar=calendar),
+        id_map,
+        census=census,
+        pumping_station_ids={},
+        effective=effective,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    by_name = {c["name"]: c for c in result.constraints}
+    assert set(by_name) == {"HQ_116", "HQ_170"}
+    assert {c["expression"] for c in by_name.values()} == {"hydro_outflow(0)"}
+    assert all(c["slack"]["enabled"] for c in by_name.values())
+    assert by_name["HQ_116"]["slack"] == by_name["HQ_170"]["slack"]
+
+
+def test_bound_conflicts_diagnostic_names_plant_restrictions_and_limits() -> None:
+    [conflict] = read_constraints(_qdef_ceiling_and_floor()).bound_conflicts
+    diagnostic = bound_conflicts_diagnostic([conflict], {118: "BILLINGS"})
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [
+        [118, "BILLINGS", "QDEF", "HQ 116, HQ 170", 1, 1, 6.0, 0.0]
+    ]
+    text = f"{diagnostic.summary} {diagnostic.remediation}"
+    for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
+        assert leak not in text

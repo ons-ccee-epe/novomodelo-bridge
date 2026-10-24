@@ -63,6 +63,14 @@ still apply stage by stage. When that target is not in the case, a diversion
 ceiling is closed and reported, so the water stays in the plant's own river;
 a positive diversion floor cannot be closed, and the conversion fails.
 
+A restriction register on one plant variable, such as an `HQ` on `QDEF`,
+becomes a bound on that plant. Two such `HQ` restrictions on the same plant
+variable that no value meets at once, such as a 0 m³/s ceiling and a 6 m³/s floor, become generic constraints
+instead, each with its own slack at the same penalty. DECOMP prices every
+`RHQ` violation per unit and violates the cheaper restriction, whatever their
+order or numbers, so Novomodelo then makes the same choice. The conversion reports
+each such pair as a warning.
+
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and

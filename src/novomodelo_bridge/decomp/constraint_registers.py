@@ -30,7 +30,9 @@ every stage, and its variable has a novomodelo bounds axis — this covers hydro
 generation (``FU``), thermal generation (``FT``), pumping flow (``QBOM``), and
 the ``HQ`` flow family (``QDEF``/``QTUR``/``QDES``/``QVER``); every other shape
 (multiple terms, a non-unit coefficient, or the ``HE`` energy sum) becomes a
-**generic constraint**.
+**generic constraint**. So does a single-term ``HQ`` whose limits leave no
+common value with another's on the same plant variable: a plant bound cannot
+hold both, and each restriction keeps its own slack.
 
 This module only reads, joins, and classifies. The lowering itself lives in the
 bounds emitters and the generic-constraints emitter.
@@ -39,13 +41,17 @@ bounds emitters and the generic-constraints emitter.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field, replace
+from itertools import combinations
 from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.generic_constraint_builder import is_bounded
+from novomodelo_bridge.core.tolerances import relative_tolerance
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -238,6 +244,27 @@ def lowers_to_bound(record: ConstraintRecord) -> bool:
         abs(term.coefficient_at(stage)) == 1.0
         for stage in range(record.stage_start, record.stage_end + 1)
     )
+
+
+def sided_bounds(
+    lower: float | None, upper: float | None, coefficient: float
+) -> tuple[float | None, float | None]:
+    """The coefficient-sign -> side map for a single term ``c*x in [lower, upper]``.
+
+    ``coefficient > 0`` (``+1``) leaves the entity bound as-is:
+    ``x in [lower, upper]``. ``coefficient < 0`` (``-1``) flips and swaps the
+    sides: ``-x in [lower, upper] => x in [-upper, -lower]``. Only ``+-1``
+    ever reaches here (``lowers_to_bound`` gates ``abs(coefficient) == 1`` at
+    every stage), so the two branches are exhaustive.
+
+    The ``+-1e21`` unbounded sentinel is not re-derived here — a bound is
+    passed through unchanged (negating it keeps its magnitude at the
+    sentinel) and its consumers drop it through ``is_bounded``. Only an
+    actual ``None`` is treated as "no bound on that side".
+    """
+    if coefficient > 0:
+        return lower, upper
+    return (None if upper is None else -upper, None if lower is None else -lower)
 
 
 @dataclass(frozen=True)
@@ -649,6 +676,32 @@ def _read_energy_constraints(dadger: Dadger) -> list[ConstraintRecord]:
     return records
 
 
+#: Families whose single-term records stay generic when their limits conflict.
+#: The source model prices every RHQ limit's violation per unit at one slack
+#: penalty and violates the cheaper side, whatever the restrictions' order or
+#: numbers; a plant bound cannot hold two disjoint ranges.
+_SOFT_CONFLICT_FAMILIES = frozenset({"HQ"})
+
+
+@dataclass(frozen=True)
+class BoundConflict:
+    """Single-term records on one plant variable that no value meets at once.
+
+    ``stage_index`` (0-based) and ``block`` (0-based) locate the first slot
+    where ``floor``, the highest lower limit among ``constraint_ids``, exceeds
+    ``ceiling``, the lowest upper limit, both on the variable itself.
+    """
+
+    family: str
+    code: int
+    variable: str
+    constraint_ids: tuple[int, ...]
+    stage_index: int
+    block: int
+    floor: float
+    ceiling: float
+
+
 @dataclass(frozen=True)
 class ConstraintCensus:
     """The four families read and split by their lowering target."""
@@ -659,6 +712,149 @@ class ConstraintCensus:
     to_bounds: Sequence[ConstraintRecord] = field(default_factory=tuple)
     #: Everything else — lower to generic constraints.
     to_generic: Sequence[ConstraintRecord] = field(default_factory=tuple)
+    #: Single-term records kept in ``to_generic`` because their limits conflict.
+    bound_conflicts: Sequence[BoundConflict] = field(default_factory=tuple)
+
+
+_Slot = tuple[int, int]
+
+
+def _entity_slots(
+    record: ConstraintRecord,
+) -> dict[_Slot, tuple[float | None, float | None]]:
+    """``{(stage_index, block): (lower, upper)}`` of a single-term record on its
+    variable, unbounded sides as ``None``."""
+    term = record.terms[0]
+    slots: dict[_Slot, tuple[float | None, float | None]] = {}
+    for stage_index, stage_bounds in record.bounds.items():
+        coefficient = term.coefficient_at(stage_index)
+        for block, (lower, upper) in enumerate(
+            zip(stage_bounds.lower, stage_bounds.upper, strict=True)
+        ):
+            lower, upper = sided_bounds(lower, upper, coefficient)
+            lower = lower if is_bounded(lower) else None
+            upper = upper if is_bounded(upper) else None
+            if lower is not None or upper is not None:
+                slots[(stage_index, block)] = (lower, upper)
+    return slots
+
+
+def _floor_above(floor: float | None, ceiling: float | None) -> bool:
+    return (
+        floor is not None
+        and ceiling is not None
+        and floor - ceiling > relative_tolerance(ceiling)
+    )
+
+
+def _group_conflict(
+    family: str, group: Sequence[ConstraintRecord]
+) -> BoundConflict | None:
+    """The conflict among *group* (one plant variable), or ``None``.
+
+    Only pairs of distinct records count: a record whose own floor exceeds its
+    own ceiling stays a bound and fails at the bound intersection.
+    """
+    slots = {record.constraint_id: _entity_slots(record) for record in group}
+    involved: set[int] = set()
+    first: _Slot | None = None
+    for a, b in combinations(sorted(slots), 2):
+        for slot in slots[a].keys() & slots[b].keys():
+            (lower_a, upper_a), (lower_b, upper_b) = slots[a][slot], slots[b][slot]
+            if _floor_above(lower_a, upper_b) or _floor_above(lower_b, upper_a):
+                involved.update((a, b))
+                first = slot if first is None else min(first, slot)
+    if first is None:
+        return None
+    lowers = [slots[cid][first][0] for cid in involved if first in slots[cid]]
+    uppers = [slots[cid][first][1] for cid in involved if first in slots[cid]]
+    term = group[0].terms[0]
+    return BoundConflict(
+        family=family,
+        code=term.code,
+        variable=term.variable,
+        constraint_ids=tuple(sorted(involved)),
+        stage_index=first[0],
+        block=first[1],
+        floor=max(value for value in lowers if value is not None),
+        ceiling=min(value for value in uppers if value is not None),
+    )
+
+
+def _split_bound_conflicts(
+    to_bounds: Sequence[ConstraintRecord],
+) -> tuple[list[ConstraintRecord], list[ConstraintRecord], list[BoundConflict]]:
+    """``(kept, rerouted, conflicts)``: the records of a conflicting pair move
+    from the bounds to the generic constraints, each with its own slack."""
+    groups: dict[tuple[str, int, str], list[ConstraintRecord]] = defaultdict(list)
+    for record in to_bounds:
+        if record.family in _SOFT_CONFLICT_FAMILIES:
+            term = record.terms[0]
+            groups[(record.family, term.code, term.variable)].append(record)
+    conflicts: list[BoundConflict] = []
+    for (family, _, _), group in sorted(groups.items()):
+        if len(group) > 1:
+            conflict = _group_conflict(family, group)
+            if conflict is not None:
+                conflicts.append(conflict)
+    moved = {
+        (conflict.family, cid)
+        for conflict in conflicts
+        for cid in conflict.constraint_ids
+    }
+    kept = [r for r in to_bounds if (r.family, r.constraint_id) not in moved]
+    rerouted = [r for r in to_bounds if (r.family, r.constraint_id) in moved]
+    return kept, rerouted, conflicts
+
+
+def bound_conflicts_diagnostic(
+    conflicts: Sequence[BoundConflict], plant_names: Mapping[int, str]
+) -> Diagnostic:
+    """WARNING listing the conflicting restrictions kept as soft constraints."""
+    rows = [
+        [
+            conflict.code,
+            plant_names.get(conflict.code, ""),
+            conflict.variable,
+            ", ".join(f"{conflict.family} {cid}" for cid in conflict.constraint_ids),
+            conflict.stage_index + 1,
+            conflict.block + 1,
+            conflict.floor,
+            conflict.ceiling,
+        ]
+        for conflict in conflicts
+    ]
+    return Diagnostic(
+        code="decomp-conflicting-flow-restrictions",
+        severity=Severity.WARNING,
+        category=_CATEGORY,
+        title=f"Conflicting flow restrictions kept soft ({len(rows)})",
+        summary=(
+            f"{len(rows)} plant flow(s) carry single-plant HQ restrictions that "
+            "no value meets at once. Each listed restriction is converted as a "
+            "generic constraint with its own slack at the common penalty "
+            "instead of a plant bound, so novomodelo violates whichever is cheaper, "
+            "as the source model does."
+        ),
+        table=DiagnosticTable(
+            columns=[
+                "Code",
+                "Name",
+                "Variable",
+                "Restrictions",
+                "First stage",
+                "Block",
+                "Floor (m3/s)",
+                "Ceiling (m3/s)",
+            ],
+            rows=rows,
+        ),
+        remediation=(
+            "Check the listed restrictions in the deck: one of them is violated "
+            "in every scenario, and the source model reports which one in its "
+            "infeasibility report (inviab)."
+        ),
+    )
 
 
 def read_constraints(dadger: Dadger) -> ConstraintCensus:
@@ -666,7 +862,8 @@ def read_constraints(dadger: Dadger) -> ConstraintCensus:
 
     Returns a :class:`ConstraintCensus`: every record grouped by family, plus the
     two lowering buckets — ``to_bounds`` (single-term on a bounded variable) and
-    ``to_generic`` (multi-term, unbounded-variable, or ``HE``).
+    ``to_generic`` (multi-term, unbounded-variable, ``HE``, or a single-term RHQ
+    whose limits conflict with another's, listed in ``bound_conflicts``).
     """
     by_family: dict[str, list[ConstraintRecord]] = {}
     for config in _TRIPLE_FAMILIES:
@@ -678,6 +875,8 @@ def read_constraints(dadger: Dadger) -> ConstraintCensus:
     for records in by_family.values():
         for record in records:
             (to_bounds if lowers_to_bound(record) else to_generic).append(record)
+    to_bounds, rerouted, conflicts = _split_bound_conflicts(to_bounds)
+    to_generic.extend(rerouted)
 
     _LOG.info(
         "special constraints read: %s; %d -> bounds, %d -> generic",
@@ -689,6 +888,7 @@ def read_constraints(dadger: Dadger) -> ConstraintCensus:
         by_family={fam: tuple(recs) for fam, recs in by_family.items()},
         to_bounds=tuple(to_bounds),
         to_generic=tuple(to_generic),
+        bound_conflicts=tuple(conflicts),
     )
 
 

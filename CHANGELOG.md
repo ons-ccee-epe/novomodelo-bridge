@@ -207,6 +207,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert decomp` converts two flow restrictions on one plant that no
+  value meets at once.** Single-plant `HQ` restrictions on the same variable,
+  such as a 0 m³/s ceiling and a 6 m³/s floor on a plant's outflow, failed the
+  conversion where their bounds were intersected. They now become generic
+  constraints, each with its own slack at the same penalty, so Cobre violates
+  the cheaper one as DECOMP does, whatever their order or numbers in the
+  deck. A `decomp-conflicting-flow-restrictions` warning names the plant, the
+  restrictions and both limits.
 - **`compare decomp` renders the report when DECOMP's lower bound
   overflowed.** DECOMP prints a lower bound too wide for its field as
   asterisks; the convergence chart now draws each bound over the iterations

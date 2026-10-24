@@ -1917,7 +1917,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "CQ", item = "tipo" },
     { file = "dadger", register = "CQ", item = "coeficiente" },
   ]
-  how = "Teto de defluência de uma RHQ de termo único sobre `QDEF` com coeficiente ±1: `limite_superior` do `LQ` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]; coeficiente −1 troca e inverte os lados. RHQ com vários termos ou coeficiente diferente de ±1 vira restrição genérica."
+  how = "Teto de defluência de uma RHQ de termo único sobre `QDEF` com coeficiente ±1: `limite_superior` do `LQ` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]; coeficiente −1 troca e inverte os lados. RHQ com vários termos ou coeficiente diferente de ±1 vira restrição genérica, assim como duas RHQ de termo único sobre a mesma variável da mesma usina cujos limites não têm valor comum num mesmo estágio e patamar."
 
   [[output.field]]
   path = "min_turbined_m3s"
@@ -2600,7 +2600,7 @@ reads = [
   { file = "libs_restricao_eletrica" },
   { file = "renovaveis" },
 ]
-summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `QBOM` sem estação `UE`, `VDEF`/`VDES`/`VBOM`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
+summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `QBOM` sem estação `UE`, `VDEF`/`VDES`/`VBOM`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
 
   [[output.field]]
   path = "constraints[].id"
