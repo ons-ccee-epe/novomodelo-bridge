@@ -14,6 +14,7 @@ from novomodelo_bridge.core.productivity import (
     equivalent_productivity_from_coeffs,
     evaluate_cota,
     fpha_efficiency,
+    fpha_spillage_fit_max_m3s,
     integrated_productivity,
     mean_cota,
     stored_energy_productivity,
@@ -173,6 +174,19 @@ class TestFphaEfficiency:
         ):
             fpha_efficiency(0.9, "CLAMPED PLANT")
         assert any("CLAMPED PLANT" in record.getMessage() for record in caplog.records)
+
+
+class TestFphaSpillageFitMax:
+    def test_is_twice_the_largest_monthly_mean(self) -> None:
+        means = [900.0, 21141.0, 18000.0] + [500.0] * 9
+        assert fpha_spillage_fit_max_m3s(288, means) == 42282.0
+
+    def test_artificial_gauge_has_none_whatever_its_means(self) -> None:
+        assert fpha_spillage_fit_max_m3s(300, [100.0] * 12) is None
+
+    def test_gauge_without_a_positive_mean_has_none(self) -> None:
+        assert fpha_spillage_fit_max_m3s(12, [0.0] * 12) is None
+        assert fpha_spillage_fit_max_m3s(12, []) is None
 
 
 class TestKturbByTipoTurbina:

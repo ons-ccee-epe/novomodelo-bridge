@@ -11,7 +11,8 @@ seasonal reference volumes, FICT-cascade fold-in) around that math.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 
 import pandas as pd
 import pyarrow as pa
@@ -20,6 +21,7 @@ from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.productivity import (
     compute_productivity,
     equivalent_productivity,
+    fpha_spillage_fit_max_m3s,
     integrated_productivity,
     stored_energy_productivity,
 )
@@ -35,6 +37,7 @@ from novomodelo_bridge.newave.converters.hydro.overrides import (
     _extract_temporal_overrides,
     _per_stage_drop_overrides,
 )
+from novomodelo_bridge.newave.converters.stochastic import natural_monthly_means
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -194,9 +197,12 @@ def compute_per_stage_prodt_sin_mean(case: NewaveCase) -> list[float]:
     return [v / count for v in stage_sum] if count else []
 
 
-def _fpha_computed_config(hreg: pd.Series) -> dict:
+def _fpha_computed_config(
+    hreg: pd.Series, spillage_fit_max_m3s: float | None = None
+) -> dict:
     """``fpha_config`` for a computed-FPHA plant, with the source model's fitting
-    window.
+    window and, when given, its spillage fit range
+    (:func:`~novomodelo_bridge.core.productivity.fpha_spillage_fit_max_m3s`).
 
     The source model fits the FPHA volume axis over the *operative* storage range, which
     depends on the regulation type:
@@ -218,10 +224,32 @@ def _fpha_computed_config(hreg: pd.Series) -> dict:
     else:
         vref = float(hreg["volume_referencia"])
         vlo = vhi = vref
-    return {
+    config: dict = {
         "source": "computed",
         "fitting_window": {"volume_min_hm3": vlo, "volume_max_hm3": vhi},
     }
+    if spillage_fit_max_m3s is not None:
+        config["spillage_fit_max_m3s"] = spillage_fit_max_m3s
+    return config
+
+
+def _spillage_fit_maxima(
+    confhd: pd.DataFrame,
+    fpha_codes: AbstractSet[int],
+    natural_monthly_means: Mapping[int, Sequence[float]],
+) -> dict[int, float]:
+    """``{plant code: spillage fit range (m³/s)}`` for each FPHA plant whose
+    ``confhd`` posto has one."""
+    maxima: dict[int, float] = {}
+    for _, row in confhd.iterrows():
+        code = int(row["codigo_usina"])
+        if code not in fpha_codes or pd.isna(row["posto"]):
+            continue
+        posto = int(row["posto"])
+        value = fpha_spillage_fit_max_m3s(posto, natural_monthly_means.get(posto, ()))
+        if value is not None:
+            maxima[code] = value
+    return maxima
 
 
 def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
@@ -288,6 +316,12 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         else None
     )
 
+    spillage_max_by_code = (
+        _spillage_fit_maxima(existing, fpha_codes, natural_monthly_means(case))
+        if fpha_codes
+        else {}
+    )
+
     production_models: list[dict] = []
     for newave_code in confhd_codes:
         try:
@@ -303,7 +337,9 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             else None
         )
         fpha_config = (
-            _fpha_computed_config(hreg) if (is_fpha and hreg is not None) else None
+            _fpha_computed_config(hreg, spillage_max_by_code.get(newave_code))
+            if (is_fpha and hreg is not None)
+            else None
         )
 
         if monthly_useful and hreg is not None:

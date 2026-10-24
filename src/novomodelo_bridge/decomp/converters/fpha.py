@@ -31,15 +31,21 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import emit
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
-from novomodelo_bridge.core.productivity import evaluate_cota, fpha_efficiency
+from novomodelo_bridge.core.productivity import (
+    evaluate_cota,
+    fpha_efficiency,
+    fpha_spillage_fit_max_m3s,
+)
 from novomodelo_bridge.core.tailrace import build_tailrace_table
 from novomodelo_bridge.decomp.converters.cadastro import storage_envelope
 from novomodelo_bridge.decomp.converters.hydro.bounds import _rated_envelope
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from idecomp.decomp import Mlt
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
@@ -161,6 +167,58 @@ def fitting_window(effective: EffectiveCadastro, code: int) -> dict[str, float]:
     envelope (see the module docstring)."""
     vmin, vmax = storage_envelope(effective, code)
     return {"volume_min_hm3": vmin, "volume_max_hm3": vmax}
+
+
+def fpha_config(
+    effective: EffectiveCadastro, mlt: Mlt | None, code: int, stage_index: int
+) -> dict:
+    """Plant *code*'s computed ``fpha_config`` at *stage_index*: its
+    :func:`fitting_window` and, when :func:`spillage_fit_max` has one, its
+    ``spillage_fit_max_m3s``."""
+    config: dict = {
+        "source": "computed",
+        "fitting_window": fitting_window(effective, code),
+    }
+    spillage_max = spillage_fit_max(effective, mlt, code, stage_index)
+    if spillage_max is not None:
+        config["spillage_fit_max_m3s"] = spillage_max
+    return config
+
+
+def spillage_fit_max(
+    effective: EffectiveCadastro, mlt: Mlt | None, code: int, stage_index: int
+) -> float | None:
+    """The FPHA spillage fit range (m³/s) of plant *code* at *stage_index*, from
+    the ``mlt.dat`` means of the inflow gauge in force (``AC NUMPOS``, else the
+    ``hidr.dat`` posto; see
+    :func:`~novomodelo_bridge.core.productivity.fpha_spillage_fit_max_m3s`).
+
+    ``None`` without ``mlt.dat``, for a gauge it does not list, or for a gauge
+    without a positive mean.
+    """
+    table = mlt.valores if mlt is not None else None
+    posto = effective.inflow_gauge(code, stage_index)
+    if table is None or str(posto) not in table.columns:
+        return None
+    return fpha_spillage_fit_max_m3s(posto, table[str(posto)].tolist())
+
+
+def mlt_absent_diagnostic(plant_count: int) -> Diagnostic:
+    """WARNING for a deck with FPHA plants and no ``mlt.dat``."""
+    return Diagnostic(
+        code="fpha-mlt-absent",
+        severity=Severity.WARNING,
+        category="Hydro production model",
+        title="FPHA spillage range without mlt.dat",
+        summary=(
+            f"The deck has no mlt.dat, so the spillage coefficient of {plant_count} "
+            "FPHA plant(s) is fit over twice the plant's maximum turbined flow. "
+            "DECOMP fits it over twice the largest monthly long-term mean inflow "
+            "of the plant's gauge. A plant whose floods exceed the narrower range "
+            "can have its spillage held down by its own production function."
+        ),
+        remediation="Add the deck's mlt.dat to the deck directory.",
+    )
 
 
 def turbine_efficiency(effective: EffectiveCadastro, code: int, name: str) -> float:

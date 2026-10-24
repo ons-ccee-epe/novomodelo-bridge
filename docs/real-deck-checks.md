@@ -115,6 +115,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | `export dessem` against DECOMP's own `mapcut` and `cortdeco` | DECOMP run on the reduced deck writes its own pair, and `convert decomp`, `novomodelo run` and `export dessem` on the same deck write the bridge's. Record 6's integers through the lag-start array and every travel-time record match byte for byte, and each node's latest cut values the in-transit water within 0.2% of DECOMP's. Two runs on edited copies of `dadger.rvN`, one with a `VI` travel time of 100 h and one with the two `VI` records swapped, fixed the conventions the unit tests pin in `test_travel_time.py`, `test_layout.py` and `test_mapcut_writer.py`: the lag array is stage-major with plants inner, the plants are numbered in `VI` record order, and the in-transit coefficients are lag-major with plants inner. Captured with DECOMP 32.0.1 in October 2026. |
 
+### The reduced DECOMP deck and a monthly-stage deck, run by DECOMP with its turbined-flow report
+
+| Check | Verified |
+| --- | --- |
+| Turbined-flow limit against DECOMP's `avl_turb_max.csv` | With `IR ARQCSV`, DECOMP writes `avl_turb_max.csv`, whose `Qmax dc pl` column is the turbined-flow limit it applies to each plant on each stage. The bridge side is the sum of the plant's unit-group limits for the stage, read from `hydro_unit_group_bounds.parquet` or else the group's envelope in `hydros.json`; for Itaipu it is capped by the plant's `max_turbined_m3s` row in `hydro_bounds.parquet`. Every plant matches within 0.5% on every stage DECOMP reports, on both decks, and no fixed point fails to converge. The largest difference is Itaipu, above DECOMP's limit, because the conversion leaves its `VL` lateral inflow out of the tailrace level. Captured with DECOMP 32.0.1 in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the

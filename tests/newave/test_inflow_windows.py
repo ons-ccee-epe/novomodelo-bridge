@@ -21,7 +21,10 @@ from novomodelo_bridge.newave.converters.inflow_windows import (
     convert_inflow_history_windows,
     convert_recent_observation_windows,
 )
-from novomodelo_bridge.newave.converters.stochastic import convert_inflow_stats
+from novomodelo_bridge.newave.converters.stochastic import (
+    convert_inflow_stats,
+    natural_monthly_means,
+)
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
 
@@ -238,6 +241,27 @@ class TestConvertInflowHistoryWindows:
                     posto,
                 ]
                 assert row.value_m3s == expected
+
+
+class TestNaturalMonthlyMeans:
+    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
+    def test_each_calendar_month_averages_the_record_before_the_study(
+        self, mock_vazoes_cls, tmp_path
+    ) -> None:
+        # 5 years of record (2020-2024) against a Sep-2024 study start:
+        # January-August average five years, September-December four.
+        record = _make_vazoes_mock(num_years=5)
+        mock_vazoes_cls.read.return_value = record
+        means = natural_monthly_means(_history_case(tmp_path))
+
+        source = record.vazoes.set_index("data")
+        study_start = datetime.datetime(2024, 9, 1)
+        for posto in (1, 2):
+            before = source.loc[source.index < study_start, posto]
+            expected = [
+                before[before.index.month == month].mean() for month in range(1, 13)
+            ]
+            assert means[posto] == expected
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from idecomp.decomp import Dadger, Dadgnl
+from idecomp.decomp import Dadger, Dadgnl, Mlt
 from idecomp.libs import Renovaveis
 from idecomp.libs.restricoes import Restricoes
 
@@ -119,6 +119,11 @@ class DecompCase:
     def libs_restricao_eletrica(self) -> Restricoes | None:
         path = self.files.libs_restricao_eletrica
         return Restricoes.read(str(path)) if path is not None else None
+
+    @cached_property
+    def mlt(self) -> Mlt | None:
+        path = self.files.mlt
+        return Mlt.read(str(path)) if path is not None else None
 
     # --- Derived state -----------------------------------------------------------
 

@@ -1222,6 +1222,8 @@ reads = [
   { file = "dadger", register = "CQ" },
   { file = "dadger", register = "VI" },
   { file = "hidr" },
+  { file = "polinjus" },
+  { file = "vazoes" },
 ]
 summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` preenchido), ordenada pelo id Novomodelo; o cadastro vem do `hidr.dat` com as modificações `AC` já resolvidas por estágio, e o bloco `diversion` é acoplado só depois da resolução dos limites."
 
@@ -1329,8 +1331,26 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "AC", item = "PROESP" },
     { file = "dadger", register = "AC", item = "JUSMED" },
     { file = "dadger", register = "AC", item = "PERHID" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "codigo_usina_jusante" },
+    { file = "hidr", item = "numero_polinomios_jusante" },
+    { file = "hidr", item = "referencia_jusante_k" },
+    { file = "hidr", item = "a0_jusante_k..a4_jusante_k" },
+    { file = "hidr", item = "posto" },
+    { file = "polinjus", item = "hidreletrica_curvajusante · nivel_montante_referencia" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4" },
+    { file = "vazoes", item = "previsoes · coluna do posto" },
+    { file = "vazoes", item = "cenarios_gerados · coluna do posto" },
+    { file = "vazoes", item = "probabilidades · probabilidade (estagio terminal)" },
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "dadger", register = "DP", item = "duracao_patamar" },
+    { file = "dadger", register = "AC", item = "NUMJUS" },
+    { file = "dadger", register = "AC", item = "NUMPOS" },
+    { file = "dadger", register = "MP", item = "manutencao" },
+    { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Engolimento máximo corrigido pela queda: por estágio, min(Σ máquinas × vazão nominal × (h_op/h_nom)^k, potência instalada / ρ_eq), com h_op = ρ_eq/ρ_esp, ρ_eq = ρ_esp × (cota média sobre [`volume_minimo`, `volume_maximo`] − `canal_fuga_medio`, descontadas as perdas), h_nom = `queda_nominal_conjunto_k` e k = 0,5 (Francis/Pelton) ou 0,2 (Kaplan, `tipo_turbina` = 2); máximo ao longo do horizonte, sem desconto de TEIF/IP. Para Itaipu (código 66) é a soma dos envelopes dos dois grupos. `AC ALTEFE` não é consumido (o idecomp não expõe seu valor) e só gera aviso."
+  how = "Maior valor, ao longo dos estágios, do engolimento máximo que o modelo de origem calcula antes da otimização: `min(qmaxT × MP × FD, Pdisp / ρ_eq)`. qmaxT é o ponto fixo `q = Σ máquinas × vazão nominal × ((h_mon − h_jus(q) − perdas) / h_ef)^k`, que parte do engolimento nominal e para quando dois passos diferem menos de 1 m³/s. h_mon é a cota do volume inicial (`UH`), limitado à faixa do estágio; h_jus vem das famílias do `polinjus` ou, sem o arquivo, dos polinômios de jusante do `hidr`, interpoladas pela cota da usina operada de jusante no seu volume mínimo (sem usina de jusante, a família de menor referência); h_ef é a média das `queda_nominal_conjunto_k` ponderada pelas máquinas (sem queda nominal em algum conjunto, qmaxT é o engolimento nominal); k = 0,5 (Francis/Pelton) ou 0,2 (Kaplan, `tipo_turbina` = 2). Quando a vazão que a usina não consegue reter no estágio (a incremental mais a das usinas a fio d'água a montante, menos o espaço livre do reservatório no estágio, nulo a fio d'água) passa do ponto fixo, qmaxT é o engolimento com essa vazão na curva de jusante. As vazões são as do modelo de origem, negativas incluídas; no estágio terminal, a média das aberturas ponderada pelas probabilidades. Pdisp é a potência instalada efetiva × `MP` × `FD`; ρ_eq é o da faixa inteira (reservatório) ou o do volume de referência (fio d'água). Para Itaipu (código 66) é a soma dos envelopes dos dois grupos. As vazões laterais (`VL`/`VU`) não entram na curva de jusante. `AC ALTEFE` não é consumido (o idecomp não expõe seu valor) e só gera aviso."
 
   [[output.field]]
   path = "hydros[].generation.min_generation_mw"
@@ -1423,8 +1443,26 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "AC", item = "PROESP" },
     { file = "dadger", register = "AC", item = "JUSMED" },
     { file = "dadger", register = "AC", item = "PERHID" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "codigo_usina_jusante" },
+    { file = "hidr", item = "numero_polinomios_jusante" },
+    { file = "hidr", item = "referencia_jusante_k" },
+    { file = "hidr", item = "a0_jusante_k..a4_jusante_k" },
+    { file = "hidr", item = "posto" },
+    { file = "polinjus", item = "hidreletrica_curvajusante · nivel_montante_referencia" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4" },
+    { file = "vazoes", item = "previsoes · coluna do posto" },
+    { file = "vazoes", item = "cenarios_gerados · coluna do posto" },
+    { file = "vazoes", item = "probabilidades · probabilidade (estagio terminal)" },
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "dadger", register = "DP", item = "duracao_patamar" },
+    { file = "dadger", register = "AC", item = "NUMJUS" },
+    { file = "dadger", register = "AC", item = "NUMPOS" },
+    { file = "dadger", register = "MP", item = "manutencao" },
+    { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Espelha `generation.max_turbined_m3s` da usina no grupo único. Para Itaipu, cada grupo recebe o engolimento corrigido pela queda do seu próprio conjunto, com o teto de potência aplicado por conjunto (não por usina), máximo ao longo dos estágios."
+  how = "Espelha `generation.max_turbined_m3s` da usina no grupo único. Para Itaipu, cada grupo recebe o maior valor, ao longo dos estágios, de `min(T, Pdisp_g / ρ_eq)`, com T o limite da usina descrito em `max_turbined_m3s` de `constraints/hydro_bounds.parquet` e Pdisp_g a potência do conjunto × `MP` × `FD` da sua frequência."
 
   [[output.field]]
   path = "hydros[].specific_productivity_mw_per_m3s_per_m"
@@ -1547,9 +1585,12 @@ reads = [
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
   { file = "dadger", register = "AC" },
+  { file = "dadger", register = "MP" },
+  { file = "dadger", register = "FD" },
   { file = "hidr" },
+  { file = "mlt" },
 ]
-summary = "Uma entrada por usina operada com um único intervalo de estágios cobrindo todo o horizonte; as usinas elegíveis recebem a FPHA computada pelo Novomodelo ajustada em torno do volume inicial, as demais produtibilidade constante."
+summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte."
 
   [[output.field]]
   path = "production_models[].hydro_id"
@@ -1565,15 +1606,21 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
 
   [[output.field]]
   path = "production_models[].stage_ranges[].start_stage_id"
-  from = []
-  status = "constant"
-  how = "Sempre 0: o intervalo único começa no primeiro estágio."
+  from = [
+    { file = "dadger", register = "MP" },
+    { file = "dadger", register = "FD" },
+  ]
+  status = "derived"
+  how = "Primeiro estágio (0-based) do intervalo. Um intervalo por trecho de estágios consecutivos com o mesmo modelo: uma usina sem estágio de engolimento nulo tem um único intervalo, que começa em 0."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].end_stage_id"
-  from = []
-  status = "constant"
-  how = "Sempre nulo: o intervalo único é aberto e vale até o fim do horizonte."
+  from = [
+    { file = "dadger", register = "MP" },
+    { file = "dadger", register = "FD" },
+  ]
+  status = "derived"
+  how = "Último estágio (0-based, inclusivo) do intervalo; nulo no último intervalo, que fica aberto até o fim do horizonte."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].model"
@@ -1584,7 +1631,14 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
     { file = "dadger", register = "AC", item = "PROESP" },
   ]
   status = "derived"
-  how = "`fpha` para as usinas com polinômio cota-volume efetivo não nulo e produtibilidade específica positiva no estágio inicial e engolimento e potência nominais efetivos positivos; `constant_productivity` para as demais. É o mesmo critério de `generation.model` em `system/hydros.json`."
+  how = "`fpha` para as usinas com polinômio cota-volume efetivo não nulo e produtibilidade específica positiva no estágio inicial e engolimento e potência nominais efetivos positivos; `constant_productivity` para as demais. É o mesmo critério de `generation.model` em `system/hydros.json`. Numa usina `fpha`, os estágios em que o engolimento máximo da usina é nulo (a soma dos `max_turbined_m3s` por grupo de `constraints/hydro_unit_group_bounds.parquet` ou, para Itaipu, o limite da usina, se menor), por exemplo com todas as máquinas em manutenção (`MP`), recebem `constant_productivity`."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].productivity_mw_per_m3s"
+  when = "somente nos estágios de engolimento nulo de uma usina `fpha`"
+  from = []
+  status = "constant"
+  how = "Sempre 0.0: a usina não gera nesses estágios, e o Novomodelo não ajusta a FPHA para eles."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.source"
@@ -1618,6 +1672,17 @@ summary = "Uma entrada por usina operada com um único intervalo de estágios co
     { file = "hidr", item = "volume_referencia" },
   ]
   how = "Maior `volume_maximo` efetivo (pós `AC VOLMAX`) entre os estágios do estudo, em hm³ (mesma envoltória de `volume_min_hm3`); fio d'água (`D`) colapsa para `volume_referencia`."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s"
+  when = "somente para usinas com modelo `fpha` cujo posto tem média de longo termo positiva no `mlt.dat`"
+  from = [
+    { file = "mlt" },
+    { file = "hidr", item = "posto" },
+    { file = "dadger", register = "AC", item = "NUMPOS" },
+  ]
+  status = "derived"
+  how = "Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal de longo termo do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, no estágio inicial do intervalo), como no DECOMP. Omitido no posto artificial 300, num posto de média nula e quando o deck não traz `mlt.dat` (diagnóstico `fpha-mlt-absent`): o Novomodelo usa então o dobro do engolimento máximo da usina, o mesmo recurso do DECOMP para média nula."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].reference_volume.volume_hm3"
@@ -1841,7 +1906,7 @@ summary = "Famílias de curvas de nível de jusante por usina (uma linha por seg
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único ou canal de desvio de base)"
+when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base ou limite de turbinamento de Itaipu)"
 module = "src/novomodelo_bridge/decomp/converters/bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
@@ -1864,9 +1929,13 @@ reads = [
   { file = "dadger", register = "HV" },
   { file = "dadger", register = "LV" },
   { file = "dadger", register = "CV" },
+  { file = "dadger", register = "MP" },
+  { file = "dadger", register = "FD" },
   { file = "hidr" },
+  { file = "polinjus" },
+  { file = "vazoes" },
 ]
-summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único."
+summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base, limite de turbinamento de Itaipu) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único."
 
   [[output.field]]
   path = "hydro_id"
@@ -1938,8 +2007,16 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "CQ", item = "codigo_usina" },
     { file = "dadger", register = "CQ", item = "tipo" },
     { file = "dadger", register = "CQ", item = "coeficiente" },
+    { file = "hidr", item = "maquinas_conjunto_1..5" },
+    { file = "hidr", item = "vazao_nominal_conjunto_1..5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1..5" },
+    { file = "hidr", item = "queda_nominal_conjunto_1..5" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4" },
+    { file = "vazoes", item = "previsoes · coluna do posto" },
+    { file = "dadger", register = "MP", item = "manutencao" },
+    { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso."
+  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso. Para Itaipu (código 66), também o limite da usina por estágio, `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`: qmaxT como em `generation.max_turbined_m3s` de `system/hydros.json`, aqui sem o fator `MP` × `FD`, e Pdisp_g a potência de cada conjunto × `MP` × `FD` da sua frequência; emitido só nos estágios em que fica abaixo da soma dos tetos dos grupos além da tolerância numérica. Vale o menor dos tetos."
 
   [[output.field]]
   path = "min_generation_mw"
@@ -2079,6 +2156,8 @@ reads = [
   { file = "dadger", register = "LU" },
   { file = "dadger", register = "FU" },
   { file = "hidr" },
+  { file = "polinjus" },
+  { file = "vazoes" },
 ]
 summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `unit_groups` de `system/hydros.json`, esparsas: só onde a disponibilidade por estágio (instalada × `MP` × `FD`) ou o engolimento corrigido pela queda do estágio fica abaixo do envelope do grupo, mais os pisos por frequência `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
 
@@ -2141,8 +2220,26 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "AC", item = "PROESP" },
     { file = "dadger", register = "AC", item = "JUSMED" },
     { file = "dadger", register = "AC", item = "PERHID" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "codigo_usina_jusante" },
+    { file = "hidr", item = "numero_polinomios_jusante" },
+    { file = "hidr", item = "referencia_jusante_k" },
+    { file = "hidr", item = "a0_jusante_k..a4_jusante_k" },
+    { file = "hidr", item = "posto" },
+    { file = "polinjus", item = "hidreletrica_curvajusante · nivel_montante_referencia" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4" },
+    { file = "vazoes", item = "previsoes · coluna do posto" },
+    { file = "vazoes", item = "cenarios_gerados · coluna do posto" },
+    { file = "vazoes", item = "probabilidades · probabilidade (estagio terminal)" },
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "dadger", register = "DP", item = "duracao_patamar" },
+    { file = "dadger", register = "AC", item = "NUMJUS" },
+    { file = "dadger", register = "AC", item = "NUMPOS" },
+    { file = "dadger", register = "MP", item = "manutencao" },
+    { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Engolimento corrigido pela queda do estágio (mesma fórmula de `generation.max_turbined_m3s` em `system/hydros.json`, avaliada no estágio em vez do máximo), emitido só quando fica abaixo do envelope do grupo além da tolerância numérica: um `AC` de máquinas ou de cadastro que reduz o engolimento no meio do horizonte aparece aqui. Para Itaipu, por conjunto."
+  how = "Engolimento máximo do estágio (o cálculo de `generation.max_turbined_m3s` em `system/hydros.json`, avaliado no estágio em vez do máximo), emitido só quando fica abaixo do envelope do grupo além da tolerância numérica. Para Itaipu, `min(T, Pdisp_g / ρ_eq)` por conjunto, como no envelope do grupo."
 
   [[output.field]]
   path = "min_generation_mw"
@@ -3302,6 +3399,13 @@ note = "Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada a
   note = "Os demais arquivos listados no índice não são abertos."
 
 # ---------------------------------------------------------------------------
+# mlt.dat — monthly long-term mean inflows
+# ---------------------------------------------------------------------------
+[[source]]
+file = "mlt"
+note = "Médias de longo termo mensais das vazões naturais por posto, lidas só para a faixa de vertimento do ajuste da FPHA. Os termos de vazão defasada dos cortes de fronteira não as usam: o modelo de origem os avalia sobre a vazão do posto de acoplamento, sem descontar a média."
+
+# ---------------------------------------------------------------------------
 # Deck input files the bridge never resolves
 # ---------------------------------------------------------------------------
 [[source]]
@@ -3309,12 +3413,6 @@ file = "prevs"
 label = "prevs.rvN"
 status = "unread"
 note = "Previsões de vazão semanais por posto, entrada do GEVAZP. Não lido: o conversor usa as previsões já consolidadas na seção de previsões de `vazoes.rvN`."
-
-[[source]]
-file = "mlt"
-label = "mlt.dat"
-status = "unread"
-note = "Médias de longo termo das vazões por posto. Não lido: o modelo de origem avalia os termos de vazão defasada dos cortes de fronteira sobre a vazão do posto de acoplamento, sem descontar a média."
 
 [[source]]
 file = "postos"

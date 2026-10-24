@@ -45,6 +45,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `ree.dat` | ● | ● | ● | ● |  |  |  |  | ● |  |
 | `patamar.dat` |  |  | ● |  |  |  |  |  |  |  |
 | `hidr.dat` |  |  |  | ● | ● | ● | ● | ● |  |  |
+| `vazoes.dat` |  |  |  |  | ● |  |  |  |  |  |
 | `modif.dat` (opcional) |  |  |  | ● | ● | ● | ● |  |  |  |
 | `expt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
 | `exph.dat` (opcional) |  |  |  | ● | ● | ● | ● | ● |  |  |
@@ -337,11 +338,11 @@ Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX
 
 ### `system/hydro_production_models.json`
 
-**Lê:** `dger.dat`, `hidr.dat`, `modif.dat` (opcional), `confhd.dat`, `exph.dat` (opcional), `volref_saz.dat` (opcional), `tratamento-fpha.csv` (opcional)  
+**Lê:** `dger.dat`, `hidr.dat`, `modif.dat` (opcional), `confhd.dat`, `exph.dat` (opcional), `volref_saz.dat` (opcional), `tratamento-fpha.csv` (opcional), `vazoes.dat`  
 **Quando:** sempre.  
 **Esquema:** [production_models.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/production_models.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/hydro/productivity.py`
 
-Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante) e o volume de referência; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`.
+Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante), o volume de referência e, nas usinas FPHA, a faixa de vertimento do ajuste; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
@@ -353,6 +354,7 @@ Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produti
 | `production_models[].stage_ranges[].fpha_config.source` | — *(constante)* | Sempre `computed`: o Novomodelo ajusta a FPHA a partir da geometria, das curvas de jusante e do rendimento. Presente só em faixas `fpha`. |
 | `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume` | Limite inferior da janela de ajuste da FPHA: `volume_minimo` para regulação `M`; `volume_referencia` para `D`/`S` (ajuste em volume único, como o NEWAVE). |
 | `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMAX · volume` | Limite superior da janela de ajuste: `volume_maximo` para regulação `M`; `volume_referencia` para `D`/`S`. |
+| `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s` | `vazoes.dat` › `1..N (coluna por posto)`, `confhd.dat` › `posto`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `ano_inicial_historico` *(derivado; condicional: somente em faixas `fpha` de usina cujo posto (não artificial) tem média mensal positiva no histórico)* | Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal, por mês-calendário, da vazão natural do posto da usina em `vazoes.dat`, sobre o mesmo histórico de `scenarios/inflow_history.parquet` (até o mês anterior ao início do estudo). É a regra do DECOMP com a média de longo termo do `mlt.dat`. Omitido no posto artificial 300 e num posto de média nula: o Novomodelo usa então o dobro do engolimento máximo da usina. |
 | `production_models[].stage_ranges[].reference_volume.percentile` | — *(constante)* | Sempre 0.65 (altura a 65% do volume útil, convenção do NEWAVE e padrão do Novomodelo). Presente só em faixas `fpha` de usina sem linha em `volref_saz.dat`. |
 | `production_models[].default_model` | — *(constante; condicional: somente em caso FPHA para usina com linha não nula em `volref_saz.dat`)* | Sempre `constant_productivity`: as doze estações são listadas, logo o padrão nunca é consultado. |
 | `production_models[].seasons[].season_id` | `volref_saz.dat` › `mes` *(derivado; condicional: somente em caso FPHA para usina com linha não nula em `volref_saz.dat`)* | `mes − 1` (0 = janeiro), alinhado ao mapa de estações de `stages.json`. |
@@ -361,6 +363,7 @@ Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produti
 | `production_models[].seasons[].fpha_config.source` | — *(constante; condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Sempre `computed`. |
 | `production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume` *(condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Igual a `stage_ranges[].fpha_config.fitting_window.volume_min_hm3`, repetido em cada estação. |
 | `production_models[].seasons[].fpha_config.fitting_window.volume_max_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMAX · volume` *(condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Igual a `stage_ranges[].fpha_config.fitting_window.volume_max_hm3`, repetido em cada estação. |
+| `production_models[].seasons[].fpha_config.spillage_fit_max_m3s` | `vazoes.dat` › `1..N (coluna por posto)`, `confhd.dat` › `posto` *(derivado; condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat` e posto com média mensal positiva)* | Igual a `stage_ranges[].fpha_config.spillage_fit_max_m3s`, repetido em cada estação. |
 | `fpha_plane_reduction.method` | `tratamento-fpha.csv` › `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO / HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO` *(condicional: somente em caso FPHA com ao menos uma usina `fpha`, `indices.csv` listando `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e o arquivo apontado com linha de método ativa; sem a chave no índice a redução de planos fica desligada no Novomodelo)* | `angle` para a linha `…-ANGULO-PADRAO`, `distance` para `…-DISTANCIA-PADRAO`; linhas iniciadas por `&` são comentários. Com mais de uma linha ativa, a primeira vale e um aviso é emitido. |
 | `fpha_plane_reduction.tolerance_deg` | `tratamento-fpha.csv` › `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO` *(condicional: somente quando o método ativo em `tratamento-fpha.csv` é o de ângulo)* | Tolerância angular (graus) lida após o `;` da linha. |
 | `fpha_plane_reduction.tolerance_pct` | `tratamento-fpha.csv` › `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO` *(condicional: somente quando o método ativo em `tratamento-fpha.csv` é o de distância)* | Tolerância de distância lida após o `;` da linha. |
@@ -822,6 +825,9 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 - `mes_inicio_estudo` → `system/hydros.json` › `hydros[].entry_stage_id`
 - `funcao_producao_uhe` → `system/hydro_production_models.json` › `production_models[].selection_mode`
 - `funcao_producao_uhe` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].model`
+- `mes_inicio_estudo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
+- `ano_inicio_estudo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
+- `ano_inicial_historico` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
 - `funcao_producao_uhe` → `system/hydro_production_models.json` › `production_models[].seasons[].model`
 - `ano_inicio_estudo` → `system/hydro_energy_productivity.parquet` › `stage_id`
 - `mes_inicio_estudo` → `system/hydro_energy_productivity.parquet` › `stage_id`
@@ -918,6 +924,8 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `nome_usina` → `system/hydros.json` › `hydros[].unit_groups[].name`
 - `ree` → `system/hydros.json` › `hydros[].unit_groups[].bus_id`
 - `codigo_usina` → `system/hydro_production_models.json` › `production_models[].hydro_id`
+- `posto` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
+- `posto` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.spillage_fit_max_m3s`
 - `codigo_usina` → `system/hydro_geometry.parquet` › `hydro_id`
 - `codigo_usina` → `system/hydro_energy_productivity.parquet` › `hydro_id`
 - `codigo_usina_jusante` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
@@ -1263,8 +1271,10 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 
 ### `vazoes.dat`
 
-**Estado:** convertido. **Lido por:** `scenarios/inflow_history.parquet`, `scenarios/inflow_seasonal_stats.parquet`.
+**Estado:** convertido. **Lido por:** `scenarios/inflow_history.parquet`, `scenarios/inflow_seasonal_stats.parquet`, `system/hydro_production_models.json`.
 
+- `1..N (coluna por posto)` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
+- `1..N (coluna por posto)` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.spillage_fit_max_m3s`
 - `1..N (coluna por posto)` → `scenarios/inflow_history.parquet` › `value_m3s`
 - `1..N (coluna por posto)` → `scenarios/inflow_seasonal_stats.parquet` › `mean_m3s`
 - `1..N (coluna por posto)` → `scenarios/inflow_seasonal_stats.parquet` › `std_m3s`

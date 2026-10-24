@@ -92,6 +92,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`convert decomp` caps turbined flow at DECOMP's stage limit.** A plant's
+  turbined flow was capped at its rated flow corrected for the head over its
+  whole storage range. It is now capped stage by stage at the limit DECOMP
+  computes before the optimization. The head is taken at the stage's initial
+  storage, with the tailrace rising with the flow until head and flow agree.
+  The limit is scaled by the plant's `MP` and `FD` factors and kept under the
+  flow of its available power. A plant that cannot hold back its stage inflow
+  turbines up to that inflow. Itaipu's limit is plant-wide: its two frequency
+  groups share it, and each group is held to its own available power.
+- **Both tracks set the spillage range of the FPHA fit.** Each FPHA plant's
+  `fpha_config.spillage_fit_max_m3s` is twice the largest monthly mean
+  inflow of its gauging station: DECOMP's long-term means in `mlt.dat` (the
+  `AC NUMPOS` station when the deck gives one), and on the NEWAVE track the
+  calendar-month means of the natural `vazoes.dat` record before the study
+  start. Cobre fitted the spillage coefficient over twice the maximum
+  turbined flow, a range a flood can exceed: the fitted plane then caps the
+  plant's spillage below the water it must pass. A plant on the artificial
+  station 300 keeps that fallback, as in DECOMP, and a DECOMP deck without
+  `mlt.dat` keeps it for every plant with an `fpha-mlt-absent` warning. The
+  field needs the paired cobre release.
+- **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
+  An FPHA plant whose turbined limit is zero on a stage, such as one with
+  every machine under maintenance, takes a zero constant productivity on that
+  stage and the production function on the others. DECOMP builds no planes
+  for such a stage; fitted planes there forced generation and outflow slack.
+  Cobre fits the production function only on the stages that select it from
+  the paired release on.
 - **Both tracks simulate with every trained cut.** `config.json` now sets
   `simulation.cut_set` to `all` rather than leaving it to cobre's default.
   The source models' cut selection only speeds up the LP solves, and their

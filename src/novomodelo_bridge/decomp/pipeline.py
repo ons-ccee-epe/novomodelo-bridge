@@ -136,6 +136,7 @@ class DecompCaseArtifacts:
     initial_conditions: dict | None = None
     deficit_cost: float | None = None
     fpha_codes: set[int] | None = None
+    turbine_limits: hydro_conv.TurbineLimits | None = None
     # Populated by `_resolve_bounds`.
     census: constraint_registers.ConstraintCensus | None = None
     pumping_ids: dict[int, int] | None = None
@@ -971,24 +972,44 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.stages_dict = stages_dict
     writer.write_json("stages.json", stages_dict)
 
-    # FPHA-eligible plants get novomodelo's computed-FPHA model, fit over the
-    # whole storage envelope (fpha_conv.fitting_window) with its reference volume
-    # anchored at the initial volume; the rest keep constant productivity, whose
-    # ρ_eq is anchored at the initial volume (not the full-range mean) — see
+    # Both the FPHA reference volume and the constant-productivity ρ_eq are
+    # anchored at the initial volume, not the full-range mean — see
     # hydro._equivalent_productivity_mw_per_m3s.
     initial_volumes = hydro_conv._operated_initial_volumes(case, effective=effective)
+    turbine_limits = hydro_conv.compute_turbine_limits(
+        effective,
+        id_map,
+        artifacts.calendar,
+        initial_volumes=initial_volumes,
+        incremental_inflows=scenarios_conv.expected_incremental_inflows(
+            artifacts.vazoes, effective, id_map, artifacts.calendar, fan_probabilities
+        ),
+        tailrace=hydro_conv.tailrace_families(case, id_map),
+        availability_factors=hydro_conv.stage_availability_factors(
+            case, id_map, effective=effective
+        ),
+    )
+    artifacts.turbine_limits = turbine_limits
     fpha_codes = fpha_conv.fpha_eligible_codes(effective, id_map)
     artifacts.fpha_codes = fpha_codes
-    fpha_configs: dict[int, dict] = {}
-    reference_volumes: dict[int, dict] = {}
+    if fpha_codes and case.mlt is None:
+        dx.emit(fpha_conv.mlt_absent_diagnostic(len(fpha_codes)), logger=_LOG)
+    stage_models: dict[int, list[dict]] = {}
     for code in fpha_codes:
         vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
-        v_init = initial_volumes.get(code, vmin)
-        fpha_configs[code] = {
-            "source": "computed",
-            "fitting_window": fpha_conv.fitting_window(effective, code),
-        }
-        reference_volumes[code] = {"volume_hm3": v_init}
+        reference_volume = {"volume_hm3": initial_volumes.get(code, vmin)}
+        stage_models[code] = [
+            hydro_conv.outage_stage_model()
+            if turbine_limits.plant_limit(code, stage.index) <= 0.0
+            else {
+                "model": "fpha",
+                "fpha_config": fpha_conv.fpha_config(
+                    effective, case.mlt, code, stage.index
+                ),
+                "reference_volume": reference_volume,
+            }
+            for stage in artifacts.calendar
+        ]
 
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
@@ -1033,6 +1054,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         case,
         id_map,
         effective=effective,
+        turbine_limits=turbine_limits,
         travel_time_hours=travel_time_hours,
         fpha_codes=fpha_codes,
     )
@@ -1104,7 +1126,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     writer.write_json("initial_conditions.json", initial_conditions_doc)
     writer.write_json(
         "system/hydro_production_models.json",
-        hydro_conv.convert_production_models(id_map, fpha_configs, reference_volumes),
+        hydro_conv.convert_production_models(id_map, stage_models),
     )
     writer.write_parquet(
         "system/hydro_energy_productivity.parquet", productivity_parquet
@@ -1231,6 +1253,8 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     assert hydros_dict is not None
     line_bounds = artifacts.line_bounds
     assert line_bounds is not None
+    turbine_limits = artifacts.turbine_limits
+    assert turbine_limits is not None
 
     census = constraint_registers.read_constraints(dadger)
     if census.bound_conflicts:
@@ -1296,8 +1320,9 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             logger=_LOG,
         )
     # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
-    # storage envelope, the CT thermal generation bounds, and the RE/RHQ/RHV
-    # single-term special-constraint bounds — is collected as
+    # storage envelope, a split plant's turbined-flow limit, the CT thermal
+    # generation bounds, and the RE/RHQ/RHV single-term special-constraint
+    # bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
     # exactly ONE resolve() + build_bound_tables() pass, so a new special
     # constraint colliding with a legacy bound on the same (entity, stage,
@@ -1310,6 +1335,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         *bounds_conv.convert_storage_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_volume_espera_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_spillage_upper_bounds(case, id_map),
+        *hydro_conv.plant_turbine_limit_contributions(turbine_limits, id_map),
         *thermal_generation_contribs,
         *single_term_bounds.single_term_bound_contributions(
             case,
@@ -1457,16 +1483,18 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     assert census is not None
     hydros_dict = artifacts.hydros_dict
     assert hydros_dict is not None
+    turbine_limits = artifacts.turbine_limits
+    assert turbine_limits is not None
 
-    # Per-group per-stage availability (installed × MP ×
-    # FD, capped by the ρ_eq·q_max hydraulic ceiling) for every plant,
+    # Per-group per-stage availability (installed × MP × FD) and turbined-flow
+    # limit for every plant,
     # single-group and Itaipu's own two per-frequency groups (code 66) alike.
     # Sparse by construction — a value only lands here where it lowers that
     # group's own declared envelope — so novomodelo rule 45 (a group-bound max_*
     # may not exceed that group's declared max) is now reachable; its mirror
     # is wired into the self-check block below.
     availability_values = hydro_conv.convert_hydro_group_availability(
-        case, id_map, effective=effective
+        case, id_map, effective=effective, turbine_limits=turbine_limits
     )
     # Itaipu's RI per-frequency must-run floors
     # (geracao_minima_50/60_hz) overlay the same per-group table as the

@@ -9,7 +9,7 @@ plant stays on the constant-productivity path (regression-preserving).
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -195,6 +195,14 @@ class TestFphaConverters:
     non-FPHA now that run-of-river plants are eligible.
     """
 
+    @pytest.fixture(autouse=True)
+    def natural_means(self):
+        with patch(
+            "novomodelo_bridge.newave.converters.hydro.productivity.natural_monthly_means",
+            return_value={},
+        ) as mock:
+            yield mock
+
     def _id_map(self) -> NewaveIdMap:
         return NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
 
@@ -345,6 +353,33 @@ class TestFphaConverters:
         assert models[0]["reference_volume"] == {"percentile": 0.65}
         assert "productivity_mw_per_m3s" not in models[0]
         assert models[1]["model"] == "constant_productivity"
+
+    def test_production_models_spillage_range_from_the_posto_natural_means(
+        self, tmp_path: Path, natural_means: MagicMock
+    ) -> None:
+        natural_means.return_value = {1: [400.0] * 11 + [900.0], 2: [50.0] * 12}
+        result = convert_production_models(self._case(tmp_path), self._id_map())
+        models = {
+            m["hydro_id"]: m["stage_ranges"][0] for m in result["production_models"]
+        }
+        assert models[0]["fpha_config"]["spillage_fit_max_m3s"] == 1800.0
+        assert "fpha_config" not in models[1]
+
+    def test_production_models_artificial_gauge_keeps_novomodelo_default_range(
+        self, tmp_path: Path, natural_means: MagicMock
+    ) -> None:
+        confhd = _make_confhd_df()
+        confhd.loc[0, "posto"] = 300
+        natural_means.return_value = {300: [100.0] * 12}
+        result = convert_production_models(
+            self._case(tmp_path, confhd=confhd), self._id_map()
+        )
+        (fpha,) = [
+            m["stage_ranges"][0]
+            for m in result["production_models"]
+            if m["stage_ranges"][0]["model"] == "fpha"
+        ]
+        assert "spillage_fit_max_m3s" not in fpha["fpha_config"]
 
     def test_production_models_plane_reduction_emitted(self, tmp_path: Path) -> None:
         result = convert_production_models(

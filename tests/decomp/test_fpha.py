@@ -1,7 +1,7 @@
 """Tests for the DECOMP FPHA converter (``decomp/fpha.py``).
 
 Tier-1: synthetic ``EffectiveCadastro`` / ``DecompIdMap`` / polinjus doubles,
-no real deck. Covers the fitting window, eligibility,
+no real deck. Covers the fitting window, the spillage fit range, eligibility,
 turbine efficiency, the VHA geometry table, and the tailrace-curves wrapper.
 """
 
@@ -18,8 +18,11 @@ from novomodelo_bridge.decomp.converters.fpha import (
     convert_hydro_geometry,
     convert_tailrace_curves,
     fitting_window,
+    fpha_config,
     fpha_eligible_codes,
     is_fpha_eligible,
+    mlt_absent_diagnostic,
+    spillage_fit_max,
     turbine_efficiency,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -109,6 +112,90 @@ def test_fitting_window_collapses_to_the_reference_volume_for_run_of_river() -> 
         "volume_min_hm3": 250.0,
         "volume_max_hm3": 250.0,
     }
+
+
+# ---------------------------------------------------------------------------
+# spillage fit range
+# ---------------------------------------------------------------------------
+
+
+class _FakeMlt:
+    """Duck-types ``idecomp.decomp.Mlt``: ``valores`` has a ``mes`` column and
+    one column per posto, named by its number."""
+
+    def __init__(self, means_by_posto: dict[int, list[float]]) -> None:
+        self.valores = pd.DataFrame(
+            {"mes": list(range(1, 13))}
+            | {str(posto): means for posto, means in means_by_posto.items()}
+        )
+
+
+def _gauged_effective(
+    posto: int, numpos: tuple[int, ...] | None = None
+) -> EffectiveCadastro:
+    row = _plant_row()
+    row["posto"] = posto
+    hidr = pd.DataFrame({1: row}).T
+    hidr.index.name = "codigo_usina"
+    return EffectiveCadastro(
+        base=hidr,
+        n_stages=2,
+        stage_varying={},
+        inflow_gauges={1: numpos} if numpos is not None else {},
+    )
+
+
+_MLT = _FakeMlt(
+    {
+        12: [100.0] * 11 + [700.0],
+        40: [50.0] * 12,
+        300: [0.0] * 12,
+    }
+)
+
+
+def test_spillage_fit_max_is_twice_the_gauge_largest_monthly_mean() -> None:
+    assert spillage_fit_max(_gauged_effective(12), _MLT, 1, 0) == 1400.0
+
+
+def test_spillage_fit_max_follows_the_ac_numpos_gauge_of_the_stage() -> None:
+    eff = _gauged_effective(12, numpos=(12, 40))
+    assert spillage_fit_max(eff, _MLT, 1, 0) == 1400.0
+    assert spillage_fit_max(eff, _MLT, 1, 1) == 100.0
+
+
+def test_spillage_fit_max_none_on_the_artificial_gauge() -> None:
+    assert (
+        spillage_fit_max(_gauged_effective(12, numpos=(300, 300)), _MLT, 1, 0) is None
+    )
+
+
+def test_spillage_fit_max_none_without_mlt_or_for_an_unlisted_gauge() -> None:
+    assert spillage_fit_max(_gauged_effective(12), None, 1, 0) is None
+    assert spillage_fit_max(_gauged_effective(77), _MLT, 1, 0) is None
+
+
+def test_fpha_config_carries_the_spillage_range_only_when_there_is_one() -> None:
+    assert fpha_config(_gauged_effective(12), _MLT, 1, 0) == {
+        "source": "computed",
+        "fitting_window": {"volume_min_hm3": 100.0, "volume_max_hm3": 500.0},
+        "spillage_fit_max_m3s": 1400.0,
+    }
+    assert "spillage_fit_max_m3s" not in fpha_config(_gauged_effective(12), None, 1, 0)
+
+
+def test_mlt_absent_diagnostic_is_a_warning_naming_the_plant_count() -> None:
+    diagnostic = mlt_absent_diagnostic(3)
+    assert diagnostic.severity is Severity.WARNING
+    assert "3 FPHA plant(s)" in diagnostic.summary
+    assert "mlt.dat" in (diagnostic.remediation or "")
+
+
+def test_mlt_absent_remediation_has_no_repo_internal_references() -> None:
+    diagnostic = mlt_absent_diagnostic(3)
+    message = f"{diagnostic.summary} {diagnostic.remediation}"
+    for leak in ("docs/", "plans/", "~/git", ".py", "TRACKED", "_"):
+        assert leak not in message
 
 
 # ---------------------------------------------------------------------------
