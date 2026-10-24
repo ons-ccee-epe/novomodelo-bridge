@@ -193,17 +193,47 @@ def _monthly_means(
 
 
 def _trunk_rows(
-    table: pd.DataFrame, calendar: Sequence[OperativeStage]
+    weekly: pd.DataFrame | None,
+    monthly: pd.DataFrame | None,
+    calendar: Sequence[OperativeStage],
 ) -> list[tuple[date, date, pd.Series]]:
-    """The deterministic stages' rows (every stage before the terminal one)."""
+    """The deterministic stages' rows (every stage before the terminal one), in
+    stage order: the *weekly* forecasts, then the monthly trunk stages, whose
+    single scenario sits in the *monthly* scenario table."""
     terminal = len(calendar) - 1
     rows: list[tuple[date, date, pd.Series]] = []
-    for _, row in table.iterrows():
-        stage_index = int(row["estagio"]) - 1
-        if 0 <= stage_index < terminal:
-            stage = calendar[stage_index]
-            rows.append((stage.start_date, stage.end_date, row))
+    for table in (weekly, monthly):
+        if table is None:
+            continue
+        for _, row in table.iterrows():
+            stage_index = int(row["estagio"]) - 1
+            if 0 <= stage_index < terminal:
+                stage = calendar[stage_index]
+                rows.append((stage.start_date, stage.end_date, row))
+    rows.sort(key=lambda entry: entry[0])
     return rows
+
+
+def _coupling_trunk(
+    vazoes: Vazoes, calendar: Sequence[OperativeStage]
+) -> list[tuple[date, date, pd.Series]]:
+    return _trunk_rows(
+        vazoes.previsoes_com_postos_artificiais,
+        vazoes.cenarios_calculados_com_postos_artificiais,
+        calendar,
+    )
+
+
+def _operation_trunk(
+    vazoes: Vazoes, calendar: Sequence[OperativeStage]
+) -> list[tuple[date, date, pd.Series]]:
+    return _trunk_rows(vazoes.previsoes, vazoes.cenarios_gerados, calendar)
+
+
+def _terminal_fan(table: pd.DataFrame, terminal_estagio: int) -> list[pd.Series]:
+    """The terminal stage's rows, in scenario order."""
+    fan = table.loc[table["estagio"] == terminal_estagio].sort_values("cenario")
+    return [row for _, row in fan.iterrows()]
 
 
 def coupling_lag_offsets(
@@ -217,13 +247,13 @@ def coupling_lag_offsets(
     """Per-depth m³/s the cut's lag value exceeds novomodelo's, for each coupled hydro.
 
     The recent-observation seed is already read on the coupling posto, so only
-    the deterministic study stages differ: the coupling inflow
-    (``previsoes_com_postos_artificiais`` on the coupling posto) minus the
-    operation inflow novomodelo carries (``previsoes`` on the operation posto). A
-    hydro whose offsets all vanish is omitted.
+    the deterministic study stages differ: the coupling inflow (the tables with
+    the artificial postos computed, on the coupling posto) minus the operation
+    inflow novomodelo carries (``previsoes`` and ``cenarios_gerados``, on the
+    operation posto). A hydro whose offsets all vanish is omitted.
     """
-    coupling_rows = _trunk_rows(vazoes.previsoes_com_postos_artificiais, calendar)
-    operation_rows = _trunk_rows(vazoes.previsoes, calendar)
+    coupling_rows = _coupling_trunk(vazoes, calendar)
+    operation_rows = _operation_trunk(vazoes, calendar)
     offsets: dict[int, tuple[float, ...]] = {}
     for coupling in couplings:
         code = id_map.hydro_codes[coupling.hydro_id]
@@ -262,7 +292,7 @@ def source_only_lag_inflows(
     """
     study_start = calendar[0].start_date
     observation_rows = recent_observation_rows(vazoes, study_start)
-    trunk = _trunk_rows(vazoes.previsoes_com_postos_artificiais, calendar)
+    trunk = _coupling_trunk(vazoes, calendar)
     inflows: dict[int, tuple[float, ...]] = {}
     for index in plant_indices:
         code = plant_codes[index]
@@ -283,25 +313,21 @@ def terminal_shares(
     id_map: DecompIdMap,
     couplings: Iterable[HydroCoupling],
     source_only_codes: Iterable[int],
+    calendar: Sequence[OperativeStage],
 ) -> tuple[TerminalShare, ...]:
     """The plants whose terminal-stage coupling inflow novomodelo's state misses.
 
     A coupled hydro is listed when its coupling inflow
     (``cenarios_calculados_com_postos_artificiais`` on the coupling posto)
     differs from its operation inflow (``cenarios_gerados`` on the operation
-    posto) in some scenario; a source-only plant always is, with its whole
-    coupling inflow as the gap.
+    posto) in some terminal scenario; a source-only plant always is, with its
+    whole coupling inflow as the gap.
     """
-    order = ["estagio", "cenario"]
-    coupling_fan = [
-        row
-        for _, row in vazoes.cenarios_calculados_com_postos_artificiais.sort_values(
-            order
-        ).iterrows()
-    ]
-    operation_fan = [
-        row for _, row in vazoes.cenarios_gerados.sort_values(order).iterrows()
-    ]
+    terminal_estagio = len(calendar)
+    coupling_fan = _terminal_fan(
+        vazoes.cenarios_calculados_com_postos_artificiais, terminal_estagio
+    )
+    operation_fan = _terminal_fan(vazoes.cenarios_gerados, terminal_estagio)
     shares: list[TerminalShare] = []
     for coupling in couplings:
         code = id_map.hydro_codes[coupling.hydro_id]

@@ -314,6 +314,7 @@ def _read_deck_coupling(
             case.id_map,
             resolution.couplings,
             (plant_codes[index] for index in source_only),
+            calendar,
         ),
         carried_share=carried_lag_share(calendar, *cut),
         gnl_plan=_build_gnl_ring_plan(
