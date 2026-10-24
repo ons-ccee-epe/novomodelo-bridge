@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`convert decomp` accepts a deck with a multi-month trunk, or with monthly
+  stages only.** The operative calendar admits any number of deterministic
+  months before the terminal month, and a deck with no operative weeks
+  starting on the first of a month. The inflows of a monthly trunk stage are
+  read from the deck's generated scenarios, where DECOMP records them, and
+  the boundary coupling reads its inflow lags there too. Reading that block
+  needs idecomp 1.15.1 or newer, now the minimum. In a deck of monthly
+  stages only, each fuel-constrained thermal takes its `NL` lag as a lead in
+  stages: the first `lag` months of the study carry the deck's `GL`
+  commitments, made before the study, and the months after the horizon that
+  its study months decide are priced from their own `TG` records. A deck
+  that splits a `GS` month into weeks, declares an `NL` lag longer than the
+  study, or commits `GL` dispatch past the horizon is refused with a message
+  naming the plant.
 - **`convert decomp` emits water travel time.** A plant's `VI` register now
   converts to the delayed cascade arc (`hydros[].travel_time_hours`) and the
   in-transit water seeding it (`initial_conditions.past_defluences`), instead
@@ -193,6 +207,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`compare decomp` renders the report when DECOMP's lower bound
+  overflowed.** DECOMP prints a lower bound too wide for its field as
+  asterisks; the convergence chart now draws each bound over the iterations
+  where it is present, instead of failing to build the HTML report.
+- **DECOMP: an Itaipu `MP` or `FD` row without a frequency applies to both
+  frequency groups.** The frequency field of those registers is optional,
+  and a row that leaves it blank holds for the whole plant; the conversion
+  failed on it before. A plant mixing a blank row with per-frequency rows in
+  one register is refused.
 - **`convert decomp` couples the boundary cuts plant by plant, as DECOMP
   does.** The cut values are scaled by the mean month of the DECOMP manual
   (365.25 days × 24 h / 12) instead of the last stage's hours, and the
