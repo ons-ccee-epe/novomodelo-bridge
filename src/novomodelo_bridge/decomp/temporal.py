@@ -4,15 +4,24 @@ Builds the stage calendar (dates, blocks, seasons) from the deck's start
 date (``DT``) and per-stage block durations (``DP``). The operative-calendar
 rules:
 
-- the study starts on a Saturday; weekly stages are exactly 168 h and break
-  on Saturdays; the single final stage aggregates the second operative
-  month and ends at a calendar month boundary;
-- every weekly stage carries the **first operative month's** season (the
-  month containing its first week's Friday). A straddling head week's
-  previous-month days carry no accumulation weight — that month is closed —
-  and a straddling tail week's next-month days spill over into the second
-  month's accumulator, which the final stage then completes;
-- the final stage carries its own calendar month's season.
+- the study starts on a Saturday. The shape and durations are owned by
+  :func:`build_operative_calendar`; the traps that a reader cannot recover
+  from the code are: the first monthly stage starts mid-month at the week
+  boundary, because the first month's last week keeps the days that overlap
+  the second month; a civil-month-boundary week's ``NH = 168 − 24·Ndias`` is
+  only the NEWAVE-coupling energy weight, so a straddle week is still a 168 h
+  ``DP`` stage; and summer time (``VR``, ``168 ± 1 h``) is the one thing that
+  moves a week's real ``DP`` duration off 168 h, which this whole-day calendar
+  rejects;
+- the terminal fan is the only branching point (see :func:`build_node_graph`),
+  so the deterministic trunk may run any number of monthly stages before it.
+  That the trunk is actually deterministic is a *scenario* contract checked
+  against the inflow file (``scenarios.terminal_fan_probabilities``), not a
+  calendar rule: a deck whose tree branches before the last stage (DECOMP's
+  growing tree from the second month on) is rejected there, never flattened;
+- a weekly stage carries the **first operative month's** season (the month of
+  its first week's Friday), even when it straddles a civil-month boundary; a
+  monthly stage carries its own calendar month's season.
 
 Season ids follow the shared 0-based convention (Jan=0 … Dec=11) via
 :func:`novomodelo_bridge.core.season_calendar.monthly_season_definitions`.
@@ -41,6 +50,10 @@ if TYPE_CHECKING:
 _SATURDAY = 5
 _WEEK_HOURS = 168.0
 _HOURS_PER_DAY = 24.0
+# Only the first operative month is split into weeks, and it spans four to six
+# of them depending on where the Saturday start falls in the civil month; every
+# later month is a single monthly stage.
+_MAX_FIRST_MONTH_WEEKS = 6
 
 
 @dataclass(frozen=True)
@@ -80,16 +93,23 @@ def build_operative_calendar(
     """Derive the operative stage calendar from block durations.
 
     ``stage_block_hours[s][b]`` is the duration in hours of block *b* of
-    stage *s*. All stages but the last must total exactly one operative
-    week (168 h); the last stage aggregates the second operative month and
-    must end at a calendar month boundary.
+    stage *s*. The first operative month is a run of 168 h weekly stages
+    that tiles it to a calendar-month boundary; each subsequent month is one
+    monthly stage spanning a full calendar month. Weekly stages form a prefix
+    and monthly stages the suffix (DECOMP discretizes only the first month
+    into weeks); the last stage is the terminal monthly fan.
 
     Raises
     ------
     ValueError
-        If the calendar violates the operative rules (non-Saturday start,
-        non-weekly stage, fractional days, or a final stage that does not
-        close the second operative month).
+        If the calendar violates the operative rules: non-Saturday start,
+        fractional-day stage, a non-final stage that is neither a 168 h week
+        nor a full calendar month, a weekly stage following a monthly one,
+        more than ``_MAX_FIRST_MONTH_WEEKS`` weekly stages, or a stage that
+        does not close its calendar month. The deterministic trunk may run any
+        number of months; the terminal fan being the only branch point is a
+        *scenario* contract verified against the inflow
+        file (``scenarios.terminal_fan_probabilities``), not here.
     """
     if len(stage_block_hours) < 2:
         raise ValueError(
@@ -102,12 +122,13 @@ def build_operative_calendar(
             f"is a {start_date:%A}"
         )
 
-    first_month_date = start_date + timedelta(days=6)
-    first_month = first_month_date.month
+    first_month = (start_date + timedelta(days=6)).month
 
     stages: list[OperativeStage] = []
     cursor = start_date
     last_index = len(stage_block_hours) - 1
+    seen_monthly = False
+    weeks = 0
     for index, hours in enumerate(stage_block_hours):
         block_hours = tuple(float(h) for h in hours)
         total = sum(block_hours)
@@ -116,26 +137,46 @@ def build_operative_calendar(
             raise ValueError(
                 f"stage {index}: total duration {total} h is not a whole number of days"
             )
-        if index < last_index and total != _WEEK_HOURS:
-            raise ValueError(
-                f"stage {index}: every stage before the last must be one "
-                f"operative week (168 h); got {total} h"
-            )
         end = cursor + timedelta(days=round(days))
+
+        # A monthly stage covers exactly one civil month, so it ends on the
+        # first of the month after its start. Testing the end (not the start)
+        # is deliberate: the first monthly stage begins mid-month, where the
+        # weekly prefix left off, since the first month's last week carries the
+        # overlapping days — only later monthly stages begin on day 1. Keying
+        # on the end admits both and still rejects a stage spanning two civil
+        # months. A weekly stage is a full 168 h and only valid in the prefix,
+        # before any monthly stage.
+        is_month = end == _first_of_next_month(cursor)
+        is_week = total == _WEEK_HOURS and not seen_monthly and not is_month
         if index < last_index:
-            season_id = first_month - 1
-        else:
-            if end.day != 1:
+            if not (is_week or is_month):
                 raise ValueError(
-                    f"final stage must end at a calendar month boundary; ends {end}"
+                    f"stage {index}: a non-final stage is either a 168 h "
+                    f"operative week of the first month or a stage closing a "
+                    f"calendar month; got {total} h spanning {cursor} to "
+                    f"{end}. A summer-time week (VR, 168 ± 1 h) is not "
+                    f"representable on this whole-day calendar, and weekly "
+                    f"stages may not follow a monthly one."
                 )
-            second_month = first_month % 12 + 1
-            if cursor.month != second_month:
+            weeks += is_week
+            if weeks > _MAX_FIRST_MONTH_WEEKS:
                 raise ValueError(
-                    f"final stage must aggregate the second operative month "
-                    f"(month {second_month}); starts {cursor}"
+                    f"the first operative month has at most "
+                    f"{_MAX_FIRST_MONTH_WEEKS} weekly stages; got more. Only "
+                    f"the first month is weekly — later months are monthly "
+                    f"stages."
+                )
+            season_id = cursor.month - 1 if is_month else first_month - 1
+        else:
+            if not is_month:
+                raise ValueError(
+                    f"the final stage closes a calendar month (the terminal "
+                    f"fan aggregates one month); got {total} h spanning "
+                    f"{cursor} to {end}"
                 )
             season_id = cursor.month - 1
+        seen_monthly = seen_monthly or is_month
         stages.append(
             OperativeStage(
                 index=index,
@@ -148,6 +189,11 @@ def build_operative_calendar(
         cursor = end
 
     return stages
+
+
+def _first_of_next_month(day: date) -> date:
+    """The first day of the calendar month after *day*'s month."""
+    return date(day.year + (day.month == 12), day.month % 12 + 1, 1)
 
 
 def operative_calendar_from_dadger(dadger: Dadger) -> list[OperativeStage]:

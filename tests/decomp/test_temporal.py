@@ -83,8 +83,43 @@ class TestBuildOperativeCalendar:
 
     def test_rejects_final_stage_not_month_end(self) -> None:
         hours = [_RV0_WEEK] * 5 + [[152.0, 184.0, 288.0]]  # 624 h → 31/10
-        with pytest.raises(ValueError, match="month boundary"):
+        with pytest.raises(ValueError, match="closes a calendar month"):
             build_operative_calendar(date(2024, 8, 31), hours)
+
+    def test_multi_month_deterministic_trunk(self) -> None:
+        # Three operative months: 3 weekly weeks (March) + the April monthly
+        # trunk stage (04/04 → 01/05, 648 h) + the May terminal stage
+        # (01/05 → 01/06, 744 h). Weekly stages carry March; each monthly
+        # stage carries its own month.
+        hours = (
+            [[24.0, 64.0, 80.0]] * 3 + [[216.0, 216.0, 216.0]] + [[248.0, 248.0, 248.0]]
+        )
+        calendar = build_operative_calendar(date(2026, 3, 14), hours)
+        assert [s.start_date for s in calendar] == [
+            date(2026, 3, 14),
+            date(2026, 3, 21),
+            date(2026, 3, 28),
+            date(2026, 4, 4),
+            date(2026, 5, 1),
+        ]
+        assert calendar[-1].end_date == date(2026, 6, 1)
+        assert [s.season_id for s in calendar] == [2, 2, 2, 3, 4]
+        assert [s.total_hours for s in calendar] == [168.0, 168.0, 168.0, 648.0, 744.0]
+
+    def test_rejects_final_stage_spanning_two_months(self) -> None:
+        # A single final stage from 04/04 to 01/06 spans two civil months
+        # (Apr+May): the terminal fan aggregates one month, so this is
+        # rejected, not merged.
+        hours = [[24.0, 64.0, 80.0]] * 3 + [[400.0, 500.0, 492.0]]  # 1392 h → 01/06
+        with pytest.raises(ValueError, match="closes a calendar month"):
+            build_operative_calendar(date(2026, 3, 14), hours)
+
+    def test_rejects_too_many_weekly_stages(self) -> None:
+        # Only the first month is weekly, at most five weeks. Eight weekly
+        # stages is not a DECOMP shape.
+        hours = [[168.0]] * 8 + [[552.0]]  # 8 weeks → 09/05, then 23 days → 01/06
+        with pytest.raises(ValueError, match="at most"):
+            build_operative_calendar(date(2026, 3, 14), hours)
 
     def test_rejects_single_stage(self) -> None:
         with pytest.raises(ValueError, match="two stages"):

@@ -195,10 +195,83 @@ class TestScenarioEmitters:
         with pytest.raises(ValueError, match="sum"):
             terminal_fan_probabilities(vazoes, _calendar())
 
+    def test_branching_trunk_raises(self) -> None:
+        # A trunk stage (2) that branches into two scenarios is DECOMP's
+        # growing tree, which the terminal-fan model cannot represent.
+        vazoes = _StubVazoes()
+        vazoes.probabilidades = pd.concat(
+            [
+                vazoes.probabilidades,
+                pd.DataFrame(
+                    [{"estagio": 2, "no": 5, "cenario": 2, "probabilidade": 1.0}]
+                ),
+            ],
+            ignore_index=True,
+        )
+        with pytest.raises(ValueError, match="branch into multiple scenarios"):
+            terminal_fan_probabilities(vazoes, _calendar())
+
+    def test_multi_month_external_inflows(self) -> None:
+        """Multi-month deck: weekly stages from previsoes, monthly trunk +
+        terminal fan from cenarios_gerados."""
+        # 3 weekly (168 h each) + 1 monthly trunk (648 h) + 1 terminal (744 h).
+        # Same calendar shape as TestBuildOperativeCalendar.test_multi_month_deterministic_trunk.
+        hours = (
+            [[24.0, 64.0, 80.0]] * 3 + [[216.0, 216.0, 216.0]] + [[248.0, 248.0, 248.0]]
+        )
+        calendar = build_operative_calendar(date(2026, 3, 14), hours)
+        case = make_decomp_case(Path("unused"), calendar=calendar)
+
+        hidr = _hidr_frame()
+        effective = EffectiveCadastro(
+            base=hidr, n_stages=len(calendar), stage_varying={}
+        )
+
+        class _MultiMonthVazoes:
+            # Weekly stages 1-3 from previsoes
+            previsoes = pd.DataFrame(
+                [
+                    {"estagio": 1, "11": 100.0, "12": 150.0},
+                    {"estagio": 2, "11": 110.0, "12": 160.0},
+                    {"estagio": 3, "11": 120.0, "12": 170.0},
+                ]
+            )
+            # Monthly stages 4 (trunk) and 5 (terminal fan) from cenarios_gerados
+            cenarios_gerados = pd.DataFrame(
+                [
+                    {"estagio": 4, "cenario": 1, "11": 80.0, "12": 130.0},  # trunk
+                    {"estagio": 5, "cenario": 1, "11": 90.0, "12": 140.0},  # fan
+                    {"estagio": 5, "cenario": 2, "11": 95.0, "12": 145.0},  # fan
+                ]
+            )
+
+        table = convert_external_inflows(
+            case,
+            _ID_MAP,
+            vazoes=_MultiMonthVazoes(),
+            effective=effective,
+        ).to_pandas()
+
+        # 5 stages: 3 weekly (1 scenario each) + 1 monthly trunk (1 scenario) +
+        # 1 terminal (2 scenarios) = (3+1)*2 hydros + 2 scenarios * 2 hydros = 12
+        assert len(table) == 12
+
+        # Weekly stage 0, scenario 0, hydro 1 → 150.0
+        weekly = table[(table["stage_id"] == 0) & (table["hydro_id"] == 1)]
+        assert weekly["value_m3s"].iloc[0] == pytest.approx(150.0)
+
+        # Monthly trunk stage 3, scenario 0, hydro 0 → 80.0
+        trunk = table[(table["stage_id"] == 3) & (table["scenario_id"] == 0)]
+        assert trunk[trunk["hydro_id"] == 0]["value_m3s"].iloc[0] == pytest.approx(80.0)
+
+        # Terminal fan stage 4, scenario 1, hydro 1 → 145.0
+        fan = table[(table["stage_id"] == 4) & (table["scenario_id"] == 1)]
+        assert fan[fan["hydro_id"] == 1]["value_m3s"].iloc[0] == pytest.approx(145.0)
+
     def test_pre_terminal_fan_raises(self) -> None:
         vazoes = _StubVazoes()
         vazoes.cenarios_gerados.loc[0, "estagio"] = 2
-        with pytest.raises(ValueError, match="node-graph"):
+        with pytest.raises(ValueError, match="outside the monthly range"):
             convert_external_inflows(
                 _scenario_case(),
                 _ID_MAP,
