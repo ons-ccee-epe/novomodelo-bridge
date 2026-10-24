@@ -75,6 +75,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
     from idecomp.decomp import Dadgnl
+    from idecomp.decomp.modelos.dadgnl import GL
 
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -172,6 +173,15 @@ def _as_floats(value: object) -> list[float]:
     return [float(value)]  # type: ignore[arg-type]
 
 
+def _gl_registers(dadgnl: Dadgnl) -> list[GL]:
+    """Every ``gl`` register of ``dadgnl``, in deck order."""
+    registers = dadgnl.gl()
+    if registers is None:
+        return []
+    # idecomp returns a lone register bare, not as a one-item list.
+    return registers if isinstance(registers, list) else [registers]
+
+
 def _block_weighted_mean(values: Sequence[float], weights: Sequence[float]) -> float:
     """``Σ w·v / Σ w`` over aligned blocks; uniform mean when weights are unusable.
 
@@ -215,12 +225,9 @@ def is_gnl_enabled(dadgnl: Dadgnl | None) -> bool:
     """
     if dadgnl is None:
         return False
-    registers = dadgnl.gl()
-    if not registers:
-        return False
     return any(
         abs(g) > _NONZERO_TOLERANCE
-        for register in registers
+        for register in _gl_registers(dadgnl)
         for g in _as_floats(register.geracao)
     )
 
@@ -283,7 +290,7 @@ def _read_gl_commitments(
     its parsed date and block-weighted committed MW.
     """
     by_code: dict[int, list[GnlStageCommitment]] = {}
-    for register in dadgnl.gl():
+    for register in _gl_registers(dadgnl):
         code = int(register.codigo_usina)
         if code not in known_codes:
             raise ValueError(

@@ -221,6 +221,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cheaper one as DECOMP does, whatever their order or numbers in the
   deck. A `decomp-conflicting-flow-restrictions` warning names the plant, the
   restrictions and both limits.
+- **`convert decomp` reads a `dadgnl` with a single `GL` register.** The
+  conversion failed on such a deck.
 - **`compare decomp` renders the report when DECOMP's lower bound
   overflowed.** DECOMP prints a lower bound too wide for its field as
   asterisks; the convergence chart now draws each bound over the iterations
