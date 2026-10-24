@@ -143,14 +143,21 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   from = []
   status = "constant"
   when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
-  how = "Sempre `level1` (seleção Level-1 sobre os estados visitados de toda a execução). O Novomodelo tem um único interruptor para os dois passos; a união dos flags do NEWAVE o liga. Os parâmetros de `selcor.dat` não são lidos."
+  how = "Sempre `level1` (seleção Level-1 sobre os estados visitados nas duas últimas iterações). O Novomodelo tem um único interruptor para os dois passos; a união dos flags do NEWAVE o liga. Os parâmetros de `selcor.dat` não são lidos."
 
   [[output.field]]
   path = "training.cut_selection.selection.check_frequency"
   from = []
   status = "constant"
   when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
-  how = "Sempre 1: a seleção é verificada a cada iteração. `lookback_iterations` não é emitido, então os estados de toda a execução são mantidos."
+  how = "Sempre 1: a seleção é verificada a cada iteração."
+
+  [[output.field]]
+  path = "training.cut_selection.selection.lookback_iterations"
+  from = []
+  status = "constant"
+  when = "somente quando `selecao_de_cortes_forward` = 1 ou `selecao_de_cortes_backward` = 1"
+  how = "Sempre 2: só os estados visitados nas duas últimas iterações são pontuados, a janela que o antigo `lml1` usava. Pontuar os estados de toda a execução mantém várias vezes mais cortes ativos e torna cada LP mais pesado."
 
   [[output.field]]
   path = "training.parallelism.backward_scheduler.method"

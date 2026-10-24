@@ -14,6 +14,16 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`convert newave` bounds cut selection to the last two iterations.** The
+  converted `config.json` now sets `lookback_iterations: 2` under
+  `training.cut_selection.selection`, so `level1` scores the trial states of
+  the last two iterations, the window `lml1` scored before 0.19.0. Since
+  0.19.0 it scored every trial state of the run, which kept about three times
+  as many cuts active and made each training iteration and the simulation
+  progressively slower.
+
 ## [0.19.0] - 2026-10-20
 
 Pairs the bridge with the **novomodelo 0.19.0** release. novomodelo loads a

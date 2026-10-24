@@ -546,12 +546,15 @@ def convert_config(case: NewaveCase) -> dict:
     # tagged `selection` object that names the method and carries only that method's
     # parameters; omitting `selection` disables row selection. The source model's
     # selection is mapped to novomodelo's Level-1 selection (`level1`), checked every
-    # iteration over the trial states of the whole run; `selcor.dat` is not read.
+    # iteration over the trial states of the last two iterations — the window the
+    # earlier `lml1` mapping scored. Scoring every state of the run keeps several
+    # times more cuts active and slows every LP; `selcor.dat` is not read.
     cut_selection: dict = {"row_activity_tolerance": 1e-6}
     if cut_selection_enabled:
         cut_selection["selection"] = {
             "method": "level1",
             "check_frequency": 1,
+            "lookback_iterations": 2,
         }
     if dger.janela_de_cortes == 1:
         logger.warning(
