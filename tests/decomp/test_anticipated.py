@@ -225,6 +225,18 @@ def _read_dadgnl_text(tmp_path: Path, text: str) -> Dadgnl:
     return Dadgnl.read(str(path))
 
 
+def test_tg_cost_without_decimal_point_reads_with_the_implied_decimals(
+    tmp_path: Path,
+) -> None:
+    # TG's cvu is F10.2: written without a point, the source model reads 299
+    # as 2.99, not 299.0.
+    model = read_gnl_model(_read_dadgnl_text(tmp_path, _ONE_GL_DADGNL))
+
+    assert model is not None
+    assert model.tg[["cvu_1", "cvu_2", "cvu_3"]].iloc[0].tolist() == [2.99] * 3
+    assert model.tg["disponibilidade_1"].iloc[0] == 1593.0
+
+
 def test_read_gnl_model_reads_a_deck_with_a_single_gl_register(
     tmp_path: Path,
 ) -> None:

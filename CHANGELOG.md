@@ -21,14 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starting on the first of a month. The inflows of a monthly trunk stage are
   read from the deck's generated scenarios, where DECOMP records them, and
   the boundary coupling reads its inflow lags there too. Reading that block
-  needs idecomp 1.15.1 or newer, now the minimum. In a deck of monthly
-  stages only, each fuel-constrained thermal takes its `NL` lag as a lead in
-  stages: the first `lag` months of the study carry the deck's `GL`
-  commitments, made before the study, and the months after the horizon that
-  its study months decide are priced from their own `TG` records. A deck
-  that splits a `GS` month into weeks, declares an `NL` lag longer than the
-  study, or commits `GL` dispatch past the horizon is refused with a message
-  naming the plant.
+  needs idecomp 1.15.1 or newer. In a deck of monthly stages only, each
+  fuel-constrained thermal takes its `NL` lag as a lead in stages: the first
+  `lag` months of the study carry the deck's `GL` commitments, made before
+  the study, and the months after the horizon that its study months decide
+  are priced from their own `TG` records. A deck that splits a `GS` month
+  into weeks, declares an `NL` lag longer than the study, or commits `GL`
+  dispatch past the horizon is refused with a message naming the plant.
 - **`convert decomp` emits water travel time.** A plant's `VI` register now
   converts to the delayed cascade arc (`hydros[].travel_time_hours`) and the
   in-transit water seeding it (`initial_conditions.past_defluences`), instead
@@ -221,6 +220,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cheaper one as DECOMP does, whatever their order or numbers in the
   deck. A `decomp-conflicting-flow-restrictions` warning names the plant, the
   restrictions and both limits.
+- **`convert decomp` reads a value written without a decimal point as DECOMP
+  does.** A field the DECOMP manual declares with decimals takes Fortran's
+  implied point when the deck omits it: a `TG` cost written `299` in its
+  `F10.2` field is 2.99, not 299. This holds for the `CT`, `CD`, `CI`, `CE`
+  and `TG` costs and the `AC COTVOL` coefficients. Renewable generation in
+  `PEE-GER-PER-PAT-CEN`, and the reference levels of the `polinjus` tailrace
+  families, are no longer cut at eight characters. This needs idecomp 1.16.0
+  or newer, now the minimum.
 - **`convert decomp` reads a `dadgnl` with a single `GL` register.** The
   conversion failed on such a deck.
 - **`compare decomp` renders the report when DECOMP's lower bound
