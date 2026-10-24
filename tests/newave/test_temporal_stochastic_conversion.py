@@ -848,6 +848,7 @@ class TestConvertConfig:
         cs = result["training"]["cut_selection"]
         assert cs["selection"]["method"] == "level1"
         assert cs["selection"]["check_frequency"] == 1
+        assert cs["selection"]["lookback_iterations"] == 2
         assert cs["row_activity_tolerance"] == 1e-6
         assert "enabled" not in cs
 
@@ -863,6 +864,7 @@ class TestConvertConfig:
         cs = result["training"]["cut_selection"]
         assert cs["selection"]["method"] == "level1"
         assert cs["selection"]["check_frequency"] == 1
+        assert cs["selection"]["lookback_iterations"] == 2
         assert cs["row_activity_tolerance"] == 1e-6
         assert "enabled" not in cs
 
@@ -878,6 +880,7 @@ class TestConvertConfig:
         cs = result["training"]["cut_selection"]
         assert cs["selection"]["method"] == "level1"
         assert cs["selection"]["check_frequency"] == 1
+        assert cs["selection"]["lookback_iterations"] == 2
         assert cs["row_activity_tolerance"] == 1e-6
         assert "enabled" not in cs
 
