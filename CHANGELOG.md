@@ -9,20 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`convert decomp` warns about negative incremental inflows.** The values
+  are converted as the deck gives them. DECOMP reports a negative incremental
+  inflow as zero in its operation output, while Cobre removes that water from
+  the plant's balance unless its priced inflow slack adds it back. A
+  `decomp-negative-incremental-inflows` warning lists each plant and stage
+  with the number of negative values and the lowest one.
 - **`convert decomp` accepts a deck with a multi-month trunk, or with monthly
   stages only.** The operative calendar admits any number of deterministic
   months before the terminal month, and a deck with no operative weeks
   starting on the first of a month. The inflows of a monthly trunk stage are
   read from the deck's generated scenarios, where DECOMP records them, and
   the boundary coupling reads its inflow lags there too. Reading that block
-  needs idecomp 1.15.1 or newer, now the minimum. In a deck of monthly
-  stages only, each fuel-constrained thermal takes its `NL` lag as a lead in
-  stages: the first `lag` months of the study carry the deck's `GL`
-  commitments, made before the study, and the months after the horizon that
-  its study months decide are priced from their own `TG` records. A deck
-  that splits a `GS` month into weeks, declares an `NL` lag longer than the
-  study, or commits `GL` dispatch past the horizon is refused with a message
-  naming the plant.
+  needs idecomp 1.15.1 or newer. In a deck of monthly stages only, each
+  fuel-constrained thermal takes its `NL` lag as a lead in stages: the first
+  `lag` months of the study carry the deck's `GL` commitments, made before
+  the study, and the months after the horizon that its study months decide
+  are priced from their own `TG` records. A deck that splits a `GS` month
+  into weeks, declares an `NL` lag longer than the study, or commits `GL`
+  dispatch past the horizon is refused with a message naming the plant.
 - **`convert decomp` emits water travel time.** A plant's `VI` register now
   converts to the delayed cascade arc (`hydros[].travel_time_hours`) and the
   in-transit water seeding it (`initial_conditions.past_defluences`), instead
@@ -207,6 +212,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert decomp` converts two flow restrictions on one plant that no
+  value meets at once.** Single-plant `HQ` restrictions on the same variable,
+  such as a 0 m³/s ceiling and a 6 m³/s floor on a plant's outflow, failed the
+  conversion where their bounds were intersected. They now become generic
+  constraints, each with its own slack at the same penalty, so Cobre violates
+  the cheaper one as DECOMP does, whatever their order or numbers in the
+  deck. A `decomp-conflicting-flow-restrictions` warning names the plant, the
+  restrictions and both limits.
+- **`convert decomp` reads a value written without a decimal point as DECOMP
+  does.** A field the DECOMP manual declares with decimals takes Fortran's
+  implied point when the deck omits it: a `TG` cost written `299` in its
+  `F10.2` field is 2.99, not 299. This holds for the `CT`, `CD`, `CI`, `CE`
+  and `TG` costs and the `AC COTVOL` coefficients. Renewable generation in
+  `PEE-GER-PER-PAT-CEN`, and the reference levels of the `polinjus` tailrace
+  families, are no longer cut at eight characters. This needs idecomp 1.16.0
+  or newer, now the minimum.
+- **`convert decomp` reads a `dadgnl` with a single `GL` register.** The
+  conversion failed on such a deck.
 - **`compare decomp` renders the report when DECOMP's lower bound
   overflowed.** DECOMP prints a lower bound too wide for its field as
   asterisks; the convergence chart now draws each bound over the iterations

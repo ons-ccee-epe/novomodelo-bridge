@@ -1233,6 +1233,18 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     assert line_bounds is not None
 
     census = constraint_registers.read_constraints(dadger)
+    if census.bound_conflicts:
+        names = {
+            conflict.code: str(effective.base.loc[conflict.code, "nome_usina"]).strip()
+            for conflict in census.bound_conflicts
+            if conflict.code in effective.base.index
+        }
+        dx.emit(
+            constraint_registers.bound_conflicts_diagnostic(
+                census.bound_conflicts, names
+            ),
+            logger=_LOG,
+        )
     pumping_ids = network_conv.pumping_station_id_map(dadger)
     thermal_generation_contribs, thermal_cost_table = (
         thermal_conv.convert_thermal_bounds(case, id_map)

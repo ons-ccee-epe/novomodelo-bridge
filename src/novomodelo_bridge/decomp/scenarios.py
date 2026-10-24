@@ -29,13 +29,19 @@ fan weights; ``convert_scenario_probabilities`` remains a validation view for
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import pandas as pd
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.incremental_inflow import (
     artificial_gauge_plants_diagnostic,
     is_artificial_gauge,
@@ -49,7 +55,7 @@ from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 from novomodelo_bridge.decomp.temporal import weekly_stage_count
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from idecomp.decomp import Vazoes
 
@@ -113,11 +119,13 @@ def _incremental_values(
     inflow, so the value is read straight through — no upstream subtraction.
     Verified against the deck's ``dec_oper_usih`` reported
     ``vazao_incremental``: the direct per-posto read matches every operated
-    plant to 0 m³/s, and the reported natural flow reconstructs exactly as the
-    running sum of these incrementals down each cascade. (DECOMP operates
-    every plant — no fictitious/non-operated intermediates — so there is no
-    upstream drainage to re-attribute downstream; ``station_by_code`` already
-    resolves any ``AC NUMPOS`` gauge relink.)
+    plant to 0 m³/s, except that a negative value is reported there as zero
+    (:func:`_report_negative_incrementals`), and the reported natural flow
+    reconstructs exactly as the running sum of these incrementals down each
+    cascade. (DECOMP operates every plant — no fictitious/non-operated
+    intermediates — so there is no upstream drainage to re-attribute
+    downstream; ``station_by_code`` already resolves any ``AC NUMPOS`` gauge
+    relink.)
     """
     return [float(row[station_by_code[code]]) for code in id_map.hydro_codes]
 
@@ -279,6 +287,65 @@ def _report_artificial_gauge_plants(
         emit(artificial_gauge_plants_diagnostic(plants), logger=_LOG)
 
 
+def _report_negative_incrementals(
+    values: Mapping[tuple[int, int], Sequence[float]],
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+) -> None:
+    """WARN on the tree's negative incremental inflows, kept as the deck has them."""
+    negatives: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for (stage_index, _), incrementals in values.items():
+        for code, value in zip(id_map.hydro_codes, incrementals, strict=True):
+            if value < 0.0:
+                negatives[(code, stage_index)].append(value)
+    if not negatives:
+        return
+    rows = [
+        [
+            code,
+            str(effective.base.loc[code, "nome_usina"]).strip(),
+            effective.inflow_gauge(code, 0),
+            stage_index + 1,
+            len(found),
+            min(found),
+        ]
+        for (code, stage_index), found in sorted(negatives.items())
+    ]
+    plants = len({code for code, _ in negatives})
+    emit(
+        Diagnostic(
+            code="decomp-negative-incremental-inflows",
+            severity=Severity.WARNING,
+            category="Inflow scenarios",
+            title=f"Negative incremental inflows kept ({plants})",
+            summary=(
+                f"{plants} plant(s) have a negative incremental inflow in the "
+                "inflow file. The values are converted as they are, so novomodelo's "
+                "water balance removes that water unless its priced inflow "
+                "slack adds it back. The source model reports these "
+                "incremental inflows as zero in its operation output."
+            ),
+            table=DiagnosticTable(
+                columns=[
+                    "Code",
+                    "Name",
+                    "Posto",
+                    "Stage",
+                    "Scenarios",
+                    "Lowest (m3/s)",
+                ],
+                rows=rows,
+            ),
+            remediation=(
+                "Compare the listed plants' operation with the source model's. "
+                "A negative inflow below a plant whose outflow is capped can "
+                "force that plant to spill or violate its outflow limit."
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
 def convert_external_inflows(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -291,6 +358,7 @@ def convert_external_inflows(
     column."""
     _report_artificial_gauge_plants(effective, id_map)
     values = _tree_values(vazoes, effective, id_map, case.calendar)
+    _report_negative_incrementals(values, effective, id_map)
 
     stage_ids: list[int] = []
     scenario_ids: list[int] = []

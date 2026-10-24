@@ -1,10 +1,11 @@
 """Unit tests for the source model's GNL reader (``decomp/anticipated.py``).
 
-CI-tier and deck-independent: every test drives a synthetic ``_StubDadgnl`` with
+CI-tier and deck-independent: the tests drive a synthetic ``_StubDadgnl`` with
 hand-authored ``gl``/``tg``/``gs`` data (mirroring the real register shapes), so
-the suite needs no deck and no novomodelo binary. ``gl`` is a list of register stubs
-(the real ``gl(df=True)`` is unusable on ragged weekly blocks); ``tg``/``gs`` are
-DataFrames (their fixed shapes make ``df=True`` well-formed).
+the suite needs no deck and no novomodelo binary; the ones that read a whole
+``dadgnl`` write a two-register file to ``tmp_path``. ``gl`` is a list of
+register stubs (the real ``gl(df=True)`` is unusable on ragged weekly blocks);
+``tg``/``gs`` are DataFrames (their fixed shapes make ``df=True`` well-formed).
 """
 
 from __future__ import annotations
@@ -13,9 +14,11 @@ import dataclasses
 import logging
 from collections.abc import Mapping
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
+from idecomp.decomp import Dadgnl
 
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -206,6 +209,47 @@ def test_registry_keeps_every_declared_tg_stage() -> None:
     assert model is not None
     assert model.thermals == (GnlThermal(86, "SANTA CRUZ", 1),)
     assert model.tg["estagio"].tolist() == [1, 2]
+
+
+_ONE_GL_DADGNL = (
+    "TG  224   3   P. SERGIPE 1       01593.       299    01593.       299"
+    "    01593.       299\n"
+    "GL  224   3    1      1517.14  126   1395.11  322   1194.75  296"
+    " 01012026\n"
+)
+
+
+def _read_dadgnl_text(tmp_path: Path, text: str) -> Dadgnl:
+    path = tmp_path / "dadgnl.rv0"
+    path.write_text(text)
+    return Dadgnl.read(str(path))
+
+
+def test_tg_cost_without_decimal_point_reads_with_the_implied_decimals(
+    tmp_path: Path,
+) -> None:
+    # TG's cvu is F10.2: written without a point, the source model reads 299
+    # as 2.99, not 299.0.
+    model = read_gnl_model(_read_dadgnl_text(tmp_path, _ONE_GL_DADGNL))
+
+    assert model is not None
+    assert model.tg[["cvu_1", "cvu_2", "cvu_3"]].iloc[0].tolist() == [2.99] * 3
+    assert model.tg["disponibilidade_1"].iloc[0] == 1593.0
+
+
+def test_read_gnl_model_reads_a_deck_with_a_single_gl_register(
+    tmp_path: Path,
+) -> None:
+    model = read_gnl_model(_read_dadgnl_text(tmp_path, _ONE_GL_DADGNL))
+
+    assert model is not None
+    [stage] = model.commitments[224].stages
+    assert stage.estagio == 1
+    assert stage.start_date == date(2026, 1, 1)
+    assert stage.hours == 744.0
+    assert stage.committed_mw == pytest.approx(
+        (1517.14 * 126 + 1395.11 * 322 + 1194.75 * 296) / 744
+    )
 
 
 def test_weeks_per_month_from_gs() -> None:
