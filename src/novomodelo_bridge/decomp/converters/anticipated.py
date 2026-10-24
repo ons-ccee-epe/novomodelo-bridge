@@ -31,7 +31,9 @@ converted case never pins a delivery novomodelo would reject.
 * ``gs`` — the weeks-per-month calendar map (``mes`` → ``semanas``).
 * ``nl`` — the per-plant dispatch-anticipation lag in whole months
   (``codigo_usina`` → ``lag``): a plant's dispatch is decided ``lag`` months
-  ahead of its delivery, and this is what sizes its physical ``lead_time_hours``.
+  ahead of its delivery, and this is what sizes its physical ``lead_time_hours``
+  — or, in a study of monthly stages only, where each ``gl`` register commits
+  one month, its ``lead_stages`` (:func:`_convert_monthly_gnl`).
 
 A commitment's delivery date is recorded per stage so the emission track can
 place it: an in-study ``gl`` commitment is folded onto the study stages as a
@@ -58,6 +60,7 @@ this asymmetry is registered, not an oversight or a missing port.
 from __future__ import annotations
 
 import calendar as _calendar
+import dataclasses
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -65,7 +68,7 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, NamedTuple
 
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
-from novomodelo_bridge.decomp.temporal import hours_weighted
+from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -315,22 +318,30 @@ def _read_weeks_per_month(dadgnl: Dadgnl) -> dict[int, int]:
 
 
 def operative_week_months(
-    weeks_per_month: Mapping[int, int], study_start: date
+    weeks_per_month: Mapping[int, int], calendar: Sequence[OperativeStage]
 ) -> dict[date, tuple[int, int]]:
-    """The ``(year, month)`` the source model books each operative week to.
+    """The ``(year, month)`` the source model books each ``gs`` interval to,
+    keyed by the interval's start.
 
-    Walks the ``gs`` counts in ascending month order from the study's first
-    week, the first count being the study-start month's. A week belongs to the
-    month ``gs`` books it to even when it ends in the next one (mar-26-rv2:
-    the week starting 2026-05-30 is a May week). Empty without a ``gs`` block.
+    Walks the ``gs`` counts in ascending month order from the study start, the
+    first count being the study-start month's. The intervals are operative
+    weeks, and a week belongs to the month ``gs`` books it to even when it
+    ends in the next one (mar-26-rv2: the week starting 2026-05-30 is a May
+    week); a study of monthly stages only has one interval per month, the
+    month itself. Empty without a ``gs`` block.
     """
+    study_start = calendar[0].start_date
+    monthly_only = weekly_stage_count(calendar) == 0
     weeks: dict[date, tuple[int, int]] = {}
     week_start = study_start
     year, month = study_start.year, study_start.month
     for key in sorted(weeks_per_month):
-        for _ in range(weeks_per_month[key]):
-            weeks[week_start] = (year, month)
-            week_start += _ONE_OPERATIVE_WEEK
+        if monthly_only:
+            weeks[date(year, month, 1)] = (year, month)
+        else:
+            for _ in range(weeks_per_month[key]):
+                weeks[week_start] = (year, month)
+                week_start += _ONE_OPERATIVE_WEEK
         year, month = (year + 1, 1) if month == 12 else (year, month + 1)
     return weeks
 
@@ -744,6 +755,229 @@ def _shared_class4_end(
     return next(iter(ends), horizon_end)
 
 
+def _fold_onto_stages(
+    commitment: GnlCommitment, stage_spans: Sequence[tuple[date, date]]
+) -> list[float]:
+    """The ``gl`` deliveries starting inside each study stage, folded into one
+    hours-weighted MW rate per stage (``0`` where none starts)."""
+    folded: list[float] = []
+    for s_start, s_end in stage_spans:
+        windows = [
+            (c.hours, c.committed_mw)
+            for c in commitment.stages
+            if s_start <= c.start_date < s_end
+        ]
+        total_h = sum(h for h, _ in windows)
+        folded.append(
+            sum(h * mw for h, mw in windows) / total_h if total_h > 0 else 0.0
+        )
+    return folded
+
+
+def _gnl_thermal(
+    thermal: GnlThermal,
+    tid: int,
+    bus_id: int,
+    study_capability: Sequence[_StageCapability],
+    horizon_start: date,
+    anticipated_config: Mapping[str, float],
+) -> dict:
+    """A created ``thermals.json`` entry for a GNL plant.
+
+    The ``generation`` pair is the envelope of the plant's per-study-stage
+    capability (smallest minimum, largest maximum): novomodelo validates every
+    ``past_anticipated_commitments`` value against that static pair, so a
+    stage-1 pair would reject a commitment the plant's own stage allows. Its
+    ``cost_per_mwh`` is the first stage's, as for ``CT`` plants.
+    """
+    return {
+        "id": tid,
+        "name": thermal.name,
+        "operational_start_date": horizon_start.isoformat(),
+        "bus_id": bus_id,
+        "cost_per_mwh": study_capability[0].cost_per_mwh,
+        "generation": {
+            "min_mw": min(c.min_mw for c in study_capability),
+            "max_mw": max(c.max_mw for c in study_capability),
+        },
+        "anticipated_config": dict(anticipated_config),
+        "entry_stage_id": None,
+        "exit_stage_id": None,
+    }
+
+
+def _study_tiles(
+    tid: int,
+    thermal: GnlThermal,
+    folded: Sequence[float],
+    study_capability: Sequence[_StageCapability],
+    calendar: Sequence[OperativeStage],
+    count: int,
+) -> list[dict]:
+    """The in-study left boundary: the leading *count* study stages, each
+    pinned to its folded ``gl`` MW clamped into that stage's capability."""
+    return [
+        {
+            "thermal_id": tid,
+            "start_date": calendar[j].start_date.isoformat(),
+            "end_date": calendar[j].end_date.isoformat(),
+            "value_mw": _clamp_committed(
+                folded[j],
+                thermal.name,
+                study_capability[j].min_mw,
+                study_capability[j].max_mw,
+                f"in-horizon study stage {j}",
+            ),
+        }
+        for j in range(count)
+    ]
+
+
+def _monthly_lead_stages(
+    model: GnlCommitmentModel, thermal: GnlThermal, horizon_end: date, n_stages: int
+) -> int:
+    """A plant's ``nl`` lag, in stages of a study of monthly stages only.
+
+    Raises
+    ------
+    ValueError
+        If the plant declares no lag, a lag outside ``1..n_stages``, or a
+        ``gl`` dispatch dated past the horizon: a delivery past the horizon
+        decided before the study has no in-study stage to carry it.
+    """
+    label = f"GNL plant {thermal.code} ({thermal.name})"
+    lag = model.nl_lag_months.get(thermal.code)
+    if lag is None:
+        raise ValueError(f"{label} declares no nl dispatch-anticipation lag")
+    if not 1 <= lag <= n_stages:
+        raise ValueError(
+            f"{label}: an nl lag of {lag} month(s) is not supported for a study "
+            f"of {n_stages} monthly stage(s); the lag must be between 1 and the "
+            "stage count"
+        )
+    late = [
+        s.start_date.isoformat()
+        for s in model.commitments[thermal.code].stages
+        if s.start_date >= horizon_end
+    ]
+    if late:
+        raise ValueError(
+            f"{label}: gl dispatch dated past the study horizon ({', '.join(late)}) "
+            "is not supported for a study of monthly stages only"
+        )
+    return lag
+
+
+def _post_study_months(horizon_end: date, count: int) -> list[dict]:
+    """*count* whole calendar months from *horizon_end*, the first of a month."""
+    stages: list[dict] = []
+    start = horizon_end
+    for _ in range(count):
+        _, days = _calendar.monthrange(start.year, start.month)
+        stages.append({"start_date": start.isoformat(), "duration_hours": days * 24.0})
+        start += timedelta(days=days)
+    return stages
+
+
+def _pricing_axis(
+    calendar: Sequence[OperativeStage], post_count: int
+) -> list[OperativeStage]:
+    """The calendar extended by *post_count* stages, so the ``tg`` records of the
+    post-study months densify like in-study ones.
+
+    Each extension stage carries the last study stage's patamar hours: no
+    register declares the source model's post-horizon patamar durations.
+    """
+    last = calendar[-1]
+    return [
+        *calendar,
+        *(
+            dataclasses.replace(last, index=last.index + 1 + j)
+            for j in range(post_count)
+        ),
+    ]
+
+
+def _convert_monthly_gnl(
+    model: GnlCommitmentModel,
+    gnl_id: Mapping[int, int],
+    bus_id_of: Callable[[int], int],
+    calendar: Sequence[OperativeStage],
+) -> GnlEmission:
+    """:func:`convert_gnl` for a study of monthly stages only.
+
+    Each ``gs`` month is one interval, so a plant's ``nl`` lag is a whole number
+    of stages, emitted as ``anticipated_config = {"lead_stages": lag}``: the
+    dispatch delivered at stage ``m`` is decided at stage ``m - lag``. The
+    leading ``lag`` study stages were decided before the study, so they tile
+    ``past_anticipated_commitments`` with their ``gl`` MW. The post-study
+    calendar is the ``max(lag)`` calendar months after the horizon; a plant's
+    study stages decide its first ``lag`` of them, each priced by a
+    ``thermal_bounds`` row from that month's ``tg`` record (the ``tg`` stage
+    axis runs on past the study, one stage per post-study month).
+
+    Raises
+    ------
+    ValueError
+        If ``gs`` books more than one interval to a month, or a plant's lag or
+        ``gl`` dispatch fails :func:`_monthly_lead_stages`.
+    """
+    split_months = {m: n for m, n in model.weeks_per_month.items() if n != 1}
+    if split_months:
+        raise ValueError(
+            "a study of monthly stages only books one gs interval per month; gs "
+            f"declares {split_months} (month: intervals)"
+        )
+    n_stages = len(calendar)
+    horizon_start = calendar[0].start_date
+    horizon_end = calendar[-1].end_date
+    stage_spans = [(stage.start_date, stage.end_date) for stage in calendar]
+    lags = {
+        t.code: _monthly_lead_stages(model, t, horizon_end, n_stages)
+        for t in model.thermals
+    }
+    post_calendar = _post_study_months(horizon_end, max(lags.values(), default=0))
+    capabilities = _stage_capabilities(
+        model.tg, _pricing_axis(calendar, len(post_calendar))
+    )
+
+    thermals: list[dict] = []
+    past: list[dict] = []
+    bounds: list[dict] = []
+    seen_bounds: set[tuple[int, int]] = set()
+    for thermal in model.thermals:
+        tid = gnl_id[thermal.code]
+        lag = lags[thermal.code]
+        stage_capability = capabilities[thermal.code]
+        study_capability = stage_capability[:n_stages]
+        thermals.append(
+            _gnl_thermal(
+                thermal,
+                tid,
+                bus_id_of(thermal.submarket_code),
+                study_capability,
+                horizon_start,
+                {"lead_stages": lag},
+            )
+        )
+        folded = _fold_onto_stages(model.commitments[thermal.code], stage_spans)
+        past.extend(_study_tiles(tid, thermal, folded, study_capability, calendar, lag))
+        for j in range(lag):
+            _record_bound(bounds, seen_bounds, tid, j, stage_capability[n_stages + j])
+
+    past.sort(key=lambda w: (w["thermal_id"], w["start_date"]))
+    bounds.sort(key=lambda b: (b["thermal_id"], b["post_study_stage_index"]))
+    return GnlEmission(
+        thermals=thermals,
+        past_anticipated_commitments=past,
+        post_study_stages=(
+            {"stages": post_calendar, "thermal_bounds": bounds}
+            if post_calendar
+            else None
+        ),
+    )
+
+
 def convert_gnl(
     model: GnlCommitmentModel,
     *,
@@ -753,9 +987,11 @@ def convert_gnl(
 ) -> GnlEmission:
     """Convert a :class:`GnlCommitmentModel` into novomodelo's anticipated-GNL inputs.
 
-    Each GNL plant is *created* (absent from ``CT``) with a dense id assigned
-    after the existing thermals (``first_thermal_id`` onward, ascending by
-    code) and marked anticipated via ``anticipated_config = {"lead_time_hours":
+    Each GNL plant is *created* (absent from ``CT``, :func:`_gnl_thermal`) with
+    a dense id assigned after the existing thermals (``first_thermal_id``
+    onward, ascending by code). A study of monthly stages only takes
+    :func:`_convert_monthly_gnl`; one split into operative weeks marks each
+    plant anticipated via ``anticipated_config = {"lead_time_hours":
     lead}``. ``lead`` is **per plant** — ``(class4_end − horizon_start).days *
     24.0`` — long enough that novomodelo's own study-reachable boundary lands
     exactly at that plant's já-comandada cutoff ``class4_end``
@@ -800,15 +1036,13 @@ def convert_gnl(
     ``thermal_bounds`` possibly empty, when every post-study stage is
     class-4.
 
-    Each plant's ``thermals.json`` ``generation`` pair is the envelope of its
-    per-stage capability (smallest minimum, largest maximum): novomodelo validates
-    every ``past_anticipated_commitments`` value against that static pair, so a
-    stage-1 pair would reject a commitment the plant's own stage allows. Its
-    ``cost_per_mwh`` is the first stage's, as for ``CT`` plants.
-
     ``calendar`` is the operative calendar the case's ``stages.json`` is built
     from.
     """
+    gnl_id = {t.code: first_thermal_id + i for i, t in enumerate(model.thermals)}
+    if weekly_stage_count(calendar) == 0:
+        return _convert_monthly_gnl(model, gnl_id, bus_id_of, calendar)
+
     horizon_start = calendar[0].start_date
     stage_spans = [(stage.start_date, stage.end_date) for stage in calendar]
     stage_hours = [stage.total_hours for stage in calendar]
@@ -822,7 +1056,6 @@ def convert_gnl(
     lead_hours = _study_lead_hours(stage_spans, model.weeks_per_month)
     _warn_on_nonuniform_lag(model.nl_lag_months)
 
-    gnl_id = {t.code: first_thermal_id + i for i, t in enumerate(model.thermals)}
     horizon_end = stage_spans[-1][1]
     classification = classify_gnl_windows(model, horizon_end=horizon_end)
 
@@ -862,19 +1095,7 @@ def convert_gnl(
         commitment = model.commitments[thermal.code]
         stage_capability = capabilities[thermal.code]
         last_capability = stage_capability[-1]
-
-        # Fold weekly gl deliveries onto study stages (hours-weighted MW rate).
-        folded: list[float] = []
-        for s_start, s_end in stage_spans:
-            windows = [
-                (c.hours, c.committed_mw)
-                for c in commitment.stages
-                if s_start <= c.start_date < s_end
-            ]
-            total_h = sum(h for h, _ in windows)
-            folded.append(
-                sum(h * mw for h, mw in windows) / total_h if total_h > 0 else 0.0
-            )
+        folded = _fold_onto_stages(commitment, stage_spans)
 
         plant_classification = classification.plants[thermal.code]
         # Per plant, not the tile-sizing global H: long enough that novomodelo's own
@@ -887,36 +1108,18 @@ def convert_gnl(
             else lead_hours
         )
         thermals.append(
-            {
-                "id": tid,
-                "name": thermal.name,
-                "operational_start_date": horizon_start.isoformat(),
-                "bus_id": bus_id_of(thermal.submarket_code),
-                "cost_per_mwh": stage_capability[0].cost_per_mwh,
-                "generation": {
-                    "min_mw": min(c.min_mw for c in stage_capability),
-                    "max_mw": max(c.max_mw for c in stage_capability),
-                },
-                "anticipated_config": {"lead_time_hours": emitted_lead_hours},
-                "entry_stage_id": None,
-                "exit_stage_id": None,
-            }
-        )
-        for j in range(tile_k):
-            past.append(
-                {
-                    "thermal_id": tid,
-                    "start_date": calendar[j].start_date.isoformat(),
-                    "end_date": calendar[j].end_date.isoformat(),
-                    "value_mw": _clamp_committed(
-                        folded[j],
-                        thermal.name,
-                        stage_capability[j].min_mw,
-                        stage_capability[j].max_mw,
-                        f"in-horizon study stage {j}",
-                    ),
-                }
+            _gnl_thermal(
+                thermal,
+                tid,
+                bus_id_of(thermal.submarket_code),
+                stage_capability,
+                horizon_start,
+                {"lead_time_hours": emitted_lead_hours},
             )
+        )
+        past.extend(
+            _study_tiles(tid, thermal, folded, stage_capability, calendar, tile_k)
+        )
         for start, end, committed_mw in plant_classification.class4_windows:
             past.append(
                 {

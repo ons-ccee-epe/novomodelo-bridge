@@ -4,7 +4,9 @@ Builds the stage calendar (dates, blocks, seasons) from the deck's start
 date (``DT``) and per-stage block durations (``DP``). The operative-calendar
 rules:
 
-- the study starts on a Saturday. The shape and durations are owned by
+- a study whose first month is split into operative weeks starts on a
+  Saturday; one without weeks (every stage monthly) starts on the first of a
+  month. The shape and durations are owned by
   :func:`build_operative_calendar`; the traps that a reader cannot recover
   from the code are: the first monthly stage starts mid-month at the week
   boundary, because the first month's last week keeps the days that overlap
@@ -93,18 +95,21 @@ def build_operative_calendar(
     """Derive the operative stage calendar from block durations.
 
     ``stage_block_hours[s][b]`` is the duration in hours of block *b* of
-    stage *s*. The first operative month is a run of 168 h weekly stages
-    that tiles it to a calendar-month boundary; each subsequent month is one
-    monthly stage spanning a full calendar month. Weekly stages form a prefix
-    and monthly stages the suffix (DECOMP discretizes only the first month
-    into weeks); the last stage is the terminal monthly fan.
+    stage *s*. The first operative month is either a run of 168 h weekly
+    stages that tiles it to a calendar-month boundary or a single monthly
+    stage; each subsequent month is one monthly stage spanning a full
+    calendar month. Weekly stages form a prefix and monthly stages the suffix
+    (DECOMP discretizes at most the first month into weeks); the last stage is
+    the terminal monthly fan.
 
     Raises
     ------
     ValueError
-        If the calendar violates the operative rules: non-Saturday start,
-        fractional-day stage, a non-final stage that is neither a 168 h week
-        nor a full calendar month, a weekly stage following a monthly one,
+        If the calendar violates the operative rules: a weekly first stage
+        not starting on a Saturday, a monthly first stage not starting on the
+        first of a month, a fractional-day stage, a non-final stage that is
+        neither a 168 h week nor a full calendar month, a weekly stage
+        following a monthly one,
         more than ``_MAX_FIRST_MONTH_WEEKS`` weekly stages, or a stage that
         does not close its calendar month. The deterministic trunk may run any
         number of months; the terminal fan being the only branch point is a
@@ -114,12 +119,7 @@ def build_operative_calendar(
     if len(stage_block_hours) < 2:
         raise ValueError(
             "an operative calendar has at least two stages "
-            f"(N weekly + 1 monthly); got {len(stage_block_hours)}"
-        )
-    if start_date.weekday() != _SATURDAY:
-        raise ValueError(
-            f"operative weeks begin on Saturdays; start date {start_date} "
-            f"is a {start_date:%A}"
+            f"(a trunk + the terminal month); got {len(stage_block_hours)}"
         )
 
     first_month = (start_date + timedelta(days=6)).month
@@ -149,6 +149,8 @@ def build_operative_calendar(
         # before any monthly stage.
         is_month = end == _first_of_next_month(cursor)
         is_week = total == _WEEK_HOURS and not seen_monthly and not is_month
+        if index == 0:
+            _check_study_start(start_date, is_week=is_week, is_month=is_month)
         if index < last_index:
             if not (is_week or is_month):
                 raise ValueError(
@@ -189,6 +191,30 @@ def build_operative_calendar(
         cursor = end
 
     return stages
+
+
+def weekly_stage_count(calendar: Sequence[OperativeStage]) -> int:
+    """Number of operative weeks, the 168 h prefix of the calendar (no monthly
+    stage spans 168 h)."""
+    count = 0
+    for stage in calendar:
+        if stage.total_hours != _WEEK_HOURS:
+            break
+        count += 1
+    return count
+
+
+def _check_study_start(start_date: date, *, is_week: bool, is_month: bool) -> None:
+    if is_week and start_date.weekday() != _SATURDAY:
+        raise ValueError(
+            f"operative weeks begin on Saturdays; start date {start_date} "
+            f"is a {start_date:%A}"
+        )
+    if is_month and start_date.day != 1:
+        raise ValueError(
+            "a study without operative weeks starts on the first of a month; "
+            f"start date {start_date}"
+        )
 
 
 def _first_of_next_month(day: date) -> date:

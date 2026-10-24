@@ -2,8 +2,9 @@
 
 The inflow file carries the deterministic trunk and the terminal fan:
 
-- **Weekly stages** (first operative month): ``previsoes`` holds one row per
-  stage, each a deterministic forecast (scenario 0).
+- **Weekly stages** (first operative month, when it is split into weeks):
+  ``previsoes`` holds one row per stage, each a deterministic forecast
+  (scenario 0); it is empty for a deck of monthly stages only.
 - **Monthly stages** (later months): ``cenarios_gerados`` holds one row per
   (stage, scenario). Deterministic trunk stages have a single row (scenario 1
   → index 0); the terminal fan has one row per opening.
@@ -45,6 +46,7 @@ from novomodelo_bridge.core.inflow_windows import (
     previous_months,
 )
 from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.temporal import weekly_stage_count
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -199,21 +201,6 @@ def convert_recent_observation_windows(
     return format_observation_windows(rows)
 
 
-def _weekly_stage_count(calendar: Sequence[OperativeStage]) -> int:
-    """Number of weekly (168 h) stages at the start of the calendar.
-
-    Weekly stages form a contiguous prefix; once a monthly stage appears, all
-    remaining stages are monthly.
-    """
-    count = 0
-    for stage in calendar:
-        if stage.total_hours == 168.0:
-            count += 1
-        else:
-            break
-    return count
-
-
 def _tree_values(
     vazoes: Vazoes,
     effective: EffectiveCadastro,
@@ -234,18 +221,18 @@ def _tree_values(
     """
     station_by_code, _ = _incremental_context(effective, id_map)
     terminal = len(calendar) - 1
-    n_weekly = _weekly_stage_count(calendar)
+    n_weekly = weekly_stage_count(calendar)
 
     previsoes = vazoes.previsoes
-    if previsoes is None or previsoes.empty:
-        raise ValueError("the inflow file has no trunk forecasts (previsoes)")
-    if len(previsoes) != n_weekly:
+    n_forecasts = 0 if previsoes is None else len(previsoes)
+    if n_forecasts != n_weekly:
         raise ValueError(
-            f"{len(previsoes)} trunk forecast rows for {n_weekly} weekly stages"
+            f"{n_forecasts} weekly forecast rows (previsoes) for {n_weekly} "
+            "weekly stages"
         )
 
     values: dict[tuple[int, int], list[float]] = {}
-    for _, row in previsoes.iterrows():
+    for _, row in () if previsoes is None else previsoes.iterrows():
         stage_index = int(row["estagio"]) - 1
         if not 0 <= stage_index < n_weekly:
             raise ValueError(
