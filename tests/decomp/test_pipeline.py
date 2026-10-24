@@ -19,7 +19,7 @@ import pytest
 from typer.testing import CliRunner
 
 from novomodelo_bridge.cli import app
-from novomodelo_bridge.core.diagnostics import Diagnostic
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -140,6 +140,48 @@ class TestScenarioEmitters:
         fan = table[(table["stage_id"] == 2) & (table["scenario_id"] == 1)]
         assert fan[fan["hydro_id"] == 0]["value_m3s"].iloc[0] == pytest.approx(120.0)
         assert fan[fan["hydro_id"] == 1]["value_m3s"].iloc[0] == pytest.approx(180.0)
+
+    def test_negative_incremental_inflows_are_kept_and_reported(self) -> None:
+        hidr = _hidr_frame().assign(nome_usina=["ALFA", "BETA"])
+        vazoes = _StubVazoes()
+        vazoes.previsoes.loc[0, "12"] = -2.0
+        vazoes.cenarios_gerados.loc[:, "12"] = [-4.0, -1.0]
+        with collect() as collected:
+            table = convert_external_inflows(
+                _scenario_case(),
+                _ID_MAP,
+                vazoes=vazoes,
+                effective=_effective_no_override(hidr),
+            ).to_pandas()
+
+        beta = table[table["hydro_id"] == 1].sort_values(["stage_id", "scenario_id"])
+        assert beta["value_m3s"].tolist() == [-2.0, 160.0, -4.0, -1.0]
+        [diagnostic] = [
+            d for d in collected if d.code == "decomp-negative-incremental-inflows"
+        ]
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [
+            [2, "BETA", 12, 1, 1, -2.0],
+            [2, "BETA", 12, 3, 2, -4.0],
+        ]
+        text = f"{diagnostic.summary} {diagnostic.remediation}"
+        for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
+            assert leak not in text
+
+    def test_non_negative_inflows_emit_no_negative_inflow_warning(self) -> None:
+        with collect() as collected:
+            convert_external_inflows(
+                _scenario_case(),
+                _ID_MAP,
+                vazoes=_StubVazoes(),
+                effective=_effective_no_override(
+                    _hidr_frame().assign(nome_usina=["ALFA", "BETA"])
+                ),
+            )
+        assert not [
+            d for d in collected if d.code == "decomp-negative-incremental-inflows"
+        ]
 
     def test_identity_stats(self) -> None:
         stats = convert_inflow_stats_identity(_scenario_case(), _ID_MAP).to_pandas()

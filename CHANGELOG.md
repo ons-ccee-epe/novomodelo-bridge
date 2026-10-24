@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`convert decomp` warns about negative incremental inflows.** The values
+  are converted as the deck gives them. DECOMP reports a negative incremental
+  inflow as zero in its operation output, while Cobre removes that water from
+  the plant's balance unless its priced inflow slack adds it back. A
+  `decomp-negative-incremental-inflows` warning lists each plant and stage
+  with the number of negative values and the lowest one.
 - **`convert decomp` accepts a deck with a multi-month trunk, or with monthly
   stages only.** The operative calendar admits any number of deterministic
   months before the terminal month, and a deck with no operative weeks
