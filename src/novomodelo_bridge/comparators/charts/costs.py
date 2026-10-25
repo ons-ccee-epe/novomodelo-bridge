@@ -15,6 +15,7 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NOVOMODELO,
 )
 from novomodelo_bridge.novomodelo.cost_categories import AGGREGATE_COST_COLUMNS
+from novomodelo_bridge.ui.html.document import escape_text
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 # Per-category mapping between the source model pmo.dat
@@ -40,8 +41,8 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
     ("Energy Excess", ["EXCESSO ENERGIA"], ["excess_cost"], "#F59E0B"),
     ("Exchange", ["INTERCAMBIO"], ["exchange_cost"], "#7C3AED"),
     ("Pumping", [], ["pumping_cost"], "#0891B2"),
-    # Energy-contract cost — novomodelo-only column (no source-model parcela analogue).
-    ("Contract", [], ["contract_cost"], "#0D9488"),
+    # DECOMP's import/export contract parcels; NEWAVE reports none.
+    ("Contract", ["CONTRATOS"], ["contract_cost"], "#0D9488"),
     # Regularisation costs (per-unit-flow charges, not violations)
     (
         "Spillage",
@@ -98,6 +99,12 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
     # FPHA folga slack (the source model) — novomodelo has no direct analogue; left as The
     # source-model-only column so it shows up in the report rather than being hidden.
     ("FPHA Slack", ["VIOLACAO FPHA"], [], "#DB2777"),
+    # DECOMP-only: its unmet water-diversion parcel, and the part of the stage cost
+    # its report does not itemize once deficit is priced (the RHQ/RHE/RHV,
+    # evaporation and irrigation slacks), which Novomodelo spreads over the violation
+    # columns above and below.
+    ("Diversion Viol.", ["VIOLACAO DESVIO"], [], "#BE185D"),
+    ("Unitemized Constr. Slack", ["FOLGA RESTRICOES"], [], "#831843"),
     ("Inflow Non-Negativity", [], ["inflow_penalty_cost"], "#EA580C"),
     # Generic constraint violations: The source model reports the risk-aversion curve
     # and surface (CAR/SAR), electric (RESTELETRICA), interchange-group (INTERC. MIN.),
@@ -123,6 +130,26 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
         "#6D28D9",
     ),
 ]
+
+#: ``_COST_MAP`` categories that price a constraint violation (a slack), as
+#: opposed to a real cost or a per-unit-flow regularisation charge.
+_VIOLATION_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "Outflow Min Viol.",
+        "Outflow Max Viol.",
+        "Turbining Bounds Viol.",
+        "Generation Bounds Viol.",
+        "Storage Bounds Viol.",
+        "Filling Target Viol.",
+        "Water Withdrawal Viol.",
+        "Evaporation Viol.",
+        "FPHA Slack",
+        "Diversion Viol.",
+        "Unitemized Constr. Slack",
+        "Inflow Non-Negativity",
+        "Generic Constr. Viol.",
+    }
+)
 
 _COST_COLOR_DEFAULT = "#6B7280"  # for any unmapped residual category
 
@@ -303,6 +330,100 @@ def cost_breakdown_table(
     body = "<tbody>" + "".join(body_rows) + "</tbody>"
     caption = "<caption>NPV by Category (10⁹ R$)</caption>"
     return '<table class="cost-breakdown-table">' + caption + head + body + "</table>"
+
+
+def _final_lower_bound(conv: pl.DataFrame | None) -> float | None:
+    if conv is None or conv.is_empty() or "lower_bound" not in conv.columns:
+        return None
+    bounds = conv.filter(pl.col("lower_bound").is_not_null()).sort("iteration")
+    return None if bounds.is_empty() else float(bounds["lower_bound"][-1])
+
+
+def net_of_penalties_table(
+    nw_conv: pl.DataFrame | None,
+    novomodelo_conv: pl.DataFrame | None,
+    nw_costs: dict[str, float] | None,
+    novomodelo_costs: dict[str, float] | None,
+    reference_label: str = "NEWAVE",
+) -> str:
+    """Each model's final lower bound with and without its expected
+    constraint-violation penalties.
+
+    The penalties are the :data:`_VIOLATION_CATEGORIES` of the cost breakdown, over
+    the horizon that breakdown covers. A slack priced far above any real cost (a
+    conflicting pair of constraints, say) can dominate one model's bound; netting
+    it out compares the operation both models price. Empty when neither model
+    reports a lower bound.
+    """
+    lower = (_final_lower_bound(nw_conv), _final_lower_bound(novomodelo_conv))
+    if lower == (None, None):
+        return ""
+
+    categories = _resolve_cost_categories(nw_costs or {}, novomodelo_costs or {})
+    counted = [c for c in categories if c[0] in _VIOLATION_CATEGORIES]
+    known = {label for label, *_ in _COST_MAP}
+    unclassified = [label for label, *_ in categories if label not in known]
+    penalties = (
+        sum(nw for _, nw, _, _ in counted) if nw_costs else None,
+        sum(cb for _, _, cb, _ in counted) if novomodelo_costs else None,
+    )
+    net = tuple(
+        None if bound is None or penalty is None else bound - penalty
+        for bound, penalty in zip(lower, penalties, strict=True)
+    )
+
+    def _money(v: float | None) -> str:
+        return "—" if v is None else f"{v / 1e9:.3f}"
+
+    def _row(label: str, pair: tuple[float | None, ...]) -> str:
+        source, novomodelo = pair
+        diff = None if source is None or novomodelo is None else novomodelo - source
+        pct = (
+            None
+            if diff is None or source is None or abs(source) <= 1e-6
+            else diff / source * 100.0
+        )
+        return (
+            "<tr>"
+            f'<td class="cb-cat">{label}</td>'
+            f'<td class="cb-num">{_money(source)}</td>'
+            f'<td class="cb-num">{_money(novomodelo)}</td>'
+            f'<td class="cb-num">{_money(diff)}</td>'
+            f'<td class="cb-num">{"—" if pct is None else f"{pct:+.1f}%"}</td>'
+            "</tr>"
+        )
+
+    notes = []
+    if counted:
+        notes.append("penalties: " + ", ".join(label for label, *_ in counted))
+    if unclassified:
+        notes.append("not classified: " + ", ".join(unclassified))
+    note = (
+        f' <span class="cb-caption-note">— {escape_text("; ".join(notes))}</span>'
+        if notes
+        else ""
+    )
+    head = (
+        "<thead><tr>"
+        '<th class="cb-cat">Bound</th>'
+        f'<th class="cb-num">{reference_label}</th>'
+        '<th class="cb-num">Novomodelo</th>'
+        '<th class="cb-num">Δ</th>'
+        '<th class="cb-num">Δ%</th>'
+        "</tr></thead>"
+    )
+    body = (
+        "<tbody>"
+        + _row("Final lower bound", lower)
+        + _row("Expected violation penalties", penalties)
+        + _row("Lower bound net of penalties", net)
+        + "</tbody>"
+    )
+    return (
+        '<table class="cost-breakdown-table">'
+        "<caption>Lower bound net of constraint-violation penalties (10⁹ R$)"
+        f"{note}</caption>" + head + body + "</table>"
+    )
 
 
 def _extract_stage_cost_series(

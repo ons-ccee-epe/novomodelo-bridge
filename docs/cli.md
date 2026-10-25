@@ -154,14 +154,12 @@ Compare a DECOMP run&#x27;s published operation against Novomodelo&#x27;s simula
 
 Informational: always exits 0, reporting divergences without failing.
 
-Two caveats apply to the generated report. First, the Overview tab&#x27;s NPV
-cost cards compare DECOMP&#x27;s undiscounted-nominal costs against Novomodelo&#x27;s
-time-discounted costs: DECOMP&#x27;s own cost report carries no per-stage
-discount factor, so none is fabricated on that side, and the two totals
-are not on the same time-value footing. Second, percentile bands are
-omitted (or labelled low-N where one would otherwise appear) for a
-deterministic tree with too few scenarios to report a spread without
-synthesizing it.
+The Overview tab&#x27;s cost breakdown is at present value on both sides:
+each stage&#x27;s DECOMP parcels are discounted by that stage&#x27;s ratio of
+present-value to nominal cost, both printed in DECOMP&#x27;s cost report.
+Percentile bands are omitted (or labelled low-N where one would
+otherwise appear) for a deterministic tree with too few scenarios to
+report a spread without synthesizing it.
 
 **Usage**:
 

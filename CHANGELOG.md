@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`compare decomp` compares both models at their operating points.** The
+  Productivity tab splits each plant and stage's realized-productivity gap
+  into a part from the fitted production functions and a part from where
+  Cobre operates, using DECOMP's planes (`avl_cortesfpha_dec.rvN`) and fit
+  windows (`eco_fpha_.rvN`). It plots generation against turbined flow at
+  DECOMP's mean operating point for both models' planes and the exact
+  production function, and lists each model's fit inputs and head
+  components. A point where the plant's energy or water is worth nothing in
+  either model is a tie: ties are left out of the split and of the per-plant
+  hydro ranking, and their share is reported per stage. The FPHA surface
+  comparison now uses DECOMP's own planes on its fit grid, as the NEWAVE
+  report does, instead of Cobre's planes against `dec_desvfpha.rvN`. The
+  static pmo section is no longer shown when it has no data.
+- **`compare newave` and `compare decomp` net the penalties out of each
+  lower bound.** Below the Overview tab's convergence chart, a table gives
+  each model's final lower bound, its expected constraint-violation
+  penalties from the cost breakdown, and the bound net of them. A slack
+  priced far above any real cost can dominate one model's bound; the net
+  bounds compare the operation both models price. The table names the
+  categories it counts and any cost category it cannot classify.
+
 - **`convert decomp` warns about negative incremental inflows.** The values
   are converted as the deck gives them. DECOMP reports a negative incremental
   inflow as zero in its operation output, while Cobre removes that water from
@@ -261,6 +282,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overflowed.** DECOMP prints a lower bound too wide for its field as
   asterisks; the convergence chart now draws each bound over the iterations
   where it is present, instead of failing to build the HTML report.
+- **`compare decomp` puts DECOMP's cost breakdown at present value.** The
+  parcels of DECOMP's cost report are nominal, and they were summed against
+  Cobre's present-value costs. Each stage's parcels are now discounted by
+  that stage's ratio of present-value to nominal cost, both printed in the
+  report. The breakdown also shows DECOMP's deficit, priced from
+  `dec_oper_sist` and the deck's `CD` costs, its import and export
+  contracts as its stage total counts them, and the penalty left in the
+  stage total for the constraint slacks the report does not itemize. DECOMP
+  counts an export contract's take-or-pay minimum as a cost where Cobre
+  counts it as revenue; the comparison logs the difference. The two turbining parcels were shown
+  as turbining-bound violations; they are the price on turbined water and
+  now compare with Cobre's turbined cost. The per-stage operating cost is
+  the nominal stage total. This needs idecomp 1.17.0 or newer, now the
+  minimum.
+- **`compare decomp` counts the ANDE load in Net Load and shows the system
+  ENA in MW.** DECOMP's `dec_oper_sist` demand leaves out the ANDE load of the
+  `RI` register, which the converted case carries on Itaipu's submarket bus,
+  so the Energy Balance tab's Net Load on that bus was lower on the DECOMP
+  side by that load. It is now added there. The system ENA chart drew
+  DECOMP's ENA, energy over the stage in MWmês of 730 hours, against Cobre's
+  mean MW, which put a weekly stage at about a quarter of Cobre's value.
+  DECOMP's ENA is now converted to the stage's mean MW.
 - **DECOMP: an Itaipu `MP` or `FD` row without a frequency applies to both
   frequency groups.** The frequency field of those registers is optional,
   and a row that leaves it blank holds for the whole plant; the conversion

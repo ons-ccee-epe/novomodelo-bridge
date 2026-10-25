@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from novomodelo_bridge.comparators import analyze
 from novomodelo_bridge.comparators.charts import (
     _BALANCE_VARS,
     constraints_comparison_chart,
@@ -18,6 +19,8 @@ from novomodelo_bridge.comparators.charts import (
     cost_breakdown_table,
     fpha_detail_chart,
     fpha_metrics_table,
+    fpha_slice_chart,
+    fpha_split_table,
     future_cost_chart,
     hydro_aggregate_chart,
     hydro_per_bus_chart,
@@ -25,6 +28,7 @@ from novomodelo_bridge.comparators.charts import (
     hydro_slack_per_bus_chart,
     immediate_cost_chart,
     line_summary_chart,
+    net_of_penalties_table,
     novomodelo_aggregate_chart,
     other_costs_chart,
     overview_metrics,
@@ -39,6 +43,7 @@ from novomodelo_bridge.comparators.charts import (
     system_per_bus_chart,
     thermal_cost_chart,
     thermal_generation_chart,
+    tie_share_table,
 )
 from novomodelo_bridge.comparators.charts._shared import (
     _BAND_FILL,
@@ -371,6 +376,7 @@ def build_hydro_detail_tab(
     novomodelo_hydro_per_stage_bounds: pl.DataFrame | None = None,
     nw_hydro_slacks: pl.DataFrame | None = None,
     reference_label: str = "NEWAVE",
+    masked_hydro: pl.DataFrame | None = None,
 ) -> str:
     """Build interactive per-plant hydro detail with JS dropdown.
 
@@ -393,6 +399,10 @@ def build_hydro_detail_tab(
     on the two withdrawal-slack panels alongside the existing Novomodelo Mean + p10/p90 band.
     The inflow-non-negativity slack stays Novomodelo-only because the source model has no
     direct counterpart.
+
+    When ``masked_hydro`` is non-empty, the per-plant ranking takes the
+    variables it carries from it (averaged over the points that are not ties)
+    and says so in its caption; the charts keep every point.
     """
     hydro_data = [r for r in results if r.entity_type == "hydro"]
     if not hydro_data:
@@ -548,9 +558,22 @@ def build_hydro_detail_tab(
 
     _enrich_with_percentiles(js_plants, all_vars, pct_df)
 
-    summary_table = _plant_max_reldiff_table(
-        results, "hydro", _HYDRO_VARIABLES, reference_label
-    )
+    if masked_hydro is not None and not masked_hydro.is_empty():
+        summary_table = _plant_max_reldiff_table(
+            analyze.with_masked_hydro_rows(results, masked_hydro),
+            "hydro",
+            _HYDRO_VARIABLES,
+            reference_label,
+            note=(
+                "generation, turbined flow, productivity, spillage and outflow "
+                "are averaged over the points that are not ties (see the "
+                "Productivity tab); the other columns use every point"
+            ),
+        )
+    else:
+        summary_table = _plant_max_reldiff_table(
+            results, "hydro", _HYDRO_VARIABLES, reference_label
+        )
     detail_html = _build_interactive_detail_html(
         js_plants,
         all_vars,
@@ -726,6 +749,11 @@ def build_comparison_report(
             single=True,
         )
     )
+    net_table = net_of_penalties_table(
+        nw_conv, cb_conv, nw_costs, novomodelo_costs, reference_label
+    )
+    if net_table:
+        overview_parts.append(chart_grid([wrap_chart(net_table)], single=True))
     tab_contents["tab-overview"] = "\n".join(overview_parts)
 
     # --- System tab ---
@@ -1069,6 +1097,7 @@ def build_comparison_report(
         novomodelo_hydro_per_stage_bounds=dataset.render.novomodelo_hydro_per_stage_bounds,
         nw_hydro_slacks=nw_hydro_slacks,
         reference_label=reference_label,
+        masked_hydro=dataset.render.hydro_masked,
     )
 
     # --- Thermal Operation tab ---
@@ -1100,17 +1129,12 @@ def build_comparison_report(
         "Static productivity — pmo vs novomodelo-bridge conversion "
         "(point / equivalent / accumulated)"
     )
-    # the static (pmo-derived) and realized (per-stage) halves are
-    # disjoint data sources -- a source with no pmo.dat (e.g. DECOMP) can
-    # carry a non-empty ``per_stage_df`` while ``prod_df`` stays empty, and
-    # vice versa -- so each half is gated on its OWN frame, independently.
-    # Order is preserved exactly for the case both are non-empty (e.g.
-    # NEWAVE, which always has both): static title -> scatter/no-data-note ->
-    # realized title/description/chart -> building-blocks table.
-    prod_parts.append(section_title(static_title))
-    if prod_df.is_empty():
-        prod_parts.append("<p>No productivity data available.</p>")
-    else:
+    # The static (pmo-derived) and realized (per-stage) halves are disjoint
+    # data sources -- a source with no pmo.dat (e.g. DECOMP) carries a
+    # non-empty ``per_stage_df`` while ``prod_df`` stays empty -- so each
+    # section is gated on its own frame.
+    if not prod_df.is_empty():
+        prod_parts.append(section_title(static_title))
         prod_parts.append(
             chart_grid(
                 [
@@ -1163,6 +1187,50 @@ def build_comparison_report(
             )
         )
 
+    # --- Both models at their operating points (DECOMP track) ---
+    fpha_split = dataset.render.fpha_split
+    tie_share = dataset.render.tie_share
+    if not fpha_split.is_empty():
+        prod_parts.append(section_title("Why the realized productivities differ"))
+        prod_parts.append(
+            '<p style="color:#64748B;margin:-8px 0 12px">Each row splits the gap'
+            " between the two realized productivities of a plant and stage into"
+            " a part from the fitted production functions (Novomodelo's planes against"
+            f" {reference_label}'s realized generation at {reference_label}'s"
+            " operating points) and a part from where Novomodelo operates. Largest gap"
+            " in MW first.</p>"
+        )
+        prod_parts.append(fpha_split_table(fpha_split, reference_label))
+    elif not tie_share.is_empty():
+        prod_parts.append(section_title("Tie points"))
+    if not tie_share.is_empty():
+        prod_parts.append(
+            chart_grid(
+                [wrap_chart(tie_share_table(tie_share, reference_label))],
+                single=True,
+            )
+        )
+    fpha_slices = dataset.render.fpha_slices
+    if not fpha_slices.is_empty():
+        prod_parts.append(section_title("Production function at the operating point"))
+        prod_parts.append(
+            '<p style="color:#64748B;margin:-8px 0 12px">Generation against'
+            f" turbined flow at {reference_label}'s mean storage, spill and lateral"
+            f" flow for the stage: {reference_label}'s planes, Novomodelo's planes, the"
+            " exact production function, and Novomodelo's planes at Novomodelo's own mean"
+            " storage and spill (dashed); below, each model's planes minus the exact"
+            " function. The table lists each model's fit inputs and the head"
+            " components at its mean operating point. Pick a plant and stage.</p>"
+        )
+        prod_parts.append(
+            fpha_slice_chart(
+                fpha_slices,
+                dataset.render.fpha_fit_inputs,
+                fpha_split,
+                reference_label,
+            )
+        )
+
     # --- Fitted production functions (FPHA) --- Present only when both sides
     # fitted FPHA hyperplanes; compares the production surfaces GH(V, Q) the two
     # solvers fit, on a shared grid (run-of-river plants reduce to a Q-curve).
@@ -1189,6 +1257,8 @@ def build_comparison_report(
             )
         )
 
+    if not prod_parts:
+        prod_parts.append("<p>No productivity data available.</p>")
     tab_contents["tab-productivity"] = "\n".join(prod_parts)
 
     # --- Performance tab ---

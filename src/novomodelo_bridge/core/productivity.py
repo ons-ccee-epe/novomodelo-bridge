@@ -142,6 +142,16 @@ def apply_hydraulic_loss(h_gross: float, tipo_perda: int, perdas: float) -> floa
     return h_gross
 
 
+def hydraulic_generation_mw(
+    rho_esp: float, turbined_m3s: float, net_head_m: float, max_generation_mw: float
+) -> float:
+    """The exact production function ``min(ρ_esp · Q · h_net, G_max)`` (MW).
+
+    A non-positive net head generates nothing.
+    """
+    return min(rho_esp * turbined_m3s * max(net_head_m, 0.0), max_generation_mw)
+
+
 def equivalent_productivity_from_coeffs(
     coeffs: Sequence[float],
     *,

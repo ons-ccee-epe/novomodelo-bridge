@@ -412,6 +412,72 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     return result
 
 
+#: Per-block hydro columns :func:`read_novomodelo_hydro_block_operation` returns.
+_HYDRO_BLOCK_COLUMNS: dict[str, type[pl.DataType]] = {
+    "scenario_id": pl.Int64,
+    "stage_id": pl.Int64,
+    "block_id": pl.Int64,
+    "hydro_id": pl.Int64,
+    "hours": pl.Float64,
+    "turbined_m3s": pl.Float64,
+    "spillage_m3s": pl.Float64,
+    "outflow_m3s": pl.Float64,
+    "incremental_inflow_m3s": pl.Float64,
+    "storage_initial_hm3": pl.Float64,
+    "storage_final_hm3": pl.Float64,
+    "generation_mw": pl.Float64,
+    "water_value_per_hm3": pl.Float64,
+    "accumulated_productivity_mw_per_m3s": pl.Float64,
+}
+
+
+def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Novomodelo's simulated hydro operation per (scenario, stage, block, hydro).
+
+    The ``simulation/hydros`` rows unaggregated, with each block's ``hours``
+    from ``stages.json``. Empty (typed) when the run has no hydro simulation
+    output or no block hours.
+    """
+    empty = pl.DataFrame(schema=_HYDRO_BLOCK_COLUMNS)
+    lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
+    block_hours = _load_block_hours(novomodelo_output_dir)
+    if lf is None or block_hours is None:
+        return empty
+    columns = [c for c in _HYDRO_BLOCK_COLUMNS if c != "hours"]
+    try:
+        frame = (
+            lf.select(columns)
+            .join(block_hours.lazy(), on=["stage_id", "block_id"])
+            .collect()
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise NovomodeloReadError(
+            f"Failed to read the hydro simulation rows in {novomodelo_output_dir}"
+        ) from exc
+    return frame.select(list(_HYDRO_BLOCK_COLUMNS)).cast(_HYDRO_BLOCK_COLUMNS)
+
+
+def read_novomodelo_bus_block_prices(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Novomodelo's spot price per (scenario, stage, block, bus); empty when absent."""
+    schema: dict[str, type[pl.DataType]] = {
+        "scenario_id": pl.Int64,
+        "stage_id": pl.Int64,
+        "block_id": pl.Int64,
+        "bus_id": pl.Int64,
+        "spot_price": pl.Float64,
+    }
+    lf = scan_simulation_entity(novomodelo_output_dir, "buses")
+    if lf is None:
+        return pl.DataFrame(schema=schema)
+    try:
+        frame = lf.select(list(schema)).collect()
+    except Exception as exc:  # noqa: BLE001
+        raise NovomodeloReadError(
+            f"Failed to read the bus simulation rows in {novomodelo_output_dir}"
+        ) from exc
+    return frame.cast(schema)
+
+
 def read_novomodelo_hydro_total_flows(
     novomodelo_output_dir: Path,
     novomodelo_hydro_means: pl.DataFrame,
@@ -2083,13 +2149,70 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
     }
 
 
+#: Columns of :func:`read_novomodelo_fpha_fit_config`.
+_FPHA_FIT_CONFIG_SCHEMA: dict[str, type[pl.DataType]] = {
+    "hydro_id": pl.Int64,
+    "stage_id": pl.Int64,
+    "volume_min_hm3": pl.Float64,
+    "volume_max_hm3": pl.Float64,
+    "spillage_fit_max_m3s": pl.Float64,
+}
+
+
+def read_novomodelo_fpha_fit_config(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """The computed-FPHA fit inputs per (hydro, stage), from
+    ``system/hydro_production_models.json``.
+
+    One row per stage of every ``fpha`` stage range: the ``fitting_window``
+    bounds and ``spillage_fit_max_m3s``, null where the config leaves novomodelo's
+    default. An open-ended range runs to the last stage of ``stages.json``.
+    Empty when either file is absent.
+    """
+    empty = pl.DataFrame(schema=_FPHA_FIT_CONFIG_SCHEMA)
+    path = _find_system_json(novomodelo_output_dir, "hydro_production_models.json")
+    block_hours = _load_block_hours(novomodelo_output_dir)
+    if path is None or block_hours is None:
+        return empty
+    try:
+        with path.open() as f:
+            models = json.load(f).get("production_models", [])
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NovomodeloReadError(f"Failed to read {path}") from exc
+    last_stage = int(block_hours["stage_id"].max())  # type: ignore[arg-type]
+    rows: list[dict[str, object]] = []
+    for model in models:
+        for stage_range in model.get("stage_ranges", []):
+            if stage_range.get("model") != "fpha":
+                continue
+            config = stage_range.get("fpha_config") or {}
+            window = config.get("fitting_window") or {}
+            end = stage_range.get("end_stage_id")
+            for stage_id in range(
+                int(stage_range["start_stage_id"]),
+                (last_stage if end is None else int(end)) + 1,
+            ):
+                rows.append(
+                    {
+                        "hydro_id": int(model["hydro_id"]),
+                        "stage_id": stage_id,
+                        "volume_min_hm3": window.get("volume_min_hm3"),
+                        "volume_max_hm3": window.get("volume_max_hm3"),
+                        "spillage_fit_max_m3s": config.get("spillage_fit_max_m3s"),
+                    }
+                )
+    if not rows:
+        return empty
+    return pl.DataFrame(rows, schema=_FPHA_FIT_CONFIG_SCHEMA)
+
+
 def read_novomodelo_fpha_planes(novomodelo_output_dir: Path) -> pl.DataFrame | None:
     """Read Novomodelo's fitted production hyperplanes (``hydro_models``).
 
     Novomodelo fits, per hydro and per stage, the FPHA hyperplanes it consumes —
-    ``GH <= kappa * (gamma_0 + gamma_v * volume + gamma_q * turbined + gamma_s *
-    spilled)`` — and exports them to ``hydro_models/fpha_hyperplanes.parquet``
-    after training. The ``gamma_v`` coefficient multiplies *absolute* volume.
+    ``GH <= kappa * gamma_0 + gamma_v * volume + gamma_q * turbined + gamma_s *
+    spilled`` (``kappa`` scales the intercept only) — and exports them to
+    ``hydro_models/fpha_hyperplanes.parquet`` after training. The ``gamma_v``
+    coefficient multiplies *absolute* volume, the stage's average storage.
 
     Returns ``None`` when the parquet is absent (the case used constant
     productivity); that ``None`` gates the production-model comparison off. A

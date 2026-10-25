@@ -15,6 +15,7 @@ from novomodelo_bridge.core.productivity import (
     evaluate_cota,
     fpha_efficiency,
     fpha_spillage_fit_max_m3s,
+    hydraulic_generation_mw,
     integrated_productivity,
     mean_cota,
     stored_energy_productivity,
@@ -199,3 +200,15 @@ class TestKturbByTipoTurbina:
 
     def test_francis_and_pelton_share_the_square_root_exponent(self) -> None:
         assert KTURB_BY_TIPO_TURBINA[1] == KTURB_BY_TIPO_TURBINA[3]
+
+
+class TestHydraulicGeneration:
+    def test_specific_productivity_times_flow_times_net_head(self) -> None:
+        generation = hydraulic_generation_mw(0.009, 100.0, 50.0, 1000.0)
+        assert generation == pytest.approx(45.0)
+
+    def test_capped_at_the_generation_limit(self) -> None:
+        assert hydraulic_generation_mw(0.009, 100.0, 50.0, 40.0) == 40.0
+
+    def test_non_positive_net_head_generates_nothing(self) -> None:
+        assert hydraulic_generation_mw(0.009, 100.0, -3.0, 1000.0) == 0.0
