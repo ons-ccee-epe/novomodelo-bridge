@@ -375,12 +375,12 @@ Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produti
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/newave/converters/hydro/geometry.py`
 
-Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes entre `volume_minimo` e `volume_maximo` (um único ponto quando iguais); usinas com polinômio cota-volume nulo são omitidas com aviso.
+Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes na faixa de armazenamento em que a usina opera (um único ponto quando ela se reduz a um volume); usinas com polinômio cota-volume nulo são omitidas com aviso.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
 | `hydro_id` | `confhd.dat` › `codigo_usina` *(derivado)* | Id Novomodelo da usina, repetido em cada ponto amostrado; a tabela é ordenada por usina e depois por volume. |
-| `volume_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume` | Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto em `volume_minimo` quando a faixa é nula. Não aplica o colapso das usinas `D`/`S` feito em `hydros.json`. |
+| `volume_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume` | Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto quando a faixa é nula. Usinas `tipo_regulacao` D e S recebem um único ponto em `volume_referencia`, o mesmo colapso dos limites de `hydros.json`, mesmo fora de [`volume_minimo`, `volume_maximo`]: a cota nesse volume é a de montante da usina e o nível de jusante da usina a montante (faixa completa se ausente). |
 | `height_m` | `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `modif.dat` › `VOLCOTA · coeficientes a0 a a4` | Cota de montante (m): polinômio `a0 + a1·V + a2·V² + a3·V³ + a4·V⁴` (coeficientes sobrescritos pelo registro permanente `VOLCOTA` de `modif.dat`) avaliado em cada volume, com valores negativos levados a 0. |
 | `area_km2` | `hidr.dat` › `a0_cota_area … a4_cota_area`, `modif.dat` › `COTAREA · coeficientes a0 a a4` | Área do espelho d'água (km²): polinômio cota-área (coeficientes sobrescritos pelo registro permanente `COTAREA` de `modif.dat`) avaliado na cota calculada, com valores negativos levados a 0. |
 
@@ -1224,6 +1224,8 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 - `volume_referencia` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.fitting_window.volume_max_hm3`
 - `volume_minimo` → `system/hydro_geometry.parquet` › `volume_hm3`
 - `volume_maximo` → `system/hydro_geometry.parquet` › `volume_hm3`
+- `tipo_regulacao` → `system/hydro_geometry.parquet` › `volume_hm3`
+- `volume_referencia` → `system/hydro_geometry.parquet` › `volume_hm3`
 - `a0_volume_cota … a4_volume_cota` → `system/hydro_geometry.parquet` › `height_m`
 - `a0_cota_area … a4_cota_area` → `system/hydro_geometry.parquet` › `area_km2`
 - `produtibilidade_especifica` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`

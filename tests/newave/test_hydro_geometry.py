@@ -203,6 +203,81 @@ class TestGenerateHydroGeometry:
         assert all(h >= 0.0 for h in heights), "Heights must be >= 0"
         assert all(a >= 0.0 for a in areas), "Areas must be >= 0"
 
+    @pytest.mark.parametrize(
+        ("tipo", "vmin", "vmax", "vref"),
+        [
+            ("D", 50.0, 50.0, 40.0),
+            ("S", 100.0, 1000.0, 1200.0),
+            ("D", 100.0, 1000.0, 500.0),
+        ],
+    )
+    def test_daily_and_run_of_river_emit_one_point_at_reference_volume(
+        self, tipo: str, vmin: float, vmax: float, vref: float
+    ) -> None:
+        """A 'D'/'S' plant's single row sits at ``volume_referencia``, the volume
+        its reservoir is held at, even outside the hidr range."""
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
+
+        cadastro = _make_geometry_cadastro().copy()
+        cadastro["tipo_regulacao"] = ["M", tipo]
+        cadastro["volume_referencia"] = [550.0, vref]
+        cadastro.loc[2, "volume_minimo"] = vmin
+        cadastro.loc[2, "volume_maximo"] = vmax
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[2], thermal_codes=[])
+        table = generate_hydro_geometry(cadastro, id_map)
+
+        assert table.column("volume_hm3").to_pylist() == [vref]
+        assert table.column("height_m").to_pylist() == pytest.approx(
+            [300.0 + 0.1 * vref]
+        )
+
+    def test_monthly_reservoir_keeps_hidr_range(self) -> None:
+        """An 'M' plant samples ``[volume_minimo, volume_maximo]`` whatever its
+        ``volume_referencia``."""
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
+
+        cadastro = _make_geometry_cadastro().copy()
+        cadastro["tipo_regulacao"] = ["M", "D"]
+        cadastro["volume_referencia"] = [1500.0, 50.0]
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
+        vols = (
+            generate_hydro_geometry(cadastro, id_map).column("volume_hm3").to_pylist()
+        )
+
+        assert len(vols) == 100
+        assert (vols[0], vols[-1]) == pytest.approx((100.0, 1000.0))
+
+
+class TestOperatingStorageRange:
+    """The one storage range the reservoir bounds, geometry and FPHA window read."""
+
+    @pytest.mark.parametrize(
+        ("tipo", "vref", "expected"),
+        [
+            ("M", 500.0, (100.0, 1000.0)),
+            ("D", 500.0, (500.0, 500.0)),
+            ("S", 1200.0, (1200.0, 1200.0)),
+            ("D", float("nan"), (100.0, 1000.0)),
+            (" ", 500.0, (100.0, 1000.0)),
+        ],
+    )
+    def test_collapses_daily_and_run_of_river_to_reference_volume(
+        self, tipo: str, vref: float, expected: tuple[float, float]
+    ) -> None:
+        from novomodelo_bridge.newave.converters.hydro.geometry import (
+            operating_storage_range,
+        )
+
+        hreg = pd.Series(
+            {
+                "tipo_regulacao": tipo,
+                "volume_minimo": 100.0,
+                "volume_maximo": 1000.0,
+                "volume_referencia": vref,
+            }
+        )
+        assert operating_storage_range(hreg) == expected
+
 
 class TestGenerateHydroGeometryDiagnostics:
     """Structured-diagnostic coverage for the loop-accumulated geometry skips."""

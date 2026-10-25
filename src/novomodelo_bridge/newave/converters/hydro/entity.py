@@ -34,6 +34,7 @@ from novomodelo_bridge.newave.converters.hydro.geometry import (
     _expansion_configs,
     _read_volref_saz,
     fpha_eligible_codes,
+    operating_storage_range,
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
@@ -318,28 +319,10 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
         hreg = cadastro.loc[newave_code]
 
-        # Reservoir bounds.
-        vol_min = float(hreg["volume_minimo"])
-        vol_max = float(hreg["volume_maximo"])
-
-        # The source model treats Daily-regulation ('D') and run-of-river / fio-d'água
-        # ('S') plants as fio-d'água — they can't accumulate water across stages, so the
-        # useful volume is NOT a usable reservoir buffer. Collapse the active range to a
-        # single point so Novomodelo's LP mirrors that; otherwise Novomodelo stores the inflow
-        # excess in a phantom buffer and shifts it across stages, where the source
-        # model simply spills it.
-        #
-        # Both 'D' and 'S' freeze at ``volume_referencia`` — the operating volume the
-        # source model holds these plants at every stage. When
-        # ``volume_referencia`` is absent/NaN the range is left as
-        # ``[volume_minimo, volume_maximo]`` (no collapse).
-        tipo_reg = str(hreg.get("tipo_regulacao", "")).strip()
-        if tipo_reg in ("D", "S"):
-            vol_ref_raw = hreg.get("volume_referencia")
-            if vol_ref_raw is not None and not pd.isna(vol_ref_raw):
-                vol_ref = float(vol_ref_raw)
-                vol_min = vol_ref
-                vol_max = vol_ref
+        # Reservoir bounds. 'D'/'S' plants collapse to one volume: the source
+        # model spills their inflow excess, and a usable range would let novomodelo
+        # store it in a phantom buffer and shift it across stages.
+        vol_min, vol_max = operating_storage_range(hreg)
 
         # FILLING phase: an admitted NE plant fills its dead
         # volume from its seeded storage up to ``min_storage_hm3`` over the

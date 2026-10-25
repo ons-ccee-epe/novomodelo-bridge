@@ -2022,7 +2022,7 @@ reads = [
   { file = "confhd" },
   { file = "exph" },
 ]
-summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes entre `volume_minimo` e `volume_maximo` (um único ponto quando iguais); usinas com polinômio cota-volume nulo são omitidas com aviso."
+summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes na faixa de armazenamento em que a usina opera (um único ponto quando ela se reduz a um volume); usinas com polinômio cota-volume nulo são omitidas com aviso."
 
   [[output.field]]
   path = "hydro_id"
@@ -2035,10 +2035,12 @@ summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniform
   from = [
     { file = "hidr", item = "volume_minimo" },
     { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
     { file = "modif", item = "VOLMIN · volume" },
     { file = "modif", item = "VOLMAX · volume" },
   ]
-  how = "Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto em `volume_minimo` quando a faixa é nula. Não aplica o colapso das usinas `D`/`S` feito em `hydros.json`."
+  how = "Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto quando a faixa é nula. Usinas `tipo_regulacao` D e S recebem um único ponto em `volume_referencia`, o mesmo colapso dos limites de `hydros.json`, mesmo fora de [`volume_minimo`, `volume_maximo`]: a cota nesse volume é a de montante da usina e o nível de jusante da usina a montante (faixa completa se ausente)."
 
   [[output.field]]
   path = "height_m"

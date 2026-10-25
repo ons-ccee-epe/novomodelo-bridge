@@ -31,6 +31,7 @@ from novomodelo_bridge.newave.converters.hydro.geometry import (
     _read_volref_saz,
     _seasonal_reference_volume,
     fpha_eligible_codes,
+    operating_storage_range,
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
@@ -204,26 +205,14 @@ def _fpha_computed_config(
     window and, when given, its spillage fit range
     (:func:`~novomodelo_bridge.core.productivity.fpha_spillage_fit_max_m3s`).
 
-    The source model fits the FPHA volume axis over the *operative* storage range, which
-    depends on the regulation type:
-
-    - ``tipo_regulacao == "M"`` (monthly reservoir) → multi-volume over
-      ``[volume_minimo, volume_maximo]``.
-    - ``"D"`` / ``"S"`` (daily / run-of-river) → single-volume at
-      ``volume_referencia`` (the reference operating volume).
-
-    Passing this as ``fitting_window`` makes novomodelo fit the same volume grid. Without it
-    novomodelo falls back to the full geometry span, which fits the "D" plants that carry a
-    cadastro storage range (e.g. ITAIPU, JIRAU) as multi-volume even though the source
-    model collapses them to a single volume.
+    The source model fits the FPHA volume axis over the plant's
+    :func:`~novomodelo_bridge.newave.converters.hydro.geometry.operating_storage_range`:
+    multi-volume over ``[volume_minimo, volume_maximo]`` for a monthly reservoir
+    ('M'), single-volume at ``volume_referencia`` for a daily or run-of-river
+    plant ('D' / 'S'). Passing it as ``fitting_window`` makes novomodelo fit the same
+    volume grid.
     """
-    reg = str(hreg["tipo_regulacao"]).strip()
-    if reg == "M":
-        vlo = float(hreg["volume_minimo"])
-        vhi = float(hreg["volume_maximo"])
-    else:
-        vref = float(hreg["volume_referencia"])
-        vlo = vhi = vref
+    vlo, vhi = operating_storage_range(hreg)
     config: dict = {
         "source": "computed",
         "fitting_window": {"volume_min_hm3": vlo, "volume_max_hm3": vhi},

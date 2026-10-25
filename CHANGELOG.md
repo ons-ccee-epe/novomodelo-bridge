@@ -260,6 +260,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert newave` writes a daily or run-of-river plant's geometry at the
+  volume its reservoir is held at.** A plant with `tipo_regulacao` D or S is
+  held at `volume_referencia`, which can lie outside its hidr volume range,
+  but `system/hydro_geometry.parquet` sampled that range. Cobre then read
+  the forebay level at the wrong volume, both for the plant's own head and
+  as the downstream level of the plant above, and the FPHA planes it fitted
+  for those plants departed from NEWAVE's. The geometry is now one point at
+  `volume_referencia`, as `convert decomp` already does.
 - **`convert decomp` converts two flow restrictions on one plant that no
   value meets at once.** Single-plant `HQ` restrictions on the same variable,
   such as a 0 m³/s ceiling and a 6 m³/s floor on a plant's outflow, failed the

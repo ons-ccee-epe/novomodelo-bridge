@@ -69,6 +69,25 @@ def _has_rated_capacity(hreg: pd.Series) -> bool:
     return max_turbined > 0.0 and max_generation > 0.0
 
 
+def operating_storage_range(hreg: pd.Series) -> tuple[float, float]:
+    """``(min, max)`` storage the plant operates over, in hm³.
+
+    The source model holds daily ('D') and run-of-river ('S') plants at
+    ``volume_referencia`` every stage, so their range collapses to that point,
+    which may lie outside ``[volume_minimo, volume_maximo]``. Every other plant,
+    and a 'D'/'S' plant without a ``volume_referencia``, keeps the hidr range.
+    The reservoir bounds, the VHA geometry and the FPHA volume window all read
+    this one range.
+    """
+    tipo_reg = str(hreg.get("tipo_regulacao", "")).strip()
+    if tipo_reg in ("D", "S"):
+        vol_ref_raw = hreg.get("volume_referencia")
+        if vol_ref_raw is not None and not pd.isna(vol_ref_raw):
+            vol_ref = float(vol_ref_raw)
+            return vol_ref, vol_ref
+    return float(hreg["volume_minimo"]), float(hreg["volume_maximo"])
+
+
 def _expansion_configs(
     case: NewaveCase, cadastro: pd.DataFrame
 ) -> dict[int, ExpansionConfig]:
@@ -237,16 +256,18 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
     """Generate a VHA curve table for all hydro plants in *id_map*.
 
     For each plant code in ``id_map.all_hydro_codes``, samples 100 uniformly
-    spaced volume points on ``[volume_minimo, volume_maximo]``, evaluates the
-    volume-to-height polynomial (``a0_volume_cota`` through
+    spaced volume points on the plant's :func:`operating_storage_range`,
+    evaluates the volume-to-height polynomial (``a0_volume_cota`` through
     ``a4_volume_cota``), then evaluates the height-to-area polynomial
     (``a0_cota_area`` through ``a4_cota_area``), and collects the results
     into a PyArrow Table.
 
-    Plants where ``volume_minimo == volume_maximo`` (run-of-river with no
-    reservoir) are skipped.  Plants whose volume_cota polynomial coefficients
-    are all zero are skipped and reported via a diagnostic.  Negative height
-    or area values produced by the polynomials are clamped to 0.0.
+    A plant whose range is a single volume emits one point there, so novomodelo
+    reads the forebay level at the volume the reservoir is held at, for the
+    plant's own head and as the downstream level of the plant above.  Plants
+    whose volume_cota polynomial coefficients are all zero are skipped and
+    reported via a diagnostic.  Negative height or area values produced by the
+    polynomials are clamped to 0.0.
 
     Parameters
     ----------
@@ -291,8 +312,7 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
             continue
 
         hreg = cadastro.loc[newave_code]
-        vol_min = float(hreg["volume_minimo"])
-        vol_max = float(hreg["volume_maximo"])
+        vol_min, vol_max = operating_storage_range(hreg)
 
         # Polynomial coefficients for volume -> height (hm3 -> m).
         vc_coeffs = [float(hreg[f"a{i}_volume_cota"]) for i in range(5)]
@@ -309,8 +329,6 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
         novomodelo_id = id_map.hydro_id(newave_code)
 
         if vol_min == vol_max:
-            # Run-of-river or fixed-level: emit a single geometry point
-            # so evaporation can still use the surface area.
             v = np.array([vol_min])
             h = _eval_poly(vc_coeffs, v)
             h = np.maximum(h, 0.0)
