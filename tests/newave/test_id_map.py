@@ -74,6 +74,7 @@ def _make_nw_files(
         adterm=None,
         libs_index=None,
         polinjus=None,
+        volumes_referencia=None,
         tratamento_fpha=None,
         restricao_eletrica=None,
         estacao_bombeamento=None,

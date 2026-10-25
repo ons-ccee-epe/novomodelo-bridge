@@ -226,6 +226,7 @@ def synthetic_offsets() -> CutBlockOffsets:
     return CutBlockOffsets(
         rhs=0,
         pi_varm=1,
+        pi_qdefp=4,
         pi_gnl=4,  # 1 + 3 hydros
         ncoef=4 + 2 * 3 * 3,  # pi_varm + n_sbm_gnl * n_estagios * n_patamares
     )
@@ -317,3 +318,20 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
     (system_dir / "buses.json").write_text(json.dumps(buses_data, indent=2))
 
     return case_dir
+
+
+@pytest.fixture
+def travel_time_case_dir(synthetic_case_dir: Path) -> Path:
+    """`synthetic_case_dir` on contiguous weekly stages, UHE_B 240 h above UHE_A."""
+    stages_path = synthetic_case_dir / "stages.json"
+    stages = json.loads(stages_path.read_text())
+    for position, stage in enumerate(stages["stages"]):
+        stage["start_date"] = f"2026-01-{1 + 7 * position:02d}"
+        stage["end_date"] = f"2026-01-{8 + 7 * position:02d}"
+    stages_path.write_text(json.dumps(stages))
+
+    hydros_path = synthetic_case_dir / "system" / "hydros.json"
+    hydros = json.loads(hydros_path.read_text())
+    hydros["hydros"][1]["travel_time_hours"] = 240.0
+    hydros_path.write_text(json.dumps(hydros))
+    return synthetic_case_dir

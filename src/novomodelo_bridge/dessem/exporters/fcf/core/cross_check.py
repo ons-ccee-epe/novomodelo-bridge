@@ -28,6 +28,8 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     cortdeco_record_count,
     cut_head_indices,
     sync_directory,
+    travel_time_lag_starts,
+    travel_time_record_count,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -53,6 +55,23 @@ class MapcutScalars:
 
 
 @dataclass(frozen=True)
+class TravelTimeRecord:
+    """One reg 7/8 record: the share of a plant's lagged release arriving in a stage.
+
+    `plant` is the plant's 0-based travel-time position. Only reg 7, which
+    opens each plant's run, carries `codigo_usina` and `numero_horas`.
+    """
+
+    record_index: int
+    plant: int
+    stage: int
+    lag: int
+    share: float
+    codigo_usina: int | None
+    numero_horas: int | None
+
+
+@dataclass(frozen=True)
 class MapcutContents:
     """All values read from a mapcut binary."""
 
@@ -72,6 +91,17 @@ class MapcutContents:
     cost_records: tuple[tuple[float, ...], ...]
     physical_span_nonzero_records: tuple[int, ...]
     travel_time_lags: tuple[int, ...]
+    travel_time_lag_starts: tuple[int, ...]
+    travel_time_records: tuple[TravelTimeRecord, ...]
+
+    @property
+    def codigos_uhes_tempo_viagem(self) -> tuple[int, ...]:
+        """The travel-time plants' codes, in reg 7 order."""
+        return tuple(
+            record.codigo_usina
+            for record in self.travel_time_records
+            if record.codigo_usina is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -83,6 +113,7 @@ class CortdecoCut:
     is_extra_record: bool
     rhs: float
     pi_varm: NDArray[np.float64]
+    pi_qdefp: NDArray[np.float64]
     pi_gnl: NDArray[np.float64]
 
 
@@ -95,40 +126,44 @@ class CortdecoContents:
     cuts: tuple[CortdecoCut, ...]
 
 
+def _int32s(data: bytes, record: int, count: int, offset: int = 0) -> tuple[int, ...]:
+    start = record * RECORD_SIZE + offset
+    return tuple(
+        int(x) for x in np.frombuffer(data[start : start + 4 * count], dtype="<i4")
+    )
+
+
+def _float64s(
+    data: bytes, record: int, count: int, offset: int = 0
+) -> tuple[float, ...]:
+    start = record * RECORD_SIZE + offset
+    return tuple(
+        float(x) for x in np.frombuffer(data[start : start + 8 * count], dtype="<f8")
+    )
+
+
 def read_mapcut(path: Path) -> MapcutContents:
     """Read a mapcut binary file and return its contents."""
     with path.open("rb") as f:
         data = f.read()
 
-    def read_int32_array(record: int, count: int, offset: int = 0) -> tuple[int, ...]:
-        start = record * RECORD_SIZE + offset
-        arr = np.frombuffer(data[start : start + 4 * count], dtype="<i4")
-        return tuple(int(x) for x in arr)
-
-    def read_float64_array(
-        record: int, count: int, offset: int = 0
-    ) -> tuple[float, ...]:
-        start = record * RECORD_SIZE + offset
-        arr = np.frombuffer(data[start : start + 8 * count], dtype="<f8")
-        return tuple(float(x) for x in arr)
-
     # Reg 1: general header
-    reg1 = read_int32_array(0, 5)
+    reg1 = _int32s(data, 0, 5)
     numero_iteracoes = reg1[0]
     numero_cortes = reg1[1]
     numero_submercados = reg1[2]
     numero_uhes = reg1[3]
     numero_cenarios = reg1[4]
-    cut_heads = read_int32_array(0, numero_cenarios, offset=20)
+    cut_heads = _int32s(data, 0, numero_cenarios, offset=20)
 
     # Reg 2: case metadata
-    reg2 = read_int32_array(1, 4)
+    reg2 = _int32s(data, 1, 4)
     tamanho_corte = reg2[0]
     dia, mes, ano = reg2[1], reg2[2], reg2[3]
 
     # Reg 3-4: hydro codes
-    codigos_uhes = read_int32_array(2, numero_uhes)
-    codigos_uhes_jusante = read_int32_array(3, numero_uhes)
+    codigos_uhes = _int32s(data, 2, numero_uhes)
+    codigos_uhes_jusante = _int32s(data, 3, numero_uhes)
 
     # Physical records P1 check
     physical_nonzero = []
@@ -138,40 +173,40 @@ def read_mapcut(path: Path) -> MapcutContents:
             physical_nonzero.append(idx)
 
     # Reg 5: tree indices (record 18)
-    indice_no_arvore = read_int32_array(18, numero_cenarios)
+    indice_no_arvore = _int32s(data, 18, numero_cenarios)
 
     # Reg 6: stage data (record 19)
-    reg6_scalars = read_int32_array(19, 5)
+    reg6_scalars = _int32s(data, 19, 5)
     numero_estagios = reg6_scalars[1]
     numero_semanas = reg6_scalars[2]
     n_utv = reg6_scalars[3]
     max_lag = reg6_scalars[4]
 
-    indice_primeiro_no_estagio = read_int32_array(19, numero_estagios, offset=20)
-    patamares_por_estagio = read_int32_array(
-        19, numero_estagios, offset=20 + 4 * numero_estagios
+    indice_primeiro_no_estagio = _int32s(data, 19, numero_estagios, offset=20)
+    patamares_por_estagio = _int32s(
+        data, 19, numero_estagios, offset=20 + 4 * numero_estagios
     )
     travel_time_count = n_utv * numero_estagios
-    travel_time_lags = (
-        read_int32_array(19, travel_time_count, offset=20 + 8 * numero_estagios)
-        if travel_time_count
-        else ()
+    lags_offset = 20 + 8 * numero_estagios
+    travel_time_lags = _int32s(data, 19, travel_time_count, offset=lags_offset)
+    travel_time_lag_starts = _int32s(
+        data, 19, travel_time_count, offset=lags_offset + 4 * travel_time_count
     )
 
-    # Reg 7/8: travel-time records (skipped, but we need to account for them)
-    # There are n_utv * n_estagios * (max_lag + 1) travel-time records
-    travel_time_record_count = n_utv * numero_estagios * (max_lag + 1)
+    travel_time_records = _read_travel_time_records(
+        data, travel_time_lags, n_utv, numero_estagios
+    )
 
     # Reg 9 and 10 records start after travel-time records
     gnl_indices = []
     cost_records = []
-    record_idx = 20 + travel_time_record_count
+    record_idx = 20 + travel_time_record_count(travel_time_lags)
 
     # First pass: identify record types
     for stage in range(numero_estagios):
         gnl_indices.append(record_idx)
         record_idx += 1
-        cost_record = read_float64_array(record_idx, 6)
+        cost_record = _float64s(data, record_idx, 6)
         cost_records.append(cost_record)
         record_idx += 1
     for _ in range(numero_cenarios - numero_estagios):
@@ -180,12 +215,12 @@ def read_mapcut(path: Path) -> MapcutContents:
 
     # Read first GNL record for configuration
     gnl_rec = gnl_indices[0]
-    ngnl = read_int32_array(gnl_rec, 1)[0]
-    codigos_submercados_gnl = read_int32_array(gnl_rec, ngnl, offset=4)
-    lag_meses_gnl = read_int32_array(gnl_rec, ngnl, offset=4 + 4 * ngnl)
-    patamares_gnl = read_int32_array(gnl_rec, ngnl, offset=4 + 8 * ngnl)
-    gnl_trailing_block = read_float64_array(
-        gnl_rec, numero_estagios * ngnl, offset=4 + 12 * ngnl
+    ngnl = _int32s(data, gnl_rec, 1)[0]
+    codigos_submercados_gnl = _int32s(data, gnl_rec, ngnl, offset=4)
+    lag_meses_gnl = _int32s(data, gnl_rec, ngnl, offset=4 + 4 * ngnl)
+    patamares_gnl = _int32s(data, gnl_rec, ngnl, offset=4 + 8 * ngnl)
+    gnl_trailing_block = _float64s(
+        data, gnl_rec, numero_estagios * ngnl, offset=4 + 12 * ngnl
     )
 
     taxa_desconto = tuple(cr[0] for cr in cost_records)
@@ -223,7 +258,51 @@ def read_mapcut(path: Path) -> MapcutContents:
         cost_records=tuple(cost_records),
         physical_span_nonzero_records=tuple(physical_nonzero),
         travel_time_lags=travel_time_lags,
+        travel_time_lag_starts=travel_time_lag_starts,
+        travel_time_records=travel_time_records,
     )
+
+
+def _read_travel_time_records(
+    data: bytes, travel_time_lags: tuple[int, ...], n_utv: int, numero_estagios: int
+) -> tuple[TravelTimeRecord, ...]:
+    """Regs 7/8 from record 20 on: plant-major, though reg 6's lags are stage-major.
+
+    Raises:
+        LayoutError: a record's lag field is not its position in the run.
+    """
+    codigo: int | None
+    horas: int | None
+    records: list[TravelTimeRecord] = []
+    index = 20
+    for plant in range(n_utv):
+        for stage in range(numero_estagios):
+            for lag in range(travel_time_lags[stage * n_utv + plant] + 1):
+                if stage == 0 and lag == 0:
+                    codigo, horas, lag_field = _int32s(data, index, 3)
+                    (share,) = _float64s(data, index, 1, offset=12)
+                else:
+                    codigo = horas = None
+                    (lag_field,) = _int32s(data, index, 1)
+                    (share,) = _float64s(data, index, 1, offset=4)
+                if lag_field != lag:
+                    raise LayoutError(
+                        f"mapcut record {index} carries lag {lag_field} but is lag "
+                        f"{lag} of travel-time plant {plant + 1}, stage {stage + 1}"
+                    )
+                records.append(
+                    TravelTimeRecord(
+                        record_index=index,
+                        plant=plant,
+                        stage=stage,
+                        lag=lag,
+                        share=share,
+                        codigo_usina=codigo,
+                        numero_horas=horas,
+                    )
+                )
+                index += 1
+    return tuple(records)
 
 
 def read_cortdeco(
@@ -245,7 +324,8 @@ def read_cortdeco(
         )
 
         rhs = float(coefficients[offsets.rhs])
-        pi_varm = coefficients[offsets.pi_varm : offsets.pi_gnl].copy()
+        pi_varm = coefficients[offsets.pi_varm : offsets.pi_qdefp].copy()
+        pi_qdefp = coefficients[offsets.pi_qdefp : offsets.pi_gnl].copy()
         pi_gnl = coefficients[offsets.pi_gnl :].copy()
 
         cuts.append(
@@ -255,6 +335,7 @@ def read_cortdeco(
                 is_extra_record=(idx == numero_cortes),
                 rhs=rhs,
                 pi_varm=pi_varm,
+                pi_qdefp=pi_qdefp,
                 pi_gnl=pi_gnl,
             )
         )
@@ -303,6 +384,22 @@ def cross_check_pair(
         raise LayoutError(
             f"mapcut head table {mapcut_contents.cut_heads[:5]}... "
             f"does not match expected {expected_heads[:5]}..."
+        )
+
+    expected_starts = travel_time_lag_starts(
+        mapcut_contents.travel_time_lags, scalars.n_utv, scalars.numero_estagios
+    )
+    if mapcut_contents.travel_time_lag_starts != expected_starts:
+        raise LayoutError(
+            f"mapcut reg 6 holds travel-time lag starts "
+            f"{mapcut_contents.travel_time_lag_starts} but its lags imply "
+            f"{expected_starts}"
+        )
+    declared_lag = max(mapcut_contents.travel_time_lags, default=0)
+    if scalars.max_lag != declared_lag:
+        raise LayoutError(
+            f"mapcut declares max_lag={scalars.max_lag} but its largest "
+            f"travel-time lag is {declared_lag}"
         )
 
     # P14: Assert GNL span is zero

@@ -1,14 +1,20 @@
 """Tests for dessem/exporters/fcf/mapcut_writer.py."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
+    MapcutContents,
+    read_mapcut,
+)
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import RECORD_SIZE, LayoutError
 from novomodelo_bridge.dessem.exporters.fcf.core.mapcut_writer import (
     MapcutHeader,
     write_mapcut,
 )
+from novomodelo_bridge.dessem.exporters.fcf.core.travel_time import TravelTimePlant
 
 
 @pytest.fixture
@@ -22,7 +28,6 @@ def minimal_header() -> MapcutHeader:
         numero_cenarios=2,
         numero_estagios=2,
         numero_semanas=2,
-        n_utv=0,
         dia=1,
         mes=1,
         ano=2026,
@@ -36,7 +41,6 @@ def minimal_header() -> MapcutHeader:
         lag_meses_gnl=(2, 2),
         patamares_gnl=(3, 3),
         taxa_desconto=(1.0, 0.998),
-        max_lag=0,
     )
 
 
@@ -99,7 +103,6 @@ class TestMapcutValidation:
             numero_cenarios=2,
             numero_estagios=2,
             numero_semanas=2,
-            n_utv=0,
             dia=1,
             mes=1,
             ano=2026,
@@ -118,33 +121,73 @@ class TestMapcutValidation:
         with pytest.raises(LayoutError, match="inconsistent"):
             write_mapcut(header, tmp_path / "mapcut.rv0")
 
-    def test_nonzero_n_utv_raises(
+    def test_travel_time_plant_without_shares_for_every_stage_raises(
         self, tmp_path: Path, minimal_header: MapcutHeader
     ) -> None:
-        # Create header with n_utv > 0 (not supported per P3)
-        header = MapcutHeader(
-            numero_iteracoes=minimal_header.numero_iteracoes,
-            numero_cortes=minimal_header.numero_cortes,
-            numero_submercados=minimal_header.numero_submercados,
-            numero_uhes=minimal_header.numero_uhes,
-            numero_cenarios=minimal_header.numero_cenarios,
-            numero_estagios=minimal_header.numero_estagios,
-            numero_semanas=minimal_header.numero_semanas,
-            n_utv=2,  # Not supported
-            dia=minimal_header.dia,
-            mes=minimal_header.mes,
-            ano=minimal_header.ano,
-            codigos_uhes=minimal_header.codigos_uhes,
-            codigos_uhes_jusante=minimal_header.codigos_uhes_jusante,
-            indice_no_arvore=minimal_header.indice_no_arvore,
-            indice_primeiro_no_estagio=minimal_header.indice_primeiro_no_estagio,
-            patamares_por_estagio=minimal_header.patamares_por_estagio,
-            registro_ultimo_corte_no=minimal_header.registro_ultimo_corte_no,
-            codigos_submercados_gnl=minimal_header.codigos_submercados_gnl,
-            lag_meses_gnl=minimal_header.lag_meses_gnl,
-            patamares_gnl=minimal_header.patamares_gnl,
-            taxa_desconto=minimal_header.taxa_desconto,
+        header = replace(minimal_header, tempo_viagem=(_plant(156, 360, ((1.0,),)),))
+
+        with pytest.raises(LayoutError, match="arrival shares for 1 stages"):
+            write_mapcut(header, tmp_path / "mapcut.rv0")
+
+
+def _plant(
+    code: int, hours: int, arrival_shares: tuple[tuple[float, ...], ...]
+) -> TravelTimePlant:
+    return TravelTimePlant(
+        hydro_id=code,
+        code=code,
+        downstream_id=0,
+        hours=hours,
+        arrival_shares=arrival_shares,
+    )
+
+
+class TestTravelTimeRecords:
+    """Regs 6-8 for two plants whose lags differ, read back from disk."""
+
+    @pytest.fixture
+    def written(self, tmp_path: Path, minimal_header: MapcutHeader) -> MapcutContents:
+        header = replace(
+            minimal_header,
+            tempo_viagem=(
+                _plant(156, 360, ((0.0, 0.0, 6 / 7, 1 / 7), (4 / 9, 1.0, 1.0, 1 / 7))),
+                _plant(162, 100, ((17 / 42, 25 / 42), (137 / 162, 25 / 42))),
+            ),
+        )
+        path = tmp_path / "mapcut.rv0"
+        write_mapcut(header, path)
+        return read_mapcut(path)
+
+    def test_stage_record_carries_stage_major_lags_and_their_starts(
+        self, written: MapcutContents
+    ) -> None:
+        assert (written.scalars.n_utv, written.scalars.max_lag) == (2, 3)
+        assert written.travel_time_lags == (3, 1, 3, 1)
+        assert written.travel_time_lag_starts == (1, 7, 4, 8)
+
+    def test_records_run_plant_major_with_code_and_hours_opening_each_plant(
+        self, written: MapcutContents
+    ) -> None:
+        records = written.travel_time_records
+
+        assert [(r.plant, r.stage, r.lag) for r in records] == [
+            *((0, 0, lag) for lag in range(4)),
+            *((0, 1, lag) for lag in range(4)),
+            *((1, 0, lag) for lag in range(2)),
+            *((1, 1, lag) for lag in range(2)),
+        ]
+        assert written.codigos_uhes_tempo_viagem == (156, 162)
+        assert [
+            (r.record_index, r.numero_horas) for r in records if r.numero_horas
+        ] == [
+            (20, 360),
+            (28, 100),
+        ]
+        assert [r.share for r in records[8:]] == pytest.approx(
+            [17 / 42, 25 / 42, 137 / 162, 25 / 42]
         )
 
-        with pytest.raises(LayoutError, match="n_utv"):
-            write_mapcut(header, tmp_path / "mapcut.rv0")
+    def test_gnl_records_follow_the_travel_time_records(
+        self, written: MapcutContents
+    ) -> None:
+        assert written.gnl_record_indices[0] == 20 + 12

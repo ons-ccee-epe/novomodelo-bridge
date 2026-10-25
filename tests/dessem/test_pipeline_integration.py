@@ -13,12 +13,14 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
+    cross_check_pair,
     read_mapcut,
     reject_pair,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import TAMANHO_CORTE
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
+    UNDATED,
     AffinePieceRecord,
     EntitySlotRecord,
     ManifestEdgeRecord,
@@ -432,6 +434,104 @@ class TestPipelineIntegration:
         assert (content_dir / "cortdeco_content.csv").exists()
 
 
+def _bucket(start: int, end: int) -> EntitySlotRecord:
+    return EntitySlotRecord(
+        entity_type=3,
+        entity_id=1,
+        subindex=0,
+        was_active=True,
+        reference_date=UNDATED,
+        interval_start=start,
+        interval_end=end,
+    )
+
+
+class TestTravelTimeExport:
+    """UHE_B's water reaches UHE_A 240 h after release, on weekly stages."""
+
+    @pytest.fixture
+    def exported(
+        self, travel_time_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> tuple[Path, list[str]]:
+        # Each pool's two buckets are the two weeks after its stage ends.
+        bucket_dates = (20260108, 20260115, 20260122, 20260129, 20260205)
+        pools = {
+            stage: _make_pool(
+                stage,
+                stage,
+                stage,
+                _make_slots(3)
+                + (
+                    _bucket(bucket_dates[stage], bucket_dates[stage + 1]),
+                    _bucket(bucket_dates[stage + 1], bucket_dates[stage + 2]),
+                ),
+                n_pieces=5,
+            )
+            for stage in range(3)
+        }
+        output_dir = tmp_path / "dessem_fcf"
+        with (
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as read,
+            dx.collect() as diagnostics,
+        ):
+            read.return_value = PolicyCheckpoint(_make_manifest(), pools)
+            result = run_export(
+                case_dir=travel_time_case_dir,
+                source=replace(synthetic_source, travel_time_codes=(102,)),
+                output_dir=output_dir,
+                settings=ExportSettings(emit_audit_csv=True),
+            )
+
+        assert result == 0
+        return output_dir, [diagnostic.code for diagnostic in diagnostics]
+
+    def test_mapcut_declares_the_plant_and_its_stage_lags(
+        self, exported: tuple[Path, list[str]]
+    ) -> None:
+        output_dir, codes = exported
+        mapcut, _ = cross_check_pair(
+            output_dir / "mapcut.rv0", output_dir / "cortdeco.rv0"
+        )
+
+        assert mapcut.codigos_uhes_tempo_viagem == (102,)
+        assert mapcut.travel_time_records[0].numero_horas == 240
+        assert mapcut.travel_time_lags == (2, 2, 2)
+        assert "dessem-fcf-travel-time-exported" in codes
+
+    def test_each_release_takes_the_buckets_it_arrives_in(
+        self, exported: tuple[Path, list[str]]
+    ) -> None:
+        # The stage's release arrives 96 h into the first bucket and 72 h into
+        # the second; the release before it has 72 h left in the first.
+        output_dir, _ = exported
+        _, cortdeco = cross_check_pair(
+            output_dir / "mapcut.rv0", output_dir / "cortdeco.rv0"
+        )
+
+        for cut in cortdeco.cuts:
+            piece = round(cut.rhs) - 1
+            first, second = 103.0 + piece, 104.0 + piece
+            np.testing.assert_allclose(
+                cut.pi_qdefp,
+                [(96 * first + 72 * second) / 168 / 1000, 72 * first / 168 / 1000],
+            )
+
+    def test_content_csvs_mirror_the_travel_time_records(
+        self, exported: tuple[Path, list[str]]
+    ) -> None:
+        output_dir, _ = exported
+        content = output_dir / "content"
+        cortdeco_header = (content / "cortdeco_content.csv").read_text().splitlines()[0]
+        mapcut_rows = (content / "mapcut_content.csv").read_text().splitlines()
+
+        assert "pi_qdefp_uhe102_lag0,pi_qdefp_uhe102_lag1,pi_gnl" in cortdeco_header
+        assert "20,reg7_travel_time,1,codigo_usina,0,102" in mapcut_rows
+        assert "20,reg7_travel_time,1,numero_horas,1,240" in mapcut_rows
+        assert "21,reg8_travel_time,1,indice_lag,0,1" in mapcut_rows
+
+
 class TestCrossCheckIntegration:
     """Integration tests for cross-check and pair rejection."""
 
@@ -543,11 +643,11 @@ class TestFailureManifest:
                 "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
             ) as mock_read,
             patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.assert_no_travel_time"
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.travel_time_plants"
             ) as mock_travel,
         ):
             mock_read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
-            mock_travel.side_effect = MappingError("travel time not supported")
+            mock_travel.side_effect = MappingError("plant 102 has no VI record")
 
             settings = ExportSettings(
                 eco_subdirectory="eco",

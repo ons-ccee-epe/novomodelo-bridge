@@ -3,8 +3,8 @@
 the operated-set / cascade-walk helpers they build on.
 
 Imports the capacity-cap helpers from ``.bounds`` and the
-storage-envelope helpers from ``decomp.converters.cadastro``; nothing in the package
-imports from here -- this is the DAG's top seam.
+storage-envelope helpers from ``decomp.converters.cadastro``; within the package
+only ``.turbine_limit`` imports from here, for the cascade walk.
 
 The cascade walk (:func:`_downstream_operated`, shared by this module's own
 ``downstream_id`` entity field and ``scenarios.py``'s incremental-inflow
@@ -13,8 +13,8 @@ attribution) and ``scenarios.py``'s inflow-gauge attribution both read
 ``downstream_plant``/``inflow_gauge`` accessors -- the post-``AC
 NUMJUS``/``NUMPOS`` link/gauge -- rather than the base ``hidr`` columns
 directly. ``AC JUSENA`` is a stored-energy link, not a water-routing one:
-only the RHE stored energy reads it. ``AC NPOSNW`` (the other source family's
-own inflow gauge) is deliberately not ingested -- no DECOMP consumer.
+only the RHE stored energy reads it. ``AC NPOSNW`` (the boundary-cut coupling
+gauge) is read only by the boundary FCF import, never by the operation.
 """
 
 from __future__ import annotations
@@ -35,7 +35,6 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
     _ITAIPU_CODE,
     _build_split_unit_groups,
-    _head_corrected_envelope,
     _rated_envelope,
     _split_plant_frequencies,
 )
@@ -48,6 +47,7 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.converters.hydro.turbine_limit import TurbineLimits
     from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
@@ -72,6 +72,14 @@ def _operated_uh(dadger: Dadger) -> pd.DataFrame:
     if uh is None or uh.empty:
         raise ValueError("the deck has no UH records; cannot convert hydros")
     return uh[uh["volume_inicial"].notna()]
+
+
+def initial_volume_percentages(dadger: Dadger) -> dict[int, float]:
+    """``{code: UH volume_inicial}`` for every operated plant, in % of useful volume."""
+    return {
+        int(row["codigo_usina"]): float(row["volume_inicial"])
+        for _, row in _operated_uh(dadger).iterrows()
+    }
 
 
 def _coupling_only_codes(dadger: Dadger) -> list[int]:
@@ -200,6 +208,7 @@ def convert_hydros(
     id_map: DecompIdMap,
     *,
     effective: EffectiveCadastro,
+    turbine_limits: TurbineLimits,
     travel_time_hours: dict[int, float] | None = None,
     fpha_codes: set[int] | None = None,
 ) -> dict:
@@ -229,11 +238,11 @@ def convert_hydros(
     outer-bound construction for the reservoir block) — some plants' *true*
     in-service machine configuration differs from ``hidr.dat``'s nameplate
     conjunto sum, and/or changes mid-horizon. ``max_turbined_m3s`` is
-    instead the max-over-stages envelope of the **head-corrected** engolimento
-    (:func:`_head_corrected_envelope` — see the module docstring
-    for the validated formula and accuracy). A stage whose effective
-    capacity (installed power or head-corrected flow) drops below its own
-    envelope gets a sparse per-stage overlay instead
+    instead the max-over-stages envelope of the plant's turbined-flow limit
+    (*turbine_limits*, from
+    :func:`~novomodelo_bridge.decomp.converters.hydro.turbine_limit.compute_turbine_limits`).
+    A stage whose effective capacity (installed power or turbined-flow limit)
+    drops below its own envelope gets a sparse per-stage overlay instead
     (:func:`convert_hydro_group_availability`), never a change to the
     declared envelope itself. The production model is constant
     productivity, with the value emitted separately
@@ -250,7 +259,7 @@ def convert_hydros(
     ``max_turbined_m3s``/``max_generation_mw`` *are* the entity envelope by
     construction — novomodelo rule 41 holds even though the two groups' own
     per-stage machine-set changes (if any) need not peak on the same stage,
-    nor their head-corrected flows peak on the same stage as their rated
+    nor their turbined-flow limits peak on the same stage as their rated
     power. Itaipu's 60 Hz group (group id 1) is placed on
     ``id_map.transhipment_bus_id`` — the ``IV`` bus modeling the 765 kV
     corridor into Ivaiporã — rather than the plant's own submercado bus; the
@@ -322,11 +331,17 @@ def convert_hydros(
             se_bus = bus_id
             iv_bus = id_map.transhipment_bus_id
             unit_groups, max_turbined, max_generation = _build_split_unit_groups(
-                hreg, code, name, [se_bus, iv_bus], frequencies, effective
+                hreg,
+                code,
+                name,
+                [se_bus, iv_bus],
+                frequencies,
+                effective,
+                turbine_limits,
             )
         else:
             _, max_generation = _rated_envelope(hreg, code, effective)
-            max_turbined = _head_corrected_envelope(hreg, code, effective)
+            max_turbined = turbine_limits.envelope(code, 0)
             unit_groups = [
                 build_mirror_unit_group(
                     name=name,
@@ -419,17 +434,17 @@ def convert_hydros(
     # source model's AC ALTEFE register overrides a conjunto's effective
     # head, but idecomp's typed accessor exposes only the identifying/timing
     # columns for it, no value column — so it cannot be folded into the
-    # head-corrected max_turbined above. Every plant keeps its base hidr
+    # turbined-flow limit's rated head. Every plant keeps its base hidr
     # queda_nominal_conjunto_* nominal head regardless of an ALTEFE
     # declaration. Remove this warning (and wire the override into
-    # _conjunto_h_nom) once idecomp exposes an ALTEFE value accessor.
+    # turbine_limit._rated_head) once idecomp exposes an ALTEFE value accessor.
     altefe = dadger.ac(codigo_usina=None, modificacao=ACALTEFE, df=True)
     if isinstance(altefe, pd.DataFrame) and not altefe.empty:
         n_altefe = altefe["codigo_usina"].nunique()
         _LOG.warning(
             "%d plant(s) declare an AC ALTEFE effective-head override that "
             "cannot be consumed (idecomp exposes no value accessor for "
-            "ALTEFE); head-corrected max_turbined uses the base hidr "
+            "ALTEFE); the turbined-flow limit uses the base hidr "
             "nominal head for these plants",
             n_altefe,
         )
@@ -468,10 +483,8 @@ def _operated_initial_volumes(
     emits as the initial condition (both via :func:`_initial_volume_hm3`).
     """
     return {
-        int(row["codigo_usina"]): _initial_volume_hm3(
-            effective, int(row["codigo_usina"]), float(row["volume_inicial"])
-        )
-        for _, row in _operated_uh(case.dadger).iterrows()
+        code: _initial_volume_hm3(effective, code, pct)
+        for code, pct in initial_volume_percentages(case.dadger).items()
     }
 
 

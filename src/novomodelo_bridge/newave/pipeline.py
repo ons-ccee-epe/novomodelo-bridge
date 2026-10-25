@@ -143,24 +143,26 @@ def _merge_hydro_bounds(
     return merged.to_arrow()
 
 
-def _fold_head_turbined_bounds(
+def _fold_per_stage_capacity_caps(
     base: pa.Table | None,
-    head_turbined: pa.Table | None,
+    capacity_caps: pa.Table | None,
 ) -> pa.Table | None:
-    """Fold per-stage head-corrected ``max_turbined_m3s`` into the hydro bounds.
+    """Fold the per-stage capacity caps into the hydro bounds.
 
-    ``head_turbined`` carries the per-(hydro, stage) engolimento cap derived from
-    the per-stage operating head. An explicit TURBMAXT override already present in
-    ``base`` (from ``convert_storage_bounds``) takes precedence — it is a deliberate
-    operational limit — so the head-derived value only fills cells TURBMAXT leaves
-    empty (the common case: plants with CFUGA/CMONT but no TURBMAXT).
+    ``capacity_caps`` carries the per-(hydro, stage) engolimento cap derived from
+    the per-stage operating head and the FPHA plants' available power. A value
+    already present in ``base`` (from ``convert_storage_bounds``) takes
+    precedence — an explicit TURBMAXT override is a deliberate operational
+    limit, and a filling ramp's cap is the machines in service — so the derived
+    value only fills cells ``base`` leaves empty (the common case: plants with
+    CFUGA/CMONT but no TURBMAXT).
     """
-    if head_turbined is None:
+    if capacity_caps is None:
         return base
 
     import polars as pl
 
-    h = pl.from_arrow(head_turbined)
+    h = pl.from_arrow(capacity_caps)
     if base is None:
         return h.sort("hydro_id", "stage_id").to_arrow()
 
@@ -266,7 +268,9 @@ def _convert_newave_case_impl(
 
     logger.debug("Generating hydro geometry")
     cadastro = hydro_conv.read_cadastro(case)
-    geometry_table = hydro_conv.generate_hydro_geometry(cadastro, id_map)
+    geometry_table = hydro_conv.generate_hydro_geometry(
+        cadastro, id_map, hydro_conv.fpha_reference_volumes(case, cadastro)
+    )
 
     logger.debug("Converting thermals")
     thermals_dict = thermal_conv.convert_thermals(case, id_map)
@@ -339,10 +343,8 @@ def _convert_newave_case_impl(
     logger.debug("Converting storage bounds from VMAXT/VMINT")
     storage_bounds_table = hydro_conv.convert_storage_bounds(case, id_map)
 
-    logger.debug("Converting per-stage head-corrected turbined caps")
-    head_turbined_table = hydro_conv.convert_turbined_bounds_head_corrected(
-        case, id_map
-    )
+    logger.debug("Converting per-stage capacity caps")
+    capacity_caps_table = hydro_conv.convert_per_stage_capacity_caps(case, id_map)
 
     allocator = ConstraintIdAllocator()
 
@@ -399,8 +401,8 @@ def _convert_newave_case_impl(
     # Merge hydro_bounds before the write phase so the post-emission
     # self-checks see the exact table that will be written.
     hydro_bounds_table = _merge_hydro_bounds(withdrawal_table, storage_bounds_table)
-    hydro_bounds_table = _fold_head_turbined_bounds(
-        hydro_bounds_table, head_turbined_table
+    hydro_bounds_table = _fold_per_stage_capacity_caps(
+        hydro_bounds_table, capacity_caps_table
     )
 
     # Clamp any per-stage MAX bound above the plant's declared envelope back to

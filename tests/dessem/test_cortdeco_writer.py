@@ -21,13 +21,13 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
 @pytest.fixture
 def simple_offsets() -> CutBlockOffsets:
     """Simple offsets for 3 hydros, no GNL."""
-    return CutBlockOffsets(rhs=0, pi_varm=1, pi_gnl=4, ncoef=4)
+    return CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=4, pi_gnl=4, ncoef=4)
 
 
 @pytest.fixture
 def offsets_with_gnl() -> CutBlockOffsets:
     """Offsets with GNL block: 3 hydros, 2*3*3=18 GNL slots."""
-    return CutBlockOffsets(rhs=0, pi_varm=1, pi_gnl=4, ncoef=22)
+    return CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=4, pi_gnl=4, ncoef=22)
 
 
 class TestZeroedGnlBlock:
@@ -54,6 +54,7 @@ class TestCutInput:
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0, 3.0]),
+            pi_qdefp=np.array([]),
             pi_gnl=np.array([]),
         )
         with pytest.raises(AttributeError):
@@ -67,6 +68,7 @@ class TestSerializeCut:
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0, 3.0]),
+            pi_qdefp=np.array([]),
             pi_gnl=np.array([]),
         )
         record = serialize_cut(cut, pointer=0, offsets=simple_offsets)
@@ -76,6 +78,7 @@ class TestSerializeCut:
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0, 3.0]),
+            pi_qdefp=np.array([]),
             pi_gnl=np.array([]),
         )
         record = serialize_cut(cut, pointer=42, offsets=simple_offsets)
@@ -86,6 +89,7 @@ class TestSerializeCut:
         cut = CutInput(
             intercept=1000.0,  # Should become 1.0 on disk
             pi_varm=np.array([1000.0, 2000.0, 3000.0]),
+            pi_qdefp=np.array([]),
             pi_gnl=np.array([]),
         )
         record = serialize_cut(cut, pointer=0, offsets=simple_offsets)
@@ -98,10 +102,47 @@ class TestSerializeCut:
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0]),  # Wrong size
+            pi_qdefp=np.array([]),
             pi_gnl=np.array([]),
         )
         with pytest.raises(LayoutError, match="pi_varm"):
             serialize_cut(cut, pointer=0, offsets=simple_offsets)
+
+    def test_pi_qdefp_sits_between_storage_and_gnl_unnegated(self) -> None:
+        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=7)
+        cut = CutInput(
+            intercept=1000.0,
+            pi_varm=np.array([1000.0, 2000.0]),
+            pi_qdefp=np.array([-3000.0, -4000.0]),
+            pi_gnl=np.array([0.0, 0.0]),
+        )
+
+        record = serialize_cut(cut, pointer=0, offsets=offsets)
+
+        values = np.frombuffer(record, dtype="<f8", count=7, offset=4)
+        assert values.tolist() == [1.0, 1.0, 2.0, -3.0, -4.0, 0.0, 0.0]
+
+    def test_mismatched_pi_qdefp_raises(self) -> None:
+        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=5)
+        cut = CutInput(
+            intercept=1000.0,
+            pi_varm=np.array([1.0, 2.0]),
+            pi_qdefp=np.array([1.0]),
+            pi_gnl=np.array([]),
+        )
+        with pytest.raises(LayoutError, match="pi_qdefp has 1 entries"):
+            serialize_cut(cut, pointer=0, offsets=offsets)
+
+    def test_non_finite_pi_qdefp_names_its_block(self) -> None:
+        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=5)
+        cut = CutInput(
+            intercept=1000.0,
+            pi_varm=np.array([1.0, 2.0]),
+            pi_qdefp=np.array([1.0, np.nan]),
+            pi_gnl=np.array([]),
+        )
+        with pytest.raises(LayoutError, match="pi_qdefp position 1"):
+            serialize_cut(cut, pointer=0, offsets=offsets)
 
 
 class TestWriteCortdeco:
@@ -115,6 +156,7 @@ class TestWriteCortdeco:
                 CutInput(
                     intercept=1000.0 * (i + 1),
                     pi_varm=np.array([1.0, 2.0, 3.0]),
+                    pi_qdefp=np.array([]),
                     pi_gnl=np.array([]),
                 )
                 for i in range(3)
@@ -135,6 +177,7 @@ class TestWriteCortdeco:
                 CutInput(
                     intercept=1000.0,
                     pi_varm=np.array([1.0, 2.0, 3.0]),
+                    pi_qdefp=np.array([]),
                     pi_gnl=np.array([]),
                 )
                 for _ in range(3)
@@ -164,6 +207,7 @@ class TestWriteCortdeco:
                 CutInput(
                     intercept=1000.0,
                     pi_varm=np.array([1.0, 2.0, 3.0]),
+                    pi_qdefp=np.array([]),
                     pi_gnl=np.array([]),
                 )
             ]
@@ -183,6 +227,7 @@ class TestWriteCortdeco:
                 CutInput(
                     intercept=1000.0,
                     pi_varm=np.array([1.0, 2.0, 3.0]),
+                    pi_qdefp=np.array([]),
                     pi_gnl=np.ones(gnl_size),  # Non-zero!
                 )
             ]

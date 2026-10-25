@@ -77,15 +77,14 @@ adds one rule for running the case; see the
 | `check newave SRC` / `check decomp SRC`        | Validate the source inputs without writing anything; report missing inputs and what the conversion would leave out. |
 | `compare newave NEWAVE_DIR NOVOMODELO_OUTPUT_DIR`   | Compare NEWAVE's published results (`MEDIAS-*.CSV`, `pmo.dat`) against a Novomodelo simulation output directory.         |
 | `compare decomp DECOMP_DIR NOVOMODELO_OUTPUT_DIR`   | Compare a DECOMP run's operation tables (`dec_oper_*.csv`) against a Novomodelo simulation output directory.             |
-| `export dessem CASE_DIR --revision rv0`        | Export a Novomodelo case's FCF to DESSEM-compatible `mapcut`/`cortdeco` format.                                          |
+| `export dessem DECOMP_DIR CASE_DIR`            | Export a Novomodelo case's FCF to DESSEM-compatible `mapcut`/`cortdeco` format.                                          |
 | `dashboard CASE_DIR`                           | Build an interactive HTML dashboard from a solved Novomodelo case (reads `CASE_DIR/output/`).                            |
 
 Every command accepts `--json`, `-v`/`-vv`, `--log-file PATH`, `--no-color`,
 and `--quiet`. `convert` adds `--validate`, `--force`, `--dry-run`, and
 `--diagnostics-json PATH`; `convert decomp` also has `--no-fcf`. `compare`
 adds `--tolerance`, `--format`, and `--out-dir`. `export dessem` adds
-`--revision`, `--hydro-codes`, `--output`, `--force`, `--audit-csv`, and
-`--include-terminal`. `dashboard`
+`--output`, `--force`, `--audit-csv`, and `--include-terminal`. `dashboard`
 adds `--output` and `--open`. The generated reference with every option's help
 text is [docs/cli.md](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/cli.md).
 Shell completion: `novomodelo-bridge --install-completion`.

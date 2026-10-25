@@ -26,18 +26,21 @@ from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.productivity import fpha_efficiency
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.bounds import (
-    _compute_max_turbined_head_corrected,
+    _operational_caps,
     _per_stage_turbined_envelope,
 )
 from novomodelo_bridge.newave.converters.hydro.geometry import (
     _EVAP_MONTHS,
     _expansion_configs,
-    _read_volref_saz,
     fpha_eligible_codes,
+    operating_storage_range,
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
     read_diversion_records,
+)
+from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
+    evaporation_reference_volumes,
 )
 from novomodelo_bridge.newave.filling import (
     exph_unit_rows,
@@ -233,10 +236,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     if not min_outflow_on:
         emit(switch_off_diagnostic(case.switches.min_outflow), logger=_LOG)
 
-    # Seasonal reference volumes per plant — when present, fed back into the evaporation
-    # block as ``reference_volumes_hm3`` so novomodelo's evaporation linearization matches
-    # the per-month reference the source model itself uses.
-    seasonal_volref = _read_volref_saz(case)
+    evaporation_references = evaporation_reference_volumes(case, cadastro)
 
     # NE plants carrying an exph dead-volume filling row are admitted as real
     # downstream nodes (admission predicate, single source of truth). The
@@ -261,8 +261,8 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         filling_codes=filling_codes,
     )
 
-    # Per-hydro envelope over the head-corrected per-stage turbined caps that
-    # convert_turbined_bounds_head_corrected emits into hydro_bounds.parquet.
+    # Per-hydro envelope over the per-stage turbined caps that
+    # convert_per_stage_capacity_caps emits into hydro_bounds.parquet.
     # novomodelo rule 43 forbids any hydro_bounds row from raising max_turbined_m3s
     # above the plant's own declared value, so the reference-head value below
     # must be raised to cover every emitted per-stage row. Empty
@@ -318,28 +318,10 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
         hreg = cadastro.loc[newave_code]
 
-        # Reservoir bounds.
-        vol_min = float(hreg["volume_minimo"])
-        vol_max = float(hreg["volume_maximo"])
-
-        # The source model treats Daily-regulation ('D') and run-of-river / fio-d'água
-        # ('S') plants as fio-d'água — they can't accumulate water across stages, so the
-        # useful volume is NOT a usable reservoir buffer. Collapse the active range to a
-        # single point so Novomodelo's LP mirrors that; otherwise Novomodelo stores the inflow
-        # excess in a phantom buffer and shifts it across stages, where the source
-        # model simply spills it.
-        #
-        # Both 'D' and 'S' freeze at ``volume_referencia`` — the operating volume the
-        # source model holds these plants at every stage. When
-        # ``volume_referencia`` is absent/NaN the range is left as
-        # ``[volume_minimo, volume_maximo]`` (no collapse).
-        tipo_reg = str(hreg.get("tipo_regulacao", "")).strip()
-        if tipo_reg in ("D", "S"):
-            vol_ref_raw = hreg.get("volume_referencia")
-            if vol_ref_raw is not None and not pd.isna(vol_ref_raw):
-                vol_ref = float(vol_ref_raw)
-                vol_min = vol_ref
-                vol_max = vol_ref
+        # Reservoir bounds. 'D'/'S' plants collapse to one volume: the source
+        # model spills their inflow excess, and a usable range would let novomodelo
+        # store it in a phantom buffer and shift it across stages.
+        vol_min, vol_max = operating_storage_range(hreg)
 
         # FILLING phase: an admitted NE plant fills its dead
         # volume from its seeded storage up to ``min_storage_hm3`` over the
@@ -428,13 +410,12 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # ``hydro_production_models.json`` on novomodelo HEAD; callers that need
         # the per-hydro base value call ``compute_base_productivities``.
         is_fpha = newave_code in fpha_codes
-        # Turbined and generation caps are independent of the production
-        # function:
-        #   * turbined cap = head-corrected engolimento at the operating head
-        #     (m³/s) — the operational dispatch cap; rated Σ n·q_nom overshoots it.
-        #   * generation cap = rated installed power Σ n·p_nom = the FPHA GHmax.
-        #     This loose ceiling never binds before the head-corrected turbined
-        #     cap, so a plant reaches its turbined limit, not nameplate power.
+        # Turbined cap: the source model's operational dispatch cap,
+        # _operational_caps for the plant's production function.
+        # Generation cap: rated installed power Σ n·p_nom = the FPHA GHmax the
+        # fit clamps at. It never binds before a constant-productivity plant's
+        # head-corrected turbined cap; an FPHA plant's available power is a
+        # per-stage hydro_bounds row below it.
         #
         # The declaration itself is the ENVELOPE over that reference-head value
         # and every per-stage head-corrected cap this hydro emits into
@@ -447,9 +428,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         novomodelo_hydro_id = id_map.hydro_id(newave_code)
         config = expansion_configs.get(newave_code)
         hreg_declared = hreg if config is None else config.declared_hreg(hreg)
-        max_turbined_reference = _compute_max_turbined_head_corrected(
-            hreg_declared, name
-        )[0]
+        max_turbined_reference = _operational_caps(hreg_declared, name, fpha=is_fpha)[0]
         envelope_value = turbined_envelope.get(novomodelo_hydro_id)
         max_turbined = (
             max_turbined_reference
@@ -529,25 +508,9 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         evap_coeffs = [float(hreg[f"evaporacao_{m}"]) for m in _EVAP_MONTHS]
         has_evaporation = any(v != 0.0 for v in evap_coeffs)
 
-        # Evaporation linearization points: when the plant has a seasonal row in
-        # volref_saz.dat, emit one absolute hm³ value per calendar month (vmin +
-        # useful_volume).  Missing months default to vmin (matching the source model's
-        # "operate at vmin" semantics for zero entries). Clamped into [min_storage_hm3,
-        # max_storage_hm3] so novomodelo's dimensional validator accepts every value even if
-        # a permanent VOLMIN override raised vmin above what the file was written for.
-        plant_seasonal_for_evap = seasonal_volref.get(newave_code)
-        evap_reference_volumes: list[float] | None = None
-        if has_evaporation and plant_seasonal_for_evap:
-            evap_reference_volumes = [
-                max(
-                    vol_min,
-                    min(
-                        vol_max,
-                        vol_min + plant_seasonal_for_evap.get(m, 0.0),
-                    ),
-                )
-                for m in range(1, 13)
-            ]
+        evap_reference_volumes = (
+            evaporation_references.get(newave_code) if has_evaporation else None
+        )
 
         tipo_perda = int(hreg.get("tipo_perda", 0) or 0)
         perdas_val = float(hreg.get("perdas", 0.0) or 0.0)

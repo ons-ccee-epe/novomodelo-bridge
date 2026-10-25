@@ -105,6 +105,12 @@ def decomp_mini_deck() -> Path:
     return Path(__file__).parent / "decks" / "decomp_mini"
 
 
+@pytest.fixture(scope="session")
+def decomp_mini_case() -> DecompCase:
+    """The DECOMP mini-deck parsed once per session; tests must not mutate it."""
+    return DecompCase.from_directory(Path(__file__).parent / "decks" / "decomp_mini")
+
+
 @pytest.fixture
 def newave_mini_deck() -> Path:
     """Path to the committed NEWAVE mini-deck under ``tests/decks/newave_mini/``.
@@ -186,6 +192,7 @@ _OPTIONAL = (
     "adterm",
     "libs_index",
     "polinjus",
+    "volumes_referencia",
     "tratamento_fpha",
     "restricao_eletrica",
     "estacao_bombeamento",
@@ -653,6 +660,10 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.read_cadastro",
             return_value=MagicMock(),
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.hydro_conv.fpha_reference_volumes",
+            return_value={},
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.generate_hydro_geometry",

@@ -1,28 +1,36 @@
 """Tests for the DECOMP FPHA converter (``decomp/fpha.py``).
 
 Tier-1: synthetic ``EffectiveCadastro`` / ``DecompIdMap`` / polinjus doubles,
-no real deck. Covers the fitting window, eligibility,
+no real deck. Covers the volume window, the spillage fit range, eligibility,
 turbine efficiency, the VHA geometry table, and the tailrace-curves wrapper.
 """
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro, MachineSet
 from novomodelo_bridge.decomp.converters.fpha import (
+    VolumeWindowRule,
     convert_hydro_geometry,
     convert_tailrace_curves,
-    fitting_window,
+    fpha_config,
     fpha_eligible_codes,
     is_fpha_eligible,
+    mlt_absent_diagnostic,
+    spillage_fit_max,
     turbine_efficiency,
+    unconverted_fp_fields_diagnostic,
+    volume_window_rule,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
 
@@ -80,35 +88,295 @@ def _id_map(codes: tuple[int, ...]) -> DecompIdMap:
 
 
 # ---------------------------------------------------------------------------
-# fitting_window
+# volume window
 # ---------------------------------------------------------------------------
 
 
-def test_fitting_window_spans_the_whole_storage_range_of_a_reservoir() -> None:
-    eff = _effective({1: _plant_row(vmin=100.0, vmax=500.0)})
-    assert fitting_window(eff, 1) == {"volume_min_hm3": 100.0, "volume_max_hm3": 500.0}
-
-
-def test_fitting_window_covers_a_later_stage_storage_floor() -> None:
-    hidr = pd.DataFrame({1: _plant_row(vmin=100.0, vmax=500.0)}).T
+def _staged_effective(
+    rows: dict[int, dict], n_stages: int, stage_varying: dict | None = None
+) -> EffectiveCadastro:
+    hidr = pd.DataFrame(rows).T
     hidr.index.name = "codigo_usina"
-    eff = EffectiveCadastro(
-        base=hidr,
-        n_stages=3,
-        stage_varying={(1, "volume_minimo"): (100.0, 100.0, 40.0)},
+    return EffectiveCadastro(
+        base=hidr, n_stages=n_stages, stage_varying=stage_varying or {}
     )
-    assert fitting_window(eff, 1) == {"volume_min_hm3": 40.0, "volume_max_hm3": 500.0}
-    volumes = convert_hydro_geometry(eff, _id_map((1,))).column("volume_hm3")
-    assert volumes[0].as_py() == 40.0 and volumes[-1].as_py() == 500.0
+
+
+def _fp(*records: tuple) -> pd.DataFrame:
+    """``Dadger.fp(df=True)`` volume columns from ``(code, estagio, entry type,
+    reduction, increase)`` tuples; ``None`` is a blank field."""
+    return pd.DataFrame(
+        [
+            {
+                "codigo_usina": code,
+                "estagio": estagio,
+                "tipo_entrada_janela_volume": entry,
+                "limite_inferior_janela_volume": reduction,
+                "limite_superior_janela_volume": increase,
+            }
+            for code, estagio, entry, reduction, increase in records
+        ]
+    )
+
+
+def _windows(
+    eff: EffectiveCadastro, rule: VolumeWindowRule, code: int = 1
+) -> list[tuple[float, float]]:
+    return [
+        tuple(rule.fitting_window(eff, code, t).values()) for t in range(eff.n_stages)
+    ]
+
+
+def test_fitting_window_defaults_to_the_weekly_and_monthly_bands() -> None:
+    eff = _staged_effective({1: _plant_row(vmin=100.0, vmax=500.0)}, n_stages=2)
+    rule = VolumeWindowRule.from_fp(None, {1: 25.0}, weekly_stages=1)
+    assert _windows(eff, rule) == [(120.0, 280.0), (100.0, 400.0)]
+
+
+def test_fitting_window_is_clamped_to_the_storage_range() -> None:
+    eff = _staged_effective({1: _plant_row(vmin=100.0, vmax=500.0)}, n_stages=1)
+    rule = VolumeWindowRule.from_fp(pd.DataFrame(), {1: 90.0}, weekly_stages=1)
+    assert _windows(eff, rule) == [(380.0, 500.0)]
+
+
+def test_fitting_window_takes_the_initial_percentage_of_each_stage_range() -> None:
+    eff = _staged_effective(
+        {1: _plant_row(vmin=100.0, vmax=500.0)},
+        n_stages=2,
+        stage_varying={(1, "volume_minimo"): (100.0, 300.0)},
+    )
+    rule = VolumeWindowRule.from_fp(None, {1: 50.0}, weekly_stages=2)
+    assert _windows(eff, rule) == [(220.0, 380.0), (360.0, 440.0)]
 
 
 def test_fitting_window_collapses_to_the_reference_volume_for_run_of_river() -> None:
     row = _plant_row(vmin=100.0, vmax=500.0, tipo_regulacao="D")
     row["volume_referencia"] = 250.0
-    assert fitting_window(_effective({1: row}), 1) == {
-        "volume_min_hm3": 250.0,
-        "volume_max_hm3": 250.0,
+    eff = _staged_effective({1: row}, n_stages=1)
+    rule = VolumeWindowRule.from_fp(_fp((1, 1, 1, 50.0, 50.0)), {1: 80.0}, 1)
+    assert _windows(eff, rule) == [(250.0, 250.0)]
+
+
+def test_fp_record_applies_from_its_stage_on() -> None:
+    eff = _staged_effective({1: _plant_row(vmin=100.0, vmax=500.0)}, n_stages=3)
+    rule = VolumeWindowRule.from_fp(_fp((1, 2, 0, 5.0, 10.0)), {1: 50.0}, 3)
+    assert _windows(eff, rule) == [(220.0, 380.0), (280.0, 340.0), (280.0, 340.0)]
+
+
+def test_fp_deltas_resolve_field_by_field_plant_then_999_then_default() -> None:
+    eff = _staged_effective(
+        {1: _plant_row(vmin=100.0, vmax=500.0), 2: _plant_row(vmin=100.0, vmax=500.0)},
+        n_stages=3,
+    )
+    fp = _fp(
+        (999, 1, 0, 30.0, 10.0),
+        (1, 1, 0, 5.0, None),
+        (1, 3, 0, None, 15.0),
+        (999, 2, 0, 40.0, 40.0),
+    )
+    rule = VolumeWindowRule.from_fp(fp, {1: 50.0, 2: 50.0}, weekly_stages=3)
+    assert _windows(eff, rule, 1) == [(280.0, 340.0), (280.0, 460.0), (280.0, 360.0)]
+    assert _windows(eff, rule, 2) == [(180.0, 340.0), (140.0, 460.0), (140.0, 460.0)]
+
+
+def test_fp_entry_type_one_gives_the_deltas_in_hm3() -> None:
+    eff = _staged_effective({1: _plant_row(vmin=100.0, vmax=500.0)}, n_stages=1)
+    rule = VolumeWindowRule.from_fp(_fp((1, 1, 1, 50.0, 20.0)), {1: 50.0}, 1)
+    assert _windows(eff, rule) == [(250.0, 320.0)]
+
+
+def test_fp_blank_entry_type_reads_as_percent() -> None:
+    eff = _staged_effective({1: _plant_row(vmin=100.0, vmax=500.0)}, n_stages=1)
+    rule = VolumeWindowRule.from_fp(_fp((1, 1, None, 5.0, 5.0)), {1: 50.0}, 1)
+    assert _windows(eff, rule) == [(280.0, 320.0)]
+
+
+def test_fp_unknown_entry_type_is_refused() -> None:
+    with pytest.raises(
+        ValueError, match="plant 1 at stage 2: volume window entry type 2"
+    ):
+        VolumeWindowRule.from_fp(_fp((1, 2, 2, 5.0, 5.0)), {1: 50.0}, 1)
+
+
+def test_fp_negative_delta_is_refused() -> None:
+    with pytest.raises(ValueError, match="negative volume window delta"):
+        VolumeWindowRule.from_fp(_fp((1, 1, 0, -5.0, 5.0)), {1: 50.0}, 1)
+
+
+class _FpDadger:
+    """Duck-types the two ``Dadger`` readers :func:`volume_window_rule` calls."""
+
+    def __init__(self, fp: pd.DataFrame, initial_pct: dict[int, float]) -> None:
+        self._fp = fp
+        self._uh = pd.DataFrame(
+            {
+                "codigo_usina": list(initial_pct),
+                "volume_inicial": list(initial_pct.values()),
+            }
+        )
+
+    def fp(self, *, df: bool) -> pd.DataFrame:
+        return self._fp
+
+    def uh(self, *, df: bool) -> pd.DataFrame:
+        return self._uh
+
+
+def _calendar(*hours: float) -> list[OperativeStage]:
+    start = date(2026, 3, 7)
+    return [
+        OperativeStage(
+            index=i,
+            start_date=start + timedelta(days=7 * i),
+            end_date=start + timedelta(days=7 * (i + 1)),
+            season_id=2,
+            block_hours=(h,),
+        )
+        for i, h in enumerate(hours)
+    ]
+
+
+def test_volume_window_rule_reads_the_deck_fp_uh_and_weekly_stages() -> None:
+    eff = _staged_effective({1: _plant_row(vmin=100.0, vmax=500.0)}, n_stages=3)
+    dadger = _FpDadger(_fp((999, 3, 0, 10.0, None)), {1: 25.0})
+    rule = volume_window_rule(dadger, _calendar(168.0, 168.0, 552.0))
+    assert _windows(eff, rule) == [(120.0, 280.0), (120.0, 280.0), (160.0, 400.0)]
+
+
+def _fit_fields(code: int, estagio: int, **overrides: float) -> dict:
+    return {
+        "codigo_usina": code,
+        "estagio": estagio,
+        "tipo_entrada_janela_turbinamento": 0,
+        "limite_inferior_janela_turbinamento": 0.0,
+        "limite_superior_janela_turbinamento": 100.0,
+        "numero_pontos_turbinamento": 5,
+        "numero_pontos_volume": 5,
+    } | overrides
+
+
+def test_unconverted_fp_fields_warn_only_when_off_the_default_fit() -> None:
+    assert unconverted_fp_fields_diagnostic(None) is None
+    assert unconverted_fp_fields_diagnostic(pd.DataFrame([_fit_fields(999, 1)])) is None
+    fp = pd.DataFrame(
+        [
+            _fit_fields(999, 1, numero_pontos_volume=7),
+            _fit_fields(6, 2, limite_superior_janela_turbinamento=80.0),
+            _fit_fields(31, 1),
+        ]
+    )
+    diagnostic = unconverted_fp_fields_diagnostic(fp)
+    assert diagnostic is not None
+    assert diagnostic.severity is Severity.WARNING
+    assert "all plants from stage 1; plant 6 from stage 2." in diagnostic.summary
+    assert "plant 31" not in diagnostic.summary
+
+
+def test_unconverted_fp_fields_message_has_no_repo_internal_references() -> None:
+    diagnostic = unconverted_fp_fields_diagnostic(
+        pd.DataFrame([_fit_fields(6, 1, numero_pontos_turbinamento=9)])
+    )
+    assert diagnostic is not None
+    message = f"{diagnostic.title} {diagnostic.summary} {diagnostic.remediation or ''}"
+    for leak in ("docs/", "plans/", "~/git", ".py", "TRACKED", "_"):
+        assert leak not in message
+
+
+def test_hydro_geometry_spans_the_storage_envelope_of_every_stage() -> None:
+    eff = _staged_effective(
+        {1: _plant_row(vmin=100.0, vmax=500.0)},
+        n_stages=3,
+        stage_varying={(1, "volume_minimo"): (100.0, 100.0, 40.0)},
+    )
+    volumes = convert_hydro_geometry(eff, _id_map((1,))).column("volume_hm3")
+    assert volumes[0].as_py() == 40.0 and volumes[-1].as_py() == 500.0
+
+
+# ---------------------------------------------------------------------------
+# spillage fit range
+# ---------------------------------------------------------------------------
+
+
+class _FakeMlt:
+    """Duck-types ``idecomp.decomp.Mlt``: ``valores`` has a ``mes`` column and
+    one column per posto, named by its number."""
+
+    def __init__(self, means_by_posto: dict[int, list[float]]) -> None:
+        self.valores = pd.DataFrame(
+            {"mes": list(range(1, 13))}
+            | {str(posto): means for posto, means in means_by_posto.items()}
+        )
+
+
+def _gauged_effective(
+    posto: int, numpos: tuple[int, ...] | None = None
+) -> EffectiveCadastro:
+    row = _plant_row()
+    row["posto"] = posto
+    hidr = pd.DataFrame({1: row}).T
+    hidr.index.name = "codigo_usina"
+    return EffectiveCadastro(
+        base=hidr,
+        n_stages=2,
+        stage_varying={},
+        inflow_gauges={1: numpos} if numpos is not None else {},
+    )
+
+
+_MLT = _FakeMlt(
+    {
+        12: [100.0] * 11 + [700.0],
+        40: [50.0] * 12,
+        300: [0.0] * 12,
     }
+)
+
+
+def test_spillage_fit_max_is_twice_the_gauge_largest_monthly_mean() -> None:
+    assert spillage_fit_max(_gauged_effective(12), _MLT, 1, 0) == 1400.0
+
+
+def test_spillage_fit_max_follows_the_ac_numpos_gauge_of_the_stage() -> None:
+    eff = _gauged_effective(12, numpos=(12, 40))
+    assert spillage_fit_max(eff, _MLT, 1, 0) == 1400.0
+    assert spillage_fit_max(eff, _MLT, 1, 1) == 100.0
+
+
+def test_spillage_fit_max_none_on_the_artificial_gauge() -> None:
+    assert (
+        spillage_fit_max(_gauged_effective(12, numpos=(300, 300)), _MLT, 1, 0) is None
+    )
+
+
+def test_spillage_fit_max_none_without_mlt_or_for_an_unlisted_gauge() -> None:
+    assert spillage_fit_max(_gauged_effective(12), None, 1, 0) is None
+    assert spillage_fit_max(_gauged_effective(77), _MLT, 1, 0) is None
+
+
+def test_fpha_config_carries_the_spillage_range_only_when_there_is_one() -> None:
+    windows = VolumeWindowRule.from_fp(None, {1: 50.0}, weekly_stages=2)
+    assert fpha_config(_gauged_effective(12), _MLT, 1, 0, windows) == {
+        "source": "computed",
+        "fitting_window": {"volume_min_hm3": 220.0, "volume_max_hm3": 380.0},
+        "spillage_fit_max_m3s": 1400.0,
+    }
+    assert "spillage_fit_max_m3s" not in fpha_config(
+        _gauged_effective(12), None, 1, 0, windows
+    )
+
+
+def test_mlt_absent_diagnostic_is_a_warning_naming_the_plant_count() -> None:
+    diagnostic = mlt_absent_diagnostic(3)
+    assert diagnostic.severity is Severity.WARNING
+    assert "3 FPHA plant(s)" in diagnostic.summary
+    assert "mlt.dat" in (diagnostic.remediation or "")
+
+
+def test_mlt_absent_remediation_has_no_repo_internal_references() -> None:
+    diagnostic = mlt_absent_diagnostic(3)
+    message = f"{diagnostic.summary} {diagnostic.remediation}"
+    for leak in ("docs/", "plans/", "~/git", ".py", "TRACKED", "_"):
+        assert leak not in message
 
 
 # ---------------------------------------------------------------------------

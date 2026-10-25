@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     SourceGnlThermal,
     match_source_hydros,
 )
+from novomodelo_bridge.dessem.exporters.fcf.core.travel_time import travel_time_plants
 from novomodelo_bridge.dessem.exporters.fcf.source import read_source_deck
 
 
@@ -48,6 +50,40 @@ def test_deck_matches_the_case_convert_writes_from_it(
     match_source_hydros(
         read_case_inputs(case_dir).hydros, read_source_deck(decomp_mini_deck).hydros
     )
+
+
+def test_travel_time_plants_of_the_converted_case_follow_the_vi_records(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+    case_dir = tmp_path / "case"
+    convert_decomp_case(decomp_mini_deck, case_dir, force=True)
+    inputs = read_case_inputs(case_dir)
+    deck = read_source_deck(decomp_mini_deck)
+
+    plants = travel_time_plants(
+        inputs.hydros, deck.hydros, deck.travel_time_codes, inputs.stages
+    )
+
+    assert deck.travel_time_codes == (156, 162)
+    assert [(plant.code, plant.hours) for plant in plants] == [(156, 360), (162, 360)]
+
+
+def test_travel_time_codes_keep_the_deck_order_over_ascending_code(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck_dir = tmp_path / "deck"
+    shutil.copytree(decomp_mini_deck, deck_dir)
+    dadger = next(deck_dir.glob("dadger.*"))
+    lines = dadger.read_text(encoding="latin-1").splitlines(keepends=True)
+    first, second = (
+        index for index, line in enumerate(lines) if line.startswith("VI ")
+    )
+    lines[first], lines[second] = lines[second], lines[first]
+    dadger.write_text("".join(lines), encoding="latin-1")
+
+    assert read_source_deck(deck_dir).travel_time_codes == (162, 156)
 
 
 def test_deck_without_gnl_dispatch_has_no_gnl_plants(decomp_mini_deck: Path) -> None:

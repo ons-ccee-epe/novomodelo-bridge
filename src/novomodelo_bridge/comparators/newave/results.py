@@ -420,8 +420,7 @@ def _compare_hydros(
                 # hm³, not flow. Novomodelo emits m³/s. The source model rounds the
                 # month-length factor to 2.63 in its internal output reporting (≈ 730 h
                 # × 3600 s / 10⁶); using the same rounded constant here makes the
-                # comparison apples-to-apples. The converter side keeps the exact 2.628
-                # (see network.py:C_M3S2HM3) because the input-data conversion has no
+                # comparison apples-to-apples. The input-data conversion has no
                 # analogous rounding. Handled per-variable rather than via a V*-prefix
                 # heuristic to avoid mis-scaling future MEDIAS columns that happen to
                 # start with V.
@@ -844,8 +843,6 @@ def compare_results(
     """
     from novomodelo_bridge.comparators.newave.alignment import read_reference_names
     from novomodelo_bridge.comparators.newave.readers import (
-        read_fpha_grid,
-        read_fpha_planes,
         read_medias_hydro,
         read_medias_market,
         read_medias_sin,
@@ -867,7 +864,6 @@ def compare_results(
         read_novomodelo_bus_percentiles,
         read_novomodelo_convergence,
         read_novomodelo_cost_breakdown,
-        read_novomodelo_fpha_planes,
         read_novomodelo_hydro_bus_labels,
         read_novomodelo_hydro_means,
         read_novomodelo_hydro_metadata,
@@ -1087,26 +1083,13 @@ def compare_results(
         alignment, nw_prod_detail, nw_cadastro, novomodelo_prod_detail, cb_accumulated
     )
 
-    # --- Production-function (FPHA) comparison --- Both solvers' fitted
-    # generation hyperplanes, evaluated on a shared (V, Q) grid. Populated only
-    # when both sides fitted FPHA planes; otherwise the three frames stay None
-    # and the Productivity tab shows only the constant-productivity content.
-    fpha_metrics: pl.DataFrame | None = None
-    fpha_surface: pl.DataFrame | None = None
-    fpha_spill: pl.DataFrame | None = None
-    cb_fpha = read_novomodelo_fpha_planes(novomodelo_output_dir)
-    if cb_fpha is not None:
-        nw_fpha = read_fpha_planes(case.files.directory)
-        nw_fpha_grid = read_fpha_grid(case.files.directory)
-        if nw_fpha is not None and nw_fpha_grid is not None:
-            _LOG.info("Comparing fitted production functions (FPHA)...")
-            from novomodelo_bridge.comparators.analyze import build_fpha_comparison
+    # --- Productivity tab: both models' FPHA and their operating points.
+    from novomodelo_bridge.comparators.newave.operating_points import (
+        compare_operating_points,
+    )
+    from novomodelo_bridge.comparators.operating_points import operating_point_fields
 
-            # Surfaces are sampled at the source model's own (V, Q) fitting-grid
-            # nodes (light + faithful to the model's resolution).
-            fpha_metrics, fpha_surface, fpha_spill = build_fpha_comparison(
-                nw_fpha, nw_fpha_grid, cb_fpha, alignment.hydros
-            )
+    operating_points = compare_operating_points(case, alignment, novomodelo_output_dir)
 
     # --- Cost breakdown --- The source model typically runs a shorter horizon than
     # Novomodelo.  Restrict Novomodelo's cost sum to the source model's stage range so the totals
@@ -1285,9 +1268,7 @@ def compare_results(
         gc_lhs_newave=gc_lhs_nw,
         gc_lhs_novomodelo=gc_lhs_cb,
         productivity_detail=productivity_detail,
-        fpha_metrics=fpha_metrics,
-        fpha_surface=fpha_surface,
-        fpha_spill=fpha_spill,
+        **operating_point_fields(operating_points),
     )
 
     _LOG.info("Results comparison: %d total comparisons", len(results))

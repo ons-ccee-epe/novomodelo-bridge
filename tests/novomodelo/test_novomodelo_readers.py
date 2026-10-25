@@ -30,6 +30,7 @@ from novomodelo_bridge.novomodelo.readers import (
     novomodelo_software_version,
     read_novomodelo_bus_aggregates,
     read_novomodelo_bus_means,
+    read_novomodelo_fpha_fit_config,
     read_novomodelo_hydro_bus_generation,
     read_novomodelo_hydro_bus_labels,
     read_novomodelo_hydro_means,
@@ -1558,6 +1559,72 @@ class TestReadNovomodeloLines:
 
         with pytest.raises(NovomodeloReadError, match="lines.json"):
             read_novomodelo_lines(out)
+
+
+class TestReadNovomodeloFphaFitConfig:
+    def test_reads_each_fit_range_per_stage(self, tmp_path: Path) -> None:
+        _write_stages_json(tmp_path, {0: [(0, 1.0)], 1: [(0, 1.0)]})
+        system_dir = tmp_path / "system"
+        system_dir.mkdir()
+        config = {
+            "source": "computed",
+            "fitting_window": {"volume_min_hm3": 50.0, "volume_max_hm3": 50.0},
+            "spillage_fit_max_m3s": 900.0,
+            "turbined_fit_max_m3s": 410.0,
+        }
+        models = [
+            {
+                "hydro_id": 3,
+                "stage_ranges": [
+                    {"start_stage_id": 0, "end_stage_id": None, "model": "fpha"}
+                    | {"fpha_config": config}
+                ],
+            }
+        ]
+        (system_dir / "hydro_production_models.json").write_text(
+            json.dumps({"production_models": models})
+        )
+
+        result = read_novomodelo_fpha_fit_config(tmp_path / "output")
+
+        assert result["stage_id"].to_list() == [0, 1]
+        assert result["spillage_fit_max_m3s"].to_list() == [900.0, 900.0]
+        assert result["turbined_fit_max_m3s"].to_list() == [410.0, 410.0]
+
+    def test_reads_each_season_at_its_stages(self, tmp_path: Path) -> None:
+        stages = [
+            {"id": stage_id, "season_id": season, "blocks": [{"id": 0, "hours": 1.0}]}
+            for stage_id, season in enumerate([8, 9, 8])
+        ]
+        (tmp_path / "stages.json").write_text(json.dumps({"stages": stages}))
+        system_dir = tmp_path / "system"
+        system_dir.mkdir()
+        models = [
+            {
+                "hydro_id": 3,
+                "selection_mode": "seasonal",
+                "default_model": "constant_productivity",
+                "seasons": [
+                    {
+                        "season_id": season,
+                        "model": "fpha",
+                        "fpha_config": {
+                            "source": "computed",
+                            "turbined_fit_max_m3s": q_max,
+                        },
+                    }
+                    for season, q_max in ((8, 400.0), (9, 420.0))
+                ],
+            }
+        ]
+        (system_dir / "hydro_production_models.json").write_text(
+            json.dumps({"production_models": models})
+        )
+
+        result = read_novomodelo_fpha_fit_config(tmp_path / "output").sort("stage_id")
+
+        assert result["stage_id"].to_list() == [0, 1, 2]
+        assert result["turbined_fit_max_m3s"].to_list() == [400.0, 420.0, 400.0]
 
 
 class TestReadNovomodeloLineBounds:

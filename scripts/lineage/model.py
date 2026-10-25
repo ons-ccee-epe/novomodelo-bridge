@@ -73,6 +73,7 @@ _NEWAVE_LABELS: dict[str, tuple[str, str | None]] = {
     "adterm": ("adterm.dat", "adterm"),
     "libs_index": ("indices.csv", None),
     "polinjus": ("polinjus.csv", None),
+    "volumes_referencia": ("volumes-referencia.csv", None),
     "tratamento_fpha": ("tratamento-fpha.csv", None),
     "restricao_eletrica": ("restricao-eletrica.csv", None),
     "estacao_bombeamento": ("estacao-bombeamento.csv", None),
@@ -88,6 +89,7 @@ _DECOMP_LABELS: dict[str, str] = {
     "dadger": "dadger.rvN",
     "vazoes": "vazoes.rvN",
     "hidr": "hidr.dat",
+    "mlt": "mlt.dat",
     "dadgnl": "dadgnl.rvN",
     "renovaveis": "renovaveis*",
     "polinjus": "polinjus.csv",
@@ -97,10 +99,9 @@ _DECOMP_LABELS: dict[str, str] = {
     "libs_index": "indices.csv",
 }
 # Deck files the converter reads without a ``DecompFiles`` field: the case
-# index and ``mlt.dat``, which the boundary import locates itself.
+# index.
 _DECOMP_EXTRAS: dict[str, str] = {
     "caso": "caso.dat",
-    "mlt": "mlt.dat",
 }
 
 

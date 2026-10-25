@@ -37,7 +37,7 @@ _LIMIT_COLUMN = re.compile(r"^limite_superior_(\d+)$")
 _FULL_DEPTH_PERCENT = 100.0
 
 
-def _bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
+def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
     """Extract one deficit cost per subsystem code from the ``CD`` records.
 
     Enforces the single-segment shape the Novomodelo bus model encodes: one
@@ -94,7 +94,7 @@ def convert_buses(
     ``deficit_segments`` and defer to the global default — they carry no
     load, so the value is never priced.
     """
-    costs = _bus_deficit_costs(case.dadger)
+    costs = bus_deficit_costs(case.dadger)
     op_date = case.start_date.isoformat()
 
     buses: list[dict] = []

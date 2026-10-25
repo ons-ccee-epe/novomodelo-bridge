@@ -1,5 +1,5 @@
-"""Hydro geometry: the VHA volume->height->area table, seasonal reference-volume
-reads, the machine configuration an expanding plant declares, and FPHA
+"""Hydro geometry: the VHA volume->height->area table, the storage range a
+plant operates over, the machine configuration an expanding plant declares, and FPHA
 eligibility (the volume->cota polynomial, the specific productivity, and the
 rated capacity of that declared configuration).
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -67,6 +68,30 @@ def _has_fpha_curve_inputs(hreg: pd.Series) -> bool:
 def _has_rated_capacity(hreg: pd.Series) -> bool:
     max_turbined, max_generation = rated_capacity(hreg)
     return max_turbined > 0.0 and max_generation > 0.0
+
+
+def held_volume(hreg: pd.Series) -> float | None:
+    """The ``volume_referencia`` (hm³) the source model holds a daily ('D') or
+    run-of-river ('S') plant at every stage, which may lie outside
+    ``[volume_minimo, volume_maximo]``; ``None`` for any other plant and for a
+    'D'/'S' plant without one."""
+    if str(hreg.get("tipo_regulacao", "")).strip() not in ("D", "S"):
+        return None
+    vol_ref_raw = hreg.get("volume_referencia")
+    if vol_ref_raw is None or pd.isna(vol_ref_raw):
+        return None
+    return float(vol_ref_raw)
+
+
+def operating_storage_range(hreg: pd.Series) -> tuple[float, float]:
+    """``(min, max)`` storage the plant operates over, in hm³: the
+    :func:`held_volume` when there is one, else the hidr range. The reservoir
+    bounds, the VHA geometry and the FPHA volume window all read this one range.
+    """
+    held = held_volume(hreg)
+    if held is not None:
+        return held, held
+    return float(hreg["volume_minimo"]), float(hreg["volume_maximo"])
 
 
 def _expansion_configs(
@@ -163,90 +188,30 @@ _EVAP_MONTHS = [
 ]
 
 
-def _seasonal_reference_volume(
-    monthly_useful: dict[int, float],
-    vmin: float,
-    vmax: float,
-    *,
-    is_fpha: bool,
-    fpha_config: dict | None = None,
-) -> list[dict]:
-    """Build 12 seasonal ``reference_volume`` entries from a volref_saz row.
-
-    ``season_id = calendar_month - 1`` (matching the ``stages.json`` season map). The
-    source model stores the seasonal reference as *useful* storage above ``vmin``, so
-    the absolute reference volume is ``clamp(vmin + useful, vmin, vmax)`` (a missing or
-    zero month means "operate at vmin"). FPHA seasons additionally carry ``fpha_config``
-    (see :func:`_fpha_computed_config`); non-FPHA seasons declare only the reference
-    volume (their productivity comes from ``hydro_energy_productivity.parquet``), so the
-    value serves purely as the backwater reference for the upstream FPHA plant.
-    """
-    seasons: list[dict] = []
-    for month in range(1, 13):
-        useful = monthly_useful.get(month, 0.0)
-        abs_vol = max(vmin, min(vmax, vmin + useful))
-        season: dict = {
-            "season_id": month - 1,
-            "model": "fpha" if is_fpha else "constant_productivity",
-            "reference_volume": {"volume_hm3": abs_vol},
-        }
-        if is_fpha and fpha_config is not None:
-            season["fpha_config"] = fpha_config
-        seasons.append(season)
-    return seasons
-
-
-def _read_volref_saz(case: NewaveCase) -> dict[int, dict[int, float]]:
-    """Read ``volref_saz.dat`` into ``{plant_code: {calendar_month: useful_vol_hm3}}``.
-
-    The source model uses two distinct conventions inside this file:
-
-    - **Row of all-zeros** — sentinel meaning "no seasonal reference for this
-      plant"; the source model falls back to its altura_65 / volume_referencia default.
-      We mirror this by *excluding* the plant from the returned mapping.
-    - **Row with at least one non-zero value** — real seasonal reference.
-      Individual zero months in such a row mean "operate at exactly
-      ``volume_minimo``" (useful = 0 above the dead-storage minimum), so we
-      keep all twelve monthly entries including explicit zeros.
-
-    Returns an empty dict when ``volref_saz.dat`` is absent.
-    """
-    vs = case.volref_saz
-    if vs is None:
-        _LOG.debug("volref_saz.dat not found; seasonal productivity disabled.")
-        return {}
-
-    df = vs.volumes
-    if df is None or df.empty:
-        return {}
-
-    by_plant: dict[int, dict[int, float]] = {}
-    for _, row in df.iterrows():
-        code = int(row["codigo_usina"])
-        month = int(row["mes"])
-        by_plant.setdefault(code, {})[month] = float(row["valor"])
-
-    return {
-        code: months
-        for code, months in by_plant.items()
-        if any(v > 0.0 for v in months.values())
-    }
-
-
-def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.Table:
+def generate_hydro_geometry(
+    cadastro: pd.DataFrame,
+    id_map: NewaveIdMap,
+    reference_volumes: Mapping[int, Sequence[float]] | None = None,
+) -> pa.Table:
     """Generate a VHA curve table for all hydro plants in *id_map*.
 
     For each plant code in ``id_map.all_hydro_codes``, samples 100 uniformly
-    spaced volume points on ``[volume_minimo, volume_maximo]``, evaluates the
-    volume-to-height polynomial (``a0_volume_cota`` through
+    spaced volume points on the plant's :func:`operating_storage_range`,
+    evaluates the volume-to-height polynomial (``a0_volume_cota`` through
     ``a4_volume_cota``), then evaluates the height-to-area polynomial
     (``a0_cota_area`` through ``a4_cota_area``), and collects the results
     into a PyArrow Table.
 
-    Plants where ``volume_minimo == volume_maximo`` (run-of-river with no
-    reservoir) are skipped.  Plants whose volume_cota polynomial coefficients
-    are all zero are skipped and reported via a diagnostic.  Negative height
-    or area values produced by the polynomials are clamped to 0.0.
+    A plant whose range is a single volume emits one point there, so novomodelo
+    reads the forebay level at the volume the reservoir is held at, for the
+    plant's own head and as the downstream level of the plant above.  Any
+    other plant's range extends to cover its ``reference_volumes``, because
+    novomodelo reads the downstream level there and clamps a volume outside the
+    geometry to its range; the source model evaluates the polynomial outside
+    ``[volume_minimo, volume_maximo]`` for it too.  Plants
+    whose volume_cota polynomial coefficients are all zero are skipped and
+    reported via a diagnostic.  Negative height or area values produced by the
+    polynomials are clamped to 0.0.
 
     Parameters
     ----------
@@ -256,6 +221,9 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
     id_map:
         Pre-built ID mapping; ``id_map.all_hydro_codes`` determines which
         plants are processed.
+    reference_volumes:
+        :func:`~novomodelo_bridge.newave.converters.hydro.reference_volumes.fpha_reference_volumes`
+        of the case, keyed by plant code.
 
     Returns
     -------
@@ -274,6 +242,7 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
     # Loop-accumulate-then-emit-once: one record per skipped plant, emitted
     # after the loop so both skip causes survive finalize_diagnostics' de-dup.
     geometry_skips: list[tuple[str, int, str]] = []
+    extended: list[list[object]] = []
 
     def _eval_poly(coeffs: list[float], x: np.ndarray) -> np.ndarray:
         """Evaluate a 4th-degree polynomial: c0 + c1*x + ... + c4*x^4."""
@@ -291,8 +260,7 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
             continue
 
         hreg = cadastro.loc[newave_code]
-        vol_min = float(hreg["volume_minimo"])
-        vol_max = float(hreg["volume_maximo"])
+        vol_min, vol_max = operating_storage_range(hreg)
 
         # Polynomial coefficients for volume -> height (hm3 -> m).
         vc_coeffs = [float(hreg[f"a{i}_volume_cota"]) for i in range(5)]
@@ -306,11 +274,25 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
         # Polynomial coefficients for height -> area (m -> km2).
         ca_coeffs = [float(hreg[f"a{i}_cota_area"]) for i in range(5)]
 
+        plant_references = (reference_volumes or {}).get(newave_code)
+        if plant_references and vol_min < vol_max:
+            sampled = (
+                min(vol_min, *plant_references),
+                max(vol_max, *plant_references),
+            )
+            if sampled != (vol_min, vol_max):
+                extended.append(
+                    [
+                        str(hreg.get("nome_usina", "?")).strip(),
+                        newave_code,
+                        *(round(v, 2) for v in (vol_min, vol_max, *sampled)),
+                    ]
+                )
+                vol_min, vol_max = sampled
+
         novomodelo_id = id_map.hydro_id(newave_code)
 
         if vol_min == vol_max:
-            # Run-of-river or fixed-level: emit a single geometry point
-            # so evaporation can still use the surface area.
             v = np.array([vol_min])
             h = _eval_poly(vc_coeffs, v)
             h = np.maximum(h, 0.0)
@@ -352,6 +334,39 @@ def generate_hydro_geometry(cadastro: pd.DataFrame, id_map: NewaveIdMap) -> pa.T
                         [name, code, reason] for name, code, reason in geometry_skips
                     ],
                     justify=["left", "right", "left"],
+                ),
+            ),
+            logger=_LOG,
+        )
+
+    if extended:
+        emit(
+            Diagnostic(
+                code="hydro-geometry-extended",
+                severity=Severity.INFO,
+                category="Hydro geometry",
+                title=(
+                    "Hydro geometry extended past the storage range "
+                    f"({len(extended)} plant(s))"
+                ),
+                summary=(
+                    f"{len(extended)} plant(s) have an FPHA reference volume "
+                    "outside [volume_minimo, volume_maximo], where the source "
+                    "model reads the downstream level of the plant above. Their "
+                    "geometry samples the volume-to-height polynomial out to "
+                    "those volumes."
+                ),
+                table=DiagnosticTable(
+                    columns=[
+                        "Plant",
+                        "Code",
+                        "volume_minimo (hm³)",
+                        "volume_maximo (hm³)",
+                        "Sampled from (hm³)",
+                        "Sampled to (hm³)",
+                    ],
+                    rows=extended,
+                    justify=["left", "right", "right", "right", "right", "right"],
                 ),
             ),
             logger=_LOG,

@@ -26,7 +26,10 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.case import DecompCase
-from novomodelo_bridge.decomp.converters.libs_electrical import read_carga_ande
+from novomodelo_bridge.decomp.converters.libs_electrical import (
+    ande_load,
+    read_carga_ande,
+)
 from novomodelo_bridge.decomp.converters.network import (
     _LINE_BOUNDS_SCHEMA,
     _UNBOUNDED_LINE_CAPACITY_MW,
@@ -487,3 +490,37 @@ class TestNoItaipu:
             _case(dadger, calendar), _ID_MAP_NO_ITAIPU, extra_bus_loads=None
         )
         assert all(e["bus_id"] != iv_bus for e in doc["load_factors"])
+
+
+class TestAndeLoad:
+    """``ande_load`` -- the ANDE series and the submarket that carries it, the
+    one source the conversion and ``compare decomp`` both read."""
+
+    _HIDR = pd.DataFrame({"submercado": [1]}, index=[_ITAIPU_CODE])
+
+    def _case(self, dadger: _StubDadger, id_map: DecompIdMap) -> DecompCase:
+        return make_decomp_case(
+            Path("unused"),
+            dadger=dadger,
+            calendar=_calendar(),
+            id_map=id_map,
+            hidr=self._HIDR,
+        )
+
+    def test_returns_itaipus_submarket_and_the_ri_series(self) -> None:
+        dadger = _StubDadger(ri=_ri_frame())
+
+        ande = ande_load(self._case(dadger, _ID_MAP_ITAIPU))
+
+        assert ande is not None
+        submarket, series = ande
+        assert submarket == 1
+        assert series == read_carga_ande(dadger, _calendar())
+
+    def test_none_without_an_ri_register(self) -> None:
+        assert ande_load(self._case(_StubDadger(), _ID_MAP_ITAIPU)) is None
+
+    def test_none_when_itaipu_is_not_operated(self) -> None:
+        dadger = _StubDadger(ri=_ri_frame())
+
+        assert ande_load(self._case(dadger, _ID_MAP_NO_ITAIPU)) is None

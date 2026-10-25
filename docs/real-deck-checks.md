@@ -3,7 +3,8 @@
 This page is for contributors. It catalogues the end-to-end checks that used
 to live in the test suite as tests guarded on real NEWAVE and DECOMP decks,
 explains why they were removed, and records what each one needs so it can be
-brought back in a form that runs for everyone.
+brought back in a form that runs for everyone. It also records checks that
+were only ever run by hand on a real deck.
 
 ## Why they were removed
 
@@ -68,8 +69,7 @@ anywhere any more; treat each as "a deck with these properties".
 | One end-to-end test in `test_fcf_importer.py` | The bootstrap resolves a real terminal node id (never the -1 sentinel), `policy.boundary.source_stage` equals that graph stage, and the already-committed months carry no dated ring slot while a signalled month does. |
 | Two tests in `test_anticipated.py` | The already-committed set derived from the `gl` records matches the prior-revision markers in `relgnl` for SANTA CRUZ; a full conversion emits the seven-stage post-study calendar, prunes the post-study thermal bounds to the signalled stages, tiles the committed windows with the deck's own MW, and keeps the lead uncapped. |
 | `test_anticipated_e2e.py` (whole module; also needs `novomodelo-python`'s checkpoint writer) | The CLI conversion with boundary import trains and simulates in-process; the anticipated-lanes output partition is populated; the post-horizon split matches the deck's declaration and the run reaches every post-study delivery. |
-| One test in `test_inflow_mlt.py` | Incremental long-term-mean inflows cover every operated plant, read zero for the diversion-fed plant on the artificial station (code 288), and carry no increment below -30 m³/s. |
-| Nine result-reader tests in `tests/comparators/test_decomp_readers.py` | Each reader returns rows with the expected columns on the deck's real result files. Three of them (`dec_oper_gnl.csv`, `dec_oper_ree.csv`, `decomp.tim`) now run against committed excerpts; the rest are listed under "Excerpts still to capture". |
+| Nine result-reader tests in `tests/comparators/test_decomp_readers.py` | Each reader returns rows with the expected columns on the deck's real result files. Four of them (`dec_oper_gnl.csv`, `dec_oper_ree.csv`, `decomp.tim`, `dec_desvfpha.rvN`) now run against committed excerpts; the rest are listed under "Excerpts still to capture". |
 
 ### The reduced deck plus its solved novomodelo case (`novomodelo-mar-26-rv2-reduced`)
 
@@ -84,6 +84,12 @@ anywhere any more; treat each as "a deck with these properties".
 | --- | --- |
 | One test each in `test_libs_electrical_emit.py` and `test_libs_electrical_pipeline.py` | Conversion emits at least one `LIBS_ELEC_*` generic constraint with matching bound rows, the unresolved-operand census stays below the pre-fix baseline of 20, and `novomodelo validate` exits 0 on the converted case. |
 
+### A DECOMP deck carrying `VI` water travel time, plus a novomodelo binary
+
+| Check | Verifies |
+| --- | --- |
+| Convert a deck with at least one operated `VI` arc, then `novomodelo run` the case to convergence | The transit-bucket cut generation produces a valid policy: training converges on a non-negative gap (no lower bound driven past the upper bound), and the solved case prices the in-transit water. `novomodelo validate` alone does not exercise this — it checks the `past_defluences` coverage rule at config time but not the cut arithmetic — so this needs the solver binary, not just the validator. The emission shape is unit-tested in `test_travel_time.py` and the loadability in `test_convert_decomp_e2e.py` (tier-2, `novomodelo validate`); this whole-deck run is what closed the former novomodelo cut-generation defect (`C-travel-time`). |
+
 ### Sibling novomodelo checkout (replaced, not removed)
 
 Four tests in `tests/decomp/test_contracts.py` read novomodelo's
@@ -92,6 +98,40 @@ checkout under the developer's home directory. Those files are now vendored
 under `tests/fixtures/novomodelo_schemas/` and `tests/fixtures/novomodelo_d41/`, so the
 tests run everywhere. Refresh both copies from the novomodelo repository whenever
 `MIN_NOVOMODELO_VERSION` moves.
+
+## Checks run by hand
+
+These were never tests. They are recorded so they can be repeated.
+
+### The reduced DECOMP deck, run by DECOMP with its coupling report
+
+| Check | Verified |
+| --- | --- |
+| Boundary coupling convention | Run with `IR ACOPLA` and `IR CORTES` added to a copy of `dadger.rvN`, DECOMP reports each boundary cut's terms and the inflows it evaluates them on. In each terminal scenario, the largest cut re-evaluated from the deck alone reproduces the cost-to-go value DECOMP reports to within a relative 5×10⁻⁷: the constant term, plus the storage terms of the `M` and `S` plants above their minimum volume, plus the inflow-lag terms on the coupling gauges, all scaled by the mean month, plus the GNL terms. Copying a downstream reservoir's storage price onto in-transit water breaks the match, so that deck's boundary prices no water in transit. Captured with DECOMP 32.0.1 in October 2026. |
+
+### The reduced DECOMP deck with water travel time, exported back to DECOMP's cut files
+
+| Check | Verified |
+| --- | --- |
+| `export dessem` against DECOMP's own `mapcut` and `cortdeco` | DECOMP run on the reduced deck writes its own pair, and `convert decomp`, `novomodelo run` and `export dessem` on the same deck write the bridge's. Record 6's integers through the lag-start array and every travel-time record match byte for byte, and each node's latest cut values the in-transit water within 0.2% of DECOMP's. Two runs on edited copies of `dadger.rvN`, one with a `VI` travel time of 100 h and one with the two `VI` records swapped, fixed the conventions the unit tests pin in `test_travel_time.py`, `test_layout.py` and `test_mapcut_writer.py`: the lag array is stage-major with plants inner, the plants are numbered in `VI` record order, and the in-transit coefficients are lag-major with plants inner. Captured with DECOMP 32.0.1 in October 2026. |
+
+### The reduced DECOMP deck and a monthly-stage deck, run by DECOMP with its turbined-flow report
+
+| Check | Verified |
+| --- | --- |
+| Turbined-flow limit against DECOMP's `avl_turb_max.csv` | With `IR ARQCSV`, DECOMP writes `avl_turb_max.csv`, whose `Qmax dc pl` column is the turbined-flow limit it applies to each plant on each stage. The bridge side is the sum of the plant's unit-group limits for the stage, read from `hydro_unit_group_bounds.parquet` or else the group's envelope in `hydros.json`; for Itaipu it is capped by the plant's `max_turbined_m3s` row in `hydro_bounds.parquet`. Every plant matches within 0.5% on every stage DECOMP reports, on both decks, and no fixed point fails to converge. The largest difference is Itaipu, above DECOMP's limit, because the conversion leaves its `VL` lateral inflow out of the tailrace level. Captured with DECOMP 32.0.1 in October 2026. |
+
+### The reduced DECOMP deck and a monthly-stage deck, run by DECOMP with their FPHA reports
+
+| Check | Verified |
+| --- | --- |
+| DECOMP's plane form and exact production function | DECOMP's planes in `avl_cortesfpha_dec.rvN`, evaluated with the storage above the `hidr.dat` minimum and the `VU` lateral flow of the same block, reproduce the `Ghid (FPHA)` column of `dec_desvfpha.rvN`, so the comparison reads them in that form. The exact production function rebuilt from the deck (cota polynomial, `polinjus` families read at the downstream plant's printed forebay, `VL`, `VU` and `VA` flows, `hidr.dat` losses, the `eco_fpha_.rvN` generation limit) reproduces its `Ghid (FPH)` column on the reduced deck within 0.004 MW at the median point and 0.62 MW at the worst, a plant with a drowned tailrace. The monthly deck's run writes no `dec_desvfpha.rvN`, which is why the comparison does not depend on it. The unit tests in `tests/comparators/test_decomp_operating_points.py` pin the same conventions on one plant's committed excerpt. Captured with DECOMP 32.0.1 in October 2026. |
+
+### A NEWAVE FPHA run with every plant's nwlistop tables, plus its solved novomodelo case
+
+| Check | Verified |
+| --- | --- |
+| NEWAVE's operating-point conventions against its printed heads and exact production | With the `nwlistop.dat` plant list set to `999`, nwlistop writes each plant's per-block generation, flows, storage, heads (`hmont`, `hjus`, `hliq`) and exact production (`gh_fphexat`). The planes in `fpha_cortes.csv`, evaluated with the stage's mean storage above the `hidr.dat` minimum, reproduce `ghiduh`. The exact production function rebuilt from the deck (cota polynomial at that storage, `polinjus` families read at the downstream plant's forebay at the same point, spill in the tailrace only where `hidr.dat` says it reaches it, `hidr.dat` losses, the `fpha_eco.csv` generation limit) reproduces `gh_fphexat` for every plant and stage within 0.07 MW, the print resolution of a block's MWmes divided by its share of the month. `compare newave` reports that gap in the fit-inputs table, so rerunning it on such a run repeats the check. The unit tests in `tests/comparators/test_newave_operating_points.py` pin the storage, generation and tie conventions on the mini-deck. Captured on a September 2024 case with a historical final simulation, NEWAVE 30.0.4, in October 2026. |
 
 ## Excerpts still to capture
 
@@ -103,14 +143,13 @@ rows, confirm the reader parses it, and commit it under
 | Reader | File | Columns the removed test asserted |
 | --- | --- | --- |
 | `read_relato_balance`, `read_relato_costs`, `read_relato_expected_cost`, `read_relato_membership` | `relato.rvN` | rows present; membership has `codigo_usina` and `codigo_ree`. The parser needs the complete report, so a head excerpt does not work; a block-wise excerpt tool or a deliberately larger fixture is required. |
-| `read_dec_desvfpha` | `dec_desvfpha.rvN` | `codigo_usina`, `estagio`, `volume_total_hm3`, `vazao_turbinada_m3s`, `vazao_vertida_m3s`, `geracao_hidraulica_fpha` |
 | `read_dec_estatfpha` | `dec_estatfpha.rvN` | `variavel`, `valor` |
 | `read_dec_oper_evap` | `dec_oper_evap.csv` | `evaporacao_calculada_hm3`; no `patamar` column |
 | `read_dec_oper_rhesoft` | `dec_oper_rhesoft.csv` | `codigo_restricao`, `limite_MW`, `valor_MW`, `violacao_absoluta_MW` |
 
 The removed `read_eco_fpha` check asserted only that a particular deck had no
-such file; the absent-file contract is covered synthetically and needs no
-excerpt.
+such file. The absent-file contract is covered synthetically, and the reader
+now also runs against a committed `eco_fpha_.rvN` excerpt.
 
 ## Restoring the whole-deck checks
 

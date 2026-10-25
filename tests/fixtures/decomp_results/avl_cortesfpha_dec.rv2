@@ -1,0 +1,50 @@
+@Tabela
+
+
+
+
+***********************************************************************
+*                                                                     *
+*            CEPEL - CENTRO DE PESQUISAS DE ENERGIA ELETRICA          *
+*  CEPEL: DECOMP     - Versao 32.0.1 - Dez/2024(L)                    *
+*                                                                     *
+***********************************************************************
+
+
+   PROGRAMA LICENCIADO PARA OPERADOR NACIONAL DO SISTEMA ELETRICO ONS                                                                                                             
+
+
+____________________________________________________________________
+
+ PMO - MARCO/26 - ABRIL/26 - REV 2 - FCF COM CVAR - 12 REE - VALOR ESPERADO      
+____________________________________________________________________
+
+--------------------------------------------------------------------------------------
+Relatorio dos cortes do modelo para a funcao de producao para as usinas hidroeletricas
+--------------------------------------------------------------------------------------
+--------------------------------------------------------
+USIH;        Numero de cadastro da usina hidroeletrica                                                                                                                                                  
+IPER;        Indice do periodo                                                                                                                                                                          
+NomeUsih;    Nome de cadastro da usina hidroeletrica                                                                                                                                                    
+ICORT;       Indice do corte                                                                                                                                                                            
+FCorrec;     Fator de correcao                                                                                                                                                                          
+RHS;         Termo independente                                                                                                                                                                         
+Coef. Vutil; Coeficiente para o volume armazenado (util)                                                                                                                                                
+Coef. Qtur;  Coeficiente para a vazao turbinada                                                                                                                                                         
+Coef. Qver;  Coeficiente para a vazao vertida                                                                                                                                                           
+Coef. Qlat;  Coeficiente para a vazao lateral a jusante                                                                                                                                                 
+--------------------------------------------------------
+
+@Tabela
+-----;-----;--------------;-------;----------;----------------;----------------;----------------;----------------;----------------;
+USIH ;IPER ;   NomeUsih   ; ICORT ; FCorrec  ;      RHS       ;  Coef. Vutil   ;   Coef. Qtur   ;   Coef. Qver   ;   Coef. Qlat   ;
+  -  ;  -  ;      -       ;       ;          ;      (MW)      ;    (MW/hm3)    ;  (MW/(m3/s))   ;  (MW/(m3/s))   ;  (MW/(m3/s))   ;
+-----;-----;--------------;-------;----------;----------------;----------------;----------------;----------------;----------------;
+ 001 ;   1 ; CAMARGOS     ;     1 ; 0.998159 ;   -11.02219458 ;     0.02227763 ;     0.21441074 ;    -0.00440108 ;     0.00000000 ;
+ 001 ;   1 ; CAMARGOS     ;     2 ; 0.998159 ;   -10.55318629 ;     0.02119043 ;     0.21521363 ;    -0.00440108 ;     0.00000000 ;
+ 001 ;   1 ; CAMARGOS     ;     3 ; 0.998159 ;   -10.04425543 ;     0.01976017 ;     0.21728537 ;    -0.00345634 ;     0.00000000 ;
+ 001 ;   1 ; CAMARGOS     ;     4 ; 0.998159 ;    -9.54763308 ;     0.01866253 ;     0.21848089 ;    -0.00203101 ;     0.00000000 ;
+ 001 ;   1 ; CAMARGOS     ;     5 ; 0.998159 ;    -9.05447200 ;     0.01769856 ;     0.21919278 ;    -0.00341427 ;     0.00000000 ;
+ 001 ;   1 ; CAMARGOS     ;     6 ; 0.998159 ;    -8.18334075 ;     0.02227763 ;     0.19698428 ;    -0.00565988 ;     0.00000000 ;
+ 001 ;   1 ; CAMARGOS     ;     7 ; 0.998159 ;    -7.45274134 ;     0.02119043 ;     0.19618138 ;    -0.00555232 ;     0.00000000 ;
+ 001 ;   1 ; CAMARGOS     ;     8 ; 0.998159 ;    -6.21623887 ;     0.01970498 ;     0.19398737 ;    -0.00555232 ;     0.00000000 ;

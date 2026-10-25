@@ -25,9 +25,23 @@ P2 = (
 )
 
 P3 = (
-    "P3: n_utv = 0, so no mapcut regs 7/8 and NCOEF omits the pi_qdefp block; "
-    "Novomodelo carried no HydroTransitBucket state; travel-time coefficients "
-    "not yet supported"
+    "P3: each hydro with a travel time to its downstream plant is a mapcut "
+    "travel-time plant, numbered in the order of the source deck's VI records; "
+    "the export is refused when such a plant has no VI record, its travel time "
+    "is not a whole number of hours, or it has no downstream plant. Reg 6 holds "
+    "each stage's last release lag per plant, stage-major with plants inner, "
+    "then the reg 7/8 index where each plant's stage begins. Regs 7/8 hold, per "
+    "plant, stage and lag, the share of that lag's release arriving within the "
+    "stage, for a release spread evenly over its stage and arriving that many "
+    "hours later over an equally long span; periods before the study are as "
+    "long as its first stage. cortdeco's pi_qdefp prices each plant's release "
+    "over max_lag lags, lag-major with plants inner, in R$ per hm3 released: "
+    "the downstream plant's HydroTransitBucket coefficients, each weighted by "
+    "the share of the release that is still in transit at the stage's end and "
+    "arrives within the bucket's window. The export is refused when a pool's "
+    "buckets do not cover that water or belong to no travel-time plant's "
+    "downstream plant. Regs 6-8 match the reference DECOMP's own mapcut byte "
+    "for byte, and pi_qdefp its cortdeco to 0.2%"
 )
 
 P4 = (

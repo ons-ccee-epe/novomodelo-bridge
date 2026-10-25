@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from inewave.newave import Cortes, Cortesh
+from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -204,6 +205,37 @@ def required_inflow_lag_depth(summary: CutFamilySummary) -> int:
         ),
         default=0,
     )
+
+
+def cut_month(cortesh: Cortesh, boundary_stage: int) -> tuple[int, int]:
+    """The calendar ``(year, month)`` of the cut stage.
+
+    ``boundary_stage`` counts months from January of ``ano_inicio_estudo``
+    (:func:`read_cortes`); the cut's inflow-lag depth 1 is this month itself.
+    """
+    year_offset, month_index = divmod(boundary_stage - 1, 12)
+    return int(cortesh.ano_inicio_estudo) + year_offset, month_index + 1
+
+
+def read_patamar_fractions(
+    cortesh: Cortesh,
+) -> dict[tuple[int, int], tuple[float, ...]]:
+    """The source model's patamar duration shares per calendar ``(year, month)``.
+
+    ``cortesh.dat``'s general-data record lays them out month-major, patamar
+    inner, from January of ``ano_inicio_estudo``; each month's shares sum to 1.
+    """
+    section = next(s for s in cortesh.data if isinstance(s, SecaoDadosCortesh))
+    values = [float(v) for v in section.duracoes_patamares]
+    n_patamares = int(cortesh.numero_patamares)
+    first_year = int(cortesh.ano_inicio_estudo)
+    fractions: dict[tuple[int, int], tuple[float, ...]] = {}
+    for index in range(len(values) // n_patamares):
+        year_offset, month_index = divmod(index, 12)
+        fractions[(first_year + year_offset, month_index + 1)] = tuple(
+            values[index * n_patamares : (index + 1) * n_patamares]
+        )
+    return fractions
 
 
 def read_cortesh(path: Path) -> CortesHeader:

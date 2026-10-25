@@ -202,9 +202,9 @@ class TestOptionalInputAdvisory:
 
         checks, diagnostics = optional_input_advisory(files)
 
-        assert len(checks) == 7
+        assert len(checks) == 8
         assert all(check.passed for check in checks)
-        assert len(diagnostics) == 7
+        assert len(diagnostics) == 8
         assert all(d.code == "optional-file-absent" for d in diagnostics)
         assert all(d.severity is Severity.INFO for d in diagnostics)
 
@@ -222,6 +222,7 @@ class TestOptionalInputAdvisory:
             "cortesh",
             "cortes",
             "libs_index",
+            "mlt",
         }
 
     def test_skips_present_decomp_optional(self, tmp_path: Path) -> None:
@@ -229,7 +230,7 @@ class TestOptionalInputAdvisory:
 
         _checks, diagnostics = optional_input_advisory(files)
 
-        assert len(diagnostics) == 6
+        assert len(diagnostics) == 7
         assert not any("field: dadgnl" in d.notes for d in diagnostics)
 
     def test_run_decomp_preflight_uses_the_shared_advisory_helper(self) -> None:

@@ -46,16 +46,17 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
 
-from novomodelo_bridge.comparators import fpha
+from novomodelo_bridge.comparators.decomp.operating_points import (
+    compare_operating_points,
+)
 from novomodelo_bridge.comparators.decomp.readers import (
-    read_dec_desvfpha,
     read_dec_estatfpha,
     read_dec_oper_evap,
     read_dec_oper_interc,
@@ -65,14 +66,16 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_oper_usih,
     read_dec_oper_usit,
     read_decomp_tim,
-    read_eco_fpha,
     read_relato2_costs,
     read_relato_convergence,
     read_relato_costs,
     read_relato_membership,
 )
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
+from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
 from novomodelo_bridge.novomodelo.case_io import case_dir_for
 
@@ -1044,6 +1047,8 @@ def _energy_balance_frames(
     decomp_dir: Path,
     bus_codes: dict[int, int],
     *,
+    stage_hours: Mapping[int, float],
+    extra_demand: Mapping[tuple[int, int], float] | None = None,
     probabilities: pl.DataFrame | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Build the Energy Balance tab's DECOMP-side reference frames.
@@ -1079,6 +1084,12 @@ def _energy_balance_frames(
     :func:`_map_entities`, this does *not* rebase to Novomodelo's 0-based
     ``stage_id``), so the consuming charts' own stage-alignment (``nw_offset
     = 1``, set on ``PercentileData`` by ``build_decomp_dataset``) lines up.
+
+    *stage_hours* (``{estagio: hours}``) turns ``ena_MWmes``, energy over the
+    stage, into the stage-mean MW the Novomodelo series is in. *extra_demand*
+    (``{(codigo_submercado, estagio): MW}``) is load the converted case
+    places on a bus but ``demanda_MW`` leaves out (the ANDE load); it is
+    added before NET_LOAD is formed.
     """
     frame = _stage_rows(read_dec_oper_sist(decomp_dir))
     if frame.is_empty() or "codigo_submercado" not in frame.columns:
@@ -1093,6 +1104,32 @@ def _energy_balance_frames(
         probabilities=probabilities,
     )
     present = set(aggregated.columns)
+    if extra_demand and "demanda_MW" in present:
+        extra = pl.DataFrame(
+            {
+                "codigo_submercado": [code for code, _ in extra_demand],
+                "estagio": [stage for _, stage in extra_demand],
+                "_extra_demand": list(extra_demand.values()),
+            },
+            schema={
+                "codigo_submercado": pl.Int64,
+                "estagio": pl.Int64,
+                "_extra_demand": pl.Float64,
+            },
+        )
+        aggregated = (
+            aggregated.with_columns(
+                pl.col("codigo_submercado").cast(pl.Int64),
+                pl.col("estagio").cast(pl.Int64),
+            )
+            .join(extra, on=["codigo_submercado", "estagio"], how="left")
+            .with_columns(
+                (pl.col("demanda_MW") + pl.col("_extra_demand").fill_null(0.0)).alias(
+                    "demanda_MW"
+                )
+            )
+            .drop("_extra_demand")
+        )
 
     mapped = aggregated.with_columns(
         pl.col("codigo_submercado")
@@ -1162,14 +1199,25 @@ def _energy_balance_frames(
     # ``read_medias_sin``'s newave-side convention.
     system_energy = {"earm_final_MWmes", "ena_MWmes"}
     if system_energy <= present:
-        sin_agg = aggregated.group_by("estagio").agg(
-            pl.col("earm_final_MWmes").sum().alias("EARMF"),
-            pl.col("ena_MWmes").sum().alias("ENA"),
+        hours = pl.DataFrame(
+            {"estagio": list(stage_hours), "_hours": list(stage_hours.values())},
+            schema={"estagio": pl.Int64, "_hours": pl.Float64},
+        )
+        sin_agg = (
+            aggregated.group_by(pl.col("estagio").cast(pl.Int64))
+            .agg(
+                pl.col("earm_final_MWmes").sum().alias("EARMF"),
+                pl.col("ena_MWmes").sum().alias("ENA"),
+            )
+            .join(hours, on="estagio", how="left")
+            .with_columns(pl.col("ENA") * _EARM_MWH_TO_MWMES / pl.col("_hours"))
+            .drop("_hours")
         )
         nw_sin = (
             sin_agg.unpivot(
                 on=["EARMF", "ENA"], index=["estagio"], variable_name="variable"
             )
+            .drop_nulls("value")
             .with_columns(
                 pl.lit(0).cast(pl.Int64).alias("newave_code"),
                 pl.col("estagio").cast(pl.Int64).alias("stage"),
@@ -1191,14 +1239,12 @@ def _energy_balance_frames(
 # (``reconcile_kdollars_to_reais``, x1e3); the per-stage ``nw_sin`` cost rows
 # are 10^6 R$ (an additional /1e6 on top of that factor).
 
-#: ``relatorio_operacao_custos`` numeric cost columns aggregated here
-#: -- every cost column the table carries except the per-submarket
-#: ``cmo_<sbm>`` marginal-*price* columns (not a cost) and the
-#: estagio/cenario/probabilidade bookkeeping columns.
-_RELATO_COST_COLUMNS: tuple[str, ...] = (
-    "custo_presente",
-    "custo_futuro",
+#: Parcels the report itemizes, with the contract balance; idecomp's
+#: ``violacao_turbinamento_*`` are the turbining parcels the report prints
+#: beside the spillage ones, not bound violations.
+_ITEMIZED_PARCELS: tuple[str, ...] = (
     "geracao_termica",
+    "contratos",
     "violacao_desvio",
     "penalidade_vertimento_reservatorio",
     "penalidade_vertimento_fio",
@@ -1207,35 +1253,36 @@ _RELATO_COST_COLUMNS: tuple[str, ...] = (
     "penalidade_intercambio",
 )
 
-#: ``violacao_desvio`` has no ``charts._COST_MAP`` analogue -- surfaced under
-#: its own label (matching the Portuguese-abbreviation style every other
-#: ``_COST_MAP`` key uses) rather than being silently dropped;
-#: ``charts._resolve_cost_categories`` appends it as an unmapped residual
-#: category.
-_DEVIATION_VIOLATION_LABEL = "VIOLACAO DESVIO"
+#: Stage-cost parts priced here, nominal k$, beside the itemized parcels.
+_DERIVED_PARCELS: tuple[str, ...] = ("deficit", "folga")
 
-#: ``(display_label, source_columns...)`` for the ``nw_costs`` NPV dict --
-#: mirrors ``charts._COST_MAP``'s the source model label strings. VERTIMENTO
-#: sums two source columns (reservoir + run-of-river spillage penalty); every
-#: other category is a single column.
+#: ``(display_label, source_columns...)`` for the ``nw_costs`` NPV dict, keyed
+#: by the ``charts._COST_MAP`` source-model labels.
 _NW_COST_LABELS: tuple[tuple[str, ...], ...] = (
     ("GERACAO TERMICA", "geracao_termica"),
+    ("DEFICIT", "deficit"),
+    ("CONTRATOS", "contratos"),
     ("INTERCAMBIO", "penalidade_intercambio"),
     (
         "VERTIMENTO",
         "penalidade_vertimento_reservatorio",
         "penalidade_vertimento_fio",
     ),
-    ("VIOL. TURB. MINIMO", "violacao_turbinamento_reservatorio"),
-    ("VIOL. TURB. MAXIMO", "violacao_turbinamento_fio"),
-    (_DEVIATION_VIOLATION_LABEL, "violacao_desvio"),
+    (
+        "TURBINAMENTO UHE",
+        "violacao_turbinamento_reservatorio",
+        "violacao_turbinamento_fio",
+    ),
+    ("VIOLACAO DESVIO", "violacao_desvio"),
+    ("FOLGA RESTRICOES", "folga"),
 )
 
 #: ``nw_sin`` variable token -> source column, for the per-stage cost rows
-#: ``charts._extract_stage_cost_series`` reads. Matches MEDIAS-SIN's the
-#: source model tokens on the newave side of ``compare newave``.
+#: ``charts._extract_stage_cost_series`` reads. Matches MEDIAS-SIN's tokens on
+#: the newave side of ``compare newave``; nominal, like Novomodelo's per-stage
+#: costs.
 _NW_SIN_COST_TOKENS: tuple[tuple[str, str], ...] = (
-    ("COPER", "custo_presente"),
+    ("COPER", "custo_presente_nominal"),
     ("CUSTO_FUTURO", "custo_futuro"),
     ("CTERM", "geracao_termica"),
 )
@@ -1273,7 +1320,91 @@ def _probability_weighted_stage_cost(
     return _weighted_group_mean(frame, ["estagio"], present)
 
 
-def _cost_frames(decomp_dir: Path) -> tuple[dict[str, float], pl.DataFrame]:
+def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataFrame:
+    """Per-(stage, scenario) deficit cost, k$: each block's ``deficit_MW`` x
+    ``duracao`` x the subsystem's ``CD`` cost.
+
+    The report prints no deficit parcel, so it is priced here from
+    ``dec_oper_sist``. Deficit in a subsystem without a ``CD`` cost is logged
+    and stays in the unitemized slack.
+    """
+    sist = read_dec_oper_sist(decomp_dir)
+    blocks = sist.filter(pl.col("patamar").is_not_null() & (pl.col("deficit_MW") > 0.0))
+    unpriced = sorted(
+        set(blocks["codigo_submercado"].cast(pl.Int64).to_list()) - set(deficit_costs)
+    )
+    if unpriced:
+        _LOG.warning(
+            "The source model reports deficit in subsystem(s) %s, which have no CD "
+            "deficit cost; that deficit stays in the unitemized constraint slack "
+            "of the cost breakdown.",
+            ", ".join(str(code) for code in unpriced),
+        )
+    cost = (
+        pl.col("codigo_submercado")
+        .cast(pl.Int64)
+        .replace_strict(deficit_costs, default=0.0, return_dtype=pl.Float64)
+    )
+    return blocks.group_by("estagio", "cenario").agg(
+        (
+            pl.col("deficit_MW")
+            * pl.col("duracao")
+            * cost
+            / reconcile_kdollars_to_reais(1.0)
+        )
+        .sum()
+        .alias("deficit")
+    )
+
+
+def _stage_cost_rows(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataFrame:
+    """The unioned ``relato``/``relato2`` cost rows with the contract balance,
+    the priced deficit, the unitemized slack and the present-value factor.
+
+    The report's values are native k$; its parcels and ``custo_presente_nominal``
+    are nominal, and only ``custo_presente`` is discounted to the study start,
+    so ``pv`` is ``custo_presente / custo_presente_nominal``.
+
+    ``contratos`` is the contract term of the stage total. An import counts
+    as a cost; an export counts its take-or-pay minimum as a cost and the
+    energy above it as revenue, so the term is ``importacao + 2 x
+    exportacao_minimo - exportacao``.
+
+    ``folga`` is the nominal stage total less the itemized parcels and the
+    deficit: the constraint-slack penalties (RHQ, RHE, RHV, evaporation,
+    irrigation) the report does not itemize. It is a sum of non-negative
+    penalties, so a negative value is print rounding and reads as zero.
+    """
+    combined = _union_relato_reports(
+        read_relato_costs(decomp_dir), read_relato2_costs(decomp_dir)
+    )
+    deficit = _deficit_cost(decomp_dir, deficit_costs)
+    rows = (
+        combined.with_columns(
+            (
+                pl.col("contrato_importacao")
+                + 2.0 * pl.col("contrato_exportacao_minimo")
+                - pl.col("contrato_exportacao")
+            ).alias("contratos")
+        )
+        .join(deficit, on=["estagio", "cenario"], how="left")
+        .with_columns(pl.col("deficit").fill_null(0.0))
+    )
+    nominal = pl.col("custo_presente_nominal")
+    return rows.with_columns(
+        (nominal - pl.sum_horizontal(_ITEMIZED_PARCELS) - pl.col("deficit"))
+        .clip(lower_bound=0.0)
+        .alias("folga"),
+        pl.when(nominal != 0.0)
+        .then(pl.col("custo_presente") / nominal)
+        .otherwise(1.0)
+        .alias("pv"),
+    )
+
+
+def _cost_frames(
+    decomp_dir: Path, deficit_costs: dict[int, float]
+) -> tuple[dict[str, float], pl.DataFrame]:
     """DECOMP-side Overview cost metadata: the NPV dict + ``nw_sin`` rows.
 
     Reads ``relatorio_operacao_custos`` from **both** reports and unions them
@@ -1282,26 +1413,23 @@ def _cost_frames(decomp_dir: Path) -> tuple[dict[str, float], pl.DataFrame]:
     (:func:`read_relato2_costs`, optional) carries the per-realization rows of
     the scenario-fan (monthly) stage(s) ``relato`` omits. Where ``relato2``
     covers a stage it is authoritative (that stage is dropped from ``relato``
-    before the union, so a fan stage is never counted twice). Aggregated in
-    two passes, both built on the same per-stage expected cost:
+    before the union, so a fan stage is never counted twice). *deficit_costs*
+    is the deck's ``CD`` cost per subsystem, which prices the deficit the
+    report leaves inside the stage total (:func:`_stage_cost_rows`).
 
     - **Per-stage expected cost** -- :func:`_probability_weighted_stage_cost`,
       weighting each stage's scenarios by the real tree ``probabilidade``.
       This is a deliberate departure from the module's unweighted-scenario
       convention **for cost only**: an *expected* operating cost on the fan
       stage must use the true opening probabilities (which are not
-      equiprobable), and both reports carry ``probabilidade`` per row. A
-      deterministic week (single row, prob 1.0) is unaffected. No stage
-      discount is applied: unlike novomodelo's ``discount_factor`` column
-      (:func:`novomodelo_readers.read_novomodelo_cost_breakdown`),
-      ``relatorio_operacao_custos`` exposes no per-row discount factor, so the
-      per-stage values are DECOMP's own raw nominal $ costs at that node.
-    - **``nw_costs``** (R$): the per-stage expected costs summed across every
-      stage, then :func:`reconcile_kdollars_to_reais` (x1e3). Categories below
-      0.01 R$ are excluded, mirroring ``newave_readers.read_pmo_cost_
-      breakdown`` and :func:`novomodelo_readers.read_novomodelo_cost_breakdown`'s own
-      floor.
-    - **``nw_sin`` rows** (10^6 R$): the same per-stage expected costs,
+      equiprobable), and both reports carry ``probabilidade`` per row.
+    - **``nw_costs``** (R$): each parcel discounted by the row's ``pv``, the
+      per-stage expectations summed across stages, then
+      :func:`reconcile_kdollars_to_reais` (x1e3) -- the present value
+      :func:`novomodelo_readers.read_novomodelo_cost_breakdown` reports on the Novomodelo
+      side. Categories below 0.01 R$ are excluded, mirroring
+      ``newave_readers.read_pmo_cost_breakdown`` and Novomodelo's own floor.
+    - **``nw_sin`` rows** (10^6 R$): the nominal per-stage expectations,
       unpivoted to ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows with the 1-based
       ``stage`` column kept as-is (the consuming charts subtract ``nw_offset``).
 
@@ -1310,52 +1438,58 @@ def _cost_frames(decomp_dir: Path) -> tuple[dict[str, float], pl.DataFrame]:
     error -- :func:`read_relato2_costs` returns empty and only the fan stage(s)
     are absent.
     """
-    raw = read_relato_costs(decomp_dir)
-    monthly = read_relato2_costs(decomp_dir)
-    combined = _union_relato_reports(raw, monthly)
-    per_stage = _probability_weighted_stage_cost(combined, list(_RELATO_COST_COLUMNS))
-    present = [c for c in _RELATO_COST_COLUMNS if c in per_stage.columns]
-
-    totals: dict[str, float] = (
-        per_stage.select([pl.col(c).sum().alias(c) for c in present]).row(0, named=True)
-        if present
-        else {}
-    )
+    rows = _stage_cost_rows(decomp_dir, deficit_costs)
+    parcels = [*_ITEMIZED_PARCELS, *_DERIVED_PARCELS, "contrato_exportacao_minimo"]
+    discounted = rows.with_columns(pl.col(c) * pl.col("pv") for c in parcels)
+    per_stage_pv = _probability_weighted_stage_cost(discounted, parcels)
+    totals: dict[str, float] = per_stage_pv.select(
+        [pl.col(c).sum().alias(c) for c in parcels]
+    ).row(0, named=True)
 
     nw_costs: dict[str, float] = {}
     for label, *columns in _NW_COST_LABELS:
-        value = reconcile_kdollars_to_reais(sum(totals.get(c, 0.0) for c in columns))
+        value = reconcile_kdollars_to_reais(sum(totals[c] for c in columns))
         if abs(value) > 0.01:
             nw_costs[label] = value
 
-    sin_tokens = [(var, col) for var, col in _NW_SIN_COST_TOKENS if col in present]
-    if not sin_tokens or per_stage.is_empty():
-        nw_sin_rows = _empty_market_frame()
-    else:
-        # A scalar factor derived from the single conversion site rather
-        # than a re-derived literal: k$ -> R$ (x1e3) then R$ -> 10^6 R$
-        # (/1e6), collapsing to x1e-3 -- but expressed via
-        # reconcile_kdollars_to_reais so the x1e3 itself is never repeated.
-        k_to_r6 = reconcile_kdollars_to_reais(1.0) / 1e6
-        nw_sin_rows = (
-            per_stage.select(
-                "estagio",
-                *[pl.col(col).alias(var) for var, col in sin_tokens],
-            )
-            .unpivot(
-                on=[var for var, _ in sin_tokens],
-                index=["estagio"],
-                variable_name="variable",
-                value_name="value",
-            )
-            .with_columns(
-                pl.lit(0).cast(pl.Int64).alias("newave_code"),
-                pl.col("estagio").cast(pl.Int64).alias("stage"),
-                (pl.col("value") * k_to_r6).cast(pl.Float64).alias("value"),
-            )
-            .select("newave_code", "stage", "variable", "value")
-            .sort("stage", "variable")
+    export_minimum = reconcile_kdollars_to_reais(totals["contrato_exportacao_minimo"])
+    if export_minimum > 0.01:
+        _LOG.warning(
+            "The source model counts the take-or-pay minimum of its export "
+            "contracts as a cost and the energy above it as revenue, while Novomodelo "
+            "counts every exported MWh as revenue. For the same exports, its "
+            "contract cost in the cost breakdown is 2 x %.6g R$ (present value) "
+            "above Novomodelo's.",
+            export_minimum,
         )
+
+    per_stage = _probability_weighted_stage_cost(
+        rows, [col for _, col in _NW_SIN_COST_TOKENS]
+    )
+    # A scalar factor derived from the single conversion site rather than a
+    # re-derived literal: k$ -> R$ (x1e3) then R$ -> 10^6 R$ (/1e6), collapsing
+    # to x1e-3 -- but expressed via reconcile_kdollars_to_reais so the x1e3
+    # itself is never repeated.
+    k_to_r6 = reconcile_kdollars_to_reais(1.0) / 1e6
+    nw_sin_rows = (
+        per_stage.select(
+            "estagio",
+            *[pl.col(col).alias(var) for var, col in _NW_SIN_COST_TOKENS],
+        )
+        .unpivot(
+            on=[var for var, _ in _NW_SIN_COST_TOKENS],
+            index=["estagio"],
+            variable_name="variable",
+            value_name="value",
+        )
+        .with_columns(
+            pl.lit(0).cast(pl.Int64).alias("newave_code"),
+            pl.col("estagio").cast(pl.Int64).alias("stage"),
+            (pl.col("value") * k_to_r6).cast(pl.Float64).alias("value"),
+        )
+        .select("newave_code", "stage", "variable", "value")
+        .sort("stage", "variable")
+    )
 
     return nw_costs, nw_sin_rows
 
@@ -1615,8 +1749,23 @@ def _read_aligned_frames(
     source_bus, unmapped_bus = _bus_side(
         decomp_dir, bus_codes, probabilities=probabilities
     )
+    calendar = case.calendar
+    extra_demand: dict[tuple[int, int], float] | None = None
+    ande = ande_load(case)
+    if ande is not None:
+        ande_submarket, carga_ande = ande
+        extra_demand = {
+            (ande_submarket, stage_index + 1): hours_weighted(
+                values, calendar[stage_index]
+            )
+            for stage_index, values in carga_ande.items()
+        }
     nw_market, nw_net_load, nw_sin = _energy_balance_frames(
-        decomp_dir, bus_codes, probabilities=probabilities
+        decomp_dir,
+        bus_codes,
+        stage_hours={stage.index + 1: stage.total_hours for stage in calendar},
+        extra_demand=extra_demand,
+        probabilities=probabilities,
     )
 
     novomodelo_hydro, hydro_names = _novomodelo_hydro(novomodelo_output_dir)
@@ -1695,38 +1844,11 @@ def _merge_hydro_bus_ids(
     }
 
 
-# --- Productivity tab's "Fitted production functions (FPHA)"
-# section (`fpha_metrics`/`fpha_surface`/`fpha_spill`) ---
-#
-# [ASSUMPTION] (Confidence Low): the full 3D FPHA overlay the newave side
-# renders (`analyze.build_fpha_comparison`, option (a)) needs the source side's
-# fitted PLANE coefficients on a shared ``(V, Q)`` grid. None of the three
-# declared readers carries them (`read_dec_estatfpha` is a deck-wide summary,
-# `read_dec_desvfpha` the realized ``(V, Q, S)`` operating points,
-# `read_eco_fpha` only the fitting-grid bounds/counts); the coefficients live
-# in a fourth file (``avl_cortesfpha.rvN`` / idecomp's ``AvlCortesFpha``) that
-# is not a declared reader. So (a) is infeasible and this ships fallback (b):
-# `fpha_metrics` only, `fpha_surface`/`fpha_spill` always `None` (never
-# fabricated; the ``if not fpha_metrics.is_empty()`` gate in `report_builder`
-# renders the empty-surface placeholder, so no exception follows).
-#
-# Within (b), `_fpha_metrics` evaluates Novomodelo's own fitted envelope
-# (`read_novomodelo_fpha_planes`) AT the source model's realized operating points
-# (`read_dec_desvfpha`) and compares it to the source's own realized
-# ``geracao_hidraulica_fpha`` -- a genuine cross-solver comparison sampled at
-# the trajectory, not a dense grid (so it never claims (a)'s full-surface
-# fidelity). ``n_planes_newave`` stays null (no declared reader counts source
-# planes).
-
-
 def _log_decomp_fpha_deck_summary(decomp_dir: Path) -> None:
     """Log the source model's deck-wide FPHA deviation summary.
 
-    `read_dec_estatfpha`'s table carries no per-hydro or per-stage key (a
-    single deck-wide variavel/valor summary), so it cannot join into the
-    per-(hydro, stage) `fpha_metrics` frame `_fpha_metrics` builds -- it is
-    surfaced as log context only. Never raises: a missing/empty parse is
-    logged and dropped, exactly like every other optional FPHA source here.
+    `read_dec_estatfpha`'s table carries no per-hydro or per-stage key, so it
+    is surfaced as log context only. A missing or empty parse is logged.
     """
     try:
         summary = read_dec_estatfpha(decomp_dir)
@@ -1743,166 +1865,6 @@ def _log_decomp_fpha_deck_summary(decomp_dir: Path) -> None:
             )
         ),
     )
-
-
-def _novomodelo_fpha_plane_counts(cb_planes: pl.DataFrame) -> pl.DataFrame:
-    """One row per (novomodelo_id, stage) with Novomodelo's own fitted plane count."""
-    return (
-        cb_planes.rename({"hydro_id": "novomodelo_id", "stage_id": "stage"})
-        .cast({"novomodelo_id": pl.Int64, "stage": pl.Int64})
-        .group_by(["novomodelo_id", "stage"])
-        .agg(pl.len().cast(pl.Int64).alias("n_planes_novomodelo"))
-    )
-
-
-def _decomp_fpha_grid_nv(
-    decomp_dir: Path, code_to_novomodelo: dict[int, int]
-) -> pl.DataFrame:
-    """One row per (novomodelo_id, stage) with the source model's own volume
-    fitting-grid node count (``numero_pontos_volume_armazenado``), from
-    `read_eco_fpha`.
-
-    Degrades to an empty frame -- never raises -- when the deck ships no
-    ``eco_fpha`` table (confirmed absent on the reduced deck): ``n_v`` then
-    stays null on every metrics row, honest about the value being genuinely
-    unavailable rather than fabricating one.
-    """
-    empty = pl.DataFrame(
-        schema={"novomodelo_id": pl.Int64, "stage": pl.Int64, "n_v": pl.Int64}
-    )
-    try:
-        grid = read_eco_fpha(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model FPHA grid table (eco_fpha): %s", exc)
-        return empty
-
-    mapped = grid.with_columns(
-        pl.col("codigo_usina")
-        .map_elements(lambda c: code_to_novomodelo.get(int(c)), return_dtype=pl.Int64)
-        .alias("novomodelo_id"),
-        (pl.col("estagio").cast(pl.Int64) - 1).alias("stage"),
-    ).filter(pl.col("novomodelo_id").is_not_null())
-    if mapped.is_empty():
-        return empty
-    return mapped.select(
-        "novomodelo_id",
-        "stage",
-        pl.col("numero_pontos_volume_armazenado").cast(pl.Int64).alias("n_v"),
-    )
-
-
-def _fpha_metrics(
-    decomp_dir: Path,
-    novomodelo_output_dir: Path,
-    id_map: DecompIdMap | None,
-    hydro_names: dict[int, str],
-) -> pl.DataFrame | None:
-    """Per-(hydro, stage) FPHA fit-fidelity metrics -- fallback (b), see the
-    [ASSUMPTION] comment above this section.
-
-    ``None`` whenever either side has no fitted planes to compare at all:
-    Novomodelo fitted none (`novomodelo_readers.read_novomodelo_fpha_planes` returns
-    ``None``), the deck has no id map to resolve hydro codes onto Novomodelo ids
-    (`id_map` is ``None``), the source model's own deviation table is
-    absent/empty, or no realized point resolves onto a Novomodelo hydro with
-    fitted planes. `build_decomp_dataset` passes ``None`` straight through
-    to `~novomodelo_bridge.comparators.model.PercentileData.fpha_metrics`; the
-    report's FPHA section gate (`report_builder`) reads it as the empty
-    `RenderInputs.fpha_metrics` default, so the section is omitted, never a
-    crash.
-    """
-    cb_planes = novomodelo_readers.read_novomodelo_fpha_planes(novomodelo_output_dir)
-    if cb_planes is None or id_map is None:
-        return None
-
-    try:
-        deviations = read_dec_desvfpha(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model FPHA deviation table: %s", exc)
-        return None
-
-    code_to_novomodelo = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
-    points = deviations.with_columns(
-        pl.col("codigo_usina")
-        .map_elements(lambda c: code_to_novomodelo.get(int(c)), return_dtype=pl.Int64)
-        .alias("novomodelo_id"),
-        (pl.col("estagio").cast(pl.Int64) - 1).alias("stage"),
-    ).filter(pl.col("novomodelo_id").is_not_null())
-    if points.is_empty():
-        return None
-    points = (
-        points.select(
-            "novomodelo_id",
-            "stage",
-            pl.col("volume_total_hm3").cast(pl.Float64).alias("v_hm3"),
-            pl.col("vazao_turbinada_m3s").cast(pl.Float64).alias("q_m3s"),
-            pl.col("vazao_vertida_m3s").cast(pl.Float64).alias("s_m3s"),
-            pl.col("geracao_hidraulica_fpha").cast(pl.Float64).alias("decomp_gh_mw"),
-        )
-        .with_row_index("_point_id")
-        .with_columns(pl.col("_point_id").cast(pl.Int64))
-    )
-
-    # Novomodelo's own kappa/gamma_v already multiply absolute volume, and the
-    # source model's own volume_total_hm3 is likewise absolute (not useful)
-    # volume -- fpha.point_cloud's default volume_offset=0.0 applies here.
-    envelope = fpha.point_cloud(cb_planes, points)
-    if envelope.is_empty():
-        return None
-
-    _log_decomp_fpha_deck_summary(decomp_dir)
-
-    joined = points.join(envelope, on="_point_id", how="inner").with_columns(
-        (pl.col("novomodelo_gh_mw") - pl.col("decomp_gh_mw")).alias("diff")
-    )
-
-    metrics = (
-        joined.group_by(["novomodelo_id", "stage"])
-        .agg(
-            pl.col("decomp_gh_mw").max().abs().alias("_denom"),
-            pl.col("diff").abs().mean().alias("_mean_abs_diff"),
-            pl.col("diff").mean().alias("_mean_diff"),
-            pl.col("diff").abs().max().alias("max_abs_dev"),
-            pl.col("novomodelo_gh_mw").max().alias("_novomodelo_max"),
-            pl.col("decomp_gh_mw").max().alias("_decomp_max"),
-        )
-        .with_columns((pl.col("_denom") > 1e-9).alias("_scaled"))
-        .with_columns(
-            pl.when(pl.col("_scaled"))
-            .then(pl.col("_mean_abs_diff") / pl.col("_denom"))
-            .otherwise(None)
-            .alias("nmae"),
-            pl.when(pl.col("_scaled"))
-            .then(pl.col("_mean_diff") / pl.col("_denom"))
-            .otherwise(None)
-            .alias("bias"),
-            pl.when(pl.col("_scaled"))
-            .then(pl.col("_novomodelo_max") / pl.col("_decomp_max"))
-            .otherwise(None)
-            .alias("gh_max_ratio"),
-        )
-        .join(
-            _novomodelo_fpha_plane_counts(cb_planes),
-            on=["novomodelo_id", "stage"],
-            how="left",
-        )
-        .join(
-            _decomp_fpha_grid_nv(decomp_dir, code_to_novomodelo),
-            on=["novomodelo_id", "stage"],
-            how="left",
-        )
-        .with_columns(
-            pl.col("novomodelo_id")
-            .map_elements(
-                lambda c: hydro_names.get(int(c), f"hydro_{c}"), return_dtype=pl.Utf8
-            )
-            .alias("plant_name"),
-            pl.lit(None).cast(pl.Int64).alias("n_planes_newave"),
-        )
-        .select(list(fpha.FPHA_METRICS_SCHEMA))
-        .sort(["novomodelo_id", "stage"])
-    )
-    return metrics if not metrics.is_empty() else None
 
 
 # --- REE energy rollup via membership ---
@@ -2194,8 +2156,8 @@ def _novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:
 
 #: hm³ -> m³/s conversion factor per hour of stage duration -- the inverse of
 #: `core.units.C_M3S2HM3` (``hours * 3600 / 1e6``), generalized to the
-#: stage's own ``hours`` instead of the fixed ``MONTH_HOURS`` (730) that
-#: constant assumes.
+#: stage's own ``hours`` instead of the fixed mean month
+#: (`core.units.MEAN_MONTH_HOURS`) that constant assumes.
 _HM3_TO_M3S_HOUR_FACTOR: float = 3600.0 / 1e6
 
 
@@ -2832,9 +2794,12 @@ def build_decomp_dataset(
     - The Hydro/Thermal Operation + Plant Details tabs' ``novomodelo_hydro_meta``
       (`_merge_hydro_bus_ids`, so every entry carries a ``"bus_ids"`` key) and
       ``novomodelo_hydro_per_stage_bounds``.
-    - The Productivity tab's ``fpha_metrics`` (`_fpha_metrics`; its preceding
-      [ASSUMPTION] comment covers why this is fit-fidelity statistics at the
-      source model's realized points, not a full grid-reconstructed surface).
+    - The Productivity tab's FPHA frames and regime flags
+      (:func:`~novomodelo_bridge.comparators.decomp.operating_points.compare_operating_points`):
+      both models' planes on a shared grid, the realized-productivity split
+      at each model's operating points, the fit inputs and slices, the
+      per-stage tie share, and the hydro rows over the points that are not
+      ties.
     - The Constraints tab's ``gc_constraints``/``gc_bounds``/``gc_lhs_novomodelo``
       (verbatim from ``constraints``) and the DECOMP-side
       ``gc_lhs_newave`` (`_generic_constraint_lhs_decomp`).
@@ -2856,11 +2821,11 @@ def build_decomp_dataset(
 
     Nothing is fabricated to fill a gap: ``bus``/``hydro``/``thermal``/
     ``line`` stay empty whenever the Novomodelo run has no percentile output (e.g.
-    the deterministic 2-node tree), and the ``nw_hydro_slacks``,
-    ``productivity_detail``, ``fpha_surface``, and ``fpha_spill`` fields stay
-    at their empty defaults, so those sections render their documented "No
-    data" path (``report_builder``'s ``has_newave=False`` branch) rather than
-    a fabricated comparison -- no percentile spread is ever invented.
+    the deterministic 2-node tree), and the ``nw_hydro_slacks`` and
+    ``productivity_detail`` fields stay at their empty defaults, so those
+    sections render their documented "No data" path (``report_builder``'s
+    ``has_newave=False`` branch) rather than a fabricated comparison -- no
+    percentile spread is ever invented.
 
     Scenario weighting: :func:`_scenario_probabilities` is built exactly once,
     here, and threaded as the ``probabilities`` keyword into every
@@ -2888,6 +2853,7 @@ def build_decomp_dataset(
     """
     from novomodelo_bridge.comparators.analyze import build_results_dataset
     from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
 
     case = DecompCase.from_directory(decomp_dir)
     probabilities = _scenario_probabilities(decomp_dir)
@@ -2941,7 +2907,7 @@ def build_decomp_dataset(
 
     # --- Overview cost metadata (nw_costs / novomodelo_costs /
     # nw_sin cost rows / novomodelo_stage_costs) ---
-    nw_costs, nw_cost_rows = _cost_frames(decomp_dir)
+    nw_costs, nw_cost_rows = _cost_frames(decomp_dir, bus_deficit_costs(case.dadger))
     novomodelo_costs = novomodelo_readers.read_novomodelo_cost_breakdown(
         novomodelo_output_dir
     )
@@ -2968,10 +2934,11 @@ def build_decomp_dataset(
         novomodelo_readers.read_novomodelo_hydro_bus_labels(novomodelo_output_dir),
     )
 
-    # --- Productivity tab's "Fitted production functions (FPHA)" section.
-    fpha_metrics = _fpha_metrics(
-        decomp_dir, novomodelo_output_dir, line_id_map, aligned.hydro_names
+    # --- Productivity tab: both models at their operating points.
+    operating_points = compare_operating_points(
+        decomp_dir, case, novomodelo_output_dir, probabilities, aligned.hydro_names
     )
+    _log_decomp_fpha_deck_summary(decomp_dir)
 
     # --- REE energy rollup via membership. ---
     ree_results, unmapped_ree = _ree_result_comparisons(
@@ -3087,13 +3054,7 @@ def build_decomp_dataset(
         # the ``productivity_mw_per_m3s`` rows appended to ``results`` above
         # (`_hydro_productivity_results`), not this field.
         productivity_detail=pl.DataFrame(),
-        # Productivity tab's Fitted production functions (FPHA)
-        # section -- fallback (b), see the [ASSUMPTION] comment above
-        # `_fpha_metrics`. ``fpha_surface``/``fpha_spill`` stay at their
-        # dataclass ``None`` default (never fabricated): the declared FPHA
-        # readers carry no fitted plane coefficients to reconstruct a dense
-        # surface from, only per-hydro/stage fit-fidelity statistics.
-        fpha_metrics=fpha_metrics,
+        **operating_point_fields(operating_points),
         # Constraints tab LHS-vs-bound metadata. ``nw_max_stage``
         # is unchanged (already set above by `_decomp_max_stage`) and
         # doubles as this section's stage clamp.

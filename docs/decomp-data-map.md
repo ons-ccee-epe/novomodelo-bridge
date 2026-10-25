@@ -30,6 +30,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `SB` |  |  | ● | ● | ● |
 | `dadger.rvN` › `TX` |  | ● |  |  |  |
 | `dadger.rvN` › `UH` |  |  | ● | ● | ● |
+| `dadger.rvN` › `VI` |  |  |  | ● |  |
 | `vazoes.rvN` |  | ● |  |  |  |
 | `hidr.dat` |  |  | ● | ● |  |
 | `dadgnl.rvN` › `GL` (opcional) |  |  |  | ● | ● |
@@ -50,23 +51,27 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `CT` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `DP` | ● | ● | ● | ● | ● | ● | ● |  | ● | ● | ● |
 | `dadger.rvN` › `DT` | ● | ● | ● | ● | ● | ● | ● |  | ● | ● | ● |
-| `dadger.rvN` › `FD` |  |  |  | ● |  |  |  |  |  |  |  |
+| `dadger.rvN` › `FD` |  |  |  | ● | ● |  |  |  |  |  |  |
+| `dadger.rvN` › `FP` |  |  |  |  | ● |  |  |  |  |  |  |
 | `dadger.rvN` › `HQ` |  |  |  | ● |  |  |  |  |  |  |  |
 | `dadger.rvN` › `IA` |  | ● |  |  |  |  |  |  |  |  |  |
 | `dadger.rvN` › `LQ` |  |  |  | ● |  |  |  |  |  |  |  |
-| `dadger.rvN` › `MP` |  |  |  | ● |  |  |  |  |  |  |  |
+| `dadger.rvN` › `MP` |  |  |  | ● | ● |  |  |  |  |  |  |
 | `dadger.rvN` › `PQ` |  |  |  |  |  |  |  |  | ● |  |  |
 | `dadger.rvN` › `RI` |  | ● |  |  |  |  |  |  |  |  |  |
 | `dadger.rvN` › `SB` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `UE` |  |  |  |  |  |  |  |  |  | ● |  |
 | `dadger.rvN` › `UH` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
+| `dadger.rvN` › `VI` |  |  |  | ● |  |  |  |  |  |  |  |
+| `vazoes.rvN` |  |  |  | ● |  |  |  |  |  |  |  |
 | `hidr.dat` |  | ● |  | ● | ● | ● | ● |  |  |  |  |
+| `mlt.dat` (opcional) |  |  |  |  | ● |  |  |  |  |  |  |
 | `dadgnl.rvN` › `GL` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
 | `dadgnl.rvN` › `GS` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
 | `dadgnl.rvN` › `NL` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
 | `dadgnl.rvN` › `TG` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
 | `renovaveis*` (opcional) |  |  |  |  |  |  |  |  | ● |  |  |
-| `polinjus.csv` (opcional) |  |  |  |  |  |  |  | ● |  |  |  |
+| `polinjus.csv` (opcional) |  |  |  | ● |  |  |  | ● |  |  |  |
 
 ### `scenarios/`
 
@@ -99,7 +104,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `DP` | ● | ● | ● | ● | ● | ● | ● | ● |  |
 | `dadger.rvN` › `DT` | ● | ● | ● | ● | ● | ● | ● | ● |  |
 | `dadger.rvN` › `EZ` |  |  |  |  |  |  | ● |  | ● |
-| `dadger.rvN` › `FD` |  | ● |  |  |  |  | ● | ● |  |
+| `dadger.rvN` › `FD` | ● | ● |  |  |  |  | ● | ● |  |
 | `dadger.rvN` › `FI` | ● |  | ● |  |  |  | ● | ● | ● |
 | `dadger.rvN` › `FT` | ● |  | ● |  |  |  | ● | ● | ● |
 | `dadger.rvN` › `FU` | ● | ● | ● |  |  |  | ● | ● | ● |
@@ -110,7 +115,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `LQ` | ● |  |  |  | ● |  | ● | ● |  |
 | `dadger.rvN` › `LU` | ● | ● | ● |  |  |  | ● | ● |  |
 | `dadger.rvN` › `LV` | ● |  |  |  |  |  | ● | ● |  |
-| `dadger.rvN` › `MP` |  | ● |  |  |  |  | ● | ● |  |
+| `dadger.rvN` › `MP` | ● | ● |  |  |  |  | ● | ● |  |
 | `dadger.rvN` › `PQ` |  |  |  |  |  |  | ● | ● |  |
 | `dadger.rvN` › `RE` | ● | ● | ● |  |  |  | ● | ● |  |
 | `dadger.rvN` › `RI` |  | ● |  | ● |  |  | ● | ● |  |
@@ -120,8 +125,10 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `UE` |  |  |  |  | ● |  | ● | ● |  |
 | `dadger.rvN` › `UH` | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `VE` | ● |  |  |  |  |  |  |  |  |
+| `vazoes.rvN` | ● | ● |  |  |  |  |  |  |  |
 | `hidr.dat` | ● | ● |  | ● |  |  | ● | ● | ● |
 | `renovaveis*` (opcional) |  |  |  |  |  |  | ● | ● |  |
+| `polinjus.csv` (opcional) | ● | ● |  |  |  |  |  |  |  |
 | `lib_restricao-eletrica-especial*.csv` (opcional) |  |  |  |  |  |  | ● | ● |  |
 
 ### `boundary/`
@@ -140,11 +147,9 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `hidr.dat` | ● |
 | `dadgnl.rvN` › `GL` (opcional) | ● |
 | `dadgnl.rvN` › `GS` (opcional) | ● |
-| `dadgnl.rvN` › `NL` (opcional) | ● |
 | `dadgnl.rvN` › `TG` (opcional) | ● |
 | `cortesh.dat` (opcional) | ● |
 | `cortes*.dat` (opcional) | ● |
-| `mlt.dat` | ● |
 
 ## Arquivos gerados
 
@@ -177,7 +182,7 @@ Critérios de parada (`GP` como gap relativo e `NI` como limite de iterações) 
 **Quando:** sempre.  
 **Esquema:** [stages.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/stages.schema.json) · **Código:** `src/novomodelo_bridge/decomp/temporal.py`
 
-Calendário operativo semanal a partir de `DT` e das durações de patamar de `DP`; grafo de nós com tronco determinístico e leque terminal ponderado pelas probabilidades do arquivo de vazões; medida de risco de `AR`.
+Calendário operativo (semanas no 1º mês, estágios mensais nos meses seguintes) a partir de `DT` e das durações de patamar de `DP`; grafo de nós com tronco determinístico e leque terminal ponderado pelas probabilidades do arquivo de vazões; medida de risco de `AR`.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
@@ -189,15 +194,15 @@ Calendário operativo semanal a partir de `DT` e das durações de patamar de `D
 | `policy_graph.nodes[].label` | — *(derivado)* | Rótulo `trunk-{estágio}` nos nós do tronco e `fan-{cenário}` nos nós do leque. |
 | `policy_graph.transitions[].source_id` | — *(derivado)* | Nó de origem: cada nó do tronco liga-se ao seguinte; o último nó do tronco liga-se a todos os nós do leque. |
 | `policy_graph.transitions[].target_id` | — *(derivado)* | Nó de destino da aresta, na ordem canônica dos sucessores. |
-| `policy_graph.transitions[].probability` | `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)` | `1.0` nas arestas do tronco; nas arestas para o leque, a probabilidade de cada cenário do estágio terminal na tabela de probabilidades do arquivo de vazões (validadas como somando 1). |
+| `policy_graph.transitions[].probability` | `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)` | `1.0` nas arestas do tronco; nas arestas para o leque, a probabilidade de cada cenário do estágio terminal na tabela de probabilidades do arquivo de vazões (validadas como somando 1). O leque terminal é o único ponto de ramificação: o tronco pode ter qualquer número de meses, mas que ele seja de fato determinístico (uma abertura por estágio) é verificado contra o arquivo de vazões; um deck cuja árvore ramifica antes do último estágio é rejeitado, nunca achatado. |
 | `season_definitions.cycle_type` | — *(constante)* | Sempre `monthly`. |
 | `season_definitions.seasons[].id` | — *(constante)* | Doze estações fixas, ids 0 a 11 (janeiro = 0). |
 | `season_definitions.seasons[].month_start` | — *(constante)* | Mês de início de cada estação, 1 a 12. |
 | `season_definitions.seasons[].label` | — *(constante)* | Nome do mês em inglês (`January` … `December`), convenção compartilhada com a conversão NEWAVE. |
 | `stages[].id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | `estagio - 1`; os estágios de `DP` devem ser contíguos a partir de 1. |
 | `stages[].start_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado)* | Data de `DT` no primeiro estágio (obrigatoriamente um sábado); nos demais, a data final do estágio anterior. Cada estágio dura a soma das durações de patamar de `DP` convertida em dias inteiros. |
-| `stages[].end_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado)* | Data de início mais a duração do estágio (exclusiva). Todo estágio exceto o último deve somar 168 h; o último deve terminar em fronteira de mês civil e cobrir o segundo mês operativo. |
-| `stages[].season_id` | `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado)* | Estações semanais recebem o mês da sexta-feira da primeira semana (data de `DT` + 6 dias) menos 1; o estágio mensal final recebe o mês do seu próprio início menos 1. |
+| `stages[].end_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado)* | Data de início mais a duração do estágio (exclusiva). O primeiro mês operativo é uma sequência de semanas de 168 h que o preenche até a borda do mês civil; cada mês seguinte é um estágio mensal que fecha na borda do mês civil. O primeiro estágio mensal começa na fronteira semanal dentro do mês (perde os dias já cobertos pela última semana do 1º mês); os seguintes são meses civis completos. O `NH = 168 − 24·Ndias` de uma semana de borda é só o peso de energia para acoplamento com o NEWAVE, não a duração em `DP`. |
+| `stages[].season_id` | `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado)* | Estágios semanais recebem o mês da sexta-feira da primeira semana (data de `DT` + 6 dias) menos 1; cada estágio mensal recebe o mês do seu próprio início menos 1. |
 | `stages[].blocks[].id` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Índice 0-based do patamar dentro do estágio. |
 | `stages[].blocks[].name` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Nome canônico pelo número de patamares: `HEAVY`/`MEDIUM`/`LIGHT` para três, `HEAVY`/`LIGHT` para dois, `SINGLE` para um, `BLOCK_i` para outros valores. |
 | `stages[].blocks[].hours` | `dadger.rvN` › `DP` › `duracao` | Duração em horas de cada patamar (`duracao_k`). As durações devem coincidir entre todos os submercados do mesmo estágio; o deck define uma única grade temporal. |
@@ -237,37 +242,41 @@ Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco
 
 ### `initial_conditions.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `AC`, `DP`, `DT`), `hidr.dat`, `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`)  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `AC`, `DP`, `DT`, `VI`), `hidr.dat`, `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`)  
 **Quando:** sempre.  
 **Esquema:** [initial_conditions.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/initial_conditions.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/entity.py`
 
-Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando `dadgnl` declara despacho GNL comprometido, o arquivo também recebe as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão.
+Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara despacho GNL comprometido, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
 | `storage[].hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas operadas (linhas `UH` com `volume_inicial`), atribuído na ordem crescente de `codigo_usina`. |
 | `storage[].value_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `hidr.dat` › `volume_minimo, volume_maximo`, `hidr.dat` › `tipo_regulacao, volume_referencia`, `dadger.rvN` › `AC` › `VOLMIN, VOLMAX` | `volume_inicial` (% do volume útil) resolvido sobre a faixa efetiva do estágio inicial: `vmin + pct/100 · (vmax − vmin)`, com `vmin`/`vmax` do cadastro após os `AC VOLMIN`/`VOLMAX` vigentes no estágio 0, limitado à faixa. Usinas a fio d'água (`tipo_regulacao` = `D`) colapsam ao `volume_referencia` independentemente do percentual. Um `volume_morto_inicial` declarado é apenas avisado, não convertido. |
 | `filling_storage` | — *(sempre nulo)* | Sempre lista vazia: o enchimento de volume morto não é convertido. |
+| `past_defluences[].hydro_id` | `dadger.rvN` › `VI` › `codigo_usina` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Id Novomodelo da usina que libera a defluência em trânsito (a de montante do arco), uma janela por período de defluência pré-estudo. |
+| `past_defluences[].start_date` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DP` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Início de cada janela, caminhando para trás a partir do início do estudo em passos de uma semana operativa (duração do estágio 0), com a última janela truncada no intervalo em trânsito `[início − duracao, início)`, para cobri-lo sem lacuna. |
+| `past_defluences[].end_date` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DP` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Fim de cada janela; a mais recente termina no início do estudo (nada datado no futuro) e cada janela encosta na seguinte, sem lacuna. |
+| `past_defluences[].value_m3s` | `dadger.rvN` › `VI` › `vazao_1..vazao_5` | Defluência da semana correspondente (`VI.vazao_k`, da mais recente para a mais antiga), em m³/s. Se o intervalo em trânsito precisa de mais janelas que as vazões declaradas, a mais antiga é reutilizada para manter a cobertura. |
 | `past_anticipated_commitments[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Id da térmica GNL criada em `system/thermals.json` (ids densos após a última térmica de `CT`, em ordem crescente de `codigo_usina` de `TG`). |
-| `past_anticipated_commitments[].start_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead global (soma das semanas `GS` dos meses do estudo × 168 h). Janelas de classe 4 (já comandadas): a `data_inicio` de cada semana `GL` a partir do fim do horizonte, com um stub a 0 MW quando a primeira começa depois dele. |
+| `past_anticipated_commitments[].start_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead global (soma das semanas `GS` dos meses do estudo × 168 h). Janelas de classe 4 (já comandadas): a `data_inicio` de cada semana `GL` a partir do fim do horizonte, com um stub a 0 MW quando a primeira começa depois dele. Num estudo só de estágios mensais: a data de início de cada um dos `lag` (`NL`) primeiros estágios do estudo, decididos antes dele; um `GL` após o fim do horizonte é rejeitado. |
 | `past_anticipated_commitments[].end_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DP` › `duracao` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Classe 2: a data final do estágio do estudo. Classe 4: a `data_inicio` da semana `GL` seguinte, ou uma semana operativa (168 h) após o início na última janela. Nenhuma janela pode cruzar o fim do horizonte. |
 | `past_anticipated_commitments[].value_mw` | `dadgnl.rvN` › `GL` › `geracao`, `dadgnl.rvN` › `GL` › `duracao`, `dadgnl.rvN` › `TG` › `inflexibilidade, disponibilidade` *(condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; nas janelas de classe 2, as semanas `GL` que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma). O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo. |
 
 ### `post_study_stages.json`
 
 **Lê:** `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`), `dadger.rvN` (`DT`, `DP`, `AR`, `CT`, `SB`, `UH`)  
-**Quando:** somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`  
+**Quando:** somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou sempre num estudo só de estágios mensais  
 **Código:** `src/novomodelo_bridge/decomp/converters/anticipated.py`
 
-Calendário pós-estudo na grade semanal (sábados): preenche as semanas já comandadas de `GL` após o fim do horizonte e depois espelha os estágios do estudo; cada térmica GNL recebe limites de preço apenas nos estágios sinalizados (classe 3), nunca nos já comandados.
+Calendário pós-estudo na grade semanal (sábados): preenche as semanas já comandadas de `GL` após o fim do horizonte e depois espelha os estágios do estudo; cada térmica GNL recebe limites de preço apenas nos estágios sinalizados (classe 3), nunca nos já comandados. Num estudo só de estágios mensais, o calendário são os meses civis seguintes ao horizonte, tantos quanto o maior `lag` de `NL`, e cada térmica recebe limites de preço nos seus `lag` primeiros meses.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `stages[].start_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `GL` › `data_inicio` *(derivado)* | Começa no fim do horizonte do estudo: um stub até o sábado seguinte (se necessário), semanas de 168 h até o corte já comandado comum a todas as usinas (`data_inicio` da última semana `GL` mais uma semana) e, a partir dele, um estágio espelhando cada estágio do estudo. |
-| `stages[].duration_hours` | `dadger.rvN` › `DP` › `duracao` *(derivado)* | Horas até o próximo sábado no stub; `168` nas semanas; no espelho do estágio mensal do estudo, as horas até o último dia do mês civil do próprio estágio espelhado. |
+| `stages[].start_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `GL` › `data_inicio` *(derivado)* | Começa no fim do horizonte do estudo: um stub até o sábado seguinte (se necessário), semanas de 168 h até o corte já comandado comum a todas as usinas (`data_inicio` da última semana `GL` mais uma semana) e, a partir dele, um estágio espelhando cada estágio do estudo. Num estudo só de estágios mensais, o primeiro dia de cada mês civil após o horizonte. |
+| `stages[].duration_hours` | `dadger.rvN` › `DP` › `duracao` *(derivado)* | Horas até o próximo sábado no stub; `168` nas semanas; no espelho do estágio mensal do estudo, as horas até o último dia do mês civil do próprio estágio espelhado. Num estudo só de estágios mensais, as horas do mês civil inteiro. |
 | `thermal_bounds[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado)* | Id da térmica GNL em `system/thermals.json`. |
-| `thermal_bounds[].post_study_stage_index` | `dadgnl.rvN` › `GL` › `data_inicio` *(derivado)* | Índice 0-based do estágio pós-estudo; apenas os estágios cujo início é igual ou posterior ao corte já comandado da usina recebem uma linha. |
-| `thermal_bounds[].cost_per_mwh` | `dadgnl.rvN` › `TG` › `cvu`, `dadger.rvN` › `DP` › `duracao` | `cvu_1..3` do `TG` vigente no último estágio do estudo (o último declarado), ponderados pelas horas de patamar desse estágio. |
+| `thermal_bounds[].post_study_stage_index` | `dadgnl.rvN` › `GL` › `data_inicio` *(derivado)* | Índice 0-based do estágio pós-estudo; apenas os estágios cujo início é igual ou posterior ao corte já comandado da usina recebem uma linha. Num estudo só de estágios mensais, os `lag` (`NL`) primeiros meses pós-estudo, decididos dentro do estudo. |
+| `thermal_bounds[].cost_per_mwh` | `dadgnl.rvN` › `TG` › `cvu`, `dadger.rvN` › `DP` › `duracao` | `cvu_1..3` do `TG` vigente no último estágio do estudo (o último declarado), ponderados pelas horas de patamar desse estágio. Num estudo só de estágios mensais, o `TG` do próprio mês pós-estudo (o eixo de estágios do `TG` continua após o estudo, um estágio por mês), ponderado pelas horas de patamar do último estágio do estudo. |
 | `thermal_bounds[].min_mw` | `dadgnl.rvN` › `TG` › `inflexibilidade`, `dadger.rvN` › `DP` › `duracao` | `inflexibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
 | `thermal_bounds[].max_mw` | `dadgnl.rvN` › `TG` › `disponibilidade`, `dadger.rvN` › `DP` › `duracao` | `disponibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
 
@@ -322,13 +331,14 @@ Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1 ponderados
 | `thermals[].cost_per_mwh` | `dadger.rvN` › `CT` › `cvu`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `TG` › `cvu` | CVU do estágio 1 por patamar (`cvu_k`, em branco lido como 0), ponderado pelas horas de patamar de `DP`; estágios seguintes vão para `constraints/thermal_bounds.parquet`. GNL: o mesmo com o `TG` do estágio 1. |
 | `thermals[].generation.min_mw` | `dadger.rvN` › `CT` › `inflexibilidade`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `TG` › `inflexibilidade` | Inflexibilidade do estágio 1 por patamar, ponderada pelas horas de patamar. GNL: a menor inflexibilidade de `TG` entre os estágios, cada um ponderado pelas suas horas de patamar (um estágio sem registro `TG` herda o último declarado, como em `CT`), para que todo compromisso dentro da capacidade do seu estágio seja aceito. |
 | `thermals[].generation.max_mw` | `dadger.rvN` › `CT` › `disponibilidade`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `TG` › `disponibilidade` | Disponibilidade do estágio 1 por patamar, ponderada pelas horas de patamar. GNL: a maior disponibilidade de `TG` entre os estágios, com a mesma ponderação e herança da inflexibilidade. |
-| `thermals[].anticipated_config.lead_time_hours` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadgnl.rvN` › `GS` › `mes, semanas`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula))* | Lead físico por usina, em horas: da data de início do estudo até o fim da última semana já comandada da usina em `GL` (o corte de classe 4). Sem calendário `GS`, a duração do primeiro estágio. |
+| `thermals[].anticipated_config.lead_time_hours` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadgnl.rvN` › `GS` › `mes, semanas`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente nas térmicas GNL de um estudo com semanas operativas, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula))* | Lead físico por usina, em horas: da data de início do estudo até o fim da última semana já comandada da usina em `GL` (o corte de classe 4). Sem calendário `GS`, a duração do primeiro estágio. |
+| `thermals[].anticipated_config.lead_stages` | `dadgnl.rvN` › `NL` › `lag` *(derivado; condicional: somente nas térmicas GNL de um estudo só de estágios mensais, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula))* | O `lag` da usina em `NL`, em estágios: o despacho entregue no estágio m é decidido no estágio m − lag. Cada mês `GS` precisa ter um único intervalo, e o `lag` fica entre 1 e o número de estágios do estudo. |
 | `thermals[].entry_stage_id` | — *(sempre nulo; condicional: somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido)* | Sempre nulo: térmicas GNL estão ativas em todo o horizonte. Térmicas de `CT` omitem o campo. |
 | `thermals[].exit_stage_id` | — *(sempre nulo; condicional: somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido)* | Sempre nulo: térmicas GNL não saem dentro do horizonte. Térmicas de `CT` omitem o campo. |
 
 ### `system/hydros.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`), `hidr.dat`  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`, `VI`), `hidr.dat`, `polinjus.csv` (opcional), `vazoes.rvN`  
 **Quando:** sempre.  
 **Esquema:** [hydros.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/hydros.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/entity.py`
 
@@ -346,7 +356,7 @@ Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` pr
 | `hydros[].outflow.max_outflow_m3s` | — *(sempre nulo)* | Sempre nulo: o DECOMP não declara defluência máxima cadastral. Um teto de `QDEF` (RHQ de termo único) vai para `constraints/hydro_bounds.parquet`. |
 | `hydros[].generation.model` | `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `dadger.rvN` › `AC` › `COTVOL`, `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(derivado)* | `fpha` quando o polinômio cota-volume efetivo (pós `AC COTVOL`) do estágio inicial não é identicamente nulo, a produtibilidade específica efetiva (pós `AC PROESP`) é positiva e o engolimento e a potência nominais efetivos (maior valor ao longo dos estágios, pós `AC NUMCON`/`NUMMAQ`/`POTEFE`/`VAZEFE`) são positivos; caso contrário `constant_productivity`, e a usina excluída só pela capacidade nula é listada em diagnóstico informativo, com o ρ_eq em `system/hydro_energy_productivity.parquet`. |
 | `hydros[].generation.min_turbined_m3s` | — *(constante)* | Sempre 0.0: o cadastro não traz engolimento mínimo; pisos de `QTUR` (RHQ) vão para `constraints/hydro_bounds.parquet`. |
-| `hydros[].generation.max_turbined_m3s` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `hidr.dat` › `tipo_turbina`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `VAZEFE`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID` | Engolimento máximo corrigido pela queda: por estágio, min(Σ máquinas × vazão nominal × (h_op/h_nom)^k, potência instalada / ρ_eq), com h_op = ρ_eq/ρ_esp, ρ_eq = ρ_esp × (cota média sobre [`volume_minimo`, `volume_maximo`] − `canal_fuga_medio`, descontadas as perdas), h_nom = `queda_nominal_conjunto_k` e k = 0,5 (Francis/Pelton) ou 0,2 (Kaplan, `tipo_turbina` = 2); máximo ao longo do horizonte, sem desconto de TEIF/IP. Para Itaipu (código 66) é a soma dos envelopes dos dois grupos. `AC ALTEFE` não é consumido (o idecomp não expõe seu valor) e só gera aviso. |
+| `hydros[].generation.max_turbined_m3s` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `hidr.dat` › `tipo_turbina`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `VAZEFE`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `codigo_usina_jusante`, `hidr.dat` › `numero_polinomios_jusante`, `hidr.dat` › `referencia_jusante_k`, `hidr.dat` › `a0_jusante_k..a4_jusante_k`, `hidr.dat` › `posto`, `polinjus.csv` › `hidreletrica_curvajusante · nivel_montante_referencia`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4`, `vazoes.rvN` › `previsoes · coluna do posto`, `vazoes.rvN` › `cenarios_gerados · coluna do posto`, `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)`, `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `DP` › `duracao_patamar`, `dadger.rvN` › `AC` › `NUMJUS`, `dadger.rvN` › `AC` › `NUMPOS`, `dadger.rvN` › `MP` › `manutencao`, `dadger.rvN` › `FD` › `fator` | Maior valor, ao longo dos estágios, do engolimento máximo que o modelo de origem calcula antes da otimização: `min(qmaxT × MP × FD, Pdisp / ρ_eq)`. qmaxT é o ponto fixo `q = Σ máquinas × vazão nominal × ((h_mon − h_jus(q) − perdas) / h_ef)^k`, que parte do engolimento nominal e para quando dois passos diferem menos de 1 m³/s. h_mon é a cota do volume inicial (`UH`), limitado à faixa do estágio; h_jus vem das famílias do `polinjus` ou, sem o arquivo, dos polinômios de jusante do `hidr`, interpoladas pela cota da usina operada de jusante no seu volume mínimo (sem usina de jusante, a família de menor referência); h_ef é a média das `queda_nominal_conjunto_k` ponderada pelas máquinas (sem queda nominal em algum conjunto, qmaxT é o engolimento nominal); k = 0,5 (Francis/Pelton) ou 0,2 (Kaplan, `tipo_turbina` = 2). Quando a vazão que a usina não consegue reter no estágio (a incremental mais a das usinas a fio d'água a montante, menos o espaço livre do reservatório no estágio, nulo a fio d'água) passa do ponto fixo, qmaxT é o engolimento com essa vazão na curva de jusante. As vazões são as do modelo de origem, negativas incluídas; no estágio terminal, a média das aberturas ponderada pelas probabilidades. Pdisp é a potência instalada efetiva × `MP` × `FD`; ρ_eq é o da faixa inteira (reservatório) ou o do volume de referência (fio d'água). Para Itaipu (código 66) é a soma dos envelopes dos dois grupos. As vazões laterais (`VL`/`VU`) não entram na curva de jusante. `AC ALTEFE` não é consumido (o idecomp não expõe seu valor) e só gera aviso. |
 | `hydros[].generation.min_generation_mw` | — *(constante)* | Sempre 0.0: o cadastro não traz geração mínima; pisos de `RE`/`FU` de termo único vão para `constraints/hydro_bounds.parquet`, e os pisos `RI` de Itaipu e os de `RE`/`FU` com `frequencia` para `constraints/hydro_unit_group_bounds.parquet`. |
 | `hydros[].generation.max_generation_mw` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `POTEFE` | Potência instalada nominal: soma, sobre os conjuntos efetivos, de máquinas × potência unitária (com `AC NUMCON`/`NUMMAQ`/`POTEFE` por estágio), tomando o máximo ao longo do horizonte; sem desconto de TEIF/IP nem de manutenção (`MP`/`FD` vão para `constraints/hydro_unit_group_bounds.parquet`). Para Itaipu (código 66) é a soma dos envelopes dos dois grupos por frequência. |
 | `hydros[].unit_groups[].id` | `dadger.rvN` › `MP` › `frequencia`, `dadger.rvN` › `FD` › `frequencia` *(derivado)* | Um único grupo espelho com id 0 por usina. Itaipu (código 66) declara um grupo por frequência dos registros `MP`/`FD`, ids 0 e 1 em ordem crescente de frequência (0 = 50 Hz, conjunto 1 do cadastro; 1 = 60 Hz, conjunto 2); `MP` e `FD` precisam concordar no conjunto de frequências. |
@@ -355,7 +365,7 @@ Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` pr
 | `hydros[].unit_groups[].min_generation_mw` | — *(constante)* | Sempre 0.0, espelhando o envelope da usina. |
 | `hydros[].unit_groups[].max_generation_mw` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `POTEFE` | Espelha `generation.max_generation_mw` da usina no grupo único. Para Itaipu, cada grupo recebe o envelope nominal (máximo ao longo dos estágios) do seu próprio conjunto; a soma dos dois é o envelope da usina por construção. |
 | `hydros[].unit_groups[].min_turbined_m3s` | — *(constante)* | Sempre 0.0, espelhando o envelope da usina. |
-| `hydros[].unit_groups[].max_turbined_m3s` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `hidr.dat` › `tipo_turbina`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `VAZEFE`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID` | Espelha `generation.max_turbined_m3s` da usina no grupo único. Para Itaipu, cada grupo recebe o engolimento corrigido pela queda do seu próprio conjunto, com o teto de potência aplicado por conjunto (não por usina), máximo ao longo dos estágios. |
+| `hydros[].unit_groups[].max_turbined_m3s` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `hidr.dat` › `tipo_turbina`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `VAZEFE`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `codigo_usina_jusante`, `hidr.dat` › `numero_polinomios_jusante`, `hidr.dat` › `referencia_jusante_k`, `hidr.dat` › `a0_jusante_k..a4_jusante_k`, `hidr.dat` › `posto`, `polinjus.csv` › `hidreletrica_curvajusante · nivel_montante_referencia`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4`, `vazoes.rvN` › `previsoes · coluna do posto`, `vazoes.rvN` › `cenarios_gerados · coluna do posto`, `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)`, `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `DP` › `duracao_patamar`, `dadger.rvN` › `AC` › `NUMJUS`, `dadger.rvN` › `AC` › `NUMPOS`, `dadger.rvN` › `MP` › `manutencao`, `dadger.rvN` › `FD` › `fator` | Espelha `generation.max_turbined_m3s` da usina no grupo único. Para Itaipu, cada grupo recebe o maior valor, ao longo dos estágios, de `min(T, Pdisp_g / ρ_eq)`, com T o limite da usina descrito em `max_turbined_m3s` de `constraints/hydro_bounds.parquet` e Pdisp_g a potência do conjunto × `MP` × `FD` da sua frequência. |
 | `hydros[].specific_productivity_mw_per_m3s_per_m` | `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(condicional: somente para usinas com `generation.model` = `fpha`)* | Produtibilidade específica efetiva do estágio inicial (`AC PROESP` aplicado), em MW/(m³/s)/m, copiada sem conversão; o Novomodelo deriva ρ_eq dela na FPHA computada. |
 | `hydros[].efficiency.type` | — *(constante; condicional: somente para usinas com `generation.model` = `fpha`)* | Sempre `constant`: o DECOMP não traz curva de rendimento por vazão ou queda. |
 | `hydros[].efficiency.value` | `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(condicional: somente para usinas com `generation.model` = `fpha`)* | Rendimento adimensional da turbina η = ρ_esp / 0,00981 (a produtibilidade específica já embute g/1000 × η); um valor acima de 1,0 é truncado para 1,0 com aviso. |
@@ -365,27 +375,30 @@ Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` pr
 | `hydros[].hydraulic_losses.value` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `hydraulic_losses.type` = `factor`)* | Fração da queda bruta perdida: `perdas`/100 quando `tipo_perda` = 1; 0.0 quando a usina não tem perda modelada. |
 | `hydros[].hydraulic_losses.value_m` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `tipo_perda` = 2 e perda positiva)* | Perda de carga constante em metros, igual ao `perdas` efetivo (`AC PERHID` aplicado). |
 | `hydros[].evaporation.coefficients_mm[]` | `dadger.rvN` › `UH` › `evaporacao`, `hidr.dat` › `evaporacao_JAN..evaporacao_DEZ` *(condicional: somente quando o `UH` da usina liga o flag `evaporacao` e o `hidr.dat` traz ao menos um coeficiente mensal não nulo)* | Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido. |
+| `hydros[].travel_time_hours` | `dadger.rvN` › `VI` › `duracao` *(condicional: somente quando a usina declara um registro `VI`, está operada e tem um arco de jusante (`downstream_id` não nulo) para o atraso atuar)* | Tempo de viagem da água, em horas, da defluência da usina até a usina de jusante (`VI.duracao`), sem conversão. A água em trânsito que ele representa no início do estudo é semeada em `past_defluences` de `initial_conditions.json`. Uma usina sem `VI` fica com o arco instantâneo (padrão do Novomodelo). |
 | `hydros[].diversion.downstream_id` | `hidr.dat` › `desvio`, `dadger.rvN` › `AC` › `DESVIO`, `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo` *(condicional: somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada)* | Id Novomodelo da usina que recebe a água desviada: o `codigo_usina_jusante` do primeiro `AC DESVIO` em vigor ou, na falta dele, o `desvio` do `hidr.dat`, a usina para onde o DECOMP envia o `QDES`. Com a usina receptora fora do caso, um piso positivo deixa o bloco nulo e a conversão falha (`hydro-diversion-without-channel`); um teto sem piso é fechado em 0 com aviso (`decomp-diversion-channel-dropped`), e a água fica no rio da própria usina. Uma usina com desvio fechado em [0, 0] em todos os estágios fica com `diversion` nulo. |
 | `hydros[].diversion.max_flow_m3s` | `dadger.rvN` › `AC` › `DESVIO`, `hidr.dat` › `desvio` *(condicional: somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada)* | `limite_vazao` do `AC DESVIO` em vigor. Nulo (canal sem limite, como no DECOMP) quando não há `AC DESVIO` com limite, como num `desvio` de base (caso MOXOTÓ → P.AFONSO 4), e quando o limite vale 9 999 999 m³/s ou mais, o valor do DECOMP para canal sem limite (diagnóstico `diversion-channel-unlimited`); os tetos `max_diversion_m3s` de `constraints/hydro_bounds.parquet` continuam valendo em cada estágio. |
 
 ### `system/hydro_production_models.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`), `hidr.dat`  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `FP`), `hidr.dat`, `mlt.dat` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [production_models.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/production_models.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/productivity.py`
 
-Uma entrada por usina operada com um único intervalo de estágios cobrindo todo o horizonte; as usinas elegíveis recebem a FPHA computada pelo Novomodelo ajustada em torno do volume inicial, as demais produtibilidade constante.
+Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
 | `production_models[].hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id Novomodelo da usina, na mesma ordem de `system/hydros.json`. |
 | `production_models[].selection_mode` | — *(constante)* | Sempre `stage_ranges`: o modelo é escolhido por intervalo de estágios. |
-| `production_models[].stage_ranges[].start_stage_id` | — *(constante)* | Sempre 0: o intervalo único começa no primeiro estágio. |
-| `production_models[].stage_ranges[].end_stage_id` | — *(constante)* | Sempre nulo: o intervalo único é aberto e vale até o fim do horizonte. |
-| `production_models[].stage_ranges[].model` | `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `dadger.rvN` › `AC` › `COTVOL`, `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(derivado)* | `fpha` para as usinas com polinômio cota-volume efetivo não nulo e produtibilidade específica positiva no estágio inicial e engolimento e potência nominais efetivos positivos; `constant_productivity` para as demais. É o mesmo critério de `generation.model` em `system/hydros.json`. |
-| `production_models[].stage_ranges[].fpha_config.source` | — *(constante; condicional: somente para usinas com modelo `fpha`)* | Sempre `computed`: o Novomodelo ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`; os registros `FP` do DECOMP não são lidos. |
-| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(condicional: somente para usinas com modelo `fpha`)* | Menor `volume_minimo` efetivo (pós `AC VOLMIN`) entre os estágios do estudo, em hm³: a envoltória de armazenamento que o bloco `reservoir` da usina declara, a mesma faixa amostrada em `system/hydro_geometry.parquet`. Fio d'água (`D`) colapsa para `volume_referencia`. A janela cobre toda a faixa, e não uma banda em torno do volume inicial: abaixo da janela os hiperplanos ficam negativos com turbinamento nulo e impõem um turbinamento mínimo que torna inviável um estágio deplecionado. |
-| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(condicional: somente para usinas com modelo `fpha`)* | Maior `volume_maximo` efetivo (pós `AC VOLMAX`) entre os estágios do estudo, em hm³ (mesma envoltória de `volume_min_hm3`); fio d'água (`D`) colapsa para `volume_referencia`. |
+| `production_models[].stage_ranges[].start_stage_id` | `dadger.rvN` › `MP`, `dadger.rvN` › `FD` *(derivado)* | Primeiro estágio (0-based) do intervalo. Um intervalo por trecho de estágios consecutivos com o mesmo modelo: uma usina sem estágio de engolimento nulo tem um único intervalo, que começa em 0. |
+| `production_models[].stage_ranges[].end_stage_id` | `dadger.rvN` › `MP`, `dadger.rvN` › `FD` *(derivado)* | Último estágio (0-based, inclusivo) do intervalo; nulo no último intervalo, que fica aberto até o fim do horizonte. |
+| `production_models[].stage_ranges[].model` | `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `dadger.rvN` › `AC` › `COTVOL`, `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(derivado)* | `fpha` para as usinas com polinômio cota-volume efetivo não nulo e produtibilidade específica positiva no estágio inicial e engolimento e potência nominais efetivos positivos; `constant_productivity` para as demais. É o mesmo critério de `generation.model` em `system/hydros.json`. Numa usina `fpha`, os estágios em que o engolimento máximo da usina é nulo (a soma dos `max_turbined_m3s` por grupo de `constraints/hydro_unit_group_bounds.parquet` ou, para Itaipu, o limite da usina, se menor), por exemplo com todas as máquinas em manutenção (`MP`), recebem `constant_productivity`. |
+| `production_models[].stage_ranges[].productivity_mw_per_m3s` | — *(constante; condicional: somente nos estágios de engolimento nulo de uma usina `fpha`)* | Sempre 0.0: a usina não gera nesses estágios, e o Novomodelo não ajusta a FPHA para eles. |
+| `production_models[].stage_ranges[].fpha_config.source` | — *(constante; condicional: somente para usinas com modelo `fpha`)* | Sempre `computed`: o Novomodelo ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`. Dos registros `FP` do DECOMP só a janela de volume é convertida (`fitting_window`). |
+| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `FP` › `tipo_entrada_janela_volume`, `dadger.rvN` › `FP` › `limite_inferior_janela_volume`, `dadger.rvN` › `FP` › `limite_superior_janela_volume`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(derivado; condicional: somente para usinas com modelo `fpha`)* | Limite inferior da janela de volume do DECOMP no estágio, em hm³: o volume inicial de `UH`, tomado como percentual do volume útil do estágio (faixa efetiva pós `AC VOLMIN`/`VOLMAX`), menos a redução, sem ficar abaixo do `volume_minimo` do estágio. A redução vem do `FP` da própria usina, senão do `FP` 999, senão do padrão do DECOMP: 20 % do volume útil num estágio semanal e 50 % num mensal. Cada registro `FP` vale a partir do seu estágio, em % do volume útil ou em hm³ (campo 8), e um campo em branco mantém o valor em vigor. Fio d'água (`D`) colapsa para `volume_referencia`. |
+| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `FP` › `tipo_entrada_janela_volume`, `dadger.rvN` › `FP` › `limite_inferior_janela_volume`, `dadger.rvN` › `FP` › `limite_superior_janela_volume`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(derivado; condicional: somente para usinas com modelo `fpha`)* | Limite superior da janela de volume do DECOMP no estágio, em hm³: o mesmo volume inicial de `volume_min_hm3` mais o acréscimo, sem passar do `volume_maximo` do estágio. O acréscimo se resolve como a redução, pelo campo 11 do `FP`; fio d'água (`D`) colapsa para `volume_referencia`. |
+| `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s` | `mlt.dat`, `hidr.dat` › `posto`, `dadger.rvN` › `AC` › `NUMPOS` *(derivado; condicional: somente para usinas com modelo `fpha` cujo posto tem média de longo termo positiva no `mlt.dat`)* | Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal de longo termo do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, no estágio inicial do intervalo), como no DECOMP. Omitido no posto artificial 300, num posto de média nula e quando o deck não traz `mlt.dat` (diagnóstico `fpha-mlt-absent`): o Novomodelo usa então o dobro do engolimento máximo da usina, o mesmo recurso do DECOMP para média nula. |
 | `production_models[].stage_ranges[].reference_volume.volume_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(condicional: somente para usinas com modelo `fpha`)* | Volume inicial em hm³: V_min + `volume_inicial`/100 × (V_max − V_min) na faixa efetiva do estágio inicial; fio d'água colapsa para `volume_referencia`. É o mesmo valor de `storage` em `initial_conditions.json`, o ponto em que o DECOMP ancora a FPHA. |
 
 ### `system/hydro_geometry.parquet`
@@ -620,11 +633,11 @@ Disponibilidade determinística das fontes não controláveis replicada nas colu
 
 ### `constraints/hydro_bounds.parquet`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `RQ`, `VE`, `TI`, `RE`, `LU`, `FU`, `FT`, `FI`, `HQ`, `LQ`, `CQ`, `HV`, `LV`, `CV`), `hidr.dat`  
-**Quando:** somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único ou canal de desvio de base)  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `RQ`, `VE`, `TI`, `RE`, `LU`, `FU`, `FT`, `FI`, `HQ`, `LQ`, `CQ`, `HV`, `LV`, `CV`, `MP`, `FD`), `hidr.dat`, `polinjus.csv` (opcional), `vazoes.rvN`  
+**Quando:** somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base ou limite de turbinamento de Itaipu)  
 **Código:** `src/novomodelo_bridge/decomp/converters/bounds.py`
 
-Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único.
+Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base, limite de turbinamento de Itaipu) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
@@ -632,9 +645,9 @@ Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hy
 | `stage_id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | Índice 0-based do estágio no calendário operativo (`estagio` − 1); os registros com trio mês/semana/ano (`AC`) e os limites por `estagio` (`LU`/`LQ`/`LV`, `VE`, `TI`) são resolvidos para esse índice. |
 | `block_id` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Nulo na linha-base (vale para todos os patamares); 0..n−1 quando algum contribuinte do eixo naquele estágio é por patamar (`LU`/`LQ` por patamar): então todos os patamares do estágio são materializados. O piso `RQ`/`UH` de defluência é por estágio (linha-base). Os eixos de armazenamento e retirada de água são sempre de estágio. |
 | `min_outflow_m3s` | `dadger.rvN` › `UH` › `vazao_defluente_minima`, `dadger.rvN` › `UH` › `codigo_ree`, `dadger.rvN` › `RQ` › `codigo_ree`, `dadger.rvN` › `RQ` › `vazao`, `hidr.dat` › `vazao_minima_historica`, `dadger.rvN` › `AC` › `VAZMIN`, `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `codigo_usina_jusante`, `dadger.rvN` › `AC` › `NUMJUS` | Piso de defluência: a `vazao_defluente_minima` do `UH` (fixa em todos os estágios) ou, na sua ausência, o percentual por estágio do `RQ` da REE da usina (`vazao_1` → estágio 0, `vazao_2` → estágio 1, …, repetindo o último declarado além das colunas do registro) aplicado à `vazao_minima_historica` efetiva (`AC VAZMIN`), um piso por (usina, estágio); valores não positivos não geram linha. Um piso `QDEF` de RHQ de termo único (`LQ` limite inferior por patamar, herdado entre estágios) coexiste e o maior piso prevalece. O piso padrão `RQ`/`UH` é liberado para as usinas a fio d'água desde a cabeceira até (exclusive) o primeiro reservatório da cascata (`tipo_regulacao` M ou S; jusante efetiva `codigo_usina_jusante` com `AC NUMJUS`): essas usinas não recebem piso `RQ`/`UH`. Uma janela `QDEF` de RHQ é uma restrição declarada pelo usuário e não é liberada — continua valendo. |
-| `max_outflow_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `HQ` › `estagio_inicial`, `dadger.rvN` › `HQ` › `estagio_final`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente` | Teto de defluência de uma RHQ de termo único sobre `QDEF` com coeficiente ±1: `limite_superior` do `LQ` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]; coeficiente −1 troca e inverte os lados. RHQ com vários termos ou coeficiente diferente de ±1 vira restrição genérica. |
+| `max_outflow_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `HQ` › `estagio_inicial`, `dadger.rvN` › `HQ` › `estagio_final`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente` | Teto de defluência de uma RHQ de termo único sobre `QDEF` com coeficiente ±1: `limite_superior` do `LQ` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]; coeficiente −1 troca e inverte os lados. RHQ com vários termos ou coeficiente diferente de ±1 vira restrição genérica, assim como duas RHQ de termo único sobre a mesma variável da mesma usina cujos limites não têm valor comum num mesmo estágio e patamar. |
 | `min_turbined_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente` | Piso de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_inferior` do `LQ` por patamar, herdado entre estágios. |
-| `max_turbined_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente` | Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso. |
+| `max_turbined_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4`, `vazoes.rvN` › `previsoes · coluna do posto`, `dadger.rvN` › `MP` › `manutencao`, `dadger.rvN` › `FD` › `fator` | Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso. Para Itaipu (código 66), também o limite da usina por estágio, `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`: qmaxT como em `generation.max_turbined_m3s` de `system/hydros.json`, aqui sem o fator `MP` × `FD`, e Pdisp_g a potência de cada conjunto × `MP` × `FD` da sua frequência; emitido só nos estágios em que fica abaixo da soma dos tetos dos grupos além da tolerância numérica. Vale o menor dos tetos. |
 | `min_generation_mw` | `dadger.rvN` › `RE` › `codigo_restricao`, `dadger.rvN` › `RE` › `estagio_inicial`, `dadger.rvN` › `RE` › `estagio_final`, `dadger.rvN` › `LU` › `limite_inferior`, `dadger.rvN` › `FU` › `codigo_usina`, `dadger.rvN` › `FU` › `coeficiente` | Piso de geração de uma RE de termo único com `FU` de coeficiente ±1 (sem termos `FT`/`FI`): `limite_inferior` do `LU` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]. Um `FU` com `frequencia` (meia-usina de 50 ou 60 Hz de Itaipu) não entra aqui: vai para o grupo da frequência em `constraints/hydro_unit_group_bounds.parquet`. |
 | `max_generation_mw` | `dadger.rvN` › `RE` › `codigo_restricao`, `dadger.rvN` › `RE` › `estagio_inicial`, `dadger.rvN` › `RE` › `estagio_final`, `dadger.rvN` › `LU` › `limite_superior`, `dadger.rvN` › `FU` › `codigo_usina`, `dadger.rvN` › `FU` › `coeficiente` | Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar, truncado ao `generation.max_generation_mw` declarado da usina (caso BELO MONTE, RE de 11000 MW acima da capacidade); um truncamento material gera aviso. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina. |
 | `min_storage_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `dadger.rvN` › `HV` › `codigo_restricao`, `dadger.rvN` › `HV` › `estagio_inicial`, `dadger.rvN` › `HV` › `estagio_final`, `dadger.rvN` › `LV` › `limite_inferior`, `dadger.rvN` › `CV` › `codigo_usina`, `dadger.rvN` › `CV` › `tipo`, `dadger.rvN` › `CV` › `coeficiente` | Piso de armazenamento por estágio, sem patamar: o `volume_minimo` efetivo do estágio quando a faixa efetiva difere do envelope declarado em `system/hydros.json` (um `AC VOLMIN`/`VOLMAX` temporal), e/ou o `limite_inferior` do `LV` de uma RHV de termo único sobre `VARM`, que é relativo ao volume útil e é somado ao piso efetivo do estágio para virar hm³ absoluto. |
@@ -647,7 +660,7 @@ Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hy
 
 ### `constraints/hydro_unit_group_bounds.parquet`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `RI`, `RE`, `LU`, `FU`), `hidr.dat`  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `RI`, `RE`, `LU`, `FU`), `hidr.dat`, `polinjus.csv` (opcional), `vazoes.rvN`  
 **Quando:** somente quando algum grupo tem, em algum estágio, disponibilidade (MP × FD) ou engolimento corrigido pela queda abaixo do envelope declarado, ou quando Itaipu é operada com pisos `RI`  
 **Código:** `src/novomodelo_bridge/decomp/group_bounds.py`
 
@@ -660,7 +673,7 @@ Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `unit_groups`
 | `stage_id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | Índice 0-based do estágio no calendário operativo; as colunas `manutencao_k`/`fator_k` de `MP`/`FD` e o `estagio` do `RI` são resolvidos para esse índice. |
 | `block_id` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Nulo na linha-base; 0..n−1 quando o piso `RI` de Itaipu difere entre patamares do estágio (a linha-base recebe então a média ponderada pelas horas) ou quando uma `RE` por frequência limita o grupo, por patamar. Disponibilidade e engolimento são valores de estágio. |
 | `min_turbined_m3s` | — *(sempre nulo)* | Sempre nulo: nenhum registro do DECOMP declara turbinamento mínimo por grupo. |
-| `max_turbined_m3s` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `hidr.dat` › `tipo_turbina`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `VAZEFE`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID` | Engolimento corrigido pela queda do estágio (mesma fórmula de `generation.max_turbined_m3s` em `system/hydros.json`, avaliada no estágio em vez do máximo), emitido só quando fica abaixo do envelope do grupo além da tolerância numérica: um `AC` de máquinas ou de cadastro que reduz o engolimento no meio do horizonte aparece aqui. Para Itaipu, por conjunto. |
+| `max_turbined_m3s` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `hidr.dat` › `tipo_turbina`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `VAZEFE`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `codigo_usina_jusante`, `hidr.dat` › `numero_polinomios_jusante`, `hidr.dat` › `referencia_jusante_k`, `hidr.dat` › `a0_jusante_k..a4_jusante_k`, `hidr.dat` › `posto`, `polinjus.csv` › `hidreletrica_curvajusante · nivel_montante_referencia`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4`, `vazoes.rvN` › `previsoes · coluna do posto`, `vazoes.rvN` › `cenarios_gerados · coluna do posto`, `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)`, `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `DP` › `duracao_patamar`, `dadger.rvN` › `AC` › `NUMJUS`, `dadger.rvN` › `AC` › `NUMPOS`, `dadger.rvN` › `MP` › `manutencao`, `dadger.rvN` › `FD` › `fator` | Engolimento máximo do estágio (o cálculo de `generation.max_turbined_m3s` em `system/hydros.json`, avaliado no estágio em vez do máximo), emitido só quando fica abaixo do envelope do grupo além da tolerância numérica. Para Itaipu, `min(T, Pdisp_g / ρ_eq)` por conjunto, como no envelope do grupo. |
 | `min_generation_mw` | `dadger.rvN` › `RI` › `estagio`, `dadger.rvN` › `RI` › `geracao_minima_50_hz`, `dadger.rvN` › `RI` › `geracao_minima_60_hz`, `dadger.rvN` › `LU` › `limite_inferior`, `dadger.rvN` › `FU` › `frequencia` *(condicional: somente para Itaipu (código 66) operada com registro `RI` ou com `RE` por frequência)* | Piso de geração por frequência de Itaipu: `geracao_minima_50_hz` no grupo 0 e `geracao_minima_60_hz` no grupo 1, por patamar (colunas `_1`..`_5`), com estágios não declarados herdando o anterior (o `RI` precisa declarar o estágio 1). Os campos `geracao_maxima_*` do `RI` não são consumidos. Uma `RE` de termo único cujo `FU` traz `frequencia` 50 ou 60 limita o grupo dessa frequência com o `limite_inferior` do `LU`; vale o maior dos pisos. `frequencia` em outra usina interrompe a conversão. |
 | `max_generation_mw` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `MP` › `codigo_usina`, `dadger.rvN` › `MP` › `manutencao`, `dadger.rvN` › `FD` › `codigo_usina`, `dadger.rvN` › `FD` › `fator` | Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida só quando fica abaixo do envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória), e o `limite_superior` do `LU` de uma `RE` por frequência também limita o grupo, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`. |
 
@@ -736,7 +749,7 @@ Limites e preço de cada contrato por estágio (estágios não declarados herdam
 **Quando:** somente quando ao menos uma restrição especial (RE com vários termos, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica  
 **Esquema:** [generic_constraints.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/generic_constraints.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/constraints.py`
 
-Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `QBOM` sem estação `UE`, `VDEF`/`VDES`/`VBOM`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem.
+Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `QBOM` sem estação `UE`, `VDEF`/`VDES`/`VBOM`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
@@ -784,11 +797,11 @@ Declara, para cada usina operada, os parâmetros calculados pelo Novomodelo `@rh
 
 ### `boundary/`
 
-**Lê:** `cortesh.dat` (opcional), `cortes*.dat` (opcional), `dadger.rvN` (`FC`, `CX`, `SB`, `CT`, `UH`, `DP`, `DT`, `AC`), `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`), `vazoes.rvN`, `hidr.dat`, `mlt.dat`  
+**Lê:** `cortesh.dat` (opcional), `cortes*.dat` (opcional), `dadger.rvN` (`FC`, `CX`, `SB`, `CT`, `UH`, `DP`, `DT`, `AC`), `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`), `vazoes.rvN`, `hidr.dat`  
 **Quando:** escrito por padrão pela CLI após a conversão, quando o deck declara `cortesh.dat` e `cortes*.dat` (registro `FC` ou busca por nome) e o novomodelo-python instalado passa na sonda de escrita e releitura do checkpoint; `--no-fcf` e `--dry-run` pulam a importação, e um deck sem arquivos de cortes converte sem fronteira (nota informativa)  
 **Código:** `src/novomodelo_bridge/decomp/fcf/importer.py`
 
-Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal, mapeia os termos de armazenamento por código de usina (replicando complexos `CX`), os termos de vazão defasada por profundidade de mês (com a média de longo termo de `mlt.dat`, incrementalizada pela cascata efetiva, dobrada no RHS) e os termos GNL do `dadgnl` no anel antecipado, e grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python. Reescreve `config.json` apontando `policy.boundary` (`path = "boundary"`, `source_stage`) para o checkpoint e, quando há `mlt.dat`, `initial_conditions.json` com as janelas `recent_observations` das observações mensais e semanais de `vazoes`; o caso deve ser executado com `novomodelo run <caso> --output <caso>`.
+Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal e mapeia sobre ele cada corte, escrito pelo modelo de origem por mês médio de 730,5 h. Cada usina convertida recebe os termos da sua própria linha do corte, da linha do complexo `CX` que a contém ou, na falta das duas, da primeira usina a jusante que tenha linha (regra inferida do relato do modelo de origem, não do manual); só um reservatório (`tipo_regulacao` `M` ou `S` em `hidr.dat`) recebe o termo de armazenamento, e só pela própria linha ou pelo complexo, cobrado acima do volume mínimo efetivo. Os termos de vazão defasada são avaliados no posto de acoplamento (`AC NPOSNW`, senão o `posto` de `hidr.dat`) sobre as tabelas de `vazoes` com postos artificiais, sem desconto de média; a diferença para a vazão de operação nos estágios determinísticos e os termos de usinas do corte ausentes do caso entram como constante no RHS. Os termos GNL vão para o anel antecipado: cada slot é cobrado pelos preços por patamar do mês de entrega (mês contado pelo `GS`), ponderados pelas durações de patamar de `cortesh.dat`, e as entregas já comandadas (`GL` após o horizonte) entram como constante no RHS. A água ainda em trânsito para uma usina ao fim do estudo (tempo de viagem `VI`) recebe o termo de armazenamento da usina quando ela o tem e, senão, o seu primeiro termo de vazão defasada por hm³: é a regra do canal que o CEPEL documenta para a FCF do DECOMP usada pelo DESSEM; o DECOMP não valora essa água na fronteira com o NEWAVE, então o custo de fronteira difere do dele pelo valor da água em trânsito. Grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python e reescreve `config.json`, apontando `policy.boundary` (`path = "boundary"`) para o checkpoint, e `initial_conditions.json`, com as janelas `recent_observations` das observações mensais e semanais de `vazoes` nos postos de acoplamento; o caso deve ser executado com `novomodelo run <caso> --output <caso>`.
 
 ## Índice por origem
 
@@ -817,6 +830,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `PROESP` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `JUSMED` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `PERHID` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `NUMJUS` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `NUMPOS` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `NUMCON` → `system/hydros.json` › `hydros[].generation.max_generation_mw`
 - `NUMMAQ` → `system/hydros.json` › `hydros[].generation.max_generation_mw`
 - `POTEFE` → `system/hydros.json` › `hydros[].generation.max_generation_mw`
@@ -833,6 +848,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `PROESP` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `JUSMED` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `PERHID` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `NUMJUS` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `NUMPOS` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `PROESP` → `system/hydros.json` › `hydros[].specific_productivity_mw_per_m3s_per_m`
 - `PROESP` → `system/hydros.json` › `hydros[].efficiency.value`
 - `JUSMED` → `system/hydros.json` › `hydros[].tailrace.coefficients[]`
@@ -847,6 +864,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `VOLMAX` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
 - `VOLMIN` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `VOLMAX` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `NUMPOS` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
 - `VOLMIN` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `VOLMAX` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `VOLMIN` → `system/hydro_geometry.parquet` › `volume_hm3`
@@ -883,6 +901,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `PROESP` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `JUSMED` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `PERHID` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `NUMJUS` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `NUMPOS` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `NUMCON` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `NUMMAQ` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `POTEFE` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
@@ -897,7 +917,6 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `COTARE` — *adiado.* Alteração de um coeficiente do polinômio cota-área. Lido pelo `check decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA.
 - `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Lido pelo `check decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
-- `NPOSNW` — *adiado.* Alteração do posto de acoplamento com o NEWAVE. Lido pelo `check decomp`, sem consumidor: o acoplamento da FCF de fronteira usa o `posto` de `hidr.dat` (com `NUMPOS`) e o registro `CX`.
 - `TIPERH` — *adiado.* Alteração do tipo de perdas hidráulicas. Lido pelo `check decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade.
 - `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante.
 
@@ -1078,6 +1097,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `numero_patamares` → `stages.json` › `stages[].blocks[].id`
 - `numero_patamares` → `stages.json` › `stages[].blocks[].name`
 - `duracao` → `stages.json` › `stages[].blocks[].hours`
+- `duracao` → `initial_conditions.json` › `past_defluences[].start_date`
+- `duracao` → `initial_conditions.json` › `past_defluences[].end_date`
 - `duracao` → `initial_conditions.json` › `past_anticipated_commitments[].end_date`
 - `duracao` → `system/thermals.json` › `thermals[].cost_per_mwh`
 - `duracao` → `system/thermals.json` › `thermals[].generation.min_mw`
@@ -1100,10 +1121,13 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `duracao` → `constraints/contract_bounds.parquet` › `min_mw`
 - `duracao` → `constraints/contract_bounds.parquet` › `max_mw`
 - `duracao` → `constraints/contract_bounds.parquet` › `price_per_mwh`
+- `duracao_patamar` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `duracao_patamar` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `estagio` → `constraints/hydro_bounds.parquet` › `stage_id`
 - `numero_patamares` → `constraints/hydro_bounds.parquet` › `block_id`
 - `estagio` → `constraints/hydro_unit_group_bounds.parquet` › `stage_id`
 - `numero_patamares` → `constraints/hydro_unit_group_bounds.parquet` › `block_id`
+- `duracao_patamar` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `estagio` → `scenarios/inflow_seasonal_stats.parquet` › `stage_id`
 - `estagio` → `scenarios/load_seasonal_stats.parquet` › `stage_id`
 - `carga` → `scenarios/load_seasonal_stats.parquet` › `mean_mw`
@@ -1133,6 +1157,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `dia, mes, ano` → `stages.json` › `stages[].start_date`
 - `dia, mes, ano` → `stages.json` › `stages[].end_date`
 - `dia, mes, ano` → `stages.json` › `stages[].season_id`
+- `dia, mes, ano` → `initial_conditions.json` › `past_defluences[].start_date`
+- `dia, mes, ano` → `initial_conditions.json` › `past_defluences[].end_date`
 - `dia, mes, ano` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
 - `dia, mes, ano` → `system/buses.json` › `buses[].operational_start_date`
 - `dia, mes, ano` → `system/lines.json` › `lines[].operational_start_date`
@@ -1150,7 +1176,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 **Estado:** não lido.
 
-- todo o registro — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN` e de `mlt.dat`.
+- todo o registro — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN`.
 
 ### `dadger.rvN` › `ES`
 
@@ -1185,10 +1211,16 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `FD`
 
-**Estado:** convertido. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `constraints/hydro_unit_group_bounds.parquet`, `system/hydros.json`.
+**Estado:** convertido. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `constraints/hydro_bounds.parquet`, `constraints/hydro_unit_group_bounds.parquet`, `system/hydro_production_models.json`, `system/hydros.json`.
 
+- `fator` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `frequencia` → `system/hydros.json` › `hydros[].unit_groups[].id`
+- `fator` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- → `system/hydro_production_models.json` › `production_models[].stage_ranges[].start_stage_id`
+- → `system/hydro_production_models.json` › `production_models[].stage_ranges[].end_stage_id`
+- `fator` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
 - `frequencia` → `constraints/hydro_unit_group_bounds.parquet` › `hydro_unit_group_id`
+- `fator` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `codigo_usina` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `fator` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `fator` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
@@ -1219,9 +1251,16 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `FP`
 
-**Estado:** não lido.
+**Estado:** convertido em parte. **Lido por:** `system/hydro_production_models.json`.
 
-- todo o registro — *não lido.* Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela igual à envoltória de armazenamento da usina.
+- `tipo_entrada_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `limite_inferior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `limite_superior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `tipo_entrada_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `limite_inferior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `limite_superior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `janela de turbinamento, número de pontos de discretização` — *não lido.* Não convertidos: o Novomodelo ajusta cada usina de zero ao seu turbinamento máximo, com a sua própria discretização. O diagnóstico `decomp-fp-fit-fields-unconverted` lista os registros que fogem dos valores padrão do DECOMP. A janela de volume é lida (ver `fitting_window`).
+- `janela de geração hidráulica, tolerância` — *não lido.* Campos 12 a 14 do `FP`. Não lidos: sem contrapartida no ajuste da FPHA do Novomodelo.
 
 ### `dadger.rvN` › `FT`
 
@@ -1397,10 +1436,16 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `MP`
 
-**Estado:** convertido. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `constraints/hydro_unit_group_bounds.parquet`, `system/hydros.json`.
+**Estado:** convertido. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `constraints/hydro_bounds.parquet`, `constraints/hydro_unit_group_bounds.parquet`, `system/hydro_production_models.json`, `system/hydros.json`.
 
+- `manutencao` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `frequencia` → `system/hydros.json` › `hydros[].unit_groups[].id`
+- `manutencao` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- → `system/hydro_production_models.json` › `production_models[].stage_ranges[].start_stage_id`
+- → `system/hydro_production_models.json` › `production_models[].stage_ranges[].end_stage_id`
+- `manutencao` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
 - `frequencia` → `constraints/hydro_unit_group_bounds.parquet` › `hydro_unit_group_id`
+- `manutencao` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `codigo_usina` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `manutencao` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `manutencao` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
@@ -1597,8 +1642,12 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `codigo_usina` → `system/hydros.json` › `hydros[].id`
 - `codigo_usina` → `system/hydros.json` › `hydros[].downstream_id`
 - `vazao_defluente_minima` → `system/hydros.json` › `hydros[].outflow.min_outflow_m3s`
+- `volume_inicial` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `volume_inicial` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `evaporacao` → `system/hydros.json` › `hydros[].evaporation.coefficients_mm[]`
 - `codigo_usina` → `system/hydro_production_models.json` › `production_models[].hydro_id`
+- `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `codigo_usina` → `system/hydro_geometry.parquet` › `hydro_id`
 - `codigo_usina` → `system/hydro_energy_productivity.parquet` › `hydro_id`
@@ -1609,6 +1658,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `codigo_ree` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `limite_superior_vertimento` → `constraints/hydro_bounds.parquet` › `max_spillage_m3s`
 - `codigo_usina` → `constraints/hydro_unit_group_bounds.parquet` › `hydro_id`
+- `volume_inicial` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `codigo_usina` → `scenarios/inflow_seasonal_stats.parquet` › `hydro_id`
 - `codigo_usina` → `scenarios/external_inflow_scenarios.parquet` › `hydro_id`
 - `codigo_ree` → `constraints/generic_constraints.json` › `constraints[].expression`
@@ -1631,9 +1681,13 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `VI`
 
-**Estado:** lido, não convertido.
+**Estado:** convertido. **Lido por:** `initial_conditions.json`, `system/hydros.json`.
 
-- todo o registro — *adiado.* Tempo de viagem da água até a usina de jusante e defluências das semanas anteriores ao estudo. O conversor lê o registro e monta `travel_time_hours` e `initial_conditions.past_defluences`, mas a emissão está desligada por um defeito na geração de cortes com água em trânsito no novomodelo (gap rastreado C-travel-time): o `convert decomp` apenas avisa `deferred at this milestone: water travel time (VI present)`.
+- `codigo_usina` → `initial_conditions.json` › `past_defluences[].hydro_id`
+- `duracao` → `initial_conditions.json` › `past_defluences[].start_date`
+- `duracao` → `initial_conditions.json` › `past_defluences[].end_date`
+- `vazao_1..vazao_5` → `initial_conditions.json` › `past_defluences[].value_m3s`
+- `duracao` → `system/hydros.json` › `hydros[].travel_time_hours`
 
 ### `dadger.rvN` › `VL`
 
@@ -1655,13 +1709,23 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `vazoes.rvN`
 
-**Estado:** convertido em parte. **Lido por:** `boundary/`, `scenarios/external_inflow_scenarios.parquet`, `scenarios/external_load_scenarios.parquet`, `scenarios/external_ncs_scenarios.parquet`, `stages.json`.
+**Estado:** convertido em parte. **Lido por:** `boundary/`, `constraints/hydro_bounds.parquet`, `constraints/hydro_unit_group_bounds.parquet`, `scenarios/external_inflow_scenarios.parquet`, `scenarios/external_load_scenarios.parquet`, `scenarios/external_ncs_scenarios.parquet`, `stages.json`, `system/hydros.json`.
 
 Árvore de cenários de vazão gerada pelo GEVAZP. O conversor lê probabilidades, previsões, cenários gerados e observações; as seções abaixo ficam de fora.
 
 - `probabilidades · cenario` → `stages.json` › `policy_graph.nodes[].id`
 - `probabilidades · cenario` → `stages.json` › `policy_graph.nodes[].scenario_id`
 - `probabilidades · probabilidade (estagio terminal)` → `stages.json` › `policy_graph.transitions[].probability`
+- `previsoes · coluna do posto` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `cenarios_gerados · coluna do posto` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `probabilidades · probabilidade (estagio terminal)` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `previsoes · coluna do posto` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `cenarios_gerados · coluna do posto` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `probabilidades · probabilidade (estagio terminal)` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `previsoes · coluna do posto` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
+- `previsoes · coluna do posto` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `cenarios_gerados · coluna do posto` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `probabilidades · probabilidade (estagio terminal)` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `previsoes · estagio` → `scenarios/external_inflow_scenarios.parquet` › `stage_id`
 - `cenarios_gerados · estagio` → `scenarios/external_inflow_scenarios.parquet` › `stage_id`
 - `cenarios_gerados · cenario` → `scenarios/external_inflow_scenarios.parquet` › `scenario_id`
@@ -1753,6 +1817,12 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `canal_fuga_medio` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `perdas` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `tipo_perda` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `tipo_regulacao` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `codigo_usina_jusante` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `numero_polinomios_jusante` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `referencia_jusante_k` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `a0_jusante_k..a4_jusante_k` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `posto` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `numero_conjuntos_maquinas` → `system/hydros.json` › `hydros[].generation.max_generation_mw`
 - `maquinas_conjunto_1..5` → `system/hydros.json` › `hydros[].generation.max_generation_mw`
 - `potencia_nominal_conjunto_1..5` → `system/hydros.json` › `hydros[].generation.max_generation_mw`
@@ -1774,6 +1844,12 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `canal_fuga_medio` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `perdas` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `tipo_perda` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `tipo_regulacao` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `codigo_usina_jusante` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `numero_polinomios_jusante` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `referencia_jusante_k` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `a0_jusante_k..a4_jusante_k` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `posto` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `produtibilidade_especifica` → `system/hydros.json` › `hydros[].specific_productivity_mw_per_m3s_per_m`
 - `produtibilidade_especifica` → `system/hydros.json` › `hydros[].efficiency.value`
 - `canal_fuga_medio` → `system/hydros.json` › `hydros[].tailrace.coefficients[]`
@@ -1796,6 +1872,7 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `volume_maximo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `tipo_regulacao` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `volume_referencia` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `posto` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
 - `volume_minimo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `volume_maximo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `tipo_regulacao` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
@@ -1827,6 +1904,10 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `vazao_minima_historica` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `tipo_regulacao` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
 - `codigo_usina_jusante` → `constraints/hydro_bounds.parquet` › `min_outflow_m3s`
+- `maquinas_conjunto_1..5` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
+- `vazao_nominal_conjunto_1..5` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
+- `potencia_nominal_conjunto_1..5` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
+- `queda_nominal_conjunto_1..5` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
 - `volume_minimo` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`
 - `volume_maximo` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`
 - `tipo_regulacao` → `constraints/hydro_bounds.parquet` › `min_storage_hm3`
@@ -1850,6 +1931,12 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `canal_fuga_medio` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `perdas` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `tipo_perda` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `tipo_regulacao` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `codigo_usina_jusante` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `numero_polinomios_jusante` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `referencia_jusante_k` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `a0_jusante_k..a4_jusante_k` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `posto` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `numero_conjuntos_maquinas` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `maquinas_conjunto_1..5` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
 - `potencia_nominal_conjunto_1..5` → `constraints/hydro_unit_group_bounds.parquet` › `max_generation_mw`
@@ -1868,6 +1955,14 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `numero_unidades_base, representacao_conjunto` — *não lido.* Número de unidades de base e forma de representação dos conjuntos. Não lidos: os grupos de unidades são derivados de `numero_conjuntos_maquinas` e das colunas por conjunto.
 - `influencia_vertimento_canal_fuga` — *não lido.* Sinalizador de influência do vertimento no canal de fuga. Não lido: o Novomodelo não modela essa influência.
 - `empresa, observacao, data` — *não lido.* Metadados do cadastro (empresa, observação, data). Não lidos.
+
+### `mlt.dat`
+
+**Estado:** convertido. **Lido por:** `system/hydro_production_models.json`.
+
+Médias de longo termo mensais das vazões naturais por posto, lidas só para a faixa de vertimento do ajuste da FPHA. Os termos de vazão defasada dos cortes de fronteira não as usam: o modelo de origem os avalia sobre a vazão do posto de acoplamento, sem descontar a média.
+
+- → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
 
 ### `dadgnl.rvN` › `GL`
 
@@ -1890,8 +1985,9 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 
 ### `dadgnl.rvN` › `NL`
 
-**Estado:** lido, não convertido. **Lido por:** `boundary/`, `initial_conditions.json`, `post_study_stages.json`, `system/thermals.json`.
+**Estado:** convertido em parte. **Lido por:** `initial_conditions.json`, `post_study_stages.json`, `system/thermals.json`.
 
+- `lag` → `system/thermals.json` › `thermals[].anticipated_config.lead_stages`
 - `codigo_submercado` — *não lido.* Submercado repetido no registro de lag. Não lido: só `codigo_usina` e `lag` são usados.
 
 ### `dadgnl.rvN` › `TG`
@@ -1934,10 +2030,16 @@ Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o subm
 
 ### `polinjus.csv`
 
-**Estado:** convertido em parte. **Lido por:** `system/tailrace_curves.parquet`.
+**Estado:** convertido em parte. **Lido por:** `constraints/hydro_bounds.parquet`, `constraints/hydro_unit_group_bounds.parquet`, `system/hydros.json`, `system/tailrace_curves.parquet`.
 
 Famílias de curvas de jusante das LIBs. O conversor lê o cadastro das famílias e os segmentos polinomiais; os cards abaixo ficam de fora.
 
+- `hidreletrica_curvajusante · nivel_montante_referencia` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
+- `hidreletrica_curvajusante · nivel_montante_referencia` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `hidreletrica_curvajusante_polinomio_segmento · codigo_usina` → `system/tailrace_curves.parquet` › `hydro_id`
 - `hidreletrica_curvajusante_polinomio_segmento · indice_familia` → `system/tailrace_curves.parquet` › `family_id`
 - `hidreletrica_curvajusante · nivel_montante_referencia` → `system/tailrace_curves.parquet` › `downstream_reference_level_m`
@@ -1949,6 +2051,10 @@ Famílias de curvas de jusante das LIBs. O conversor lê o cadastro das família
 - `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a2` → `system/tailrace_curves.parquet` › `coefficient_2`
 - `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a3` → `system/tailrace_curves.parquet` › `coefficient_3`
 - `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a4` → `system/tailrace_curves.parquet` › `coefficient_4`
+- `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
+- `hidreletrica_curvajusante · nivel_montante_referencia` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `hidreletrica_curvajusante_polinomio` — *não lido.* Cabeçalho de polinômio por família. Não lido: os segmentos trazem os coeficientes diretamente.
 - `hidreletrica_curvajusante_afogamentoexplicito_padrao` — *não lido.* Habilitação padrão do tratamento de afogamento explícito. Não lida: o Novomodelo escolhe a família pela defluência de jusante sem afogamento explícito.
 - `hidreletrica_curvajusante_afogamentoexplicito_usina` — *não lido.* Habilitação do afogamento explícito por usina. Não lida; ver o card padrão.
@@ -2017,10 +2123,6 @@ Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de f
 
 Nomeia a revisão (`rv0`, `rv1`, ...) cujo índice lista os arquivos de dados. Lido apenas para localizar os demais arquivos do deck.
 
-### `mlt.dat`
-
-**Estado:** lido, não convertido. **Lido por:** `boundary/`.
-
 ### `prevs.rvN`
 
 **Estado:** não lido.
@@ -2058,7 +2160,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 
 ### Registros e campos do deck não convertidos
 
-- `dadger.rvN` › `VI` — *adiado.* Tempo de viagem da água até a usina de jusante e defluências das semanas anteriores ao estudo. O conversor lê o registro e monta `travel_time_hours` e `initial_conditions.past_defluences`, mas a emissão está desligada por um defeito na geração de cortes com água em trânsito no novomodelo (gap rastreado C-travel-time): o `convert decomp` apenas avisa `deferred at this milestone: water travel time (VI present)`.
 - `dadger.rvN` › `FE` — *adiado.* Coeficientes de participação elétrica de uma restrição `RE`. O idecomp não expõe leitor para este registro; o bridge detecta sua presença por varredura textual e emite `decomp-fe-participation-unreadable`, pois uma `RE` com termo `FE` fica sub-lida. Converter exige um leitor próprio e o descarte, por restrição, das `RE` que carregam `FE`.
 - `dadger.rvN` › `HA` — *adiado.* Cadastro da família de restrições `HA`/`LA`/`CA` (declaração, limites e coeficientes), sem leitor no idecomp. Detectada por varredura textual; diagnóstico `decomp-rha-family-unconverted`. Converter exige leitor próprio e um emissor equivalente ao das famílias `RE`/`HQ`/`HV`.
 - `dadger.rvN` › `LA` — *adiado.* Limites por estágio da família `HA`/`LA`/`CA`; ver `HA`.
@@ -2068,7 +2169,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `AC` › `COTARE` — *adiado.* Alteração de um coeficiente do polinômio cota-área. Lido pelo `check decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA.
 - `dadger.rvN` › `AC` › `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Lido pelo `check decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `dadger.rvN` › `AC` › `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
-- `dadger.rvN` › `AC` › `NPOSNW` — *adiado.* Alteração do posto de acoplamento com o NEWAVE. Lido pelo `check decomp`, sem consumidor: o acoplamento da FCF de fronteira usa o `posto` de `hidr.dat` (com `NUMPOS`) e o registro `CX`.
 - `dadger.rvN` › `AC` › `TIPERH` — *adiado.* Alteração do tipo de perdas hidráulicas. Lido pelo `check decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade.
 - `dadger.rvN` › `AC` › `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante.
 - `dadger.rvN` › `CE` › `fator_perdas` — *adiado.* Fator de perdas do contrato de exportação. Lido e ignorado com o diagnóstico `contract-loss-factor-unmapped`: `energy_contracts` do Novomodelo não tem campo equivalente e o fator não é dobrado no preço nem nos limites.
@@ -2085,9 +2185,10 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `HE` › `arquivo_produtibilidades` — *não lido.* Arquivo externo de produtibilidades da restrição; capturado e não consumido, e o arquivo nunca é aberto.
 - `dadger.rvN` › `HE` › `tipo_penalidade` — *não lido.* Tipo da penalidade da restrição de energia; só `valor_penalidade` é usado como penalidade da folga.
 - `dadger.rvN` › `DA` — *não lido.* Retiradas de água para outros usos (desvios) por UHE: usina de retirada, usina de retorno, vazão desviada, percentual de retorno e custo, por estágio. Não lido. Converter exige mapear a retirada para o canal de desvio da usina no Novomodelo e o retorno como afluência à usina de destino.
-- `dadger.rvN` › `EA` — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN` e de `mlt.dat`.
+- `dadger.rvN` › `EA` — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN`.
 - `dadger.rvN` › `ES` — *não lido.* ENA das semanas anteriores ao estudo, por REE. Não lido, pelo mesmo motivo de `EA`.
-- `dadger.rvN` › `FP` — *não lido.* Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela igual à envoltória de armazenamento da usina.
+- `dadger.rvN` › `FP` › `janela de turbinamento, número de pontos de discretização` — *não lido.* Não convertidos: o Novomodelo ajusta cada usina de zero ao seu turbinamento máximo, com a sua própria discretização. O diagnóstico `decomp-fp-fit-fields-unconverted` lista os registros que fogem dos valores padrão do DECOMP. A janela de volume é lida (ver `fitting_window`).
+- `dadger.rvN` › `FP` › `janela de geração hidráulica, tolerância` — *não lido.* Campos 12 a 14 do `FP`. Não lidos: sem contrapartida no ajuste da FPHA do Novomodelo.
 - `dadger.rvN` › `IR` — *não lido.* Opções de geração de relatórios de saída do DECOMP. Sem contrapartida no caso Novomodelo.
 - `dadger.rvN` › `MT` — *não lido.* Manutenções programadas das UTEs (fator por estágio). Não lido: a disponibilidade térmica vem só de `CT`. Converter exige multiplicar `disponibilidade` pelo fator ao emitir `thermal_bounds.parquet`.
 - `dadger.rvN` › `PD` — *não lido.* Escolha do algoritmo de solução do PL. Parâmetro do solver do DECOMP; sem contrapartida.

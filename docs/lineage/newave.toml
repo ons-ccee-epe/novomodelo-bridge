@@ -1568,8 +1568,9 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "confhd", item = "usina_existente" },
     { file = "exph", item = "data_entrada_operacao" },
     { file = "exph", item = "conjunto_maquina_entrada" },
+    { file = "dger", item = "funcao_producao_uhe" },
   ]
-  how = "Engolimento máximo na queda de operação: soma por conjunto de `n · vazao_nominal · (h_op / queda_nominal)^k` (k = 0,5 para Francis/Pelton, 0,2 para Kaplan), limitada por `potência instalada / (ρ_esp · h_op)` e multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. `h_op` é a queda líquida média entre `volume_minimo` e 65% do volume útil (regulação `M`) ou na cota de `volume_referencia` (`D`/`S`), descontados canal de fuga e perdas. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final, com todas as máquinas em operação; a rampa até ela vai para `hydro_bounds.parquet`. Para usina com `CFUGA`/`CMONT` ou linha em `volref_saz.dat`, o valor é elevado ao máximo dos limites por estágio emitidos em `hydro_bounds.parquet`, pois o Novomodelo não admite limite por estágio acima do declarado."
+  how = "Usina `fpha` em caso FPHA (`funcao_producao_uhe = 0`): soma por conjunto de `n · vazao_nominal`, multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)` e sem correção pela queda, o limite que o NEWAVE aplica sob FPHA. Demais usinas: engolimento máximo na queda de operação, soma por conjunto de `n · vazao_nominal · (h_op / queda_nominal)^k` (k = 0,5 para Francis/Pelton, 0,2 para Kaplan), limitada por `potência instalada / (ρ_esp · h_op)` e multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. `h_op` é a queda líquida média entre `volume_minimo` e 65% do volume útil (regulação `M`) ou na cota de `volume_referencia` (`D`/`S`), descontados canal de fuga e perdas. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final, com todas as máquinas em operação; a rampa até ela vai para `hydro_bounds.parquet`. Para usina de produtibilidade constante com `CFUGA`/`CMONT` ou linha em `volref_saz.dat`, o valor é elevado ao máximo dos limites por estágio emitidos em `hydro_bounds.parquet`, pois o Novomodelo não admite limite por estágio acima do declarado."
 
   [[output.field]]
   path = "hydros[].generation.min_generation_mw"
@@ -1590,7 +1591,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "exph", item = "data_entrada_operacao" },
     { file = "exph", item = "conjunto_maquina_entrada" },
   ]
-  how = "Potência instalada nominal: soma por conjunto de `maquinas_conjunto · potencia_nominal_conjunto` (potência do conjunto sobrescrita pelo registro permanente `POTEFE` de `modif.dat`), sem desconto de `teif`/`ip` (o teto GHmax da FPHA do NEWAVE). Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final: a de `modif.dat` no início do estudo mais as máquinas que entram, até o total de `hidr.dat`."
+  how = "Potência instalada nominal: soma por conjunto de `maquinas_conjunto · potencia_nominal_conjunto` (potência do conjunto sobrescrita pelo registro permanente `POTEFE` de `modif.dat`), sem desconto de `teif`/`ip` (o teto GHmax da FPHA do NEWAVE). Em caso FPHA, a potência disponível das usinas `fpha` vai, por estágio, para `hydro_bounds.parquet`. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final: a de `modif.dat` no início do estudo mais as máquinas que entram, até o total de `hidr.dat`."
 
   [[output.field]]
   path = "hydros[].unit_groups[].id"
@@ -1820,10 +1821,12 @@ reads = [
   { file = "modif" },
   { file = "confhd" },
   { file = "exph" },
-  { file = "volref_saz" },
+  { file = "volumes_referencia" },
   { file = "tratamento_fpha" },
+  { file = "vazoes" },
+  { file = "polinjus" },
 ]
-summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante) e o volume de referência; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`."
+summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante), o volume de referência e, nas usinas FPHA, as faixas de vertimento e de turbinamento do ajuste; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`."
 
   [[output.field]]
   path = "production_models[].hydro_id"
@@ -1835,21 +1838,23 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   path = "production_models[].selection_mode"
   from = [
     { file = "dger", item = "funcao_producao_uhe" },
-    { file = "volref_saz", item = "valor" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "volumes_referencia", item = "VOLUME-REFERENCIAL-TIPO-PADRAO · tipo_referencia" },
+    { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" },
   ]
-  how = "`seasonal` quando o caso é FPHA (`funcao_producao_uhe = 0`) e a usina tem linha não nula em `volref_saz.dat` (FPHA ou não, pois o Novomodelo lê o volume de referência da usina de jusante para o remanso); `stage_ranges` nos demais casos."
+  how = "`seasonal` quando o caso é FPHA (`funcao_producao_uhe = 0`) e a série por estágio da usina (o volume de referência da FPHA e, nas usinas `fpha`, a faixa de turbinamento que dele depende) se repete a cada mês civil, com os doze meses presentes no horizonte; `stage_ranges` nos demais casos."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].start_stage_id"
-  from = []
-  status = "constant"
-  how = "Sempre 0: uma única faixa cobre todo o horizonte."
+  from = [ { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" } ]
+  status = "derived"
+  how = "Primeiro estágio (0-based) de uma sequência de estágios com o mesmo modelo, volume de referência e configuração de ajuste: 0 na primeira faixa, e uma faixa só quando todos os estágios coincidem (sempre o caso fora da FPHA)."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].end_stage_id"
-  from = []
-  status = "null"
-  how = "Sempre nulo: a faixa única é aberta até o fim do horizonte."
+  from = [ { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" } ]
+  status = "derived"
+  how = "Último estágio (0-based, inclusive) da sequência; nulo na última faixa, aberta até o fim do horizonte."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].model"
@@ -1888,28 +1893,90 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   how = "Limite superior da janela de ajuste: `volume_maximo` para regulação `M`; `volume_referencia` para `D`/`S`."
 
   [[output.field]]
-  path = "production_models[].stage_ranges[].reference_volume.percentile"
-  from = []
-  status = "constant"
-  how = "Sempre 0.65 (altura a 65% do volume útil, convenção do NEWAVE e padrão do Novomodelo). Presente só em faixas `fpha` de usina sem linha em `volref_saz.dat`."
+  path = "production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s"
+  when = "somente em faixas `fpha` de usina cujo posto (não artificial) tem média mensal positiva no histórico"
+  from = [
+    { file = "vazoes", item = "1..N (coluna por posto)" },
+    { file = "confhd", item = "posto" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "ano_inicial_historico" },
+  ]
+  status = "derived"
+  how = "Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal, por mês-calendário, da vazão natural do posto da usina em `vazoes.dat`, sobre o mesmo histórico de `scenarios/inflow_history.parquet` (até o mês anterior ao início do estudo). É a regra do DECOMP com a média de longo termo do `mlt.dat`. Omitido no posto artificial 300 e num posto de média nula: o Novomodelo usa então o dobro do engolimento máximo da usina."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s"
+  when = "somente em faixas `fpha` de usina com volume de referência da FPHA, `produtibilidade_especifica` positiva e queda líquida positiva"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "perdas" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "tipo_turbina" },
+    { file = "hidr", item = "numero_conjuntos_maquinas" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "vazao_nominal_conjunto_1 … vazao_nominal_conjunto_5" },
+    { file = "hidr", item = "queda_nominal_conjunto_1 … queda_nominal_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "hidr", item = "codigo_usina_jusante" },
+    { file = "modif", item = "NUMCNJ · numero" },
+    { file = "modif", item = "NUMMAQ · numero_maquinas" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "confhd", item = "codigo_usina" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "confhd", item = "volume_inicial_percentual" },
+    { file = "exph", item = "data_entrada_operacao" },
+    { file = "exph", item = "conjunto_maquina_entrada" },
+    { file = "volumes_referencia", item = "VOLUME-REFERENCIAL-TIPO-PADRAO · tipo_referencia" },
+    { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" },
+    { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE · nivel_montante_referencia" },
+    { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a0 … coeficiente_a4" },
+  ]
+  status = "derived"
+  how = "Limite superior, em m³/s, da faixa de turbinamento sobre a qual o Novomodelo ajusta os hiperplanos do estágio, a regra do `fpha_eco` do NEWAVE: soma por conjunto de `n · min(vazao_nominal · (h_t / queda_nominal)^k, potencia_nominal / (ρ_esp · h_g))`, sem disponibilidade (`teif`/`ip`). `h_g` é a queda líquida da cota média sobre a faixa de operação (de `volume_minimo` a `volume_maximo` para `M`, a cota de `volume_referencia` para `D`/`S`) ao `canal_fuga_medio`. `h_t` parte da cota do volume de referência da FPHA do estágio (`reference_volume.volume_hm3`) e desce até o nível de jusante de `polinjus.csv` na própria vazão (ponto fixo), com a família interpolada no nível da usina que o cadastro do `hidr.dat` põe a jusante (`codigo_usina_jusante`) no menor volume de operação dela (`volume_referencia` para `D`/`S`, `volume_minimo` para `M`); quando essa usina não está no `confhd.dat`, vale a família de menor nível. Sem família em `polinjus.csv`, `h_t` desce até `canal_fuga_medio`. Usina `EE` usa a configuração final de máquinas. O valor muda de estágio quando o volume de referência muda."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].reference_volume.volume_hm3"
+  when = "somente em caso FPHA (`funcao_producao_uhe = 0`), para usina `fpha` ou não, pois o Novomodelo lê o volume de referência da usina de jusante para o remanso"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "modif", item = "VOLMIN · volume" },
+    { file = "modif", item = "VOLMAX · volume" },
+    { file = "confhd", item = "volume_inicial_percentual" },
+    { file = "volumes_referencia", item = "VOLUME-REFERENCIAL-TIPO-PADRAO · tipo_referencia" },
+    { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" },
+  ]
+  status = "derived"
+  how = "Volume de referência da FPHA no estágio, em hm³, pela regra do modelo de origem. Usinas `D`/`S` usam `volume_referencia` e têm suas linhas de `volumes-referencia.csv` ignoradas. Usinas `M`, com `VOLUME-REFERENCIAL-TIPO-PADRAO = 1`, usam a linha `CADH-VOL-REF-PER` que cobre o mês do estágio (de `data_inicio` a `data_fim`, ambos inclusive), ou `volume_referencia` quando não têm linha; sem o arquivo, com o tipo 0 ou sem o registro, usam o armazenamento inicial `volume_minimo + volume_inicial_percentual/100 · (volume_maximo − volume_minimo)` em todos os estágios. Linhas que deixam um estágio descoberto ou dão dois valores para o mesmo mês da usina interrompem a conversão, como interrompem o modelo de origem. O valor pode ficar fora de [`volume_minimo`, `volume_maximo`] e a geometria da usina se estende até ele: é a cota de montante da faixa de turbinamento da própria usina e o volume em que o Novomodelo lê o nível de jusante da usina a montante. `volref_saz.dat` e os registros temporais de `modif.dat` não o alteram."
 
   [[output.field]]
   path = "production_models[].default_model"
-  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil"
   from = []
   status = "constant"
   how = "Sempre `constant_productivity`: as doze estações são listadas, logo o padrão nunca é consultado."
 
   [[output.field]]
   path = "production_models[].seasons[].season_id"
-  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
-  from = [ { file = "volref_saz", item = "mes" } ]
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil"
+  from = [ { file = "dger", item = "mes_inicio_estudo" } ]
   status = "derived"
-  how = "`mes − 1` (0 = janeiro), alinhado ao mapa de estações de `stages.json`."
+  how = "Mês civil − 1 (0 = janeiro), alinhado ao mapa de estações de `stages.json`."
 
   [[output.field]]
   path = "production_models[].seasons[].model"
-  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil"
   from = [
     { file = "dger", item = "funcao_producao_uhe" },
     { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
@@ -1920,26 +1987,24 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
 
   [[output.field]]
   path = "production_models[].seasons[].reference_volume.volume_hm3"
-  when = "somente em caso FPHA para usina com linha não nula em `volref_saz.dat`"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil"
   from = [
-    { file = "volref_saz", item = "valor" },
-    { file = "hidr", item = "volume_minimo" },
-    { file = "hidr", item = "volume_maximo" },
-    { file = "modif", item = "VOLMIN · volume" },
-    { file = "modif", item = "VOLMAX · volume" },
+    { file = "volumes_referencia", item = "VOLUME-REFERENCIAL-TIPO-PADRAO · tipo_referencia" },
+    { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" },
   ]
-  how = "Volume de referência absoluto do mês: `volume_minimo + valor` (volume útil sazonal; mês ausente ou zero significa operar em `volume_minimo`), limitado a [`volume_minimo`, `volume_maximo`]."
+  status = "derived"
+  how = "Igual a `stage_ranges[].reference_volume.volume_hm3` nos estágios do mês civil da estação."
 
   [[output.field]]
   path = "production_models[].seasons[].fpha_config.source"
-  when = "somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil, se `fpha`"
   from = []
   status = "constant"
   how = "Sempre `computed`."
 
   [[output.field]]
   path = "production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3"
-  when = "somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil, se `fpha`"
   from = [
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_minimo" },
@@ -1950,7 +2015,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
 
   [[output.field]]
   path = "production_models[].seasons[].fpha_config.fitting_window.volume_max_hm3"
-  when = "somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil, se `fpha`"
   from = [
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_maximo" },
@@ -1958,6 +2023,28 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
     { file = "modif", item = "VOLMAX · volume" },
   ]
   how = "Igual a `stage_ranges[].fpha_config.fitting_window.volume_max_hm3`, repetido em cada estação."
+
+  [[output.field]]
+  path = "production_models[].seasons[].fpha_config.spillage_fit_max_m3s"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil, se `fpha` e com posto de média mensal positiva"
+  from = [
+    { file = "vazoes", item = "1..N (coluna por posto)" },
+    { file = "confhd", item = "posto" },
+  ]
+  status = "derived"
+  how = "Igual a `stage_ranges[].fpha_config.spillage_fit_max_m3s`, repetido em cada estação."
+
+  [[output.field]]
+  path = "production_models[].seasons[].fpha_config.turbined_fit_max_m3s"
+  when = "somente em caso FPHA para usina cuja série por estágio se repete a cada mês civil, se `fpha` e com faixa de turbinamento positiva"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "codigo_usina_jusante" },
+    { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" },
+    { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a0 … coeficiente_a4" },
+  ]
+  status = "derived"
+  how = "Igual a `stage_ranges[].fpha_config.turbined_fit_max_m3s` nos estágios do mês civil da estação."
 
   [[output.field]]
   path = "fpha_plane_reduction.method"
@@ -1997,8 +2084,9 @@ reads = [
   { file = "modif" },
   { file = "confhd" },
   { file = "exph" },
+  { file = "volumes_referencia" },
 ]
-summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes entre `volume_minimo` e `volume_maximo` (um único ponto quando iguais); usinas com polinômio cota-volume nulo são omitidas com aviso."
+summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes na faixa de armazenamento em que a usina opera, estendida até cobrir os volumes de referência da FPHA (um único ponto quando ela se reduz a um volume); usinas com polinômio cota-volume nulo são omitidas com aviso."
 
   [[output.field]]
   path = "hydro_id"
@@ -2011,10 +2099,14 @@ summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniform
   from = [
     { file = "hidr", item = "volume_minimo" },
     { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
     { file = "modif", item = "VOLMIN · volume" },
     { file = "modif", item = "VOLMAX · volume" },
+    { file = "confhd", item = "volume_inicial_percentual" },
+    { file = "volumes_referencia", item = "CADH-VOL-REF-PER · codigo_usina · data_inicio · data_fim · volume_referencia" },
   ]
-  how = "Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto em `volume_minimo` quando a faixa é nula. Não aplica o colapso das usinas `D`/`S` feito em `hydros.json`."
+  how = "Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto quando a faixa é nula. Usinas `tipo_regulacao` D e S recebem um único ponto em `volume_referencia`, o mesmo colapso dos limites de `hydros.json`, mesmo fora de [`volume_minimo`, `volume_maximo`]: a cota nesse volume é a de montante da usina e o nível de jusante da usina a montante (faixa completa se ausente). Em caso FPHA, a faixa das demais usinas se estende até o menor e o maior volume de referência da FPHA (`production_models[].stage_ranges[].reference_volume.volume_hm3`) quando eles saem de [`volume_minimo`, `volume_maximo`]: o polinômio cota-volume é avaliado fora da faixa, como faz o modelo de origem ao ler ali a cota de montante da usina e o nível de jusante da usina a montante."
 
   [[output.field]]
   path = "height_m"
@@ -2207,7 +2299,7 @@ summary = "Famílias de curvas de nível de jusante (polinômios por partes na v
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma fonte produz linhas: `dsvagua.dat` com desvios (e `outros_usos_da_agua` de `dger.dat` diferente de 0), registros temporais `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat`, ou usina com `CFUGA`/`CMONT`/linha em `volref_saz.dat`"
+when = "somente quando ao menos uma fonte produz linhas: `dsvagua.dat` com desvios (e `outros_usos_da_agua` de `dger.dat` diferente de 0), registros temporais `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat`, usina com `CFUGA`/`CMONT`/linha em `volref_saz.dat`, ou usina `fpha` em caso FPHA"
 module = "src/novomodelo_bridge/newave/converters/hydro/bounds.py"
 reads = [
   { file = "dsvagua" },
@@ -2219,7 +2311,7 @@ reads = [
   { file = "exph" },
   { file = "volref_saz" },
 ]
-summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`, resultado da junção externa de três tabelas: retirada de água (`dsvagua.dat`), limites temporais (`modif.dat`, `ghmin.dat`, rampa de máquinas de `exph.dat`) e turbinamento máximo corrigido pela queda por estágio (`CFUGA`/`CMONT`/`volref_saz.dat`). Colunas de máximo acima do valor declarado em `hydros.json` são limitadas ao declarado, com aviso. A coluna `max_generation_mw` só existe quando há usina NE em enchimento ou usina EE com entrada de máquinas."
+summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`, resultado da junção externa de três tabelas: retirada de água (`dsvagua.dat`), limites temporais (`modif.dat`, `ghmin.dat`, rampa de máquinas de `exph.dat`) e limites de capacidade por estágio (turbinamento máximo corrigido pela queda, com `CFUGA`/`CMONT`/`volref_saz.dat`, e, em caso FPHA, a potência disponível das usinas `fpha`). Colunas de máximo acima do valor declarado em `hydros.json` são limitadas ao declarado, com aviso. A coluna `max_generation_mw` só existe quando há usina NE em enchimento, usina EE com entrada de máquinas ou usina `fpha`."
 
   [[output.field]]
   path = "hydro_id"
@@ -2244,6 +2336,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "water_withdrawal_m3s"
+  when = "somente quando `dsvagua.dat` tem desvios e `outros_usos_da_agua` de `dger.dat` é diferente de 0 (a coluna é omitida nos demais casos)"
   from = [
     { file = "dsvagua", item = "codigo_usina" },
     { file = "dsvagua", item = "data" },
@@ -2255,6 +2348,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "min_storage_hm3"
+  when = "somente quando o caso tem registro temporal `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, linha em `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat` (a coluna é omitida nos demais casos)"
   from = [
     { file = "modif", item = "VMINT · volume, unidade" },
     { file = "modif", item = "VMINT · data_inicio" },
@@ -2268,6 +2362,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "max_storage_hm3"
+  when = "somente quando o caso tem registro temporal `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, linha em `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat` (a coluna é omitida nos demais casos)"
   from = [
     { file = "modif", item = "VMAXT · volume, unidade" },
     { file = "modif", item = "VMAXT · data_inicio" },
@@ -2281,6 +2376,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "min_turbined_m3s"
+  when = "somente quando o caso tem registro temporal `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, linha em `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat` (a coluna é omitida nos demais casos)"
   from = [
     { file = "dger", item = "restricao_turbinamento" },
     { file = "modif", item = "TURBMINT · turbinamento" },
@@ -2290,6 +2386,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "max_turbined_m3s"
+  when = "somente quando o caso tem fonte de limites temporais (registro de `modif.dat`, linha em `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas) ou de limites de capacidade por estágio (`CFUGA`/`CMONT`/linha em `volref_saz.dat` ou usina `fpha`); a coluna é omitida nos demais casos"
   from = [
     { file = "dger", item = "restricao_turbinamento" },
     { file = "modif", item = "TURBMAXT · turbinamento" },
@@ -2311,11 +2408,13 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "exph", item = "conjunto_maquina_entrada" },
     { file = "exph", item = "data_inicio_enchimento" },
     { file = "exph", item = "duracao_enchimento" },
+    { file = "dger", item = "funcao_producao_uhe" },
   ]
-  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o engolimento corrigido pela queda com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, o engolimento corrigido pela queda do estágio (`h = ρ_eq / ρ_esp`, com `CFUGA`/`CMONT` e `volref_saz.dat`), pela mesma fórmula de `hydros[].generation.max_turbined_m3s`, com as máquinas em operação no estágio para usina `EE`; usina `EE` sem queda por estágio recebe linha só nos estágios anteriores à entrada da última máquina de `exph.dat`, na mesma queda de referência do valor declarado. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o limite de `hydros[].generation.max_turbined_m3s` com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, para usina de produtibilidade constante, o engolimento corrigido pela queda do estágio (`h = ρ_eq / ρ_esp`, com `CFUGA`/`CMONT` e `volref_saz.dat`), pela mesma fórmula de `hydros[].generation.max_turbined_m3s`, com as máquinas em operação no estágio para usina `EE`; usina `EE` sem queda por estágio, e toda usina `EE` `fpha` (cujo limite não depende da queda), recebe linha só nos estágios anteriores à entrada da última máquina de `exph.dat`, pela regra do valor declarado. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
 
   [[output.field]]
   path = "min_outflow_m3s"
+  when = "somente quando o caso tem registro temporal `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, linha em `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat` (a coluna é omitida nos demais casos)"
   from = [
     { file = "dger", item = "desconsidera_vazao_minima" },
     { file = "modif", item = "VAZMINT · vazao" },
@@ -2326,6 +2425,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "min_generation_mw"
+  when = "somente quando o caso tem registro temporal `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, linha em `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat` (a coluna é omitida nos demais casos)"
   from = [
     { file = "dger", item = "considera_ghmin" },
     { file = "ghmin", item = "codigo_usina" },
@@ -2338,8 +2438,11 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "max_generation_mw"
-  when = "somente quando o caso tem usina NE com registro de enchimento ou usina EE com entrada de máquinas em `exph.dat` (a coluna é omitida nos demais casos)"
+  when = "somente quando o caso tem usina NE com registro de enchimento, usina EE com entrada de máquinas em `exph.dat` ou usina `fpha` (a coluna é omitida nos demais casos)"
   from = [
+    { file = "dger", item = "funcao_producao_uhe" },
+    { file = "hidr", item = "teif" },
+    { file = "hidr", item = "ip" },
     { file = "exph", item = "data_entrada_operacao" },
     { file = "exph", item = "conjunto_maquina_entrada" },
     { file = "exph", item = "data_inicio_enchimento" },
@@ -2351,7 +2454,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "modif", item = "NUMCNJ · numero" },
     { file = "modif", item = "NUMMAQ · numero_maquinas" },
   ]
-  how = "Potência nominal (MW) das máquinas em operação em cada estágio anterior à entrada da última máquina: soma de `n_online · potencia_nominal_conjunto` por conjunto. Para usina NE, 0 antes do fim do enchimento; para usina EE, a configuração de `modif.dat` no início do estudo mais as máquinas de `exph.dat` já entradas, na mesma linha de qualquer limite de `modif.dat`/`ghmin.dat` do estágio. Nulo nas demais linhas de `modif.dat`/`ghmin.dat`. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+  how = "Potência nominal (MW) das máquinas em operação em cada estágio anterior à entrada da última máquina: soma de `n_online · potencia_nominal_conjunto` por conjunto. Para usina NE, 0 antes do fim do enchimento; para usina EE, a configuração de `modif.dat` no início do estudo mais as máquinas de `exph.dat` já entradas, na mesma linha de qualquer limite de `modif.dat`/`ghmin.dat` do estágio. Usina `fpha` recebe linha em todo estágio, com a potência das máquinas em operação multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`: o NEWAVE limita a geração sob FPHA à potência disponível, abaixo da potência nominal que `hydros.json` declara como teto do ajuste. Nulo nas demais linhas de `modif.dat`/`ghmin.dat`. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
 
 # ===== frag_C_nw_scenarios_constraints =====
 # Fragment C — NEWAVE: scenarios/* e constraints/generic_constraint*.
@@ -3080,12 +3183,6 @@ label = "eliminacao-cortes.dat"
 status = "unread"
 note = "Parâmetros do algoritmo de eliminação de cortes de Benders. O bridge espelha apenas o liga/desliga da seleção de cortes (`selecao_de_cortes_*` de `dger.dat`) em `config.json`; os parâmetros finos ficam nos defaults do Novomodelo."
 
-[[source]]
-file = "volumes_referencia"
-label = "volumes-referencia.csv"
-status = "unread"
-note = "Arquivo LIBs apontado por `indices.csv` (chave `HIDRELETRICA-CADASTRO-RESERVATORIO`) com `VOLUME-REFERENCIAL-TIPO-PADRAO` e `CADH-VOL-REF-PER` (volume de referência por usina e período). O bridge deriva o volume de referência de `hidr.dat` (`volume_referencia`) e de `volref_saz.dat`; a chave não é seguida em `indices.csv`."
-
 # ---------------------------------------------------------------------------
 # Arquivos resolvidos: registros/colunas não convertidos
 # ---------------------------------------------------------------------------
@@ -3189,9 +3286,9 @@ file = "hidr"
 note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alimentam nenhuma saída."
 
   [[source.item]]
-  item = "posto · submercado · codigo_usina_jusante (do cadastro)"
+  item = "posto · submercado (do cadastro)"
   status = "unread"
-  note = "Posto, submercado e jusante são tomados de `confhd.dat` (jusante) e de `ree.dat` via o REE de `confhd.dat` (barra); as colunas homônimas do cadastro são ignoradas."
+  note = "Posto e submercado são tomados de `confhd.dat` e de `ree.dat` via o REE de `confhd.dat` (barra); as colunas homônimas do cadastro são ignoradas. A topologia da cascata vem do `codigo_usina_jusante` do `confhd.dat`; o do cadastro só localiza o nível de jusante da faixa de turbinamento da FPHA."
 
   [[source.item]]
   item = "numero_polinomios_jusante · a0..a4_jusante_1..6 · referencia_jusante_1..6"
@@ -3355,7 +3452,7 @@ note = "Fornece o conjunto de usinas e os limites superiores das restrições el
 
 [[source]]
 file = "volref_saz"
-note = "Lido integralmente. Uma linha inteiramente zerada é tratada como ausência de referência sazonal (a usina recai em `volume_referencia`/altura 65%)."
+note = "Lido integralmente. Uma linha inteiramente zerada é tratada como ausência de referência sazonal (a usina recai em `volume_referencia`/altura 65%). Alimenta a evaporação, a produtibilidade equivalente e o engolimento máximo, nunca o volume de referência da FPHA (`volumes-referencia.csv`)."
 
 [[source]]
 file = "shist"
@@ -3364,6 +3461,10 @@ note = "Lido integralmente. `varredura`, `ano_inicio_varredura` e `anos_inicio_s
 [[source]]
 file = "adterm"
 note = "Lido integralmente quando `despacho_antecipado_gnl ≠ 0`; despachos por patamar são ponderados pela duração dos patamares e lags além do horizonte são truncados com aviso."
+
+[[source]]
+file = "volumes_referencia"
+note = "Localizado pela chave `HIDRELETRICA-CADASTRO-RESERVATORIO` de `indices.csv` e lido em caso FPHA. `VOLUME-REFERENCIAL-TIPO-PADRAO` liga (1) ou desliga (0) as linhas `CADH-VOL-REF-PER`, que dão o volume de referência da FPHA das usinas `M` por período; não alimenta a evaporação nem a produtibilidade equivalente, que seguem `volref_saz.dat`."
 
 [[source]]
 file = "polinjus"
@@ -3382,7 +3483,7 @@ note = "Localizado pela chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` 
   [[source.item]]
   item = "VolumeReferencialPeriodo · VolumeReferencialTipoPadrao"
   status = "unread"
-  note = "Volumes de referência por período. O volume de referência vem de `hidr.dat`/`volref_saz.dat`."
+  note = "Volumes de referência por período neste arquivo. O bridge, como o modelo de origem, os lê do arquivo da chave `HIDRELETRICA-CADASTRO-RESERVATORIO` (`volumes-referencia.csv`)."
 
 [[source]]
 file = "tratamento_fpha"

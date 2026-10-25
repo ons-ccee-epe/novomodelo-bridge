@@ -56,6 +56,8 @@ class DecompFiles:
     cortes: Path | None = None
     #: The LIBS index file ``FA`` names; ``None`` when ``dadger`` has no ``FA``.
     libs_index: Path | None = None
+    #: The per-posto monthly long-term mean inflows (``mlt.dat``).
+    mlt: Path | None = None
 
     @property
     def fixed_column_files(self) -> list[Path]:
@@ -228,6 +230,7 @@ def discover_decomp_files(src: Path) -> DecompFiles:
     vazoes = find("vazoes", required=True)
     hidr = find("hidr", required=True)
     dadgnl = find("dadgnl", required=False)
+    mlt = find("mlt", required=False)
     assert dadger is not None and vazoes is not None and hidr is not None
     fa_names, fj_names = _libs_registers(dadger)
     libs_index = _register_file(fa_names, "FA", src)
@@ -261,6 +264,7 @@ def discover_decomp_files(src: Path) -> DecompFiles:
         cortesh=cortesh,
         cortes=cortes,
         libs_index=libs_index,
+        mlt=mlt,
     )
 
 

@@ -36,9 +36,10 @@ from typing import Any
 
 import numpy as np
 
-from novomodelo_bridge.core.units import C_M3S2HM3, MONTH_HOURS
+from novomodelo_bridge.core.units import C_M3S2HM3, MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
 from novomodelo_bridge.decomp.fcf.cortes import StageCutRecord
+from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests._fcf_fixtures import (
     make_boundary_cuts,
@@ -152,45 +153,35 @@ def _theta_source(
     records: Sequence[StageCutRecord],
     resolved: Mapping[int, tuple[int, int, dict[int, int]]],
     state: _PhysicalState,
-    cost_unit_hours: float,
+    storage_floors: Mapping[int, float],
 ) -> float:
-    """``max_k(rhs_k + pi_varm_k . storage + pi_qafl_k . inflow)`` over active
-    source records, restricted to resolved plants and present lag slots —
-    the independent oracle AC 4 cross-evaluates against ``_theta_novomodelo``.
+    """The source model's own cut evaluation over active records.
 
-    Terms are scaled per family to match the mapper's cost-unit conversion
-    (``fcf.mapper``), since the authored (reloaded) cut ``_theta_novomodelo`` reads
-    is in novomodelo cost units: the intercept and storage by ``cost_unit_hours``
-    (the ``($·mês)/h -> $`` integration over the coupling stage's hours), and
-    the inflow-lag additionally by ``C_M3S2HM3`` (the Hm³<-m³/s factor for
-    novomodelo's m³/s lag state). ``cost_unit_hours`` is the same value the mapper
-    was given (MONTH_HOURS for the synthetic fixtures below).
+    ``max_k MEAN_MONTH_HOURS · (rhs_k + Σ pi_varm_k · (V − floor) +
+    Σ pi_qafl_k · Q · C_M3S2HM3)``, restricted to resolved plants and present
+    lag slots; ``storage_floors`` is keyed by source plant index.
     """
-    lag_factor = cost_unit_hours * C_M3S2HM3
     best = float("-inf")
     for record in records:
         if not record.is_active:
             continue
-        value = record.rhs * cost_unit_hours
+        value = record.rhs
         for plant_index, (
             _hydro_id,
             _storage_position,
             lag_positions,
         ) in resolved.items():
-            value += (
-                record.pi_varm[plant_index]
-                * state.storage.get(plant_index, 0.0)
-                * cost_unit_hours
+            value += record.pi_varm[plant_index] * (
+                state.storage.get(plant_index, 0.0) - storage_floors[plant_index]
             )
             plant_lags = record.pi_qafl[plant_index]
             for depth in lag_positions:
                 value += (
                     plant_lags[depth - 1]
                     * state.inflow.get((plant_index, depth), 0.0)
-                    * lag_factor
+                    * C_M3S2HM3
                 )
-        if value > best:
-            best = value
+        best = max(best, value * MEAN_MONTH_HOURS)
     return best
 
 
@@ -244,7 +235,7 @@ def _synthetic_two_plant_case() -> tuple[
                 make_slot(_HYDRO_INFLOW_LAG, 1, lag)  # positions 14..25
                 for lag in range(12)
             ],
-            make_slot(_HYDRO_TRANSIT_BUCKET, 0, 0),  # position 26: unmapped
+            make_slot(_HYDRO_TRANSIT_BUCKET, 2, 0),  # position 26
         ]
     )
     return plant_codes, id_map, manifest
@@ -302,14 +293,15 @@ def test_synthetic_roundtrip_coefficient_identity(tmp_path: Path) -> None:
     assert len(active_cuts) == 1
     cut = active_cuts[0]
     coefficients = cut["coefficients"]
-    # Authored values are the source terms scaled to novomodelo cost units by
-    # MONTH_HOURS (fcf.mapper's ($·mês)/h -> $ conversion).
     assert math.isclose(
-        cut["intercept"], active_record.rhs * MONTH_HOURS, rel_tol=1e-9, abs_tol=1e-6
+        cut["intercept"],
+        active_record.rhs * MEAN_MONTH_HOURS,
+        rel_tol=1e-9,
+        abs_tol=1e-6,
     )
 
     for plant_index, (_hydro_id, storage_position, lag_positions) in resolved.items():
-        source_storage = active_record.pi_varm[plant_index] * MONTH_HOURS
+        source_storage = active_record.pi_varm[plant_index] * MEAN_MONTH_HOURS
         assert math.isclose(
             coefficients[storage_position], source_storage, rel_tol=1e-9, abs_tol=1e-6
         ), f"plant_index={plant_index} storage slot {storage_position}"
@@ -317,7 +309,7 @@ def test_synthetic_roundtrip_coefficient_identity(tmp_path: Path) -> None:
         for depth, lag_position in lag_positions.items():
             assert math.isclose(
                 coefficients[lag_position],
-                plant_lags[depth - 1] * MONTH_HOURS * C_M3S2HM3,
+                plant_lags[depth - 1] * MEAN_MONTH_HOURS * C_M3S2HM3,
                 rel_tol=1e-9,
                 abs_tol=1e-6,
             ), f"plant_index={plant_index} lag depth={depth} slot {lag_position}"
@@ -334,8 +326,9 @@ def test_synthetic_roundtrip_theta_sweep(tmp_path: Path) -> None:
     and no novomodelo binary.
 
     Reuses this module's own ``_theta_source``/``_theta_novomodelo`` oracle
-    against the same synthetic two-plant case, over the all-zero,
-    per-plant-unit-storage, and ``rng(0)``-random states.
+    against the same synthetic two-plant case, both plants reservoirs with a
+    storage floor, over the all-zero, per-plant-unit-storage, and
+    ``rng(0)``-random states.
     """
     plant_codes, id_map, manifest = _synthetic_two_plant_case()
     records = (
@@ -367,8 +360,15 @@ def test_synthetic_roundtrip_theta_sweep(tmp_path: Path) -> None:
         ),
     )
     cuts = make_boundary_cuts(plant_codes, records)
+    storage_floors = {0: 120.0, 1: 35.0}
+    couplings = tuple(
+        HydroCoupling(id_map.hydro_id(plant_codes[index]), index, floor)
+        for index, floor in storage_floors.items()
+    )
 
-    reloaded = synthetic_roundtrip(tmp_path / "boundary", cuts, manifest, id_map)
+    reloaded = synthetic_roundtrip(
+        tmp_path / "boundary", cuts, manifest, id_map, couplings=couplings
+    )
     entry = reloaded["stage_cuts"][0]
     cuts_list = entry["cuts"]
     state_dimension = entry["state_dimension"]
@@ -403,10 +403,7 @@ def test_synthetic_roundtrip_theta_sweep(tmp_path: Path) -> None:
                 x_novomodelo[lag_position] = state.inflow.get((plant_index, depth), 0.0)
 
         theta_novomodelo = _theta_novomodelo(cuts_list, x_novomodelo)
-        # Synthetic fixture used synthetic_roundtrip's default cost_unit_hours.
-        theta_source = _theta_source(
-            records, resolved, state, cost_unit_hours=MONTH_HOURS
-        )
+        theta_source = _theta_source(records, resolved, state, storage_floors)
         assert math.isclose(
             theta_novomodelo, theta_source, rel_tol=1e-9, abs_tol=1e-6
         ), (

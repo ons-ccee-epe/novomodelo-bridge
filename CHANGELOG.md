@@ -14,6 +14,149 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`compare decomp` compares both models at their operating points.** The
+  Productivity tab splits each plant and stage's realized-productivity gap
+  into a part from the fitted production functions and a part from where
+  Novomodelo operates, using DECOMP's planes (`avl_cortesfpha_dec.rvN`) and fit
+  windows (`eco_fpha_.rvN`). It plots generation against turbined flow at
+  DECOMP's mean operating point for both models' planes and the exact
+  production function, and lists each model's fit inputs and head
+  components. A point where the plant's energy or water is worth nothing in
+  either model is a tie: ties are left out of the split and of the per-plant
+  hydro ranking, and their share is reported per stage. The FPHA surface
+  comparison now uses DECOMP's own planes on its fit grid, as the NEWAVE
+  report does, instead of Novomodelo's planes against `dec_desvfpha.rvN`. The
+  static pmo section is no longer shown when it has no data.
+- **`compare newave` compares both models at their operating points.** In an
+  FPHA run, the Productivity tab now gives the realized-productivity split,
+  the generation-against-turbined-flow chart, each model's fit inputs and
+  head components, and the per-stage tie share, as the DECOMP report does.
+  NEWAVE's operating points come from the nwlistop plant tables, which
+  nwlistop writes for the plants in the `nwlistop.dat` plant list; without
+  them the tab says to set that list to `999` and leaves the operating
+  points out. The fit-inputs table gives the largest gap between the exact
+  production function rebuilt from the deck and NEWAVE's printed
+  `gh_fphexat`.
+- **`compare newave` and `compare decomp` net the penalties out of each
+  lower bound.** Below the Overview tab's convergence chart, a table gives
+  each model's final lower bound, its expected constraint-violation
+  penalties from the cost breakdown, and the bound net of them. A slack
+  priced far above any real cost can dominate one model's bound; the net
+  bounds compare the operation both models price. The table names the
+  categories it counts and any cost category it cannot classify.
+- **`convert decomp` warns about negative incremental inflows.** The values
+  are converted as the deck gives them. DECOMP reports a negative incremental
+  inflow as zero in its operation output, while Novomodelo removes that water from
+  the plant's balance unless its priced inflow slack adds it back. A
+  `decomp-negative-incremental-inflows` warning lists each plant and stage
+  with the number of negative values and the lowest one.
+- **`convert decomp` accepts a deck with a multi-month trunk, or with monthly
+  stages only.** The operative calendar admits any number of deterministic
+  months before the terminal month, and a deck with no operative weeks
+  starting on the first of a month. The inflows of a monthly trunk stage are
+  read from the deck's generated scenarios, where DECOMP records them, and
+  the boundary coupling reads its inflow lags there too. Reading that block
+  needs idecomp 1.15.1 or newer. In a deck of monthly stages only, each
+  fuel-constrained thermal takes its `NL` lag as a lead in stages: the first
+  `lag` months of the study carry the deck's `GL` commitments, made before
+  the study, and the months after the horizon that its study months decide
+  are priced from their own `TG` records. A deck that splits a `GS` month
+  into weeks, declares an `NL` lag longer than the study, or commits `GL`
+  dispatch past the horizon is refused with a message naming the plant.
+- **`convert decomp` emits water travel time.** A plant's `VI` register now
+  converts to the delayed cascade arc (`hydros[].travel_time_hours`) and the
+  in-transit water seeding it (`initial_conditions.past_defluences`), instead
+  of being read and deferred. The deferral stood on a novomodelo cut-generation
+  defect that produced an invalid in-transit cut; that defect is fixed in the
+  paired novomodelo release, so the emission is restored. A deck with no `VI`
+  register is unaffected (the arc stays instantaneous). At the imported
+  boundary, water still in transit toward a plant is valued with that plant's
+  boundary storage term, or with its first inflow-lag term when it takes no
+  storage term, the in-channel rule CEPEL documents for DECOMP's cost-to-go
+  function handed to DESSEM. DECOMP gives that water no value at the NEWAVE
+  boundary, so the boundary cost differs from DECOMP's by the value of the
+  water in transit; a `boundary-fcf-transit-water-priced` note lists the
+  plants and the term each takes.
+- **`export dessem` exports water travel time.** A case with water travel
+  time exports it the way DECOMP lays it out: `mapcut` gives each
+  travel-time plant the share of every lagged release arriving in each stage,
+  and each `cortdeco` cut values the water still in transit by stage of
+  release, from the transit-bucket coefficients of the cut. The deck's `VI`
+  record order numbers the travel-time plants. Before, a policy carrying
+  travel-time state was refused.
+
+### Changed
+
+- **`convert decomp` caps turbined flow at DECOMP's stage limit.** A plant's
+  turbined flow was capped at its rated flow corrected for the head over its
+  whole storage range. It is now capped stage by stage at the limit DECOMP
+  computes before the optimization. The head is taken at the stage's initial
+  storage, with the tailrace rising with the flow until head and flow agree.
+  The limit is scaled by the plant's `MP` and `FD` factors and kept under the
+  flow of its available power. A plant that cannot hold back its stage inflow
+  turbines up to that inflow. Itaipu's limit is plant-wide: its two frequency
+  groups share it, and each group is held to its own available power.
+- **Both tracks set the spillage range of the FPHA fit.** Each FPHA plant's
+  `fpha_config.spillage_fit_max_m3s` is twice the largest monthly mean
+  inflow of its gauging station: DECOMP's long-term means in `mlt.dat` (the
+  `AC NUMPOS` station when the deck gives one), and on the NEWAVE track the
+  calendar-month means of the natural `vazoes.dat` record before the study
+  start. Novomodelo fitted the spillage coefficient over twice the maximum
+  turbined flow, a range a flood can exceed: the fitted plane then caps the
+  plant's spillage below the water it must pass. A plant on the artificial
+  station 300 keeps that fallback, as in DECOMP, and a DECOMP deck without
+  `mlt.dat` keeps it for every plant with an `fpha-mlt-absent` warning. The
+  field needs the paired novomodelo release.
+- **`convert newave` sets the turbined-flow range of the FPHA fit.** NEWAVE
+  fits each FPHA plant up to the flow at which every machine set reaches its
+  rated power or its turbine limit, with no outage derating. The turbine head
+  runs from the forebay level at the plant's FPHA reference volume down to
+  the `polinjus` tailrace at that flow, read at the forebay level of the
+  plant `hidr.dat` names downstream; the generator head runs from the mean
+  forebay over the plant's operating range. Novomodelo fitted up to the plant's
+  maximum turbined flow, which for most plants is a different range, so the
+  planes departed from NEWAVE's at its operating points. Each FPHA plant now
+  emits `fpha_config.turbined_fit_max_m3s`, stage by stage where its
+  reference volume changes. An `fpha-turbined-fit-range-unconverged` warning
+  names a plant where the flow does not settle on the tailrace curve. The
+  field needs the paired novomodelo release.
+- **`convert newave` takes the FPHA reference volume from
+  `volumes-referencia.csv`.** NEWAVE reads a monthly reservoir's FPHA
+  reference volume, the forebay level of its own fit and the downstream level
+  of the plant above, from the `CADH-VOL-REF-PER` rows of the file
+  `indices.csv` lists under `HIDRELETRICA-CADASTRO-RESERVATORIO` when
+  `VOLUME-REFERENCIAL-TIPO-PADRAO` is 1, from `volume_referencia` for a
+  reservoir without rows, and from the initial storage when the file is
+  absent or the type is 0; a daily or run-of-river plant reads
+  `volume_referencia`. The converter used `volref_saz.dat` or 65% of the
+  useful volume instead. Each plant of an FPHA case now declares NEWAVE's
+  volume, as twelve seasons when it repeats every calendar month and as stage
+  ranges otherwise, and an `fpha-reference-initial-storage` note marks the
+  initial-storage fallback. Rows that leave a study stage uncovered, two
+  values for one month, or an unknown type fail the conversion, as they stop
+  NEWAVE. Evaporation, the equivalent productivity and the turbine limit of a
+  constant-productivity plant keep reading `volref_saz.dat`.
+- **`convert newave` caps an FPHA plant's turbined flow and generation as
+  NEWAVE does.** Under FPHA, NEWAVE caps a plant's turbined flow at its rated
+  flow and its generation at its rated power, both scaled by the plant's TEIF
+  and IP availability, with no head correction. The converter capped the flow
+  at the rated flow corrected for the operating head, NEWAVE's rule under
+  constant productivity, and left generation at the rated power. An FPHA plant
+  now declares the available rated flow as `max_turbined_m3s`, and
+  `hydro_bounds.parquet` carries its available power as `max_generation_mw`
+  on every stage. The declared `max_generation_mw` stays the rated power,
+  which caps the fit as it does NEWAVE's. A constant-productivity plant keeps
+  the head-corrected cap.
+- **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
+  An FPHA plant whose turbined limit is zero on a stage, such as one with
+  every machine under maintenance, takes a zero constant productivity on that
+  stage and the production function on the others. DECOMP builds no planes
+  for such a stage; fitted planes there forced generation and outflow slack.
+  Novomodelo fits the production function only on the stages that select it from
+  the paired release on.
+
 ### Fixed
 
 - **`convert newave` bounds cut selection to the last two iterations.** The
@@ -23,6 +166,111 @@ links are cobre-bridge's.
   0.19.0 it scored every trial state of the run, which kept about three times
   as many cuts active and made each training iteration and the simulation
   progressively slower.
+- **The Productivity tab reads Novomodelo's fit inputs for seasonal production
+  models.** The fit-inputs table read only the `stage_ranges` entries of
+  `hydro_production_models.json`, so a plant whose FPHA configuration is
+  given per season showed no Novomodelo volume window or turbined fit range. Each
+  season now covers the stages `stages.json` assigns it.
+- **`convert newave` writes a daily or run-of-river plant's geometry at the
+  volume its reservoir is held at.** A plant with `tipo_regulacao` D or S is
+  held at `volume_referencia`, which can lie outside its hidr volume range,
+  but `system/hydro_geometry.parquet` sampled that range. Novomodelo then read
+  the forebay level at the wrong volume, both for the plant's own head and
+  as the downstream level of the plant above, and the FPHA planes it fitted
+  for those plants departed from NEWAVE's. The geometry is now one point at
+  `volume_referencia`, as `convert decomp` already does.
+- **`convert newave` keeps an FPHA reference volume outside the storage
+  range.** In FPHA cases, a reference volume above `volume_maximo` was capped
+  at the maximum. NEWAVE reads the plant's forebay level and the downstream
+  level of the plant above at that volume, so the upstream plant's FPHA
+  tailrace was set too low. The reference volume is now emitted as given, and
+  the plant's geometry samples the volume-to-height polynomial over its
+  storage range widened to cover it, below `volume_minimo` as well as above
+  `volume_maximo`. A `hydro-geometry-extended` note names each plant.
+- **`convert decomp` converts two flow restrictions on one plant that no
+  value meets at once.** Single-plant `HQ` restrictions on the same variable,
+  such as a 0 m³/s ceiling and a 6 m³/s floor on a plant's outflow, failed the
+  conversion where their bounds were intersected. They now become generic
+  constraints, each with its own slack at the same penalty, so Novomodelo violates
+  the cheaper one as DECOMP does, whatever their order or numbers in the
+  deck. A `decomp-conflicting-flow-restrictions` warning names the plant, the
+  restrictions and both limits.
+- **`convert decomp` reads a value written without a decimal point as DECOMP
+  does.** A field the DECOMP manual declares with decimals takes Fortran's
+  implied point when the deck omits it: a `TG` cost written `299` in its
+  `F10.2` field is 2.99, not 299. This holds for the `CT`, `CD`, `CI`, `CE`
+  and `TG` costs and the `AC COTVOL` coefficients. Renewable generation in
+  `PEE-GER-PER-PAT-CEN`, and the reference levels of the `polinjus` tailrace
+  families, are no longer cut at eight characters. This needs idecomp 1.16.0
+  or newer, now the minimum.
+- **`convert decomp` reads a `dadgnl` with a single `GL` register.** The
+  conversion failed on such a deck.
+- **`compare decomp` renders the report when DECOMP's lower bound
+  overflowed.** DECOMP prints a lower bound too wide for its field as
+  asterisks; the convergence chart now draws each bound over the iterations
+  where it is present, instead of failing to build the HTML report.
+- **`compare decomp` puts DECOMP's cost breakdown at present value.** The
+  parcels of DECOMP's cost report are nominal, and they were summed against
+  Novomodelo's present-value costs. Each stage's parcels are now discounted by
+  that stage's ratio of present-value to nominal cost, both printed in the
+  report. The breakdown also shows DECOMP's deficit, priced from
+  `dec_oper_sist` and the deck's `CD` costs, its import and export
+  contracts as its stage total counts them, and the penalty left in the
+  stage total for the constraint slacks the report does not itemize. DECOMP
+  counts an export contract's take-or-pay minimum as a cost where Novomodelo
+  counts it as revenue; the comparison logs the difference. The two turbining parcels were shown
+  as turbining-bound violations; they are the price on turbined water and
+  now compare with Novomodelo's turbined cost. The per-stage operating cost is
+  the nominal stage total. This needs idecomp 1.17.0 or newer, now the
+  minimum.
+- **`compare decomp` counts the ANDE load in Net Load and shows the system
+  ENA in MW.** DECOMP's `dec_oper_sist` demand leaves out the ANDE load of the
+  `RI` register, which the converted case carries on Itaipu's submarket bus,
+  so the Energy Balance tab's Net Load on that bus was lower on the DECOMP
+  side by that load. It is now added there. The system ENA chart drew
+  DECOMP's ENA, energy over the stage in MWmês of 730 hours, against Novomodelo's
+  mean MW, which put a weekly stage at about a quarter of Novomodelo's value.
+  DECOMP's ENA is now converted to the stage's mean MW.
+- **DECOMP: an Itaipu `MP` or `FD` row without a frequency applies to both
+  frequency groups.** The frequency field of those registers is optional,
+  and a row that leaves it blank holds for the whole plant; the conversion
+  failed on it before. A plant mixing a blank row with per-frequency rows in
+  one register is refused.
+- **`convert decomp` couples the boundary cuts plant by plant, as DECOMP
+  does.** The cut values are scaled by the mean month of the DECOMP manual
+  (365.25 days × 24 h / 12) instead of the last stage's hours, and the
+  inflow-lag terms no longer subtract a long-term mean inflow, so `mlt.dat`
+  is no longer read. Only a reservoir (`M` or `S` in `hidr.dat`) takes a
+  storage term, priced above its minimum volume. A plant without its own
+  cut row takes its `CX` complex's row or else the first downstream plant's,
+  and a `boundary-fcf-coefficient-owners` note lists those plants; a plant
+  that finds no row is a `boundary-fcf-unowned-plants` error. The
+  inflow-lag terms are read on each plant's coupling gauge (`AC NPOSNW`,
+  else the `hidr.dat` gauge) with the artificial gauges computed, and so are
+  the pre-study observations that seed the lag state, which are now written
+  whenever the boundary is imported. The known difference from the operated
+  inflow and the lag terms of cut plants outside the case are folded into
+  each cut's constant term; what cannot be folded is reported by the
+  `boundary-fcf-coupling-inflow-unrepresented` and
+  `boundary-fcf-coupling-lag-carried-share` warnings. GNL deliveries are
+  priced in the month the `GS` register books their week to, with
+  `cortesh.dat`'s patamar shares of that month, and deliveries the deck has
+  already committed fold into the constant term.
+- **`convert decomp` fits each plant's FPHA over DECOMP's volume window.**
+  The fitting window was a band of ±10 % of useful volume around the initial
+  storage on every stage. It is now the window DECOMP builds for each stage:
+  the `UH` initial storage, as a percentage of that stage's useful volume,
+  minus a reduction and plus an increase, within the stage's storage limits.
+  Both default to 20 % of useful volume on a weekly stage and 50 % on a
+  monthly one, and a run-of-river plant keeps its single reference volume.
+  `FP` records set them, in % of useful volume or in hm³, from their stage
+  on. Each value is taken from the plant's own record when it sets it, else
+  from a `999` record, else from the default. The `hydro_geometry.parquet`
+  volume grid spans the plant's whole storage range, which holds every
+  window. `FP` turbined-flow windows and point counts are not converted; a
+  `decomp-fp-fit-fields-unconverted` warning lists the records that set them
+  to other values than the default fit. FPHA results change for every plant
+  with storage.
 
 ## [0.19.0] - 2026-10-20
 

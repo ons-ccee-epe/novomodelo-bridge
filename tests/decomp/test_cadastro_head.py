@@ -35,6 +35,7 @@ from novomodelo_bridge.decomp.converters.hydro import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 if TYPE_CHECKING:
     from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -327,9 +328,8 @@ def test_cotvol_out_of_horizon_reported_not_dropped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-stage rho_eq no longer caps generation (availability owns the
-# generation cap; the head-corrected turbined-flow cap owns the physical
-# hydraulic limit).
+# Per-stage rho_eq does not cap generation (availability owns the generation
+# cap; the turbined-flow limit owns the hydraulic one).
 # ---------------------------------------------------------------------------
 
 
@@ -337,8 +337,7 @@ def test_per_stage_rho_eq_does_not_cap_generation() -> None:
     """A plant's ``PROESP`` doubles from stage 1 onward, so its per-stage
     ρ_eq doubles too — but that no longer lowers ``max_generation_mw``. The
     generation cap is the installed × MP × FD availability (head-independent),
-    and the physical hydraulic limit binds through the head-corrected
-    turbined-flow cap instead. With no MP/FD derate here the availability
+    and the hydraulic limit binds through the turbined-flow limit instead. With no MP/FD derate here the availability
     equals the rated envelope, so no lowered generation overlay is emitted at
     any stage.
     """
@@ -367,7 +366,12 @@ def test_per_stage_rho_eq_does_not_cap_generation() -> None:
     case = make_decomp_case(
         Path("unused"), dadger=_StubDadger(), hidr=hidr, calendar=_calendar()
     )
-    values = convert_hydro_group_availability(case, id_map, effective=effective)
+    values = convert_hydro_group_availability(
+        case,
+        id_map,
+        effective=effective,
+        turbine_limits=flat_turbine_limits(id_map, len(case.calendar)),
+    )
     hydro_id = id_map.hydro_id(1)
 
     for stage_index in range(3):
@@ -493,7 +497,12 @@ def test_no_override_is_byte_identical() -> None:
     case = make_decomp_case(
         Path("unused"), dadger=_StubDadger(), hidr=hidr, calendar=_calendar()
     )
-    values = convert_hydro_group_availability(case, id_map, effective=effective)
+    values = convert_hydro_group_availability(
+        case,
+        id_map,
+        effective=effective,
+        turbine_limits=flat_turbine_limits(id_map, len(case.calendar)),
+    )
     hydro_id = id_map.hydro_id(1)
     for stage_index in range(3):
         entry = values.get((hydro_id, 0, stage_index))

@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pandas as pd
-from idecomp.decomp.modelos.dadger import ACCOTVOL, ACJUSENA, ACNUMJUS, ACNUMPOS
+from idecomp.decomp.modelos.dadger import (
+    ACCOTVOL,
+    ACJUSENA,
+    ACNPOSNW,
+    ACNUMJUS,
+    ACNUMPOS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -56,6 +62,7 @@ class EffectiveCadastro:
     )
     downstream_links: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     inflow_gauges: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    coupling_gauges: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     energy_links: Mapping[int, tuple[int | None, ...]] = field(default_factory=dict)
 
     def value(self, code: int, param: str, stage_index: int) -> float:
@@ -192,6 +199,18 @@ class EffectiveCadastro:
         if code not in self.inflow_gauges:
             return int(self.base.loc[code, "posto"])
         return self.inflow_gauges[code][stage_index]
+
+    def coupling_gauge(self, code: int) -> int:
+        """The ``posto`` whose inflows *code* couples to the boundary cut with.
+
+        ``AC NPOSNW`` in force at the last stage, where the cut attaches, else
+        the base ``posto`` — never the ``AC NUMPOS`` operation gauge
+        (:meth:`inflow_gauge`), which the source model does not use for the
+        coupling.
+        """
+        if code not in self.coupling_gauges:
+            return int(self.base.loc[code, "posto"])
+        return self.coupling_gauges[code][-1]
 
     def inflow_gauge_varies(self, code: int) -> bool:
         """Whether *code*'s effective inflow gauge varies across stages (a
@@ -413,8 +432,9 @@ def build_effective_cadastro(
     (:meth:`EffectiveCadastro.downstream_plant_varies`/``inflow_gauge_varies``),
     not a silent per-stage cascade. ``energy_links`` holds the ``AC JUSENA``
     stored-energy links (:meth:`EffectiveCadastro.energy_link`),
-    seeded with ``None`` (follow the water-routing link). ``AC NPOSNW`` is
-    deliberately **not** ingested here — no DECOMP consumer.
+    seeded with ``None`` (follow the water-routing link). ``coupling_gauges``
+    holds the ``AC NPOSNW`` boundary-cut coupling gauges
+    (:meth:`EffectiveCadastro.coupling_gauge`).
 
     Raises
     ------
@@ -451,6 +471,15 @@ def build_effective_cadastro(
     gauge_records, gauge_out_of_horizon = _read_keyed_overrides(
         dadger, calendar, ACNUMPOS, "codigo_posto", "posto", int, _plant_code_key
     )
+    coupling_records, coupling_out_of_horizon = _read_keyed_overrides(
+        dadger,
+        calendar,
+        ACNPOSNW,
+        "codigo_posto",
+        "posto_acoplamento",
+        int,
+        _plant_code_key,
+    )
     energy_records, energy_out_of_horizon = _read_keyed_overrides(
         dadger,
         calendar,
@@ -467,6 +496,7 @@ def build_effective_cadastro(
         + cota_out_of_horizon
         + topology_out_of_horizon
         + gauge_out_of_horizon
+        + coupling_out_of_horizon
         + energy_out_of_horizon
     )
 
@@ -575,6 +605,17 @@ def build_effective_cadastro(
     if gauge_records:
         applied["posto"] = len(gauge_records)
 
+    coupling_gauges: dict[int, tuple[int, ...]] = {}
+    for code, coupling_overrides in coupling_records.items():
+        _require_cadastro_row(hidr, code)
+        coupling_gauges[code] = tuple(
+            _forward_fill_series(
+                int(hidr.loc[code, "posto"]), coupling_overrides, n_stages
+            )
+        )
+    if coupling_records:
+        applied["posto_acoplamento"] = len(coupling_records)
+
     energy_links: dict[int, tuple[int | None, ...]] = {}
     for code, energy_overrides in energy_records.items():
         _require_cadastro_row(hidr, code)
@@ -594,6 +635,7 @@ def build_effective_cadastro(
         cota_polynomials=cota_polynomials,
         downstream_links=downstream_links,
         inflow_gauges=inflow_gauges,
+        coupling_gauges=coupling_gauges,
         energy_links=energy_links,
     )
     report = CadastroResolutionReport(

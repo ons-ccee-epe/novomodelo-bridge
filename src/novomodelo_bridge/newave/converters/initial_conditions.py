@@ -9,7 +9,11 @@ import pandas as pd
 
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
-from novomodelo_bridge.newave.converters.hydro import read_cadastro
+from novomodelo_bridge.newave.converters.hydro import (
+    held_volume,
+    initial_storage_hm3,
+    read_cadastro,
+)
 from novomodelo_bridge.newave.converters.thermal import thermal_generation_bounds
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import filling_hydro_codes
@@ -103,7 +107,6 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
         hreg = cadastro.loc[newave_code]
         vol_min = float(hreg["volume_minimo"])
-        vol_max = float(hreg["volume_maximo"])
 
         # ``NE``-with-filling plant: seed ``filling_storage`` (never ``storage``)
         # with the already-impounded fraction of the dead volume at filling start.
@@ -136,24 +139,9 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             )
             continue
 
-        # Fio-d'água plants don't accumulate water across stages, so the
-        # bounds converter collapses their storage to a single point in
-        # ``hydro.py``.  Anchor the initial storage to that same point so the
-        # initial condition stays inside the (collapsed) [min, max] range.
-        # Both 'D' (daily) and 'S' (run-of-river) freeze at ``volume_referencia``
-        # — the same anchor the reservoir-range collapse uses in ``hydro.py``.
-        # When ``volume_referencia`` is absent/NaN the range is not collapsed
-        # there, so we skip the anchor here too and fall through to the normal
-        # ``volume_inicial_percentual`` seeding below.
-        tipo_reg = str(hreg.get("tipo_regulacao", "")).strip()
-        vol_ref_raw = hreg.get("volume_referencia")
-        anchored: float | None = None
-        if (
-            tipo_reg in ("D", "S")
-            and vol_ref_raw is not None
-            and not pd.isna(vol_ref_raw)
-        ):
-            anchored = float(vol_ref_raw)
+        # A daily or run-of-river plant's storage is collapsed to its held
+        # volume, so its initial storage must sit there too.
+        anchored = held_volume(hreg)
         if anchored is not None:
             storage.append(
                 {
@@ -172,10 +160,8 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                 newave_code,
                 pct,
             )
-            pct = max(0.0, min(100.0, pct))
 
-        # Percentage is of useful volume (max - min), not of max.
-        value_hm3 = (pct / 100.0) * (vol_max - vol_min) + vol_min
+        value_hm3 = initial_storage_hm3(hreg, pct)
 
         storage.append(
             {

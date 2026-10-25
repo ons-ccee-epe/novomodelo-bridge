@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 
@@ -36,6 +37,9 @@ from novomodelo_bridge.novomodelo.case_io import (
 from novomodelo_bridge.novomodelo.cost_categories import (
     NOVOMODELO_COST_COMPONENT_COLUMNS,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 _LOG = logging.getLogger(__name__)
 
@@ -52,40 +56,59 @@ class NovomodeloReadError(RuntimeError):
     """
 
 
+def _parsed_stages(novomodelo_output_dir: Path) -> Iterator[list[dict]]:
+    """Each readable ``stages.json`` ``"stages"`` list, the case directory's
+    before the output directory's."""
+    for candidate in [case_dir_for(novomodelo_output_dir), novomodelo_output_dir]:
+        p = candidate / "stages.json"
+        if p.exists():
+            try:
+                with p.open() as f:
+                    yield json.load(f).get("stages", [])
+            except Exception:  # noqa: BLE001
+                continue
+
+
 def _load_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame | None:
     """Load block hours from stages.json as a Polars DataFrame.
 
     Returns DataFrame with columns ``stage_id``, ``block_id``, ``hours``
     or None if stages.json cannot be found or parsed.
     """
-    case_dir = case_dir_for(novomodelo_output_dir)
-    for candidate in [case_dir, novomodelo_output_dir]:
-        p = candidate / "stages.json"
-        if p.exists():
-            try:
-                with p.open() as f:
-                    data = json.load(f)
-                rows: list[dict] = []
-                for stage in data.get("stages", []):
-                    for block in stage.get("blocks", []):
-                        rows.append(
-                            {
-                                "stage_id": stage["id"],
-                                "block_id": block["id"],
-                                "hours": block["hours"],
-                            }
-                        )
-                if rows:
-                    return pl.DataFrame(rows).cast(
-                        {
-                            "stage_id": pl.Int32,
-                            "block_id": pl.Int32,
-                            "hours": pl.Float64,
-                        }
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+    for stages in _parsed_stages(novomodelo_output_dir):
+        try:
+            rows = [
+                {
+                    "stage_id": stage["id"],
+                    "block_id": block["id"],
+                    "hours": block["hours"],
+                }
+                for stage in stages
+                for block in stage.get("blocks", [])
+            ]
+            if rows:
+                return pl.DataFrame(rows).cast(
+                    {
+                        "stage_id": pl.Int32,
+                        "block_id": pl.Int32,
+                        "hours": pl.Float64,
+                    }
+                )
+        except Exception:  # noqa: BLE001
+            continue
     return None
+
+
+def _stage_seasons(novomodelo_output_dir: Path) -> dict[int, list[int]]:
+    """``{season_id: [stage_id, ...]}`` from ``stages.json``."""
+    for stages in _parsed_stages(novomodelo_output_dir):
+        seasons: dict[int, list[int]] = {}
+        for stage in stages:
+            if stage.get("season_id") is not None:
+                seasons.setdefault(int(stage["season_id"]), []).append(int(stage["id"]))
+        if seasons:
+            return seasons
+    return {}
 
 
 def _weighted_stage_mean(
@@ -410,6 +433,72 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
             result = result.with_columns(pl.lit(None).cast(pl.Float64).alias(col))
 
     return result
+
+
+#: Per-block hydro columns :func:`read_novomodelo_hydro_block_operation` returns.
+_HYDRO_BLOCK_COLUMNS: dict[str, type[pl.DataType]] = {
+    "scenario_id": pl.Int64,
+    "stage_id": pl.Int64,
+    "block_id": pl.Int64,
+    "hydro_id": pl.Int64,
+    "hours": pl.Float64,
+    "turbined_m3s": pl.Float64,
+    "spillage_m3s": pl.Float64,
+    "outflow_m3s": pl.Float64,
+    "incremental_inflow_m3s": pl.Float64,
+    "storage_initial_hm3": pl.Float64,
+    "storage_final_hm3": pl.Float64,
+    "generation_mw": pl.Float64,
+    "water_value_per_hm3": pl.Float64,
+    "accumulated_productivity_mw_per_m3s": pl.Float64,
+}
+
+
+def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Novomodelo's simulated hydro operation per (scenario, stage, block, hydro).
+
+    The ``simulation/hydros`` rows unaggregated, with each block's ``hours``
+    from ``stages.json``. Empty (typed) when the run has no hydro simulation
+    output or no block hours.
+    """
+    empty = pl.DataFrame(schema=_HYDRO_BLOCK_COLUMNS)
+    lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
+    block_hours = _load_block_hours(novomodelo_output_dir)
+    if lf is None or block_hours is None:
+        return empty
+    columns = [c for c in _HYDRO_BLOCK_COLUMNS if c != "hours"]
+    try:
+        frame = (
+            lf.select(columns)
+            .join(block_hours.lazy(), on=["stage_id", "block_id"])
+            .collect()
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise NovomodeloReadError(
+            f"Failed to read the hydro simulation rows in {novomodelo_output_dir}"
+        ) from exc
+    return frame.select(list(_HYDRO_BLOCK_COLUMNS)).cast(_HYDRO_BLOCK_COLUMNS)
+
+
+def read_novomodelo_bus_block_prices(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Novomodelo's spot price per (scenario, stage, block, bus); empty when absent."""
+    schema: dict[str, type[pl.DataType]] = {
+        "scenario_id": pl.Int64,
+        "stage_id": pl.Int64,
+        "block_id": pl.Int64,
+        "bus_id": pl.Int64,
+        "spot_price": pl.Float64,
+    }
+    lf = scan_simulation_entity(novomodelo_output_dir, "buses")
+    if lf is None:
+        return pl.DataFrame(schema=schema)
+    try:
+        frame = lf.select(list(schema)).collect()
+    except Exception as exc:  # noqa: BLE001
+        raise NovomodeloReadError(
+            f"Failed to read the bus simulation rows in {novomodelo_output_dir}"
+        ) from exc
+    return frame.cast(schema)
 
 
 def read_novomodelo_hydro_total_flows(
@@ -2083,13 +2172,88 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
     }
 
 
+#: Columns of :func:`read_novomodelo_fpha_fit_config`.
+_FPHA_FIT_CONFIG_SCHEMA: dict[str, type[pl.DataType]] = {
+    "hydro_id": pl.Int64,
+    "stage_id": pl.Int64,
+    "volume_min_hm3": pl.Float64,
+    "volume_max_hm3": pl.Float64,
+    "spillage_fit_max_m3s": pl.Float64,
+    "turbined_fit_max_m3s": pl.Float64,
+}
+
+
+def _model_entries(
+    model: dict, last_stage: int, season_stages: dict[int, list[int]]
+) -> Iterator[tuple[dict, Iterable[int]]]:
+    """Each stage range or season of a production model, with its stages."""
+    for entry in model.get("stage_ranges", []):
+        end = entry.get("end_stage_id")
+        yield (
+            entry,
+            range(
+                int(entry["start_stage_id"]),
+                (last_stage if end is None else int(end)) + 1,
+            ),
+        )
+    for entry in model.get("seasons", []):
+        yield entry, season_stages.get(int(entry["season_id"]), [])
+
+
+def read_novomodelo_fpha_fit_config(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """The computed-FPHA fit inputs per (hydro, stage), from
+    ``system/hydro_production_models.json``.
+
+    One row per stage of every ``fpha`` stage range or season: the
+    ``fitting_window`` bounds, ``spillage_fit_max_m3s`` and
+    ``turbined_fit_max_m3s``, null where the config leaves novomodelo's default. An
+    open-ended range runs to the last stage of ``stages.json``, and a season
+    covers the stages ``stages.json`` assigns it. Empty when either file is
+    absent.
+    """
+    empty = pl.DataFrame(schema=_FPHA_FIT_CONFIG_SCHEMA)
+    path = _find_system_json(novomodelo_output_dir, "hydro_production_models.json")
+    block_hours = _load_block_hours(novomodelo_output_dir)
+    if path is None or block_hours is None:
+        return empty
+    try:
+        with path.open() as f:
+            models = json.load(f).get("production_models", [])
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NovomodeloReadError(f"Failed to read {path}") from exc
+    last_stage = int(block_hours["stage_id"].max())  # type: ignore[arg-type]
+    season_stages = _stage_seasons(novomodelo_output_dir)
+    rows: list[dict[str, object]] = []
+    for model in models:
+        for entry, stage_ids in _model_entries(model, last_stage, season_stages):
+            if entry.get("model") != "fpha":
+                continue
+            config = entry.get("fpha_config") or {}
+            window = config.get("fitting_window") or {}
+            rows.extend(
+                {
+                    "hydro_id": int(model["hydro_id"]),
+                    "stage_id": stage_id,
+                    "volume_min_hm3": window.get("volume_min_hm3"),
+                    "volume_max_hm3": window.get("volume_max_hm3"),
+                    "spillage_fit_max_m3s": config.get("spillage_fit_max_m3s"),
+                    "turbined_fit_max_m3s": config.get("turbined_fit_max_m3s"),
+                }
+                for stage_id in stage_ids
+            )
+    if not rows:
+        return empty
+    return pl.DataFrame(rows, schema=_FPHA_FIT_CONFIG_SCHEMA)
+
+
 def read_novomodelo_fpha_planes(novomodelo_output_dir: Path) -> pl.DataFrame | None:
     """Read Novomodelo's fitted production hyperplanes (``hydro_models``).
 
     Novomodelo fits, per hydro and per stage, the FPHA hyperplanes it consumes —
-    ``GH <= kappa * (gamma_0 + gamma_v * volume + gamma_q * turbined + gamma_s *
-    spilled)`` — and exports them to ``hydro_models/fpha_hyperplanes.parquet``
-    after training. The ``gamma_v`` coefficient multiplies *absolute* volume.
+    ``GH <= kappa * gamma_0 + gamma_v * volume + gamma_q * turbined + gamma_s *
+    spilled`` (``kappa`` scales the intercept only) — and exports them to
+    ``hydro_models/fpha_hyperplanes.parquet`` after training. The ``gamma_v``
+    coefficient multiplies *absolute* volume, the stage's average storage.
 
     Returns ``None`` when the parquet is absent (the case used constant
     productivity); that ``None`` gates the production-model comparison off. A

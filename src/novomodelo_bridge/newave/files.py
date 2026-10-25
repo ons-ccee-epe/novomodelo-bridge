@@ -19,6 +19,7 @@ from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.libs_index import (
     ESTACAO_BOMBEAMENTO,
     ESTACAO_BOMBEAMENTO_SUBMERCADO,
+    HIDRELETRICA_CADASTRO_RESERVATORIO,
     HIDRELETRICA_CURVAJUSANTE,
     HIDRELETRICA_FPHA_REDUCAO_CORTES,
     INDEX_FILENAME,
@@ -41,6 +42,7 @@ _NOT_FIXED_COLUMN = frozenset(
         "vazoes",
         "libs_index",
         "polinjus",
+        "volumes_referencia",
         "tratamento_fpha",
         "restricao_eletrica",
         "estacao_bombeamento",
@@ -121,6 +123,7 @@ class NewaveFiles:
     # LIBS files, declared by ``indices.csv`` (None when the index lists none)
     libs_index: Path | None
     polinjus: Path | None
+    volumes_referencia: Path | None
     tratamento_fpha: Path | None
     restricao_eletrica: Path | None
     estacao_bombeamento: Path | None
@@ -207,6 +210,7 @@ class NewaveFiles:
         libs_index = find_case_insensitive(directory, INDEX_FILENAME)
         libs = read_libs_index(directory, libs_index)
         polinjus = libs.path(HIDRELETRICA_CURVAJUSANTE)
+        volumes_referencia = libs.path(HIDRELETRICA_CADASTRO_RESERVATORIO)
         tratamento_fpha = libs.path(HIDRELETRICA_FPHA_REDUCAO_CORTES)
         restricao_eletrica = libs.path(RESTRICAO_ELETRICA_ESPECIAL)
         estacao_bombeamento = libs.path(ESTACAO_BOMBEAMENTO)
@@ -270,6 +274,7 @@ class NewaveFiles:
             adterm=adterm,
             libs_index=libs_index,
             polinjus=polinjus,
+            volumes_referencia=volumes_referencia,
             tratamento_fpha=tratamento_fpha,
             restricao_eletrica=restricao_eletrica,
             estacao_bombeamento=estacao_bombeamento,
@@ -283,6 +288,11 @@ def unindexed_libs_diagnostic(files: NewaveFiles) -> Diagnostic | None:
     conventional = [
         ConventionalFile("polinjus.csv", HIDRELETRICA_CURVAJUSANTE, files.polinjus),
         ConventionalFile("polinjus.dat", HIDRELETRICA_CURVAJUSANTE, files.polinjus),
+        ConventionalFile(
+            "volumes-referencia.csv",
+            HIDRELETRICA_CADASTRO_RESERVATORIO,
+            files.volumes_referencia,
+        ),
         ConventionalFile(
             "tratamento[-_]fpha.*",
             HIDRELETRICA_FPHA_REDUCAO_CORTES,

@@ -154,14 +154,12 @@ Compare a DECOMP run&#x27;s published operation against Novomodelo&#x27;s simula
 
 Informational: always exits 0, reporting divergences without failing.
 
-Two caveats apply to the generated report. First, the Overview tab&#x27;s NPV
-cost cards compare DECOMP&#x27;s undiscounted-nominal costs against Novomodelo&#x27;s
-time-discounted costs: DECOMP&#x27;s own cost report carries no per-stage
-discount factor, so none is fabricated on that side, and the two totals
-are not on the same time-value footing. Second, percentile bands are
-omitted (or labelled low-N where one would otherwise appear) for a
-deterministic tree with too few scenarios to report a spread without
-synthesizing it.
+The Overview tab&#x27;s cost breakdown is at present value on both sides:
+each stage&#x27;s DECOMP parcels are discounted by that stage&#x27;s ratio of
+present-value to nominal cost, both printed in DECOMP&#x27;s cost report.
+Percentile bands are omitted (or labelled low-N where one would
+otherwise appear) for a deterministic tree with too few scenarios to
+report a spread without synthesizing it.
 
 **Usage**:
 
@@ -310,12 +308,12 @@ DECOMP-format mapcut and cortdeco binary files that DESSEM can consume.
 
 DECOMP_DIR is the deck the case was converted from. Its caso.dat names the
 revision, which sets the output file extension (mapcut.rv0, cortdeco.rv0,
-etc.), its hidr.dat codes label the hydro plants in the cut files, and
-its dadgnl NL records give each GNL plant&#x27;s lag in months.
+etc.), its hidr.dat codes label the hydro plants in the cut files, its
+dadgnl NL records give each GNL plant&#x27;s lag in months, and the order of
+its VI records numbers the plants with a water travel time.
 
 
 Warnings logged during export:
-- P3: travel-time (tempo de viagem) coefficients not yet supported
 - P14: GNL (anticipated thermal) coefficients emitted as zeros
 
 **Usage**:
