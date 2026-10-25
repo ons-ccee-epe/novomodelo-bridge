@@ -856,6 +856,110 @@ class TestOverviewCostCharts:
         assert cats["Storage Bounds Viol."][1] == pytest.approx(1.0e7)
 
 
+class TestNetOfPenaltiesTable:
+    """Overview table of each model's lower bound net of its expected
+    constraint-violation penalties."""
+
+    @staticmethod
+    def _conv(bounds: dict[int, float | None]) -> pl.DataFrame:
+        return pl.DataFrame(
+            {"iteration": list(bounds), "lower_bound": list(bounds.values())},
+            schema={"iteration": pl.Int64, "lower_bound": pl.Float64},
+        )
+
+    @staticmethod
+    def _cells(html: str, row: str) -> list[str]:
+        match = re.search(rf'<td class="cb-cat">{row}</td>(.*?)</tr>', html)
+        assert match is not None, row
+        return re.findall(r'<td class="cb-num">(.*?)</td>', match.group(1))
+
+    def test_nets_the_violation_categories_out_of_each_final_bound(self) -> None:
+        from novomodelo_bridge.comparators.charts import net_of_penalties_table
+
+        html = net_of_penalties_table(
+            # Out of iteration order, with a trailing null bound, so the final
+            # bound is the last non-null one by iteration.
+            self._conv({3: 120e9, 1: 100e9, 4: None}),
+            self._conv({1: 90e9, 2: 118e9}),
+            {"GERACAO TERMICA": 10e9, "FOLGA RESTRICOES": 60e9},
+            {"thermal_cost": 9e9, "generic_violation_cost": 1e9},
+            reference_label="DECOMP",
+        )
+
+        assert self._cells(html, "Final lower bound") == [
+            "120.000",
+            "118.000",
+            "-2.000",
+            "-1.7%",
+        ]
+        assert self._cells(html, "Expected violation penalties")[:2] == [
+            "60.000",
+            "1.000",
+        ]
+        assert self._cells(html, "Lower bound net of penalties")[:2] == [
+            "60.000",
+            "117.000",
+        ]
+        assert "DECOMP" in html
+        assert "Unitemized Constr. Slack" in html
+        assert "Generic Constr. Viol." in html
+        assert "Thermal" not in html
+
+    def test_empty_when_neither_model_reports_a_lower_bound(self) -> None:
+        from novomodelo_bridge.comparators.charts import net_of_penalties_table
+
+        html = net_of_penalties_table(
+            None, self._conv({1: None}), {"GERACAO TERMICA": 1e9}, {}
+        )
+
+        assert html == ""
+
+    def test_a_missing_cost_breakdown_reads_as_unknown_not_zero(self) -> None:
+        from novomodelo_bridge.comparators.charts import net_of_penalties_table
+
+        html = net_of_penalties_table(
+            self._conv({1: 50e9}),
+            self._conv({1: 49e9}),
+            {"FOLGA RESTRICOES": 5e9},
+            {},
+        )
+
+        assert self._cells(html, "Expected violation penalties") == [
+            "5.000",
+            "—",
+            "—",
+            "—",
+        ]
+        assert self._cells(html, "Lower bound net of penalties")[:2] == [
+            "45.000",
+            "—",
+        ]
+
+    def test_unclassified_categories_are_named_in_the_caption(self) -> None:
+        from novomodelo_bridge.comparators.charts import net_of_penalties_table
+
+        html = net_of_penalties_table(
+            self._conv({1: 50e9}),
+            self._conv({1: 49e9}),
+            {"PARCELA NOVA": 5e9},
+            {"thermal_cost": 1e9},
+        )
+
+        assert "not classified: Parcela Nova" in html
+        assert self._cells(html, "Expected violation penalties")[:2] == [
+            "0.000",
+            "0.000",
+        ]
+
+    def test_every_violation_category_is_a_cost_map_label(self) -> None:
+        from novomodelo_bridge.comparators.charts.costs import (
+            _COST_MAP,
+            _VIOLATION_CATEGORIES,
+        )
+
+        assert _VIOLATION_CATEGORIES <= {label for label, *_ in _COST_MAP}
+
+
 # -------------------------------------------------------------------
 # Edge cases and error handling
 # -------------------------------------------------------------------

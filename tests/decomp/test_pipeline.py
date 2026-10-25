@@ -934,7 +934,7 @@ def _run_cadastro_pipeline(
             1.0
         ],
         "novomodelo_bridge.decomp.pipeline.config_conv.convert_config": {},
-        "novomodelo_bridge.decomp.pipeline.network_conv._bus_deficit_costs": {},
+        "novomodelo_bridge.decomp.pipeline.network_conv.bus_deficit_costs": {},
         "novomodelo_bridge.decomp.pipeline"
         ".hydro_conv.convert_energy_productivity": productivity_table,
         "novomodelo_bridge.decomp.pipeline.network_conv.convert_buses": {"buses": []},

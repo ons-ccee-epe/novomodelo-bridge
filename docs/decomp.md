@@ -227,14 +227,31 @@ the deck again.
 
 `compare decomp DECOMP_DIR NOVOMODELO_OUTPUT_DIR` reads the deck plus the
 `dec_oper_*.csv` operation tables directly in `DECOMP_DIR`, and Novomodelo's
-`output/` directory. Two caveats apply to the report:
+`output/` directory. Percentile bands are omitted, or labelled low-N, when the
+deterministic tree has too few scenarios to report a spread without
+synthesizing it.
 
-- The overview's net-present-value cost cards compare DECOMP's undiscounted
-  nominal costs with Novomodelo's time-discounted costs. DECOMP's cost report
-  carries no per-stage discount factor and the bridge does not invent one, so
-  the two totals are not on the same time-value footing.
-- Percentile bands are omitted, or labelled low-N, when the deterministic tree
-  has too few scenarios to report a spread without synthesizing it.
+The overview's cost breakdown is at present value on both sides. DECOMP's
+cost report prints each stage's parcels at their nominal value and the stage
+total at both nominal and present value, so each parcel is discounted by that
+stage's ratio of the two. The report prints no deficit parcel: the deficit is
+priced from `dec_oper_sist` and the deck's `CD` costs. What is left of the
+stage total after the printed parcels and the deficit is the penalty on the
+constraint slacks the report does not itemize, such as `RHQ`, `RHV`, `RHE`,
+evaporation and irrigation; it is shown as one unitemized-slack category. The
+two turbining parcels are the price DECOMP puts on turbined water and compare
+with Novomodelo's turbined cost. DECOMP's stage total counts the take-or-pay
+minimum of an export contract at its price as a cost, and only the energy
+above it as revenue. Novomodelo counts every exported MWh as revenue, so on a deck
+with an export minimum the two contract costs differ by twice the minimum's
+value; the comparison logs that amount.
+
+Below the convergence chart, a table gives each model's final lower bound with
+and without its expected constraint-violation penalties. One slack priced far
+above any real cost, such as a pair of conflicting constraints, can dominate a
+model's bound; the bounds net of penalties compare the operation both models
+price. The table names the categories it counts and any cost category it
+cannot classify. `compare newave` shows the same table.
 
 The Productivity tab compares the two models at the operating points each one
 reached, per plant, stage, scenario and block. It reads DECOMP's fitted planes

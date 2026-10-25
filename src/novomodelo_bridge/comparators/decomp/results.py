@@ -1192,14 +1192,12 @@ def _energy_balance_frames(
 # (``reconcile_kdollars_to_reais``, x1e3); the per-stage ``nw_sin`` cost rows
 # are 10^6 R$ (an additional /1e6 on top of that factor).
 
-#: ``relatorio_operacao_custos`` numeric cost columns aggregated here
-#: -- every cost column the table carries except the per-submarket
-#: ``cmo_<sbm>`` marginal-*price* columns (not a cost) and the
-#: estagio/cenario/probabilidade bookkeeping columns.
-_RELATO_COST_COLUMNS: tuple[str, ...] = (
-    "custo_presente",
-    "custo_futuro",
+#: Parcels the report itemizes, with the contract balance; idecomp's
+#: ``violacao_turbinamento_*`` are the turbining parcels the report prints
+#: beside the spillage ones, not bound violations.
+_ITEMIZED_PARCELS: tuple[str, ...] = (
     "geracao_termica",
+    "contratos",
     "violacao_desvio",
     "penalidade_vertimento_reservatorio",
     "penalidade_vertimento_fio",
@@ -1208,35 +1206,36 @@ _RELATO_COST_COLUMNS: tuple[str, ...] = (
     "penalidade_intercambio",
 )
 
-#: ``violacao_desvio`` has no ``charts._COST_MAP`` analogue -- surfaced under
-#: its own label (matching the Portuguese-abbreviation style every other
-#: ``_COST_MAP`` key uses) rather than being silently dropped;
-#: ``charts._resolve_cost_categories`` appends it as an unmapped residual
-#: category.
-_DEVIATION_VIOLATION_LABEL = "VIOLACAO DESVIO"
+#: Stage-cost parts priced here, nominal k$, beside the itemized parcels.
+_DERIVED_PARCELS: tuple[str, ...] = ("deficit", "folga")
 
-#: ``(display_label, source_columns...)`` for the ``nw_costs`` NPV dict --
-#: mirrors ``charts._COST_MAP``'s the source model label strings. VERTIMENTO
-#: sums two source columns (reservoir + run-of-river spillage penalty); every
-#: other category is a single column.
+#: ``(display_label, source_columns...)`` for the ``nw_costs`` NPV dict, keyed
+#: by the ``charts._COST_MAP`` source-model labels.
 _NW_COST_LABELS: tuple[tuple[str, ...], ...] = (
     ("GERACAO TERMICA", "geracao_termica"),
+    ("DEFICIT", "deficit"),
+    ("CONTRATOS", "contratos"),
     ("INTERCAMBIO", "penalidade_intercambio"),
     (
         "VERTIMENTO",
         "penalidade_vertimento_reservatorio",
         "penalidade_vertimento_fio",
     ),
-    ("VIOL. TURB. MINIMO", "violacao_turbinamento_reservatorio"),
-    ("VIOL. TURB. MAXIMO", "violacao_turbinamento_fio"),
-    (_DEVIATION_VIOLATION_LABEL, "violacao_desvio"),
+    (
+        "TURBINAMENTO UHE",
+        "violacao_turbinamento_reservatorio",
+        "violacao_turbinamento_fio",
+    ),
+    ("VIOLACAO DESVIO", "violacao_desvio"),
+    ("FOLGA RESTRICOES", "folga"),
 )
 
 #: ``nw_sin`` variable token -> source column, for the per-stage cost rows
-#: ``charts._extract_stage_cost_series`` reads. Matches MEDIAS-SIN's the
-#: source model tokens on the newave side of ``compare newave``.
+#: ``charts._extract_stage_cost_series`` reads. Matches MEDIAS-SIN's tokens on
+#: the newave side of ``compare newave``; nominal, like Novomodelo's per-stage
+#: costs.
 _NW_SIN_COST_TOKENS: tuple[tuple[str, str], ...] = (
-    ("COPER", "custo_presente"),
+    ("COPER", "custo_presente_nominal"),
     ("CUSTO_FUTURO", "custo_futuro"),
     ("CTERM", "geracao_termica"),
 )
@@ -1274,7 +1273,91 @@ def _probability_weighted_stage_cost(
     return _weighted_group_mean(frame, ["estagio"], present)
 
 
-def _cost_frames(decomp_dir: Path) -> tuple[dict[str, float], pl.DataFrame]:
+def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataFrame:
+    """Per-(stage, scenario) deficit cost, k$: each block's ``deficit_MW`` x
+    ``duracao`` x the subsystem's ``CD`` cost.
+
+    The report prints no deficit parcel, so it is priced here from
+    ``dec_oper_sist``. Deficit in a subsystem without a ``CD`` cost is logged
+    and stays in the unitemized slack.
+    """
+    sist = read_dec_oper_sist(decomp_dir)
+    blocks = sist.filter(pl.col("patamar").is_not_null() & (pl.col("deficit_MW") > 0.0))
+    unpriced = sorted(
+        set(blocks["codigo_submercado"].cast(pl.Int64).to_list()) - set(deficit_costs)
+    )
+    if unpriced:
+        _LOG.warning(
+            "The source model reports deficit in subsystem(s) %s, which have no CD "
+            "deficit cost; that deficit stays in the unitemized constraint slack "
+            "of the cost breakdown.",
+            ", ".join(str(code) for code in unpriced),
+        )
+    cost = (
+        pl.col("codigo_submercado")
+        .cast(pl.Int64)
+        .replace_strict(deficit_costs, default=0.0, return_dtype=pl.Float64)
+    )
+    return blocks.group_by("estagio", "cenario").agg(
+        (
+            pl.col("deficit_MW")
+            * pl.col("duracao")
+            * cost
+            / reconcile_kdollars_to_reais(1.0)
+        )
+        .sum()
+        .alias("deficit")
+    )
+
+
+def _stage_cost_rows(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataFrame:
+    """The unioned ``relato``/``relato2`` cost rows with the contract balance,
+    the priced deficit, the unitemized slack and the present-value factor.
+
+    The report's values are native k$; its parcels and ``custo_presente_nominal``
+    are nominal, and only ``custo_presente`` is discounted to the study start,
+    so ``pv`` is ``custo_presente / custo_presente_nominal``.
+
+    ``contratos`` is the contract term of the stage total. An import counts
+    as a cost; an export counts its take-or-pay minimum as a cost and the
+    energy above it as revenue, so the term is ``importacao + 2 x
+    exportacao_minimo - exportacao``.
+
+    ``folga`` is the nominal stage total less the itemized parcels and the
+    deficit: the constraint-slack penalties (RHQ, RHE, RHV, evaporation,
+    irrigation) the report does not itemize. It is a sum of non-negative
+    penalties, so a negative value is print rounding and reads as zero.
+    """
+    combined = _union_relato_reports(
+        read_relato_costs(decomp_dir), read_relato2_costs(decomp_dir)
+    )
+    deficit = _deficit_cost(decomp_dir, deficit_costs)
+    rows = (
+        combined.with_columns(
+            (
+                pl.col("contrato_importacao")
+                + 2.0 * pl.col("contrato_exportacao_minimo")
+                - pl.col("contrato_exportacao")
+            ).alias("contratos")
+        )
+        .join(deficit, on=["estagio", "cenario"], how="left")
+        .with_columns(pl.col("deficit").fill_null(0.0))
+    )
+    nominal = pl.col("custo_presente_nominal")
+    return rows.with_columns(
+        (nominal - pl.sum_horizontal(_ITEMIZED_PARCELS) - pl.col("deficit"))
+        .clip(lower_bound=0.0)
+        .alias("folga"),
+        pl.when(nominal != 0.0)
+        .then(pl.col("custo_presente") / nominal)
+        .otherwise(1.0)
+        .alias("pv"),
+    )
+
+
+def _cost_frames(
+    decomp_dir: Path, deficit_costs: dict[int, float]
+) -> tuple[dict[str, float], pl.DataFrame]:
     """DECOMP-side Overview cost metadata: the NPV dict + ``nw_sin`` rows.
 
     Reads ``relatorio_operacao_custos`` from **both** reports and unions them
@@ -1283,26 +1366,23 @@ def _cost_frames(decomp_dir: Path) -> tuple[dict[str, float], pl.DataFrame]:
     (:func:`read_relato2_costs`, optional) carries the per-realization rows of
     the scenario-fan (monthly) stage(s) ``relato`` omits. Where ``relato2``
     covers a stage it is authoritative (that stage is dropped from ``relato``
-    before the union, so a fan stage is never counted twice). Aggregated in
-    two passes, both built on the same per-stage expected cost:
+    before the union, so a fan stage is never counted twice). *deficit_costs*
+    is the deck's ``CD`` cost per subsystem, which prices the deficit the
+    report leaves inside the stage total (:func:`_stage_cost_rows`).
 
     - **Per-stage expected cost** -- :func:`_probability_weighted_stage_cost`,
       weighting each stage's scenarios by the real tree ``probabilidade``.
       This is a deliberate departure from the module's unweighted-scenario
       convention **for cost only**: an *expected* operating cost on the fan
       stage must use the true opening probabilities (which are not
-      equiprobable), and both reports carry ``probabilidade`` per row. A
-      deterministic week (single row, prob 1.0) is unaffected. No stage
-      discount is applied: unlike novomodelo's ``discount_factor`` column
-      (:func:`novomodelo_readers.read_novomodelo_cost_breakdown`),
-      ``relatorio_operacao_custos`` exposes no per-row discount factor, so the
-      per-stage values are DECOMP's own raw nominal $ costs at that node.
-    - **``nw_costs``** (R$): the per-stage expected costs summed across every
-      stage, then :func:`reconcile_kdollars_to_reais` (x1e3). Categories below
-      0.01 R$ are excluded, mirroring ``newave_readers.read_pmo_cost_
-      breakdown`` and :func:`novomodelo_readers.read_novomodelo_cost_breakdown`'s own
-      floor.
-    - **``nw_sin`` rows** (10^6 R$): the same per-stage expected costs,
+      equiprobable), and both reports carry ``probabilidade`` per row.
+    - **``nw_costs``** (R$): each parcel discounted by the row's ``pv``, the
+      per-stage expectations summed across stages, then
+      :func:`reconcile_kdollars_to_reais` (x1e3) -- the present value
+      :func:`novomodelo_readers.read_novomodelo_cost_breakdown` reports on the Novomodelo
+      side. Categories below 0.01 R$ are excluded, mirroring
+      ``newave_readers.read_pmo_cost_breakdown`` and Novomodelo's own floor.
+    - **``nw_sin`` rows** (10^6 R$): the nominal per-stage expectations,
       unpivoted to ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows with the 1-based
       ``stage`` column kept as-is (the consuming charts subtract ``nw_offset``).
 
@@ -1311,52 +1391,58 @@ def _cost_frames(decomp_dir: Path) -> tuple[dict[str, float], pl.DataFrame]:
     error -- :func:`read_relato2_costs` returns empty and only the fan stage(s)
     are absent.
     """
-    raw = read_relato_costs(decomp_dir)
-    monthly = read_relato2_costs(decomp_dir)
-    combined = _union_relato_reports(raw, monthly)
-    per_stage = _probability_weighted_stage_cost(combined, list(_RELATO_COST_COLUMNS))
-    present = [c for c in _RELATO_COST_COLUMNS if c in per_stage.columns]
-
-    totals: dict[str, float] = (
-        per_stage.select([pl.col(c).sum().alias(c) for c in present]).row(0, named=True)
-        if present
-        else {}
-    )
+    rows = _stage_cost_rows(decomp_dir, deficit_costs)
+    parcels = [*_ITEMIZED_PARCELS, *_DERIVED_PARCELS, "contrato_exportacao_minimo"]
+    discounted = rows.with_columns(pl.col(c) * pl.col("pv") for c in parcels)
+    per_stage_pv = _probability_weighted_stage_cost(discounted, parcels)
+    totals: dict[str, float] = per_stage_pv.select(
+        [pl.col(c).sum().alias(c) for c in parcels]
+    ).row(0, named=True)
 
     nw_costs: dict[str, float] = {}
     for label, *columns in _NW_COST_LABELS:
-        value = reconcile_kdollars_to_reais(sum(totals.get(c, 0.0) for c in columns))
+        value = reconcile_kdollars_to_reais(sum(totals[c] for c in columns))
         if abs(value) > 0.01:
             nw_costs[label] = value
 
-    sin_tokens = [(var, col) for var, col in _NW_SIN_COST_TOKENS if col in present]
-    if not sin_tokens or per_stage.is_empty():
-        nw_sin_rows = _empty_market_frame()
-    else:
-        # A scalar factor derived from the single conversion site rather
-        # than a re-derived literal: k$ -> R$ (x1e3) then R$ -> 10^6 R$
-        # (/1e6), collapsing to x1e-3 -- but expressed via
-        # reconcile_kdollars_to_reais so the x1e3 itself is never repeated.
-        k_to_r6 = reconcile_kdollars_to_reais(1.0) / 1e6
-        nw_sin_rows = (
-            per_stage.select(
-                "estagio",
-                *[pl.col(col).alias(var) for var, col in sin_tokens],
-            )
-            .unpivot(
-                on=[var for var, _ in sin_tokens],
-                index=["estagio"],
-                variable_name="variable",
-                value_name="value",
-            )
-            .with_columns(
-                pl.lit(0).cast(pl.Int64).alias("newave_code"),
-                pl.col("estagio").cast(pl.Int64).alias("stage"),
-                (pl.col("value") * k_to_r6).cast(pl.Float64).alias("value"),
-            )
-            .select("newave_code", "stage", "variable", "value")
-            .sort("stage", "variable")
+    export_minimum = reconcile_kdollars_to_reais(totals["contrato_exportacao_minimo"])
+    if export_minimum > 0.01:
+        _LOG.warning(
+            "The source model counts the take-or-pay minimum of its export "
+            "contracts as a cost and the energy above it as revenue, while Novomodelo "
+            "counts every exported MWh as revenue. For the same exports, its "
+            "contract cost in the cost breakdown is 2 x %.6g R$ (present value) "
+            "above Novomodelo's.",
+            export_minimum,
         )
+
+    per_stage = _probability_weighted_stage_cost(
+        rows, [col for _, col in _NW_SIN_COST_TOKENS]
+    )
+    # A scalar factor derived from the single conversion site rather than a
+    # re-derived literal: k$ -> R$ (x1e3) then R$ -> 10^6 R$ (/1e6), collapsing
+    # to x1e-3 -- but expressed via reconcile_kdollars_to_reais so the x1e3
+    # itself is never repeated.
+    k_to_r6 = reconcile_kdollars_to_reais(1.0) / 1e6
+    nw_sin_rows = (
+        per_stage.select(
+            "estagio",
+            *[pl.col(col).alias(var) for var, col in _NW_SIN_COST_TOKENS],
+        )
+        .unpivot(
+            on=[var for var, _ in _NW_SIN_COST_TOKENS],
+            index=["estagio"],
+            variable_name="variable",
+            value_name="value",
+        )
+        .with_columns(
+            pl.lit(0).cast(pl.Int64).alias("newave_code"),
+            pl.col("estagio").cast(pl.Int64).alias("stage"),
+            (pl.col("value") * k_to_r6).cast(pl.Float64).alias("value"),
+        )
+        .select("newave_code", "stage", "variable", "value")
+        .sort("stage", "variable")
+    )
 
     return nw_costs, nw_sin_rows
 
@@ -2728,6 +2814,7 @@ def build_decomp_dataset(
     """
     from novomodelo_bridge.comparators.analyze import build_results_dataset
     from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
 
     case = DecompCase.from_directory(decomp_dir)
     probabilities = _scenario_probabilities(decomp_dir)
@@ -2781,7 +2868,7 @@ def build_decomp_dataset(
 
     # --- Overview cost metadata (nw_costs / novomodelo_costs /
     # nw_sin cost rows / novomodelo_stage_costs) ---
-    nw_costs, nw_cost_rows = _cost_frames(decomp_dir)
+    nw_costs, nw_cost_rows = _cost_frames(decomp_dir, bus_deficit_costs(case.dadger))
     novomodelo_costs = novomodelo_readers.read_novomodelo_cost_breakdown(
         novomodelo_output_dir
     )

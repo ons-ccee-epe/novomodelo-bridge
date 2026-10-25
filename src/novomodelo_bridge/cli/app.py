@@ -328,14 +328,12 @@ def _compare_decomp(
 
     Informational: always exits 0, reporting divergences without failing.
 
-    Two caveats apply to the generated report. First, the Overview tab's NPV
-    cost cards compare DECOMP's undiscounted-nominal costs against Novomodelo's
-    time-discounted costs: DECOMP's own cost report carries no per-stage
-    discount factor, so none is fabricated on that side, and the two totals
-    are not on the same time-value footing. Second, percentile bands are
-    omitted (or labelled low-N where one would otherwise appear) for a
-    deterministic tree with too few scenarios to report a spread without
-    synthesizing it.
+    The Overview tab's cost breakdown is at present value on both sides:
+    each stage's DECOMP parcels are discounted by that stage's ratio of
+    present-value to nominal cost, both printed in DECOMP's cost report.
+    Percentile bands are omitted (or labelled low-N where one would
+    otherwise appear) for a deterministic tree with too few scenarios to
+    report a spread without synthesizing it.
     """
     _configure_logging(verbose, log_file)
     _run_decomp_comparison(

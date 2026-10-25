@@ -36,6 +36,9 @@ from novomodelo_bridge.comparators.charts.costs import (
     immediate_cost_chart as immediate_cost_chart,
 )
 from novomodelo_bridge.comparators.charts.costs import (
+    net_of_penalties_table as net_of_penalties_table,
+)
+from novomodelo_bridge.comparators.charts.costs import (
     other_costs_chart as other_costs_chart,
 )
 from novomodelo_bridge.comparators.charts.costs import (

@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comparison now uses DECOMP's own planes on its fit grid, as the NEWAVE
   report does, instead of Cobre's planes against `dec_desvfpha.rvN`. The
   static pmo section is no longer shown when it has no data.
+- **`compare newave` and `compare decomp` net the penalties out of each
+  lower bound.** Below the Overview tab's convergence chart, a table gives
+  each model's final lower bound, its expected constraint-violation
+  penalties from the cost breakdown, and the bound net of them. A slack
+  priced far above any real cost can dominate one model's bound; the net
+  bounds compare the operation both models price. The table names the
+  categories it counts and any cost category it cannot classify.
 
 - **`convert decomp` warns about negative incremental inflows.** The values
   are converted as the deck gives them. DECOMP reports a negative incremental
@@ -275,6 +282,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overflowed.** DECOMP prints a lower bound too wide for its field as
   asterisks; the convergence chart now draws each bound over the iterations
   where it is present, instead of failing to build the HTML report.
+- **`compare decomp` puts DECOMP's cost breakdown at present value.** The
+  parcels of DECOMP's cost report are nominal, and they were summed against
+  Cobre's present-value costs. Each stage's parcels are now discounted by
+  that stage's ratio of present-value to nominal cost, both printed in the
+  report. The breakdown also shows DECOMP's deficit, priced from
+  `dec_oper_sist` and the deck's `CD` costs, its import and export
+  contracts as its stage total counts them, and the penalty left in the
+  stage total for the constraint slacks the report does not itemize. DECOMP
+  counts an export contract's take-or-pay minimum as a cost where Cobre
+  counts it as revenue; the comparison logs the difference. The two turbining parcels were shown
+  as turbining-bound violations; they are the price on turbined water and
+  now compare with Cobre's turbined cost. The per-stage operating cost is
+  the nominal stage total. This needs idecomp 1.17.0 or newer, now the
+  minimum.
 - **DECOMP: an Itaipu `MP` or `FD` row without a frequency applies to both
   frequency groups.** The frequency field of those registers is optional,
   and a row that leaves it blank holds for the whole plant; the conversion

@@ -1019,7 +1019,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     productivity_parquet = hydro_conv.convert_hydro_energy_productivity(
         effective, id_map, initial_volumes, fpha_codes
     )
-    deficit_costs = network_conv._bus_deficit_costs(dadger)
+    deficit_costs = network_conv.bus_deficit_costs(dadger)
     deficit_cost = max(deficit_costs.values()) if deficit_costs else 0.0
     artifacts.deficit_cost = deficit_cost
     writer.write_json(
