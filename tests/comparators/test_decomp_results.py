@@ -12,6 +12,7 @@ stay in the mega file pending their own carve.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -664,11 +665,19 @@ class TestBuildDecompDatasetSingleParse:
         ]
         output_dir = _write_generic_constraints_case(case_dir, constraints, [])
 
-        spy = MagicMock(
-            return_value=_ConstraintFakeDadger(
-                sb=pd.DataFrame({"codigo_submercado": [1], "nome_submercado": ["SE"]})
-            )
+        dadger = _ConstraintFakeDadger(
+            sb=pd.DataFrame({"codigo_submercado": [1], "nome_submercado": ["SE"]}),
+            dp=pd.DataFrame(
+                {
+                    "estagio": [1, 2],
+                    "codigo_submercado": [1, 1],
+                    "numero_patamares": [1, 1],
+                    "duracao_1": [168.0, 528.0],
+                }
+            ),
         )
+        dadger.dt = SimpleNamespace(ano=2026, mes=1, dia=3)
+        spy = MagicMock(return_value=dadger)
         monkeypatch.setattr("idecomp.decomp.Dadger.read", spy)
         monkeypatch.setattr(
             "novomodelo_bridge.decomp.case.discover_decomp_files",

@@ -1154,11 +1154,9 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     """
     case = artifacts.case
     id_map = artifacts.id_map
-    dadger = artifacts.dadger
     calendar = artifacts.calendar
     vazoes = artifacts.vazoes
     effective = artifacts.effective
-    itaipu_operated = artifacts.itaipu_operated
     fan_probabilities = artifacts.fan_probabilities
 
     writer.write_parquet(
@@ -1176,19 +1174,17 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     # -- see hydro.py's convert_hydros docstring) and is gated on the dadger
     # RI register being present -- independent of (and additional to) the
     # unconditional Itaipu-operated line above. An Itaipu deck with no RI
-    # register (read_carga_ande returns {}) converts gracefully: SE carries
-    # only its own DP demand.
+    # register (ande_load returns None) converts gracefully: SE carries only
+    # its own DP demand.
     extra_bus_loads: dict[tuple[int, int], list[float]] | None = None
-    if itaipu_operated:
-        carga_ande = libs_electrical_conv.read_carga_ande(dadger, calendar)
-        if carga_ande:
-            ande_bus = id_map.bus_id(
-                int(case.hidr.loc[hydro_conv._ITAIPU_CODE, "submercado"])
-            )
-            extra_bus_loads = {
-                (ande_bus, stage_index): values
-                for stage_index, values in carga_ande.items()
-            }
+    ande = libs_electrical_conv.ande_load(case)
+    if ande is not None:
+        ande_submarket, carga_ande = ande
+        ande_bus = id_map.bus_id(ande_submarket)
+        extra_bus_loads = {
+            (ande_bus, stage_index): values
+            for stage_index, values in carga_ande.items()
+        }
     load_stats = load_conv.convert_load_stats(
         case, id_map, extra_bus_loads=extra_bus_loads
     )

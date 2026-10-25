@@ -144,6 +144,10 @@ def _dec_oper_sist_frame() -> pl.DataFrame:
     )
 
 
+#: One 730-hour stage: MWmes and MW coincide, so values read through unscaled.
+_MONTH_HOURS = {1: 730.0}
+
+
 class TestEnergyBalanceFrames:
     """``_energy_balance_frames`` -- the Energy Balance tab
     reference frames, built from ``dec_oper_sist``'s stage-aggregate rows."""
@@ -163,7 +167,7 @@ class TestEnergyBalanceFrames:
         self._patch_source(monkeypatch)
 
         nw_market, _nw_net_load, _nw_sin = _energy_balance_frames(
-            tmp_path, self._bus_codes()
+            tmp_path, self._bus_codes(), stage_hours=_MONTH_HOURS
         )
 
         tab_tokens = {nw_var for _, nw_var, _, _ in _BALANCE_VARS if nw_var}
@@ -179,7 +183,7 @@ class TestEnergyBalanceFrames:
         self._patch_source(monkeypatch)
 
         nw_market, _nw_net_load, _nw_sin = _energy_balance_frames(
-            tmp_path, self._bus_codes()
+            tmp_path, self._bus_codes(), stage_hours=_MONTH_HOURS
         )
 
         by_bus = {
@@ -202,7 +206,7 @@ class TestEnergyBalanceFrames:
         self._patch_source(monkeypatch)
 
         nw_market, nw_net_load, nw_sin = _energy_balance_frames(
-            tmp_path, self._bus_codes()
+            tmp_path, self._bus_codes(), stage_hours=_MONTH_HOURS
         )
 
         assert set(nw_market["stage"].unique().to_list()) == {1}
@@ -215,7 +219,7 @@ class TestEnergyBalanceFrames:
         self._patch_source(monkeypatch)
 
         _nw_market, nw_net_load, _nw_sin = _energy_balance_frames(
-            tmp_path, self._bus_codes()
+            tmp_path, self._bus_codes(), stage_hours=_MONTH_HOURS
         )
 
         assert set(nw_net_load["variable"].unique().to_list()) == {"NET_LOAD"}
@@ -232,7 +236,7 @@ class TestEnergyBalanceFrames:
         self._patch_source(monkeypatch)
 
         _nw_market, _nw_net_load, nw_sin = _energy_balance_frames(
-            tmp_path, self._bus_codes()
+            tmp_path, self._bus_codes(), stage_hours=_MONTH_HOURS
         )
 
         by_var = {row["variable"]: row["value"] for row in nw_sin.iter_rows(named=True)}
@@ -240,6 +244,57 @@ class TestEnergyBalanceFrames:
         assert by_var["ENA"] == pytest.approx(1200.0 + 400.0)
         # The constant SIN placeholder, matching read_medias_sin's convention.
         assert set(nw_sin["newave_code"].unique().to_list()) == {0}
+
+    def test_ena_is_converted_to_the_stage_mean_mw(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``ena_MWmes`` is energy over the stage; a 168-hour week holds
+        168/730 of a month, so the stage-mean MW is MWmes x 730 / 168. EARM
+        stays in MWmes (the chart scales Novomodelo's MWh by 730)."""
+        self._patch_source(monkeypatch)
+
+        _nw_market, _nw_net_load, nw_sin = _energy_balance_frames(
+            tmp_path, self._bus_codes(), stage_hours={1: 168.0}
+        )
+
+        by_var = {row["variable"]: row["value"] for row in nw_sin.iter_rows(named=True)}
+        assert by_var["ENA"] == pytest.approx((1200.0 + 400.0) * 730.0 / 168.0)
+        assert by_var["EARMF"] == pytest.approx(5000.0 + 2000.0)
+
+    def test_ena_is_dropped_for_a_stage_without_hours(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patch_source(monkeypatch)
+
+        _nw_market, _nw_net_load, nw_sin = _energy_balance_frames(
+            tmp_path, self._bus_codes(), stage_hours={}
+        )
+
+        assert set(nw_sin["variable"].to_list()) == {"EARMF"}
+
+    def test_extra_demand_adds_to_its_submarkets_net_load(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The ANDE load: the converted case carries it on Itaipu's bus while
+        ``demanda_MW`` leaves it out, so it is added before NET_LOAD. A key
+        for a stage the source model does not print adds no row."""
+        self._patch_source(monkeypatch)
+
+        _nw_market, nw_net_load, _nw_sin = _energy_balance_frames(
+            tmp_path,
+            self._bus_codes(),
+            stage_hours=_MONTH_HOURS,
+            extra_demand={(1, 1): 300.0, (1, 2): 999.0},
+        )
+
+        by_key = {
+            (row["newave_code"], row["stage"]): row["value"]
+            for row in nw_net_load.iter_rows(named=True)
+        }
+        assert by_key == {
+            (0, 1): pytest.approx(1000.0 + 300.0 - 30.0 - 20.0),
+            (1, 1): pytest.approx(500.0 - 10.0 - 5.0),
+        }
 
     def test_transhipment_bus_never_appears(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -254,7 +309,9 @@ class TestEnergyBalanceFrames:
         bus_codes = {code: id_map.bus_id(code) for code in id_map.bus_codes}
         self._patch_source(monkeypatch)
 
-        nw_market, nw_net_load, _nw_sin = _energy_balance_frames(tmp_path, bus_codes)
+        nw_market, nw_net_load, _nw_sin = _energy_balance_frames(
+            tmp_path, bus_codes, stage_hours=_MONTH_HOURS
+        )
 
         assert id_map.transhipment_bus_id not in nw_market["newave_code"].to_list()
         assert id_map.transhipment_bus_id not in nw_net_load["newave_code"].to_list()
@@ -268,7 +325,7 @@ class TestEnergyBalanceFrames:
         )
 
         nw_market, nw_net_load, nw_sin = _energy_balance_frames(
-            tmp_path, self._bus_codes()
+            tmp_path, self._bus_codes(), stage_hours=_MONTH_HOURS
         )
 
         for frame in (nw_market, nw_net_load, nw_sin):

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -74,6 +74,8 @@ from novomodelo_bridge.comparators.decomp.readers import (
 )
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
+from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
 from novomodelo_bridge.novomodelo.case_io import case_dir_for
 
@@ -1045,6 +1047,8 @@ def _energy_balance_frames(
     decomp_dir: Path,
     bus_codes: dict[int, int],
     *,
+    stage_hours: Mapping[int, float],
+    extra_demand: Mapping[tuple[int, int], float] | None = None,
     probabilities: pl.DataFrame | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Build the Energy Balance tab's DECOMP-side reference frames.
@@ -1080,6 +1084,12 @@ def _energy_balance_frames(
     :func:`_map_entities`, this does *not* rebase to Novomodelo's 0-based
     ``stage_id``), so the consuming charts' own stage-alignment (``nw_offset
     = 1``, set on ``PercentileData`` by ``build_decomp_dataset``) lines up.
+
+    *stage_hours* (``{estagio: hours}``) turns ``ena_MWmes``, energy over the
+    stage, into the stage-mean MW the Novomodelo series is in. *extra_demand*
+    (``{(codigo_submercado, estagio): MW}``) is load the converted case
+    places on a bus but ``demanda_MW`` leaves out (the ANDE load); it is
+    added before NET_LOAD is formed.
     """
     frame = _stage_rows(read_dec_oper_sist(decomp_dir))
     if frame.is_empty() or "codigo_submercado" not in frame.columns:
@@ -1094,6 +1104,32 @@ def _energy_balance_frames(
         probabilities=probabilities,
     )
     present = set(aggregated.columns)
+    if extra_demand and "demanda_MW" in present:
+        extra = pl.DataFrame(
+            {
+                "codigo_submercado": [code for code, _ in extra_demand],
+                "estagio": [stage for _, stage in extra_demand],
+                "_extra_demand": list(extra_demand.values()),
+            },
+            schema={
+                "codigo_submercado": pl.Int64,
+                "estagio": pl.Int64,
+                "_extra_demand": pl.Float64,
+            },
+        )
+        aggregated = (
+            aggregated.with_columns(
+                pl.col("codigo_submercado").cast(pl.Int64),
+                pl.col("estagio").cast(pl.Int64),
+            )
+            .join(extra, on=["codigo_submercado", "estagio"], how="left")
+            .with_columns(
+                (pl.col("demanda_MW") + pl.col("_extra_demand").fill_null(0.0)).alias(
+                    "demanda_MW"
+                )
+            )
+            .drop("_extra_demand")
+        )
 
     mapped = aggregated.with_columns(
         pl.col("codigo_submercado")
@@ -1163,14 +1199,25 @@ def _energy_balance_frames(
     # ``read_medias_sin``'s newave-side convention.
     system_energy = {"earm_final_MWmes", "ena_MWmes"}
     if system_energy <= present:
-        sin_agg = aggregated.group_by("estagio").agg(
-            pl.col("earm_final_MWmes").sum().alias("EARMF"),
-            pl.col("ena_MWmes").sum().alias("ENA"),
+        hours = pl.DataFrame(
+            {"estagio": list(stage_hours), "_hours": list(stage_hours.values())},
+            schema={"estagio": pl.Int64, "_hours": pl.Float64},
+        )
+        sin_agg = (
+            aggregated.group_by(pl.col("estagio").cast(pl.Int64))
+            .agg(
+                pl.col("earm_final_MWmes").sum().alias("EARMF"),
+                pl.col("ena_MWmes").sum().alias("ENA"),
+            )
+            .join(hours, on="estagio", how="left")
+            .with_columns(pl.col("ENA") * _EARM_MWH_TO_MWMES / pl.col("_hours"))
+            .drop("_hours")
         )
         nw_sin = (
             sin_agg.unpivot(
                 on=["EARMF", "ENA"], index=["estagio"], variable_name="variable"
             )
+            .drop_nulls("value")
             .with_columns(
                 pl.lit(0).cast(pl.Int64).alias("newave_code"),
                 pl.col("estagio").cast(pl.Int64).alias("stage"),
@@ -1702,8 +1749,23 @@ def _read_aligned_frames(
     source_bus, unmapped_bus = _bus_side(
         decomp_dir, bus_codes, probabilities=probabilities
     )
+    calendar = case.calendar
+    extra_demand: dict[tuple[int, int], float] | None = None
+    ande = ande_load(case)
+    if ande is not None:
+        ande_submarket, carga_ande = ande
+        extra_demand = {
+            (ande_submarket, stage_index + 1): hours_weighted(
+                values, calendar[stage_index]
+            )
+            for stage_index, values in carga_ande.items()
+        }
     nw_market, nw_net_load, nw_sin = _energy_balance_frames(
-        decomp_dir, bus_codes, probabilities=probabilities
+        decomp_dir,
+        bus_codes,
+        stage_hours={stage.index + 1: stage.total_hours for stage in calendar},
+        extra_demand=extra_demand,
+        probabilities=probabilities,
     )
 
     novomodelo_hydro, hydro_names = _novomodelo_hydro(novomodelo_output_dir)

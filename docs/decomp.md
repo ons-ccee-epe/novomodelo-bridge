@@ -253,6 +253,13 @@ model's bound; the bounds net of penalties compare the operation both models
 price. The table names the categories it counts and any cost category it
 cannot classify. `compare newave` shows the same table.
 
+On the Energy Balance tab, the ANDE load of the deck's `RI` register is added
+to the demand of Itaipu's submarket, as the conversion adds it to that bus:
+DECOMP's `dec_oper_sist` demand leaves it out, while its hydro generation
+includes the Itaipu output that serves it. DECOMP prints the system's natural
+inflow energy (ENA) as energy over the stage, in MWmês of 730 hours; the
+chart converts it to the stage's mean MW, the unit of Novomodelo's series.
+
 The Productivity tab compares the two models at the operating points each one
 reached, per plant, stage, scenario and block. It reads DECOMP's fitted planes
 (`avl_cortesfpha_dec.rvN`) and fit windows (`eco_fpha_.rvN`). For each plant

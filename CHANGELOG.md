@@ -296,6 +296,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now compare with Cobre's turbined cost. The per-stage operating cost is
   the nominal stage total. This needs idecomp 1.17.0 or newer, now the
   minimum.
+- **`compare decomp` counts the ANDE load in Net Load and shows the system
+  ENA in MW.** DECOMP's `dec_oper_sist` demand leaves out the ANDE load of the
+  `RI` register, which the converted case carries on Itaipu's submarket bus,
+  so the Energy Balance tab's Net Load on that bus was lower on the DECOMP
+  side by that load. It is now added there. The system ENA chart drew
+  DECOMP's ENA, energy over the stage in MWmês of 730 hours, against Cobre's
+  mean MW, which put a weekly stage at about a quarter of Cobre's value.
+  DECOMP's ENA is now converted to the stage's mean MW.
 - **DECOMP: an Itaipu `MP` or `FD` row without a frequency applies to both
   frequency groups.** The frequency field of those registers is optional,
   and a row that leaves it blank holds for the whole plant; the conversion

@@ -69,7 +69,7 @@ import pandas as pd
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
-from novomodelo_bridge.decomp.converters.hydro import _rated_envelope
+from novomodelo_bridge.decomp.converters.hydro import _ITAIPU_CODE, _rated_envelope
 from novomodelo_bridge.decomp.load import _per_stage_block_loads
 
 if TYPE_CHECKING:
@@ -593,6 +593,22 @@ def read_carga_ande(
     return {
         stage.index: values for stage, values in zip(calendar, per_stage, strict=True)
     }
+
+
+def ande_load(case: DecompCase) -> tuple[int, dict[int, list[float]]] | None:
+    """The ANDE load and the submarket that carries it.
+
+    Returns ``(codigo_submercado, {stage_index: per-block MW})``: the
+    :func:`read_carga_ande` series on Itaipu's own ``hidr.dat`` submarket.
+    ``None`` when the deck does not operate Itaipu or carries no ``RI``
+    register.
+    """
+    if _ITAIPU_CODE not in case.id_map.hydro_codes:
+        return None
+    carga_ande = read_carga_ande(case.dadger, case.calendar)
+    if not carga_ande:
+        return None
+    return int(case.hidr.loc[_ITAIPU_CODE, "submercado"]), carga_ande
 
 
 #: Built-in bare (argument-less) input-data tokens. A bare name not
