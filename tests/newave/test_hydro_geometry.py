@@ -248,6 +248,51 @@ class TestGenerateHydroGeometry:
         assert (vols[0], vols[-1]) == pytest.approx((100.0, 1000.0))
 
 
+class TestGeometryCoversReferenceVolumes:
+    """The geometry reaches every volume novomodelo reads a downstream level at."""
+
+    def test_reference_volume_above_vmax_extends_geometry(self) -> None:
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
+
+        cadastro = _make_geometry_cadastro()
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
+        with dx.collect() as collected:
+            table = generate_hydro_geometry(
+                cadastro, id_map, {1: [300.0] * 11 + [1200.0]}
+            )
+
+        volumes = table.column("volume_hm3").to_pylist()
+        heights = table.column("height_m").to_pylist()
+        assert volumes[0] == pytest.approx(100.0)
+        assert volumes[-1] == pytest.approx(1200.0)
+        assert heights[-1] == pytest.approx(300.0 + 0.1 * 1200.0)
+        [diagnostic] = [d for d in collected if d.code == "hydro-geometry-extended"]
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.table is not None
+        assert [row[1:] for row in diagnostic.table.rows] == [[1, 1000.0, 1200.0]]
+        _assert_no_repo_internal_leaks(collected)
+
+    def test_reference_volumes_within_range_keep_geometry(self) -> None:
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
+
+        cadastro = _make_geometry_cadastro()
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
+        with dx.collect() as collected:
+            table = generate_hydro_geometry(cadastro, id_map, {1: [300.0] * 12})
+
+        assert max(table.column("volume_hm3").to_pylist()) == pytest.approx(1000.0)
+        assert [d for d in collected if d.code == "hydro-geometry-extended"] == []
+
+    def test_single_volume_plant_ignores_reference_volumes(self) -> None:
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
+
+        cadastro = _make_geometry_cadastro()
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[2], thermal_codes=[])
+        table = generate_hydro_geometry(cadastro, id_map, {2: [80.0] * 12})
+
+        assert table.column("volume_hm3").to_pylist() == [50.0]
+
+
 class TestOperatingStorageRange:
     """The one storage range the reservoir bounds, geometry and FPHA window read."""
 

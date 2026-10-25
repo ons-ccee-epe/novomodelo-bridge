@@ -427,7 +427,7 @@ class TestFphaConverters:
         # Plant 1: vmin=100, vmax=1000. volref stores USEFUL storage above vmin.
         case = self._case(
             tmp_path,
-            volref={1: {1: 200.0, 6: 850.0, 7: 5000.0}},  # Jan, Jun, Jul (Jul > band)
+            volref={1: {1: 200.0, 6: 850.0, 7: 5000.0}},  # Jan, Jun, Jul (Jul > vmax)
         )
         models = {
             m["hydro_id"]: m
@@ -440,10 +440,10 @@ class TestFphaConverters:
         assert entry["default_model"] == "constant_productivity"
         seasons = {s["season_id"]: s for s in entry["seasons"]}
         assert sorted(seasons) == list(range(12))
-        # season_id = month - 1; absolute = clamp(vmin + useful, vmin, vmax).
+        # season_id = month - 1; absolute = vmin + useful, not capped at vmax.
         assert seasons[0]["reference_volume"] == {"volume_hm3": 300.0}  # Jan: 100+200
         assert seasons[5]["reference_volume"] == {"volume_hm3": 950.0}  # Jun: 100+850
-        assert seasons[6]["reference_volume"] == {"volume_hm3": 1000.0}  # Jul clamped
+        assert seasons[6]["reference_volume"] == {"volume_hm3": 5100.0}  # Jul: 100+5000
         assert seasons[2]["reference_volume"] == {"volume_hm3": 100.0}  # unset -> vmin
         # FPHA plant: every season carries model fpha + fpha_config (with window).
         assert all(s["model"] == "fpha" for s in entry["seasons"])

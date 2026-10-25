@@ -268,6 +268,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the downstream level of the plant above, and the FPHA planes it fitted
   for those plants departed from NEWAVE's. The geometry is now one point at
   `volume_referencia`, as `convert decomp` already does.
+- **`convert newave` keeps a seasonal reference volume above
+  `volume_maximo`.** In FPHA cases, a `volref_saz.dat` month whose
+  `volume_minimo + valor` exceeded `volume_maximo` was capped at the maximum.
+  NEWAVE reads the downstream level of the plant above at that volume, so the
+  upstream plant's FPHA tailrace was set too low. The reference volume is now
+  emitted as given, and the plant's geometry samples the volume-to-height
+  polynomial up to it. A `hydro-geometry-extended` note names each plant.
 - **`convert decomp` converts two flow restrictions on one plant that no
   value meets at once.** Single-plant `HQ` restrictions on the same variable,
   such as a 0 m³/s ceiling and a 6 m³/s floor on a plant's outflow, failed the

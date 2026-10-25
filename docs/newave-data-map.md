@@ -50,7 +50,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `expt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
 | `exph.dat` (opcional) |  |  |  | ● | ● | ● | ● | ● |  |  |
 | `manutt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
-| `volref_saz.dat` (opcional) |  |  |  | ● | ● |  | ● |  |  |  |
+| `volref_saz.dat` (opcional) |  |  |  | ● | ● | ● | ● |  |  |  |
 | `adterm.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
 | `polinjus.csv` (opcional) |  |  |  |  |  |  |  | ● |  |  |
 | `tratamento-fpha.csv` (opcional) |  |  |  |  | ● |  |  |  |  |  |
@@ -359,7 +359,7 @@ Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produti
 | `production_models[].default_model` | — *(constante; condicional: somente em caso FPHA para usina com linha não nula em `volref_saz.dat`)* | Sempre `constant_productivity`: as doze estações são listadas, logo o padrão nunca é consultado. |
 | `production_models[].seasons[].season_id` | `volref_saz.dat` › `mes` *(derivado; condicional: somente em caso FPHA para usina com linha não nula em `volref_saz.dat`)* | `mes − 1` (0 = janeiro), alinhado ao mapa de estações de `stages.json`. |
 | `production_models[].seasons[].model` | `dger.dat` › `funcao_producao_uhe`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `modif.dat` › `VOLCOTA · coeficientes a0 a a4`, `hidr.dat` › `produtibilidade_especifica` *(condicional: somente em caso FPHA para usina com linha não nula em `volref_saz.dat`)* | `fpha` ou `constant_productivity`, igual em todas as estações, pelo critério de elegibilidade da usina. |
-| `production_models[].seasons[].reference_volume.volume_hm3` | `volref_saz.dat` › `valor`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume` *(condicional: somente em caso FPHA para usina com linha não nula em `volref_saz.dat`)* | Volume de referência absoluto do mês: `volume_minimo + valor` (volume útil sazonal; mês ausente ou zero significa operar em `volume_minimo`), limitado a [`volume_minimo`, `volume_maximo`]. |
+| `production_models[].seasons[].reference_volume.volume_hm3` | `volref_saz.dat` › `valor`, `hidr.dat` › `volume_minimo`, `modif.dat` › `VOLMIN · volume` *(condicional: somente em caso FPHA para usina com linha não nula em `volref_saz.dat`)* | Volume de referência absoluto do mês: `volume_minimo + valor` (volume útil sazonal; mês ausente ou zero significa operar em `volume_minimo`), sem limite em `volume_maximo`: o modelo de origem lê nesse volume o nível de jusante da usina a montante mesmo acima do máximo, e a geometria da usina se estende até ele. |
 | `production_models[].seasons[].fpha_config.source` | — *(constante; condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Sempre `computed`. |
 | `production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume` *(condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Igual a `stage_ranges[].fpha_config.fitting_window.volume_min_hm3`, repetido em cada estação. |
 | `production_models[].seasons[].fpha_config.fitting_window.volume_max_hm3` | `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMAX · volume` *(condicional: somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat`)* | Igual a `stage_ranges[].fpha_config.fitting_window.volume_max_hm3`, repetido em cada estação. |
@@ -371,16 +371,16 @@ Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produti
 
 ### `system/hydro_geometry.parquet`
 
-**Lê:** `hidr.dat`, `modif.dat` (opcional), `confhd.dat`, `exph.dat` (opcional)  
+**Lê:** `hidr.dat`, `modif.dat` (opcional), `confhd.dat`, `exph.dat` (opcional), `volref_saz.dat` (opcional)  
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/newave/converters/hydro/geometry.py`
 
-Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes na faixa de armazenamento em que a usina opera (um único ponto quando ela se reduz a um volume); usinas com polinômio cota-volume nulo são omitidas com aviso.
+Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes na faixa de armazenamento em que a usina opera, estendida até o maior volume de referência sazonal (um único ponto quando ela se reduz a um volume); usinas com polinômio cota-volume nulo são omitidas com aviso.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
 | `hydro_id` | `confhd.dat` › `codigo_usina` *(derivado)* | Id Novomodelo da usina, repetido em cada ponto amostrado; a tabela é ordenada por usina e depois por volume. |
-| `volume_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume` | Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto quando a faixa é nula. Usinas `tipo_regulacao` D e S recebem um único ponto em `volume_referencia`, o mesmo colapso dos limites de `hydros.json`, mesmo fora de [`volume_minimo`, `volume_maximo`]: a cota nesse volume é a de montante da usina e o nível de jusante da usina a montante (faixa completa se ausente). |
+| `volume_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume`, `volref_saz.dat` › `valor` | Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto quando a faixa é nula. Usinas `tipo_regulacao` D e S recebem um único ponto em `volume_referencia`, o mesmo colapso dos limites de `hydros.json`, mesmo fora de [`volume_minimo`, `volume_maximo`]: a cota nesse volume é a de montante da usina e o nível de jusante da usina a montante (faixa completa se ausente). Em caso FPHA, a faixa das demais usinas vai até o maior volume de referência sazonal (`volume_minimo + valor` de `volref_saz.dat`) quando ele passa de `volume_maximo`: o polinômio cota-volume é avaliado além do máximo, como faz o modelo de origem ao ler ali o nível de jusante da usina a montante. |
 | `height_m` | `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `modif.dat` › `VOLCOTA · coeficientes a0 a a4` | Cota de montante (m): polinômio `a0 + a1·V + a2·V² + a3·V³ + a4·V⁴` (coeficientes sobrescritos pelo registro permanente `VOLCOTA` de `modif.dat`) avaliado em cada volume, com valores negativos levados a 0. |
 | `area_km2` | `hidr.dat` › `a0_cota_area … a4_cota_area`, `modif.dat` › `COTAREA · coeficientes a0 a a4` | Área do espelho d'água (km²): polinômio cota-área (coeficientes sobrescritos pelo registro permanente `COTAREA` de `modif.dat`) avaliado na cota calculada, com valores negativos levados a 0. |
 
@@ -1215,7 +1215,6 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 - `a0_volume_cota … a4_volume_cota` → `system/hydro_production_models.json` › `production_models[].seasons[].model`
 - `produtibilidade_especifica` → `system/hydro_production_models.json` › `production_models[].seasons[].model`
 - `volume_minimo` → `system/hydro_production_models.json` › `production_models[].seasons[].reference_volume.volume_hm3`
-- `volume_maximo` → `system/hydro_production_models.json` › `production_models[].seasons[].reference_volume.volume_hm3`
 - `tipo_regulacao` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3`
 - `volume_minimo` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3`
 - `volume_referencia` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3`
@@ -1332,7 +1331,6 @@ Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`
 - `VOLMAX · volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `VOLCOTA · coeficientes a0 a a4` → `system/hydro_production_models.json` › `production_models[].seasons[].model`
 - `VOLMIN · volume` → `system/hydro_production_models.json` › `production_models[].seasons[].reference_volume.volume_hm3`
-- `VOLMAX · volume` → `system/hydro_production_models.json` › `production_models[].seasons[].reference_volume.volume_hm3`
 - `VOLMIN · volume` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.fitting_window.volume_min_hm3`
 - `VOLMAX · volume` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.fitting_window.volume_max_hm3`
 - `VOLMIN · volume` → `system/hydro_geometry.parquet` › `volume_hm3`
@@ -1591,7 +1589,7 @@ Fornece o conjunto de usinas e os limites superiores das restrições elétricas
 
 ### `volref_saz.dat`
 
-**Estado:** convertido. **Lido por:** `constraints/hydro_bounds.parquet`, `system/hydro_energy_productivity.parquet`, `system/hydro_production_models.json`, `system/hydros.json`.
+**Estado:** convertido. **Lido por:** `constraints/hydro_bounds.parquet`, `system/hydro_energy_productivity.parquet`, `system/hydro_geometry.parquet`, `system/hydro_production_models.json`, `system/hydros.json`.
 
 Lido integralmente. Uma linha inteiramente zerada é tratada como ausência de referência sazonal (a usina recai em `volume_referencia`/altura 65%).
 
@@ -1602,6 +1600,7 @@ Lido integralmente. Uma linha inteiramente zerada é tratada como ausência de r
 - `valor` → `system/hydro_production_models.json` › `production_models[].selection_mode`
 - `mes` → `system/hydro_production_models.json` › `production_models[].seasons[].season_id`
 - `valor` → `system/hydro_production_models.json` › `production_models[].seasons[].reference_volume.volume_hm3`
+- `valor` → `system/hydro_geometry.parquet` › `volume_hm3`
 - `valor` → `system/hydro_energy_productivity.parquet` › `stage_id`
 - `valor` → `system/hydro_energy_productivity.parquet` › `equivalent_productivity_mw_per_m3s`
 - `valor` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`

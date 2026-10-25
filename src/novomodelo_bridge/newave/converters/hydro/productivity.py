@@ -32,6 +32,7 @@ from novomodelo_bridge.newave.converters.hydro.geometry import (
     _seasonal_reference_volume,
     fpha_eligible_codes,
     operating_storage_range,
+    seasonal_reference_volumes,
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
@@ -261,7 +262,8 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     backwater / tailrace level and the ρ_eq reference. The source model's per-month
     seasonal reference comes from ``volref_saz.dat``: a plant with a seasonal row is
     emitted in ``seasonal`` mode with one absolute ``reference_volume`` per season
-    (``clamp(vmin + useful, vmin, vmax)``); a plant without one falls back to
+    (:func:`~novomodelo_bridge.newave.converters.hydro.geometry.seasonal_reference_volumes`,
+    which may lie above ``vmax``); a plant without one falls back to
     ``percentile 0.65`` (= novomodelo's default, the source model's altura_65). This is
     emitted for FPHA reservoirs **and** for any non-FPHA plant that has a seasonal row,
     because novomodelo reads a plant's *downstream* ``reference_volume`` (via
@@ -296,13 +298,13 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # row (FPHA or not), so each plant is a correct backwater reference for its upstream
     # FPHA neighbour. Plants without a row fall through to novomodelo's 0.65 default fraction
     # (= the source model's altura_65).
-    seasonal_volref = _read_volref_saz(case) if case.fpha_enabled else {}
-    # Load the cadastro whenever per-plant volume info is needed — for the FPHA
-    # fitting window (every FPHA plant) or the seasonal reference volumes.
     cadastro = (
         _apply_permanent_overrides(case.hidr.cadastro, case)
-        if (seasonal_volref or fpha_codes)
+        if case.fpha_enabled
         else None
+    )
+    reference_volumes = (
+        seasonal_reference_volumes(case, cadastro) if cadastro is not None else {}
     )
 
     spillage_max_by_code = (
@@ -319,7 +321,7 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             continue
 
         is_fpha = newave_code in fpha_codes
-        monthly_useful = seasonal_volref.get(newave_code)
+        plant_references = reference_volumes.get(newave_code)
         hreg = (
             cadastro.loc[newave_code]
             if cadastro is not None and newave_code in cadastro.index
@@ -331,7 +333,7 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             else None
         )
 
-        if monthly_useful and hreg is not None:
+        if plant_references:
             production_models.append(
                 {
                     "hydro_id": hydro_id,
@@ -340,11 +342,7 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                     # consulted; a config-less model keeps it valid.
                     "default_model": "constant_productivity",
                     "seasons": _seasonal_reference_volume(
-                        monthly_useful,
-                        float(hreg["volume_minimo"]),
-                        float(hreg["volume_maximo"]),
-                        is_fpha=is_fpha,
-                        fpha_config=fpha_config,
+                        plant_references, is_fpha=is_fpha, fpha_config=fpha_config
                     ),
                 }
             )

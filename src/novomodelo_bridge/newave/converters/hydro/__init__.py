@@ -41,6 +41,9 @@ from novomodelo_bridge.newave.converters.hydro.geometry import (
 from novomodelo_bridge.newave.converters.hydro.geometry import (
     generate_hydro_geometry as generate_hydro_geometry,
 )
+from novomodelo_bridge.newave.converters.hydro.geometry import (
+    seasonal_reference_volumes as seasonal_reference_volumes,
+)
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides as _apply_permanent_overrides,
 )
