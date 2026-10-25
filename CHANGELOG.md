@@ -133,18 +133,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   station 300 keeps that fallback, as in DECOMP, and a DECOMP deck without
   `mlt.dat` keeps it for every plant with an `fpha-mlt-absent` warning. The
   field needs the paired cobre release.
-- **`convert newave` sets the turbined-flow range of the FPHA fit for daily
-  and run-of-river plants.** NEWAVE fits a plant with `tipo_regulacao` D or S
-  up to the flow at which each machine set reaches its rated power or its
-  turbine limit at the head it sees there, from the forebay level at
-  `volume_referencia` down to the `polinjus` tailrace at that flow, with no
-  outage derating. Cobre fitted up to the plant's maximum turbined flow,
-  which for most of these plants is a different range, so the planes
-  departed from NEWAVE's at its operating points. Each such plant now emits
-  `fpha_config.turbined_fit_max_m3s`; monthly reservoirs keep Cobre's range.
-  An `fpha-turbined-fit-range-unconverged` warning names a plant where the
-  flow does not settle on the tailrace curve. The field needs the paired
-  cobre release.
+- **`convert newave` sets the turbined-flow range of the FPHA fit.** NEWAVE
+  fits each FPHA plant up to the flow at which every machine set reaches its
+  rated power or its turbine limit, with no outage derating. The turbine head
+  runs from the forebay level at the plant's FPHA reference volume down to
+  the `polinjus` tailrace at that flow, read at the forebay level of the
+  plant `hidr.dat` names downstream; the generator head runs from the mean
+  forebay over the plant's operating range. Cobre fitted up to the plant's
+  maximum turbined flow, which for most plants is a different range, so the
+  planes departed from NEWAVE's at its operating points. Each FPHA plant now
+  emits `fpha_config.turbined_fit_max_m3s`, stage by stage where its
+  reference volume changes. An `fpha-turbined-fit-range-unconverged` warning
+  names a plant where the flow does not settle on the tailrace curve. The
+  field needs the paired cobre release.
+- **`convert newave` takes the FPHA reference volume from
+  `volumes-referencia.csv`.** NEWAVE reads a monthly reservoir's FPHA
+  reference volume, the forebay level of its own fit and the downstream level
+  of the plant above, from the `CADH-VOL-REF-PER` rows of the file
+  `indices.csv` lists under `HIDRELETRICA-CADASTRO-RESERVATORIO` when
+  `VOLUME-REFERENCIAL-TIPO-PADRAO` is 1, from `volume_referencia` for a
+  reservoir without rows, and from the initial storage when the file is
+  absent or the type is 0; a daily or run-of-river plant reads
+  `volume_referencia`. The converter used `volref_saz.dat` or 65% of the
+  useful volume instead. Each plant of an FPHA case now declares NEWAVE's
+  volume, as twelve seasons when it repeats every calendar month and as stage
+  ranges otherwise, and an `fpha-reference-initial-storage` note marks the
+  initial-storage fallback. Rows that leave a study stage uncovered, two
+  values for one month, or an unknown type fail the conversion, as they stop
+  NEWAVE. Evaporation, the equivalent productivity and the turbine limit keep
+  reading `volref_saz.dat`.
 - **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
   An FPHA plant whose turbined limit is zero on a stage, such as one with
   every machine under maintenance, takes a zero constant productivity on that
@@ -280,13 +297,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the downstream level of the plant above, and the FPHA planes it fitted
   for those plants departed from NEWAVE's. The geometry is now one point at
   `volume_referencia`, as `convert decomp` already does.
-- **`convert newave` keeps a seasonal reference volume above
-  `volume_maximo`.** In FPHA cases, a `volref_saz.dat` month whose
-  `volume_minimo + valor` exceeded `volume_maximo` was capped at the maximum.
-  NEWAVE reads the downstream level of the plant above at that volume, so the
-  upstream plant's FPHA tailrace was set too low. The reference volume is now
-  emitted as given, and the plant's geometry samples the volume-to-height
-  polynomial up to it. A `hydro-geometry-extended` note names each plant.
+- **`convert newave` keeps an FPHA reference volume outside the storage
+  range.** In FPHA cases, a reference volume above `volume_maximo` was capped
+  at the maximum. NEWAVE reads the plant's forebay level and the downstream
+  level of the plant above at that volume, so the upstream plant's FPHA
+  tailrace was set too low. The reference volume is now emitted as given, and
+  the plant's geometry samples the volume-to-height polynomial over its
+  storage range widened to cover it, below `volume_minimo` as well as above
+  `volume_maximo`. A `hydro-geometry-extended` note names each plant.
 - **`convert decomp` converts two flow restrictions on one plant that no
   value meets at once.** Single-plant `HQ` restrictions on the same variable,
   such as a 0 m³/s ceiling and a 6 m³/s floor on a plant's outflow, failed the

@@ -17,7 +17,8 @@ The CSV inputs of the LIBS family are found through their own index,
 `indices.csv` in the case directory. Each line of it names a record key and the
 file that holds it, and the converter reads each LIBS record from the file
 listed for its key: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` (the
-tailrace curves), `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` (the FPHA plane
+tailrace curves), `HIDRELETRICA-CADASTRO-RESERVATORIO` (the per-period
+reference volumes), `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` (the FPHA plane
 reduction method) and `RESTRICAO-ELETRICA-ESPECIAL` (the electrical
 constraints). Lines starting with `&` are comments. Without `indices.csv`, or
 with a key left out or commented out, that record is not part of the case: no
@@ -130,6 +131,25 @@ the same output.
   over the record before the study start. DECOMP applies the same rule to its
   long-term means. A plant on posto 300 gets no range, and Novomodelo fits over
   twice its maximum turbined flow.
+- **FPHA reference volume.** Each plant of an FPHA case declares, per stage,
+  the volume NEWAVE reads its forebay level at: the head of its own turbined
+  fit range and the downstream level of the plant above it. A daily or
+  run-of-river plant reads `volume_referencia`. A monthly reservoir reads the
+  `CADH-VOL-REF-PER` row of `volumes-referencia.csv` that covers the stage's
+  month when `VOLUME-REFERENCIAL-TIPO-PADRAO` is 1, or `volume_referencia`
+  when it has no row. Without the file, with type 0 or without the record,
+  every monthly reservoir reads its initial storage. Rows that leave a stage
+  uncovered or give one month twice fail the conversion, as they stop NEWAVE.
+  `volref_saz.dat` and the `modif.dat` temporal records do not move this
+  volume; `volref_saz.dat` sets the evaporation reference and the head of the
+  equivalent productivity. A volume outside the plant's storage range widens
+  its sampled geometry to cover it.
+- **Turbined fit range.** Each FPHA plant's fit runs up to the flow at which
+  every machine set reaches its rated power or its turbine limit, NEWAVE's
+  rule, with no outage derating: the turbine head runs from the forebay at the
+  reference volume down to the `polinjus` tailrace at that flow, read at the
+  forebay of the plant `hidr.dat` names downstream, and the generator head
+  from the mean forebay over the plant's operating range.
 
 Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,

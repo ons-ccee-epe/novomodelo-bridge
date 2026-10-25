@@ -192,6 +192,7 @@ _OPTIONAL = (
     "adterm",
     "libs_index",
     "polinjus",
+    "volumes_referencia",
     "tratamento_fpha",
     "restricao_eletrica",
     "estacao_bombeamento",
@@ -659,6 +660,10 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.read_cadastro",
             return_value=MagicMock(),
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.hydro_conv.fpha_reference_volumes",
+            return_value={},
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.generate_hydro_geometry",
