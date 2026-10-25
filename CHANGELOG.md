@@ -170,19 +170,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ranges otherwise, and an `fpha-reference-initial-storage` note marks the
   initial-storage fallback. Rows that leave a study stage uncovered, two
   values for one month, or an unknown type fail the conversion, as they stop
-  NEWAVE. Evaporation, the equivalent productivity and the turbine limit of a
-  constant-productivity plant keep reading `volref_saz.dat`.
-- **`convert newave` caps an FPHA plant's turbined flow and generation as
-  NEWAVE does.** Under FPHA, NEWAVE caps a plant's turbined flow at its rated
-  flow and its generation at its rated power, both scaled by the plant's TEIF
-  and IP availability, with no head correction. The converter capped the flow
-  at the rated flow corrected for the operating head, NEWAVE's rule under
-  constant productivity, and left generation at the rated power. An FPHA plant
-  now declares the available rated flow as `max_turbined_m3s`, and
-  `hydro_bounds.parquet` carries its available power as `max_generation_mw`
-  on every stage. The declared `max_generation_mw` stays the rated power,
-  which caps the fit as it does NEWAVE's. A constant-productivity plant keeps
-  the head-corrected cap.
+  NEWAVE. Evaporation and the equivalent productivity keep reading
+  `volref_saz.dat`.
+- **`convert newave` caps turbined flow and generation as NEWAVE does.**
+  NEWAVE caps a plant's generation at its available power, the rated power
+  scaled by the plant's TEIF and IP availability, under FPHA and constant
+  productivity alike. The converter left generation at the rated power.
+  `hydro_bounds.parquet` now carries every plant's available power as
+  `max_generation_mw` on every stage; the declared `max_generation_mw` stays
+  the rated power, which caps the FPHA fit as it does NEWAVE's. Under a
+  `CFUGA` or `CMONT` record, the per-stage turbined cap of a monthly
+  reservoir read the forebay level at 65% of its useful volume, while NEWAVE
+  keeps the mean level between the minimum volume and that volume, as the
+  declared cap does, and a `volref_saz.dat` row moved the per-stage turbined
+  cap, which in NEWAVE it does not.
 - **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
   An FPHA plant whose turbined limit is zero on a stage, such as one with
   every machine under maintenance, takes a zero constant productivity on that
