@@ -1,17 +1,17 @@
 """Hydro conversion for DECOMP-like decks (registry ``hidr.dat`` + ``UH``).
 
 Thin facade — re-exports the public API from :mod:`.entity`, :mod:`.bounds`,
-and :mod:`.productivity`.
+:mod:`.turbine_limit`, and :mod:`.productivity`.
 
-Converted scope: faithful registry, cascade,
-capability, initial storage, head/productivity (including head-aware
-engolimento), and the ``VI`` water travel time — a separate dadger register,
-not an ``AC`` class, converted in
-:mod:`novomodelo_bridge.decomp.converters.travel_time`. Left unconverted are the
-evaporation/tailrace-polynomial models (``COTVAZ``/``COTARE``/``COFEVA`` —
-``AC`` classes with no DECOMP consumer). The ``AC`` families' own per-deck
-coverage (which of them a given deck actually declares) is reported by
-``check decomp`` (:mod:`novomodelo_bridge.decomp.preflight`).
+Converted scope: faithful registry, cascade, capability, initial storage,
+head/productivity, the a-priori turbined-flow limit (:mod:`.turbine_limit`),
+and the ``VI`` water travel time — a separate dadger register, not an ``AC``
+class, converted in :mod:`novomodelo_bridge.decomp.converters.travel_time`. Left
+unconverted are the evaporation/tailrace-polynomial models
+(``COTVAZ``/``COTARE``/``COFEVA`` — ``AC`` classes with no DECOMP consumer).
+The ``AC`` families' own per-deck coverage (which of them a given deck actually
+declares) is reported by ``check decomp``
+(:mod:`novomodelo_bridge.decomp.preflight`).
 """
 
 from __future__ import annotations
@@ -37,6 +37,9 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
     split_plant_group_id as split_plant_group_id,
 )
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
+    stage_availability_factors as stage_availability_factors,
+)
 from novomodelo_bridge.decomp.converters.hydro.entity import (
     _downstream_operated as _downstream_operated,
 )
@@ -56,6 +59,9 @@ from novomodelo_bridge.decomp.converters.hydro.entity import (
     convert_initial_storage as convert_initial_storage,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
+    initial_volume_percentages as initial_volume_percentages,
+)
+from novomodelo_bridge.decomp.converters.hydro.entity import (
     read_hidr as read_hidr,
 )
 from novomodelo_bridge.decomp.converters.hydro.productivity import (
@@ -69,4 +75,19 @@ from novomodelo_bridge.decomp.converters.hydro.productivity import (
 )
 from novomodelo_bridge.decomp.converters.hydro.productivity import (
     convert_production_models as convert_production_models,
+)
+from novomodelo_bridge.decomp.converters.hydro.productivity import (
+    outage_stage_model as outage_stage_model,
+)
+from novomodelo_bridge.decomp.converters.hydro.turbine_limit import (
+    TurbineLimits as TurbineLimits,
+)
+from novomodelo_bridge.decomp.converters.hydro.turbine_limit import (
+    compute_turbine_limits as compute_turbine_limits,
+)
+from novomodelo_bridge.decomp.converters.hydro.turbine_limit import (
+    plant_turbine_limit_contributions as plant_turbine_limit_contributions,
+)
+from novomodelo_bridge.decomp.converters.hydro.turbine_limit import (
+    tailrace_families as tailrace_families,
 )

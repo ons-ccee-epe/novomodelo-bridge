@@ -41,6 +41,7 @@ from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.pipeline import ConversionReport
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 # ---------------------------------------------------------------------------
 # Tier-1 pipeline wiring -- a fully synthetic mock deck, mirroring
@@ -186,6 +187,9 @@ class _MockDadger:
         return None
 
     def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+        return None
+
+    def fp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
         return None
 
     def ac(
@@ -379,6 +383,12 @@ def _run_libs_pipeline(
         "novomodelo_bridge.decomp.pipeline"
         ".bounds_conv.convert_hydro_bounds": baseline_hydro_bounds,
         "novomodelo_bridge.decomp.pipeline.hydro_conv.convert_hydro_group_availability": {},
+        "novomodelo_bridge.decomp.pipeline.scenarios_conv.expected_incremental_inflows": {},
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.tailrace_families": {},
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.stage_availability_factors": {},
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.compute_turbine_limits": (
+            flat_turbine_limits(_ID_MAP, len(case.calendar))
+        ),
         "novomodelo_bridge.decomp.pipeline.contracts_conv.read_contracts": [],
         "novomodelo_bridge.decomp.pipeline.constraint_registers.read_constraints": (
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)

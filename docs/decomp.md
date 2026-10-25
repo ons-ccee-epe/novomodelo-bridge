@@ -10,7 +10,8 @@ in the [CLI reference](cli.md).
 
 `SRC` is the deck directory. `caso.dat` names the revision (`rv0`, `rv1`, and
 so on) and the revision's index file names that revision's data files:
-`dadger.rvN` and `vazoes.rvN`, the shared `hidr.dat` registry, `dadgnl.rvN`
+`dadger.rvN` and `vazoes.rvN`, the shared `hidr.dat` registry, the
+long-term mean inflows `mlt.dat` when the index lists them, `dadgnl.rvN`
 when the deck has fuel-constrained thermals, and the cut files when the deck
 declares them. The deck is parsed once and shared by every converter.
 
@@ -76,6 +77,51 @@ values included. DECOMP reports a negative incremental inflow as zero in its
 operation output; Novomodelo's water balance removes that water unless its priced
 inflow slack adds it back. The conversion lists every negative value as a
 warning.
+
+A plant's turbined flow is capped stage by stage at the limit DECOMP computes
+before the optimization. The rule:
+
+- The units' rated flow is corrected for the head at the stage's initial
+  storage. The tailrace level rises with the flow, so the flow is iterated
+  until head and flow agree.
+- The result is scaled by the `MP` maintenance and `FD` availability factors.
+  It never exceeds the flow that produces the plant's available power.
+- A plant that cannot hold back its stage inflow turbines up to that inflow
+  when it exceeds the head-limited flow. This covers a run-of-river plant and
+  a reservoir without enough free room. The inflow is the deck's, negative
+  values included; the terminal stage takes the probability-weighted mean of
+  its scenarios.
+- The tailrace curves come from `polinjus`. For a deck without that file they
+  come from the `hidr.dat` downstream polynomials. That path follows the same
+  rule but has not been checked against a DECOMP run.
+- Itaipu's limit is plant-wide: its two frequency groups share the
+  head-limited flow, and each group is also held to its own available power.
+- DECOMP raises the tailrace level by the lateral inflows of `VL` and `VU`
+  registers; the conversion leaves them out. A plant with such a register,
+  such as Itaipu or Belo Monte, may therefore turbine slightly more than
+  DECOMP allows.
+- `AC ALTEFE` overrides of the rated head are not applied; the conversion
+  warns about them.
+
+Novomodelo fits the planes of the hydro production function (FPHA) itself. These
+inputs follow DECOMP:
+
+- Each stage is fitted over DECOMP's volume window: the `UH` initial storage,
+  as a percentage of the stage's useful volume, minus a reduction and plus an
+  increase, within the stage's storage limits. Both are 20 % of useful volume
+  on a weekly stage and 50 % on a monthly one unless `FP` records set them,
+  in % of useful volume or in hm³, from their stage on. A run-of-river plant
+  is fitted at its reference volume. The turbined-flow window and point
+  counts of `FP` are not converted; the conversion warns when a record sets
+  them away from DECOMP's defaults.
+- The spillage range of the fit is twice the largest monthly long-term mean
+  inflow in `mlt.dat` of the plant's station (`AC NUMPOS` included). A plant
+  on the artificial station 300, or on a station with a zero mean, is fitted
+  over twice its maximum turbined flow, as in DECOMP. A deck without `mlt.dat`
+  gets that fallback for every plant, and the conversion warns.
+- A stage where the plant's turbined limit is zero, for example with every
+  machine under maintenance, gets a zero constant productivity in place of
+  the production function. DECOMP builds no planes for such a stage.
 
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,

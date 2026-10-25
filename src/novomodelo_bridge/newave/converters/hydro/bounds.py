@@ -26,6 +26,7 @@ from novomodelo_bridge.core.productivity import (
     mean_cota,
 )
 from novomodelo_bridge.core.tolerances import BIG_M
+from novomodelo_bridge.core.turbine import head_limited_flow
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.geometry import (
     _expansion_configs,
@@ -277,13 +278,12 @@ def _compute_max_turbined_head_corrected(
         n_machines = int(hreg[f"maquinas_conjunto_{i}"])
         q_nominal = float(hreg[f"vazao_nominal_conjunto_{i}"])
         h_nominal = float(hreg[f"queda_nominal_conjunto_{i}"])
-        if h_nominal <= 0.0:
-            sum_kt += n_machines * q_nominal
-            continue
-        ratio = h_op / h_nominal
-        # Use abs to guard against the rare case where h_op flips sign during
-        # overhaul-only periods; the exponent < 1 keeps the result finite.
-        sum_kt += n_machines * q_nominal * (ratio**kturb)
+        sum_kt += head_limited_flow(
+            h_op,
+            nominal_head_m=h_nominal,
+            nominal_flow_m3s=n_machines * q_nominal,
+            exponent=kturb,
+        )
 
     # Installed-power-over-equivalent-productivity cap.
     prodt_eq = rho_esp * h_int

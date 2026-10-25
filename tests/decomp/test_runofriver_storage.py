@@ -38,6 +38,7 @@ from novomodelo_bridge.decomp.converters.hydro import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 
 def _plant_row(
@@ -175,7 +176,12 @@ def test_d_plant_storage_collapses_to_vol_ref() -> None:
         hidr=hidr,
         calendar=_calendar(2),
     )
-    doc = convert_hydros(case, _ID_MAP_SINGLE, effective=effective)
+    doc = convert_hydros(
+        case,
+        _ID_MAP_SINGLE,
+        effective=effective,
+        turbine_limits=flat_turbine_limits(_ID_MAP_SINGLE, 2),
+    )
     assert doc["hydros"][0]["reservoir"] == {
         "min_storage_hm3": 300.0,
         "max_storage_hm3": 300.0,
@@ -308,7 +314,12 @@ def test_collapse_diagnostic_counts_d_plants(caplog: pytest.LogCaptureFixture) -
     with caplog.at_level(
         logging.INFO, logger="novomodelo_bridge.decomp.converters.hydro.entity"
     ):
-        convert_hydros(case, id_map, effective=effective)
+        convert_hydros(
+            case,
+            id_map,
+            effective=effective,
+            turbine_limits=flat_turbine_limits(id_map, 1),
+        )
 
     assert "collapsed 2 run-of-river" in caplog.text
 

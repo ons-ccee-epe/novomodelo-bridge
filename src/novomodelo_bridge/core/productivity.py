@@ -33,6 +33,8 @@ from collections.abc import Sequence
 
 import pandas as pd
 
+from novomodelo_bridge.core.incremental_inflow import is_artificial_gauge
+
 _LOG = logging.getLogger(__name__)
 
 # --- FPHA turbine efficiency ------------------------------------------------
@@ -61,6 +63,23 @@ def fpha_efficiency(rho_esp: float, name: str) -> float:
         )
         return 1.0
     return eta
+
+
+def fpha_spillage_fit_max_m3s(
+    posto: int, monthly_mean_m3s: Sequence[float]
+) -> float | None:
+    """``fpha_config.spillage_fit_max_m3s`` for a plant gauged at *posto*.
+
+    The source models fit the FPHA spillage coefficient over ``[0, 2·MLT]``, MLT
+    the gauge's largest monthly long-term mean natural inflow (*monthly_mean_m3s*,
+    one per calendar month). ``None`` on the artificial gauge or a gauge without a
+    positive mean: the field is then left out, and novomodelo, like the source models,
+    fits over twice the plant's maximum turbined flow.
+    """
+    if is_artificial_gauge(posto):
+        return None
+    largest = max((float(m) for m in monthly_mean_m3s), default=0.0)
+    return 2.0 * largest if largest > 0.0 else None
 
 
 # Turbine type code -> kturb exponent used in the head-correction formula. The source

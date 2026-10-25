@@ -39,6 +39,7 @@ from novomodelo_bridge.decomp.scenarios import (
 )
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 if TYPE_CHECKING:
     from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -113,12 +114,7 @@ def _plant_row(
     posto: int,
     name: str = "PLANT",
 ) -> dict:
-    """One synthetic ``hidr`` row. ``produtibilidade_especifica=0.0`` keeps
-    ``convert_hydros``'s head-correction branch (``_operating_head``)
-    defensively off (``rho_eq`` is then always non-positive), so the
-    no-override case does not need to also pin a head-correction formula to
-    check ``downstream_id``.
-    """
+    """One synthetic ``hidr`` row."""
     row: dict = {
         "nome_usina": name,
         "submercado": 1,
@@ -294,8 +290,13 @@ def test_no_topology_override_is_identical() -> None:
     )
     assert via_effective.equals(via_base)
 
-    hydros_effective = convert_hydros(case, id_map, effective=effective)["hydros"]
-    hydros_base = convert_hydros(case, id_map, effective=base_effective)["hydros"]
+    limits = flat_turbine_limits(id_map, len(calendar))
+    hydros_effective = convert_hydros(
+        case, id_map, effective=effective, turbine_limits=limits
+    )["hydros"]
+    hydros_base = convert_hydros(
+        case, id_map, effective=base_effective, turbine_limits=limits
+    )["hydros"]
     assert [h["downstream_id"] for h in hydros_effective] == [
         h["downstream_id"] for h in hydros_base
     ]

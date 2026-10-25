@@ -12,6 +12,7 @@ import pytest
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.hydro import (
+    TurbineLimits,
     _build_split_unit_groups,
     _evaporation_coefficients_mm,
     _evaporation_flag_codes,
@@ -19,6 +20,7 @@ from novomodelo_bridge.decomp.converters.hydro import (
     convert_hydros,
     convert_initial_storage,
     convert_production_models,
+    outage_stage_model,
 )
 from novomodelo_bridge.decomp.converters.thermal import (
     convert_thermal_bounds,
@@ -27,6 +29,7 @@ from novomodelo_bridge.decomp.converters.thermal import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 _EVAPORATION_COLUMNS = (
     "evaporacao_JAN",
@@ -294,6 +297,9 @@ def _uh_frame() -> pd.DataFrame:
 #: 1 (SE) — so the bus-relocation math reuses the same 100.0 / 0.72 head-free
 #: engolimento ratio already pinned for ``UP_RES`` above, just per-conjunto.
 _ITAIPU_ID_MAP = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"), hydro_codes=(66,))
+_ITAIPU_TURBINE_LIMITS = TurbineLimits(
+    {(66, 0): (70.0, 80.0, 75.0), (66, 1): (95.0, 90.0, 85.0)}
+)
 
 
 def _itaipu_hidr_frame() -> pd.DataFrame:
@@ -343,6 +349,13 @@ class TestConvertHydros:
                 _case(_StubDadger(uh=_uh_frame()), hidr),
                 _ID_MAP,
                 effective=_no_override_effective(hidr),
+                turbine_limits=TurbineLimits(
+                    {
+                        (1, 0): (90.0, 120.0, 110.0),
+                        (2, 0): (100.0,) * 3,
+                        (5, 0): (100.0,) * 3,
+                    }
+                ),
             )
         hydros = doc["hydros"]
         assert [h["id"] for h in hydros] == [0, 1, 2]
@@ -358,12 +371,9 @@ class TestConvertHydros:
             "max_storage_hm3": 500.0,
         }
         assert up["outflow"]["min_outflow_m3s"] == 30.0
-        # 2 machines × 50 MW, no derating: max_generation_mw stays rated.
-        # max_turbined_m3s is head-corrected: this fixture
-        # carries no queda_nominal_conjunto_1, so the affinity ratio is a
-        # no-op (falls back to the rated 200 m³/s), but the installed-power
-        # cap Σ n·p_nom / ρ_eq (= 100 / 0.72) still binds below it.
-        assert up["generation"]["max_turbined_m3s"] == pytest.approx(100.0 / 0.72)
+        # 2 machines × 50 MW, no derating: max_generation_mw stays rated;
+        # max_turbined_m3s is the widest turbined-flow limit over the stages.
+        assert up["generation"]["max_turbined_m3s"] == 120.0
         assert up["generation"]["max_generation_mw"] == 100.0
 
         assert hydros[1]["downstream_id"] is None
@@ -381,6 +391,7 @@ class TestConvertHydros:
                 _case(_StubDadger(uh=_uh_frame()), hidr),
                 _ID_MAP,
                 effective=_no_override_effective(hidr),
+                turbine_limits=flat_turbine_limits(_ID_MAP, 3),
             )
         for h in doc["hydros"]:
             assert "bus_id" not in h
@@ -432,6 +443,35 @@ class TestConvertHydros:
             m["stage_ranges"][0]["model"] == "constant_productivity" for m in models
         )
 
+    def test_production_models_merge_equal_stages_into_ranges(self) -> None:
+        fpha = {
+            "model": "fpha",
+            "fpha_config": {"source": "computed", "spillage_fit_max_m3s": 500.0},
+            "reference_volume": {"volume_hm3": 10.0},
+        }
+        code = _ID_MAP.hydro_codes[1]
+        doc = convert_production_models(
+            _ID_MAP, {code: [outage_stage_model(), outage_stage_model(), fpha, fpha]}
+        )
+        models = {m["hydro_id"]: m["stage_ranges"] for m in doc["production_models"]}
+        assert models[_ID_MAP.hydro_id(code)] == [
+            {"start_stage_id": 0, "end_stage_id": 1, **outage_stage_model()},
+            {"start_stage_id": 2, "end_stage_id": None, **fpha},
+        ]
+        assert models[_ID_MAP.hydro_id(_ID_MAP.hydro_codes[0])] == [
+            {
+                "start_stage_id": 0,
+                "end_stage_id": None,
+                "model": "constant_productivity",
+            }
+        ]
+
+    def test_outage_stage_model_is_constant_zero_productivity(self) -> None:
+        assert outage_stage_model() == {
+            "model": "constant_productivity",
+            "productivity_mw_per_m3s": 0.0,
+        }
+
 
 class TestItaipuBusRelabel:
     """The per-frequency split plant's 60 Hz unit group (group id 1, the
@@ -454,6 +494,7 @@ class TestItaipuBusRelabel:
             _case(dadger, hidr),
             _ITAIPU_ID_MAP,
             effective=_no_override_effective(hidr),
+            turbine_limits=_ITAIPU_TURBINE_LIMITS,
         )
         itaipu = doc["hydros"][0]
         groups = {g["id"]: g for g in itaipu["unit_groups"]}
@@ -463,12 +504,9 @@ class TestItaipuBusRelabel:
         assert groups[0]["bus_id"] != groups[1]["bus_id"]
 
     def test_envelope_unchanged_by_the_relabel(self) -> None:
-        """The relabel moves only the 60 Hz group's ``bus_id`` — the summed
-        plant envelope is exactly what it was before the split existed: two
-        identical conjuntos, each capped by its own installed power at
-        ``100.0 / 0.72`` m3/s (no head data in this fixture, same head-free
-        ratio ``UP_RES`` pins above), never the plant-wide power cap.
-        """
+        """The relabel moves only the 60 Hz group's ``bus_id``: the plant
+        envelope is the sum of its two groups', each group's turbined flow its
+        own widest turbined-flow limit."""
         hidr = _itaipu_hidr_frame()
         dadger = _StubDadger(
             uh=_itaipu_uh_frame(),
@@ -479,13 +517,14 @@ class TestItaipuBusRelabel:
             _case(dadger, hidr),
             _ITAIPU_ID_MAP,
             effective=_no_override_effective(hidr),
+            turbine_limits=_ITAIPU_TURBINE_LIMITS,
         )
         itaipu = doc["hydros"][0]
         gen = itaipu["generation"]
         groups = itaipu["unit_groups"]
 
         expected_generation = 2 * 100.0
-        expected_turbined = 2 * (100.0 / 0.72)
+        expected_turbined = 80.0 + 95.0
         assert gen["max_generation_mw"] == pytest.approx(expected_generation)
         assert gen["max_turbined_m3s"] == pytest.approx(expected_turbined)
         assert sum(g["max_generation_mw"] for g in groups) == pytest.approx(
@@ -505,7 +544,13 @@ class TestItaipuBusRelabel:
             match="plant 66: 2 split frequencies but 1 per-group buses were supplied",
         ):
             _build_split_unit_groups(
-                hreg, 66, "ITAIPU", [0], [50.0, 60.0], _no_override_effective(hidr)
+                hreg,
+                66,
+                "ITAIPU",
+                [0],
+                [50.0, 60.0],
+                _no_override_effective(hidr),
+                _ITAIPU_TURBINE_LIMITS,
             )
 
 
@@ -530,6 +575,7 @@ def test_deferred_note_excludes_head_productivity(caplog) -> None:
             _case(_StubDadger(uh=_uh_frame()), hidr),
             _ID_MAP,
             effective=_no_override_effective(hidr),
+            turbine_limits=flat_turbine_limits(_ID_MAP, 3),
         )
     assert not any("deferred hydro fidelity" in r.message for r in caplog.records)
 
@@ -556,7 +602,10 @@ class TestEffectiveCadastroSourcing:
         uh = _temporal_uh_frame(volume_inicial=50.0)
 
         doc = convert_hydros(
-            _case(_StubDadger(uh=uh), hidr), _TEMPORAL_ID_MAP, effective=effective
+            _case(_StubDadger(uh=uh), hidr),
+            _TEMPORAL_ID_MAP,
+            effective=effective,
+            turbine_limits=flat_turbine_limits(_TEMPORAL_ID_MAP, 3),
         )
         assert doc["hydros"][0]["reservoir"] == {
             "min_storage_hm3": 20.0,
@@ -579,7 +628,10 @@ class TestEffectiveCadastroSourcing:
         uh = _temporal_uh_frame(volume_inicial=50.0)
 
         doc = convert_hydros(
-            _case(_StubDadger(uh=uh), hidr), _TEMPORAL_ID_MAP, effective=effective
+            _case(_StubDadger(uh=uh), hidr),
+            _TEMPORAL_ID_MAP,
+            effective=effective,
+            turbine_limits=flat_turbine_limits(_TEMPORAL_ID_MAP, 3),
         )
         reservoir = doc["hydros"][0]["reservoir"]
         assert reservoir["max_storage_hm3"] == 250.0

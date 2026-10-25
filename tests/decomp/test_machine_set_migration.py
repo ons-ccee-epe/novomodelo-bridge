@@ -29,6 +29,7 @@ from novomodelo_bridge.decomp.converters.hydro import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_tailrace_turbine_limits
 
 _HYDRO_CODE = 7
 _ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(_HYDRO_CODE,))
@@ -43,25 +44,11 @@ def _calendar() -> list[OperativeStage]:
 
 
 def _plant_row() -> dict:
-    """One reservoir plant, one conjunto: 4 machines x 50 m3/s x 25 MW —
-    base (un-overridden) rated capacity 200 m3/s / 100 MW. Flat cota
-    (``a1..a4`` zero) and ``volume_minimo == volume_maximo`` keep
-    ``_equivalent_productivity_mw_per_m3s`` a trivial constant (rho_eq =
-    0.009 x (100 - 20) = 0.72 MW per m3/s) so the hydraulic ceiling
-    (0.72 x 200 = 144 MW) never binds below the 100 MW installed power —
-    the fixtures below isolate the machine-set/MP/FD behaviour from the overlay's
-    hydraulic-cap behaviour, which is already covered elsewhere
-    (``test_decomp_availability_rule.py``).
-
-    ``queda_nominal_conjunto_1`` is pinned to 80.0 m — exactly the plant's
-    own operating head (``h_op = rho_eq / rho_esp = 0.72 / 0.009 = 80``) —
-    so the affinity ratio is a no-op (``(h_op/h_nom)**k == 1``)
-    and this fixture stays a pure machine-set/MP-FD regression, isolated
-    from head-affinity effects (covered elsewhere,
-    ``test_decomp_head_aware_max_turbined.py``). The head-corrected
-    ``max_turbined_m3s`` is not, however, isolated from the *power* cap
-    (``Σ n·p_nom / rho_eq``): with this plant's numbers that cap (see each
-    test's own comment) binds below the affinity-neutral rated flow.
+    """One plant, one conjunto: 4 machines x 50 m3/s x 25 MW — base rated
+    capacity 200 m3/s / 100 MW. A flat cota at 100 m over a flat 20 m tailrace
+    keeps rho_eq at 0.009 x 80 = 0.72 MW per m3/s and the net head at the
+    rated 80 m, so the turbined-flow limit is the generator limit
+    ``installed x MP x FD / rho_eq`` (100 / 0.72 below the rated 200 m3/s).
     """
     return {
         "nome_usina": "SYN",
@@ -69,6 +56,7 @@ def _plant_row() -> dict:
         "codigo_usina_jusante": 0,
         "volume_minimo": 10.0,
         "volume_maximo": 10.0,
+        "tipo_regulacao": "M",
         "numero_conjuntos_maquinas": 1,
         "maquinas_conjunto_1": 4,
         "vazao_nominal_conjunto_1": 50.0,
@@ -138,9 +126,6 @@ class _StubDadger:
         modificacao: type | None = None,
         df: bool = False,
     ) -> pd.DataFrame:
-        # No ACALTEFE (or any other AC) row on this synthetic double — the
-        # tracked-gap warning is covered separately in
-        # test_head_aware_max_turbined.py.
         return pd.DataFrame()
 
 
@@ -172,11 +157,7 @@ def _dropping_machine_set_effective(
 def test_constant_machine_set_matches_base_rated_sum() -> None:
     """No override at all: the entity envelope and its mirror group's
     ``max_generation_mw`` equal the base ``hidr`` rated sum (4 x 25 = 100
-    MW) — byte-identical to the date-blind value.
-    ``max_turbined_m3s`` is head-corrected: the affinity ratio
-    is a no-op here (``queda_nominal_conjunto_1`` pinned to ``h_op``), but
-    the installed-power cap ``Σ n·p_nom / rho_eq`` (= 100 / 0.72) still
-    binds below the rated 4 x 50 = 200 m3/s."""
+    MW), and ``max_turbined_m3s`` the generator limit 100 / 0.72 m3/s."""
     hidr = _hidr_frame()
     calendar = _calendar()
     effective = _no_override_effective(hidr, len(calendar))
@@ -184,7 +165,14 @@ def test_constant_machine_set_matches_base_rated_sum() -> None:
     case = make_decomp_case(
         Path("unused"), dadger=_StubDadger(uh=_uh_frame()), hidr=hidr, calendar=calendar
     )
-    doc = convert_hydros(case, _ID_MAP, effective=effective)
+    doc = convert_hydros(
+        case,
+        _ID_MAP,
+        effective=effective,
+        turbine_limits=flat_tailrace_turbine_limits(
+            case, _ID_MAP, effective, tailrace_m=20.0
+        ),
+    )
     gen = doc["hydros"][0]["generation"]
     assert gen["max_turbined_m3s"] == pytest.approx(100.0 / 0.72)
     assert gen["max_generation_mw"] == pytest.approx(100.0)
@@ -198,8 +186,8 @@ def test_mid_horizon_nummaq_drop_entity_declares_pre_drop_envelope() -> None:
     """A machine-count drop at the final stage does not lower the declared
     entity/mirror-group envelope: both stay at the pre-drop max-over-stages
     value (``max_generation_mw`` 100 MW rated; ``max_turbined_m3s`` the
-    power-cap-bound 100 / 0.72 m3/s, same as the constant-machine-set case
-    above), not the reduced stage's (50 MW / 50 x 0.72 m3/s)."""
+    generator limit 100 / 0.72 m3/s, same as the constant-machine-set case
+    above), not the reduced stage's (50 MW / 50 / 0.72 m3/s)."""
     hidr = _hidr_frame()
     calendar = _calendar()
     effective = _dropping_machine_set_effective(hidr, len(calendar))
@@ -207,7 +195,14 @@ def test_mid_horizon_nummaq_drop_entity_declares_pre_drop_envelope() -> None:
     case = make_decomp_case(
         Path("unused"), dadger=_StubDadger(uh=_uh_frame()), hidr=hidr, calendar=calendar
     )
-    doc = convert_hydros(case, _ID_MAP, effective=effective)
+    doc = convert_hydros(
+        case,
+        _ID_MAP,
+        effective=effective,
+        turbine_limits=flat_tailrace_turbine_limits(
+            case, _ID_MAP, effective, tailrace_m=20.0
+        ),
+    )
     gen = doc["hydros"][0]["generation"]
     assert gen["max_turbined_m3s"] == pytest.approx(100.0 / 0.72)
     assert gen["max_generation_mw"] == pytest.approx(100.0)
@@ -220,10 +215,9 @@ def test_mid_horizon_nummaq_drop_entity_declares_pre_drop_envelope() -> None:
 def test_mid_horizon_nummaq_drop_overlay_only_at_reduced_stage() -> None:
     """The machine-count drop's own overlay row: sparse, lands only at the
     reduced final stage, carrying both the lowered ``max_generation_mw``
-    (50 MW, rated) and the head-corrected ``max_turbined_m3s`` overlay
-    (``Σ n·p_nom / rho_eq`` = 50 / 0.72, power-cap-bound — not the rated
-    2 x 50 = 100 m3/s); the unchanged stages 0-1 get no row at all (MP=FD=1,
-    hydraulic non-binding at every stage)."""
+    (50 MW, rated) and the lowered ``max_turbined_m3s`` (the generator limit
+    50 / 0.72, below the rated 2 x 50 = 100 m3/s); the unchanged stages 0-1
+    get no row at all (MP = FD = 1)."""
     hidr = _hidr_frame()
     calendar = _calendar()
     effective = _dropping_machine_set_effective(hidr, len(calendar))
@@ -231,7 +225,14 @@ def test_mid_horizon_nummaq_drop_overlay_only_at_reduced_stage() -> None:
     case = make_decomp_case(
         Path("unused"), dadger=_StubDadger(), hidr=hidr, calendar=calendar
     )
-    values = convert_hydro_group_availability(case, _ID_MAP, effective=effective)
+    values = convert_hydro_group_availability(
+        case,
+        _ID_MAP,
+        effective=effective,
+        turbine_limits=flat_tailrace_turbine_limits(
+            case, _ID_MAP, effective, tailrace_m=20.0
+        ),
+    )
     hydro_id = _ID_MAP.hydro_id(_HYDRO_CODE)
 
     assert (hydro_id, 0, 0) not in values
@@ -243,14 +244,10 @@ def test_mid_horizon_nummaq_drop_overlay_only_at_reduced_stage() -> None:
 
 
 def test_constant_machine_set_availability_matches_mp_fd_product() -> None:
-    """Regression guard: with a constant (un-overridden) machine set, the
-    availability overlay still reproduces the plain ``installed x MP x FD`` formula,
-    capped by the (here, non-binding) hydraulic ceiling — unchanged from
-    the date-blind behaviour, now sourced through ``effective``.
-    A stage whose MP/FD factors do not move installed capacity below the
-    envelope (stage 0) gets no row; the flow envelope is untouched by
-    MP/FD (only by the machine set), so ``max_turbined_m3s`` stays absent
-    on every row here."""
+    """With a constant (un-overridden) machine set, the availability overlay is
+    ``installed x MP x FD`` and the turbined-flow limit falls with the same
+    factor (the generator limit ``installed x MP x FD / rho_eq`` binds here).
+    A stage whose MP/FD factors stay at 1 (stage 0) gets no row."""
     hidr = _hidr_frame()
     calendar = _calendar()
     effective = _no_override_effective(hidr, len(calendar))
@@ -278,15 +275,22 @@ def test_constant_machine_set_availability_matches_mp_fd_product() -> None:
     case = make_decomp_case(
         Path("unused"), dadger=_StubDadger(mp=mp, fd=fd), hidr=hidr, calendar=calendar
     )
-    values = convert_hydro_group_availability(case, _ID_MAP, effective=effective)
+    values = convert_hydro_group_availability(
+        case,
+        _ID_MAP,
+        effective=effective,
+        turbine_limits=flat_tailrace_turbine_limits(
+            case, _ID_MAP, effective, tailrace_m=20.0
+        ),
+    )
     hydro_id = _ID_MAP.hydro_id(_HYDRO_CODE)
 
     assert (hydro_id, 0, 0) not in values
 
     stage1 = values[(hydro_id, 0, 1)]
     assert stage1.max_generation_mw == pytest.approx(50.0)
-    assert stage1.max_turbined_m3s is None
+    assert stage1.max_turbined_m3s == pytest.approx(50.0 / 0.72)
 
     stage2 = values[(hydro_id, 0, 2)]
     assert stage2.max_generation_mw == pytest.approx(80.0)
-    assert stage2.max_turbined_m3s is None
+    assert stage2.max_turbined_m3s == pytest.approx(80.0 / 0.72)

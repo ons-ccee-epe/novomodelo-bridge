@@ -381,6 +381,31 @@ def convert_external_inflows(
     )
 
 
+def expected_incremental_inflows(
+    vazoes: Vazoes,
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+    calendar: Sequence[OperativeStage],
+    fan_probabilities: Sequence[float],
+) -> dict[tuple[int, int], float]:
+    """``{(plant code, stage_index): incremental inflow m³/s}``, as the deck
+    gives it (negative values included).
+
+    A trunk stage takes its single forecast; the terminal stage takes its fan's
+    mean weighted by *fan_probabilities* (from
+    :func:`terminal_fan_probabilities`), never the uniform mean.
+    """
+    terminal = len(calendar) - 1
+    expected: dict[tuple[int, int], float] = defaultdict(float)
+    for (stage_index, scenario_index), incrementals in _tree_values(
+        vazoes, effective, id_map, calendar
+    ).items():
+        weight = fan_probabilities[scenario_index] if stage_index == terminal else 1.0
+        for code, value in zip(id_map.hydro_codes, incrementals, strict=True):
+            expected[(code, stage_index)] += weight * value
+    return dict(expected)
+
+
 def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
     """Fail unless every stage before *terminal* is deterministic.
 

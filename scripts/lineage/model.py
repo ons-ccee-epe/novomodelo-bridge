@@ -88,6 +88,7 @@ _DECOMP_LABELS: dict[str, str] = {
     "dadger": "dadger.rvN",
     "vazoes": "vazoes.rvN",
     "hidr": "hidr.dat",
+    "mlt": "mlt.dat",
     "dadgnl": "dadgnl.rvN",
     "renovaveis": "renovaveis*",
     "polinjus": "polinjus.csv",

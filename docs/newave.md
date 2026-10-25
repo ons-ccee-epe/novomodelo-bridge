@@ -123,6 +123,13 @@ the same output.
   lists these plants, and warns when a gauged plant sits below an artificial
   plant that has gauged plants further upstream, since their inflow may then
   be counted twice.
+- **Production function.** When `dger.dat` selects the hydro production
+  function (FPHA), Novomodelo fits each eligible plant's planes itself. The
+  converter sets the spillage range of that fit to twice the largest
+  calendar-month mean natural inflow of the plant's station in `vazoes.dat`,
+  over the record before the study start. DECOMP applies the same rule to its
+  long-term means. A plant on posto 300 gets no range, and Novomodelo fits over
+  twice its maximum turbined flow.
 
 Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,

@@ -1822,8 +1822,9 @@ reads = [
   { file = "exph" },
   { file = "volref_saz" },
   { file = "tratamento_fpha" },
+  { file = "vazoes" },
 ]
-summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante) e o volume de referência; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`."
+summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante), o volume de referência e, nas usinas FPHA, a faixa de vertimento do ajuste; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`."
 
   [[output.field]]
   path = "production_models[].hydro_id"
@@ -1886,6 +1887,19 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
     { file = "modif", item = "VOLMAX · volume" },
   ]
   how = "Limite superior da janela de ajuste: `volume_maximo` para regulação `M`; `volume_referencia` para `D`/`S`."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s"
+  when = "somente em faixas `fpha` de usina cujo posto (não artificial) tem média mensal positiva no histórico"
+  from = [
+    { file = "vazoes", item = "1..N (coluna por posto)" },
+    { file = "confhd", item = "posto" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+    { file = "dger", item = "ano_inicial_historico" },
+  ]
+  status = "derived"
+  how = "Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal, por mês-calendário, da vazão natural do posto da usina em `vazoes.dat`, sobre o mesmo histórico de `scenarios/inflow_history.parquet` (até o mês anterior ao início do estudo). É a regra do DECOMP com a média de longo termo do `mlt.dat`. Omitido no posto artificial 300 e num posto de média nula: o Novomodelo usa então o dobro do engolimento máximo da usina."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].reference_volume.percentile"
@@ -1958,6 +1972,16 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
     { file = "modif", item = "VOLMAX · volume" },
   ]
   how = "Igual a `stage_ranges[].fpha_config.fitting_window.volume_max_hm3`, repetido em cada estação."
+
+  [[output.field]]
+  path = "production_models[].seasons[].fpha_config.spillage_fit_max_m3s"
+  when = "somente em caso FPHA para usina `fpha` com linha não nula em `volref_saz.dat` e posto com média mensal positiva"
+  from = [
+    { file = "vazoes", item = "1..N (coluna por posto)" },
+    { file = "confhd", item = "posto" },
+  ]
+  status = "derived"
+  how = "Igual a `stage_ranges[].fpha_config.spillage_fit_max_m3s`, repetido em cada estação."
 
   [[output.field]]
   path = "fpha_plane_reduction.method"

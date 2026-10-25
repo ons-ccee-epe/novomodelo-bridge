@@ -14,38 +14,70 @@ volume→cota polynomial (the forebay curve), a positive ``ρ_esp``, and a posit
 ``AC``-adjusted rated turbined flow and power. Ineligible plants keep the
 constant-productivity path.
 
-**Fitting window.** Each plant is fit over its whole storage envelope
-(:func:`~novomodelo_bridge.decomp.converters.cadastro.storage_envelope`, the
-range the entity ``reservoir`` block declares) — a single volume for a
-run-of-river plant — and :func:`convert_hydro_geometry` samples the same range,
-since novomodelo clamps the window to the geometry table. Never a band around
-the initial volume: novomodelo's planes are an outer approximation only inside
-the window, and below it they turn negative at zero flow, forcing a minimum
-turbined flow that makes a drawn-down stage infeasible.
+**Fitting window.** Each stage is fit over the source model's volume window
+(:class:`VolumeWindowRule`): a band around the plant's ``UH`` initial volume,
+set by the ``FP`` records, clamped to the stage's storage range, and a single
+volume for a run-of-river plant. :func:`convert_hydro_geometry` samples the
+whole storage envelope, which holds every stage's window, since novomodelo clamps
+the window to the geometry table. Below the window novomodelo's planes are negative
+at zero turbined flow and force a minimum flow, as the source model's do.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import pandas as pd
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import emit
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
-from novomodelo_bridge.core.productivity import evaluate_cota, fpha_efficiency
+from novomodelo_bridge.core.productivity import (
+    evaluate_cota,
+    fpha_efficiency,
+    fpha_spillage_fit_max_m3s,
+)
 from novomodelo_bridge.core.tailrace import build_tailrace_table
-from novomodelo_bridge.decomp.converters.cadastro import storage_envelope
+from novomodelo_bridge.decomp.converters.cadastro import (
+    effective_storage_range,
+    storage_envelope,
+)
 from novomodelo_bridge.decomp.converters.hydro.bounds import _rated_envelope
+from novomodelo_bridge.decomp.converters.hydro.entity import initial_volume_percentages
+from novomodelo_bridge.decomp.temporal import weekly_stage_count
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+    from idecomp.decomp import Dadger, Mlt
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
+    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
+
+#: The source model's volume-window reduction and increase, in % of the stage's
+#: useful volume, where no ``FP`` record sets them.
+_WEEKLY_WINDOW_PCT = 20.0
+_MONTHLY_WINDOW_PCT = 50.0
+
+#: ``FP`` plant code of a record that applies to every plant.
+_ALL_PLANTS = 999
+
+#: The source model's defaults for the ``FP`` fields not converted, which are
+#: also novomodelo's.
+_UNCONVERTED_FP_DEFAULTS = {
+    "tipo_entrada_janela_turbinamento": 0,
+    "limite_inferior_janela_turbinamento": 0.0,
+    "limite_superior_janela_turbinamento": 100.0,
+    "numero_pontos_turbinamento": 5,
+    "numero_pontos_volume": 5,
+}
 
 #: Number of volume samples per plant in the VHA geometry table — matches
 #: :func:`novomodelo_bridge.newave.converters.hydro.generate_hydro_geometry`.
@@ -156,11 +188,229 @@ def fpha_eligible_codes(effective: EffectiveCadastro, id_map: DecompIdMap) -> se
     return eligible
 
 
-def fitting_window(effective: EffectiveCadastro, code: int) -> dict[str, float]:
-    """The FPHA volume ``fitting_window`` for plant *code*, in hm³: its storage
-    envelope (see the module docstring)."""
-    vmin, vmax = storage_envelope(effective, code)
-    return {"volume_min_hm3": vmin, "volume_max_hm3": vmax}
+@dataclass(frozen=True)
+class _WindowDelta:
+    """One side of a volume window: % of the stage's useful volume, or hm³."""
+
+    value: float
+    in_hm3: bool
+
+    def hm3(self, useful_volume_hm3: float) -> float:
+        if self.in_hm3:
+            return self.value
+        return self.value / 100.0 * useful_volume_hm3
+
+
+@dataclass(frozen=True)
+class _FpRecord:
+    first_stage: int  # 0-based; the record applies from this stage on
+    reduction: _WindowDelta | None
+    increase: _WindowDelta | None
+
+
+@dataclass(frozen=True)
+class VolumeWindowRule:
+    """The source model's FPHA volume window.
+
+    At each stage the window is the plant's ``UH`` initial volume, taken as a
+    percentage of that stage's useful volume, minus a reduction and plus an
+    increase, clamped to the stage's storage range. Each delta resolves on its
+    own: the plant's latest ``FP`` record up to the stage that sets it, else
+    the latest such ``999`` record, else :data:`_WEEKLY_WINDOW_PCT` on a
+    weekly stage and :data:`_MONTHLY_WINDOW_PCT` on a monthly one.
+    """
+
+    initial_pct: Mapping[int, float]
+    weekly_stages: int
+    records: Mapping[int, tuple[_FpRecord, ...]]
+
+    @classmethod
+    def from_fp(
+        cls,
+        fp: pd.DataFrame | None,
+        initial_pct: Mapping[int, float],
+        weekly_stages: int,
+    ) -> VolumeWindowRule:
+        """Build the rule from idecomp's ``Dadger.fp(df=True)`` frame.
+
+        Raises:
+            ValueError: for a record whose volume entry type is neither 0 nor 1,
+                or whose reduction or increase is negative.
+        """
+        by_code: dict[int, list[_FpRecord]] = {}
+        if fp is not None and not fp.empty:
+            for row in fp.itertuples(index=False):
+                code, estagio = int(row.codigo_usina), int(row.estagio)
+                in_hm3 = _volume_entry_in_hm3(
+                    row.tipo_entrada_janela_volume, code, estagio
+                )
+                record = _FpRecord(
+                    first_stage=estagio - 1,
+                    reduction=_window_delta(
+                        row.limite_inferior_janela_volume, in_hm3, code, estagio
+                    ),
+                    increase=_window_delta(
+                        row.limite_superior_janela_volume, in_hm3, code, estagio
+                    ),
+                )
+                by_code.setdefault(code, []).append(record)
+        records = {
+            code: tuple(sorted(rs, key=lambda r: r.first_stage))
+            for code, rs in by_code.items()
+        }
+        return cls(initial_pct, weekly_stages, records)
+
+    def fitting_window(
+        self, effective: EffectiveCadastro, code: int, stage_index: int
+    ) -> dict[str, float]:
+        """Plant *code*'s volume ``fitting_window`` at *stage_index*, in hm³."""
+        vmin, vmax = effective_storage_range(effective, code, stage_index)
+        useful = vmax - vmin
+        initial = min(max(vmin + self.initial_pct[code] / 100.0 * useful, vmin), vmax)
+        default = _WindowDelta(
+            _WEEKLY_WINDOW_PCT
+            if stage_index < self.weekly_stages
+            else _MONTHLY_WINDOW_PCT,
+            in_hm3=False,
+        )
+        reduction = self._delta(code, stage_index, "reduction") or default
+        increase = self._delta(code, stage_index, "increase") or default
+        return {
+            "volume_min_hm3": max(initial - reduction.hm3(useful), vmin),
+            "volume_max_hm3": min(initial + increase.hm3(useful), vmax),
+        }
+
+    def _delta(self, code: int, stage_index: int, side: str) -> _WindowDelta | None:
+        for owner in (code, _ALL_PLANTS):
+            for record in reversed(self.records.get(owner, ())):
+                delta = getattr(record, side)
+                if record.first_stage <= stage_index and delta is not None:
+                    return delta
+        return None
+
+
+def _volume_entry_in_hm3(flag: object, code: int, estagio: int) -> bool:
+    # A blank I1 field reads as 0, as the source model reads it.
+    entry = 0 if flag is None or pd.isna(flag) else int(flag)
+    if entry not in (0, 1):
+        raise ValueError(
+            f"FP record of plant {code} at stage {estagio}: volume window entry "
+            f"type {entry} is neither 0 (% of useful volume) nor 1 (hm3)"
+        )
+    return entry == 1
+
+
+def _window_delta(
+    value: object, in_hm3: bool, code: int, estagio: int
+) -> _WindowDelta | None:
+    if value is None or pd.isna(value):
+        return None
+    if float(value) < 0.0:
+        raise ValueError(
+            f"FP record of plant {code} at stage {estagio}: negative volume "
+            f"window delta {value}"
+        )
+    return _WindowDelta(float(value), in_hm3)
+
+
+def volume_window_rule(
+    dadger: Dadger, calendar: Sequence[OperativeStage]
+) -> VolumeWindowRule:
+    """The deck's :class:`VolumeWindowRule`, from its ``FP`` and ``UH`` records;
+    emits :func:`unconverted_fp_fields_diagnostic` when it applies."""
+    fp = dadger.fp(df=True)
+    warning = unconverted_fp_fields_diagnostic(fp)
+    if warning is not None:
+        emit(warning, logger=_LOG)
+    return VolumeWindowRule.from_fp(
+        fp, initial_volume_percentages(dadger), weekly_stage_count(calendar)
+    )
+
+
+def unconverted_fp_fields_diagnostic(fp: pd.DataFrame | None) -> Diagnostic | None:
+    """WARNING listing the ``FP`` records whose turbined-flow window or point
+    counts differ from :data:`_UNCONVERTED_FP_DEFAULTS`, or ``None``."""
+    if fp is None or fp.empty:
+        return None
+    flagged: list[str] = []
+    for row in fp.to_dict("records"):
+        if any(
+            not pd.isna(row.get(column)) and float(row[column]) != default
+            for column, default in _UNCONVERTED_FP_DEFAULTS.items()
+        ):
+            code = int(row["codigo_usina"])
+            plant = "all plants" if code == _ALL_PLANTS else f"plant {code}"
+            flagged.append(f"{plant} from stage {int(row['estagio'])}")
+    if not flagged:
+        return None
+    return Diagnostic(
+        code="decomp-fp-fit-fields-unconverted",
+        severity=Severity.WARNING,
+        category="Hydro production model",
+        title="FP turbined-flow window and point counts not converted",
+        summary=(
+            f"{len(flagged)} FP record(s) set a turbined-flow window or a number "
+            "of discretization points: " + "; ".join(flagged) + ". Only their "
+            "volume window is converted. Novomodelo fits each plant from zero to its "
+            "maximum turbined flow, with its own number of points."
+        ),
+    )
+
+
+def fpha_config(
+    effective: EffectiveCadastro,
+    mlt: Mlt | None,
+    code: int,
+    stage_index: int,
+    windows: VolumeWindowRule,
+) -> dict:
+    """Plant *code*'s computed ``fpha_config`` at *stage_index*: its volume
+    ``fitting_window`` and, when :func:`spillage_fit_max` has one, its
+    ``spillage_fit_max_m3s``."""
+    config: dict = {
+        "source": "computed",
+        "fitting_window": windows.fitting_window(effective, code, stage_index),
+    }
+    spillage_max = spillage_fit_max(effective, mlt, code, stage_index)
+    if spillage_max is not None:
+        config["spillage_fit_max_m3s"] = spillage_max
+    return config
+
+
+def spillage_fit_max(
+    effective: EffectiveCadastro, mlt: Mlt | None, code: int, stage_index: int
+) -> float | None:
+    """The FPHA spillage fit range (m³/s) of plant *code* at *stage_index*, from
+    the ``mlt.dat`` means of the inflow gauge in force (``AC NUMPOS``, else the
+    ``hidr.dat`` posto; see
+    :func:`~novomodelo_bridge.core.productivity.fpha_spillage_fit_max_m3s`).
+
+    ``None`` without ``mlt.dat``, for a gauge it does not list, or for a gauge
+    without a positive mean.
+    """
+    table = mlt.valores if mlt is not None else None
+    posto = effective.inflow_gauge(code, stage_index)
+    if table is None or str(posto) not in table.columns:
+        return None
+    return fpha_spillage_fit_max_m3s(posto, table[str(posto)].tolist())
+
+
+def mlt_absent_diagnostic(plant_count: int) -> Diagnostic:
+    """WARNING for a deck with FPHA plants and no ``mlt.dat``."""
+    return Diagnostic(
+        code="fpha-mlt-absent",
+        severity=Severity.WARNING,
+        category="Hydro production model",
+        title="FPHA spillage range without mlt.dat",
+        summary=(
+            f"The deck has no mlt.dat, so the spillage coefficient of {plant_count} "
+            "FPHA plant(s) is fit over twice the plant's maximum turbined flow. "
+            "DECOMP fits it over twice the largest monthly long-term mean inflow "
+            "of the plant's gauge. A plant whose floods exceed the narrower range "
+            "can have its spillage held down by its own production function."
+        ),
+        remediation="Add the deck's mlt.dat to the deck directory.",
+    )
 
 
 def turbine_efficiency(effective: EffectiveCadastro, code: int, name: str) -> float:
@@ -182,7 +432,7 @@ def convert_hydro_geometry(
     reads the **effective** (post-``AC COTVOL``) volume→cota polynomial and the
     base ``a*_cota_area`` height→area polynomial, sampling
     :data:`_GEOMETRY_N_POINTS` uniform volume points over the plant's storage
-    envelope (the :func:`fitting_window` range). Emitted for every operated plant with a
+    envelope. Emitted for every operated plant with a
     non-degenerate cota polynomial (so any plant is a valid backwater reference
     for its upstream FPHA neighbour); a run-of-river plant (``vmin == vmax``)
     contributes a single point; heights/areas are clamped to ``>= 0``.
