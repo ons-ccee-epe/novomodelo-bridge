@@ -74,6 +74,14 @@ def _operated_uh(dadger: Dadger) -> pd.DataFrame:
     return uh[uh["volume_inicial"].notna()]
 
 
+def initial_volume_percentages(dadger: Dadger) -> dict[int, float]:
+    """``{code: UH volume_inicial}`` for every operated plant, in % of useful volume."""
+    return {
+        int(row["codigo_usina"]): float(row["volume_inicial"])
+        for _, row in _operated_uh(dadger).iterrows()
+    }
+
+
 def _coupling_only_codes(dadger: Dadger) -> list[int]:
     """Operated-set-excluded ``UH`` codes — registrations with no initial volume."""
     uh = dadger.uh(df=True)
@@ -475,10 +483,8 @@ def _operated_initial_volumes(
     emits as the initial condition (both via :func:`_initial_volume_hm3`).
     """
     return {
-        int(row["codigo_usina"]): _initial_volume_hm3(
-            effective, int(row["codigo_usina"]), float(row["volume_inicial"])
-        )
-        for _, row in _operated_uh(case.dadger).iterrows()
+        code: _initial_volume_hm3(effective, code, pct)
+        for code, pct in initial_volume_percentages(case.dadger).items()
     }
 
 

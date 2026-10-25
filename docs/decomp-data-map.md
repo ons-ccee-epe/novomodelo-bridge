@@ -52,6 +52,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `DP` | ● | ● | ● | ● | ● | ● | ● |  | ● | ● | ● |
 | `dadger.rvN` › `DT` | ● | ● | ● | ● | ● | ● | ● |  | ● | ● | ● |
 | `dadger.rvN` › `FD` |  |  |  | ● | ● |  |  |  |  |  |  |
+| `dadger.rvN` › `FP` |  |  |  |  | ● |  |  |  |  |  |  |
 | `dadger.rvN` › `HQ` |  |  |  | ● |  |  |  |  |  |  |  |
 | `dadger.rvN` › `IA` |  | ● |  |  |  |  |  |  |  |  |  |
 | `dadger.rvN` › `LQ` |  |  |  | ● |  |  |  |  |  |  |  |
@@ -380,11 +381,11 @@ Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` pr
 
 ### `system/hydro_production_models.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`), `hidr.dat`, `mlt.dat` (opcional)  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `FP`), `hidr.dat`, `mlt.dat` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [production_models.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/production_models.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/productivity.py`
 
-Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte.
+Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
@@ -394,9 +395,9 @@ Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pel
 | `production_models[].stage_ranges[].end_stage_id` | `dadger.rvN` › `MP`, `dadger.rvN` › `FD` *(derivado)* | Último estágio (0-based, inclusivo) do intervalo; nulo no último intervalo, que fica aberto até o fim do horizonte. |
 | `production_models[].stage_ranges[].model` | `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `dadger.rvN` › `AC` › `COTVOL`, `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(derivado)* | `fpha` para as usinas com polinômio cota-volume efetivo não nulo e produtibilidade específica positiva no estágio inicial e engolimento e potência nominais efetivos positivos; `constant_productivity` para as demais. É o mesmo critério de `generation.model` em `system/hydros.json`. Numa usina `fpha`, os estágios em que o engolimento máximo da usina é nulo (a soma dos `max_turbined_m3s` por grupo de `constraints/hydro_unit_group_bounds.parquet` ou, para Itaipu, o limite da usina, se menor), por exemplo com todas as máquinas em manutenção (`MP`), recebem `constant_productivity`. |
 | `production_models[].stage_ranges[].productivity_mw_per_m3s` | — *(constante; condicional: somente nos estágios de engolimento nulo de uma usina `fpha`)* | Sempre 0.0: a usina não gera nesses estágios, e o Novomodelo não ajusta a FPHA para eles. |
-| `production_models[].stage_ranges[].fpha_config.source` | — *(constante; condicional: somente para usinas com modelo `fpha`)* | Sempre `computed`: o Novomodelo ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`; os registros `FP` do DECOMP não são lidos. |
-| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(condicional: somente para usinas com modelo `fpha`)* | Menor `volume_minimo` efetivo (pós `AC VOLMIN`) entre os estágios do estudo, em hm³: a envoltória de armazenamento que o bloco `reservoir` da usina declara, a mesma faixa amostrada em `system/hydro_geometry.parquet`. Fio d'água (`D`) colapsa para `volume_referencia`. A janela cobre toda a faixa, e não uma banda em torno do volume inicial: abaixo da janela os hiperplanos ficam negativos com turbinamento nulo e impõem um turbinamento mínimo que torna inviável um estágio deplecionado. |
-| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3` | `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(condicional: somente para usinas com modelo `fpha`)* | Maior `volume_maximo` efetivo (pós `AC VOLMAX`) entre os estágios do estudo, em hm³ (mesma envoltória de `volume_min_hm3`); fio d'água (`D`) colapsa para `volume_referencia`. |
+| `production_models[].stage_ranges[].fpha_config.source` | — *(constante; condicional: somente para usinas com modelo `fpha`)* | Sempre `computed`: o Novomodelo ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`. Dos registros `FP` do DECOMP só a janela de volume é convertida (`fitting_window`). |
+| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `FP` › `tipo_entrada_janela_volume`, `dadger.rvN` › `FP` › `limite_inferior_janela_volume`, `dadger.rvN` › `FP` › `limite_superior_janela_volume`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(derivado; condicional: somente para usinas com modelo `fpha`)* | Limite inferior da janela de volume do DECOMP no estágio, em hm³: o volume inicial de `UH`, tomado como percentual do volume útil do estágio (faixa efetiva pós `AC VOLMIN`/`VOLMAX`), menos a redução, sem ficar abaixo do `volume_minimo` do estágio. A redução vem do `FP` da própria usina, senão do `FP` 999, senão do padrão do DECOMP: 20 % do volume útil num estágio semanal e 50 % num mensal. Cada registro `FP` vale a partir do seu estágio, em % do volume útil ou em hm³ (campo 8), e um campo em branco mantém o valor em vigor. Fio d'água (`D`) colapsa para `volume_referencia`. |
+| `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `FP` › `tipo_entrada_janela_volume`, `dadger.rvN` › `FP` › `limite_inferior_janela_volume`, `dadger.rvN` › `FP` › `limite_superior_janela_volume`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(derivado; condicional: somente para usinas com modelo `fpha`)* | Limite superior da janela de volume do DECOMP no estágio, em hm³: o mesmo volume inicial de `volume_min_hm3` mais o acréscimo, sem passar do `volume_maximo` do estágio. O acréscimo se resolve como a redução, pelo campo 11 do `FP`; fio d'água (`D`) colapsa para `volume_referencia`. |
 | `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s` | `mlt.dat`, `hidr.dat` › `posto`, `dadger.rvN` › `AC` › `NUMPOS` *(derivado; condicional: somente para usinas com modelo `fpha` cujo posto tem média de longo termo positiva no `mlt.dat`)* | Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal de longo termo do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, no estágio inicial do intervalo), como no DECOMP. Omitido no posto artificial 300, num posto de média nula e quando o deck não traz `mlt.dat` (diagnóstico `fpha-mlt-absent`): o Novomodelo usa então o dobro do engolimento máximo da usina, o mesmo recurso do DECOMP para média nula. |
 | `production_models[].stage_ranges[].reference_volume.volume_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(condicional: somente para usinas com modelo `fpha`)* | Volume inicial em hm³: V_min + `volume_inicial`/100 × (V_max − V_min) na faixa efetiva do estágio inicial; fio d'água colapsa para `volume_referencia`. É o mesmo valor de `storage` em `initial_conditions.json`, o ponto em que o DECOMP ancora a FPHA. |
 
@@ -1250,9 +1251,16 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `FP`
 
-**Estado:** não lido.
+**Estado:** convertido em parte. **Lido por:** `system/hydro_production_models.json`.
 
-- todo o registro — *não lido.* Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela igual à envoltória de armazenamento da usina.
+- `tipo_entrada_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `limite_inferior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `limite_superior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `tipo_entrada_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `limite_inferior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `limite_superior_janela_volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `janela de turbinamento, número de pontos de discretização` — *não lido.* Não convertidos: o Novomodelo ajusta cada usina de zero ao seu turbinamento máximo, com a sua própria discretização. O diagnóstico `decomp-fp-fit-fields-unconverted` lista os registros que fogem dos valores padrão do DECOMP. A janela de volume é lida (ver `fitting_window`).
+- `janela de geração hidráulica, tolerância` — *não lido.* Campos 12 a 14 do `FP`. Não lidos: sem contrapartida no ajuste da FPHA do Novomodelo.
 
 ### `dadger.rvN` › `FT`
 
@@ -1638,6 +1646,8 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `volume_inicial` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `evaporacao` → `system/hydros.json` › `hydros[].evaporation.coefficients_mm[]`
 - `codigo_usina` → `system/hydro_production_models.json` › `production_models[].hydro_id`
+- `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
+- `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `codigo_usina` → `system/hydro_geometry.parquet` › `hydro_id`
 - `codigo_usina` → `system/hydro_energy_productivity.parquet` › `hydro_id`
@@ -2177,7 +2187,8 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `DA` — *não lido.* Retiradas de água para outros usos (desvios) por UHE: usina de retirada, usina de retorno, vazão desviada, percentual de retorno e custo, por estágio. Não lido. Converter exige mapear a retirada para o canal de desvio da usina no Novomodelo e o retorno como afluência à usina de destino.
 - `dadger.rvN` › `EA` — *não lido.* ENA dos meses anteriores ao estudo, por REE, para a tendência hidrológica do DECOMP. Não lido: a árvore de cenários vem pronta de `vazoes.rvN` e o estado de afluências passadas da FCF de fronteira é derivado das observações de `vazoes.rvN`.
 - `dadger.rvN` › `ES` — *não lido.* ENA das semanas anteriores ao estudo, por REE. Não lido, pelo mesmo motivo de `EA`.
-- `dadger.rvN` › `FP` — *não lido.* Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela igual à envoltória de armazenamento da usina.
+- `dadger.rvN` › `FP` › `janela de turbinamento, número de pontos de discretização` — *não lido.* Não convertidos: o Novomodelo ajusta cada usina de zero ao seu turbinamento máximo, com a sua própria discretização. O diagnóstico `decomp-fp-fit-fields-unconverted` lista os registros que fogem dos valores padrão do DECOMP. A janela de volume é lida (ver `fitting_window`).
+- `dadger.rvN` › `FP` › `janela de geração hidráulica, tolerância` — *não lido.* Campos 12 a 14 do `FP`. Não lidos: sem contrapartida no ajuste da FPHA do Novomodelo.
 - `dadger.rvN` › `IR` — *não lido.* Opções de geração de relatórios de saída do DECOMP. Sem contrapartida no caso Novomodelo.
 - `dadger.rvN` › `MT` — *não lido.* Manutenções programadas das UTEs (fator por estágio). Não lido: a disponibilidade térmica vem só de `CT`. Converter exige multiplicar `disponibilidade` pelo fator ao emitir `thermal_bounds.parquet`.
 - `dadger.rvN` › `PD` — *não lido.* Escolha do algoritmo de solução do PL. Parâmetro do solver do DECOMP; sem contrapartida.

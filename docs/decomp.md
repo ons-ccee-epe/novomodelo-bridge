@@ -103,9 +103,17 @@ before the optimization. The rule:
 - `AC ALTEFE` overrides of the rated head are not applied; the conversion
   warns about them.
 
-Novomodelo fits the planes of the hydro production function (FPHA) itself. Two of
-its inputs follow DECOMP:
+Novomodelo fits the planes of the hydro production function (FPHA) itself. These
+inputs follow DECOMP:
 
+- Each stage is fitted over DECOMP's volume window: the `UH` initial storage,
+  as a percentage of the stage's useful volume, minus a reduction and plus an
+  increase, within the stage's storage limits. Both are 20 % of useful volume
+  on a weekly stage and 50 % on a monthly one unless `FP` records set them,
+  in % of useful volume or in hm³, from their stage on. A run-of-river plant
+  is fitted at its reference volume. The turbined-flow window and point
+  counts of `FP` are not converted; the conversion warns when a record sets
+  them away from DECOMP's defaults.
 - The spillage range of the fit is twice the largest monthly long-term mean
   inflow in `mlt.dat` of the plant's station (`AC NUMPOS` included). A plant
   on the artificial station 300, or on a station with a zero mean, is fitted

@@ -59,6 +59,9 @@ from novomodelo_bridge.decomp.converters.hydro.entity import (
     convert_initial_storage as convert_initial_storage,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
+    initial_volume_percentages as initial_volume_percentages,
+)
+from novomodelo_bridge.decomp.converters.hydro.entity import (
     read_hidr as read_hidr,
 )
 from novomodelo_bridge.decomp.converters.hydro.productivity import (

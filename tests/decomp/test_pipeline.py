@@ -781,6 +781,9 @@ class _CadastroDadger:
     def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
         return None
 
+    def fp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+        return None
+
     def ac(
         self,
         codigo_usina: int | None = None,  # noqa: ARG002
@@ -2265,12 +2268,28 @@ class TestMiniDeckFphaProductionModels:
         assert means is not None
 
         def spillage_max(name: str) -> float | None:
-            (only,) = ranges[name]
-            return only["fpha_config"].get("spillage_fit_max_m3s")
+            (value,) = {
+                r["fpha_config"].get("spillage_fit_max_m3s") for r in ranges[name]
+            }
+            return value
 
         assert spillage_max("SOBRADINHO") == 2.0 * means["168"].max()
         assert spillage_max("PIMENTAL") == 2.0 * means["288"].max()
         assert spillage_max("BELO MONTE") is None
+
+    def test_fitting_window_widens_from_the_weekly_to_the_monthly_band(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+        weekly, monthly = self._stage_ranges(tmp_path / "out")["FURNAS"]
+        assert (weekly["start_stage_id"], weekly["end_stage_id"]) == (0, 2)
+        lo_w, hi_w = weekly["fpha_config"]["fitting_window"].values()
+        lo_m, hi_m = monthly["fpha_config"]["fitting_window"].values()
+        initial = (lo_w + hi_w) / 2.0
+        assert initial - lo_m == pytest.approx(2.5 * (initial - lo_w))
+        assert hi_w < hi_m
 
     def test_zero_turbine_limit_stages_take_zero_constant_productivity(
         self, decomp_mini_deck: Path, tmp_path: Path

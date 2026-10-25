@@ -382,18 +382,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   electrical-constraint file was read as Latin-1 only. Decks mix the two
   encodings, so each of these files, and the LIBS index on both tracks, is
   now read as UTF-8 when it is valid UTF-8 and as Latin-1 otherwise.
-- **`convert decomp` fits each plant's FPHA over its whole storage range.**
+- **`convert decomp` fits each plant's FPHA over DECOMP's volume window.**
   The fitting window was a band of ±10 % of useful volume around the initial
-  storage. Below the band, cobre's production planes are negative at zero
-  turbined flow, so a plant drawn down past the band's lower edge had to
-  turbine a minimum flow. Where its inflow could not supply that flow, the
-  inflow slack supplied the missing water and inflated the costs, or, without
-  the slack, the stage was infeasible. The window and the
-  `hydro_geometry.parquet` volume grid now span the plant's storage envelope
-  over the study (a single reference volume for a run-of-river plant), as
-  `convert newave` fits its reservoirs over their whole storage range. DECOMP
-  results change for every FPHA plant whose band did not cover its storage
-  range.
+  storage on every stage. It is now the window DECOMP builds for each stage:
+  the `UH` initial storage, as a percentage of that stage's useful volume,
+  minus a reduction and plus an increase, within the stage's storage limits.
+  Both default to 20 % of useful volume on a weekly stage and 50 % on a
+  monthly one, and a run-of-river plant keeps its single reference volume.
+  `FP` records set them, in % of useful volume or in hm³, from their stage
+  on. Each value is taken from the plant's own record when it sets it, else
+  from a `999` record, else from the default. The `hydro_geometry.parquet`
+  volume grid spans the plant's whole storage range, which holds every
+  window. `FP` turbined-flow windows and point counts are not converted; a
+  `decomp-fp-fit-fields-unconverted` warning lists the records that set them
+  to other values than the default fit. FPHA results change for every plant
+  with storage.
 - **A failed `convert` keeps the warnings found before the failure.** Both
   tracks reported only the error, so a warning that explained it, such as a
   tab that misaligned a fixed-column file, was lost. The rendered notes and the

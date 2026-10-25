@@ -1587,10 +1587,11 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "dadger", register = "MP" },
   { file = "dadger", register = "FD" },
+  { file = "dadger", register = "FP" },
   { file = "hidr" },
   { file = "mlt" },
 ]
-summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte."
+summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte."
 
   [[output.field]]
   path = "production_models[].hydro_id"
@@ -1645,12 +1646,16 @@ summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA co
   when = "somente para usinas com modelo `fpha`"
   from = []
   status = "constant"
-  how = "Sempre `computed`: o Novomodelo ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`; os registros `FP` do DECOMP não são lidos."
+  how = "Sempre `computed`: o Novomodelo ajusta os hiperplanos da FPHA a partir de `system/hydro_geometry.parquet` e `system/tailrace_curves.parquet`. Dos registros `FP` do DECOMP só a janela de volume é convertida (`fitting_window`)."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3"
   when = "somente para usinas com modelo `fpha`"
   from = [
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "dadger", register = "FP", item = "tipo_entrada_janela_volume" },
+    { file = "dadger", register = "FP", item = "limite_inferior_janela_volume" },
+    { file = "dadger", register = "FP", item = "limite_superior_janela_volume" },
     { file = "hidr", item = "volume_minimo" },
     { file = "hidr", item = "volume_maximo" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
@@ -1658,12 +1663,17 @@ summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA co
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_referencia" },
   ]
-  how = "Menor `volume_minimo` efetivo (pós `AC VOLMIN`) entre os estágios do estudo, em hm³: a envoltória de armazenamento que o bloco `reservoir` da usina declara, a mesma faixa amostrada em `system/hydro_geometry.parquet`. Fio d'água (`D`) colapsa para `volume_referencia`. A janela cobre toda a faixa, e não uma banda em torno do volume inicial: abaixo da janela os hiperplanos ficam negativos com turbinamento nulo e impõem um turbinamento mínimo que torna inviável um estágio deplecionado."
+  status = "derived"
+  how = "Limite inferior da janela de volume do DECOMP no estágio, em hm³: o volume inicial de `UH`, tomado como percentual do volume útil do estágio (faixa efetiva pós `AC VOLMIN`/`VOLMAX`), menos a redução, sem ficar abaixo do `volume_minimo` do estágio. A redução vem do `FP` da própria usina, senão do `FP` 999, senão do padrão do DECOMP: 20 % do volume útil num estágio semanal e 50 % num mensal. Cada registro `FP` vale a partir do seu estágio, em % do volume útil ou em hm³ (campo 8), e um campo em branco mantém o valor em vigor. Fio d'água (`D`) colapsa para `volume_referencia`."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3"
   when = "somente para usinas com modelo `fpha`"
   from = [
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "dadger", register = "FP", item = "tipo_entrada_janela_volume" },
+    { file = "dadger", register = "FP", item = "limite_inferior_janela_volume" },
+    { file = "dadger", register = "FP", item = "limite_superior_janela_volume" },
     { file = "hidr", item = "volume_minimo" },
     { file = "hidr", item = "volume_maximo" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
@@ -1671,7 +1681,8 @@ summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA co
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_referencia" },
   ]
-  how = "Maior `volume_maximo` efetivo (pós `AC VOLMAX`) entre os estágios do estudo, em hm³ (mesma envoltória de `volume_min_hm3`); fio d'água (`D`) colapsa para `volume_referencia`."
+  status = "derived"
+  how = "Limite superior da janela de volume do DECOMP no estágio, em hm³: o mesmo volume inicial de `volume_min_hm3` mais o acréscimo, sem passar do `volume_maximo` do estágio. O acréscimo se resolve como a redução, pelo campo 11 do `FP`; fio d'água (`D`) colapsa para `volume_referencia`."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s"
@@ -3133,8 +3144,15 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
 
   [[source.item]]
   register = "FP"
+  item = "janela de turbinamento, número de pontos de discretização"
   status = "unread"
-  note = "Parâmetros da função de produção por usina e estágio: janelas de volume e turbinamento e número de pontos de discretização. Não lido: o Novomodelo ajusta a FPHA internamente (`fpha_configs` com `source = computed`), com janela igual à envoltória de armazenamento da usina."
+  note = "Não convertidos: o Novomodelo ajusta cada usina de zero ao seu turbinamento máximo, com a sua própria discretização. O diagnóstico `decomp-fp-fit-fields-unconverted` lista os registros que fogem dos valores padrão do DECOMP. A janela de volume é lida (ver `fitting_window`)."
+
+  [[source.item]]
+  register = "FP"
+  item = "janela de geração hidráulica, tolerância"
+  status = "unread"
+  note = "Campos 12 a 14 do `FP`. Não lidos: sem contrapartida no ajuste da FPHA do Novomodelo."
 
   [[source.item]]
   register = "IR"

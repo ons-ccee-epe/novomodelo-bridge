@@ -992,24 +992,26 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.turbine_limits = turbine_limits
     fpha_codes = fpha_conv.fpha_eligible_codes(effective, id_map)
     artifacts.fpha_codes = fpha_codes
-    if fpha_codes and case.mlt is None:
-        dx.emit(fpha_conv.mlt_absent_diagnostic(len(fpha_codes)), logger=_LOG)
     stage_models: dict[int, list[dict]] = {}
-    for code in fpha_codes:
-        vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
-        reference_volume = {"volume_hm3": initial_volumes.get(code, vmin)}
-        stage_models[code] = [
-            hydro_conv.outage_stage_model()
-            if turbine_limits.plant_limit(code, stage.index) <= 0.0
-            else {
-                "model": "fpha",
-                "fpha_config": fpha_conv.fpha_config(
-                    effective, case.mlt, code, stage.index
-                ),
-                "reference_volume": reference_volume,
-            }
-            for stage in artifacts.calendar
-        ]
+    if fpha_codes:
+        if case.mlt is None:
+            dx.emit(fpha_conv.mlt_absent_diagnostic(len(fpha_codes)), logger=_LOG)
+        fpha_windows = fpha_conv.volume_window_rule(dadger, artifacts.calendar)
+        for code in fpha_codes:
+            vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
+            reference_volume = {"volume_hm3": initial_volumes.get(code, vmin)}
+            stage_models[code] = [
+                hydro_conv.outage_stage_model()
+                if turbine_limits.plant_limit(code, stage.index) <= 0.0
+                else {
+                    "model": "fpha",
+                    "fpha_config": fpha_conv.fpha_config(
+                        effective, case.mlt, code, stage.index, fpha_windows
+                    ),
+                    "reference_volume": reference_volume,
+                }
+                for stage in artifacts.calendar
+            ]
 
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
