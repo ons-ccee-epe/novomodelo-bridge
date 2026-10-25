@@ -226,6 +226,7 @@ def _compare(
     case: DecompCase,
     runs: _Runs,
     names: dict[int, str] | None = None,
+    fit_config: dict[str, list[float]] | None = None,
 ):
     decomp_dir = tmp_path / "decomp"
     decomp_dir.mkdir(exist_ok=True)
@@ -246,7 +247,10 @@ def _compare(
                 "volume_min_hm3": [600.0],
                 "volume_max_hm3": [792.0],
                 "spillage_fit_max_m3s": [50.0],
+                "turbined_fit_max_m3s": [None],
             }
+            | (fit_config or {}),
+            schema_overrides={"turbined_fit_max_m3s": pl.Float64},
         ),
         "read_novomodelo_hydro_metadata": {
             h: {"max_turbined_m3s": 220.0} for h in runs.hydro_ids
@@ -484,6 +488,25 @@ class TestFitInputsAndSlices:
         assert row["n_planes_novomodelo"] == 2
         assert row["novomodelo_v_hm3"] == pytest.approx(695.0)
         assert row["novomodelo_q_m3s"] == pytest.approx(150.0)
+
+    def test_fit_inputs_report_the_configured_turbined_fit_range(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        result = _compare(
+            monkeypatch,
+            tmp_path,
+            decomp_mini_case,
+            _camargos_runs(decomp_mini_case),
+            fit_config={"turbined_fit_max_m3s": [205.0]},
+        )
+
+        assert result is not None
+        (row,) = result.fit_inputs.iter_rows(named=True)
+        assert row["novomodelo_q_max_m3s"] == 205.0
+        assert row["novomodelo_q_stage_max_m3s"] == 180.0
 
     def test_slices_sweep_turbined_flow_up_to_the_widest_limit(
         self,

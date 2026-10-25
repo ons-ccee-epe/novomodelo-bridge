@@ -95,8 +95,9 @@ _POINT_KEYS = ["stage", "scenario", "block"]
 
 #: Per-(plant, stage) fit inputs, and each model's mean operating point
 #: (weighted over every point) with the head components there.
-#: Novomodelo fits turbined flow up to the plant's static limit
-#: (``novomodelo_q_max_m3s``); ``novomodelo_q_stage_max_m3s`` is the stage's limit.
+#: Novomodelo fits turbined flow up to the config's ``turbined_fit_max_m3s``, else
+#: the plant's static limit (``novomodelo_q_max_m3s``); ``novomodelo_q_stage_max_m3s`` is
+#: the stage's limit.
 #: ``*_lateral_m3s`` is the flow reaching the tailrace besides the plant's own
 #: (``VU`` and ``VA``), ``*_downstream_level_m`` the downstream forebay.
 #: ``exact_check_max_mw`` is the largest gap between the exact production
@@ -1124,10 +1125,10 @@ def _fit_inputs_and_slices(
         eco_row = windows.get((code, stage), {})
         novomodelo_window = novomodelo_windows.get((novomodelo_id, stage), {})
         novomodelo_planes = novomodelo_by_key[(novomodelo_id, stage)]
-        novomodelo_q_max = static_q_max.get(novomodelo_id)
-        novomodelo_q_stage_max = stage_q_max.get(
-            (novomodelo_id, stage), novomodelo_q_max
-        )
+        static_limit = static_q_max.get(novomodelo_id)
+        fit_q_max = novomodelo_window.get("turbined_fit_max_m3s")
+        novomodelo_q_max = static_limit if fit_q_max is None else fit_q_max
+        novomodelo_q_stage_max = stage_q_max.get((novomodelo_id, stage), static_limit)
 
         def _at_mean(prefix: str, q: float | None = None) -> _Head:
             level = m[f"{prefix}_downstream_level_m"]

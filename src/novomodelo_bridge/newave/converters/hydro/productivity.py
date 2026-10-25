@@ -17,20 +17,37 @@ from collections.abc import Set as AbstractSet
 import pandas as pd
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.productivity import (
+    KTURB_BY_TIPO_TURBINA,
+    apply_hydraulic_loss,
     compute_productivity,
     equivalent_productivity,
+    evaluate_cota,
     fpha_spillage_fit_max_m3s,
     integrated_productivity,
     stored_energy_productivity,
 )
 from novomodelo_bridge.core.source_text import read_source_text
+from novomodelo_bridge.core.tailrace import (
+    TailraceFamily,
+    tailrace_families_from_polinjus,
+    tailrace_level_m,
+)
+from novomodelo_bridge.core.turbine import MachineSet, power_limited_flow, settled_flow
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.geometry import (
+    _expansion_configs,
     _read_volref_saz,
     _seasonal_reference_volume,
     fpha_eligible_codes,
+    held_volume,
     operating_storage_range,
     seasonal_reference_volumes,
 )
@@ -65,6 +82,11 @@ _compute_integrated_productivity = integrated_productivity
 # also requires a sample count for the mean-squared-distance estimate. The source model
 # does not specify one, so we supply a reasonable default.
 _FPHA_DISTANCE_N_SAMPLES = 100
+
+#: The source model prints its turbined fit range to 0.1 m³/s.
+_FIT_FLOW_TOLERANCE_M3S = 1.0e-3
+#: A safety bound only: the iteration converges in a few steps on real decks.
+_FIT_FLOW_MAX_ITERATIONS = 100
 
 
 def _parse_fpha_plane_reduction(case: NewaveCase) -> dict | None:
@@ -200,11 +222,14 @@ def compute_per_stage_prodt_sin_mean(case: NewaveCase) -> list[float]:
 
 
 def _fpha_computed_config(
-    hreg: pd.Series, spillage_fit_max_m3s: float | None = None
+    hreg: pd.Series,
+    spillage_fit_max_m3s: float | None = None,
+    turbined_fit_max_m3s: float | None = None,
 ) -> dict:
     """``fpha_config`` for a computed-FPHA plant, with the source model's fitting
     window and, when given, its spillage fit range
-    (:func:`~novomodelo_bridge.core.productivity.fpha_spillage_fit_max_m3s`).
+    (:func:`~novomodelo_bridge.core.productivity.fpha_spillage_fit_max_m3s`) and
+    turbined fit range (:func:`_turbined_fit_max`).
 
     The source model fits the FPHA volume axis over the plant's
     :func:`~novomodelo_bridge.newave.converters.hydro.geometry.operating_storage_range`:
@@ -220,7 +245,148 @@ def _fpha_computed_config(
     }
     if spillage_fit_max_m3s is not None:
         config["spillage_fit_max_m3s"] = spillage_fit_max_m3s
+    if turbined_fit_max_m3s is not None:
+        config["turbined_fit_max_m3s"] = turbined_fit_max_m3s
     return config
+
+
+def _turbined_fit_max(
+    hreg: pd.Series,
+    families: Sequence[TailraceFamily],
+    downstream_level_m: float | None,
+) -> tuple[float | None, bool]:
+    """The source model's FPHA turbined-flow range (m³/s) for a plant it holds at a
+    :func:`~novomodelo_bridge.newave.converters.hydro.geometry.held_volume`, and
+    whether its fixed point settled.
+
+    The range is every machine set's
+    :func:`~novomodelo_bridge.core.turbine.power_limited_flow`, with no TEIF/IP
+    derating. The turbine head runs from that volume down to the tailrace at the
+    turbined flow, on *families* at *downstream_level_m*
+    (:func:`~novomodelo_bridge.core.turbine.settled_flow`). The generator head runs
+    down to ``canal_fuga_medio``, which is also the turbine head when *families*
+    is empty. The range is ``None`` for any other plant, which novomodelo fits up to
+    its maximum turbined flow, and when ``produtibilidade_especifica`` or the net
+    head is not positive.
+    """
+    volume = held_volume(hreg)
+    rho_esp_raw = hreg.get("produtibilidade_especifica")
+    cf_raw = hreg.get("canal_fuga_medio")
+    if volume is None or is_na(rho_esp_raw) or is_na(cf_raw):
+        return None, True
+    rho_esp = float(rho_esp_raw)
+    if rho_esp <= 0.0:
+        return None, True
+    forebay_m = evaluate_cota(
+        [float(hreg[f"a{i}_volume_cota"]) for i in range(5)], volume
+    )
+    tipo_perda = int(hreg.get("tipo_perda", 0) or 0)
+    perdas = float(hreg.get("perdas", 0.0) or 0.0)
+    generator_head = apply_hydraulic_loss(forebay_m - float(cf_raw), tipo_perda, perdas)
+    sets = [
+        MachineSet(
+            units=int(hreg[f"maquinas_conjunto_{i}"]),
+            flow_m3s=float(hreg[f"vazao_nominal_conjunto_{i}"]),
+            head_m=float(hreg[f"queda_nominal_conjunto_{i}"]),
+            power_mw=float(hreg[f"potencia_nominal_conjunto_{i}"]),
+        )
+        for i in range(1, int(hreg["numero_conjuntos_maquinas"]) + 1)
+    ]
+    exponent = KTURB_BY_TIPO_TURBINA.get(int(hreg.get("tipo_turbina", 0) or 0), 0.5)
+
+    def flow_at(turbine_head: float) -> float:
+        return power_limited_flow(
+            turbine_head,
+            sets,
+            generator_head_m=generator_head,
+            specific_productivity=rho_esp,
+            exponent=exponent,
+        )
+
+    flow, converged = flow_at(generator_head), True
+    if families:
+        flow, converged = settled_flow(
+            lambda q: flow_at(
+                apply_hydraulic_loss(
+                    forebay_m - tailrace_level_m(families, q, downstream_level_m),
+                    tipo_perda,
+                    perdas,
+                )
+            ),
+            flow,
+            tolerance_m3s=_FIT_FLOW_TOLERANCE_M3S,
+            max_iterations=_FIT_FLOW_MAX_ITERATIONS,
+        )
+    return (flow if flow > 0.0 else None), converged
+
+
+def _turbined_fit_maxima(
+    case: NewaveCase,
+    cadastro: pd.DataFrame,
+    fpha_codes: AbstractSet[int],
+) -> dict[int, float]:
+    """``{plant code: turbined fit range (m³/s)}`` for each FPHA plant
+    :func:`_turbined_fit_max` gives one.
+
+    An expanding plant is rated on the machines ``hydros.json`` declares. The
+    plant downstream (``confhd``) sets the tailrace family at its forebay level
+    at the low end of its
+    :func:`~novomodelo_bridge.newave.converters.hydro.geometry.operating_storage_range`.
+    """
+    polinjus = case.polinjus
+    families = (
+        {}
+        if polinjus is None
+        else tailrace_families_from_polinjus(
+            polinjus.hidreletrica_curvajusante(df=True),
+            polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True),
+        )
+    )
+    expansion = _expansion_configs(case, cadastro)
+    maxima: dict[int, float] = {}
+    unconverged: list[list[object]] = []
+    for _, row in case.active_hydros.iterrows():
+        code = int(row["codigo_usina"])
+        if code not in fpha_codes or code not in cadastro.index:
+            continue
+        hreg = cadastro.loc[code]
+        config = expansion.get(code)
+        downstream = row.get("codigo_usina_jusante")
+        downstream_level = None
+        if not is_na(downstream) and int(downstream) in cadastro.index:
+            below = cadastro.loc[int(downstream)]
+            downstream_level = evaluate_cota(
+                [float(below[f"a{i}_volume_cota"]) for i in range(5)],
+                operating_storage_range(below)[0],
+            )
+        value, converged = _turbined_fit_max(
+            hreg if config is None else config.declared_hreg(hreg),
+            families.get(code, ()),
+            downstream_level,
+        )
+        if value is not None:
+            maxima[code] = value
+        if not converged:
+            unconverged.append([code, str(hreg["nome_usina"]).strip()])
+    if unconverged:
+        emit(
+            Diagnostic(
+                code="fpha-turbined-fit-range-unconverged",
+                severity=Severity.WARNING,
+                category="Production model",
+                title=(
+                    f"FPHA turbined fit range did not converge ({len(unconverged)})"
+                ),
+                summary=(
+                    "The tailrace-dependent turbined fit range of the listed "
+                    f"plants did not settle within {_FIT_FLOW_MAX_ITERATIONS} "
+                    "iterations; the last value is used."
+                ),
+                table=DiagnosticTable(columns=["Code", "Name"], rows=unconverged),
+            ),
+            logger=_LOG,
+        )
+    return maxima
 
 
 def _spillage_fit_maxima(
@@ -312,6 +478,11 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         if fpha_codes
         else {}
     )
+    turbined_max_by_code = (
+        _turbined_fit_maxima(case, cadastro, fpha_codes)
+        if cadastro is not None and fpha_codes
+        else {}
+    )
 
     production_models: list[dict] = []
     for newave_code in confhd_codes:
@@ -328,7 +499,11 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             else None
         )
         fpha_config = (
-            _fpha_computed_config(hreg, spillage_max_by_code.get(newave_code))
+            _fpha_computed_config(
+                hreg,
+                spillage_max_by_code.get(newave_code),
+                turbined_max_by_code.get(newave_code),
+            )
             if (is_fpha and hreg is not None)
             else None
         )
