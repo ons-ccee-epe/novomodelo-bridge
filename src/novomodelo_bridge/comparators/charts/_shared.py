@@ -145,6 +145,7 @@ def _plant_max_reldiff_table(
     entity_type: str,
     variables: list[tuple[str, str]],
     reference_label: str = "NEWAVE",
+    note: str | None = None,
 ) -> str:
     """Per-plant max relative-difference summary table.
 
@@ -156,7 +157,8 @@ def _plant_max_reldiff_table(
     source-model-relative, per the report convention). Stages with ``|newave| ≈ 0`` are
     excluded — for any plant/variable that has no eligible stage the cell shows "—".
 
-    Colour cues: ≤ 1 % green, ≤ 10 % amber, > 10 % red.
+    Colour cues: ≤ 1 % green, ≤ 10 % amber, > 10 % red. *note* is appended
+    to the caption.
     """
     max_rd, plant_keys, medians = analyze.plant_max_reldiff_ranking(
         results, entity_type, variables
@@ -201,7 +203,12 @@ def _plant_max_reldiff_table(
         '<table class="cost-breakdown-table">'
         f"<caption>{caption_label} per-plant max relative difference "
         f"(|Novomodelo − {reference_label}| / |{reference_label}|, over stages)"
-        "</caption>"
+        + (
+            ""
+            if note is None
+            else f' <span class="cb-caption-note">— {escape_text(note)}</span>'
+        )
+        + "</caption>"
         f"<thead><tr>{header_cells}</tr></thead>"
         "<tbody>" + "".join(body_rows) + "</tbody>"
         "</table>"

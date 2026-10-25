@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`compare decomp` compares both models at their operating points.** The
+  Productivity tab splits each plant and stage's realized-productivity gap
+  into a part from the fitted production functions and a part from where
+  Cobre operates, using DECOMP's planes (`avl_cortesfpha_dec.rvN`) and fit
+  windows (`eco_fpha_.rvN`). It plots generation against turbined flow at
+  DECOMP's mean operating point for both models' planes and the exact
+  production function, and lists each model's fit inputs and head
+  components. A point where the plant's energy or water is worth nothing in
+  either model is a tie: ties are left out of the split and of the per-plant
+  hydro ranking, and their share is reported per stage. The FPHA surface
+  comparison now uses DECOMP's own planes on its fit grid, as the NEWAVE
+  report does, instead of Cobre's planes against `dec_desvfpha.rvN`. The
+  static pmo section is no longer shown when it has no data.
+
 - **`convert decomp` warns about negative incremental inflows.** The values
   are converted as the deck gives them. DECOMP reports a negative incremental
   inflow as zero in its operation output, while Cobre removes that water from

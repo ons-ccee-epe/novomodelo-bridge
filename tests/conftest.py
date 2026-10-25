@@ -105,6 +105,12 @@ def decomp_mini_deck() -> Path:
     return Path(__file__).parent / "decks" / "decomp_mini"
 
 
+@pytest.fixture(scope="session")
+def decomp_mini_case() -> DecompCase:
+    """The DECOMP mini-deck parsed once per session; tests must not mutate it."""
+    return DecompCase.from_directory(Path(__file__).parent / "decks" / "decomp_mini")
+
+
 @pytest.fixture
 def newave_mini_deck() -> Path:
     """Path to the committed NEWAVE mini-deck under ``tests/decks/newave_mini/``.

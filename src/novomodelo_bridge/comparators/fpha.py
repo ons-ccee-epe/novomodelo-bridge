@@ -2,25 +2,15 @@
 
 Both the source model and Novomodelo fit a piecewise-linear production surface
 GH(V, Q, S) as a set of hyperplanes; the LP consumes the lower envelope --
-the minimum across planes -- of ``multiplier * (gamma_0 + gamma_v * (v -
-volume_offset) + gamma_q * q + gamma_s * s)``. :func:`dense_grid` evaluates
-that envelope with numpy over a whole meshgrid at once (the NEWAVE track,
-which has fitted planes on both sides and compares a dense (V, Q) surface).
-:func:`point_cloud` evaluates the identical contract with polars over a
-scattered set of operating points (the DECOMP track, which has only Novomodelo's
-fitted planes plus the source model's realized trajectory -- no source-side
-plane coefficients and no fitting grid to build a dense surface from).
+the minimum across planes. :func:`dense_grid` evaluates that envelope with
+numpy over any broadcastable set of points: a whole meshgrid (the surface
+comparison) or a scattered set of operating points. The source models scale
+the whole plane by their correction factor; Novomodelo scales the intercept only
+(:func:`novomodelo_plane_arrays`).
 
-The two tracks' fidelity metrics (``nmae``/``bias`` in
-:data:`FPHA_METRICS_SCHEMA`) normalize to different denominators, and this is
-not a discrepancy to unify: NEWAVE normalizes to the fitted grid-corner max
-(the source model's own envelope value at the max-V/max-Q grid corner);
-DECOMP normalizes to the realized-trajectory max (the largest generation the
-source model actually realized over the simulated operating points), because
-it has no fitted grid to take a corner from in the first place. The two
-``nmae``/``bias`` values share column names but are **not cross-track
-comparable** -- each is only meaningful measured against its own track's
-denominator.
+:func:`productivity_split` splits the gap between the two models' realized
+productivity into a part due to the fitted surfaces and a part due to where
+each model operates.
 """
 
 from __future__ import annotations
@@ -120,50 +110,125 @@ def dense_grid(
     return planes.min(axis=0).reshape(shape)
 
 
-def point_cloud(
-    planes: pl.DataFrame, points: pl.DataFrame, *, volume_offset: float = 0.0
-) -> pl.DataFrame:
-    """Evaluate a min-over-planes FPHA envelope at a scattered set of
-    (hydro, stage, v, q, s) operating points.
+def novomodelo_plane_arrays(
+    planes: pl.DataFrame,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Novomodelo's planes as :func:`dense_grid` arguments.
 
-    ``points`` carries one row per sample, with columns ``_point_id`` (a
-    stable row identity), ``novomodelo_id``, ``stage``, ``v_hm3``, ``q_m3s``,
-    ``s_m3s``. ``planes`` is a Novomodelo-shaped ``hydro_id``/``stage_id``/
-    ``gamma_0``/``gamma_v``/``gamma_q``/``gamma_s``/``kappa`` frame (multiple
-    plane rows per (hydro_id, stage_id)) — the polars counterpart of
-    :func:`dense_grid`'s ``multiplier * (gamma_0 + gamma_v * (v -
-    volume_offset) + gamma_q * q + gamma_s * s)`` contract, expressed as a
-    join + group-by rather than a numpy broadcast since this evaluates a
-    scattered point cloud, not a dense grid.
-
-    ``volume_offset`` follows :func:`dense_grid`'s convention (subtract the
-    plant's minimum storage before applying ``gamma_v``); pass ``0.0`` (the
-    default) when ``gamma_v`` already multiplies absolute volume.
-
-    Returns one row per ``_point_id`` with the envelope value in
-    ``novomodelo_gh_mw``; a point whose (hydro, stage) has no matching plane rows
-    drops out of the join rather than null-keeping.
+    Novomodelo's ``kappa`` scales the intercept only, so it is folded into
+    ``gamma_0`` and the per-plane multiplier is one.
     """
-    keyed_planes = planes.rename(
-        {"hydro_id": "novomodelo_id", "stage_id": "stage"}
-    ).cast({"novomodelo_id": pl.Int64, "stage": pl.Int64})
-    joined = points.join(keyed_planes, on=["novomodelo_id", "stage"], how="inner")
-    if joined.is_empty():
-        return pl.DataFrame(
-            schema={"_point_id": pl.Int64, "novomodelo_gh_mw": pl.Float64}
-        )
+    kappa = planes.get_column("kappa").to_numpy()
     return (
-        joined.with_columns(
-            (
-                pl.col("kappa")
-                * (
-                    pl.col("gamma_0")
-                    + pl.col("gamma_v") * (pl.col("v_hm3") - volume_offset)
-                    + pl.col("gamma_q") * pl.col("q_m3s")
-                    + pl.col("gamma_s") * pl.col("s_m3s")
-                )
-            ).alias("plane_value")
+        planes.get_column("gamma_0").to_numpy() * kappa,
+        planes.get_column("gamma_v").to_numpy(),
+        planes.get_column("gamma_q").to_numpy(),
+        planes.get_column("gamma_s").to_numpy(),
+        np.ones_like(kappa),
+    )
+
+
+#: Output schema of :func:`productivity_split`, plus ``plant_name``.
+FPHA_SPLIT_SCHEMA: dict[str, type[pl.DataType]] = {
+    "novomodelo_id": pl.Int64,
+    "plant_name": pl.Utf8,
+    "stage": pl.Int64,
+    "tie_share": pl.Float64,
+    "q_source_m3s": pl.Float64,
+    "gh_source_mw": pl.Float64,
+    "rho_source": pl.Float64,
+    "rho_novomodelo": pl.Float64,
+    "rho_novomodelo_planes_at_source": pl.Float64,
+    "rho_source_planes_at_source": pl.Float64,
+    "rho_exact_at_source": pl.Float64,
+    "rho_exact_at_novomodelo": pl.Float64,
+    "d_total": pl.Float64,
+    "d_model": pl.Float64,
+    "d_operating_point": pl.Float64,
+    "fit_error_source": pl.Float64,
+    "fit_error_novomodelo": pl.Float64,
+}
+
+#: Turbined flow (weighted m³/s) below which a productivity is 0/0.
+_SPLIT_TURBINED_EPS: float = 1.0e-6
+
+
+def productivity_split(
+    source_points: pl.DataFrame, novomodelo_points: pl.DataFrame
+) -> pl.DataFrame:
+    """Split each (plant, stage) realized-productivity gap at the operating points.
+
+    *source_points* holds one row per source-model operating point with
+    ``novomodelo_id``, ``stage``, ``weight`` (probability × hours), ``q_m3s``,
+    ``gh_mw`` (realized), ``source_planes_mw`` and ``novomodelo_planes_mw`` (each
+    model's envelope there), ``exact_mw`` and ``tie``; *novomodelo_points* the same
+    for Novomodelo without the plane columns. Each productivity is a weighted
+    ``Σ GH / Σ Q`` over the points that are not ties:
+
+    - ``d_total = ρ_novomodelo / ρ_source − 1 = (1 + d_model)(1 + d_operating_point) − 1``;
+    - ``d_model = ρ_novomodelo_planes_at_source / ρ_source − 1``, Novomodelo's surface
+      against the source model's realized generation at the source's points;
+    - ``d_operating_point = ρ_novomodelo / ρ_novomodelo_planes_at_source − 1``, where
+      Novomodelo operates against where the source operates, under Novomodelo's surface;
+    - ``fit_error_* = ρ_*_planes_at_source / ρ_exact_at_source − 1``, each
+      surface against the exact production function at the source's points.
+
+    ``tie_share`` is the weight share of the source's points that are ties;
+    ``q_source_m3s`` and ``gh_source_mw`` are the source's weighted mean
+    turbined flow and generation over the others. A productivity whose points
+    turbine nothing is null.
+    """
+
+    def _rho(column: str) -> pl.Expr:
+        q = (pl.col("weight") * pl.col("q_m3s")).filter(~pl.col("tie")).sum()
+        g = (pl.col("weight") * pl.col(column)).filter(~pl.col("tie")).sum()
+        return pl.when(q > _SPLIT_TURBINED_EPS).then(g / q).otherwise(None)
+
+    def _untied_mean(column: str) -> pl.Expr:
+        w = pl.col("weight").filter(~pl.col("tie")).sum()
+        total = (pl.col("weight") * pl.col(column)).filter(~pl.col("tie")).sum()
+        return pl.when(w > 0.0).then(total / w).otherwise(None)
+
+    def _gap(numerator: str, denominator: str) -> pl.Expr:
+        return (
+            pl.when(pl.col(denominator) > 0.0)
+            .then(pl.col(numerator) / pl.col(denominator) - 1.0)
+            .otherwise(None)
         )
-        .group_by("_point_id")
-        .agg(pl.col("plane_value").min().alias("novomodelo_gh_mw"))
+
+    keys = ["novomodelo_id", "stage"]
+    source = source_points.group_by(keys).agg(
+        (pl.col("weight").filter(pl.col("tie")).sum() / pl.col("weight").sum()).alias(
+            "tie_share"
+        ),
+        _untied_mean("q_m3s").alias("q_source_m3s"),
+        _untied_mean("gh_mw").alias("gh_source_mw"),
+        _rho("gh_mw").alias("rho_source"),
+        _rho("novomodelo_planes_mw").alias("rho_novomodelo_planes_at_source"),
+        _rho("source_planes_mw").alias("rho_source_planes_at_source"),
+        _rho("exact_mw").alias("rho_exact_at_source"),
+    )
+    novomodelo = novomodelo_points.group_by(keys).agg(
+        _rho("gh_mw").alias("rho_novomodelo"),
+        _rho("exact_mw").alias("rho_exact_at_novomodelo"),
+    )
+    return (
+        source.join(novomodelo, on=keys, how="left")
+        .with_columns(
+            _gap("rho_novomodelo", "rho_source").alias("d_total"),
+            _gap("rho_novomodelo_planes_at_source", "rho_source").alias("d_model"),
+            _gap("rho_novomodelo", "rho_novomodelo_planes_at_source").alias(
+                "d_operating_point"
+            ),
+            _gap("rho_source_planes_at_source", "rho_exact_at_source").alias(
+                "fit_error_source"
+            ),
+            _gap("rho_novomodelo_planes_at_source", "rho_exact_at_source").alias(
+                "fit_error_novomodelo"
+            ),
+        )
+        .with_columns(pl.lit(None, dtype=pl.Utf8).alias("plant_name"))
+        .select(list(FPHA_SPLIT_SCHEMA))
+        .cast(FPHA_SPLIT_SCHEMA)
+        .sort(keys)
     )

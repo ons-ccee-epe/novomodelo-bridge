@@ -47,6 +47,15 @@ from novomodelo_bridge.comparators.charts.fpha import (
 from novomodelo_bridge.comparators.charts.fpha import (
     fpha_metrics_table as fpha_metrics_table,
 )
+from novomodelo_bridge.comparators.charts.fpha import (
+    fpha_slice_chart as fpha_slice_chart,
+)
+from novomodelo_bridge.comparators.charts.fpha import (
+    fpha_split_table as fpha_split_table,
+)
+from novomodelo_bridge.comparators.charts.fpha import (
+    tie_share_table as tie_share_table,
+)
 from novomodelo_bridge.comparators.charts.hydro import (
     hydro_aggregate_chart as hydro_aggregate_chart,
 )

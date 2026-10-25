@@ -278,6 +278,7 @@ _TYPE_CHECKING_EDGES: frozenset[tuple[str, str]] = frozenset(
         ("cli.verdict", "core.conversion"),
         ("cli.verdict", "core.diagnostics"),
         ("comparators.analyze", "comparators.newave.alignment"),
+        ("comparators.decomp.operating_points", "decomp.case"),
         ("comparators.decomp.results", "comparators.dataset"),
         ("comparators.decomp.results", "decomp.case"),
         ("comparators.decomp.results", "decomp.constraint_registers"),

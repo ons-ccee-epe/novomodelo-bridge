@@ -30,6 +30,7 @@ from novomodelo_bridge.comparators.analyze import (
     tidy_percentiles_from_percentile_data,
     tidy_results_dataset,
     top_divergences_from_results,
+    with_masked_hydro_rows,
 )
 from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
@@ -1515,3 +1516,35 @@ def test_cost_percent_deltas_zero_total_denominator_yields_none_pct() -> None:
     assert total_cb == pytest.approx(20.0)
     assert total_diff == pytest.approx(20.0)
     assert total_pct is None
+
+
+def _masked_generation(novomodelo_id: int, stage: int, value: float) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "entity_type": ["hydro"],
+            "entity_name": ["ITAIPU"],
+            "newave_code": [10],
+            "novomodelo_id": [novomodelo_id],
+            "stage": [stage],
+            "variable": ["generation_mw"],
+            "newave_value": [value],
+            "novomodelo_value": [value],
+            "abs_diff": [0.0],
+            "rel_diff": [0.0],
+        }
+    )
+
+
+def test_with_masked_hydro_rows_replaces_each_masked_variable() -> None:
+    """TUCURUI's stage-1 generation has no masked row (every point a tie),
+    so it drops out; the thermal row passes through."""
+    rows = with_masked_hydro_rows(_make_results(), _masked_generation(0, 0, 95.0))
+
+    hydro = [r for r in rows if r.entity_type == "hydro"]
+    assert [(r.novomodelo_id, r.stage, r.newave_value) for r in hydro] == [(0, 0, 95.0)]
+    assert [r.entity_name for r in rows if r.entity_type == "thermal"] == ["ANGRA"]
+
+
+def test_with_masked_hydro_rows_without_masked_rows_is_unchanged() -> None:
+    results = _make_results()
+    assert with_masked_hydro_rows(results, pl.DataFrame()) == results

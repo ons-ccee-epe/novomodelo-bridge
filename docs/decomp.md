@@ -235,3 +235,28 @@ the deck again.
   the two totals are not on the same time-value footing.
 - Percentile bands are omitted, or labelled low-N, when the deterministic tree
   has too few scenarios to report a spread without synthesizing it.
+
+The Productivity tab compares the two models at the operating points each one
+reached, per plant, stage, scenario and block. It reads DECOMP's fitted planes
+(`avl_cortesfpha_dec.rvN`) and fit windows (`eco_fpha_.rvN`). For each plant
+and stage it splits the gap between the two realized productivities into a
+part from the fitted planes, Novomodelo's planes evaluated at DECOMP's operating
+points, and a part from where Novomodelo operates. A chart draws generation against
+turbined flow at DECOMP's mean operating point for both models' planes and the
+exact production function, beside each model's fit inputs and head components.
+The exact function follows DECOMP's conventions: the forebay at the stage's
+mean storage, the tailrace at the plant's outflow plus the lateral flows of its
+`VU` and `VA` registers, read between `polinjus` families at the downstream
+plant's forebay, and the losses of `hidr.dat`. DECOMP holds the `VA` share at
+the first stage's inflow, and so does the comparison. When the run wrote
+`dec_desvfpha.rvN`, the table also gives the largest gap between that function
+and DECOMP's own printed value.
+
+A point where the plant's energy or stored water is worth nothing in either
+model is a tie: DECOMP's marginal cost is zero, Novomodelo's spot price is zero at
+every bus the plant feeds, or Novomodelo's water value is zero, all at DECOMP's
+two-decimal print resolution. Either model may then turbine or spill at no
+cost. Ties are left out of the split and of the per-plant ranking of
+generation, turbined flow, productivity, spillage and outflow on the Hydro
+Plant Details tab, and the tab reports their share per stage. DECOMP prints no
+water value, so on its side a tie is detected through the marginal cost only.

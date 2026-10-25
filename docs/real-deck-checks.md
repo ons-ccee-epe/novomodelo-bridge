@@ -69,7 +69,7 @@ anywhere any more; treat each as "a deck with these properties".
 | One end-to-end test in `test_fcf_importer.py` | The bootstrap resolves a real terminal node id (never the -1 sentinel), `policy.boundary.source_stage` equals that graph stage, and the already-committed months carry no dated ring slot while a signalled month does. |
 | Two tests in `test_anticipated.py` | The already-committed set derived from the `gl` records matches the prior-revision markers in `relgnl` for SANTA CRUZ; a full conversion emits the seven-stage post-study calendar, prunes the post-study thermal bounds to the signalled stages, tiles the committed windows with the deck's own MW, and keeps the lead uncapped. |
 | `test_anticipated_e2e.py` (whole module; also needs `novomodelo-python`'s checkpoint writer) | The CLI conversion with boundary import trains and simulates in-process; the anticipated-lanes output partition is populated; the post-horizon split matches the deck's declaration and the run reaches every post-study delivery. |
-| Nine result-reader tests in `tests/comparators/test_decomp_readers.py` | Each reader returns rows with the expected columns on the deck's real result files. Three of them (`dec_oper_gnl.csv`, `dec_oper_ree.csv`, `decomp.tim`) now run against committed excerpts; the rest are listed under "Excerpts still to capture". |
+| Nine result-reader tests in `tests/comparators/test_decomp_readers.py` | Each reader returns rows with the expected columns on the deck's real result files. Four of them (`dec_oper_gnl.csv`, `dec_oper_ree.csv`, `decomp.tim`, `dec_desvfpha.rvN`) now run against committed excerpts; the rest are listed under "Excerpts still to capture". |
 
 ### The reduced deck plus its solved novomodelo case (`novomodelo-mar-26-rv2-reduced`)
 
@@ -121,6 +121,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | Turbined-flow limit against DECOMP's `avl_turb_max.csv` | With `IR ARQCSV`, DECOMP writes `avl_turb_max.csv`, whose `Qmax dc pl` column is the turbined-flow limit it applies to each plant on each stage. The bridge side is the sum of the plant's unit-group limits for the stage, read from `hydro_unit_group_bounds.parquet` or else the group's envelope in `hydros.json`; for Itaipu it is capped by the plant's `max_turbined_m3s` row in `hydro_bounds.parquet`. Every plant matches within 0.5% on every stage DECOMP reports, on both decks, and no fixed point fails to converge. The largest difference is Itaipu, above DECOMP's limit, because the conversion leaves its `VL` lateral inflow out of the tailrace level. Captured with DECOMP 32.0.1 in October 2026. |
 
+### The reduced DECOMP deck and a monthly-stage deck, run by DECOMP with their FPHA reports
+
+| Check | Verified |
+| --- | --- |
+| DECOMP's plane form and exact production function | DECOMP's planes in `avl_cortesfpha_dec.rvN`, evaluated with the storage above the `hidr.dat` minimum and the `VU` lateral flow of the same block, reproduce the `Ghid (FPHA)` column of `dec_desvfpha.rvN`, so the comparison reads them in that form. The exact production function rebuilt from the deck (cota polynomial, `polinjus` families read at the downstream plant's printed forebay, `VL`, `VU` and `VA` flows, `hidr.dat` losses, the `eco_fpha_.rvN` generation limit) reproduces its `Ghid (FPH)` column on the reduced deck within 0.004 MW at the median point and 0.62 MW at the worst, a plant with a drowned tailrace. The monthly deck's run writes no `dec_desvfpha.rvN`, which is why the comparison does not depend on it. The unit tests in `tests/comparators/test_decomp_operating_points.py` pin the same conventions on one plant's committed excerpt. Captured with DECOMP 32.0.1 in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the
@@ -131,14 +137,13 @@ rows, confirm the reader parses it, and commit it under
 | Reader | File | Columns the removed test asserted |
 | --- | --- | --- |
 | `read_relato_balance`, `read_relato_costs`, `read_relato_expected_cost`, `read_relato_membership` | `relato.rvN` | rows present; membership has `codigo_usina` and `codigo_ree`. The parser needs the complete report, so a head excerpt does not work; a block-wise excerpt tool or a deliberately larger fixture is required. |
-| `read_dec_desvfpha` | `dec_desvfpha.rvN` | `codigo_usina`, `estagio`, `volume_total_hm3`, `vazao_turbinada_m3s`, `vazao_vertida_m3s`, `geracao_hidraulica_fpha` |
 | `read_dec_estatfpha` | `dec_estatfpha.rvN` | `variavel`, `valor` |
 | `read_dec_oper_evap` | `dec_oper_evap.csv` | `evaporacao_calculada_hm3`; no `patamar` column |
 | `read_dec_oper_rhesoft` | `dec_oper_rhesoft.csv` | `codigo_restricao`, `limite_MW`, `valor_MW`, `violacao_absoluta_MW` |
 
 The removed `read_eco_fpha` check asserted only that a particular deck had no
-such file; the absent-file contract is covered synthetically and needs no
-excerpt.
+such file. The absent-file contract is covered synthetically, and the reader
+now also runs against a committed `eco_fpha_.rvN` excerpt.
 
 ## Restoring the whole-deck checks
 
