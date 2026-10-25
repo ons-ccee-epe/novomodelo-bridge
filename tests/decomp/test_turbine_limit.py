@@ -355,6 +355,34 @@ def test_converged_limits_emit_no_diagnostic() -> None:
     assert sink == []
 
 
+def _gap_rows(row: dict) -> list[list[object]]:
+    with collect() as sink:
+        _limits({1: row})
+    (diagnostic,) = [d for d in sink if d.code == "turbine-limit-data-missing"]
+    assert diagnostic.table is not None
+    return diagnostic.table.rows
+
+
+def test_set_without_a_rated_head_warns_on_every_stage() -> None:
+    row = _plant_row(conjuntos=((2, 50.0, 1000.0, 80.0), (1, 30.0, 500.0, math.nan)))
+    assert _gap_rows(row) == [
+        [
+            1,
+            "PLANT",
+            "queda_nominal_conjunto_2",
+            "rated flow, not head-corrected",
+            "0-2",
+        ]
+    ]
+
+
+def test_non_positive_productivity_warns_of_no_generator_limit() -> None:
+    row = _plant_row() | {"produtibilidade_especifica": 0.0}
+    assert _gap_rows(row) == [
+        [1, "PLANT", "positive equivalent productivity", "no generator limit", "0-2"]
+    ]
+
+
 def test_plant_limit_sums_the_groups_unless_the_plant_cap_is_tighter() -> None:
     limits = TurbineLimits(
         {(66, 0): (100.0, 100.0), (66, 1): (80.0, 80.0), (1, 0): (50.0, 0.0)},

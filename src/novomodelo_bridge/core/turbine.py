@@ -6,15 +6,18 @@ A turbine set rated for flow ``q_ef`` at net head ``h_ef`` swallows
 When the tailrace level rises with the flow, the head depends on the flow it
 limits, and :func:`settled_flow` solves the two together.
 :func:`power_limited_flow` also caps the plant where its generators together
-reach rated power.
+reach rated power. :func:`turbine_limit_gap_diagnostic` reports the plants
+either track cannot rate this way for lack of data.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
 
 class MachineSet(NamedTuple):
@@ -122,4 +125,31 @@ def tailrace_limited_flow(
         nominal_flow_m3s,
         tolerance_m3s=tolerance_m3s,
         max_iterations=max_iterations,
+    )
+
+
+def turbine_limit_gap_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic:
+    """WARNING for plants whose turbined-flow limit leaves out part of the
+    source model's rule because a datum it needs is missing.
+
+    Each row is ``[code, name, missing datum, limit used, stages]``. The limit
+    used is above the source model's whenever the missing datum would have
+    lowered it.
+    """
+    return Diagnostic(
+        code="turbine-limit-data-missing",
+        severity=Severity.WARNING,
+        category="Hydro capacity",
+        title=f"Turbined-flow limit without its head rule ({len(rows)})",
+        summary=(
+            f"{len(rows)} plant(s) lack a datum the source model's "
+            "turbined-flow limit is computed from; their limit leaves out the "
+            "part of the rule that datum feeds and can sit above the source "
+            "model's."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Missing", "Limit used", "Stages"],
+            rows=[list(row) for row in rows],
+            caption="Stage ids are 0-based.",
+        ),
     )
