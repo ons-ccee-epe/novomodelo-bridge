@@ -1591,6 +1591,41 @@ class TestReadNovomodeloFphaFitConfig:
         assert result["spillage_fit_max_m3s"].to_list() == [900.0, 900.0]
         assert result["turbined_fit_max_m3s"].to_list() == [410.0, 410.0]
 
+    def test_reads_each_season_at_its_stages(self, tmp_path: Path) -> None:
+        stages = [
+            {"id": stage_id, "season_id": season, "blocks": [{"id": 0, "hours": 1.0}]}
+            for stage_id, season in enumerate([8, 9, 8])
+        ]
+        (tmp_path / "stages.json").write_text(json.dumps({"stages": stages}))
+        system_dir = tmp_path / "system"
+        system_dir.mkdir()
+        models = [
+            {
+                "hydro_id": 3,
+                "selection_mode": "seasonal",
+                "default_model": "constant_productivity",
+                "seasons": [
+                    {
+                        "season_id": season,
+                        "model": "fpha",
+                        "fpha_config": {
+                            "source": "computed",
+                            "turbined_fit_max_m3s": q_max,
+                        },
+                    }
+                    for season, q_max in ((8, 400.0), (9, 420.0))
+                ],
+            }
+        ]
+        (system_dir / "hydro_production_models.json").write_text(
+            json.dumps({"production_models": models})
+        )
+
+        result = read_novomodelo_fpha_fit_config(tmp_path / "output").sort("stage_id")
+
+        assert result["stage_id"].to_list() == [0, 1, 2]
+        assert result["turbined_fit_max_m3s"].to_list() == [400.0, 420.0, 400.0]
+
 
 class TestReadNovomodeloLineBounds:
     def test_present_returns_raw_frame(self, tmp_path: Path) -> None:

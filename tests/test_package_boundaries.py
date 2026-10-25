@@ -286,6 +286,7 @@ _TYPE_CHECKING_EDGES: frozenset[tuple[str, str]] = frozenset(
         ("comparators.newave.alignment", "newave.case"),
         ("comparators.newave.alignment", "newave.id_map"),
         ("comparators.newave.constraints", "newave.id_map"),
+        ("comparators.newave.operating_points", "newave.case"),
         ("comparators.newave.results", "comparators.dataset"),
         ("comparators.newave.results", "newave.case"),
         ("comparators.newave.results", "newave.id_map"),

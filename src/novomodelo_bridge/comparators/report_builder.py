@@ -1187,7 +1187,7 @@ def build_comparison_report(
             )
         )
 
-    # --- Both models at their operating points (DECOMP track) ---
+    # --- Both models at their operating points ---
     fpha_split = dataset.render.fpha_split
     tie_share = dataset.render.tie_share
     if not fpha_split.is_empty():

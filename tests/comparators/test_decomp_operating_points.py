@@ -685,7 +685,9 @@ class TestTies:
             prices=_prices(stages={0: (0,), 1: (0, 1, 2)}),
         )
 
-        with caplog.at_level(logging.INFO, logger=_MODULE):
+        with caplog.at_level(
+            logging.INFO, logger="novomodelo_bridge.comparators.operating_points"
+        ):
             result = _compare(monkeypatch, tmp_path, decomp_mini_case, runs)
 
         assert result is not None

@@ -373,6 +373,36 @@ class TestConvertStagesThreeBlocks:
             assert total_hours == pytest.approx(expected_total)
 
 
+class TestBlockFractions:
+    def test_a_later_year_repeats_the_last_listed_year(self, tmp_path) -> None:
+        dger = _make_dger_mock(mes_inicio=1, ano_inicio=2020, num_anos=2)
+        patamar = _make_patamar_mock_three_blocks()
+        case = make_case(tmp_path, dger=dger, patamar=patamar)
+
+        from novomodelo_bridge.newave.converters.temporal import block_fractions
+
+        fractions = block_fractions(case)
+        assert len(fractions) == 24
+        assert fractions[13] == (0.3, 0.4, 0.3)
+
+    def test_a_block_without_a_duration_takes_an_equal_share(
+        self, tmp_path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        dger = _make_dger_mock(mes_inicio=1, ano_inicio=2020, num_anos=1)
+        patamar = _make_patamar_mock_three_blocks()
+        durations = patamar.duracao_mensal_patamares
+        patamar.duracao_mensal_patamares = durations[durations["data"].dt.month != 1]
+        case = make_case(tmp_path, dger=dger, patamar=patamar)
+
+        from novomodelo_bridge.newave.converters.temporal import block_fractions
+
+        with caplog.at_level(logging.WARNING):
+            fractions = block_fractions(case)
+        assert fractions[0] == pytest.approx((1 / 3, 1 / 3, 1 / 3))
+        assert fractions[1] == (0.3, 0.4, 0.3)
+        assert "No patamar duration" in caplog.text
+
+
 class TestConvertStagesPreStudy:
     def test_pre_study_stages_generated(self, tmp_path) -> None:
         dger = _make_dger_mock(

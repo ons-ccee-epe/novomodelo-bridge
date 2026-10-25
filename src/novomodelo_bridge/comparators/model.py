@@ -120,11 +120,11 @@ class PercentileData:
     fpha_surface: pl.DataFrame | None = None
     fpha_spill: pl.DataFrame | None = None
 
-    # --- Operating-point comparison (Productivity tab, DECOMP track) --- The
+    # --- Operating-point comparison (Productivity tab) --- The
     # realized-productivity split, each model's fit inputs and mean-point heads,
     # the GH-vs-Q slices, the per-stage tie share, and the hydro rows averaged
-    # over the points that are not ties. Built by
-    # :func:`novomodelo_bridge.comparators.decomp.operating_points.compare_operating_points`.
+    # over the points that are not ties. Filled by
+    # :func:`novomodelo_bridge.comparators.operating_points.operating_point_fields`.
     fpha_split: pl.DataFrame = field(default_factory=pl.DataFrame)
     fpha_fit_inputs: pl.DataFrame = field(default_factory=pl.DataFrame)
     fpha_slices: pl.DataFrame = field(default_factory=pl.DataFrame)
