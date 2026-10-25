@@ -22,10 +22,10 @@ from novomodelo_bridge.newave.converters.hydro.bounds import (
     _reduced_caps as _reduced_caps,
 )
 from novomodelo_bridge.newave.converters.hydro.bounds import (
-    convert_storage_bounds as convert_storage_bounds,
+    convert_per_stage_capacity_caps as convert_per_stage_capacity_caps,
 )
 from novomodelo_bridge.newave.converters.hydro.bounds import (
-    convert_turbined_bounds_head_corrected as convert_turbined_bounds_head_corrected,
+    convert_storage_bounds as convert_storage_bounds,
 )
 from novomodelo_bridge.newave.converters.hydro.bounds import (
     convert_water_withdrawal as convert_water_withdrawal,

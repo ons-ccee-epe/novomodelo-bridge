@@ -150,6 +150,14 @@ the same output.
   reference volume down to the `polinjus` tailrace at that flow, read at the
   forebay of the plant `hidr.dat` names downstream, and the generator head
   from the mean forebay over the plant's operating range.
+- **Turbine and generation limits.** Under FPHA, a plant turbines at most its
+  rated flow and generates at most its rated power, both scaled by its TEIF
+  and IP availability, with no head correction. `max_turbined_m3s` declares
+  that flow and `hydro_bounds.parquet` gives the available power on every
+  stage, while the declared `max_generation_mw` stays the rated power the fit
+  is capped at. A constant-productivity plant is capped at its rated flow
+  corrected for the operating head, which also keeps it under its available
+  power.
 
 Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,

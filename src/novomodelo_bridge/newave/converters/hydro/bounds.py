@@ -28,7 +28,10 @@ from novomodelo_bridge.core.productivity import (
 from novomodelo_bridge.core.tolerances import BIG_M
 from novomodelo_bridge.core.turbine import head_limited_flow
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.converters.hydro.geometry import _expansion_configs
+from novomodelo_bridge.newave.converters.hydro.geometry import (
+    _expansion_configs,
+    fpha_eligible_codes,
+)
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
     _extract_temporal_overrides,
@@ -61,9 +64,9 @@ _LOG = logging.getLogger(__name__)
 def _clamp_outage_pct(value: float, label: str, plant_name: str) -> float:
     """Clamp TEIF/IP percentages into ``[0, 100]``, reporting an overshoot.
 
-    A leaf helper on multiple call paths (``_compute_max_turbined_simple`` and
-    ``_compute_max_turbined_head_corrected``, from both ``convert_hydros`` and
-    :func:`convert_turbined_bounds_head_corrected`): the same plant+field can
+    A leaf helper on multiple call paths (:func:`_available_capacity` and
+    :func:`_compute_max_turbined_head_corrected`, from both ``convert_hydros`` and
+    :func:`convert_per_stage_capacity_caps`): the same plant+field can
     be clamped on more than one path in one run.  Emitting per-call and
     relying on ``finalize_diagnostics``' ``(code, summary)`` de-dup collapses
     that to a single diagnostic instead of threading an accumulator through
@@ -94,16 +97,16 @@ def _availability(teif: float, ip: float) -> float:
     return ((100.0 - teif) / 100.0) * ((100.0 - ip) / 100.0)
 
 
-def _compute_max_turbined_simple(hreg: pd.Series, name: str) -> tuple[float, float]:
-    """Return ``(max_turbined, max_generation)`` using the simple sum-of-rated
-    approach: ``Σ_c (n_c · q_nom_c)`` for flow and ``Σ_c (n_c · p_nom_c)`` for
-    power, both derated by the combined TEIF/IP availability factor.
+def _available_capacity(hreg: pd.Series, name: str) -> tuple[float, float]:
+    """Return ``(max_turbined, max_generation)`` as the available nameplate
+    capacity: ``Σ_c (n_c · q_nom_c)`` for flow and ``Σ_c (n_c · p_nom_c)`` for
+    power, both derated by the combined TEIF/IP availability factor, with no
+    head correction.
 
-    This is **live code on two paths**: it is the fallback
-    :func:`_compute_max_turbined_head_corrected` calls whenever a plant lacks the
-    head data (``queda_nominal_conjunto_*`` / cota polynomial) the corrected
-    formula needs, and it is the v0.6.x formulation the top-level caller can be
-    switched back to if the head-corrected formula proves wrong.
+    These are the source model's operational caps on both axes under FPHA, and
+    the flow is the fallback :func:`_compute_max_turbined_head_corrected` takes
+    when a plant lacks the head data (``queda_nominal_conjunto_*`` / cota
+    polynomial) its correction needs.
     """
     n_sets = int(hreg["numero_conjuntos_maquinas"])
     max_turbined = 0.0
@@ -132,7 +135,7 @@ def _compute_max_turbined_head_corrected(
     produces the stage's equivalent productivity (``ρ_eq / ρ_esp``), so the
     engolimento and the ``p_inst/prodt_eq`` cap track the per-stage CFUGA/CMONT
     overrides in lockstep with :func:`convert_hydro_energy_productivity`. Used by
-    :func:`convert_turbined_bounds_head_corrected` to emit a per-stage
+    :func:`convert_per_stage_capacity_caps` to emit a per-stage
     ``max_turbined`` instead of a single static cap.
 
     This is the source model's **operational turbined cap** — the maximum turbinable
@@ -182,7 +185,7 @@ def _compute_max_turbined_head_corrected(
         f"queda_nominal_conjunto_{i}" in available_cols for i in range(1, 6)
     ) and all(f"a{i}_volume_cota" in available_cols for i in range(5))
     if not has_head_data:
-        return _compute_max_turbined_simple(hreg, name)
+        return _available_capacity(hreg, name)
 
     sum_n_q = 0.0
     sum_n_p = 0.0
@@ -293,54 +296,72 @@ def _compute_max_turbined_head_corrected(
     return max_turbined, max_generation
 
 
+def _operational_caps(hreg: pd.Series, name: str, *, fpha: bool) -> tuple[float, float]:
+    """Return the ``(max_turbined, max_generation)`` the source model dispatches
+    the machines of *hreg* against.
+
+    Under FPHA both are the available capacity (:func:`_available_capacity`).
+    Under constant productivity the flow is the head-corrected engolimento and
+    the generation the rated power, which never binds before it.
+    """
+    if fpha:
+        return _available_capacity(hreg, name)
+    return _compute_max_turbined_head_corrected(hreg, name)[0], rated_capacity(hreg)[1]
+
+
 def _reduced_caps(
-    hreg: pd.Series, online: dict[int, int], name: str
+    hreg: pd.Series, online: dict[int, int], name: str, *, fpha: bool
 ) -> tuple[float, float]:
     """Return ``(max_turbined, max_generation)`` over the online machine subset.
 
-    Computes the head-corrected turbined cap and the rated generation cap for a
-    filling plant at a ramp stage where only ``online`` of its machines are in
-    service. Rather than threading an override count through the load-bearing
-    shared helpers, it copies the cadastro ``hreg`` Series and rewrites each
-    ``maquinas_conjunto_{c}`` (for ``c`` in ``1..numero_conjuntos_maquinas``) to
-    the online count (``0`` for any group absent from the dict), then re-runs the
-    exact full-capacity helpers — so the all-online stage equals the base
-    ``hydros.json`` cap by construction. With an empty ``online`` dict every
-    count is ``0`` and both caps are ``0.0`` (an explicit zero-capacity stage, not
-    a skip).
+    Computes the :func:`_operational_caps` of a filling plant at a ramp stage
+    where only ``online`` of its machines are in service. Rather than threading
+    an override count through the load-bearing shared helpers, it copies the
+    cadastro ``hreg`` Series and rewrites each ``maquinas_conjunto_{c}`` (for
+    ``c`` in ``1..numero_conjuntos_maquinas``) to the online count (``0`` for any
+    group absent from the dict), then re-runs the exact full-capacity helpers — so
+    the all-online stage equals the base cap by construction. With an empty
+    ``online`` dict every count is ``0`` and both caps are ``0.0`` (an explicit
+    zero-capacity stage, not a skip).
     """
     n_sets = int(hreg["numero_conjuntos_maquinas"])
     hreg_copy = hreg_with_machines(
         hreg, {c: online.get(c, 0) for c in range(1, n_sets + 1)}
     )
-    max_turbined = _compute_max_turbined_head_corrected(hreg_copy, name)[0]
-    max_generation = rated_capacity(hreg_copy)[1]
-    return max_turbined, max_generation
+    return _operational_caps(hreg_copy, name, fpha=fpha)
 
 
-def convert_turbined_bounds_head_corrected(
+def convert_per_stage_capacity_caps(
     case: NewaveCase, id_map: NewaveIdMap
 ) -> pa.Table | None:
-    """Per-stage ``max_turbined_m3s`` for plants whose operating head varies by stage.
+    """Per-stage capacity caps the static ``hydros.json`` declaration cannot carry.
 
-    The engolimento (max turbinable flow) depends on the operating head — both via
-    the turbine affinity ratio and the ``p_inst / prodt_eq`` installed-power cap. For
-    plants carrying MODIF.DAT CFUGA/CMONT temporal overrides (or a seasonal V_ref),
-    that head changes stage-to-stage, exactly as the per-stage equivalent
-    productivity does (:func:`convert_hydro_energy_productivity`). The static
-    per-plant cap in ``hydros.json`` is computed at a single reference head, so at
-    high-flow/low-head stages it under-caps turbining and forces spill (lost hydro →
-    extra thermal). This emits a per-(hydro, stage) ``max_turbined`` override using
-    the SAME per-stage head (``h = ρ_eq / ρ_esp``) that drives productivity, so the
-    two stay consistent. An expanding plant is rated with the machines in service
-    at each stage; one with no per-stage head gets rows only before its last
-    machine enters.
+    A constant-productivity plant's engolimento (max turbinable flow) depends on
+    the operating head — both via the turbine affinity ratio and the ``p_inst /
+    prodt_eq`` installed-power cap. For plants carrying MODIF.DAT CFUGA/CMONT
+    temporal overrides (or a seasonal V_ref), that head changes stage-to-stage,
+    exactly as the per-stage equivalent productivity does
+    (:func:`convert_hydro_energy_productivity`). The static per-plant cap in
+    ``hydros.json`` is computed at a single reference head, so at
+    high-flow/low-head stages it under-caps turbining and forces spill (lost hydro
+    → extra thermal). This emits a per-(hydro, stage) ``max_turbined`` override
+    using the SAME per-stage head (``h = ρ_eq / ρ_esp``) that drives productivity,
+    so the two stay consistent.
 
-    Returns a ``(hydro_id, stage_id, max_turbined_m3s)`` table for the affected
-    plants/stages, or ``None`` when no plant has a per-stage head or a machine ramp.
+    An FPHA plant's turbined cap carries no head, so it gets ``max_turbined`` rows
+    only for a machine ramp; its ``max_generation`` is the available power at
+    every stage, below the rated power ``hydros.json`` declares as the fit's
+    ceiling. An expanding plant is rated with the machines in service at each
+    stage; a constant-productivity one with no per-stage head gets rows only
+    before its last machine enters.
+
+    Returns a ``(hydro_id, stage_id, max_turbined_m3s)`` table, with a
+    ``max_generation_mw`` column when the case has an FPHA plant, or ``None``
+    when no plant has a per-stage cap.
     """
     cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
     confhd_codes = [int(r["codigo_usina"]) for _, r in case.active_hydros.iterrows()]
+    fpha_codes = fpha_eligible_codes(case)
 
     temporal_overrides = _extract_temporal_overrides(case, confhd_codes)
     drop_overrides = {
@@ -350,7 +371,7 @@ def convert_turbined_bounds_head_corrected(
     }
     seasonal_volref = seasonal_useful_volumes(case)
     expansion = _expansion_configs(case, cadastro)
-    if not drop_overrides and not seasonal_volref and not expansion:
+    if not drop_overrides and not seasonal_volref and not expansion and not fpha_codes:
         return None
 
     total_stages = _total_study_stages(case)
@@ -359,13 +380,15 @@ def convert_turbined_bounds_head_corrected(
 
     hydro_ids: list[int] = []
     stage_ids: list[int] = []
-    max_turbined_vals: list[float] = []
+    max_turbined_vals: list[float | None] = []
+    max_generation_vals: list[float | None] = []
 
     for newave_code in sorted(confhd_codes):
-        overrides = drop_overrides.get(newave_code, [])
-        plant_seasonal = seasonal_volref.get(newave_code)
+        is_fpha = newave_code in fpha_codes
+        overrides = [] if is_fpha else drop_overrides.get(newave_code, [])
+        plant_seasonal = None if is_fpha else seasonal_volref.get(newave_code)
         config = expansion.get(newave_code)
-        if not overrides and not plant_seasonal and config is None:
+        if not overrides and not plant_seasonal and config is None and not is_fpha:
             continue
         if newave_code not in cadastro.index:
             continue
@@ -375,6 +398,16 @@ def convert_turbined_bounds_head_corrected(
             continue
         hreg = cadastro.loc[newave_code]
         name = str(hreg.get("nome_usina", newave_code))
+        if is_fpha:
+            ramp_end = 0 if config is None else config.full_online_stage
+            for stage_id in range(total_stages):
+                hreg_stage = hreg if config is None else config.hreg_at(hreg, stage_id)
+                max_turbined, max_generation = _available_capacity(hreg_stage, name)
+                hydro_ids.append(hydro_id)
+                stage_ids.append(stage_id)
+                max_turbined_vals.append(max_turbined if stage_id < ramp_end else None)
+                max_generation_vals.append(max_generation)
+            continue
         if config is not None and not overrides and not plant_seasonal:
             # Rated at the reference head the declared value uses, never a
             # productivity-derived one, which rates the same machines differently.
@@ -386,6 +419,7 @@ def convert_turbined_bounds_head_corrected(
                         config.hreg_at(hreg, stage_id), name
                     )[0]
                 )
+                max_generation_vals.append(None)
             continue
         rho_esp_raw = hreg.get("produtibilidade_especifica")
         if rho_esp_raw is None or is_na(rho_esp_raw) or float(rho_esp_raw) <= 0.0:
@@ -412,26 +446,28 @@ def convert_turbined_bounds_head_corrected(
             hydro_ids.append(hydro_id)
             stage_ids.append(stage_id)
             max_turbined_vals.append(max_turbined)
+            max_generation_vals.append(None)
 
     if not hydro_ids:
         return None
 
-    return pa.table(
-        {
-            "hydro_id": pa.array(hydro_ids, type=pa.int32()),
-            "stage_id": pa.array(stage_ids, type=pa.int32()),
-            "max_turbined_m3s": pa.array(max_turbined_vals, type=pa.float64()),
-        }
-    )
+    columns = {
+        "hydro_id": pa.array(hydro_ids, type=pa.int32()),
+        "stage_id": pa.array(stage_ids, type=pa.int32()),
+        "max_turbined_m3s": pa.array(max_turbined_vals, type=pa.float64()),
+    }
+    if fpha_codes:
+        columns["max_generation_mw"] = pa.array(max_generation_vals, type=pa.float64())
+    return pa.table(columns)
 
 
 def _per_stage_turbined_envelope(
     case: NewaveCase, id_map: NewaveIdMap
 ) -> dict[int, float]:
     """Return ``{novomodelo_hydro_id: max per-stage max_turbined_m3s}`` from the
-    head-corrected per-stage table.
+    per-stage capacity table.
 
-    Delegates to :func:`convert_turbined_bounds_head_corrected` — the exact
+    Delegates to :func:`convert_per_stage_capacity_caps` — the exact
     function the pipeline uses to emit the per-(hydro, stage)
     ``hydro_bounds`` rows — instead of re-deriving the per-stage head. This is
     what lets :func:`convert_hydros` raise its declared
@@ -443,7 +479,7 @@ def _per_stage_turbined_envelope(
     temporal overrides and no seasonal ``VOLREF_SAZ`` row) or a machine ramp,
     so callers must treat a missing key as "no per-stage variation", not as zero.
     """
-    table = convert_turbined_bounds_head_corrected(case, id_map)
+    table = convert_per_stage_capacity_caps(case, id_map)
     if table is None:
         return {}
     envelope: dict[int, float] = {}
@@ -452,6 +488,8 @@ def _per_stage_turbined_envelope(
         table["max_turbined_m3s"].to_pylist(),
         strict=True,
     ):
+        if value is None:
+            continue
         current = envelope.get(hydro_id)
         if current is None or value > current:
             envelope[hydro_id] = value
@@ -714,6 +752,7 @@ def convert_storage_bounds(
     exph_df = case.exph.expansoes if case.exph is not None else None
     filling_codes = filling_hydro_codes(case.confhd.usinas, exph_df)
     expansion = _expansion_configs(case, cadastro)
+    fpha_codes = fpha_eligible_codes(case)
 
     # Extract temporal overrides — empty dict when MODIF.DAT is absent,
     # which is fine because GHMIN.DAT alone can still produce per-stage
@@ -813,9 +852,12 @@ def convert_storage_bounds(
         # pass never has to choose between a ramp cap and a VMINT floor.
         ramp_generation: dict[int, float] = {}
         if config is not None:
+            name = str(hreg.get("nome_usina", "")).strip() or str(newave_code)
             for ramp_stage in range(min(config.full_online_stage, total_stages)):
-                ramp_generation[ramp_stage] = rated_capacity(
-                    config.hreg_at(hreg, ramp_stage)
+                ramp_generation[ramp_stage] = _operational_caps(
+                    config.hreg_at(hreg, ramp_stage),
+                    name,
+                    fpha=newave_code in fpha_codes,
                 )[1]
 
         def _storage_hm3(rec: dict) -> dict | None:
@@ -920,7 +962,7 @@ def convert_storage_bounds(
             full_online_sid = max(max(usid, entry_sid) for _c, usid in unit_rows)
             for s in range(min(full_online_sid, total_stages)):
                 online = online_machines(unit_rows, entry_sid, s)
-                mt, mg = _reduced_caps(hreg, online, name)
+                mt, mg = _reduced_caps(hreg, online, name, fpha=code in fpha_codes)
                 hydro_ids.append(hydro_id)
                 stage_ids.append(s)
                 min_storage_vals.append(None)

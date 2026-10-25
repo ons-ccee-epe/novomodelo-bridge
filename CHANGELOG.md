@@ -160,8 +160,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ranges otherwise, and an `fpha-reference-initial-storage` note marks the
   initial-storage fallback. Rows that leave a study stage uncovered, two
   values for one month, or an unknown type fail the conversion, as they stop
-  NEWAVE. Evaporation, the equivalent productivity and the turbine limit keep
-  reading `volref_saz.dat`.
+  NEWAVE. Evaporation, the equivalent productivity and the turbine limit of a
+  constant-productivity plant keep reading `volref_saz.dat`.
+- **`convert newave` caps an FPHA plant's turbined flow and generation as
+  NEWAVE does.** Under FPHA, NEWAVE caps a plant's turbined flow at its rated
+  flow and its generation at its rated power, both scaled by the plant's TEIF
+  and IP availability, with no head correction. The converter capped the flow
+  at the rated flow corrected for the operating head, NEWAVE's rule under
+  constant productivity, and left generation at the rated power. An FPHA plant
+  now declares the available rated flow as `max_turbined_m3s`, and
+  `hydro_bounds.parquet` carries its available power as `max_generation_mw`
+  on every stage. The declared `max_generation_mw` stays the rated power,
+  which caps the fit as it does NEWAVE's. A constant-productivity plant keeps
+  the head-corrected cap.
 - **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
   An FPHA plant whose turbined limit is zero on a stage, such as one with
   every machine under maintenance, takes a zero constant productivity on that

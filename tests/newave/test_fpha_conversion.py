@@ -8,6 +8,7 @@ plant stays on the constant-productivity path (regression-preserving).
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -20,12 +21,15 @@ from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.productivity import fpha_efficiency
 from novomodelo_bridge.newave.converters.hydro import (
+    _compute_max_turbined_head_corrected,
     _fpha_computed_config,
     _is_fpha_eligible,
     _parse_fpha_plane_reduction,
     convert_hydro_energy_productivity,
     convert_hydros,
+    convert_per_stage_capacity_caps,
     convert_production_models,
+    convert_storage_bounds,
     fpha_eligible_codes,
 )
 from novomodelo_bridge.newave.id_map import NewaveIdMap
@@ -42,6 +46,14 @@ from tests.newave.conftest import (
 _K = 9.81e-3
 # A physically realistic specific productivity -> eta in (0, 1].
 _REALISTIC_RHO_ESP = 0.00892
+# TEIF 5% and IP 2%, and the availability they leave, on a plant 1 carrying the
+# head data the head-corrected turbined cap needs.
+_OUTAGES = {
+    "teif": 5.0,
+    "ip": 2.0,
+    **{f"queda_nominal_conjunto_{i}": 0.0 for i in range(2, 6)},
+}
+_AVAILABILITY = 0.95 * 0.98
 
 
 def _reservoir_row(
@@ -358,6 +370,113 @@ class TestFphaConverters:
         ]
         assert all(h["generation"]["model"] == "constant_productivity" for h in hydros)
         assert all(h["efficiency"] is None for h in hydros)
+
+    def test_fpha_plant_turbined_cap_is_the_available_nominal_flow(
+        self, tmp_path: Path
+    ) -> None:
+        hydros = convert_hydros(self._case(tmp_path, plant_1=_OUTAGES), self._id_map())[
+            "hydros"
+        ]
+        generation = hydros[0]["generation"]
+        assert generation["max_turbined_m3s"] == pytest.approx(
+            4 * 222.2 * _AVAILABILITY
+        )
+        assert generation["max_generation_mw"] == pytest.approx(4 * 200.0)
+        assert hydros[0]["unit_groups"][0]["max_turbined_m3s"] == pytest.approx(
+            generation["max_turbined_m3s"]
+        )
+
+    def test_constant_productivity_plant_keeps_the_head_corrected_cap(
+        self, tmp_path: Path
+    ) -> None:
+        case = self._case(tmp_path, fpha=False, plant_1=_OUTAGES)
+        expected = _compute_max_turbined_head_corrected(
+            case.hidr.cadastro.loc[1], "USINA_A"
+        )[0]
+        assert expected != pytest.approx(4 * 222.2 * _AVAILABILITY)
+
+        hydros = convert_hydros(case, self._id_map())["hydros"]
+
+        assert hydros[0]["generation"]["max_turbined_m3s"] == pytest.approx(expected)
+
+    def test_fpha_plant_available_power_caps_every_stage(self, tmp_path: Path) -> None:
+        table = convert_per_stage_capacity_caps(
+            self._case(tmp_path, plant_1=_OUTAGES), self._id_map()
+        )
+        assert table is not None
+        rows = table.to_pylist()
+        plant_rows = [r for r in rows if r["hydro_id"] == 0]
+        assert [r["stage_id"] for r in plant_rows] == list(range(60))
+        for row in plant_rows:
+            assert row["max_generation_mw"] == pytest.approx(4 * 200.0 * _AVAILABILITY)
+            assert row["max_turbined_m3s"] is None
+        assert all(r["hydro_id"] == 0 for r in rows)
+
+    def test_fpha_plant_turbined_cap_ignores_a_tailrace_override(
+        self, tmp_path: Path
+    ) -> None:
+        cfuga = MagicMock()
+        type(cfuga).__name__ = "CFUGA"
+        cfuga.data_inicio = datetime.datetime(2025, 1, 1)
+        cfuga.nivel = 30.0
+
+        def turbined(fpha: bool) -> list[float | None]:
+            case = self._case(tmp_path, fpha=fpha, modif=modif_mock((1, [cfuga])))
+            table = convert_per_stage_capacity_caps(case, self._id_map())
+            assert table is not None
+            return [
+                r["max_turbined_m3s"] for r in table.to_pylist() if r["hydro_id"] == 0
+            ]
+
+        assert all(value is not None for value in turbined(fpha=False))
+        assert set(turbined(fpha=True)) == {None}
+
+    def test_expanding_fpha_plant_caps_follow_the_machines_in_service(
+        self, tmp_path: Path
+    ) -> None:
+        # One machine at the study start; the two exph machines enter in July.
+        nummaq_rec = MagicMock()
+        type(nummaq_rec).__name__ = "NUMMAQ"
+        nummaq_rec.conjunto = 1
+        nummaq_rec.numero_maquinas = 1
+        confhd = _make_confhd_df()
+        confhd["usina_existente"] = ["EE", "EX"]
+        case = self._case(
+            tmp_path,
+            modif=modif_mock((1, [nummaq_rec])),
+            confhd=confhd,
+            exph=_make_ee_exph_mock(entry="2025-07-01", code=1, conjunto=1),
+            plant_1=_OUTAGES,
+        )
+        id_map = self._id_map()
+
+        caps = {
+            r["stage_id"]: r
+            for r in convert_per_stage_capacity_caps(case, id_map).to_pylist()
+            if r["hydro_id"] == 0
+        }
+        for stage_id in range(6):
+            assert caps[stage_id]["max_turbined_m3s"] == pytest.approx(
+                222.2 * _AVAILABILITY
+            )
+            assert caps[stage_id]["max_generation_mw"] == pytest.approx(
+                200.0 * _AVAILABILITY
+            )
+        assert caps[6]["max_turbined_m3s"] is None
+        assert caps[6]["max_generation_mw"] == pytest.approx(3 * 200.0 * _AVAILABILITY)
+
+        ramp = {
+            r["stage_id"]: r["max_generation_mw"]
+            for r in convert_storage_bounds(case, id_map).to_pylist()
+            if r["hydro_id"] == 0
+        }
+        assert ramp == {s: pytest.approx(200.0 * _AVAILABILITY) for s in range(6)}
+
+        generation = convert_hydros(case, id_map)["hydros"][0]["generation"]
+        assert generation["max_turbined_m3s"] == pytest.approx(
+            3 * 222.2 * _AVAILABILITY
+        )
+        assert generation["max_generation_mw"] == pytest.approx(3 * 200.0)
 
     def test_production_models_reservoir_fpha(self, tmp_path: Path) -> None:
         result = convert_production_models(self._case(tmp_path), self._id_map())
