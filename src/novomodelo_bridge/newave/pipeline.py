@@ -266,7 +266,9 @@ def _convert_newave_case_impl(
 
     logger.debug("Generating hydro geometry")
     cadastro = hydro_conv.read_cadastro(case)
-    geometry_table = hydro_conv.generate_hydro_geometry(cadastro, id_map)
+    geometry_table = hydro_conv.generate_hydro_geometry(
+        cadastro, id_map, hydro_conv.seasonal_reference_volumes(case, cadastro)
+    )
 
     logger.debug("Converting thermals")
     thermals_dict = thermal_conv.convert_thermals(case, id_map)

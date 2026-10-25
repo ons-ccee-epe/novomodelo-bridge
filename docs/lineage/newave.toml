@@ -1938,11 +1938,9 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   from = [
     { file = "volref_saz", item = "valor" },
     { file = "hidr", item = "volume_minimo" },
-    { file = "hidr", item = "volume_maximo" },
     { file = "modif", item = "VOLMIN · volume" },
-    { file = "modif", item = "VOLMAX · volume" },
   ]
-  how = "Volume de referência absoluto do mês: `volume_minimo + valor` (volume útil sazonal; mês ausente ou zero significa operar em `volume_minimo`), limitado a [`volume_minimo`, `volume_maximo`]."
+  how = "Volume de referência absoluto do mês: `volume_minimo + valor` (volume útil sazonal; mês ausente ou zero significa operar em `volume_minimo`), sem limite em `volume_maximo`: o modelo de origem lê nesse volume o nível de jusante da usina a montante mesmo acima do máximo, e a geometria da usina se estende até ele."
 
   [[output.field]]
   path = "production_models[].seasons[].fpha_config.source"
@@ -2021,8 +2019,9 @@ reads = [
   { file = "modif" },
   { file = "confhd" },
   { file = "exph" },
+  { file = "volref_saz" },
 ]
-summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes entre `volume_minimo` e `volume_maximo` (um único ponto quando iguais); usinas com polinômio cota-volume nulo são omitidas com aviso."
+summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniformes na faixa de armazenamento em que a usina opera, estendida até o maior volume de referência sazonal (um único ponto quando ela se reduz a um volume); usinas com polinômio cota-volume nulo são omitidas com aviso."
 
   [[output.field]]
   path = "hydro_id"
@@ -2035,10 +2034,13 @@ summary = "Curva volume-cota-área amostrada por usina ativa: 100 pontos uniform
   from = [
     { file = "hidr", item = "volume_minimo" },
     { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
     { file = "modif", item = "VOLMIN · volume" },
     { file = "modif", item = "VOLMAX · volume" },
+    { file = "volref_saz", item = "valor" },
   ]
-  how = "Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto em `volume_minimo` quando a faixa é nula. Não aplica o colapso das usinas `D`/`S` feito em `hydros.json`."
+  how = "Grade de 100 volumes igualmente espaçados em [`volume_minimo`, `volume_maximo`] do cadastro corrigido por `modif.dat`; um único ponto quando a faixa é nula. Usinas `tipo_regulacao` D e S recebem um único ponto em `volume_referencia`, o mesmo colapso dos limites de `hydros.json`, mesmo fora de [`volume_minimo`, `volume_maximo`]: a cota nesse volume é a de montante da usina e o nível de jusante da usina a montante (faixa completa se ausente). Em caso FPHA, a faixa das demais usinas vai até o maior volume de referência sazonal (`volume_minimo + valor` de `volref_saz.dat`) quando ele passa de `volume_maximo`: o polinômio cota-volume é avaliado além do máximo, como faz o modelo de origem ao ler ali o nível de jusante da usina a montante."
 
   [[output.field]]
   path = "height_m"
