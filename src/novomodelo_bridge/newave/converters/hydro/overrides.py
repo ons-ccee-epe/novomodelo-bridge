@@ -627,8 +627,8 @@ def _per_stage_drop_overrides(
     last study year and in every post-study year.
 
     Shared by :func:`_per_stage_productivities` (point ρ, combined with
-    VOLREF_SAZ) and :func:`_per_stage_equivalent_productivities` (PRODT, which
-    ignores VOLREF_SAZ).
+    VOLREF_SAZ), and by :func:`_per_stage_equivalent_productivities` (PRODT) and
+    the per-stage capacity caps, which both ignore VOLREF_SAZ.
     """
     if not drop_overrides:
         return [(None, None)] * total_stages

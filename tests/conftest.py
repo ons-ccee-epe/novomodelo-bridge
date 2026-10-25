@@ -722,6 +722,10 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
             return_value=None,
         ),
         patch(
+            "novomodelo_bridge.newave.pipeline.hydro_conv.convert_per_stage_capacity_caps",
+            return_value=None,
+        ),
+        patch(
             "novomodelo_bridge.newave.pipeline.pumping_conv.read_pumping_inputs",
             return_value=None,
         ),

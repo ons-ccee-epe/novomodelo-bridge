@@ -150,7 +150,7 @@ def _fold_per_stage_capacity_caps(
     """Fold the per-stage capacity caps into the hydro bounds.
 
     ``capacity_caps`` carries the per-(hydro, stage) engolimento cap derived from
-    the per-stage operating head and the FPHA plants' available power. A value
+    the per-stage operating head and every plant's available power. A value
     already present in ``base`` (from ``convert_storage_bounds``) takes
     precedence — an explicit TURBMAXT override is a deliberate operational
     limit, and a filling ramp's cap is the machines in service — so the derived

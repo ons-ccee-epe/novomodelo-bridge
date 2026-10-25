@@ -150,14 +150,20 @@ the same output.
   reference volume down to the `polinjus` tailrace at that flow, read at the
   forebay of the plant `hidr.dat` names downstream, and the generator head
   from the mean forebay over the plant's operating range.
-- **Turbine and generation limits.** Under FPHA, a plant turbines at most its
-  rated flow and generates at most its rated power, both scaled by its TEIF
-  and IP availability, with no head correction. `max_turbined_m3s` declares
-  that flow and `hydro_bounds.parquet` gives the available power on every
-  stage, while the declared `max_generation_mw` stays the rated power the fit
-  is capped at. A constant-productivity plant is capped at its rated flow
-  corrected for the operating head, which also keeps it under its available
-  power.
+- **Turbine and generation limits.** Under FPHA and constant productivity
+  alike, a plant generates at most its rated power scaled by its TEIF and IP
+  availability, and turbines at most its engolimento: its rated flow
+  corrected for the operating head, capped by the flow that reaches the
+  rated power at that head, and scaled by the same availability. The
+  operating head of a monthly reservoir runs from the mean forebay level
+  between its minimum volume and 65% of its useful volume, that of a daily
+  or run-of-river plant from the forebay at `volume_referencia`, down to the
+  tailrace and less the hydraulic losses. A `CFUGA` record replaces the
+  tailrace and a `CMONT` record the forebay level, stage by stage;
+  `volref_saz.dat` does not enter the head. `hydro_bounds.parquet` gives the
+  available power on every stage, and the turbined cap on the stages a
+  `CFUGA`/`CMONT` record or a machine entry moves it, while the declared
+  `max_generation_mw` stays the rated power the fit is capped at.
 
 Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,
