@@ -728,7 +728,7 @@ def test_tie_share_table_lists_each_stage() -> None:
 def test_fpha_slice_chart_embeds_each_plant_with_fit_inputs() -> None:
     """Plant 1 has slice curves but no fit-input row, so it is left out."""
     from novomodelo_bridge.comparators.charts import fpha_slice_chart
-    from novomodelo_bridge.comparators.decomp.operating_points import (
+    from novomodelo_bridge.comparators.operating_points import (
         FPHA_FIT_INPUTS_SCHEMA,
         FPHA_SLICE_SCHEMA,
     )

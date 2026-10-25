@@ -127,6 +127,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | DECOMP's plane form and exact production function | DECOMP's planes in `avl_cortesfpha_dec.rvN`, evaluated with the storage above the `hidr.dat` minimum and the `VU` lateral flow of the same block, reproduce the `Ghid (FPHA)` column of `dec_desvfpha.rvN`, so the comparison reads them in that form. The exact production function rebuilt from the deck (cota polynomial, `polinjus` families read at the downstream plant's printed forebay, `VL`, `VU` and `VA` flows, `hidr.dat` losses, the `eco_fpha_.rvN` generation limit) reproduces its `Ghid (FPH)` column on the reduced deck within 0.004 MW at the median point and 0.62 MW at the worst, a plant with a drowned tailrace. The monthly deck's run writes no `dec_desvfpha.rvN`, which is why the comparison does not depend on it. The unit tests in `tests/comparators/test_decomp_operating_points.py` pin the same conventions on one plant's committed excerpt. Captured with DECOMP 32.0.1 in October 2026. |
 
+### A NEWAVE FPHA run with every plant's nwlistop tables, plus its solved novomodelo case
+
+| Check | Verified |
+| --- | --- |
+| NEWAVE's operating-point conventions against its printed heads and exact production | With the `nwlistop.dat` plant list set to `999`, nwlistop writes each plant's per-block generation, flows, storage, heads (`hmont`, `hjus`, `hliq`) and exact production (`gh_fphexat`). The planes in `fpha_cortes.csv`, evaluated with the stage's mean storage above the `hidr.dat` minimum, reproduce `ghiduh`. The exact production function rebuilt from the deck (cota polynomial at that storage, `polinjus` families read at the downstream plant's forebay at the same point, spill in the tailrace only where `hidr.dat` says it reaches it, `hidr.dat` losses, the `fpha_eco.csv` generation limit) reproduces `gh_fphexat` for every plant and stage within 0.07 MW, the print resolution of a block's MWmes divided by its share of the month. `compare newave` reports that gap in the fit-inputs table, so rerunning it on such a run repeats the check. The unit tests in `tests/comparators/test_newave_operating_points.py` pin the storage, generation and tie conventions on the mini-deck. Captured on a September 2024 case with a historical final simulation, NEWAVE 30.0.4, in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the

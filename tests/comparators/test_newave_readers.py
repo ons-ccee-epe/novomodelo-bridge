@@ -6,7 +6,10 @@ empty frame / ``None`` plus a ``_LOG.warning``, never a raised exception).
 The fixture case under ``fixtures/newave_results/`` is small hand-authored
 synthetic data — one entity or two, at most a few stages per file — built
 directly from each ``inewave`` reader's expected layout, not a slice of any
-real deck.
+real deck. The nwlistop plant tables under
+``fixtures/newave_results/nwlistop_plants/`` are the first two years of one
+plant's and one submarket's tables from a September 2024 NEWAVE run with a
+historical final simulation.
 """
 
 from __future__ import annotations
@@ -30,6 +33,9 @@ from novomodelo_bridge.comparators.newave.readers import (
     read_newave_net_load_nwlistop,
     read_newave_tim_iterations,
     read_newave_tim_stages,
+    read_nwlistop_block_cmo,
+    read_nwlistop_hydro_blocks,
+    read_nwlistop_hydro_storage,
     read_nwlistop_intercambio,
     read_pmo_convergence,
     read_pmo_cost_breakdown,
@@ -38,6 +44,7 @@ from novomodelo_bridge.comparators.newave.readers import (
 from tests.conftest import make_nw_files
 
 _FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "newave_results"
+_PLANT_TABLES = _FIXTURE_DIR / "nwlistop_plants"
 
 
 # ---------------------------------------------------------------------------
@@ -312,3 +319,78 @@ class TestFphaGrid:
 
     def test_degrades_to_none_on_missing_report(self, tmp_path: Path) -> None:
         assert read_fpha_grid(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# nwlistop plant tables
+# ---------------------------------------------------------------------------
+
+
+class TestNwlistopHydroBlocks:
+    def test_keys_each_block_from_the_study_start(self) -> None:
+        df = read_nwlistop_hydro_blocks(_PLANT_TABLES, 2024, 9)
+
+        assert set(df["newave_code"]) == {6}
+        assert (df["stage"].min(), df["stage"].max()) == (0, 15)
+        assert set(df["block"]) == {0, 1, 2}
+        assert set(df["scenario"]) == {0}
+        row = df.filter((pl.col("stage") == 0) & (pl.col("block") == 1)).row(
+            0, named=True
+        )
+        assert row["generation_mwmes"] == 216.56
+        assert row["turbined_m3s"] == 941.7
+        assert row["spillage_m3s"] == 0.0
+        assert row["exact_generation_mwmes"] == 209.74
+
+    def test_a_later_study_start_drops_the_earlier_months(self) -> None:
+        df = read_nwlistop_hydro_blocks(_PLANT_TABLES, 2025, 1)
+
+        row = df.filter((pl.col("stage") == 0) & (pl.col("block") == 0)).row(
+            0, named=True
+        )
+        assert row["generation_mwmes"] == 231.83
+        assert df["stage"].max() == 11
+
+    def test_without_the_exact_table_its_column_is_null(self, tmp_path: Path) -> None:
+        for name in ("ghiduh006.out", "qturuh006.out", "qvertuh006.out"):
+            (tmp_path / name).write_bytes((_PLANT_TABLES / name).read_bytes())
+
+        df = read_nwlistop_hydro_blocks(tmp_path, 2024, 9)
+
+        assert df.height == 48
+        assert df["exact_generation_mwmes"].is_null().all()
+
+    def test_degrades_to_empty_without_plant_tables(self, tmp_path: Path) -> None:
+        df = read_nwlistop_hydro_blocks(tmp_path, 2024, 9)
+
+        assert df.is_empty()
+        assert "exact_generation_mwmes" in df.columns
+
+
+class TestNwlistopHydroStorage:
+    def test_reads_the_final_useful_storage_per_stage(self) -> None:
+        df = read_nwlistop_hydro_storage(_PLANT_TABLES, 2024, 9)
+
+        assert df.filter(pl.col("stage") == 0)["useful_storage_final_hm3"].item() == (
+            7890.92
+        )
+        assert df.filter(pl.col("stage") == 4)["useful_storage_final_hm3"].item() == (
+            10809.7
+        )
+
+    def test_degrades_to_empty_without_tables(self, tmp_path: Path) -> None:
+        assert read_nwlistop_hydro_storage(tmp_path, 2024, 9).is_empty()
+
+
+class TestNwlistopBlockCmo:
+    def test_reads_each_submarket_block(self) -> None:
+        df = read_nwlistop_block_cmo(_PLANT_TABLES, 2024, 9)
+
+        assert set(df["submarket_code"]) == {1}
+        row = df.filter((pl.col("stage") == 0) & (pl.col("block") == 2)).row(
+            0, named=True
+        )
+        assert row["cmo"] == 920.85
+
+    def test_degrades_to_empty_without_tables(self, tmp_path: Path) -> None:
+        assert read_nwlistop_block_cmo(tmp_path, 2024, 9).is_empty()

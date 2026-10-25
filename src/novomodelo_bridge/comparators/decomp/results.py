@@ -54,7 +54,6 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from novomodelo_bridge.comparators.decomp.operating_points import (
-    OperatingPointComparison,
     compare_operating_points,
 )
 from novomodelo_bridge.comparators.decomp.readers import (
@@ -73,6 +72,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_relato_membership,
 )
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
 from novomodelo_bridge.decomp.temporal import hours_weighted
@@ -1867,29 +1867,6 @@ def _log_decomp_fpha_deck_summary(decomp_dir: Path) -> None:
     )
 
 
-def _operating_point_fields(
-    comparison: OperatingPointComparison | None,
-) -> dict[str, pl.DataFrame | None]:
-    """The :class:`PercentileData` fields *comparison* fills; the FPHA frames
-    are ``None`` when either model fitted no planes."""
-    if comparison is None:
-        return {}
-
-    def _or_none(frame: pl.DataFrame) -> pl.DataFrame | None:
-        return None if frame.is_empty() else frame
-
-    return {
-        "fpha_metrics": _or_none(comparison.metrics),
-        "fpha_surface": _or_none(comparison.surface),
-        "fpha_spill": _or_none(comparison.spill),
-        "fpha_split": comparison.split,
-        "fpha_fit_inputs": comparison.fit_inputs,
-        "fpha_slices": comparison.slices,
-        "tie_share": comparison.tie_share,
-        "hydro_masked": comparison.masked_hydro,
-    }
-
-
 # --- REE energy rollup via membership ---
 #
 # DECOMP reports energy at REE (reservoir-equivalent-energy) granularity
@@ -3077,7 +3054,7 @@ def build_decomp_dataset(
         # the ``productivity_mw_per_m3s`` rows appended to ``results`` above
         # (`_hydro_productivity_results`), not this field.
         productivity_detail=pl.DataFrame(),
-        **_operating_point_fields(operating_points),
+        **operating_point_fields(operating_points),
         # Constraints tab LHS-vs-bound metadata. ``nw_max_stage``
         # is unchanged (already set above by `_decomp_max_stage`) and
         # doubles as this section's stage clamp.

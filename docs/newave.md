@@ -238,8 +238,9 @@ comparable:
 - NEWAVE's final simulation has preventive rationing enabled in `dger.dat`.
   With it disabled, NEWAVE drains reservoirs to avoid deficit while Novomodelo
   follows the converted policy, and the two diverge by construction.
-- The hydro production function is linear (constant productivity). A
-  head-dependent run is a different production model.
+- Both runs use the same kind of hydro production function. When `dger.dat`
+  selects FPHA, Novomodelo fits its own planes rather than reading NEWAVE's; the
+  Productivity tab compares the two.
 - You know whether the final simulation is deterministic or stochastic. A
   single historical series makes the inflow model irrelevant on both sides.
 - No input `.dat` file is newer than the NEWAVE outputs. Otherwise the
@@ -252,3 +253,29 @@ expected constraint-violation penalties out of its final lower bound, so a
 slack priced far above any real cost on one side does not hide how close the
 priced operation is. Load and non-controllable generation are converted directly
 from the inputs and are rarely the cause.
+
+In an FPHA run, the Productivity tab compares the two models' fitted planes on
+NEWAVE's fit grid, read from `fpha_cortes.csv` and `fpha_eco.csv`, and the two
+models at the operating points each one reached, per plant, stage, series and
+block. The operating points come from the nwlistop plant tables (`ghiduh`,
+`qturuh`, `qvertuh`, `gh_fphexat`, `varmuh` and `cmarg`), which nwlistop
+writes only for the plants in the plant list of `nwlistop.dat`. Set that list
+to `999` (every plant) and rerun nwlistop; without the tables the tab leaves
+the operating points out and says so. For each plant and stage the tab splits
+the gap between the two realized productivities into a part from the fitted
+planes, Novomodelo's planes evaluated at NEWAVE's operating points, and a part from
+where Novomodelo operates, and plots generation against turbined flow at NEWAVE's
+mean operating point for both models' planes and the exact production
+function.
+
+The exact function follows NEWAVE's conventions: the forebay at the stage's
+mean storage, the mean of its initial and final storage in `varmuh`, starting
+from the `confhd.dat` initial storage, with a daily or run-of-river plant held
+at its `volume_referencia`; the tailrace at the turbined flow, plus the spill
+where `hidr.dat` says it reaches the tailrace, read between `polinjus`
+families at the downstream plant's forebay; the losses of `hidr.dat`; and the
+`fpha_eco.csv` generation limit. The fit-inputs table gives the largest gap
+between that function and NEWAVE's printed `gh_fphexat` for each plant and
+stage. A point where NEWAVE's marginal cost (`cmarg`) is zero, or where
+Novomodelo's spot price or water value is, is a tie, handled as on the DECOMP
+report (see [the DECOMP guide](decomp.md#comparing-results)).

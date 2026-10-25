@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comparison now uses DECOMP's own planes on its fit grid, as the NEWAVE
   report does, instead of Cobre's planes against `dec_desvfpha.rvN`. The
   static pmo section is no longer shown when it has no data.
+- **`compare newave` compares both models at their operating points.** In an
+  FPHA run, the Productivity tab now gives the realized-productivity split,
+  the generation-against-turbined-flow chart, each model's fit inputs and
+  head components, and the per-stage tie share, as the DECOMP report does.
+  NEWAVE's operating points come from the nwlistop plant tables, which
+  nwlistop writes for the plants in the `nwlistop.dat` plant list; without
+  them the tab says to set that list to `999` and leaves the operating
+  points out. The fit-inputs table gives the largest gap between the exact
+  production function rebuilt from the deck and NEWAVE's printed
+  `gh_fphexat`.
 - **`compare newave` and `compare decomp` net the penalties out of each
   lower bound.** Below the Overview tab's convergence chart, a table gives
   each model's final lower bound, its expected constraint-violation
@@ -300,6 +310,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Productivity tab reads Cobre's fit inputs for seasonal production
+  models.** The fit-inputs table read only the `stage_ranges` entries of
+  `hydro_production_models.json`, so a plant whose FPHA configuration is
+  given per season showed no Cobre volume window or turbined fit range. Each
+  season now covers the stages `stages.json` assigns it.
 - **`convert newave` writes a daily or run-of-river plant's geometry at the
   volume its reservoir is held at.** A plant with `tipo_regulacao` D or S is
   held at `volume_referencia`, which can lie outside its hidr volume range,

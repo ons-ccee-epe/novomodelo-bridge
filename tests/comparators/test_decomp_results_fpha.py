@@ -14,19 +14,19 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from novomodelo_bridge.comparators.decomp.operating_points import (
-    FPHA_FIT_INPUTS_SCHEMA,
-    FPHA_SLICE_SCHEMA,
-    MASKED_HYDRO_SCHEMA,
-    TIE_SHARE_SCHEMA,
-    OperatingPointComparison,
-)
 from novomodelo_bridge.comparators.decomp.results import build_decomp_dataset
 from novomodelo_bridge.comparators.fpha import (
     FPHA_METRICS_SCHEMA,
     FPHA_SPILL_SCHEMA,
     FPHA_SPLIT_SCHEMA,
     FPHA_SURFACE_SCHEMA,
+)
+from novomodelo_bridge.comparators.operating_points import (
+    FPHA_FIT_INPUTS_SCHEMA,
+    FPHA_SLICE_SCHEMA,
+    MASKED_HYDRO_SCHEMA,
+    TIE_SHARE_SCHEMA,
+    OperatingPointComparison,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from tests.comparators.conftest import _aligned_fixture, _patch_aligned_frames
