@@ -2,7 +2,8 @@
 
 Covers the two source-model readers (``read_fpha_planes`` / ``read_fpha_grid``),
 the Novomodelo reader (``read_novomodelo_fpha_planes``), the envelope evaluator
-(``fpha.dense_grid``), and the comparison builder (``build_fpha_comparison``).
+(``fpha.dense_grid``), the comparison builder (``build_fpha_comparison``), and
+the FPHA charts, the operating-point views among them.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import pytest
 
 from novomodelo_bridge.comparators.analyze import build_fpha_comparison
 from novomodelo_bridge.comparators.fpha import dense_grid
-from novomodelo_bridge.comparators.newave.alignment import HydroEntity
 from novomodelo_bridge.comparators.newave.readers import (
     read_fpha_grid,
     read_fpha_planes,
@@ -244,7 +244,7 @@ _METRIC_COLUMNS = [
 
 
 def test_build_fpha_comparison_returns_empty_when_no_planes() -> None:
-    metrics, surface, spill = build_fpha_comparison(None, None, None, [])
+    metrics, surface, spill = build_fpha_comparison(None, None, None, {}, {})
     assert metrics.is_empty()
     assert surface.is_empty()
     assert spill.is_empty()
@@ -319,9 +319,7 @@ def test_build_fpha_comparison_run_of_river_collapses_volume_axis() -> None:
             }
         ]
     )
-    hydros = [HydroEntity(newave_code=10, novomodelo_id=0, name="ROR")]
-
-    metrics, surface, spill = build_fpha_comparison(nw, grid, cb, hydros)
+    metrics, surface, spill = build_fpha_comparison(nw, grid, cb, {10: 0}, {0: "ROR"})
 
     row = metrics.row(0, named=True)
     assert row["gh_max_ratio"] == pytest.approx(1.0)
@@ -386,9 +384,7 @@ def test_build_fpha_comparison_reconciles_useful_vs_absolute_volume() -> None:
             }
         ]
     )
-    hydros = [HydroEntity(newave_code=20, novomodelo_id=3, name="RES")]
-
-    metrics, surface, _ = build_fpha_comparison(nw, grid, cb, hydros)
+    metrics, surface, _ = build_fpha_comparison(nw, grid, cb, {20: 3}, {3: "RES"})
 
     row = metrics.row(0, named=True)
     assert row["gh_max_ratio"] == pytest.approx(1.0)
@@ -449,9 +445,7 @@ def test_build_fpha_comparison_skips_plant_absent_on_one_side() -> None:
             }
         ]
     )
-    hydros = [HydroEntity(newave_code=10, novomodelo_id=0, name="ROR")]
-
-    metrics, surface, spill = build_fpha_comparison(nw, grid, cb, hydros)
+    metrics, surface, spill = build_fpha_comparison(nw, grid, cb, {10: 0}, {0: "ROR"})
     assert metrics.is_empty()
     assert surface.is_empty()
     assert spill.is_empty()
@@ -509,7 +503,7 @@ def test_fpha_metrics_table_sorts_and_tints_worst() -> None:
         }
     )
     html = fpha_metrics_table(metrics)
-    assert "fpha-metrics-table" in html
+    assert "fpha-table" in html
     assert "run-of-river" in html and "reservoir" in html
     # Sorted worst-NMAE first: BADPLANT (12%) before GOOD (0.1%).
     assert html.index("BADPLANT") < html.index("GOOD")
@@ -656,3 +650,119 @@ def test_fpha_detail_chart_empty_message() -> None:
 
     out = fpha_detail_chart(_surface_frame([]), _spill_frame([]))
     assert "No production-function (FPHA) data" in out
+
+
+def _split_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
+    from novomodelo_bridge.comparators.fpha import FPHA_SPLIT_SCHEMA
+
+    return pl.DataFrame(
+        [{c: r.get(c) for c in FPHA_SPLIT_SCHEMA} for r in rows],
+        schema=FPHA_SPLIT_SCHEMA,
+    )
+
+
+def test_fpha_split_table_ranks_by_the_gap_in_mw() -> None:
+    """SMALL has the larger relative gap, BIG the larger gap in MW."""
+    from novomodelo_bridge.comparators.charts import fpha_split_table
+
+    split = _split_frame(
+        [
+            {
+                "novomodelo_id": 0,
+                "plant_name": "SMALL",
+                "stage": 0,
+                "tie_share": 0.0,
+                "q_source_m3s": 10.0,
+                "rho_source": 1.0,
+                "rho_novomodelo": 0.5,
+                "d_total": -0.5,
+                "d_model": -0.000001,
+            },
+            {
+                "novomodelo_id": 1,
+                "plant_name": "BIG",
+                "stage": 0,
+                "tie_share": 0.25,
+                "q_source_m3s": 1000.0,
+                "rho_source": 1.0,
+                "rho_novomodelo": 0.9,
+                "d_total": -0.1,
+            },
+        ]
+    )
+
+    html = fpha_split_table(split, "DECOMP")
+
+    assert html.index("BIG") < html.index("SMALL")
+    assert ">-100.0<" in html and ">-5.0<" in html
+    assert ">25.0%<" in html
+    # A part that rounds to zero prints unsigned-zero, not "-0.00%".
+    assert "-0.00%" not in html and "+0.00%" in html
+    assert "DECOMP fit vs exact" in html
+
+
+def test_fpha_split_table_empty_message() -> None:
+    from novomodelo_bridge.comparators.charts import fpha_split_table
+
+    assert "No operating-point comparison" in fpha_split_table(_split_frame([]))
+
+
+def test_tie_share_table_lists_each_stage() -> None:
+    from novomodelo_bridge.comparators.charts import tie_share_table
+
+    shares = pl.DataFrame(
+        {
+            "stage": [1, 0],
+            "source_tie_share": [0.5, None],
+            "novomodelo_tie_share": [0.125, 0.0],
+        }
+    )
+
+    html = tie_share_table(shares, "DECOMP")
+
+    assert html.index(">0<") < html.index(">1<")
+    assert ">50.0%<" in html and ">12.5%<" in html and ">—<" in html
+    assert tie_share_table(shares.clear()) == ""
+
+
+def test_fpha_slice_chart_embeds_each_plant_with_fit_inputs() -> None:
+    """Plant 1 has slice curves but no fit-input row, so it is left out."""
+    from novomodelo_bridge.comparators.charts import fpha_slice_chart
+    from novomodelo_bridge.comparators.operating_points import (
+        FPHA_FIT_INPUTS_SCHEMA,
+        FPHA_SLICE_SCHEMA,
+    )
+
+    slices = pl.DataFrame(
+        [
+            (cid, 0, curve, q, q * 0.5)
+            for cid in (0, 1)
+            for curve in ("source_planes", "novomodelo_planes", "exact")
+            for q in (0.0, 50.0, 100.0)
+        ],
+        schema=FPHA_SLICE_SCHEMA,
+        orient="row",
+    )
+    fit_inputs = pl.DataFrame(
+        [
+            {
+                **{c: None for c in FPHA_FIT_INPUTS_SCHEMA},
+                "novomodelo_id": 0,
+                "plant_name": "ALPHA",
+                "stage": 0,
+                "source_q_m3s": 40.0,
+                "source_gh_mw": 20.0,
+            }
+        ],
+        schema=FPHA_FIT_INPUTS_SCHEMA,
+    )
+
+    html = fpha_slice_chart(slices, fit_inputs, _split_frame([]), "DECOMP")
+
+    assert '<option value="0">ALPHA</option>' in html
+    assert '<option value="1">' not in html
+    assert '"source_q_m3s":40.0' in html
+    assert "DECOMP planes" in html
+    assert "No operating-point comparison" in fpha_slice_chart(
+        slices.clear(), fit_inputs, _split_frame([])
+    )

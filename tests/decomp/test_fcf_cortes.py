@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pandas as pd  # type: ignore[import-untyped]  # pandas-stubs not installed
 import pytest
+from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 
 from novomodelo_bridge.decomp.fcf.cortes import (
     BoundaryCuts,
@@ -23,8 +24,10 @@ from novomodelo_bridge.decomp.fcf.cortes import (
     StageCutRecord,
     _build_header,
     _read_trailer,
+    cut_month,
     read_cortes,
     read_cortesh,
+    read_patamar_fractions,
     required_inflow_lag_depth,
     summarize_cut_families,
 )
@@ -391,3 +394,35 @@ def test_required_inflow_lag_depth_zero_when_no_lag_terms() -> None:
     summary = _summary_with_lag_depths((0,) * 12)
 
     assert required_inflow_lag_depth(summary) == 0
+
+
+class _FakeCalendarCortesh:
+    """The general-data fields ``cut_month``/``read_patamar_fractions`` read."""
+
+    ano_inicio_estudo = 2025
+    numero_patamares = 2
+
+    def __init__(self, shares: list[float]) -> None:
+        class _Section(SecaoDadosCortesh):
+            duracoes_patamares = shares
+
+        self.data = [object(), _Section()]
+
+
+def test_cut_month_counts_months_from_the_study_start_january() -> None:
+    cortesh = _FakeCalendarCortesh([])
+
+    assert cut_month(cortesh, 1) == (2025, 1)  # type: ignore[arg-type]
+    assert cut_month(cortesh, 16) == (2026, 4)  # type: ignore[arg-type]
+    assert cut_month(cortesh, 24) == (2026, 12)  # type: ignore[arg-type]
+
+
+def test_read_patamar_fractions_is_month_major_from_the_study_start() -> None:
+    shares = [0.5, 0.5] * 12 + [0.25, 0.75, 0.4, 0.6]
+
+    fractions = read_patamar_fractions(_FakeCalendarCortesh(shares))  # type: ignore[arg-type]
+
+    assert len(fractions) == 14
+    assert fractions[(2025, 12)] == (0.5, 0.5)
+    assert fractions[(2026, 1)] == (0.25, 0.75)
+    assert fractions[(2026, 2)] == (0.4, 0.6)

@@ -27,6 +27,7 @@ to an empty frame when absent.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from pathlib import Path
@@ -35,6 +36,7 @@ from typing import Protocol
 import pandas as pd
 import polars as pl
 from idecomp.decomp import (
+    AvlCortesFpha,
     DecDesvFpha,
     DecEstatFpha,
     Decomptim,
@@ -98,6 +100,17 @@ def _read_dec_oper(
     path = _resolve_result_file(case_dir, filename)
     if path is None:
         raise FileNotFoundError(f"{filename} not found in {case_dir}")
+    stat = path.stat()
+    return _parse_dec_oper((path, stat.st_mtime_ns, stat.st_size), reader_cls)
+
+
+@functools.lru_cache(maxsize=16)
+def _parse_dec_oper(
+    version: tuple[Path, int, int], reader_cls: _TableReader
+) -> pl.DataFrame:
+    """Parse a table once per file *version* (path, mtime, size): one
+    comparison reads the larger tables several times."""
+    path = version[0]
     return _finalize_table(path, reader_cls.read(str(path)).tabela)
 
 
@@ -194,8 +207,8 @@ def _resolve_revisioned_file(case_dir: Path, stem: str) -> Path | None:
 
     Shared by every reader whose filename carries the deck's own revision
     number as a suffix instead of a fixed extension -- the general report
-    (``relato.rvN``) and the FPHA deviation/grid-echo files
-    (``dec_estatfpha.rvN``, ``dec_desvfpha.rvN``, ``eco_fpha.rvN``), unlike
+    (``relato.rvN``) and the FPHA files (``avl_cortesfpha_dec.rvN``,
+    ``dec_estatfpha.rvN``, ``dec_desvfpha.rvN``, ``eco_fpha_.rvN``), unlike
     the fixed-name ``dec_oper_*.csv``/``decomp.tim`` tables
     `_resolve_result_file` resolves.
     """
@@ -338,16 +351,12 @@ def read_relato_membership(case_dir: Path) -> pl.DataFrame:
 
 # --- FPHA (fitted production function) readers ---
 #
-# Three files, all resolved via `_resolve_revisioned_file` (root-only,
-# `<stem>.rvN`): `dec_desvfpha` (per-hydro/stage/scenario/block deviation
-# between the "true" nonlinear generation and the piecewise-linear fit the
-# LP actually consumed), `eco_fpha` (per-hydro/stage fitting-grid bounds and
-# node counts), and `dec_estatfpha` (a single deck-wide deviation summary,
-# no per-hydro/stage key). None of the three carries the fitted PLANE
-# coefficients themselves (those live in a fourth, undeclared file,
-# `avl_cortesfpha.rvN` / idecomp's `AvlCortesFpha`) -- see
-# `results._fpha_metrics`'s docstring for how it works
-# around that gap.
+# All resolved via `_resolve_revisioned_file` (root-only, `<stem>.rvN`):
+# `avl_cortesfpha_dec` (the fitted planes), `dec_desvfpha` (per-hydro/stage/
+# scenario/block deviation between the "true" nonlinear generation and the
+# piecewise-linear fit the LP actually consumed), `eco_fpha_` (per-hydro/stage
+# fitting-grid bounds and node counts), and `dec_estatfpha` (a single deck-wide
+# deviation summary, no per-hydro/stage key).
 
 
 def _read_revisioned_table(
@@ -383,16 +392,37 @@ def read_dec_desvfpha(case_dir: Path) -> pl.DataFrame:
 
 
 def read_eco_fpha(case_dir: Path) -> pl.DataFrame:
-    """Read the per-hydro/stage FPHA fitting-grid echo (``eco_fpha.rvN``).
+    """Read the per-hydro/stage FPHA fitting-grid echo (``eco_fpha_.rvN``).
 
     One row per (hydro, stage): the volume/turbined-flow fitting-grid bounds
     and node counts (``numero_pontos_volume_armazenado``/
     ``numero_pontos_vazao_turbinada``, ``volume_armazenado_minimo/maximo``,
     ``vazao_turbinada_minima/maxima``) and the plant's generation bounds --
     the grid the source model's own fit was built on, not the fitted
-    coefficients themselves.
+    coefficients themselves. ``eco_fpha.rvN`` is also accepted. The table's
+    closing separator line parses as an all-null row and is dropped.
     """
-    return _read_revisioned_table(case_dir, "eco_fpha", EcoFpha)
+    path = _resolve_revisioned_file(case_dir, "eco_fpha_") or (
+        _resolve_revisioned_file(case_dir, "eco_fpha")
+    )
+    if path is None:
+        raise FileNotFoundError(f"eco_fpha_.rvN not found in {case_dir}")
+    table = _finalize_table(path, EcoFpha.read(str(path)).tabela)
+    return table.filter(pl.col("codigo_usina").is_not_null()).with_columns(
+        pl.col("codigo_usina", "estagio").cast(pl.Int64)
+    )
+
+
+def read_avl_cortesfpha(case_dir: Path) -> pl.DataFrame:
+    """Read the fitted FPHA planes (``avl_cortesfpha_dec.rvN``).
+
+    One row per (hydro, stage, plane): ``GH <= fator_correcao · (rhs +
+    coeficiente_volume_util · V_u + coeficiente_vazao_turbinada · Q +
+    coeficiente_vazao_vertida · S + coeficiente_vazao_lateral · Q_lat)``, with
+    ``V_u`` the volume above the plant's ``hidr.dat`` minimum and ``Q_lat`` the
+    lateral flow its ``VU`` registers route into the tailrace.
+    """
+    return _read_revisioned_table(case_dir, "avl_cortesfpha_dec", AvlCortesFpha)
 
 
 def read_dec_estatfpha(case_dir: Path) -> pl.DataFrame:

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
+from novomodelo_bridge.decomp.constraint_registers import sided_bounds
 from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
 from novomodelo_bridge.decomp.converters.hydro import split_plant_group_id
 
@@ -107,27 +108,6 @@ def _clamp_upper_to_capacity(
     return clamped, ceilings
 
 
-def _sided_bounds(
-    lower: float | None, upper: float | None, coefficient: float
-) -> tuple[float | None, float | None]:
-    """The coefficient-sign -> side map for a single term ``c*x in [lower, upper]``.
-
-    ``coefficient > 0`` (``+1``) leaves the entity bound as-is:
-    ``x in [lower, upper]``. ``coefficient < 0`` (``-1``) flips and swaps the
-    sides: ``-x in [lower, upper] => x in [-upper, -lower]``. Only ``+-1``
-    ever reaches here (``lowers_to_bound`` gates ``abs(coefficient) == 1`` at
-    every stage), so the two branches are exhaustive.
-
-    The ``+-1e21`` unbounded sentinel is not re-derived here — a bound is
-    passed through unchanged (negating it keeps its magnitude at the
-    sentinel) and the accumulator's ``_effective`` is the single place that
-    drops it. Only an actual ``None`` is treated as "no bound on that side".
-    """
-    if coefficient > 0:
-        return lower, upper
-    return (None if upper is None else -upper, None if lower is None else -lower)
-
-
 def _per_block_contributions(
     record: ConstraintRecord,
     family: str,
@@ -154,7 +134,7 @@ def _per_block_contributions(
         for block_id in range(n_blocks):
             if block_id >= len(stage_bounds.lower):
                 continue
-            entity_lower, entity_upper = _sided_bounds(
+            entity_lower, entity_upper = sided_bounds(
                 stage_bounds.lower[block_id],
                 stage_bounds.upper[block_id],
                 coefficient,
@@ -486,7 +466,7 @@ def _hv_storage_contributions(
 
     The source model's ``LV`` limits are relative to the plant's useful
     volume; novomodelo's ``min/max_storage_hm3`` are absolute. The sign map
-    (:func:`_sided_bounds`) runs first, then each surviving side is added to
+    (:func:`sided_bounds`) runs first, then each surviving side is added to
     the per-stage effective floor (:func:`~novomodelo_bridge.decomp.converters.
     cadastro.effective.effective_storage_range`'s floor element, which
     honours per-stage ``AC VOLMIN``/``VOLMAX`` overrides and the
@@ -521,7 +501,7 @@ def _hv_storage_contributions(
     term = record.terms[0]
     contributions: list[BoundContribution] = []
     for stage_index, stage_bounds in record.bounds.items():
-        rel_lower, rel_upper = _sided_bounds(
+        rel_lower, rel_upper = sided_bounds(
             stage_bounds.lower[0],
             stage_bounds.upper[0],
             term.coefficient_at(stage_index),

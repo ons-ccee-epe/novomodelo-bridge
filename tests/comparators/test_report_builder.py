@@ -146,6 +146,35 @@ def test_build_comparison_report_default_label_report_title() -> None:
     assert "Novomodelo vs NEWAVE Results Comparison" in html
 
 
+def test_overview_shows_the_bounds_net_of_penalties_after_convergence() -> None:
+    dataset = _build_dataset()
+    conv = pl.DataFrame(
+        {
+            "iteration": [1, 2],
+            "lower_bound": [40e9, 50e9],
+            "upper_bound_mean": [60e9, 55e9],
+        }
+    )
+    dataset.render.nw_convergence = conv
+    dataset.render.novomodelo_convergence = conv
+    dataset.render.nw_costs = {"FOLGA RESTRICOES": 5e9}
+    dataset.render.novomodelo_costs = {"generic_violation_cost": 1e9}
+
+    overview = _extract_tab_content(build_comparison_report(dataset), "tab-overview")
+
+    caption = "Lower bound net of constraint-violation penalties"
+    assert caption in overview
+    assert overview.index(caption) > overview.index("Convergence")
+
+
+def test_overview_omits_the_net_bounds_without_convergence() -> None:
+    overview = _extract_tab_content(
+        build_comparison_report(_build_dataset()), "tab-overview"
+    )
+
+    assert "net of constraint-violation penalties" not in overview
+
+
 # ---------------------------------------------------------------------------
 # print_results_summary_from_dataset: default unchanged; "DECOMP" relabels.
 # ---------------------------------------------------------------------------

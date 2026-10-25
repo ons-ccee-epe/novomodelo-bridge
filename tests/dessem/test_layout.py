@@ -16,6 +16,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     cortdeco_record_count,
     cut_head_indices,
     mapcut_record_count,
+    travel_time_lag_starts,
 )
 
 
@@ -38,18 +39,38 @@ class TestMapcutRecordCount:
     """Test mapcut record count calculation."""
 
     def test_minimal_case(self) -> None:
-        # n_utv=0, n_estagios=1, max_lag=0, n_cenarios=1
-        count = mapcut_record_count(0, 1, 0, 1)
-        # header(4) + physical(14) + tree(1) + stage(1) + reg9+10 pairs(1) = 21
-        # Actually: 4 + 14 + 1 + 1 + 0*1*1 + 1 + 1 = 22
-        expected = 4 + 14 + 1 + 1 + 0 + 1 + 1
-        assert count == expected
+        count = mapcut_record_count((), 1, 1)
+        # header(4) + physical(14) + tree(1) + stage(1) + reg 9 (1) + reg 10 (1)
+        assert count == 4 + 14 + 1 + 1 + 1 + 1
+
+    def test_travel_time_adds_one_record_per_plant_stage_and_lag(self) -> None:
+        assert mapcut_record_count((3, 1, 3, 1), 2, 2) == mapcut_record_count(
+            (), 2, 2
+        ) + (4 + 2 + 4 + 2)
 
     def test_negative_values_raise(self) -> None:
         with pytest.raises(LayoutError):
-            mapcut_record_count(-1, 1, 0, 1)
+            mapcut_record_count((-1,), 1, 1)
         with pytest.raises(LayoutError):
-            mapcut_record_count(0, -1, 0, 1)
+            mapcut_record_count((), -1, 1)
+
+
+class TestTravelTimeLagStarts:
+    """Reg 6's lag starts, as the reference DECOMP writes them."""
+
+    def test_two_plants_with_different_lags(self) -> None:
+        lags = (3, 1) * 4
+
+        assert travel_time_lag_starts(lags, 2, 4) == (1, 13, 4, 14, 7, 15, 10, 16)
+
+    def test_swapped_plant_order_numbers_the_shorter_lags_first(self) -> None:
+        lags = (1, 3) * 4
+
+        assert travel_time_lag_starts(lags, 2, 4) == (1, 5, 2, 8, 3, 11, 4, 14)
+
+    def test_lag_count_must_match_plants_and_stages(self) -> None:
+        with pytest.raises(LayoutError, match="2 plants and 3 stages"):
+            travel_time_lag_starts((3, 1, 3, 1), 2, 3)
 
 
 class TestCortdecoNcoef:

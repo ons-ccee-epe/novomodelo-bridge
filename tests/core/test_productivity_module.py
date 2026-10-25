@@ -14,6 +14,8 @@ from novomodelo_bridge.core.productivity import (
     equivalent_productivity_from_coeffs,
     evaluate_cota,
     fpha_efficiency,
+    fpha_spillage_fit_max_m3s,
+    hydraulic_generation_mw,
     integrated_productivity,
     mean_cota,
     stored_energy_productivity,
@@ -175,6 +177,19 @@ class TestFphaEfficiency:
         assert any("CLAMPED PLANT" in record.getMessage() for record in caplog.records)
 
 
+class TestFphaSpillageFitMax:
+    def test_is_twice_the_largest_monthly_mean(self) -> None:
+        means = [900.0, 21141.0, 18000.0] + [500.0] * 9
+        assert fpha_spillage_fit_max_m3s(288, means) == 42282.0
+
+    def test_artificial_gauge_has_none_whatever_its_means(self) -> None:
+        assert fpha_spillage_fit_max_m3s(300, [100.0] * 12) is None
+
+    def test_gauge_without_a_positive_mean_has_none(self) -> None:
+        assert fpha_spillage_fit_max_m3s(12, [0.0] * 12) is None
+        assert fpha_spillage_fit_max_m3s(12, []) is None
+
+
 class TestKturbByTipoTurbina:
     def test_maps_known_turbine_types(self) -> None:
         # 1 = Francis, 2 = Kaplan, 3 = Pelton; 0 = unspecified -> Francis.
@@ -185,3 +200,15 @@ class TestKturbByTipoTurbina:
 
     def test_francis_and_pelton_share_the_square_root_exponent(self) -> None:
         assert KTURB_BY_TIPO_TURBINA[1] == KTURB_BY_TIPO_TURBINA[3]
+
+
+class TestHydraulicGeneration:
+    def test_specific_productivity_times_flow_times_net_head(self) -> None:
+        generation = hydraulic_generation_mw(0.009, 100.0, 50.0, 1000.0)
+        assert generation == pytest.approx(45.0)
+
+    def test_capped_at_the_generation_limit(self) -> None:
+        assert hydraulic_generation_mw(0.009, 100.0, 50.0, 40.0) == 40.0
+
+    def test_non_positive_net_head_generates_nothing(self) -> None:
+        assert hydraulic_generation_mw(0.009, 100.0, -3.0, 1000.0) == 0.0

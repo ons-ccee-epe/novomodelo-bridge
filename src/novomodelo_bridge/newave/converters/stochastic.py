@@ -356,6 +356,35 @@ def _incremental_history(
     FileNotFoundError
         If the vazoes.dat DataFrame is absent or empty.
     """
+    hist_start_year, n_rows, natural_by_posto = _natural_history(case)
+    cascade = _case_cascade(case)
+    _report_artificial_gauge(case, cascade, id_map, natural_by_posto)
+    incremental = _incremental_by_hydro(cascade, id_map, natural_by_posto)
+    return hist_start_year, n_rows, incremental
+
+
+def natural_monthly_means(case: NewaveCase) -> dict[int, list[float]]:
+    """Per posto, the mean natural inflow (m³/s) of each calendar month,
+    January first, over the historical record :func:`_incremental_history`
+    reads.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the vazoes.dat DataFrame is absent or empty.
+    """
+    _, _, natural_by_posto = _natural_history(case)
+    return {
+        posto: [float(series[month::12].mean()) for month in range(12)]
+        for posto, series in natural_by_posto.items()
+        if len(series) >= 12
+    }
+
+
+def _natural_history(case: NewaveCase) -> tuple[int, int, dict[int, np.ndarray]]:
+    """``(hist_start_year, n_rows, natural series per posto)`` of
+    ``vazoes.dat``, one entry per month from January of ``hist_start_year``,
+    truncated at the month before the study start."""
     # vazoes.dat is large and read only here, so it stays uncached on case.files.
     dger = case.dger
     vazoes_obj = _read_vazoes(case.files.vazoes, dger)
@@ -373,11 +402,7 @@ def _incremental_history(
     cutoff_months = (study_start_year - hist_start_year) * 12 + (study_start_month - 1)
     n_rows = min(cutoff_months, n_total_rows)
 
-    natural_by_posto = _natural_by_posto(df_vazoes, n_rows)
-    cascade = _case_cascade(case)
-    _report_artificial_gauge(case, cascade, id_map, natural_by_posto)
-    incremental = _incremental_by_hydro(cascade, id_map, natural_by_posto)
-    return hist_start_year, n_rows, incremental
+    return hist_start_year, n_rows, _natural_by_posto(df_vazoes, n_rows)
 
 
 def _natural_by_posto(df_vazoes: pd.DataFrame, n_rows: int) -> dict[int, np.ndarray]:

@@ -1,35 +1,47 @@
 """Scenario conversion for DECOMP-like decks (the explicit inflow tree).
 
-The inflow file carries the deterministic trunk (weekly forecasts, one
-scenario per weekly stage) and the terminal fan (generated scenarios with
-per-node probabilities). DECOMP's inflow file is the *arquivo de vazões
-incrementais*: each gauging-station column already holds the plant's own
-incremental (local) inflow, so each plant's value is read straight through
-from its (post-``AC NUMPOS``) gauge column — no upstream subtraction.
-novomodelo re-derives the natural flow at each plant by routing upstream
-releases down the ``downstream_id`` cascade.
+The inflow file carries the deterministic trunk and the terminal fan:
+
+- **Weekly stages** (first operative month, when it is split into weeks):
+  ``previsoes`` holds one row per stage, each a deterministic forecast
+  (scenario 0); it is empty for a deck of monthly stages only.
+- **Monthly stages** (later months): ``cenarios_gerados`` holds one row per
+  (stage, scenario). Deterministic trunk stages have a single row (scenario 1
+  → index 0); the terminal fan has one row per opening.
+
+DECOMP's inflow file is the *arquivo de vazões incrementais*: each
+gauging-station column already holds the plant's own incremental (local)
+inflow, so each plant's value is read straight through from its (post-``AC
+NUMPOS``) gauge column — no upstream subtraction. novomodelo re-derives the natural
+flow at each plant by routing upstream releases down the ``downstream_id``
+cascade.
 
 The tree is emitted node-natively: every stage draws its openings from
-``external_inflow_scenarios.parquet`` (trunk column 0, terminal fan
-columns ``0..N-1``), and the per-scenario weights become the terminal
-branch-edge probabilities on the ``policy_graph`` (see
-``temporal.convert_stages``). Under the identity stochastic convention
-(μ = 0, σ = 1, order 0) the standardized noise equals the natural value.
-``terminal_fan_probabilities`` supplies those fan weights;
-``convert_scenario_probabilities`` remains a validation view for
+``external_inflow_scenarios.parquet`` (trunk column 0, terminal fan columns
+``0..N-1``), and the per-scenario weights become the terminal branch-edge
+probabilities on the ``policy_graph`` (see ``temporal.convert_stages``). Under
+the identity stochastic convention (μ = 0, σ = 1, order 0) the standardized
+noise equals the natural value. ``terminal_fan_probabilities`` supplies those
+fan weights; ``convert_scenario_probabilities`` remains a validation view for
 ``check decomp`` and is no longer written to the case directory.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import pandas as pd
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.incremental_inflow import (
     artificial_gauge_plants_diagnostic,
     is_artificial_gauge,
@@ -40,9 +52,10 @@ from novomodelo_bridge.core.inflow_windows import (
     previous_months,
 )
 from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.temporal import weekly_stage_count
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from idecomp.decomp import Vazoes
 
@@ -106,79 +119,49 @@ def _incremental_values(
     inflow, so the value is read straight through — no upstream subtraction.
     Verified against the deck's ``dec_oper_usih`` reported
     ``vazao_incremental``: the direct per-posto read matches every operated
-    plant to 0 m³/s, and the reported natural flow reconstructs exactly as the
-    running sum of these incrementals down each cascade. (DECOMP operates
-    every plant — no fictitious/non-operated intermediates — so there is no
-    upstream drainage to re-attribute downstream; ``station_by_code`` already
-    resolves any ``AC NUMPOS`` gauge relink.)
+    plant to 0 m³/s, except that a negative value is reported there as zero
+    (:func:`_report_negative_incrementals`), and the reported natural flow
+    reconstructs exactly as the running sum of these incrementals down each
+    cascade. (DECOMP operates every plant — no fictitious/non-operated
+    intermediates — so there is no upstream drainage to re-attribute
+    downstream; ``station_by_code`` already resolves any ``AC NUMPOS`` gauge
+    relink.)
     """
     return [float(row[station_by_code[code]]) for code in id_map.hydro_codes]
 
 
-def convert_recent_observation_windows(
-    vazoes: Vazoes,
-    effective: EffectiveCadastro,
-    id_map: DecompIdMap,
-    calendar: Sequence[OperativeStage],
-) -> list[dict]:
-    """``initial_conditions.recent_observations``: the deck's pre-study observed
-    inflows (full preceding months + the partial study-start month's weeks) as
-    non-overlapping windows, seeding novomodelo's PAR inflow-lag accumulator.
+def recent_observation_rows(
+    vazoes: Vazoes, study_start: date
+) -> list[tuple[date, date, pd.Series]]:
+    """The deck's pre-study observation windows, oldest first, each with its row.
 
-    DECOMP's ``vazoes`` carries two observation tables, natural inflow per posto
-    (each posto column is the plant's own incremental, :func:`_incremental_values`):
+    Each row is one ``vazoes`` observation, a column per posto. The tables are:
 
-    - ``observacoes_mensais`` — the ``N`` full calendar months preceding the
-      study, ``mes`` chronological oldest-first (``mes = N`` is the month
-      immediately before the study-start month; verified against the deck's
-      seasonal signal), and
-    - ``observacoes_semanais`` — the ``W`` weeks of the partial study-start
-      month before the study begins, ``semana`` oldest-first.
+    - ``observacoes_mensais`` — the ``N`` full calendar months before the
+      study, ``mes`` oldest first (``mes = N`` is the month before the
+      study-start month);
+    - ``observacoes_semanais`` — the ``W`` 7-day weeks of the study-start month
+      before the study begins, ``semana`` oldest first, ending at the study
+      start.
 
-    Emitted as ``[start, end)`` windows per hydro: the weekly windows are 7-day,
-    Saturday-aligned, ending at the study start; the monthly windows are full
-    calendar months, with the most recent clipped to end where the weekly
-    windows begin so no two windows overlap (a novomodelo requirement; adjacent
-    ``start == previous end`` is fine). novomodelo casts these onto the monthly
-    inflow-lag periods to seed the ``p`` lags before stage 0
-    (``derive_inflow_seeds``); the forward pass then supplies the study's own
-    inflows to complete the accumulator at the coupling.
-
-    The monthly history is deliberately routed here and **not** to
-    ``scenarios/inflow_history.parquet``: novomodelo fits AR seasonal statistics from
-    that file (needs ≥ 2 observations per season), which the single-realization
-    DECOMP tendency cannot satisfy — ``recent_observations`` is the pure lag
-    seed, never AR-fit input. Returns ``[]`` when the deck carries neither table.
+    The most recent month is clipped where the weeks begin and a month wholly
+    inside them is dropped, so no two windows overlap (a novomodelo requirement of
+    ``recent_observations``; ``start == previous end`` is fine).
     """
     monthly = vazoes.observacoes_mensais
     weekly = vazoes.observacoes_semanais
-    has_monthly = monthly is not None and not monthly.empty
-    has_weekly = weekly is not None and not weekly.empty
-    if not has_monthly and not has_weekly:
-        return []
+    windows: list[tuple[date, date, pd.Series]] = []
 
-    station_by_code, _ = _incremental_context(effective, id_map)
-    study_start = calendar[0].start_date
-    rows: list[tuple[int, date, date, float]] = []
-
-    # Weekly windows: 7-day, ending at the study start, oldest first. Their
-    # earliest start is where the monthly history must stop to avoid overlap.
     weekly_floor = study_start
-    if has_weekly:
+    if weekly is not None and not weekly.empty:
         ordered_weeks = weekly.sort_values("semana")
         n_weeks = len(ordered_weeks)
         weekly_floor = study_start - timedelta(days=n_weeks * 7)
         for offset, (_, row) in enumerate(ordered_weeks.iterrows()):
             start = study_start - timedelta(days=(n_weeks - offset) * 7)
-            end = study_start - timedelta(days=(n_weeks - offset - 1) * 7)
-            for hydro_id, value in enumerate(
-                _incremental_values(row, id_map, station_by_code)
-            ):
-                rows.append((hydro_id, start, end, value))
+            windows.append((start, start + timedelta(days=7), row))
 
-    # Monthly windows: full calendar months, the most recent clipped to abut
-    # the weekly floor (a month fully inside the weekly span is dropped).
-    if has_monthly:
+    if monthly is not None and not monthly.empty:
         ordered_months = monthly.sort_values("mes")
         months = previous_months(
             study_start.year, study_start.month, len(ordered_months)
@@ -187,14 +170,41 @@ def convert_recent_observation_windows(
             months, ordered_months.iterrows(), strict=True
         ):
             start, end = month_window(year, month)
-            if start >= weekly_floor:
-                continue
-            end = min(end, weekly_floor)
-            for hydro_id, value in enumerate(
-                _incremental_values(row, id_map, station_by_code)
-            ):
-                rows.append((hydro_id, start, end, value))
+            if start < weekly_floor:
+                windows.append((start, min(end, weekly_floor), row))
 
+    windows.sort(key=lambda window: window[0])
+    return windows
+
+
+def convert_recent_observation_windows(
+    vazoes: Vazoes,
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+    calendar: Sequence[OperativeStage],
+) -> list[dict]:
+    """``initial_conditions.recent_observations``: the pre-study observed inflows
+    (:func:`recent_observation_rows`) seeding novomodelo's PAR inflow-lag accumulator.
+
+    Read on each plant's boundary-cut coupling gauge
+    (:meth:`~novomodelo_bridge.decomp.converters.cadastro.effective.EffectiveCadastro.coupling_gauge`),
+    not its operation gauge: the seed only feeds the lag terms of the boundary
+    cut, which the source model evaluates there. novomodelo casts these windows onto
+    the monthly lag periods before stage 0 (``derive_inflow_seeds``) and the
+    forward pass completes the accumulator at the coupling.
+
+    The monthly history is deliberately not routed to
+    ``scenarios/inflow_history.parquet``: novomodelo fits AR seasonal statistics from
+    that file (≥ 2 observations per season), which the single-realization
+    DECOMP tendency cannot satisfy. Returns ``[]`` when the deck carries neither
+    observation table.
+    """
+    stations = [str(effective.coupling_gauge(code)) for code in id_map.hydro_codes]
+    rows = [
+        (hydro_id, start, end, float(row[station]))
+        for start, end, row in recent_observation_rows(vazoes, calendar[0].start_date)
+        for hydro_id, station in enumerate(stations)
+    ]
     rows.sort(key=lambda entry: (entry[0], entry[1]))
     return format_observation_windows(rows)
 
@@ -205,25 +215,37 @@ def _tree_values(
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
 ) -> dict[tuple[int, int], list[float]]:
-    """``{(stage_index, scenario_index): incrementals}`` for the whole tree."""
+    """``{(stage_index, scenario_index): incrementals}`` for the whole tree.
+
+    DECOMP's inflow file splits forecasts across two tables:
+
+    - ``previsoes`` — one row per **weekly** stage (the first operative month)
+    - ``cenarios_gerados`` — one row per (stage, scenario) for **monthly**
+      stages (the deterministic monthly trunk stages + the terminal fan)
+
+    For a multi-month deck the monthly trunk stages (deterministic, scenario 1)
+    come from ``cenarios_gerados``, not ``previsoes``. The terminal fan's
+    multiple scenarios also come from ``cenarios_gerados``.
+    """
     station_by_code, _ = _incremental_context(effective, id_map)
     terminal = len(calendar) - 1
+    n_weekly = weekly_stage_count(calendar)
 
     previsoes = vazoes.previsoes
-    if previsoes is None or previsoes.empty:
-        raise ValueError("the inflow file has no trunk forecasts (previsoes)")
-    if len(previsoes) != terminal:
+    n_forecasts = 0 if previsoes is None else len(previsoes)
+    if n_forecasts != n_weekly:
         raise ValueError(
-            f"{len(previsoes)} trunk forecast rows for {terminal} weekly stages"
+            f"{n_forecasts} weekly forecast rows (previsoes) for {n_weekly} "
+            "weekly stages"
         )
 
     values: dict[tuple[int, int], list[float]] = {}
-    for _, row in previsoes.iterrows():
+    for _, row in () if previsoes is None else previsoes.iterrows():
         stage_index = int(row["estagio"]) - 1
-        if not 0 <= stage_index < terminal:
+        if not 0 <= stage_index < n_weekly:
             raise ValueError(
                 f"trunk forecast stage {int(row['estagio'])} outside the "
-                f"weekly range (1..{terminal})"
+                f"weekly range (1..{n_weekly})"
             )
         values[(stage_index, 0)] = _incremental_values(row, id_map, station_by_code)
 
@@ -232,13 +254,18 @@ def _tree_values(
         raise ValueError("the inflow file has no terminal fan (cenarios_gerados)")
     for _, row in cenarios.iterrows():
         stage_index = int(row["estagio"]) - 1
-        if stage_index != terminal:
+        scenario_index = int(row["cenario"]) - 1
+        if not n_weekly <= stage_index <= terminal:
             raise ValueError(
-                f"fan scenario at stage {int(row['estagio'])}; expected only "
-                f"the terminal stage {terminal + 1} — a pre-terminal branching "
-                "deck needs the node-graph work"
+                f"cenarios_gerados row at stage {int(row['estagio'])} outside "
+                f"the monthly range ({n_weekly + 1}..{terminal + 1})"
             )
-        values[(stage_index, int(row["cenario"]) - 1)] = _incremental_values(
+        if stage_index < terminal and scenario_index != 0:
+            raise ValueError(
+                f"monthly trunk stage {int(row['estagio'])} has scenario "
+                f"{int(row['cenario'])}; only the terminal stage may fan"
+            )
+        values[(stage_index, scenario_index)] = _incremental_values(
             row, id_map, station_by_code
         )
     return values
@@ -260,6 +287,65 @@ def _report_artificial_gauge_plants(
         emit(artificial_gauge_plants_diagnostic(plants), logger=_LOG)
 
 
+def _report_negative_incrementals(
+    values: Mapping[tuple[int, int], Sequence[float]],
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+) -> None:
+    """WARN on the tree's negative incremental inflows, kept as the deck has them."""
+    negatives: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for (stage_index, _), incrementals in values.items():
+        for code, value in zip(id_map.hydro_codes, incrementals, strict=True):
+            if value < 0.0:
+                negatives[(code, stage_index)].append(value)
+    if not negatives:
+        return
+    rows = [
+        [
+            code,
+            str(effective.base.loc[code, "nome_usina"]).strip(),
+            effective.inflow_gauge(code, 0),
+            stage_index + 1,
+            len(found),
+            min(found),
+        ]
+        for (code, stage_index), found in sorted(negatives.items())
+    ]
+    plants = len({code for code, _ in negatives})
+    emit(
+        Diagnostic(
+            code="decomp-negative-incremental-inflows",
+            severity=Severity.WARNING,
+            category="Inflow scenarios",
+            title=f"Negative incremental inflows kept ({plants})",
+            summary=(
+                f"{plants} plant(s) have a negative incremental inflow in the "
+                "inflow file. The values are converted as they are, so novomodelo's "
+                "water balance removes that water unless its priced inflow "
+                "slack adds it back. The source model reports these "
+                "incremental inflows as zero in its operation output."
+            ),
+            table=DiagnosticTable(
+                columns=[
+                    "Code",
+                    "Name",
+                    "Posto",
+                    "Stage",
+                    "Scenarios",
+                    "Lowest (m3/s)",
+                ],
+                rows=rows,
+            ),
+            remediation=(
+                "Compare the listed plants' operation with the source model's. "
+                "A negative inflow below a plant whose outflow is capped can "
+                "force that plant to spill or violate its outflow limit."
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
 def convert_external_inflows(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -272,6 +358,7 @@ def convert_external_inflows(
     column."""
     _report_artificial_gauge_plants(effective, id_map)
     values = _tree_values(vazoes, effective, id_map, case.calendar)
+    _report_negative_incrementals(values, effective, id_map)
 
     stage_ids: list[int] = []
     scenario_ids: list[int] = []
@@ -294,6 +381,59 @@ def convert_external_inflows(
     )
 
 
+def expected_incremental_inflows(
+    vazoes: Vazoes,
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+    calendar: Sequence[OperativeStage],
+    fan_probabilities: Sequence[float],
+) -> dict[tuple[int, int], float]:
+    """``{(plant code, stage_index): incremental inflow m³/s}``, as the deck
+    gives it (negative values included).
+
+    A trunk stage takes its single forecast; the terminal stage takes its fan's
+    mean weighted by *fan_probabilities* (from
+    :func:`terminal_fan_probabilities`), never the uniform mean.
+    """
+    terminal = len(calendar) - 1
+    expected: dict[tuple[int, int], float] = defaultdict(float)
+    for (stage_index, scenario_index), incrementals in _tree_values(
+        vazoes, effective, id_map, calendar
+    ).items():
+        weight = fan_probabilities[scenario_index] if stage_index == terminal else 1.0
+        for code, value in zip(id_map.hydro_codes, incrementals, strict=True):
+            expected[(code, stage_index)] += weight * value
+    return dict(expected)
+
+
+def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
+    """Fail unless every stage before *terminal* is deterministic.
+
+    The node graph fans only at the terminal stage (``build_node_graph``), so
+    the trunk — every 1-based stage ``1..terminal-1`` — must carry a single
+    inflow opening. A trunk stage with more than one ``cenario`` is DECOMP's
+    growing scenario tree (branching before the last month), which this
+    terminal-fan conversion cannot represent and must not silently flatten.
+    """
+    stage = prob["estagio"].astype(int)
+    trunk = prob[(stage >= 1) & (stage < terminal)]
+    branching = sorted(
+        {
+            int(s)
+            for s, n in trunk.groupby("estagio")["cenario"].nunique().items()
+            if n > 1
+        }
+    )
+    if branching:
+        raise ValueError(
+            f"inflow stages {branching} branch into multiple scenarios, but "
+            f"only the terminal stage {terminal} may fan. DECOMP's scenario "
+            f"tree branches from the second month on; a deck that branches "
+            f"before its last stage is not convertible by the terminal-fan "
+            f"model."
+        )
+
+
 def terminal_fan_probabilities(
     vazoes: Vazoes,
     calendar: Sequence[OperativeStage],
@@ -306,12 +446,16 @@ def terminal_fan_probabilities(
     returned list is indexed by 0-based scenario id (``cenario - 1``), the
     same id the external inflow library binds via each fan node's
     ``scenario_id``. Validated to be a contiguous 0-based range summing to 1.
+
+    Rejects (via :func:`_reject_branching_trunk`) a deck whose trunk already
+    branches, since only the terminal stage may fan.
     """
     prob = vazoes.probabilidades
     if prob is None or prob.empty:
         raise ValueError("the inflow file has no probability table")
 
     terminal = len(calendar)  # 1-based id of the terminal (fan) stage
+    _reject_branching_trunk(prob, terminal)
     rows = prob[prob["estagio"].astype(int) == terminal]
     if rows.empty:
         raise ValueError(

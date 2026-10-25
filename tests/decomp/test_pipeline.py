@@ -19,7 +19,7 @@ import pytest
 from typer.testing import CliRunner
 
 from novomodelo_bridge.cli import app
-from novomodelo_bridge.core.diagnostics import Diagnostic
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -33,6 +33,7 @@ from novomodelo_bridge.decomp.converters.cadastro import (
     DiversionChannel,
     EffectiveCadastro,
 )
+from novomodelo_bridge.decomp.converters.hydro import TurbineLimits
 from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
 from novomodelo_bridge.decomp.converters.thermal import (
     _THERMAL_COST_SCHEMA,
@@ -57,6 +58,7 @@ from novomodelo_bridge.decomp.scenarios import (
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 _ID_MAP = DecompIdMap(
     bus_codes=(1, 2),
@@ -141,6 +143,48 @@ class TestScenarioEmitters:
         assert fan[fan["hydro_id"] == 0]["value_m3s"].iloc[0] == pytest.approx(120.0)
         assert fan[fan["hydro_id"] == 1]["value_m3s"].iloc[0] == pytest.approx(180.0)
 
+    def test_negative_incremental_inflows_are_kept_and_reported(self) -> None:
+        hidr = _hidr_frame().assign(nome_usina=["ALFA", "BETA"])
+        vazoes = _StubVazoes()
+        vazoes.previsoes.loc[0, "12"] = -2.0
+        vazoes.cenarios_gerados.loc[:, "12"] = [-4.0, -1.0]
+        with collect() as collected:
+            table = convert_external_inflows(
+                _scenario_case(),
+                _ID_MAP,
+                vazoes=vazoes,
+                effective=_effective_no_override(hidr),
+            ).to_pandas()
+
+        beta = table[table["hydro_id"] == 1].sort_values(["stage_id", "scenario_id"])
+        assert beta["value_m3s"].tolist() == [-2.0, 160.0, -4.0, -1.0]
+        [diagnostic] = [
+            d for d in collected if d.code == "decomp-negative-incremental-inflows"
+        ]
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [
+            [2, "BETA", 12, 1, 1, -2.0],
+            [2, "BETA", 12, 3, 2, -4.0],
+        ]
+        text = f"{diagnostic.summary} {diagnostic.remediation}"
+        for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
+            assert leak not in text
+
+    def test_non_negative_inflows_emit_no_negative_inflow_warning(self) -> None:
+        with collect() as collected:
+            convert_external_inflows(
+                _scenario_case(),
+                _ID_MAP,
+                vazoes=_StubVazoes(),
+                effective=_effective_no_override(
+                    _hidr_frame().assign(nome_usina=["ALFA", "BETA"])
+                ),
+            )
+        assert not [
+            d for d in collected if d.code == "decomp-negative-incremental-inflows"
+        ]
+
     def test_identity_stats(self) -> None:
         stats = convert_inflow_stats_identity(_scenario_case(), _ID_MAP).to_pandas()
         assert len(stats) == 2 * 3
@@ -195,10 +239,83 @@ class TestScenarioEmitters:
         with pytest.raises(ValueError, match="sum"):
             terminal_fan_probabilities(vazoes, _calendar())
 
+    def test_branching_trunk_raises(self) -> None:
+        # A trunk stage (2) that branches into two scenarios is DECOMP's
+        # growing tree, which the terminal-fan model cannot represent.
+        vazoes = _StubVazoes()
+        vazoes.probabilidades = pd.concat(
+            [
+                vazoes.probabilidades,
+                pd.DataFrame(
+                    [{"estagio": 2, "no": 5, "cenario": 2, "probabilidade": 1.0}]
+                ),
+            ],
+            ignore_index=True,
+        )
+        with pytest.raises(ValueError, match="branch into multiple scenarios"):
+            terminal_fan_probabilities(vazoes, _calendar())
+
+    def test_multi_month_external_inflows(self) -> None:
+        """Multi-month deck: weekly stages from previsoes, monthly trunk +
+        terminal fan from cenarios_gerados."""
+        # 3 weekly (168 h each) + 1 monthly trunk (648 h) + 1 terminal (744 h).
+        # Same calendar shape as TestBuildOperativeCalendar.test_multi_month_deterministic_trunk.
+        hours = (
+            [[24.0, 64.0, 80.0]] * 3 + [[216.0, 216.0, 216.0]] + [[248.0, 248.0, 248.0]]
+        )
+        calendar = build_operative_calendar(date(2026, 3, 14), hours)
+        case = make_decomp_case(Path("unused"), calendar=calendar)
+
+        hidr = _hidr_frame()
+        effective = EffectiveCadastro(
+            base=hidr, n_stages=len(calendar), stage_varying={}
+        )
+
+        class _MultiMonthVazoes:
+            # Weekly stages 1-3 from previsoes
+            previsoes = pd.DataFrame(
+                [
+                    {"estagio": 1, "11": 100.0, "12": 150.0},
+                    {"estagio": 2, "11": 110.0, "12": 160.0},
+                    {"estagio": 3, "11": 120.0, "12": 170.0},
+                ]
+            )
+            # Monthly stages 4 (trunk) and 5 (terminal fan) from cenarios_gerados
+            cenarios_gerados = pd.DataFrame(
+                [
+                    {"estagio": 4, "cenario": 1, "11": 80.0, "12": 130.0},  # trunk
+                    {"estagio": 5, "cenario": 1, "11": 90.0, "12": 140.0},  # fan
+                    {"estagio": 5, "cenario": 2, "11": 95.0, "12": 145.0},  # fan
+                ]
+            )
+
+        table = convert_external_inflows(
+            case,
+            _ID_MAP,
+            vazoes=_MultiMonthVazoes(),
+            effective=effective,
+        ).to_pandas()
+
+        # 5 stages: 3 weekly (1 scenario each) + 1 monthly trunk (1 scenario) +
+        # 1 terminal (2 scenarios) = (3+1)*2 hydros + 2 scenarios * 2 hydros = 12
+        assert len(table) == 12
+
+        # Weekly stage 0, scenario 0, hydro 1 → 150.0
+        weekly = table[(table["stage_id"] == 0) & (table["hydro_id"] == 1)]
+        assert weekly["value_m3s"].iloc[0] == pytest.approx(150.0)
+
+        # Monthly trunk stage 3, scenario 0, hydro 0 → 80.0
+        trunk = table[(table["stage_id"] == 3) & (table["scenario_id"] == 0)]
+        assert trunk[trunk["hydro_id"] == 0]["value_m3s"].iloc[0] == pytest.approx(80.0)
+
+        # Terminal fan stage 4, scenario 1, hydro 1 → 145.0
+        fan = table[(table["stage_id"] == 4) & (table["scenario_id"] == 1)]
+        assert fan[fan["hydro_id"] == 1]["value_m3s"].iloc[0] == pytest.approx(145.0)
+
     def test_pre_terminal_fan_raises(self) -> None:
         vazoes = _StubVazoes()
         vazoes.cenarios_gerados.loc[0, "estagio"] = 2
-        with pytest.raises(ValueError, match="node-graph"):
+        with pytest.raises(ValueError, match="outside the monthly range"):
             convert_external_inflows(
                 _scenario_case(),
                 _ID_MAP,
@@ -327,7 +444,6 @@ class TestDecompCaseArtifacts:
             "line_bounds",
             "initial_conditions",
             "deficit_cost",
-            "has_travel_time",
             "fpha_codes",
         } <= field_names
 
@@ -665,6 +781,9 @@ class _CadastroDadger:
     def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
         return None
 
+    def fp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+        return None
+
     def ac(
         self,
         codigo_usina: int | None = None,  # noqa: ARG002
@@ -690,6 +809,7 @@ def _run_cadastro_pipeline(
     report_out: list[ConversionReport] | None = None,
     gnl_emission: GnlEmission | None = None,
     convert_gnl_mock_out: list[MagicMock] | None = None,
+    turbine_limits: TurbineLimits | None = None,
 ) -> Path:
     """Run ``convert_decomp_case`` against the fully synthetic mock deck
     above, patching every converter not under test to a canned
@@ -730,6 +850,8 @@ def _run_cadastro_pipeline(
     *convert_gnl_mock_out*, mirroring *diagnostics_out*'s out-param shape, lets
     a caller recover the ``convert_gnl`` mock (and thus its call args) after
     the patched run — populated only alongside *gnl_emission*.
+
+    *turbine_limits* replaces the default flat turbined-flow limits.
     """
     from novomodelo_bridge.decomp.files import DecompFiles
     from novomodelo_bridge.decomp.pipeline import convert_decomp_case
@@ -812,7 +934,7 @@ def _run_cadastro_pipeline(
             1.0
         ],
         "novomodelo_bridge.decomp.pipeline.config_conv.convert_config": {},
-        "novomodelo_bridge.decomp.pipeline.network_conv._bus_deficit_costs": {},
+        "novomodelo_bridge.decomp.pipeline.network_conv.bus_deficit_costs": {},
         "novomodelo_bridge.decomp.pipeline"
         ".hydro_conv.convert_energy_productivity": productivity_table,
         "novomodelo_bridge.decomp.pipeline.network_conv.convert_buses": {"buses": []},
@@ -843,6 +965,14 @@ def _run_cadastro_pipeline(
         "novomodelo_bridge.decomp.pipeline"
         ".bounds_conv.convert_hydro_bounds": baseline_hydro_bounds,
         "novomodelo_bridge.decomp.pipeline.hydro_conv.convert_hydro_group_availability": {},
+        # The mock deck carries no inflows, MP/FD registers or tailrace
+        # polynomials: the turbined-flow limit's inputs are patched with it.
+        "novomodelo_bridge.decomp.pipeline.scenarios_conv.expected_incremental_inflows": {},
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.tailrace_families": {},
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.stage_availability_factors": {},
+        "novomodelo_bridge.decomp.pipeline.hydro_conv.compute_turbine_limits": (
+            turbine_limits or flat_turbine_limits(_CADASTRO_ID_MAP, len(calendar))
+        ),
         "novomodelo_bridge.decomp.pipeline.contracts_conv.read_contracts": [],
         # The mock deck (_CadastroDadger) exposes no
         # RE/HQ/HV/UE accessors, so the special-constraint census and the
@@ -1078,6 +1208,25 @@ class TestCadastroPipelineWiring:
         # 50% of the base [20, 100] / [10, 50] ranges.
         assert values[0] == pytest.approx(60.0)
         assert values[1] == pytest.approx(30.0)
+
+    def test_plant_turbine_limit_lands_in_hydro_bounds(self, tmp_path: Path) -> None:
+        """A plant-wide turbined-flow limit below its groups' summed caps
+        becomes that stage's ``max_turbined_m3s``."""
+        limits = TurbineLimits(
+            {(1, 0): (100.0,) * 3, (2, 0): (100.0,) * 3},
+            plant_caps={1: (100.0, 80.0, 100.0)},
+        )
+        dst = _run_cadastro_pipeline(
+            tmp_path, ac_volmax_frame=None, turbine_limits=limits
+        )
+
+        table = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
+        rows = [
+            (row["hydro_id"], row["stage_id"], row["max_turbined_m3s"])
+            for row in table.to_pylist()
+            if row["max_turbined_m3s"] is not None
+        ]
+        assert rows == [(0, 1, 80.0)]
 
     def test_initial_conditions_json_stamps_schema_as_first_key(
         self, tmp_path: Path
@@ -1722,25 +1871,18 @@ class TestDryRun:
         assert not config.exists()
 
 
-_READ_TRAVEL_TIMES = (
-    "novomodelo_bridge.decomp.pipeline.travel_time_conv.read_travel_times"
-)
-
-
-class TestDeferralWarning:
-    """The flat ``deferred at this milestone`` warning now names ONLY water
-    travel time, and only when the deck actually carries a ``VI`` register.
-    Boundary FCF is imported by default, reservoir evaporation is converted
-    and windowed inflow inputs do not apply to the
-    external explicit tree the DECOMP path emits — so none of those are
-    deferred, and a deck with no travel time emits no deferral warning at all.
+class TestSpecialConstraintSurfaces:
+    """FE/RHA/LIBs special-constraint surfaces are reported through the
+    structured ``Diagnostic`` sink, and the DECOMP pipeline emits no flat
+    ``deferred at this milestone`` warning (nothing, including ``VI`` water
+    travel time, is held back at a milestone).
     """
 
-    def test_no_warning_when_nothing_is_deferred(
+    def test_no_milestone_deferral_warning_is_emitted(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The mock deck carries no VI travel-time register, so nothing is
-        deferred and no ``deferred at this milestone`` warning is emitted."""
+        """No ``deferred at this milestone`` warning fires: nothing is held
+        back at a milestone, including a deck carrying a ``VI`` register."""
         with caplog.at_level(
             logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
         ):
@@ -1750,42 +1892,14 @@ class TestDeferralWarning:
             r for r in caplog.records if "deferred at this milestone" in r.message
         ]
 
-    def test_names_only_water_travel_time_when_present(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """With a VI register present, the warning fires naming water travel
-        time alone — never boundary FCF, windowed inflow inputs, GNL
-        anticipation, or reservoir evaporation (all emitted, not deferred)."""
-        with (
-            caplog.at_level(
-                logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
-            ),
-            patch(_READ_TRAVEL_TIMES, return_value={1: 24.0}),
-        ):
-            _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
+    def test_fe_rha_libs_are_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
+        """A deck with FE/RHA/LIBs surfaces reports each exactly once through
+        the structured ``Diagnostic``s.
 
-        deferral = next(
-            r.message
-            for r in caplog.records
-            if "deferred at this milestone" in r.message
-        )
-        assert "water travel time (VI present)" in deferral
-        for absent in ("boundary FCF", "windowed inflow", "GNL", "evaporation"):
-            assert absent not in deferral
-
-    def test_fe_rha_libs_are_reported_through_the_dx_sink_not_the_warning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A deck with FE/RHA/LIBs surfaces reports them exactly once, through
-        the structured ``Diagnostic``s -- even when the deferral
-        warning fires (VI present here), it names only water travel time,
-        never these special-constraint surfaces (the warning text and the
-        ``dx`` sink are disjoint on these items).
-
-        ``convert_decomp_case`` owns its own top-level
-        ``dx.collect()``, so the diagnostics half reads
-        ``_run_cadastro_pipeline``'s ``diagnostics_out`` rather than an outer
-        ``dx.collect()`` (which would be shadowed and see nothing)."""
+        ``convert_decomp_case`` owns its own top-level ``dx.collect()``, so the
+        assertion reads ``_run_cadastro_pipeline``'s ``diagnostics_out`` rather
+        than an outer ``dx.collect()`` (which would be shadowed and see
+        nothing)."""
         from novomodelo_bridge.core import diagnostics as dx
 
         fe_diagnostic = dx.Diagnostic(
@@ -1811,19 +1925,13 @@ class TestDeferralWarning:
         )
 
         collected: list[dx.Diagnostic] = []
-        with (
-            caplog.at_level(
-                logging.WARNING, logger="novomodelo_bridge.decomp.pipeline"
-            ),
-            patch(_READ_TRAVEL_TIMES, return_value={1: 24.0}),
-        ):
-            _run_cadastro_pipeline(
-                tmp_path,
-                ac_volmax_frame=None,
-                unreadable_electrical=(fe_diagnostic, rha_diagnostic),
-                libs_electrical=libs_diagnostic,
-                diagnostics_out=collected,
-            )
+        _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            unreadable_electrical=(fe_diagnostic, rha_diagnostic),
+            libs_electrical=libs_diagnostic,
+            diagnostics_out=collected,
+        )
 
         codes = {d.code for d in collected}
         assert {
@@ -1831,14 +1939,6 @@ class TestDeferralWarning:
             "decomp-rha-family-unconverted",
             "decomp-libs-electrical-present",
         } <= codes
-
-        deferral = next(
-            r.message
-            for r in caplog.records
-            if "deferred at this milestone" in r.message
-        )
-        for needle in ("FE electrical participation", "RHA family", "LIBs electrical"):
-            assert needle not in deferral
 
 
 class TestDiversionChannels:
@@ -2130,6 +2230,108 @@ class TestMiniDeckItaipuFrequencyBounds:
         assert by_group_block[(0, 2)]["max_generation_mw"] == 6310.5
         assert by_group_block[(1, 0)]["min_generation_mw"] == 2000.0
         assert by_group_block[(1, 0)]["max_generation_mw"] == 7000.0
+
+
+class TestMiniDeckFphaProductionModels:
+    """The mini deck's FPHA plants fit their spillage coefficient over twice the
+    largest ``mlt.dat`` mean of their ``AC NUMPOS`` gauge, and a plant whose
+    turbined-flow limit is zero on a stage takes constant productivity 0.0
+    there."""
+
+    @staticmethod
+    def _stage_ranges(out: Path) -> dict[str, list[dict]]:
+        import json
+
+        names = {
+            h["id"]: h["name"]
+            for h in json.loads(
+                (out / "system" / "hydros.json").read_text(encoding="utf-8")
+            )["hydros"]
+        }
+        models = json.loads(
+            (out / "system" / "hydro_production_models.json").read_text(
+                encoding="utf-8"
+            )
+        )["production_models"]
+        return {names[m["hydro_id"]]: m["stage_ranges"] for m in models}
+
+    def test_spillage_range_follows_the_numpos_gauge(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from idecomp.decomp import Mlt
+
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+        ranges = self._stage_ranges(tmp_path / "out")
+        means = Mlt.read(str(decomp_mini_deck / "mlt.dat")).valores
+        assert means is not None
+
+        def spillage_max(name: str) -> float | None:
+            (value,) = {
+                r["fpha_config"].get("spillage_fit_max_m3s") for r in ranges[name]
+            }
+            return value
+
+        assert spillage_max("SOBRADINHO") == 2.0 * means["168"].max()
+        assert spillage_max("PIMENTAL") == 2.0 * means["288"].max()
+        assert spillage_max("BELO MONTE") is None
+
+    def test_fitting_window_widens_from_the_weekly_to_the_monthly_band(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+        weekly, monthly = self._stage_ranges(tmp_path / "out")["FURNAS"]
+        assert (weekly["start_stage_id"], weekly["end_stage_id"]) == (0, 2)
+        lo_w, hi_w = weekly["fpha_config"]["fitting_window"].values()
+        lo_m, hi_m = monthly["fpha_config"]["fitting_window"].values()
+        initial = (lo_w + hi_w) / 2.0
+        assert initial - lo_m == pytest.approx(2.5 * (initial - lo_w))
+        assert hi_w < hi_m
+
+    def test_zero_turbine_limit_stages_take_zero_constant_productivity(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+        outage, fpha = self._stage_ranges(tmp_path / "out")["JACUI"]
+        assert outage == {
+            "start_stage_id": 0,
+            "end_stage_id": 2,
+            "model": "constant_productivity",
+            "productivity_mw_per_m3s": 0.0,
+        }
+        assert (fpha["start_stage_id"], fpha["end_stage_id"], fpha["model"]) == (
+            3,
+            None,
+            "fpha",
+        )
+
+    def test_deck_without_mlt_warns_and_keeps_novomodelo_default_range(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        src = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, src)
+        (src / "mlt.dat").unlink()
+        index = src / "rv2"
+        index.write_text(
+            index.read_text(encoding="latin-1").replace("mlt.dat\n", ""),
+            encoding="latin-1",
+        )
+
+        report = convert_decomp_case(src, tmp_path / "out")
+        (warning,) = [d for d in report.diagnostics if d.code == "fpha-mlt-absent"]
+        assert warning.severity is Severity.WARNING
+        assert not any(
+            "spillage_fit_max_m3s" in r.get("fpha_config", {})
+            for plant in self._stage_ranges(tmp_path / "out").values()
+            for r in plant
+        )
 
 
 def _fc_line(tipo: str, caminho: str) -> str:

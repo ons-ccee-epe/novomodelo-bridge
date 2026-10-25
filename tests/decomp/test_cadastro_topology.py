@@ -1,8 +1,9 @@
 """Tests for the topology/gauge ``AC`` override family.
 
 Covers the plant-keyed, ``int``-valued mnemonics (``ACNUMJUS`` — the
-water-routing downstream plant — ``ACNUMPOS`` — the inflow gauge — and
-``ACJUSENA`` — the stored-energy downstream plant),
+water-routing downstream plant — ``ACNUMPOS`` — the inflow gauge —
+``ACNPOSNW`` — the boundary-cut coupling gauge — and ``ACJUSENA`` — the
+stored-energy downstream plant),
 flowing through the shared
 :func:`~novomodelo_bridge.decomp.converters.cadastro.overrides._read_keyed_overrides`
 reader (with ``_plant_code_key``), and their effect on the re-sourced
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
-from idecomp.decomp.modelos.dadger import ACJUSENA, ACNUMJUS, ACNUMPOS
+from idecomp.decomp.modelos.dadger import ACJUSENA, ACNPOSNW, ACNUMJUS, ACNUMPOS
 
 from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -38,6 +39,7 @@ from novomodelo_bridge.decomp.scenarios import (
 )
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 if TYPE_CHECKING:
     from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -112,12 +114,7 @@ def _plant_row(
     posto: int,
     name: str = "PLANT",
 ) -> dict:
-    """One synthetic ``hidr`` row. ``produtibilidade_especifica=0.0`` keeps
-    ``convert_hydros``'s head-correction branch (``_operating_head``)
-    defensively off (``rho_eq`` is then always non-positive), so the
-    no-override case does not need to also pin a head-correction formula to
-    check ``downstream_id``.
-    """
+    """One synthetic ``hidr`` row."""
     row: dict = {
         "nome_usina": name,
         "submercado": 1,
@@ -293,8 +290,13 @@ def test_no_topology_override_is_identical() -> None:
     )
     assert via_effective.equals(via_base)
 
-    hydros_effective = convert_hydros(case, id_map, effective=effective)["hydros"]
-    hydros_base = convert_hydros(case, id_map, effective=base_effective)["hydros"]
+    limits = flat_turbine_limits(id_map, len(calendar))
+    hydros_effective = convert_hydros(
+        case, id_map, effective=effective, turbine_limits=limits
+    )["hydros"]
+    hydros_base = convert_hydros(
+        case, id_map, effective=base_effective, turbine_limits=limits
+    )["hydros"]
     assert [h["downstream_id"] for h in hydros_effective] == [
         h["downstream_id"] for h in hydros_base
     ]
@@ -333,6 +335,31 @@ def test_numpos_override_changes_station() -> None:
     ).to_pandas()
     trunk = table[table["stage_id"] == 0]["value_m3s"].iloc[0]
     assert trunk == pytest.approx(77.0)
+
+
+def test_nposnw_override_sets_the_coupling_gauge_only() -> None:
+    """The last stage's ``ACNPOSNW`` is the coupling gauge; the operation
+    gauge and a plant without the record keep the ``hidr.dat`` posto."""
+    nposnw = pd.DataFrame(
+        [
+            {
+                "codigo_usina": 1,
+                "codigo_posto": 99,
+                "mes": "AGO",
+                "semana": 1.0,
+                "ano": 2026.0,
+            }
+        ]
+    )
+    effective, report = build_effective_cadastro(
+        _FakeDadger({ACNPOSNW: nposnw}), _abc_hidr(), _calendar()
+    )
+
+    assert report.applied["posto_acoplamento"] == 1
+    assert effective.coupling_gauge(1) == 99
+    assert effective.inflow_gauge(1, 2) == 11
+    assert effective.inflow_gauge_varies(1) is False
+    assert effective.coupling_gauge(2) == 12
 
 
 # ---------------------------------------------------------------------------

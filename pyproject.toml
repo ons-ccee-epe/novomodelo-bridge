@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
-    "idecomp>=1.15.0",
+    "idecomp>=1.17.0",
     # 1.16.1: first to read modif.dat VAZMINT PRE/POS markers (1.16.0: modif.dat
     # POTEFE/VOLCOTA/COTAREA and vazoes.dat at 600 postos).
     "inewave>=1.16.2",

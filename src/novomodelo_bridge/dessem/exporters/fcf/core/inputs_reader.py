@@ -1,7 +1,7 @@
 """Readers for the Novomodelo JSON inputs the conversion depends on.
 
-Only JSON is read. Because premise P1 zero-fills mapcut record indices 4-17 and
-premise P3 sets `n_utv = 0`, no Novomodelo Parquet artifact is needed.
+Only JSON is read. Because premise P1 zero-fills mapcut record indices 4-17,
+no Novomodelo Parquet artifact is needed.
 
 Stage durations are NOT uniform in the reference deck: stages 0-5 span 168
 hours each while stage 6 spans 600. Anything weighted by time must read the
@@ -54,13 +54,19 @@ class StageInfo:
 
 @dataclass(frozen=True)
 class HydroInfo:
-    """One hydro plant. `downstream_id` is `None` for a terminal plant."""
+    """One hydro plant.
+
+    `None` marks a terminal plant in `downstream_id`, and in
+    `travel_time_hours` a plant whose defluence reaches its downstream plant at
+    once.
+    """
 
     id: int
     name: str
     downstream_id: int | None
     min_storage_hm3: float
     max_storage_hm3: float
+    travel_time_hours: float | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +223,15 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
                 f"{dotted}.downstream_id must be int or null, "
                 f"got {type(downstream).__name__}"
             )
+        travel_time = (
+            _require_float(entry, "travel_time_hours", f"{dotted}.travel_time_hours")
+            if isinstance(entry, dict) and entry.get("travel_time_hours") is not None
+            else None
+        )
+        if travel_time is not None and travel_time < 0.0:
+            raise InputReadError(
+                f"{dotted}.travel_time_hours must be non-negative, got {travel_time}"
+            )
         hydros.append(
             HydroInfo(
                 id=_require_int(entry, "id", f"{dotted}.id"),
@@ -232,6 +247,7 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
                     "max_storage_hm3",
                     f"{dotted}.reservoir.max_storage_hm3",
                 ),
+                travel_time_hours=travel_time,
             )
         )
     return tuple(hydros)

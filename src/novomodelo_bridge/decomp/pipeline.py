@@ -3,7 +3,7 @@
 ``convert_decomp_case(src, dst)`` discovers the deck (``caso.dat`` names
 the revision extension; the ``rvN`` index file names the data files),
 parses it once, and writes a Novomodelo case directory. A deck feature the
-conversion leaves out (water travel time behind a tracked novomodelo gap, the
+conversion leaves out (an unconverted special-constraint family, the
 register term types their emitters name) is reported as a diagnostic by the
 emitter that detects it, never dropped silently.
 """
@@ -135,8 +135,8 @@ class DecompCaseArtifacts:
     line_bounds: pa.Table | None = None
     initial_conditions: dict | None = None
     deficit_cost: float | None = None
-    has_travel_time: bool | None = None
     fpha_codes: set[int] | None = None
+    turbine_limits: hydro_conv.TurbineLimits | None = None
     # Populated by `_resolve_bounds`.
     census: constraint_registers.ConstraintCensus | None = None
     pumping_ids: dict[int, int] | None = None
@@ -972,24 +972,46 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.stages_dict = stages_dict
     writer.write_json("stages.json", stages_dict)
 
-    # FPHA-eligible plants get novomodelo's computed-FPHA model, fit over the
-    # whole storage envelope (fpha_conv.fitting_window) with its reference volume
-    # anchored at the initial volume; the rest keep constant productivity, whose
-    # ρ_eq is anchored at the initial volume (not the full-range mean) — see
+    # Both the FPHA reference volume and the constant-productivity ρ_eq are
+    # anchored at the initial volume, not the full-range mean — see
     # hydro._equivalent_productivity_mw_per_m3s.
     initial_volumes = hydro_conv._operated_initial_volumes(case, effective=effective)
+    turbine_limits = hydro_conv.compute_turbine_limits(
+        effective,
+        id_map,
+        artifacts.calendar,
+        initial_volumes=initial_volumes,
+        incremental_inflows=scenarios_conv.expected_incremental_inflows(
+            artifacts.vazoes, effective, id_map, artifacts.calendar, fan_probabilities
+        ),
+        tailrace=hydro_conv.tailrace_families(case, id_map),
+        availability_factors=hydro_conv.stage_availability_factors(
+            case, id_map, effective=effective
+        ),
+    )
+    artifacts.turbine_limits = turbine_limits
     fpha_codes = fpha_conv.fpha_eligible_codes(effective, id_map)
     artifacts.fpha_codes = fpha_codes
-    fpha_configs: dict[int, dict] = {}
-    reference_volumes: dict[int, dict] = {}
-    for code in fpha_codes:
-        vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
-        v_init = initial_volumes.get(code, vmin)
-        fpha_configs[code] = {
-            "source": "computed",
-            "fitting_window": fpha_conv.fitting_window(effective, code),
-        }
-        reference_volumes[code] = {"volume_hm3": v_init}
+    stage_models: dict[int, list[dict]] = {}
+    if fpha_codes:
+        if case.mlt is None:
+            dx.emit(fpha_conv.mlt_absent_diagnostic(len(fpha_codes)), logger=_LOG)
+        fpha_windows = fpha_conv.volume_window_rule(dadger, artifacts.calendar)
+        for code in fpha_codes:
+            vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
+            reference_volume = {"volume_hm3": initial_volumes.get(code, vmin)}
+            stage_models[code] = [
+                hydro_conv.outage_stage_model()
+                if turbine_limits.plant_limit(code, stage.index) <= 0.0
+                else {
+                    "model": "fpha",
+                    "fpha_config": fpha_conv.fpha_config(
+                        effective, case.mlt, code, stage.index, fpha_windows
+                    ),
+                    "reference_volume": reference_volume,
+                }
+                for stage in artifacts.calendar
+            ]
 
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
@@ -997,7 +1019,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     productivity_parquet = hydro_conv.convert_hydro_energy_productivity(
         effective, id_map, initial_volumes, fpha_codes
     )
-    deficit_costs = network_conv._bus_deficit_costs(dadger)
+    deficit_costs = network_conv.bus_deficit_costs(dadger)
     deficit_cost = max(deficit_costs.values()) if deficit_costs else 0.0
     artifacts.deficit_cost = deficit_cost
     writer.write_json(
@@ -1007,19 +1029,12 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
             productivity["equivalent_productivity_mw_per_m3s"].to_pylist(),
         ),
     )
-    # TRACKED NOVOMODELO-GAP WORKAROUND (VI water travel time): the converter
-    # (decomp/travel_time.py) is complete and `novomodelo validate` accepts the
-    # emitted travel_time_hours + past_defluences, but novomodelo's transit-bucket
-    # cut generation currently produces an invalid cut that blows the lower
-    # bound past the upper bound (a large negative gap that novomodelo clamps to
-    # zero and mistakes for convergence, stopping on a corrupted policy). So VI
-    # is DEFERRED alongside GNL and the boundary FCF: detected for the deferral
-    # warning below, but not emitted. Restore by wiring convert_travel_time back
-    # into hydros.json + initial_conditions.past_defluences once the novomodelo bug
-    # is fixed. Removal condition tracked in the novomodelo repository's
-    # conversion-found-improvements registry (C-travel-time).
-    has_travel_time = bool(travel_time_conv.read_travel_times(dadger))
-    artifacts.has_travel_time = has_travel_time
+    # week_hours is stage 0's own duration, never a hardcoded 168: a deck whose
+    # first stage is not a full operative week still tiles past_defluences exactly.
+    calendar = case.calendar
+    travel_time_hours, past_defluences = travel_time_conv.convert_travel_time(
+        dadger, id_map, effective, case.start_date, calendar[0].total_hours
+    )
     # Built here but written below (after GNL): an anticipated GNL fleet extends
     # it with the left/right temporal-boundary arrays, and those need the thermal
     # ids assigned when thermals.json is built.
@@ -1030,13 +1045,20 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         ),
         "filling_storage": [],
     }
+    if past_defluences:
+        initial_conditions_doc["past_defluences"] = past_defluences
     artifacts.initial_conditions = initial_conditions_doc
 
     buses_doc = network_conv.convert_buses(case, id_map)
     artifacts.buses_doc = buses_doc
     writer.write_json("system/buses.json", buses_doc)
     hydros_dict = hydro_conv.convert_hydros(
-        case, id_map, effective=effective, fpha_codes=fpha_codes
+        case,
+        id_map,
+        effective=effective,
+        turbine_limits=turbine_limits,
+        travel_time_hours=travel_time_hours,
+        fpha_codes=fpha_codes,
     )
     artifacts.hydros_dict = hydros_dict
     # hydros.json is written after the bound tables are resolved (below): its
@@ -1098,19 +1120,15 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         )
     artifacts.thermals_dict = thermals_dict
     writer.write_json("system/thermals.json", thermals_dict)
-    # The PAR inflow-lag seed (initial_conditions.recent_observations) is NOT
-    # written here. The boundary cuts price the inflow-lag *deviation from the
-    # seasonal mean* (MLT), not the absolute inflow, so a raw observation seed is
-    # only correct once the cut RHS is folded by that same mean. Both the mean
-    # fold and the raw seed are authored together by the boundary-FCF importer
-    # (`fcf/importer.py::import_boundary_fcf`, which has the mlt.dat the fold
-    # needs), patched onto this file after conversion -- so they can never ship
-    # apart. A plain conversion (no boundary FCF) keeps the lag state at 0: its
-    # inflow model is order 0 (no autoregression), so the lags are inert anyway.
+    # The PAR inflow-lag seed (initial_conditions.recent_observations) is
+    # written by `fcf/importer.py::import_boundary_fcf`, not here: it is read on
+    # the boundary cut's coupling postos and feeds only that cut's inflow-lag
+    # terms. Without a boundary FCF the inflow model is order 0, so the lags
+    # are inert.
     writer.write_json("initial_conditions.json", initial_conditions_doc)
     writer.write_json(
         "system/hydro_production_models.json",
-        hydro_conv.convert_production_models(id_map, fpha_configs, reference_volumes),
+        hydro_conv.convert_production_models(id_map, stage_models),
     )
     writer.write_parquet(
         "system/hydro_energy_productivity.parquet", productivity_parquet
@@ -1136,11 +1154,9 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     """
     case = artifacts.case
     id_map = artifacts.id_map
-    dadger = artifacts.dadger
     calendar = artifacts.calendar
     vazoes = artifacts.vazoes
     effective = artifacts.effective
-    itaipu_operated = artifacts.itaipu_operated
     fan_probabilities = artifacts.fan_probabilities
 
     writer.write_parquet(
@@ -1158,19 +1174,17 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     # -- see hydro.py's convert_hydros docstring) and is gated on the dadger
     # RI register being present -- independent of (and additional to) the
     # unconditional Itaipu-operated line above. An Itaipu deck with no RI
-    # register (read_carga_ande returns {}) converts gracefully: SE carries
-    # only its own DP demand.
+    # register (ande_load returns None) converts gracefully: SE carries only
+    # its own DP demand.
     extra_bus_loads: dict[tuple[int, int], list[float]] | None = None
-    if itaipu_operated:
-        carga_ande = libs_electrical_conv.read_carga_ande(dadger, calendar)
-        if carga_ande:
-            ande_bus = id_map.bus_id(
-                int(case.hidr.loc[hydro_conv._ITAIPU_CODE, "submercado"])
-            )
-            extra_bus_loads = {
-                (ande_bus, stage_index): values
-                for stage_index, values in carga_ande.items()
-            }
+    ande = libs_electrical_conv.ande_load(case)
+    if ande is not None:
+        ande_submarket, carga_ande = ande
+        ande_bus = id_map.bus_id(ande_submarket)
+        extra_bus_loads = {
+            (ande_bus, stage_index): values
+            for stage_index, values in carga_ande.items()
+        }
     load_stats = load_conv.convert_load_stats(
         case, id_map, extra_bus_loads=extra_bus_loads
     )
@@ -1237,8 +1251,22 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     assert hydros_dict is not None
     line_bounds = artifacts.line_bounds
     assert line_bounds is not None
+    turbine_limits = artifacts.turbine_limits
+    assert turbine_limits is not None
 
     census = constraint_registers.read_constraints(dadger)
+    if census.bound_conflicts:
+        names = {
+            conflict.code: str(effective.base.loc[conflict.code, "nome_usina"]).strip()
+            for conflict in census.bound_conflicts
+            if conflict.code in effective.base.index
+        }
+        dx.emit(
+            constraint_registers.bound_conflicts_diagnostic(
+                census.bound_conflicts, names
+            ),
+            logger=_LOG,
+        )
     pumping_ids = network_conv.pumping_station_id_map(dadger)
     thermal_generation_contribs, thermal_cost_table = (
         thermal_conv.convert_thermal_bounds(case, id_map)
@@ -1290,8 +1318,9 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             logger=_LOG,
         )
     # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
-    # storage envelope, the CT thermal generation bounds, and the RE/RHQ/RHV
-    # single-term special-constraint bounds — is collected as
+    # storage envelope, a split plant's turbined-flow limit, the CT thermal
+    # generation bounds, and the RE/RHQ/RHV single-term special-constraint
+    # bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
     # exactly ONE resolve() + build_bound_tables() pass, so a new special
     # constraint colliding with a legacy bound on the same (entity, stage,
@@ -1304,6 +1333,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         *bounds_conv.convert_storage_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_volume_espera_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_spillage_upper_bounds(case, id_map),
+        *hydro_conv.plant_turbine_limit_contributions(turbine_limits, id_map),
         *thermal_generation_contribs,
         *single_term_bounds.single_term_bound_contributions(
             case,
@@ -1451,16 +1481,18 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     assert census is not None
     hydros_dict = artifacts.hydros_dict
     assert hydros_dict is not None
+    turbine_limits = artifacts.turbine_limits
+    assert turbine_limits is not None
 
-    # Per-group per-stage availability (installed × MP ×
-    # FD, capped by the ρ_eq·q_max hydraulic ceiling) for every plant,
+    # Per-group per-stage availability (installed × MP × FD) and turbined-flow
+    # limit for every plant,
     # single-group and Itaipu's own two per-frequency groups (code 66) alike.
     # Sparse by construction — a value only lands here where it lowers that
     # group's own declared envelope — so novomodelo rule 45 (a group-bound max_*
     # may not exceed that group's declared max) is now reachable; its mirror
     # is wired into the self-check block below.
     availability_values = hydro_conv.convert_hydro_group_availability(
-        case, id_map, effective=effective
+        case, id_map, effective=effective, turbine_limits=turbine_limits
     )
     # Itaipu's RI per-frequency must-run floors
     # (geracao_minima_50/60_hz) overlay the same per-group table as the
@@ -1614,7 +1646,6 @@ def _emit_and_write(
     assert stages_dict is not None
     deficit_cost = artifacts.deficit_cost
     assert deficit_cost is not None
-    has_travel_time = artifacts.has_travel_time
     hydro_bounds = artifacts.hydro_bounds
     assert hydro_bounds is not None
     thermal_bounds_table = artifacts.thermal_bounds_table
@@ -1861,16 +1892,6 @@ def _emit_and_write(
     if libs_electrical_result is not None:
         dx.emit(_libs_electrical_census_diagnostic(libs_electrical_result), logger=_LOG)
 
-    # Milestone-deferral warning. Boundary FCF is imported by default now (the
-    # CLI runs the importer after this converter returns), reservoir evaporation
-    # is converted, and windowed inflow inputs are a
-    # source-model concept that does not apply to the external explicit tree the
-    # DECOMP path emits — so none of those are deferred. Only VI water travel
-    # time remains deferred (a tracked novomodelo-gap; see the note in
-    # `_convert_core_entities` where it is detected), and only when the deck
-    # actually carries it.
-    if has_travel_time:
-        _LOG.warning("deferred at this milestone: water travel time (VI present)")
     _LOG.info(
         "converted %d buses, %d hydros, %d thermals, %d stages, terminal fan %d",
         id_map.n_buses,

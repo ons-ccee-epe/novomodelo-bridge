@@ -7,7 +7,7 @@ Record map for mapcut.rv0:
 | 4-17 | undocumented per-plant physical records | 14 |
 | 18 | reg 5, parent-node indices | 1 |
 | 19 | reg 6, stage data | 1 |
-| 20.. | regs 7/8 travel time | `n_utv * n_estagios * (max_lag+1)` |
+| 20.. | regs 7/8 travel time | `sum(lag + 1)` over reg 6's per-plant stage lags |
 | .. | reg 9 per node and reg 10 per stage | `n_cenarios + n_estagios` |
 """
 
@@ -17,12 +17,9 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from novomodelo_bridge.dessem.exporters.fcf.core.reader import EntitySlotRecord
 
 RECORD_SIZE = 48020
 TAMANHO_CORTE = 26976
@@ -36,8 +33,6 @@ _HEADER_RECORD_COUNT = 4
 _TREE_RECORD_COUNT = 1
 _STAGE_RECORD_COUNT = 1
 
-ENTITY_TYPE_HYDRO_TRANSIT_BUCKET = 3
-
 
 class LayoutError(Exception):
     """Raised when a DECOMP binary violates its layout invariant."""
@@ -47,25 +42,50 @@ class MapcutDimensions(Protocol):
     """Protocol for objects carrying mapcut dimension fields."""
 
     @property
-    def n_utv(self) -> int: ...
+    def travel_time_lags(self) -> tuple[int, ...]: ...
     @property
     def numero_estagios(self) -> int: ...
-    @property
-    def max_lag(self) -> int: ...
     @property
     def numero_cenarios(self) -> int: ...
 
 
+def travel_time_record_count(travel_time_lags: Sequence[int]) -> int:
+    """Regs 7/8 records: one per plant, stage and lag `0..lag` of reg 6."""
+    if any(lag < 0 for lag in travel_time_lags):
+        raise LayoutError(
+            f"travel-time lags must be non-negative, got {list(travel_time_lags)}"
+        )
+    return sum(lag + 1 for lag in travel_time_lags)
+
+
+def travel_time_lag_starts(
+    travel_time_lags: Sequence[int], n_utv: int, n_estagios: int
+) -> tuple[int, ...]:
+    """Reg 6's second travel-time array, laid out like *travel_time_lags*.
+
+    Both are stage-major with plants inner. Each start is 1 plus the lags of
+    every (plant, stage) before it in plant-major order, as DECOMP writes it.
+    """
+    if len(travel_time_lags) != n_utv * n_estagios:
+        raise LayoutError(
+            f"{len(travel_time_lags)} travel-time lags for {n_utv} plants and "
+            f"{n_estagios} stages"
+        )
+    starts = [0] * len(travel_time_lags)
+    position = 1
+    for plant in range(n_utv):
+        for stage in range(n_estagios):
+            index = stage * n_utv + plant
+            starts[index] = position
+            position += travel_time_lags[index]
+    return tuple(starts)
+
+
 def mapcut_record_count(
-    n_utv: int, n_estagios: int, max_lag: int, n_cenarios: int
+    travel_time_lags: Sequence[int], n_estagios: int, n_cenarios: int
 ) -> int:
     """Calculate expected record count for a mapcut file."""
-    for name, value in (
-        ("n_utv", n_utv),
-        ("n_estagios", n_estagios),
-        ("max_lag", max_lag),
-        ("n_cenarios", n_cenarios),
-    ):
+    for name, value in (("n_estagios", n_estagios), ("n_cenarios", n_cenarios)):
         if value < 0:
             raise LayoutError(f"{name} must be non-negative, got {value}")
     return (
@@ -73,27 +93,10 @@ def mapcut_record_count(
         + PHYSICAL_RECORD_COUNT
         + _TREE_RECORD_COUNT
         + _STAGE_RECORD_COUNT
-        + n_utv * n_estagios * (max_lag + 1)
+        + travel_time_record_count(travel_time_lags)
         + n_cenarios
         + n_estagios
     )
-
-
-def derive_n_utv(slots: Sequence[EntitySlotRecord]) -> int:
-    """Count travel-time axes from entity manifest."""
-    return sum(
-        1 for slot in slots if slot.entity_type == ENTITY_TYPE_HYDRO_TRANSIT_BUCKET
-    )
-
-
-def assert_no_travel_time(slots: Sequence[EntitySlotRecord]) -> None:
-    """Refuse conversion if travel-time state exists (premise P3)."""
-    count = derive_n_utv(slots)
-    if count:
-        raise LayoutError(
-            f"the case carries {count} HydroTransitBucket slot(s), so premise P3 "
-            f"does not hold: travel-time coefficients are not supported"
-        )
 
 
 def assert_record_multiple(size_bytes: int, path_label: str) -> int:
@@ -111,14 +114,15 @@ def assert_record_multiple(size_bytes: int, path_label: str) -> int:
 def assert_mapcut_layout(path: Path, header: MapcutDimensions) -> None:
     """Verify written mapcut matches its header's declared layout."""
     expected = mapcut_record_count(
-        header.n_utv, header.numero_estagios, header.max_lag, header.numero_cenarios
+        header.travel_time_lags, header.numero_estagios, header.numero_cenarios
     )
     observed = assert_record_multiple(path.stat().st_size, str(path))
     if observed != expected:
         raise LayoutError(
             f"{path} holds {observed} records but its header declares {expected} "
-            f"(n_utv={header.n_utv}, n_estagios={header.numero_estagios}, "
-            f"max_lag={header.max_lag}, n_cenarios={header.numero_cenarios})"
+            f"(travel-time lags={list(header.travel_time_lags)}, "
+            f"n_estagios={header.numero_estagios}, "
+            f"n_cenarios={header.numero_cenarios})"
         )
 
     with path.open("rb") as handle:
@@ -162,6 +166,7 @@ class CutBlockOffsets:
 
     rhs: int
     pi_varm: int
+    pi_qdefp: int
     pi_gnl: int
     ncoef: int
 
@@ -179,6 +184,7 @@ def cortdeco_block_offsets(
     return CutBlockOffsets(
         rhs=0,
         pi_varm=1,
+        pi_qdefp=1 + n_uhes,
         pi_gnl=1 + n_uhes + n_utv * max_lag,
         ncoef=ncoef,
     )

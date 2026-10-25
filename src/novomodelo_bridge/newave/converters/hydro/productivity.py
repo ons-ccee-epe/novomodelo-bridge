@@ -11,30 +11,54 @@ seasonal reference volumes, FICT-cascade fold-in) around that math.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 
 import pandas as pd
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.productivity import (
+    KTURB_BY_TIPO_TURBINA,
+    apply_hydraulic_loss,
     compute_productivity,
     equivalent_productivity,
+    evaluate_cota,
+    fpha_spillage_fit_max_m3s,
     integrated_productivity,
+    mean_cota,
     stored_energy_productivity,
 )
 from novomodelo_bridge.core.source_text import read_source_text
+from novomodelo_bridge.core.tailrace import (
+    TailraceFamily,
+    tailrace_families_from_polinjus,
+    tailrace_level_m,
+)
+from novomodelo_bridge.core.turbine import MachineSet, power_limited_flow, settled_flow
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.geometry import (
-    _read_volref_saz,
-    _seasonal_reference_volume,
+    _expansion_configs,
     fpha_eligible_codes,
+    operating_storage_range,
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
     _extract_temporal_overrides,
     _per_stage_drop_overrides,
 )
+from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
+    fpha_reference_volumes,
+    seasonal_useful_volumes,
+)
+from novomodelo_bridge.newave.converters.stochastic import natural_monthly_means
+from novomodelo_bridge.newave.horizon import stage_dates_for
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -60,6 +84,11 @@ _compute_integrated_productivity = integrated_productivity
 # also requires a sample count for the mean-squared-distance estimate. The source model
 # does not specify one, so we supply a reasonable default.
 _FPHA_DISTANCE_N_SAMPLES = 100
+
+#: The source model prints its turbined fit range to 0.1 m³/s.
+_FIT_FLOW_TOLERANCE_M3S = 1.0e-3
+#: A safety bound only: the iteration converges in a few steps on real decks.
+_FIT_FLOW_MAX_ITERATIONS = 100
 
 
 def _parse_fpha_plane_reduction(case: NewaveCase) -> dict | None:
@@ -194,62 +223,228 @@ def compute_per_stage_prodt_sin_mean(case: NewaveCase) -> list[float]:
     return [v / count for v in stage_sum] if count else []
 
 
-def _fpha_computed_config(hreg: pd.Series) -> dict:
+def _fpha_computed_config(
+    hreg: pd.Series,
+    spillage_fit_max_m3s: float | None = None,
+    turbined_fit_max_m3s: float | None = None,
+) -> dict:
     """``fpha_config`` for a computed-FPHA plant, with the source model's fitting
-    window.
+    window and, when given, its spillage fit range
+    (:func:`~novomodelo_bridge.core.productivity.fpha_spillage_fit_max_m3s`) and
+    turbined fit range (:func:`_turbined_fit_max`).
 
-    The source model fits the FPHA volume axis over the *operative* storage range, which
-    depends on the regulation type:
-
-    - ``tipo_regulacao == "M"`` (monthly reservoir) → multi-volume over
-      ``[volume_minimo, volume_maximo]``.
-    - ``"D"`` / ``"S"`` (daily / run-of-river) → single-volume at
-      ``volume_referencia`` (the reference operating volume).
-
-    Passing this as ``fitting_window`` makes novomodelo fit the same volume grid. Without it
-    novomodelo falls back to the full geometry span, which fits the "D" plants that carry a
-    cadastro storage range (e.g. ITAIPU, JIRAU) as multi-volume even though the source
-    model collapses them to a single volume.
+    The source model fits the FPHA volume axis over the plant's
+    :func:`~novomodelo_bridge.newave.converters.hydro.geometry.operating_storage_range`:
+    multi-volume over ``[volume_minimo, volume_maximo]`` for a monthly reservoir
+    ('M'), single-volume at ``volume_referencia`` for a daily or run-of-river
+    plant ('D' / 'S'). Passing it as ``fitting_window`` makes novomodelo fit the same
+    volume grid.
     """
-    reg = str(hreg["tipo_regulacao"]).strip()
-    if reg == "M":
-        vlo = float(hreg["volume_minimo"])
-        vhi = float(hreg["volume_maximo"])
-    else:
-        vref = float(hreg["volume_referencia"])
-        vlo = vhi = vref
-    return {
+    vlo, vhi = operating_storage_range(hreg)
+    config: dict = {
         "source": "computed",
         "fitting_window": {"volume_min_hm3": vlo, "volume_max_hm3": vhi},
     }
+    if spillage_fit_max_m3s is not None:
+        config["spillage_fit_max_m3s"] = spillage_fit_max_m3s
+    if turbined_fit_max_m3s is not None:
+        config["turbined_fit_max_m3s"] = turbined_fit_max_m3s
+    return config
+
+
+def _turbined_fit_max(
+    hreg: pd.Series,
+    families: Sequence[TailraceFamily],
+    downstream_level_m: float | None,
+    reference_volume_hm3: float,
+) -> tuple[float | None, bool]:
+    """The source model's FPHA turbined-flow range (m³/s) at a stage whose FPHA
+    reference volume is *reference_volume_hm3*, and whether its fixed point
+    settled.
+
+    The range is every machine set's
+    :func:`~novomodelo_bridge.core.turbine.power_limited_flow`, with no TEIF/IP
+    derating. The turbine head runs from the reference volume down to the
+    tailrace at the turbined flow, on *families* at *downstream_level_m*
+    (:func:`~novomodelo_bridge.core.turbine.settled_flow`), or down to
+    ``canal_fuga_medio`` when *families* is empty. The generator head runs from
+    the mean forebay over the plant's
+    :func:`~novomodelo_bridge.newave.converters.hydro.geometry.operating_storage_range`
+    down to ``canal_fuga_medio``. The range is ``None`` when
+    ``produtibilidade_especifica`` or the net head is not positive.
+    """
+    rho_esp_raw = hreg.get("produtibilidade_especifica")
+    cf_raw = hreg.get("canal_fuga_medio")
+    if is_na(rho_esp_raw) or is_na(cf_raw):
+        return None, True
+    rho_esp = float(rho_esp_raw)
+    if rho_esp <= 0.0:
+        return None, True
+    coeffs = [float(hreg[f"a{i}_volume_cota"]) for i in range(5)]
+    forebay_m = evaluate_cota(coeffs, reference_volume_hm3)
+    tipo_perda = int(hreg.get("tipo_perda", 0) or 0)
+    perdas = float(hreg.get("perdas", 0.0) or 0.0)
+    generator_head = apply_hydraulic_loss(
+        mean_cota(coeffs, *operating_storage_range(hreg)) - float(cf_raw),
+        tipo_perda,
+        perdas,
+    )
+    sets = [
+        MachineSet(
+            units=int(hreg[f"maquinas_conjunto_{i}"]),
+            flow_m3s=float(hreg[f"vazao_nominal_conjunto_{i}"]),
+            head_m=float(hreg[f"queda_nominal_conjunto_{i}"]),
+            power_mw=float(hreg[f"potencia_nominal_conjunto_{i}"]),
+        )
+        for i in range(1, int(hreg["numero_conjuntos_maquinas"]) + 1)
+    ]
+    exponent = KTURB_BY_TIPO_TURBINA.get(int(hreg.get("tipo_turbina", 0) or 0), 0.5)
+
+    def flow_at(tailrace_m: float) -> float:
+        return power_limited_flow(
+            apply_hydraulic_loss(forebay_m - tailrace_m, tipo_perda, perdas),
+            sets,
+            generator_head_m=generator_head,
+            specific_productivity=rho_esp,
+            exponent=exponent,
+        )
+
+    flow, converged = flow_at(float(cf_raw)), True
+    if families:
+        flow, converged = settled_flow(
+            lambda q: flow_at(tailrace_level_m(families, q, downstream_level_m)),
+            flow,
+            tolerance_m3s=_FIT_FLOW_TOLERANCE_M3S,
+            max_iterations=_FIT_FLOW_MAX_ITERATIONS,
+        )
+    return (flow if flow > 0.0 else None), converged
+
+
+def _downstream_level_m(
+    cadastro: pd.DataFrame, hreg: pd.Series, confhd_codes: AbstractSet[int]
+) -> float | None:
+    """Forebay level (m) of the plant hidr names downstream of *hreg*, at the
+    low end of its
+    :func:`~novomodelo_bridge.newave.converters.hydro.geometry.operating_storage_range`;
+    ``None`` when hidr names none or confhd does not list it."""
+    downstream = hreg.get("codigo_usina_jusante")
+    if is_na(downstream) or int(downstream) not in confhd_codes:
+        return None
+    if int(downstream) not in cadastro.index:
+        return None
+    below = cadastro.loc[int(downstream)]
+    return evaluate_cota(
+        [float(below[f"a{i}_volume_cota"]) for i in range(5)],
+        operating_storage_range(below)[0],
+    )
+
+
+def _turbined_fit_maxima(
+    case: NewaveCase,
+    cadastro: pd.DataFrame,
+    fpha_codes: AbstractSet[int],
+    references: Mapping[int, Sequence[float]],
+) -> dict[int, list[float | None]]:
+    """``{plant code: turbined fit range (m³/s) of each study stage}`` for each
+    FPHA plant with :func:`fpha_reference_volumes`, from
+    :func:`_turbined_fit_max` at the stage's reference volume.
+
+    An expanding plant is rated on the machines ``hydros.json`` declares. The
+    tailrace family is read at :func:`_downstream_level_m`.
+    """
+    polinjus = case.polinjus
+    families = (
+        {}
+        if polinjus is None
+        else tailrace_families_from_polinjus(
+            polinjus.hidreletrica_curvajusante(df=True),
+            polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True),
+        )
+    )
+    confhd_codes = {int(code) for code in case.confhd.usinas["codigo_usina"]}
+    expansion = _expansion_configs(case, cadastro)
+    maxima: dict[int, list[float | None]] = {}
+    unconverged: list[list[object]] = []
+    for _, row in case.active_hydros.iterrows():
+        code = int(row["codigo_usina"])
+        if code not in fpha_codes or code not in cadastro.index:
+            continue
+        stage_volumes = references.get(code)
+        if not stage_volumes:
+            continue
+        hreg = cadastro.loc[code]
+        config = expansion.get(code)
+        declared = hreg if config is None else config.declared_hreg(hreg)
+        downstream_level = _downstream_level_m(cadastro, hreg, confhd_codes)
+        by_volume: dict[float, float | None] = {}
+        settled = True
+        for volume in dict.fromkeys(stage_volumes):
+            by_volume[volume], converged = _turbined_fit_max(
+                declared, families.get(code, ()), downstream_level, volume
+            )
+            settled = settled and converged
+        maxima[code] = [by_volume[volume] for volume in stage_volumes]
+        if not settled:
+            unconverged.append([code, str(hreg["nome_usina"]).strip()])
+    if unconverged:
+        emit(
+            Diagnostic(
+                code="fpha-turbined-fit-range-unconverged",
+                severity=Severity.WARNING,
+                category="Production model",
+                title=(
+                    f"FPHA turbined fit range did not converge ({len(unconverged)})"
+                ),
+                summary=(
+                    "The tailrace-dependent turbined fit range of the listed "
+                    f"plants did not settle within {_FIT_FLOW_MAX_ITERATIONS} "
+                    "iterations; the last value is used."
+                ),
+                table=DiagnosticTable(columns=["Code", "Name"], rows=unconverged),
+            ),
+            logger=_LOG,
+        )
+    return maxima
+
+
+def _spillage_fit_maxima(
+    confhd: pd.DataFrame,
+    fpha_codes: AbstractSet[int],
+    natural_monthly_means: Mapping[int, Sequence[float]],
+) -> dict[int, float]:
+    """``{plant code: spillage fit range (m³/s)}`` for each FPHA plant whose
+    ``confhd`` posto has one."""
+    maxima: dict[int, float] = {}
+    for _, row in confhd.iterrows():
+        code = int(row["codigo_usina"])
+        if code not in fpha_codes or pd.isna(row["posto"]):
+            continue
+        posto = int(row["posto"])
+        value = fpha_spillage_fit_max_m3s(posto, natural_monthly_means.get(posto, ()))
+        if value is not None:
+            maxima[code] = value
+    return maxima
 
 
 def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     """Build ``hydro_production_models.json`` with per-hydro model selection.
 
-    - **Non-FPHA cases (and run-of-river plants in FPHA cases):** a single
-      ``stage_ranges`` entry with ``model: "constant_productivity"`` and no
+    - **Plants outside the FPHA:** ``model: "constant_productivity"`` with no
       numeric value; ``productivity_mw_per_m3s`` is supplied per-(hydro, stage)
       in ``hydro_energy_productivity.parquet`` (see
       :func:`convert_hydro_energy_productivity`). Cross-file validation in novomodelo
       rejects double-supply (JSON + parquet) and coverage gaps, so keeping
       productivity strictly in the parquet eliminates the conflict surface.
-    - **FPHA reservoirs** (``dger`` ``funcao_producao_uhe == 0`` and the plant
-      has storage swing — see :func:`fpha_eligible_codes`): ``model: "fpha"``
-      with ``fpha_config: {source: "computed"}``; novomodelo fits the production
-      function from geometry + tailrace families, so no parquet productivity is
-      emitted for these plants.
+    - **FPHA plants** (:func:`fpha_eligible_codes`): ``model: "fpha"`` with the
+      :func:`_fpha_computed_config` of each stage; novomodelo fits the production
+      function from geometry + tailrace families.
 
-    **Reference volume.** In FPHA cases, ``reference_volume`` (V_ref) sets the FPHA
-    backwater / tailrace level and the ρ_eq reference. The source model's per-month
-    seasonal reference comes from ``volref_saz.dat``: a plant with a seasonal row is
-    emitted in ``seasonal`` mode with one absolute ``reference_volume`` per season
-    (``clamp(vmin + useful, vmin, vmax)``); a plant without one falls back to
-    ``percentile 0.65`` (= novomodelo's default, the source model's altura_65). This is
-    emitted for FPHA reservoirs **and** for any non-FPHA plant that has a seasonal row,
-    because novomodelo reads a plant's *downstream* ``reference_volume`` (via
-    ``downstream_id``) to set that plant's backwater — so each plant must be a correct
-    reference for its upstream FPHA neighbour.
+    **Reference volume.** In FPHA cases every plant declares its
+    :func:`~novomodelo_bridge.newave.converters.hydro.reference_volumes.fpha_reference_volumes`
+    as an absolute ``reference_volume``: novomodelo reads a plant's downstream
+    ``reference_volume`` (via ``downstream_id``) for that plant's backwater, so
+    each plant must be the correct reference for its upstream FPHA neighbour.
+    The stages are grouped by :func:`_model_selection`.
 
     When FPHA is active, a file-level ``fpha_plane_reduction`` block parsed from
     ``tratamento-fpha`` is added (see :func:`_parse_fpha_plane_reduction`).
@@ -272,20 +467,25 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     confhd_codes = [int(r["codigo_usina"]) for _, r in existing.iterrows()]
     fpha_codes = fpha_eligible_codes(case)
 
-    # Seasonal reference volumes (volref_saz.dat) drive the FPHA reference volume V_ref
-    # — only relevant in FPHA cases. V_ref feeds both a plant's own rho_eq AND, via
-    # novomodelo's downstream lookup (`downstream_id`), the backwater / tailrace level of the
-    # plant ABOVE it. So we emit reference_volume for every plant that has a volref_saz
-    # row (FPHA or not), so each plant is a correct backwater reference for its upstream
-    # FPHA neighbour. Plants without a row fall through to novomodelo's 0.65 default fraction
-    # (= the source model's altura_65).
-    seasonal_volref = _read_volref_saz(case) if case.fpha_enabled else {}
-    # Load the cadastro whenever per-plant volume info is needed — for the FPHA
-    # fitting window (every FPHA plant) or the seasonal reference volumes.
     cadastro = (
         _apply_permanent_overrides(case.hidr.cadastro, case)
-        if (seasonal_volref or fpha_codes)
+        if case.fpha_enabled
         else None
+    )
+    references = fpha_reference_volumes(case, cadastro) if cadastro is not None else {}
+    calendar_months = (
+        [d.month for d in stage_dates_for(case.horizon)] if references else []
+    )
+
+    spillage_max_by_code = (
+        _spillage_fit_maxima(existing, fpha_codes, natural_monthly_means(case))
+        if fpha_codes
+        else {}
+    )
+    turbined_max_by_code = (
+        _turbined_fit_maxima(case, cadastro, fpha_codes, references)
+        if cadastro is not None and fpha_codes
+        else {}
     )
 
     production_models: list[dict] = []
@@ -295,66 +495,28 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         except KeyError:
             continue
 
-        is_fpha = newave_code in fpha_codes
-        monthly_useful = seasonal_volref.get(newave_code)
         hreg = (
             cadastro.loc[newave_code]
             if cadastro is not None and newave_code in cadastro.index
             else None
         )
-        fpha_config = (
-            _fpha_computed_config(hreg) if (is_fpha and hreg is not None) else None
+        is_fpha = newave_code in fpha_codes and hreg is not None
+        volumes: Sequence[float | None] = references.get(newave_code) or [None]
+        fit_maxima = turbined_max_by_code.get(newave_code) or [None] * len(volumes)
+        stages = [
+            _stage_model(
+                volume,
+                _fpha_computed_config(
+                    hreg, spillage_max_by_code.get(newave_code), fit_max
+                )
+                if is_fpha and hreg is not None
+                else None,
+            )
+            for volume, fit_max in zip(volumes, fit_maxima, strict=True)
+        ]
+        production_models.append(
+            {"hydro_id": hydro_id, **_model_selection(stages, calendar_months)}
         )
-
-        if monthly_useful and hreg is not None:
-            production_models.append(
-                {
-                    "hydro_id": hydro_id,
-                    "selection_mode": "seasonal",
-                    # All 12 seasons are listed below, so the default is never
-                    # consulted; a config-less model keeps it valid.
-                    "default_model": "constant_productivity",
-                    "seasons": _seasonal_reference_volume(
-                        monthly_useful,
-                        float(hreg["volume_minimo"]),
-                        float(hreg["volume_maximo"]),
-                        is_fpha=is_fpha,
-                        fpha_config=fpha_config,
-                    ),
-                }
-            )
-        elif is_fpha:
-            # FPHA reservoir with no seasonal reference: fall back to V_65 (percentile
-            # 0.65 = the source model's altura_65, and novomodelo's own default).
-            production_models.append(
-                {
-                    "hydro_id": hydro_id,
-                    "selection_mode": "stage_ranges",
-                    "stage_ranges": [
-                        {
-                            "start_stage_id": 0,
-                            "end_stage_id": None,
-                            "model": "fpha",
-                            "fpha_config": fpha_config or {"source": "computed"},
-                            "reference_volume": {"percentile": 0.65},
-                        }
-                    ],
-                }
-            )
-        else:
-            production_models.append(
-                {
-                    "hydro_id": hydro_id,
-                    "selection_mode": "stage_ranges",
-                    "stage_ranges": [
-                        {
-                            "start_stage_id": 0,
-                            "end_stage_id": None,
-                            "model": "constant_productivity",
-                        }
-                    ],
-                }
-            )
 
     production_models.sort(key=lambda m: m["hydro_id"])
 
@@ -371,6 +533,59 @@ def convert_production_models(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             result["fpha_plane_reduction"] = plane_reduction
     result["production_models"] = production_models
     return result
+
+
+def _stage_model(volume_hm3: float | None, fpha_config: dict | None) -> dict:
+    """One stage's production model: FPHA with *fpha_config* when given, else
+    constant productivity, with *volume_hm3* as its reference volume."""
+    stage: dict = {
+        "model": "fpha" if fpha_config is not None else "constant_productivity"
+    }
+    if fpha_config is not None:
+        stage["fpha_config"] = fpha_config
+    if volume_hm3 is not None:
+        stage["reference_volume"] = {"volume_hm3": volume_hm3}
+    return stage
+
+
+def _model_selection(stages: Sequence[dict], calendar_months: Sequence[int]) -> dict:
+    """The model selection of a plant whose study stage *s* uses ``stages[s]``.
+
+    One open stage range when every stage agrees; twelve seasons
+    (``season_id = calendar_month - 1``, the ``stages.json`` season map) when
+    each calendar month always gets the same model; otherwise one stage range
+    per run of equal stages.
+    """
+    if all(stage == stages[0] for stage in stages):
+        return {
+            "selection_mode": "stage_ranges",
+            "stage_ranges": [{"start_stage_id": 0, "end_stage_id": None, **stages[0]}],
+        }
+    by_month: dict[int, dict] = {}
+    periodic = all(
+        by_month.setdefault(month, stage) == stage
+        for month, stage in zip(calendar_months, stages, strict=True)
+    )
+    if periodic and len(by_month) == 12:
+        return {
+            "selection_mode": "seasonal",
+            # All 12 seasons are listed, so the default is never consulted; a
+            # config-less model keeps it valid.
+            "default_model": "constant_productivity",
+            "seasons": [
+                {"season_id": month - 1, **by_month[month]} for month in range(1, 13)
+            ],
+        }
+    ranges: list[dict] = []
+    for stage_id, stage in enumerate(stages):
+        if ranges and stage == stages[stage_id - 1]:
+            ranges[-1]["end_stage_id"] = stage_id
+        else:
+            ranges.append(
+                {"start_stage_id": stage_id, "end_stage_id": stage_id, **stage}
+            )
+    ranges[-1]["end_stage_id"] = None
+    return {"selection_mode": "stage_ranges", "stage_ranges": ranges}
 
 
 def _total_study_stages(case: NewaveCase) -> int:
@@ -534,7 +749,7 @@ def convert_hydro_energy_productivity(
         if any(o["type"] in ("CFUGA", "CMONT") for o in overrides)
     }
 
-    seasonal_volref = _read_volref_saz(case)
+    seasonal_volref = seasonal_useful_volumes(case)
 
     needs_per_stage = bool(plants_with_drop_overrides) or bool(seasonal_volref)
     total_stages = _total_study_stages(case) if needs_per_stage else 0
@@ -649,7 +864,7 @@ def compute_per_stage_own_productivities(
         if any(o["type"] in ("CFUGA", "CMONT") for o in overrides)
     }
 
-    seasonal_volref = _read_volref_saz(case)
+    seasonal_volref = seasonal_useful_volumes(case)
 
     # FICT-cascade fold-in: per-stage ρ_eq must already include any FICT
     # contribution so that the per-stage ρ_acum used by VminOP and EARM

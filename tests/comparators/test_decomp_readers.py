@@ -1,11 +1,15 @@
 """Tests for the DECOMP output readers.
 
 Synthetic tables for the parsing contracts, plus small real-format result
-file excerpts under ``tests/fixtures/decomp_results/`` for the file layout.
+file excerpts under ``tests/fixtures/decomp_results/`` for the file layout:
+the ``dec_oper_*`` and ``decomp.tim`` excerpts come from the
+sintetizador-decomp project's test mocks; ``avl_cortesfpha_dec``,
+``eco_fpha_`` and ``dec_desvfpha`` are trimmed from a March 2026 weekly run.
 """
 
 from __future__ import annotations
 
+import shutil
 from datetime import timedelta
 from pathlib import Path
 
@@ -31,6 +35,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     _resolve_relato2,
     _resolve_result_file,
     _resolve_revisioned_file,
+    read_avl_cortesfpha,
     read_dec_desvfpha,
     read_dec_estatfpha,
     read_dec_oper_evap,
@@ -48,9 +53,6 @@ from novomodelo_bridge.comparators.decomp.readers import (
 )
 from novomodelo_bridge.comparators.decomp.results import reconcile_kdollars_to_reais
 
-# Real-format DECOMP result files (a few KB each) vendored from the
-# sintetizador-decomp project's test mocks, so the readers are exercised
-# against the model's own file layout without any deck outside the repo.
 _RESULTS_EXCERPT = Path(__file__).resolve().parents[1] / "fixtures" / "decomp_results"
 
 
@@ -234,6 +236,36 @@ class TestReadDecDesvfpha:
         with pytest.raises(ValueError, match="parsed empty"):
             read_dec_desvfpha(tmp_path)
 
+    def test_result_excerpt_parses(self) -> None:
+        df = read_dec_desvfpha(_RESULTS_EXCERPT)
+        assert df.height == 6
+        row = df.row(0, named=True)
+        assert (row["codigo_usina"], row["estagio"], row["patamar"]) == (1, 1, 1)
+        assert row["geracao_hidraulica_fph"] == pytest.approx(37.68)
+        assert row["altura_montante"] == pytest.approx(912.40)
+        assert row["influencia_vertimento_canal_fuga"] == 1
+
+
+class TestReadAvlCortesfpha:
+    """`read_avl_cortesfpha`: the source model's fitted FPHA planes."""
+
+    def test_result_excerpt_parses(self) -> None:
+        df = read_avl_cortesfpha(_RESULTS_EXCERPT)
+        assert df.height == 8
+        row = df.row(0, named=True)
+        assert (row["codigo_usina"], row["estagio"]) == (1, 1)
+        assert row["fator_correcao"] == pytest.approx(0.998159)
+        assert row["rhs"] == pytest.approx(-11.02219458)
+        assert row["coeficiente_volume_util"] == pytest.approx(0.02227763)
+        assert row["coeficiente_vazao_turbinada"] == pytest.approx(0.21441074)
+        assert row["coeficiente_vazao_vertida"] == pytest.approx(-0.00440108)
+        assert row["coeficiente_vazao_lateral"] == 0.0
+
+    def test_missing_file_raises_naming_case_dir(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError, match="avl_cortesfpha_dec") as exc_info:
+            read_avl_cortesfpha(tmp_path)
+        assert str(tmp_path) in str(exc_info.value)
+
 
 class TestReadEcoFpha:
     """`read_eco_fpha`: per-hydro/stage FPHA fitting-grid echo."""
@@ -292,6 +324,20 @@ class TestReadEcoFpha:
         )
         with pytest.raises(ValueError, match="parsed empty"):
             read_eco_fpha(tmp_path)
+
+    def test_result_excerpt_drops_the_closing_separator_row(self) -> None:
+        df = read_eco_fpha(_RESULTS_EXCERPT)
+        assert df["codigo_usina"].to_list() == [1, 2, 4]
+        assert df.schema["codigo_usina"] == pl.Int64
+        assert df.schema["estagio"] == pl.Int64
+        row = df.row(0, named=True)
+        assert row["vazao_turbinada_maxima"] == pytest.approx(217.2)
+        assert row["volume_armazenado_minimo"] == pytest.approx(631.6)
+        assert row["geracao_maxima"] == pytest.approx(46.0)
+
+    def test_name_without_the_underscore_is_read(self, tmp_path: Path) -> None:
+        shutil.copy(_RESULTS_EXCERPT / "eco_fpha_.rv2", tmp_path / "eco_fpha.rv2")
+        assert read_eco_fpha(tmp_path)["codigo_usina"].to_list() == [1, 2, 4]
 
 
 class TestReadDecEstatfpha:
@@ -387,6 +433,25 @@ class TestReadDecOperCore:
         result = _read_dec_oper(tmp_path, "dec_oper_sist.csv", _stub_reader(table))
         assert isinstance(result, pl.DataFrame)
         assert result.shape == (2, 2)
+
+    def test_a_file_is_parsed_once_until_it_changes(self, tmp_path: Path) -> None:
+        path = tmp_path / "dec_oper_sist.csv"
+        path.write_text("1")
+        parsed: list[str] = []
+        table = pd.DataFrame({"estagio": [1], "cmo": [10.0]})
+
+        class _Counting:
+            @staticmethod
+            def read(path: str) -> _StubFile:
+                parsed.append(path)
+                return _StubFile(table)
+
+        _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
+        _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
+        assert len(parsed) == 1
+        path.write_text("12")
+        _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
+        assert len(parsed) == 2
 
 
 class TestRealDeckReaders:

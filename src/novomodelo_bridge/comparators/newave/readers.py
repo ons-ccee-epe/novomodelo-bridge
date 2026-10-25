@@ -8,7 +8,8 @@ not provide dedicated reader classes for them.  pmo.dat is read via
 ``inewave.newave.Pmo``.
 
 Reader-failure contract: every file this module reads (MEDIAS CSVs,
-pmo.dat, sistema.dat, newave.tim, the FPHA reports) is an OPTIONAL
+pmo.dat, sistema.dat, newave.tim, the FPHA reports, the nwlistop
+tables) is an OPTIONAL
 input, and this module contains no ``raise`` statement — an absent
 input AND a present-but-unparseable input both degrade to a typed-empty
 frame (or ``None``, for the pmo/FPHA readers) plus a ``_LOG.warning``.
@@ -1092,3 +1093,230 @@ def read_fpha_grid(newave_dir: Path) -> pl.DataFrame | None:
         return None
     frame = pl.from_pandas(table[list(_FPHA_GRID_COLUMNS)]).rename(_FPHA_GRID_COLUMNS)
     return frame.cast(_FPHA_GRID_SCHEMA)
+
+
+_NWLISTOP_PLANT_RE = re.compile(r"^ghiduh(\d{3})\.out$", re.IGNORECASE)
+
+#: The per-block nwlistop plant tables :func:`read_nwlistop_hydro_blocks`
+#: reads: file prefix -> output column.
+_NWLISTOP_BLOCK_TABLES: dict[str, str] = {
+    "ghiduh": "generation_mwmes",
+    "qturuh": "turbined_m3s",
+    "qvertuh": "spillage_m3s",
+    "gh_fphexat": "exact_generation_mwmes",
+}
+
+_NWLISTOP_KEYS = ["stage", "scenario", "block"]
+
+
+def _nwlistop_classes() -> dict[str, type]:
+    from inewave.nwlistop import Cmarg, Ghiduh, Qturuh, Qvertuh, Varmuh
+    from inewave.nwlistop.gh_fphexat import GhFphexat
+
+    return {
+        "ghiduh": Ghiduh,
+        "qturuh": Qturuh,
+        "qvertuh": Qvertuh,
+        "gh_fphexat": GhFphexat,
+        "varmuh": Varmuh,
+        "cmarg": Cmarg,
+    }
+
+
+def _read_nwlistop_table(
+    path: Path, cls: type, start_year: int, start_month: int
+) -> pl.DataFrame | None:
+    """One nwlistop table keyed by study stage, series and block.
+
+    ``stage`` counts months from the study start, the earlier months dropped.
+    ``scenario`` is the series' rank within its calendar year, from 0: a
+    historical final simulation labels each year's series by its inflow year.
+    ``block`` is ``patamar − 1`` in a per-block table, its ``TOTAL`` rows
+    dropped. ``None`` when the file does not parse.
+    """
+    try:
+        table = cls.read(str(path)).valores
+    except Exception:  # noqa: BLE001
+        _LOG.warning("Failed to parse %s", path, exc_info=True)
+        return None
+    if table is None or table.empty:
+        return None
+    frame = pl.from_pandas(table)
+    keys = ["stage", "scenario"]
+    if "patamar" in frame.columns:
+        frame = frame.filter(
+            pl.col("patamar").cast(pl.Utf8).str.contains(r"^\d+$")
+        ).with_columns((pl.col("patamar").cast(pl.Int64) - 1).alias("block"))
+        keys.append("block")
+    return (
+        frame.with_columns(
+            (
+                (pl.col("data").dt.year().cast(pl.Int64) - start_year) * 12
+                + pl.col("data").dt.month().cast(pl.Int64)
+                - start_month
+            ).alias("stage"),
+            (pl.col("serie").rank("dense").over(pl.col("data").dt.year()) - 1)
+            .cast(pl.Int64)
+            .alias("scenario"),
+        )
+        .filter(pl.col("stage") >= 0)
+        .select(*keys, pl.col("valor").cast(pl.Float64))
+    )
+
+
+def read_nwlistop_hydro_blocks(
+    newave_dir: Path, start_year: int, start_month: int
+) -> pl.DataFrame:
+    """Read each plant's per-block operation from the nwlistop plant tables.
+
+    For each plant ``NNN`` its ``nwlistop.dat`` plant list names, nwlistop
+    writes ``ghiduh<NNN>.out`` (generation, MWmes), ``qturuh<NNN>.out`` and
+    ``qvertuh<NNN>.out`` (turbined and spilled flow, m³/s) and, in an FPHA
+    run, ``gh_fphexat<NNN>.out`` (the exact production function at the
+    operating point, MWmes), per block and series. A block's MWmes is its
+    mean MW times its share of the month.
+
+    Returns columns ``newave_code``, ``stage``, ``scenario``, ``block`` (keyed
+    as :func:`_read_nwlistop_table`), ``generation_mwmes``, ``turbined_m3s``,
+    ``spillage_m3s`` and ``exact_generation_mwmes`` (null without the
+    ``gh_fphexat`` table). Empty when no plant has a ``ghiduh`` table.
+    """
+    schema: dict[str, type[pl.DataType]] = {
+        "newave_code": pl.Int64,
+        "stage": pl.Int64,
+        "scenario": pl.Int64,
+        "block": pl.Int64,
+        **dict.fromkeys(_NWLISTOP_BLOCK_TABLES.values(), pl.Float64),
+    }
+    if not newave_dir.is_dir():
+        return pl.DataFrame(schema=schema)
+    codes = sorted(
+        int(m.group(1))
+        for p in newave_dir.iterdir()
+        if (m := _NWLISTOP_PLANT_RE.match(p.name)) is not None
+    )
+    classes = _nwlistop_classes()
+    plants: list[pl.DataFrame] = []
+    for code in codes:
+        plant: pl.DataFrame | None = None
+        for prefix, column in _NWLISTOP_BLOCK_TABLES.items():
+            path = find_case_insensitive(newave_dir, f"{prefix}{code:03d}.out")
+            table = (
+                None
+                if path is None
+                else _read_nwlistop_table(
+                    path, classes[prefix], start_year, start_month
+                )
+            )
+            if table is None:
+                continue
+            table = table.rename({"valor": column})
+            plant = (
+                table
+                if plant is None
+                else plant.join(table, on=_NWLISTOP_KEYS, how="full", coalesce=True)
+            )
+        if plant is not None:
+            plants.append(plant.with_columns(pl.lit(code).alias("newave_code")))
+    if not plants:
+        return pl.DataFrame(schema=schema)
+    frame = pl.concat(plants, how="diagonal_relaxed")
+    return (
+        frame.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias(column)
+            for column in _NWLISTOP_BLOCK_TABLES.values()
+            if column not in frame.columns
+        )
+        .select(list(schema))
+        .cast(schema)
+        .sort("newave_code", *_NWLISTOP_KEYS)
+    )
+
+
+def read_nwlistop_hydro_storage(
+    newave_dir: Path, start_year: int, start_month: int
+) -> pl.DataFrame:
+    """Read each reservoir's end-of-stage useful storage from ``varmuh<NNN>.out``.
+
+    nwlistop writes the table for each listed plant that has a reservoir, per
+    stage and series, in hm³ above the plant's minimum storage.
+
+    Returns columns ``newave_code``, ``stage``, ``scenario`` (keyed as
+    :func:`_read_nwlistop_table`) and ``useful_storage_final_hm3``; empty
+    without the tables.
+    """
+    schema: dict[str, type[pl.DataType]] = {
+        "newave_code": pl.Int64,
+        "stage": pl.Int64,
+        "scenario": pl.Int64,
+        "useful_storage_final_hm3": pl.Float64,
+    }
+    return _read_numbered_tables(
+        newave_dir,
+        "varmuh",
+        "newave_code",
+        "useful_storage_final_hm3",
+        schema,
+        start_year,
+        start_month,
+    )
+
+
+def read_nwlistop_block_cmo(
+    newave_dir: Path, start_year: int, start_month: int
+) -> pl.DataFrame:
+    """Read each submarket's per-block marginal cost from ``cmarg<NNN>.out``.
+
+    nwlistop writes the table for each submarket ``NNN``, per block and
+    series, in $/MWh with two decimals.
+
+    Returns columns ``submarket_code``, ``stage``, ``scenario``, ``block``
+    (keyed as :func:`_read_nwlistop_table`) and ``cmo``; empty without the
+    tables.
+    """
+    schema: dict[str, type[pl.DataType]] = {
+        "submarket_code": pl.Int64,
+        "stage": pl.Int64,
+        "scenario": pl.Int64,
+        "block": pl.Int64,
+        "cmo": pl.Float64,
+    }
+    return _read_numbered_tables(
+        newave_dir, "cmarg", "submarket_code", "cmo", schema, start_year, start_month
+    )
+
+
+def _read_numbered_tables(
+    newave_dir: Path,
+    prefix: str,
+    code_column: str,
+    value_column: str,
+    schema: dict[str, type[pl.DataType]],
+    start_year: int,
+    start_month: int,
+) -> pl.DataFrame:
+    """Every ``<prefix><NNN>.out`` table, ``NNN`` in *code_column*."""
+    if not newave_dir.is_dir():
+        return pl.DataFrame(schema=schema)
+    pattern = re.compile(rf"^{prefix}(\d{{3}})\.out$", re.IGNORECASE)
+    cls = _nwlistop_classes()[prefix]
+    tables: list[pl.DataFrame] = []
+    for path in sorted(newave_dir.iterdir()):
+        m = pattern.match(path.name)
+        if m is None:
+            continue
+        table = _read_nwlistop_table(path, cls, start_year, start_month)
+        if table is not None:
+            tables.append(
+                table.rename({"valor": value_column}).with_columns(
+                    pl.lit(int(m.group(1))).alias(code_column)
+                )
+            )
+    if not tables:
+        return pl.DataFrame(schema=schema)
+    return (
+        pl.concat(tables)
+        .select(list(schema))
+        .cast(schema)
+        .sort(code_column, *(k for k in _NWLISTOP_KEYS if k in schema))
+    )

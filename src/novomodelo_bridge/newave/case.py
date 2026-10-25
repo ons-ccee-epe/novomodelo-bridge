@@ -212,6 +212,15 @@ class NewaveCase:
         return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
 
     @cached_property
+    def volumes_referencia(self) -> UsinasHidreletricas | None:
+        """LIBS reader for the per-period reservoir reference volumes, or
+        ``None`` if absent."""
+        path = self.files.volumes_referencia
+        if path is None:
+            return None
+        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+
+    @cached_property
     def estacao_bombeamento(self) -> UsinasHidreletricas | None:
         """LIBS reader for pumping station data, or ``None`` if absent."""
         path = self.files.estacao_bombeamento

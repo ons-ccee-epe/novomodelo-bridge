@@ -275,14 +275,12 @@ class TestBuildDecompDatasetProductivity:
 
         assert dataset.render.productivity_detail.is_empty()
 
-    def test_report_renders_both_the_realized_title_and_the_static_no_data_note(
+    def test_report_renders_the_realized_section_without_the_static_one(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """On the SAME DECOMP dataset: with
-        ``productivity_detail`` empty AND ``productivity_per_stage``
-        non-empty, the decoupled report_builder gate renders
-        BOTH the realized-productivity section and the static section's "No
-        productivity data available" note."""
+        """With ``productivity_detail`` empty and ``productivity_per_stage``
+        not, the tab shows the realized section and leaves out the static
+        sections and the no-data note."""
         _patch_aligned_frames(monkeypatch, _productivity_aligned_fixture())
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)
@@ -290,6 +288,6 @@ class TestBuildDecompDatasetProductivity:
 
         productivity_tab = _extract_tab_content(html, "tab-productivity")
         assert "Realized productivity across stages" in productivity_tab
-        assert "No productivity data available." in productivity_tab
-        # The static-only Building Blocks table has no DECOMP data to render.
+        assert "Static productivity" not in productivity_tab
         assert "Productivity Building Blocks" not in productivity_tab
+        assert "No productivity data available." not in productivity_tab

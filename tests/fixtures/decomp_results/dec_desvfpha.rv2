@@ -1,0 +1,52 @@
+***********************************************************************
+*                                                                     *
+*            CEPEL - CENTRO DE PESQUISAS DE ENERGIA ELETRICA          *
+*  CEPEL: DECOMP     - Versao 32.0.1 - Dez/2024(L)                    *
+*                                                                     *
+***********************************************************************
+
+
+   PROGRAMA LICENCIADO PARA OPERADOR NACIONAL DO SISTEMA ELETRICO ONS                                                                                                             
+
+
+____________________________________________________________________
+
+ PMO - MARCO/26 - ABRIL/26 - REV 2 - FCF COM CVAR - 12 REE - VALOR ESPERADO      
+____________________________________________________________________
+
+---------------------------------------------------------------------------------------------
+USIH;        Numero de cadastro da usina hidroeletrica                                                                                                                                                  
+IPER;        Indice do periodo                                                                                                                                                                          
+ICEN;        Indice do cenario                                                                                                                                                                          
+IPAT;        Patamar de Carga                                                                                                                                                                           
+NomeUsih;    Nome de cadastro da usina hidroeletrica                                                                                                                                                    
+Varm;        Volume Armazenado Total                                                                                                                                                                    
+Vutil;       Volume Util                                                                                                                                                                                
+Qtur;        Vazao turbinada                                                                                                                                                                            
+Qver;        Vazao vertida                                                                                                                                                                              
+Qjus;        Vazao de jusante da usina (calculo da cota de jusante)                                                                                                                                     
+Qlatu;       Parcela da vazao de jusante referente à influências de defluências de outras usi                                                                                                           
+Qlatp;       Parcela da vazao de jusante referente à influências de postos                                                                                                                              
+Hjus;        Altura de jusante                                                                                                                                                                          
+Hmon;        Altura de montante                                                                                                                                                                         
+Pdt.Esp.;    Produtibilidade específica da usina                                                                                                                                                        
+Perd.Hidr.;  Perdas hidráulicas na queda da usina                                                                                                                                                       
+Afog;        Indicacao de afogamento do canal de fuga                                                                                                                                                   
+Ghid (FPH);  Geração hidroeletrica obtida pela funcao exata (nao linear)                                                                                                                                
+Ghid (FPHA); Geração hidroeletrica obtida pela funcao de producao (linear por partes)                                                                                                                   
+Desvio Abs;  Desvio absoluto entre o valor exato e o obtido pelo modelo (MW)                                                                                                                            
+Desvio;      Desvio percentual entre o valor exato e o obtido pelo modelo (%)                                                                                                                           
+Vtfuga;      Flag para indicar se o vertimento influencia na cota do canal de fuga                                                                                                                      
+---------------------------------------------------------------------------------------------
+
+@Tabela
+-----;-----;------;-----;--------------;----------;----------;----------;----------;---------;---------;---------;---------;---------;------------;------------;----;----------;----------;-----------;-----------;------;
+USIH ;IPER ; ICEN ;IPAT ;   NomeUsih   ;   Varm   ;  Vutil   ;   Qtur   ;   Qver   ;  Qjus   ;  Qlatu  ;  Qlatp  ;  Hjus   ;  Hmon   ;  Pdt.Esp.  ; Perd.Hidr. ;Afog;Ghid (FPH);Ghid (FPHA;Desvio Abs ;  Desvio   ;Vtfuga;
+  -  ;  -  ;  -   ;  -  ;      -       ;  (hm3)   ;   (%)    ;  (m3/s)  ;  (m3/s)  ; (m3/s)  ; (m3/s)  ; (m3/s)  ;   (m)   ;   (m)   ;(MW/m3/s/m) ;    (m)     ;    ;   (MW)   ;   (MW)   ;   (MW)    ;    (%)    ;  -   ;
+-----;-----;------;-----;--------------;----------;----------;----------;----------;---------;---------;---------;---------;---------;------------;------------;----;----------;----------;-----------;-----------;------;
+ 001 ;   1 ;    1 ;   1 ; CAMARGOS     ;   744.58 ;    92.94 ;   162.83 ;     0.00 ;   162.83;     0.00;     0.00;   885.91;   912.40; 0.00876680 ;   0.095000 ;  0 ;    37.68 ;    37.61 ;    -0.07  ;      -0.19;   1  ;
+ 001 ;   1 ;    1 ;   2 ; CAMARGOS     ;   744.58 ;    92.94 ;   162.83 ;     0.00 ;   162.83;     0.00;     0.00;   885.91;   912.40; 0.00876680 ;   0.095000 ;  0 ;    37.68 ;    37.61 ;    -0.07  ;      -0.19;   1  ;
+ 001 ;   1 ;    1 ;   3 ; CAMARGOS     ;   744.58 ;    92.94 ;   154.45 ;     0.00 ;   154.45;     0.00;     0.00;   885.89;   912.40; 0.00876680 ;   0.095000 ;  0 ;    35.77 ;    35.79 ;     0.01  ;       0.04;   1  ;
+ 002 ;   1 ;    1 ;   1 ; ITUTINGA     ;    10.64 ;   100.00 ;   213.36 ;     0.00 ;   213.36;     0.00;     0.00;   857.82;   885.66; 0.00864940 ;   0.631000 ;  0 ;    50.21 ;    50.21 ;     0.00  ;       0.00;   1  ;
+ 002 ;   1 ;    1 ;   2 ; ITUTINGA     ;    10.64 ;   100.00 ;   213.36 ;     0.00 ;   213.36;     0.00;     0.00;   857.82;   885.66; 0.00864940 ;   0.631000 ;  0 ;    50.21 ;    50.21 ;     0.00  ;       0.00;   1  ;
+ 002 ;   1 ;    1 ;   3 ; ITUTINGA     ;    10.64 ;   100.00 ;    72.29 ;     0.00 ;    72.29;     0.00;     0.00;   856.63;   885.66; 0.00864940 ;   0.631000 ;  0 ;    17.76 ;    17.70 ;    -0.06  ;      -0.32;   1  ;

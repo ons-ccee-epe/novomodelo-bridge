@@ -18,7 +18,6 @@ import pytest
 
 from novomodelo_bridge.comparators.charts import _COST_MAP
 from novomodelo_bridge.comparators.decomp.results import (
-    _DEVIATION_VIOLATION_LABEL,
     _NW_COST_LABELS,
     _bus_side,
     _cost_frames,
@@ -40,10 +39,11 @@ def _relato_costs_frame() -> pl.DataFrame:
 
     Per-stage means (across ``cenario``): stage 1 -> geracao_termica=120,
     custo_presente=600, custo_futuro=2200; stage 2 -> geracao_termica=100,
-    custo_presente=400, custo_futuro=1200. NPV (summed across stage, x1e3):
+    custo_presente=400, custo_futuro=1200. The present-value factor is 1 and
+    no contract is active. NPV (summed across stage, x1e3):
     GERACAO TERMICA=220_000, INTERCAMBIO=8_000, VERTIMENTO=12_000,
-    VIOL. TURB. MINIMO=2_000, VIOL. TURB. MAXIMO=4_000,
-    VIOLACAO DESVIO=16_000.
+    TURBINAMENTO UHE=6_000, VIOLACAO DESVIO=16_000, and the unitemized
+    remainder FOLGA RESTRICOES=738_000 (455 + 283 k$ stage means).
     """
     return pl.DataFrame(
         {
@@ -51,8 +51,12 @@ def _relato_costs_frame() -> pl.DataFrame:
             "cenario": [1, 2, 1, 2],
             "probabilidade": [0.5, 0.5, 0.5, 0.5],
             "custo_presente": [500.0, 700.0, 300.0, 500.0],
+            "custo_presente_nominal": [500.0, 700.0, 300.0, 500.0],
             "custo_futuro": [2000.0, 2400.0, 1000.0, 1400.0],
             "geracao_termica": [100.0, 140.0, 80.0, 120.0],
+            "contrato_importacao": [0.0, 0.0, 0.0, 0.0],
+            "contrato_exportacao_minimo": [0.0, 0.0, 0.0, 0.0],
+            "contrato_exportacao": [0.0, 0.0, 0.0, 0.0],
             "violacao_desvio": [10.0, 10.0, 6.0, 6.0],
             "penalidade_vertimento_reservatorio": [5.0, 5.0, 3.0, 3.0],
             "penalidade_vertimento_fio": [3.0, 3.0, 1.0, 1.0],
@@ -68,15 +72,19 @@ def _relato2_costs_frame() -> pl.DataFrame:
     openings, so its expected cost is genuinely probability-weighted rather
     than a 50/50 mean. stage 3 geracao_termica expectation:
     0.6*1000 + 0.4*500 = 800 k$ (weighted) vs 750 k$ (unweighted) -- the tests
-    pin the weighted value."""
+    pin the weighted value. The stage's present-value factor is 0.9."""
     return pl.DataFrame(
         {
             "estagio": [3, 3],
             "cenario": [1, 2],
             "probabilidade": [0.6, 0.4],
-            "custo_presente": [900.0, 400.0],
+            "custo_presente": [900.0, 450.0],
+            "custo_presente_nominal": [1000.0, 500.0],
             "custo_futuro": [0.0, 0.0],
             "geracao_termica": [1000.0, 500.0],
+            "contrato_importacao": [0.0, 0.0],
+            "contrato_exportacao_minimo": [0.0, 0.0],
+            "contrato_exportacao": [0.0, 0.0],
             "violacao_desvio": [0.0, 0.0],
             "penalidade_vertimento_reservatorio": [0.0, 0.0],
             "penalidade_vertimento_fio": [0.0, 0.0],
@@ -87,19 +95,54 @@ def _relato2_costs_frame() -> pl.DataFrame:
     )
 
 
+def _dec_oper_sist_frame(
+    rows: list[tuple[int, int, int | None, int, float, float]],
+) -> pl.DataFrame:
+    """``read_dec_oper_sist`` rows from ``(estagio, cenario, patamar,
+    codigo_submercado, duracao, deficit_MW)`` tuples; ``patamar=None`` is the
+    stage aggregate row."""
+    estagio, cenario, patamar, codigo, duracao, deficit = zip(*rows, strict=True)
+    return pl.DataFrame(
+        {
+            "estagio": list(estagio),
+            "cenario": list(cenario),
+            "patamar": list(patamar),
+            "codigo_submercado": list(codigo),
+            "duracao": list(duracao),
+            "deficit_MW": list(deficit),
+        },
+        schema_overrides={"patamar": pl.Int64},
+    )
+
+
+def _no_deficit_frame() -> pl.DataFrame:
+    return _dec_oper_sist_frame([(1, 1, 1, 1, 168.0, 0.0)])
+
+
 class TestCostFrames:
     """``_cost_frames`` -- the DECOMP-side NPV dict (R$) + the
     per-stage ``nw_sin`` cost rows (10^6 R$), reconciled from native k$."""
 
-    def _patch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _patch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        relato: pl.DataFrame | None = None,
+        sist: pl.DataFrame | None = None,
+    ) -> None:
+        relato = _relato_costs_frame() if relato is None else relato
+        sist = _no_deficit_frame() if sist is None else sist
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
-            lambda *_args, **_kwargs: _relato_costs_frame(),
+            lambda *_args, **_kwargs: relato,
         )
         # No scenario-fan stage by default -- relato2 is optional.
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_args, **_kwargs: pl.DataFrame(),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
+            lambda *_args, **_kwargs: sist,
         )
 
     def test_kdollars_to_reais_reconciliation_on_both_unit_paths(
@@ -113,7 +156,7 @@ class TestCostFrames:
         must read that stage's mean k$ /1e3."""
         self._patch(monkeypatch)
 
-        nw_costs, nw_sin = _cost_frames(tmp_path)
+        nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
         assert nw_costs["GERACAO TERMICA"] == pytest.approx(220_000.0)
         cterm = {
@@ -130,16 +173,13 @@ class TestCostFrames:
         """relato2's monthly scenario-fan stage is unioned onto relato's weekly
         stages, and its expected cost uses the real (unequal) tree
         probabilities -- not a 50/50 mean."""
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
-            lambda *_args, **_kwargs: _relato_costs_frame(),  # weekly stages 1, 2
-        )
+        self._patch(monkeypatch)  # weekly stages 1, 2
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
             lambda *_args, **_kwargs: _relato2_costs_frame(),  # fan stage 3
         )
 
-        nw_costs, nw_sin = _cost_frames(tmp_path)
+        nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
         cterm = {
             row["stage"]: row["value"]
@@ -153,8 +193,9 @@ class TestCostFrames:
         # ... and probability-weighted: 0.6*1000 + 0.4*500 = 800 k$ -> 0.8
         # (10^6 R$), NOT the unweighted 750 -> 0.75.
         assert cterm[3] == pytest.approx(0.8)
-        # NPV thermal now includes the fan stage: (120 + 100 + 800) k$ x1e3.
-        assert nw_costs["GERACAO TERMICA"] == pytest.approx(1_020_000.0)
+        # NPV thermal includes the fan stage at its present value:
+        # (120 + 100 + 0.9 * 800) k$ x1e3.
+        assert nw_costs["GERACAO TERMICA"] == pytest.approx(940_000.0)
 
     def test_absent_relato2_leaves_only_relato_stages(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -163,7 +204,7 @@ class TestCostFrames:
         the cost frames cover exactly relato's weeks."""
         self._patch(monkeypatch)  # read_relato2_costs stubbed to empty
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path)
+        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
         stages = set(nw_sin.filter(pl.col("variable") == "CTERM")["stage"].to_list())
         assert stages == {1, 2}
@@ -173,30 +214,154 @@ class TestCostFrames:
     ) -> None:
         self._patch(monkeypatch)
 
-        nw_costs, _nw_sin = _cost_frames(tmp_path)
+        nw_costs, _nw_sin = _cost_frames(tmp_path, {})
 
         assert nw_costs["INTERCAMBIO"] == pytest.approx(8_000.0)
         assert nw_costs["VERTIMENTO"] == pytest.approx(12_000.0)
-        assert nw_costs["VIOL. TURB. MINIMO"] == pytest.approx(2_000.0)
-        assert nw_costs["VIOL. TURB. MAXIMO"] == pytest.approx(4_000.0)
+        assert nw_costs["TURBINAMENTO UHE"] == pytest.approx(6_000.0)
+        assert nw_costs["VIOLACAO DESVIO"] == pytest.approx(16_000.0)
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
+        assert "DEFICIT" not in nw_costs
+        assert "CONTRATOS" not in nw_costs
 
-    def test_violacao_desvio_surfaces_as_a_descriptive_residual_key(
+    def test_parcels_are_discounted_by_the_stage_present_value_factor(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """``violacao_desvio`` has no ``charts._COST_MAP`` slot -- it must
-        still surface (not be silently dropped) under its own key."""
-        self._patch(monkeypatch)
+        """The report's parcels are nominal; only its stage total has a
+        present-value line. Stage 2's factor is 0.5 here, so its parcels count
+        half in the NPV dict while its ``nw_sin`` rows stay nominal."""
+        relato = _relato_costs_frame().with_columns(
+            pl.when(pl.col("estagio") == 2)
+            .then(pl.col("custo_presente") / 2.0)
+            .otherwise(pl.col("custo_presente"))
+            .alias("custo_presente")
+        )
+        self._patch(monkeypatch, relato=relato)
 
-        nw_costs, _nw_sin = _cost_frames(tmp_path)
+        nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
-        assert nw_costs[_DEVIATION_VIOLATION_LABEL] == pytest.approx(16_000.0)
+        # (120 + 0.5 * 100) k$ x1e3.
+        assert nw_costs["GERACAO TERMICA"] == pytest.approx(170_000.0)
+        # (455 + 0.5 * 283) k$ x1e3.
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(596_500.0)
+        coper = {
+            row["stage"]: row["value"]
+            for row in nw_sin.filter(pl.col("variable") == "COPER").iter_rows(
+                named=True
+            )
+        }
+        assert coper == pytest.approx({1: 0.6, 2: 0.4})
+
+    def test_deficit_is_priced_from_the_block_rows_and_leaves_the_slack(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Block deficit x duration x the subsystem's CD cost; the stage
+        aggregate row (``patamar`` null) is not counted twice."""
+        sist = _dec_oper_sist_frame(
+            [
+                (1, 1, 1, 1, 5.0, 10.0),
+                (1, 1, 2, 1, 10.0, 2.0),
+                (1, 1, None, 1, 15.0, 4.666),
+                (1, 1, 1, 2, 5.0, 0.0),
+            ]
+        )
+        self._patch(monkeypatch, sist=sist)
+
+        nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0, 2: 2000.0})
+
+        # (10 * 5 + 2 * 10) MWh x 1000 $/MWh = 70 k$ in scenario 1 of stage 1,
+        # 35 k$ as the stage expectation.
+        assert nw_costs["DEFICIT"] == pytest.approx(35_000.0)
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(703_000.0)
+
+    def test_deficit_without_a_cd_cost_is_logged_and_stays_in_the_slack(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        sist = _dec_oper_sist_frame([(1, 1, 1, 3, 5.0, 10.0)])
+        self._patch(monkeypatch, sist=sist)
+
+        with caplog.at_level("WARNING"):
+            nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0})
+
+        assert "DEFICIT" not in nw_costs
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
+        assert "subsystem(s) 3" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("importacao", "exportacao_minimo", "exportacao", "term", "warned"),
+        [
+            # A take-or-pay export minimum counts as a cost, the rest as revenue.
+            (1680.0, 8400.0, 16800.0, 1680.0, True),
+            (0.0, 0.0, 16800.0, -16800.0, False),
+            (840.0, 504.0, 504.0, 1344.0, True),
+        ],
+    )
+    def test_contract_term_follows_the_stage_total(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        importacao: float,
+        exportacao_minimo: float,
+        exportacao: float,
+        term: float,
+        warned: bool,
+    ) -> None:
+        """Stage 1 carries the contracts, and its totals include their term,
+        so the unitemized slack is unchanged."""
+        stage_1 = pl.col("estagio") == 1
+        relato = _relato_costs_frame().with_columns(
+            pl.when(stage_1)
+            .then(importacao)
+            .otherwise(0.0)
+            .alias("contrato_importacao"),
+            pl.when(stage_1)
+            .then(exportacao_minimo)
+            .otherwise(0.0)
+            .alias("contrato_exportacao_minimo"),
+            pl.when(stage_1)
+            .then(exportacao)
+            .otherwise(0.0)
+            .alias("contrato_exportacao"),
+            *(
+                pl.when(stage_1).then(pl.col(c) + term).otherwise(pl.col(c)).alias(c)
+                for c in ("custo_presente", "custo_presente_nominal")
+            ),
+        )
+        self._patch(monkeypatch, relato=relato)
+
+        with caplog.at_level("WARNING"):
+            nw_costs, _nw_sin = _cost_frames(tmp_path, {})
+
+        assert nw_costs["CONTRATOS"] == pytest.approx(term * 1e3)
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
+        assert ("take-or-pay" in caplog.text) is warned
+
+    def test_negative_remainder_reads_as_zero_slack(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Print rounding can leave the stage total a hair below its parcels;
+        the slack is a sum of non-negative penalties, so it never goes
+        negative."""
+        relato = _relato_costs_frame().with_columns(
+            pl.lit(90.0).alias("custo_presente"),
+            pl.lit(90.0).alias("custo_presente_nominal"),
+        )
+        self._patch(monkeypatch, relato=relato)
+
+        nw_costs, _nw_sin = _cost_frames(tmp_path, {})
+
+        assert "FOLGA RESTRICOES" not in nw_costs
 
     def test_coper_and_custo_futuro_rows_match_the_stage_means(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         self._patch(monkeypatch)
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path)
+        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
         coper = {
             row["stage"]: row["value"]
@@ -216,26 +381,24 @@ class TestCostFrames:
     def test_every_nw_costs_key_maps_to_a_known_cost_map_category(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """No dead rows: every emitted key is either a ``charts._COST_MAP``
-        the source model label or the one intentional residual
-        (``violacao_desvio``)."""
+        """No dead rows: every label ``_cost_frames`` can emit is a
+        ``charts._COST_MAP`` source-model label."""
         self._patch(monkeypatch)
 
-        nw_costs, _nw_sin = _cost_frames(tmp_path)
+        nw_costs, _nw_sin = _cost_frames(tmp_path, {})
 
         known_labels = {label for label, *_ in _NW_COST_LABELS}
         mapped_cost_map_keys = {k for _, nw_keys, _, _ in _COST_MAP for k in nw_keys}
         assert nw_costs  # the fixture must exercise real categories
-        for key in nw_costs:
-            assert key in known_labels
-            assert key == _DEVIATION_VIOLATION_LABEL or key in mapped_cost_map_keys
+        assert set(nw_costs) <= known_labels
+        assert known_labels <= mapped_cost_map_keys
 
     def test_every_nw_sin_variable_is_a_chart_consumed_token(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         self._patch(monkeypatch)
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path)
+        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
         assert set(nw_sin["variable"].unique().to_list()) <= {
             "COPER",
@@ -248,7 +411,7 @@ class TestCostFrames:
     ) -> None:
         self._patch(monkeypatch)
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path)
+        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
         assert set(nw_sin["stage"].unique().to_list()) == {1, 2}
 
@@ -266,7 +429,7 @@ class TestCostFrames:
         )
 
         with pytest.raises(FileNotFoundError):
-            _cost_frames(tmp_path)
+            _cost_frames(tmp_path, {})
 
 
 def _relato_costs_with_overlapping_fan_stage() -> pl.DataFrame:
@@ -280,8 +443,12 @@ def _relato_costs_with_overlapping_fan_stage() -> pl.DataFrame:
             "cenario": [1, 2],
             "probabilidade": [0.9, 0.1],  # wrong -- must be superseded
             "custo_presente": [1.0, 1.0],
+            "custo_presente_nominal": [1.0, 1.0],
             "custo_futuro": [1.0, 1.0],
             "geracao_termica": [1.0, 1.0],
+            "contrato_importacao": [1.0, 1.0],
+            "contrato_exportacao_minimo": [1.0, 1.0],
+            "contrato_exportacao": [1.0, 1.0],
             "violacao_desvio": [1.0, 1.0],
             "penalidade_vertimento_reservatorio": [1.0, 1.0],
             "penalidade_vertimento_fio": [1.0, 1.0],
@@ -599,6 +766,10 @@ class TestBuildDecompDatasetCosts:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_args, **_kwargs: _relato_costs_frame(),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
+            lambda *_args, **_kwargs: _no_deficit_frame(),
         )
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."

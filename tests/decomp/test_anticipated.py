@@ -1,10 +1,11 @@
 """Unit tests for the source model's GNL reader (``decomp/anticipated.py``).
 
-CI-tier and deck-independent: every test drives a synthetic ``_StubDadgnl`` with
+CI-tier and deck-independent: the tests drive a synthetic ``_StubDadgnl`` with
 hand-authored ``gl``/``tg``/``gs`` data (mirroring the real register shapes), so
-the suite needs no deck and no novomodelo binary. ``gl`` is a list of register stubs
-(the real ``gl(df=True)`` is unusable on ragged weekly blocks); ``tg``/``gs`` are
-DataFrames (their fixed shapes make ``df=True`` well-formed).
+the suite needs no deck and no novomodelo binary; the ones that read a whole
+``dadgnl`` write a two-register file to ``tmp_path``. ``gl`` is a list of
+register stubs (the real ``gl(df=True)`` is unusable on ragged weekly blocks);
+``tg``/``gs`` are DataFrames (their fixed shapes make ``df=True`` well-formed).
 """
 
 from __future__ import annotations
@@ -13,9 +14,11 @@ import dataclasses
 import logging
 from collections.abc import Mapping
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
+from idecomp.decomp import Dadgnl
 
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -32,6 +35,7 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     classify_gnl_windows,
     convert_gnl,
     is_gnl_enabled,
+    operative_week_months,
     read_gnl_model,
 )
 from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -121,6 +125,7 @@ def test_committed_mw_is_block_duration_weighted() -> None:
     expected = (40 * 107 + 48 * 131 + 80 * 97) / 168
     assert abs(got - expected) < 1e-9
     assert model.commitments[86].stages[0].hours == 168.0  # sum of duracao
+    assert model.commitments[86].stages[0].block_mw == (107.0, 131.0, 97.0)
 
 
 def test_gate_off_when_gl_absent() -> None:
@@ -206,6 +211,47 @@ def test_registry_keeps_every_declared_tg_stage() -> None:
     assert model.tg["estagio"].tolist() == [1, 2]
 
 
+_ONE_GL_DADGNL = (
+    "TG  224   3   P. SERGIPE 1       01593.       299    01593.       299"
+    "    01593.       299\n"
+    "GL  224   3    1      1517.14  126   1395.11  322   1194.75  296"
+    " 01012026\n"
+)
+
+
+def _read_dadgnl_text(tmp_path: Path, text: str) -> Dadgnl:
+    path = tmp_path / "dadgnl.rv0"
+    path.write_text(text)
+    return Dadgnl.read(str(path))
+
+
+def test_tg_cost_without_decimal_point_reads_with_the_implied_decimals(
+    tmp_path: Path,
+) -> None:
+    # TG's cvu is F10.2: written without a point, the source model reads 299
+    # as 2.99, not 299.0.
+    model = read_gnl_model(_read_dadgnl_text(tmp_path, _ONE_GL_DADGNL))
+
+    assert model is not None
+    assert model.tg[["cvu_1", "cvu_2", "cvu_3"]].iloc[0].tolist() == [2.99] * 3
+    assert model.tg["disponibilidade_1"].iloc[0] == 1593.0
+
+
+def test_read_gnl_model_reads_a_deck_with_a_single_gl_register(
+    tmp_path: Path,
+) -> None:
+    model = read_gnl_model(_read_dadgnl_text(tmp_path, _ONE_GL_DADGNL))
+
+    assert model is not None
+    [stage] = model.commitments[224].stages
+    assert stage.estagio == 1
+    assert stage.start_date == date(2026, 1, 1)
+    assert stage.hours == 744.0
+    assert stage.committed_mw == pytest.approx(
+        (1517.14 * 126 + 1395.11 * 322 + 1194.75 * 296) / 744
+    )
+
+
 def test_weeks_per_month_from_gs() -> None:
     gl = [_GlReg(86, 1, "14032026", [168.0], [100.0])]
     gs = [{"mes": 1, "semanas": 3}, {"mes": 2, "semanas": 4}, {"mes": 3, "semanas": 5}]
@@ -214,6 +260,33 @@ def test_weeks_per_month_from_gs() -> None:
     assert model is not None
     assert model.weeks_per_month == {1: 3, 2: 4, 3: 5}
     assert isinstance(model, GnlCommitmentModel)
+
+
+def test_operative_week_months_books_weeks_by_gs_counts() -> None:
+    weeks = operative_week_months({1: 3, 2: 4, 3: 5}, _EMIT_CALENDAR)
+
+    assert len(weeks) == 12
+    assert weeks[date(2026, 3, 28)] == (2026, 3)
+    assert weeks[date(2026, 4, 4)] == (2026, 4)
+    assert weeks[date(2026, 4, 25)] == (2026, 4)
+    # Starts in May, ends in June: booked to May by the count.
+    assert weeks[date(2026, 5, 30)] == (2026, 5)
+
+
+def test_operative_week_months_empty_without_gs() -> None:
+    assert operative_week_months({}, _EMIT_CALENDAR) == {}
+
+
+def test_operative_week_months_books_one_interval_per_month_for_a_monthly_study() -> (
+    None
+):
+    weeks = operative_week_months({1: 1, 2: 1, 3: 1}, _MONTHLY_CALENDAR)
+
+    assert weeks == {
+        date(2026, 1, 1): (2026, 1),
+        date(2026, 2, 1): (2026, 2),
+        date(2026, 3, 1): (2026, 3),
+    }
 
 
 def test_nl_lags_read_per_plant() -> None:
@@ -894,3 +967,149 @@ def test_convert_gnl_clamps_class4_commitment_above_capability(
     ]
     assert any(p["value_mw"] == 500.0 for p in class4)  # 900 -> max 500
     assert any("clamped" in r.message for r in caplog.records)
+
+
+# --------------------------------------------------------------------------
+# Emission for a study of monthly stages only (the decomp-mensal shape)
+# --------------------------------------------------------------------------
+
+_MONTHLY_CALENDAR = [
+    OperativeStage(0, date(2026, 1, 1), date(2026, 2, 1), 0, (126.0, 322.0, 296.0)),
+    OperativeStage(1, date(2026, 2, 1), date(2026, 3, 1), 1, (114.0, 291.0, 267.0)),
+]
+
+
+def _monthly_tg(code: int, name: str, *, sub: int, cvus: list[float]) -> list[dict]:
+    """One ``tg`` record per stage of the study and its two post-study months."""
+    return [
+        {**_tg_row(code, name, sub=sub, cvu=cvu, disp=500.0), "estagio": k}
+        for k, cvu in enumerate(cvus, start=1)
+    ]
+
+
+def _monthly_model(
+    *,
+    nl: Mapping[int, int] | None = None,
+    weeks_per_month: Mapping[int, int] | None = None,
+    extra_gl: tuple[GnlStageCommitment, ...] = (),
+) -> GnlCommitmentModel:
+    """SANTA CRUZ (86) commits 500 MW in January and a ragged February; PSERGIPE
+    (224) commits nothing. ``tg`` prices each month differently."""
+    return GnlCommitmentModel(
+        tg=pd.DataFrame(
+            _monthly_tg(86, "SANTA CRUZ", sub=1, cvus=[296.0, 297.0, 298.0, 299.0])
+            + _monthly_tg(224, "PSERGIPE I", sub=3, cvus=[310.0, 311.0, 312.0, 313.0])
+        ),
+        thermals=(_SANTA, _PSERG),
+        commitments={
+            86: GnlCommitment(
+                86,
+                (
+                    GnlStageCommitment(1, date(2026, 1, 1), 500.0, 744.0),
+                    GnlStageCommitment(2, date(2026, 2, 1), 112.0, 672.0),
+                    *extra_gl,
+                ),
+            ),
+            224: GnlCommitment(
+                224,
+                (
+                    GnlStageCommitment(1, date(2026, 1, 1), 0.0, 744.0),
+                    GnlStageCommitment(2, date(2026, 2, 1), 0.0, 672.0),
+                ),
+            ),
+        },
+        weeks_per_month=dict(weeks_per_month or {1: 1, 2: 1, 3: 1}),
+        nl_lag_months=dict(nl or {86: 2, 224: 2}),
+    )
+
+
+def _convert_monthly(model: GnlCommitmentModel) -> GnlEmission:
+    return convert_gnl(
+        model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_MONTHLY_CALENDAR
+    )
+
+
+def test_convert_gnl_monthly_study_leads_by_the_nl_lag_in_stages() -> None:
+    e = _convert_monthly(_monthly_model())
+
+    assert [t["anticipated_config"] for t in e.thermals] == [
+        {"lead_stages": 2},
+        {"lead_stages": 2},
+    ]
+
+
+def test_convert_gnl_monthly_study_pins_the_lagged_study_stages_to_gl() -> None:
+    e = _convert_monthly(_monthly_model())
+
+    assert [
+        (p["thermal_id"], p["start_date"], p["end_date"], p["value_mw"])
+        for p in e.past_anticipated_commitments
+    ] == [
+        (94, "2026-01-01", "2026-02-01", 500.0),
+        (94, "2026-02-01", "2026-03-01", 112.0),
+        (95, "2026-01-01", "2026-02-01", 0.0),
+        (95, "2026-02-01", "2026-03-01", 0.0),
+    ]
+
+
+def test_convert_gnl_monthly_post_study_is_whole_months_priced_from_tg() -> None:
+    e = _convert_monthly(_monthly_model())
+
+    assert e.post_study_stages is not None
+    assert e.post_study_stages["stages"] == [
+        {"start_date": "2026-03-01", "duration_hours": 744.0},
+        {"start_date": "2026-04-01", "duration_hours": 720.0},
+    ]
+    assert [
+        (b["thermal_id"], b["post_study_stage_index"], b["cost_per_mwh"])
+        for b in e.post_study_stages["thermal_bounds"]
+    ] == [(94, 0, 298.0), (94, 1, 299.0), (95, 0, 312.0), (95, 1, 313.0)]
+
+
+def test_convert_gnl_monthly_shorter_lag_prices_only_its_reach() -> None:
+    e = _convert_monthly(_monthly_model(nl={86: 2, 224: 1}))
+
+    assert e.thermals[1]["anticipated_config"] == {"lead_stages": 1}
+    assert [
+        p["start_date"] for p in e.past_anticipated_commitments if p["thermal_id"] == 95
+    ] == ["2026-01-01"]
+    assert e.post_study_stages is not None
+    assert len(e.post_study_stages["stages"]) == 2
+    assert [
+        b["post_study_stage_index"]
+        for b in e.post_study_stages["thermal_bounds"]
+        if b["thermal_id"] == 95
+    ] == [0]
+
+
+def test_convert_gnl_monthly_rejects_a_gs_month_split_into_weeks() -> None:
+    with pytest.raises(ValueError, match=r"one gs interval per month.*\{3: 4\}"):
+        _convert_monthly(_monthly_model(weeks_per_month={1: 1, 2: 1, 3: 4}))
+
+
+def test_convert_gnl_monthly_rejects_a_lag_past_the_study() -> None:
+    with pytest.raises(ValueError, match="nl lag of 3 month"):
+        _convert_monthly(_monthly_model(nl={86: 3, 224: 2}))
+
+
+def test_convert_gnl_monthly_rejects_a_plant_without_nl() -> None:
+    with pytest.raises(ValueError, match=r"plant 224 \(PSERGIPE I\) declares no nl"):
+        _convert_monthly(_monthly_model(nl={86: 2}))
+
+
+def test_convert_gnl_monthly_rejects_gl_past_the_horizon() -> None:
+    late = (GnlStageCommitment(3, date(2026, 3, 1), 500.0, 0.0),)
+
+    with pytest.raises(ValueError, match="past the study horizon .2026-03-01."):
+        _convert_monthly(_monthly_model(extra_gl=late))
+
+
+def test_convert_gnl_monthly_rejects_tg_past_the_post_study_months() -> None:
+    model = _monthly_model()
+    beyond = {**_tg_row(86, "SANTA CRUZ"), "estagio": 5}
+    model = dataclasses.replace(
+        model, tg=pd.concat([model.tg, pd.DataFrame([beyond])], ignore_index=True)
+    )
+
+    with pytest.raises(ValueError, match=r"TG stage 5 outside the calendar \(1..4\)"):
+        _convert_monthly(model)

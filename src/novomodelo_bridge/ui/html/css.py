@@ -181,6 +181,11 @@ COST_BREAKDOWN_TABLE_CSS: str = """
 .cost-breakdown-table .cb-cat { text-align: left; }
 .cost-breakdown-table .cb-diff-pos { color: #DC2626; font-weight: 600; }
 .cost-breakdown-table .cb-diff-neg { color: #059669; font-weight: 600; }
+.cost-breakdown-table .cb-caption-note {
+    font-weight: 400;
+    font-size: 0.8rem;
+    color: #6B7280;
+}
 /* Productivity building-blocks table: per-metric column grouping cues. */
 .prod-blocks-table thead th { text-align: center; }
 .prod-blocks-table .cb-group-tint { background: #F1F5F9; }
@@ -194,11 +199,21 @@ COST_BREAKDOWN_TABLE_CSS: str = """
     background: #FFFFFF;
     z-index: 1;
 }
-.prod-blocks-table .cb-caption-note {
+/* FPHA tables: per-plant rows only (no summary row), body scrolled. */
+.cost-breakdown-table.fpha-table tbody tr:last-child td {
+    border-top: none;
+    background: transparent;
     font-weight: 400;
-    font-size: 0.8rem;
-    color: #6B7280;
 }
+.cost-breakdown-table.fpha-table tbody tr:nth-child(even):last-child td {
+    background: #FBFBFA;
+}
+.cost-breakdown-table.fpha-table tbody tr:last-child:hover td {
+    background: #EFF6FF;
+}
+.fpha-scroll { max-height: 60vh; overflow-y: auto; margin-bottom: 16px; }
+.fpha-scroll .cost-breakdown-table { overflow: visible; }
+.fpha-scroll thead th { position: sticky; top: 0; z-index: 2; }
 """
 
 DATA_TABLE_CSS: str = """

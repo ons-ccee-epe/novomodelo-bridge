@@ -96,6 +96,9 @@ def _deferred(code: str, title: str, summary: str, remediation: str) -> Diagnost
     )
 
 
+_CALENDAR_LABEL = "Operative calendar (operative weeks, then whole months)"
+
+
 def _calendar_check(
     dadger: Dadger,
 ) -> tuple[CheckItem, list[OperativeStage], str | None]:
@@ -107,7 +110,7 @@ def _calendar_check(
     except (ValueError, AttributeError, TypeError) as exc:
         return (
             CheckItem(
-                label="Operative calendar (weekly walk, month-boundary close)",
+                label=_CALENDAR_LABEL,
                 passed=False,
                 detail=str(exc),
             ),
@@ -117,7 +120,7 @@ def _calendar_check(
     span = f"{calendar[0].start_date} → {calendar[-1].end_date}"
     return (
         CheckItem(
-            label="Operative calendar (weekly walk, month-boundary close)",
+            label=_CALENDAR_LABEL,
             passed=True,
             detail=f"{len(calendar)} stages, {span}",
         ),

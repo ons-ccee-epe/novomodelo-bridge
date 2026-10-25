@@ -1,8 +1,8 @@
-"""Tests for the shared FPHA envelope math (``comparators/fpha.py``).
+"""Tests for the shared FPHA math (``comparators/fpha.py``).
 
-Covers the two entry points -- ``dense_grid`` (numpy, whole-meshgrid) and
-``point_cloud`` (polars, scattered samples) -- and the three shared schemas
-both the NEWAVE and DECOMP comparison tracks import.
+Covers the envelope evaluator ``dense_grid``, Novomodelo's plane read-back
+``novomodelo_plane_arrays``, the operating-point ``productivity_split``, and the
+shared schemas.
 """
 
 from __future__ import annotations
@@ -14,9 +14,11 @@ import pytest
 from novomodelo_bridge.comparators.fpha import (
     FPHA_METRICS_SCHEMA,
     FPHA_SPILL_SCHEMA,
+    FPHA_SPLIT_SCHEMA,
     FPHA_SURFACE_SCHEMA,
     dense_grid,
-    point_cloud,
+    novomodelo_plane_arrays,
+    productivity_split,
 )
 
 # --------------------------------------------------------------------------- #
@@ -70,223 +72,153 @@ def test_dense_grid_default_volume_offset_is_zero() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# point_cloud                                                                  #
+# novomodelo_plane_arrays                                                           #
 # --------------------------------------------------------------------------- #
 
 
-def _planes(rows: list[dict[str, float]]) -> pl.DataFrame:
-    return pl.DataFrame(
-        rows,
-        schema={
-            "hydro_id": pl.Int64,
-            "stage_id": pl.Int64,
-            "gamma_0": pl.Float64,
-            "gamma_v": pl.Float64,
-            "gamma_q": pl.Float64,
-            "gamma_s": pl.Float64,
-            "kappa": pl.Float64,
-        },
+def test_novomodelo_plane_arrays_scales_only_the_intercept_by_kappa() -> None:
+    planes = pl.DataFrame(
+        {
+            "gamma_0": [10.0],
+            "gamma_v": [0.2],
+            "gamma_q": [0.5],
+            "gamma_s": [-0.1],
+            "kappa": [0.9],
+        }
     )
+    gamma_0, gamma_v, gamma_q, gamma_s, mult = novomodelo_plane_arrays(planes)
+    assert gamma_0.tolist() == pytest.approx([9.0])
+    assert gamma_v.tolist() == [0.2]
+    assert gamma_q.tolist() == [0.5]
+    assert gamma_s.tolist() == [-0.1]
+    assert mult.tolist() == [1.0]
 
 
-def _points(rows: list[dict[str, float]]) -> pl.DataFrame:
-    return pl.DataFrame(
-        rows,
-        schema={
-            "_point_id": pl.Int64,
-            "novomodelo_id": pl.Int64,
-            "stage": pl.Int64,
-            "v_hm3": pl.Float64,
-            "q_m3s": pl.Float64,
-            "s_m3s": pl.Float64,
-        },
-    )
+# --------------------------------------------------------------------------- #
+# productivity_split                                                           #
+# --------------------------------------------------------------------------- #
 
 
-def test_point_cloud_takes_min_over_planes() -> None:
-    # Plane A: GH = q ; plane B: GH = 10 (constant). Envelope = min(q, 10).
-    planes = _planes(
+def _split_points(rows: list[dict[str, object]], *, planes: bool) -> pl.DataFrame:
+    schema: dict[str, type[pl.DataType]] = {
+        "novomodelo_id": pl.Int64,
+        "stage": pl.Int64,
+        "weight": pl.Float64,
+        "q_m3s": pl.Float64,
+        "gh_mw": pl.Float64,
+        "exact_mw": pl.Float64,
+        "tie": pl.Boolean,
+    }
+    if planes:
+        schema |= {"source_planes_mw": pl.Float64, "novomodelo_planes_mw": pl.Float64}
+    return pl.DataFrame(rows, schema=schema)
+
+
+def test_productivity_split_composes_model_and_operating_point() -> None:
+    # Source: realized 0.5 MW per m³/s, its planes 0.5, Novomodelo's planes 0.55,
+    # exact 0.5. Novomodelo realizes 0.605 at its own points.
+    source = _split_points(
         [
             {
-                "hydro_id": 0,
-                "stage_id": 0,
-                "gamma_0": 0.0,
-                "gamma_v": 0.0,
-                "gamma_q": 1.0,
-                "gamma_s": 0.0,
-                "kappa": 1.0,
-            },
-            {
-                "hydro_id": 0,
-                "stage_id": 0,
-                "gamma_0": 10.0,
-                "gamma_v": 0.0,
-                "gamma_q": 0.0,
-                "gamma_s": 0.0,
-                "kappa": 1.0,
-            },
-        ]
-    )
-    points = _points(
-        [
-            {
-                "_point_id": 0,
-                "novomodelo_id": 0,
-                "stage": 0,
-                "v_hm3": 0.0,
-                "q_m3s": 5.0,
-                "s_m3s": 0.0,
-            },
-            {
-                "_point_id": 1,
-                "novomodelo_id": 0,
-                "stage": 0,
-                "v_hm3": 0.0,
-                "q_m3s": 20.0,
-                "s_m3s": 0.0,
-            },
-        ]
-    )
-
-    out = point_cloud(planes, points).sort("_point_id")
-    assert out["novomodelo_gh_mw"].to_list() == [5.0, 10.0]
-
-
-def test_point_cloud_applies_volume_offset() -> None:
-    # GH = 0.1 * useful_volume, useful = v - offset. At v=110, offset=10 -> 10.0.
-    planes = _planes(
-        [
-            {
-                "hydro_id": 0,
-                "stage_id": 0,
-                "gamma_0": 0.0,
-                "gamma_v": 0.1,
-                "gamma_q": 0.0,
-                "gamma_s": 0.0,
-                "kappa": 1.0,
-            }
-        ]
-    )
-    points = _points(
-        [
-            {
-                "_point_id": 0,
-                "novomodelo_id": 0,
-                "stage": 0,
-                "v_hm3": 110.0,
-                "q_m3s": 0.0,
-                "s_m3s": 0.0,
-            }
-        ]
-    )
-
-    out = point_cloud(planes, points, volume_offset=10.0)
-    assert out["novomodelo_gh_mw"].to_list() == pytest.approx([10.0])
-
-
-def test_point_cloud_default_volume_offset_is_zero() -> None:
-    # No offset passed -> the volume coefficient multiplies absolute volume,
-    # matching the DECOMP caller's convention.
-    planes = _planes(
-        [
-            {
-                "hydro_id": 0,
-                "stage_id": 0,
-                "gamma_0": 0.0,
-                "gamma_v": 0.1,
-                "gamma_q": 0.0,
-                "gamma_s": 0.0,
-                "kappa": 1.0,
-            }
-        ]
-    )
-    points = _points(
-        [
-            {
-                "_point_id": 0,
-                "novomodelo_id": 0,
-                "stage": 0,
-                "v_hm3": 110.0,
-                "q_m3s": 0.0,
-                "s_m3s": 0.0,
-            }
-        ]
-    )
-
-    out = point_cloud(planes, points)
-    assert out["novomodelo_gh_mw"].to_list() == pytest.approx([11.0])
-
-
-def test_point_cloud_point_with_no_matching_plane_drops_out() -> None:
-    planes = _planes(
-        [
-            {
-                "hydro_id": 0,
-                "stage_id": 0,
-                "gamma_0": 1.0,
-                "gamma_v": 0.0,
-                "gamma_q": 0.0,
-                "gamma_s": 0.0,
-                "kappa": 1.0,
-            }
-        ]
-    )
-    points = _points(
-        [
-            {
-                "_point_id": 0,
-                "novomodelo_id": 0,
-                "stage": 0,
-                "v_hm3": 0.0,
-                "q_m3s": 0.0,
-                "s_m3s": 0.0,
-            },
-            # No (hydro_id=1, stage_id=0) plane exists.
-            {
-                "_point_id": 1,
                 "novomodelo_id": 1,
                 "stage": 0,
-                "v_hm3": 0.0,
-                "q_m3s": 0.0,
-                "s_m3s": 0.0,
-            },
-        ]
-    )
-
-    out = point_cloud(planes, points)
-    assert out["_point_id"].to_list() == [0]
-
-
-def test_point_cloud_returns_empty_typed_frame_when_no_planes_match() -> None:
-    planes = _planes(
-        [
-            {
-                "hydro_id": 9,
-                "stage_id": 0,
-                "gamma_0": 1.0,
-                "gamma_v": 0.0,
-                "gamma_q": 0.0,
-                "gamma_s": 0.0,
-                "kappa": 1.0,
+                "weight": 1.0,
+                "q_m3s": 100.0,
+                "gh_mw": 50.0,
+                "source_planes_mw": 50.0,
+                "novomodelo_planes_mw": 55.0,
+                "exact_mw": 50.0,
+                "tie": False,
             }
-        ]
+        ],
+        planes=True,
     )
-    points = _points(
+    novomodelo = _split_points(
         [
             {
-                "_point_id": 0,
-                "novomodelo_id": 0,
+                "novomodelo_id": 1,
                 "stage": 0,
-                "v_hm3": 0.0,
-                "q_m3s": 0.0,
-                "s_m3s": 0.0,
+                "weight": 1.0,
+                "q_m3s": 100.0,
+                "gh_mw": 60.5,
+                "exact_mw": 55.0,
+                "tie": False,
             }
-        ]
+        ],
+        planes=False,
+    )
+    row = productivity_split(source, novomodelo).row(0, named=True)
+    assert row["d_model"] == pytest.approx(0.10)
+    assert row["d_operating_point"] == pytest.approx(0.10)
+    assert row["d_total"] == pytest.approx(0.21)
+    assert (1 + row["d_model"]) * (1 + row["d_operating_point"]) - 1 == (
+        pytest.approx(row["d_total"])
+    )
+    assert row["fit_error_source"] == pytest.approx(0.0)
+    assert row["fit_error_novomodelo"] == pytest.approx(0.10)
+    assert row["rho_exact_at_novomodelo"] == pytest.approx(0.55)
+    assert row["q_source_m3s"] == pytest.approx(100.0)
+    assert row["gh_source_mw"] == pytest.approx(50.0)
+    assert row["tie_share"] == pytest.approx(0.0)
+    assert list(productivity_split(source, novomodelo).columns) == list(
+        FPHA_SPLIT_SCHEMA
     )
 
-    out = point_cloud(planes, points)
-    assert out.is_empty()
-    assert out.schema == {"_point_id": pl.Int64, "novomodelo_gh_mw": pl.Float64}
+
+def test_productivity_split_leaves_ties_out_and_reports_their_share() -> None:
+    base = {
+        "novomodelo_id": 1,
+        "stage": 0,
+        "q_m3s": 100.0,
+        "source_planes_mw": 50.0,
+        "novomodelo_planes_mw": 50.0,
+        "exact_mw": 50.0,
+    }
+    source = _split_points(
+        [
+            {**base, "weight": 3.0, "gh_mw": 50.0, "tie": False},
+            # A tie point with a wildly different realized generation.
+            {**base, "weight": 1.0, "gh_mw": 5.0, "tie": True},
+        ],
+        planes=True,
+    )
+    novomodelo = _split_points(
+        [
+            {
+                "novomodelo_id": 1,
+                "stage": 0,
+                "weight": 1.0,
+                "q_m3s": 100.0,
+                "gh_mw": 50.0,
+                "exact_mw": 50.0,
+                "tie": False,
+            }
+        ],
+        planes=False,
+    )
+    row = productivity_split(source, novomodelo).row(0, named=True)
+    assert row["rho_source"] == pytest.approx(0.5)
+    assert row["tie_share"] == pytest.approx(0.25)
+    assert row["d_total"] == pytest.approx(0.0)
+
+
+def test_productivity_split_nulls_a_stage_that_turbines_nothing() -> None:
+    zero = {
+        "novomodelo_id": 1,
+        "stage": 0,
+        "weight": 1.0,
+        "q_m3s": 0.0,
+        "gh_mw": 0.0,
+        "exact_mw": 0.0,
+        "tie": False,
+    }
+    source = _split_points(
+        [{**zero, "source_planes_mw": 0.0, "novomodelo_planes_mw": 0.0}], planes=True
+    )
+    novomodelo = _split_points([zero], planes=False)
+    row = productivity_split(source, novomodelo).row(0, named=True)
+    assert row["rho_source"] is None
+    assert row["d_total"] is None
 
 
 # --------------------------------------------------------------------------- #
