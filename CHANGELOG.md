@@ -311,6 +311,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`convert newave` caps the FPHA turbined fit range at the plant's rated
+  power, not at each machine set's.** NEWAVE's fit range is the lower of the
+  machine sets' head-limited flow and the plant's rated power over the
+  generator head. The conversion capped each set at its own generators, so a
+  plant whose generators bind some of its sets and not others got a lower
+  range than NEWAVE's `fpha_eco`. The turbined cap of `hydros.json` and
+  `hydro_bounds.parquet` already took the plant-level minimum and now uses the
+  same function.
 - **The Productivity tab reads Cobre's fit inputs for seasonal production
   models.** The fit-inputs table read only the `stage_ranges` entries of
   `hydro_production_models.json`, so a plant whose FPHA configuration is

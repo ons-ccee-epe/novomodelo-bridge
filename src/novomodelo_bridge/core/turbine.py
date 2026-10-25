@@ -5,8 +5,8 @@ A turbine set rated for flow ``q_ef`` at net head ``h_ef`` swallows
 :data:`~novomodelo_bridge.core.productivity.KTURB_BY_TIPO_TURBINA`'s exponent).
 When the tailrace level rises with the flow, the head depends on the flow it
 limits, and :func:`settled_flow` solves the two together.
-:func:`power_limited_flow` also caps each machine set where its generator
-reaches rated power.
+:func:`power_limited_flow` also caps the plant where its generators together
+reach rated power.
 """
 
 from __future__ import annotations
@@ -51,28 +51,29 @@ def power_limited_flow(
     specific_productivity: float,
     exponent: float,
 ) -> float:
-    """``Σ n · min(q_ef (h_t / h_ef)^α, P_ef / (ρ_esp · h_g))`` (m³/s).
+    """``min(Σ n · q_ef (h_t / h_ef)^α, Σ n · P_ef / (ρ_esp · h_g))`` (m³/s).
 
-    Each set swallows its head-limited flow at the turbine head *h_t* until its
-    generator reaches rated power at the generator head *h_g*. Zero when either
-    head is not positive; *specific_productivity* is ``ρ_esp`` in
-    MW/(m³/s)/m and must be positive.
+    The sets swallow their head-limited flow at the turbine head *h_t* until
+    the plant's generators together reach rated power at the generator head
+    *h_g*; a set whose own generators would bind first is not capped on its
+    own. Zero when either head is not positive; *specific_productivity* is
+    ``ρ_esp`` in MW/(m³/s)/m and must be positive.
     """
     if turbine_head_m <= 0.0 or generator_head_m <= 0.0:
         return 0.0
-    return sum(
+    machines = tuple(sets)
+    swallowed = sum(
         machine.units
-        * min(
-            head_limited_flow(
-                turbine_head_m,
-                nominal_head_m=machine.head_m,
-                nominal_flow_m3s=machine.flow_m3s,
-                exponent=exponent,
-            ),
-            machine.power_mw / (specific_productivity * generator_head_m),
+        * head_limited_flow(
+            turbine_head_m,
+            nominal_head_m=machine.head_m,
+            nominal_flow_m3s=machine.flow_m3s,
+            exponent=exponent,
         )
-        for machine in sets
+        for machine in machines
     )
+    rated_power = sum(machine.units * machine.power_mw for machine in machines)
+    return min(swallowed, rated_power / (specific_productivity * generator_head_m))
 
 
 def settled_flow(

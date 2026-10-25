@@ -669,6 +669,30 @@ class TestFphaConverters:
             4 * 200.0 / (_REALISTIC_RHO_ESP * 305.0)
         )
 
+    def test_production_models_turbined_range_caps_the_plant_not_each_set(
+        self, tmp_path: Path
+    ) -> None:
+        # The second set's 50 MW generators alone would bind at
+        # 50 / (ρ_esp · 305); the plant's 1700 MW bind its four turbines as a
+        # whole.
+        case = self._case(
+            tmp_path,
+            plant_1={
+                "tipo_regulacao": "D",
+                "numero_conjuntos_maquinas": 2,
+                "maquinas_conjunto_1": 2,
+                "maquinas_conjunto_2": 2,
+                "vazao_nominal_conjunto_2": 222.2,
+                "queda_nominal_conjunto_1": 300.0,
+                "queda_nominal_conjunto_2": 300.0,
+                "potencia_nominal_conjunto_1": 800.0,
+                "potencia_nominal_conjunto_2": 50.0,
+            },
+        )
+        assert self._turbined_fit_max(case) == pytest.approx(
+            1700.0 / (_REALISTIC_RHO_ESP * 305.0)
+        )
+
     def test_production_models_expanding_plant_turbined_range_on_its_declared_machines(
         self, tmp_path: Path
     ) -> None:
