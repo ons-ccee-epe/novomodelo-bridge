@@ -9,7 +9,7 @@ is the only reader of their files:
 - the seasonal operating reference (:func:`seasonal_useful_volumes`), one
   useful volume per calendar month from ``volref_saz.dat``: the evaporation
   reference (:func:`evaporation_reference_volumes`) and the head of the
-  constant-productivity ρ_eq and turbine limit.
+  constant-productivity ρ_eq.
 
 The modif.dat temporal records move neither.
 """
