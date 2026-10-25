@@ -26,7 +26,7 @@ from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.productivity import fpha_efficiency
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.bounds import (
-    _compute_max_turbined_head_corrected,
+    _operational_caps,
     _per_stage_turbined_envelope,
 )
 from novomodelo_bridge.newave.converters.hydro.geometry import (
@@ -261,8 +261,8 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         filling_codes=filling_codes,
     )
 
-    # Per-hydro envelope over the head-corrected per-stage turbined caps that
-    # convert_turbined_bounds_head_corrected emits into hydro_bounds.parquet.
+    # Per-hydro envelope over the per-stage turbined caps that
+    # convert_per_stage_capacity_caps emits into hydro_bounds.parquet.
     # novomodelo rule 43 forbids any hydro_bounds row from raising max_turbined_m3s
     # above the plant's own declared value, so the reference-head value below
     # must be raised to cover every emitted per-stage row. Empty
@@ -410,13 +410,12 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # ``hydro_production_models.json`` on novomodelo HEAD; callers that need
         # the per-hydro base value call ``compute_base_productivities``.
         is_fpha = newave_code in fpha_codes
-        # Turbined and generation caps are independent of the production
-        # function:
-        #   * turbined cap = head-corrected engolimento at the operating head
-        #     (m³/s) — the operational dispatch cap; rated Σ n·q_nom overshoots it.
-        #   * generation cap = rated installed power Σ n·p_nom = the FPHA GHmax.
-        #     This loose ceiling never binds before the head-corrected turbined
-        #     cap, so a plant reaches its turbined limit, not nameplate power.
+        # Turbined cap: the source model's operational dispatch cap,
+        # _operational_caps for the plant's production function.
+        # Generation cap: rated installed power Σ n·p_nom = the FPHA GHmax the
+        # fit clamps at. It never binds before a constant-productivity plant's
+        # head-corrected turbined cap; an FPHA plant's available power is a
+        # per-stage hydro_bounds row below it.
         #
         # The declaration itself is the ENVELOPE over that reference-head value
         # and every per-stage head-corrected cap this hydro emits into
@@ -429,9 +428,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         novomodelo_hydro_id = id_map.hydro_id(newave_code)
         config = expansion_configs.get(newave_code)
         hreg_declared = hreg if config is None else config.declared_hreg(hreg)
-        max_turbined_reference = _compute_max_turbined_head_corrected(
-            hreg_declared, name
-        )[0]
+        max_turbined_reference = _operational_caps(hreg_declared, name, fpha=is_fpha)[0]
         envelope_value = turbined_envelope.get(novomodelo_hydro_id)
         max_turbined = (
             max_turbined_reference
