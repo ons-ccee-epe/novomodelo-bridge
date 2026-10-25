@@ -355,13 +355,16 @@ def test_spillage_fit_max_none_without_mlt_or_for_an_unlisted_gauge() -> None:
 
 def test_fpha_config_carries_the_spillage_range_only_when_there_is_one() -> None:
     windows = VolumeWindowRule.from_fp(None, {1: 50.0}, weekly_stages=2)
-    assert fpha_config(_gauged_effective(12), _MLT, 1, 0, windows) == {
+    assert fpha_config(
+        _gauged_effective(12), _MLT, 1, 0, windows, turbined_fit_max_m3s=250.0
+    ) == {
         "source": "computed",
         "fitting_window": {"volume_min_hm3": 220.0, "volume_max_hm3": 380.0},
+        "turbined_fit_max_m3s": 250.0,
         "spillage_fit_max_m3s": 1400.0,
     }
     assert "spillage_fit_max_m3s" not in fpha_config(
-        _gauged_effective(12), None, 1, 0, windows
+        _gauged_effective(12), None, 1, 0, windows, turbined_fit_max_m3s=250.0
     )
 
 

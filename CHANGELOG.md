@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`convert decomp` fits each FPHA plant's turbined flow over DECOMP's
+  range.** Each stage's `fpha_config` carries `turbined_fit_max_m3s`: the
+  stage's turbined limit without the `MP` maintenance and `FD`
+  availability factors, as in DECOMP's `eco_fpha_.rvN`, and Itaipu's
+  derated plant-wide limit. Cobre used to fit every stage up to the plant's
+  widest derated limit.
 - **`convert newave` and `convert decomp` warn when a plant's turbined-flow
   limit leaves out part of the source model's rule.** A plant whose
   `hidr.dat` record lacks a datum the limit is computed from (a machine

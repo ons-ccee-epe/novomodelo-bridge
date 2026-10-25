@@ -114,6 +114,11 @@ inputs follow DECOMP:
   is fitted at its reference volume. The turbined-flow window and point
   counts of `FP` are not converted; the conversion warns when a record sets
   them away from DECOMP's defaults.
+- The turbined-flow range of the fit runs up to the stage's turbined limit
+  computed without the `MP` and `FD` factors, the range DECOMP fits over: a
+  plant under maintenance keeps the planes of its full machine set, and the
+  factors cap only its turbined flow. Itaipu's range is its plant-wide
+  limit, derated as in the turbined cap.
 - The spillage range of the fit is twice the largest monthly long-term mean
   inflow in `mlt.dat` of the plant's station (`AC NUMPOS` included). A plant
   on the artificial station 300, or on a station with a zero mean, is fitted

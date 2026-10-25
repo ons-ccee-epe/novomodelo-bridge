@@ -1215,6 +1215,7 @@ class TestCadastroPipelineWiring:
         limits = TurbineLimits(
             {(1, 0): (100.0,) * 3, (2, 0): (100.0,) * 3},
             plant_caps={1: (100.0, 80.0, 100.0)},
+            fit_maxima={1: (100.0, 80.0, 100.0), 2: (100.0,) * 3},
         )
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, turbine_limits=limits
@@ -2290,6 +2291,37 @@ class TestMiniDeckFphaProductionModels:
         initial = (lo_w + hi_w) / 2.0
         assert initial - lo_m == pytest.approx(2.5 * (initial - lo_w))
         assert hi_w < hi_m
+
+    def test_turbined_range_leaves_the_maintenance_factor_out(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        """PROMISSAO is under ``MP`` maintenance on every stage, so its fit
+        range sits above the widest turbined limit it declares."""
+        import json
+
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+        ranges = self._stage_ranges(tmp_path / "out")
+        assert all(
+            r["fpha_config"]["turbined_fit_max_m3s"] > 0.0
+            for plant in ranges.values()
+            for r in plant
+            if r["model"] == "fpha"
+        )
+        (promissao,) = [
+            h
+            for h in json.loads(
+                (tmp_path / "out" / "system" / "hydros.json").read_text(
+                    encoding="utf-8"
+                )
+            )["hydros"]
+            if h["name"] == "PROMISSAO"
+        ]
+        (fit_max,) = {
+            r["fpha_config"]["turbined_fit_max_m3s"] for r in ranges["PROMISSAO"]
+        }
+        assert fit_max > promissao["generation"]["max_turbined_m3s"]
 
     def test_zero_turbine_limit_stages_take_zero_constant_productivity(
         self, decomp_mini_deck: Path, tmp_path: Path

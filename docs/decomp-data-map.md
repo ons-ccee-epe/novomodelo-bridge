@@ -63,7 +63,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `UE` |  |  |  |  |  |  |  |  |  | ● |  |
 | `dadger.rvN` › `UH` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `VI` |  |  |  | ● |  |  |  |  |  |  |  |
-| `vazoes.rvN` |  |  |  | ● |  |  |  |  |  |  |  |
+| `vazoes.rvN` |  |  |  | ● | ● |  |  |  |  |  |  |
 | `hidr.dat` |  | ● |  | ● | ● | ● | ● |  |  |  |  |
 | `mlt.dat` (opcional) |  |  |  |  | ● |  |  |  |  |  |  |
 | `dadgnl.rvN` › `GL` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
@@ -71,7 +71,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadgnl.rvN` › `NL` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
 | `dadgnl.rvN` › `TG` (opcional) |  |  | ● |  |  |  |  |  |  |  |  |
 | `renovaveis*` (opcional) |  |  |  |  |  |  |  |  | ● |  |  |
-| `polinjus.csv` (opcional) |  |  |  | ● |  |  |  | ● |  |  |  |
+| `polinjus.csv` (opcional) |  |  |  | ● | ● |  |  | ● |  |  |  |
 
 ### `scenarios/`
 
@@ -381,11 +381,11 @@ Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` pr
 
 ### `system/hydro_production_models.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `FP`), `hidr.dat`, `mlt.dat` (opcional)  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `FP`), `hidr.dat`, `mlt.dat` (opcional), `polinjus.csv` (opcional), `vazoes.rvN`  
 **Quando:** sempre.  
 **Esquema:** [production_models.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/production_models.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/productivity.py`
 
-Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte.
+Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume e na faixa de turbinamento do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
@@ -399,6 +399,7 @@ Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pel
 | `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `FP` › `tipo_entrada_janela_volume`, `dadger.rvN` › `FP` › `limite_inferior_janela_volume`, `dadger.rvN` › `FP` › `limite_superior_janela_volume`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(derivado; condicional: somente para usinas com modelo `fpha`)* | Limite inferior da janela de volume do DECOMP no estágio, em hm³: o volume inicial de `UH`, tomado como percentual do volume útil do estágio (faixa efetiva pós `AC VOLMIN`/`VOLMAX`), menos a redução, sem ficar abaixo do `volume_minimo` do estágio. A redução vem do `FP` da própria usina, senão do `FP` 999, senão do padrão do DECOMP: 20 % do volume útil num estágio semanal e 50 % num mensal. Cada registro `FP` vale a partir do seu estágio, em % do volume útil ou em hm³ (campo 8), e um campo em branco mantém o valor em vigor. Fio d'água (`D`) colapsa para `volume_referencia`. |
 | `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `FP` › `tipo_entrada_janela_volume`, `dadger.rvN` › `FP` › `limite_inferior_janela_volume`, `dadger.rvN` › `FP` › `limite_superior_janela_volume`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(derivado; condicional: somente para usinas com modelo `fpha`)* | Limite superior da janela de volume do DECOMP no estágio, em hm³: o mesmo volume inicial de `volume_min_hm3` mais o acréscimo, sem passar do `volume_maximo` do estágio. O acréscimo se resolve como a redução, pelo campo 11 do `FP`; fio d'água (`D`) colapsa para `volume_referencia`. |
 | `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s` | `mlt.dat`, `hidr.dat` › `posto`, `dadger.rvN` › `AC` › `NUMPOS` *(derivado; condicional: somente para usinas com modelo `fpha` cujo posto tem média de longo termo positiva no `mlt.dat`)* | Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal de longo termo do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, no estágio inicial do intervalo), como no DECOMP. Omitido no posto artificial 300, num posto de média nula e quando o deck não traz `mlt.dat` (diagnóstico `fpha-mlt-absent`): o Novomodelo usa então o dobro do engolimento máximo da usina, o mesmo recurso do DECOMP para média nula. |
+| `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s` | `hidr.dat` › `numero_conjuntos_maquinas`, `hidr.dat` › `maquinas_conjunto_1..5`, `hidr.dat` › `vazao_nominal_conjunto_1..5`, `hidr.dat` › `potencia_nominal_conjunto_1..5`, `hidr.dat` › `queda_nominal_conjunto_1..5`, `hidr.dat` › `tipo_turbina`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `NUMCON`, `dadger.rvN` › `AC` › `NUMMAQ`, `dadger.rvN` › `AC` › `VAZEFE`, `dadger.rvN` › `AC` › `POTEFE`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `codigo_usina_jusante`, `hidr.dat` › `numero_polinomios_jusante`, `hidr.dat` › `referencia_jusante_k`, `hidr.dat` › `a0_jusante_k..a4_jusante_k`, `hidr.dat` › `posto`, `polinjus.csv` › `hidreletrica_curvajusante · nivel_montante_referencia`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante`, `polinjus.csv` › `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4`, `vazoes.rvN` › `previsoes · coluna do posto`, `vazoes.rvN` › `cenarios_gerados · coluna do posto`, `vazoes.rvN` › `probabilidades · probabilidade (estagio terminal)`, `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `DP` › `duracao_patamar`, `dadger.rvN` › `AC` › `NUMJUS`, `dadger.rvN` › `AC` › `NUMPOS`, `dadger.rvN` › `MP` › `manutencao`, `dadger.rvN` › `FD` › `fator` *(derivado; condicional: somente para usinas com modelo `fpha`)* | Limite superior, em m³/s, da faixa de turbinamento sobre a qual o Novomodelo ajusta os hiperplanos no estágio: o limite de turbinamento a priori do DECOMP no estágio, como em `hydros[].generation.max_turbined_m3s`, mas sem o fator `MP` × `FD` nos dois termos, `min(qmaxT, P_inst / ρ_eq)`. É a faixa de vazão turbinada do `eco_fpha_` do DECOMP: uma usina em manutenção mantém os hiperplanos do conjunto completo de máquinas. Para Itaipu (código 66), o limite da usina `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`, com Pdisp_g já reduzido por `MP` × `FD`. O valor muda de estágio quando o cadastro efetivo ou a afluência que a usina não consegue reter mudam. |
 | `production_models[].stage_ranges[].reference_volume.volume_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia` *(condicional: somente para usinas com modelo `fpha`)* | Volume inicial em hm³: V_min + `volume_inicial`/100 × (V_max − V_min) na faixa efetiva do estágio inicial; fio d'água colapsa para `volume_referencia`. É o mesmo valor de `storage` em `initial_conditions.json`, o ponto em que o DECOMP ancora a FPHA. |
 
 ### `system/hydro_geometry.parquet`
@@ -865,6 +866,18 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `VOLMIN` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `VOLMAX` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `NUMPOS` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
+- `NUMCON` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `NUMMAQ` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `VAZEFE` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `POTEFE` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `COTVOL` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `VOLMIN` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `VOLMAX` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `PROESP` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `JUSMED` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `PERHID` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `NUMJUS` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `NUMPOS` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `VOLMIN` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `VOLMAX` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `VOLMIN` → `system/hydro_geometry.parquet` › `volume_hm3`
@@ -1123,6 +1136,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `duracao` → `constraints/contract_bounds.parquet` › `price_per_mwh`
 - `duracao_patamar` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `duracao_patamar` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `duracao_patamar` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `estagio` → `constraints/hydro_bounds.parquet` › `stage_id`
 - `numero_patamares` → `constraints/hydro_bounds.parquet` › `block_id`
 - `estagio` → `constraints/hydro_unit_group_bounds.parquet` › `stage_id`
@@ -1218,6 +1232,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `fator` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - → `system/hydro_production_models.json` › `production_models[].stage_ranges[].start_stage_id`
 - → `system/hydro_production_models.json` › `production_models[].stage_ranges[].end_stage_id`
+- `fator` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `fator` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
 - `frequencia` → `constraints/hydro_unit_group_bounds.parquet` › `hydro_unit_group_id`
 - `fator` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
@@ -1443,6 +1458,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `manutencao` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - → `system/hydro_production_models.json` › `production_models[].stage_ranges[].start_stage_id`
 - → `system/hydro_production_models.json` › `production_models[].stage_ranges[].end_stage_id`
+- `manutencao` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `manutencao` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
 - `frequencia` → `constraints/hydro_unit_group_bounds.parquet` › `hydro_unit_group_id`
 - `manutencao` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
@@ -1648,6 +1664,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `codigo_usina` → `system/hydro_production_models.json` › `production_models[].hydro_id`
 - `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
 - `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
+- `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `codigo_usina` → `system/hydro_geometry.parquet` › `hydro_id`
 - `codigo_usina` → `system/hydro_energy_productivity.parquet` › `hydro_id`
@@ -1709,7 +1726,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `vazoes.rvN`
 
-**Estado:** convertido em parte. **Lido por:** `boundary/`, `constraints/hydro_bounds.parquet`, `constraints/hydro_unit_group_bounds.parquet`, `scenarios/external_inflow_scenarios.parquet`, `scenarios/external_load_scenarios.parquet`, `scenarios/external_ncs_scenarios.parquet`, `stages.json`, `system/hydros.json`.
+**Estado:** convertido em parte. **Lido por:** 9 arquivos gerados; ver a visão geral.
 
 Árvore de cenários de vazão gerada pelo GEVAZP. O conversor lê probabilidades, previsões, cenários gerados e observações; as seções abaixo ficam de fora.
 
@@ -1722,6 +1739,9 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `previsoes · coluna do posto` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `cenarios_gerados · coluna do posto` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `probabilidades · probabilidade (estagio terminal)` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `previsoes · coluna do posto` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `cenarios_gerados · coluna do posto` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `probabilidades · probabilidade (estagio terminal)` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `previsoes · coluna do posto` → `constraints/hydro_bounds.parquet` › `max_turbined_m3s`
 - `previsoes · coluna do posto` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
 - `cenarios_gerados · coluna do posto` → `constraints/hydro_unit_group_bounds.parquet` › `max_turbined_m3s`
@@ -1873,6 +1893,25 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `tipo_regulacao` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `volume_referencia` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
 - `posto` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
+- `numero_conjuntos_maquinas` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `maquinas_conjunto_1..5` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `vazao_nominal_conjunto_1..5` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `potencia_nominal_conjunto_1..5` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `queda_nominal_conjunto_1..5` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `tipo_turbina` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `a0_volume_cota..a4_volume_cota` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `volume_minimo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `volume_maximo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `produtibilidade_especifica` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `canal_fuga_medio` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `perdas` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `tipo_perda` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `tipo_regulacao` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `codigo_usina_jusante` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `numero_polinomios_jusante` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `referencia_jusante_k` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `a0_jusante_k..a4_jusante_k` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `posto` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `volume_minimo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `volume_maximo` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
 - `tipo_regulacao` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].reference_volume.volume_hm3`
@@ -2030,7 +2069,7 @@ Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o subm
 
 ### `polinjus.csv`
 
-**Estado:** convertido em parte. **Lido por:** `constraints/hydro_bounds.parquet`, `constraints/hydro_unit_group_bounds.parquet`, `system/hydros.json`, `system/tailrace_curves.parquet`.
+**Estado:** convertido em parte. **Lido por:** `constraints/hydro_bounds.parquet`, `constraints/hydro_unit_group_bounds.parquet`, `system/hydro_production_models.json`, `system/hydros.json`, `system/tailrace_curves.parquet`.
 
 Famílias de curvas de jusante das LIBs. O conversor lê o cadastro das famílias e os segmentos polinomiais; os cards abaixo ficam de fora.
 
@@ -2040,6 +2079,9 @@ Famílias de curvas de jusante das LIBs. O conversor lê o cadastro das família
 - `hidreletrica_curvajusante · nivel_montante_referencia` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
+- `hidreletrica_curvajusante · nivel_montante_referencia` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
+- `hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s`
 - `hidreletrica_curvajusante_polinomio_segmento · codigo_usina` → `system/tailrace_curves.parquet` › `hydro_id`
 - `hidreletrica_curvajusante_polinomio_segmento · indice_familia` → `system/tailrace_curves.parquet` › `family_id`
 - `hidreletrica_curvajusante · nivel_montante_referencia` → `system/tailrace_curves.parquet` › `downstream_reference_level_m`

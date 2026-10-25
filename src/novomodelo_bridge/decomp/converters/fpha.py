@@ -363,13 +363,17 @@ def fpha_config(
     code: int,
     stage_index: int,
     windows: VolumeWindowRule,
+    *,
+    turbined_fit_max_m3s: float,
 ) -> dict:
     """Plant *code*'s computed ``fpha_config`` at *stage_index*: its volume
-    ``fitting_window`` and, when :func:`spillage_fit_max` has one, its
-    ``spillage_fit_max_m3s``."""
+    ``fitting_window``, its ``turbined_fit_max_m3s``
+    (:attr:`~novomodelo_bridge.decomp.converters.hydro.TurbineLimits.fit_maxima`)
+    and, when :func:`spillage_fit_max` has one, its ``spillage_fit_max_m3s``."""
     config: dict = {
         "source": "computed",
         "fitting_window": windows.fitting_window(effective, code, stage_index),
+        "turbined_fit_max_m3s": turbined_fit_max_m3s,
     }
     spillage_max = spillage_fit_max(effective, mlt, code, stage_index)
     if spillage_max is not None:

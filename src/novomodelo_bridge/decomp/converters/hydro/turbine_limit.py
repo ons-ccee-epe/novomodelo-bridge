@@ -26,6 +26,10 @@ at ``min(T, Pdisp_g / ρ_eq)``, its own generator limit within the plant's.
 The unregulated inflow is the plant's incremental inflow plus that of every
 run-of-river plant upstream of it short of a reservoir; on the terminal stage
 it is the fan's probability-weighted mean.
+
+The source model fits each plant's FPHA over the turbined flows up to the same
+limit with ``MP`` × ``FD`` left out, ``min(qmaxT, P_inst / ρ_eq)``, and
+Itaipu's up to its ``T`` (:attr:`TurbineLimits.fit_maxima`).
 """
 
 from __future__ import annotations
@@ -96,11 +100,14 @@ class TurbineLimits:
 
     Every plant has unit group 0; Itaipu has one group per frequency half.
     *plant_caps* holds, by plant code, the per-stage plant-wide cap of a plant
-    whose groups share one limit, tighter than their caps' sum.
+    whose groups share one limit, tighter than their caps' sum. *fit_maxima*
+    holds, by plant code, the per-stage upper end of the turbined flows the
+    source model fits the plant's FPHA over.
     """
 
     caps: Mapping[tuple[int, int], tuple[float, ...]]
     plant_caps: Mapping[int, tuple[float, ...]] = field(default_factory=dict)
+    fit_maxima: Mapping[int, tuple[float, ...]] = field(default_factory=dict)
 
     def cap(self, code: int, group_id: int, stage_index: int) -> float:
         return self.caps[(code, group_id)][stage_index]
@@ -178,6 +185,7 @@ def compute_turbine_limits(
 
     caps: dict[tuple[int, int], list[float]] = {}
     plant_caps: dict[int, list[float]] = {}
+    fit_maxima: dict[int, list[float]] = {}
     unconverged: list[list[object]] = []
     gap_stages: dict[tuple[int, str, str], list[int]] = {}
     for code in id_map.hydro_codes:
@@ -198,6 +206,7 @@ def compute_turbine_limits(
                 caps.setdefault((code, group_id), []).append(cap)
             if stage_caps.plant is not None:
                 plant_caps.setdefault(code, []).append(stage_caps.plant)
+            fit_maxima.setdefault(code, []).append(stage_caps.fit_max)
             if not stage_caps.converged:
                 unconverged.append(
                     [code, _plant_name(effective, code), stage.index + 1]
@@ -225,6 +234,7 @@ def compute_turbine_limits(
     return TurbineLimits(
         {key: tuple(values) for key, values in caps.items()},
         {code: tuple(values) for code, values in plant_caps.items()},
+        {code: tuple(values) for code, values in fit_maxima.items()},
     )
 
 
@@ -276,6 +286,7 @@ def _unregulated_inflow(
 class _StageCaps(NamedTuple):
     groups: list[float]
     plant: float | None
+    fit_max: float
     converged: bool
     gaps: tuple[tuple[str, str], ...] = ()
 
@@ -303,8 +314,8 @@ def _stage_caps(
     rated_flow = sum(n * q_nom for n, q_nom, _ in machines)
     if n_units <= 0 or rated_flow <= 0.0:
         if code == _ITAIPU_CODE:
-            return _StageCaps([0.0] * len(machines), 0.0, True)
-        return _StageCaps([0.0], None, True)
+            return _StageCaps([0.0] * len(machines), 0.0, 0.0, True)
+        return _StageCaps([0.0], None, 0.0, True)
     nominal_head = _rated_head(hreg, [n for n, _, _ in machines])
     gaps: list[tuple[str, str]] = []
     unrated = _unrated_sets(hreg, len(machines))
@@ -381,6 +392,7 @@ def _stage_caps(
         return _StageCaps(
             [min(plant_cap, limit) for limit in generator_limits],
             plant_cap,
+            plant_cap,
             converged,
             tuple(gaps),
         )
@@ -389,6 +401,7 @@ def _stage_caps(
     return _StageCaps(
         [min(head_limited * factor, _generator_limit(installed * factor, rho_eq))],
         None,
+        min(head_limited, _generator_limit(installed, rho_eq)),
         converged,
         tuple(gaps),
     )
