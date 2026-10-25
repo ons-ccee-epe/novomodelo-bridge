@@ -146,9 +146,82 @@ class TestPmoConvergence:
     def test_parses_iteration_table_via_own_regex(self) -> None:
         df = read_pmo_convergence(_FIXTURE_DIR)
         assert df.to_dicts() == [
-            {"iteration": 1, "lower_bound": 5.551e8, "upper_bound_mean": 5.803e8},
-            {"iteration": 2, "lower_bound": 5.602e8, "upper_bound_mean": 5.855e8},
+            {
+                "iteration": 1,
+                "lower_bound": pytest.approx(5.551e8),
+                "upper_bound_mean": pytest.approx(5.804e8),
+                "upper_bound_best": pytest.approx(5.804e8),
+            },
+            {
+                "iteration": 2,
+                "lower_bound": pytest.approx(5.602e8),
+                "upper_bound_mean": pytest.approx(5.86e8),
+                "upper_bound_best": pytest.approx(5.804e8),
+            },
         ]
+
+    def test_reads_only_the_iteration_rows_of_the_convergence_table(
+        self, tmp_path: Path
+    ) -> None:
+        """An electric-constraint year row before the table, a deficit-risk
+        year row inside it and a row past its page all carry seven numbers."""
+        risk_indent = " " * 61
+        (tmp_path / "pmo.dat").write_text(
+            "\n".join(
+                [
+                    " 2027     60.00      90.00      90.00     120.00     120.00"
+                    "     150.00     180.00",
+                    "    ITER               LIM.INF.                   ZINF"
+                    "               LIM.SUP.                   ZSUP"
+                    "                  DZINF             ZSUP ITER.",
+                    "      1     10.0     5.0     10.0     10.0     000h00min17.000s",
+                    "      1     10.0     5.0     10.0     10.0     -     10.0",
+                    f"{risk_indent}2025   0.0    0.0   0.0    0.0   0.0    0.0",
+                    " CEPEL   MODELO ESTRATEGICO DE GERACAO HIDROTERMICA",
+                    "      7     1.0     2.0     3.0     4.0     -     5.0",
+                ]
+            ),
+            encoding="latin-1",
+        )
+
+        df = read_pmo_convergence(tmp_path)
+
+        assert df["iteration"].to_list() == [1]
+
+    def test_several_forward_series_read_the_row_carrying_zsup_iter(
+        self, tmp_path: Path
+    ) -> None:
+        """Rows of a four-forward run: the 95% and 99% interval rows of the
+        best iteration, then the row ``CONVERG.TMP`` records."""
+        (tmp_path / "pmo.dat").write_text(
+            "\n".join(
+                [
+                    "    ITER               LIM.INF.                   ZINF"
+                    "               LIM.SUP.                   ZSUP"
+                    "                  DZINF             ZSUP ITER.",
+                    "      3                 2787.42               51384.44"
+                    "              274544.92              179245.92"
+                    "                                                B"
+                    "    000h03min12.000s",
+                    "      3                  345.15               51384.44"
+                    "              276987.19              179245.92"
+                    "                                                B     (99%)",
+                    "      3                    0.00               51384.44"
+                    "              256620.33              161321.33"
+                    "        0.006                        161976.25  B",
+                ]
+            ),
+            encoding="latin-1",
+        )
+
+        row = read_pmo_convergence(tmp_path).row(0, named=True)
+
+        assert row == {
+            "iteration": 3,
+            "lower_bound": pytest.approx(51384.44e6),
+            "upper_bound_mean": pytest.approx(161976.25e6),
+            "upper_bound_best": pytest.approx(161321.33e6),
+        }
 
     def test_degrades_to_empty_frame_on_missing_pmo(
         self, tmp_path: Path, caplog

@@ -246,6 +246,10 @@ above it as revenue. Novomodelo counts every exported MWh as revenue, so on a de
 with an export minimum the two contract costs differ by twice the minimum's
 value; the comparison logs that amount.
 
+DECOMP's `Zsup` is the lowest upper bound reached so far, and the relato
+prints no upper bound per iteration, so the convergence chart sets it against
+Novomodelo's running minimum.
+
 Below the convergence chart, a table gives each model's final lower bound with
 and without its expected constraint-violation penalties. One slack priced far
 above any real cost, such as a pair of conflicting constraints, can dominate a

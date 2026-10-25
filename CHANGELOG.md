@@ -310,6 +310,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The convergence chart compares each upper bound with the same Cobre
+  statistic.** NEWAVE's `ZSUP` and DECOMP's `Zsup` are the lowest upper bound
+  reached so far, but the chart drew them against Cobre's upper bound at each
+  iteration, so the source model's line never rose where Cobre's did.
+  `compare newave` now reads `ZSUP ITER`, NEWAVE's upper bound at each
+  iteration, from `pmo.dat` and compares it with Cobre's, in the chart and in
+  the per-iteration comparison. Both reports add Cobre's running minimum
+  against the source model's `ZSUP`. The DECOMP report has no per-iteration
+  line, as the relato prints none. `compare newave` also read any `pmo.dat` row
+  with seven numbers, such as an electric-constraint year row, as an
+  iteration; it now reads only the convergence table.
 - **The Productivity tab reads Cobre's fit inputs for seasonal production
   models.** The fit-inputs table read only the `stage_ranges` entries of
   `hydro_production_models.json`, so a plant whose FPHA configuration is
