@@ -5,8 +5,9 @@ Thin facade — defines nothing itself. Re-exports the package's public API from
 :mod:`.entity` (the ``convert_hydros`` builder and its local leaf helpers),
 :mod:`.bounds` (plant-capacity caps and the per-stage bounds converters),
 :mod:`.geometry` (VHA geometry and FPHA eligibility), :mod:`.overrides`
-(MODIF.DAT/GHMIN.DAT/PENALID.DAT readers), and :mod:`.productivity`
-(equivalent-productivity machinery and the production-model JSON).
+(MODIF.DAT/GHMIN.DAT/PENALID.DAT readers), :mod:`.productivity`
+(equivalent-productivity machinery and the production-model JSON), and
+:mod:`.reference_volumes` (the reference volumes each plant is read at).
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from novomodelo_bridge.newave.converters.hydro.geometry import (
     generate_hydro_geometry as generate_hydro_geometry,
 )
 from novomodelo_bridge.newave.converters.hydro.geometry import (
-    seasonal_reference_volumes as seasonal_reference_volumes,
+    held_volume as held_volume,
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides as _apply_permanent_overrides,
@@ -88,4 +89,10 @@ from novomodelo_bridge.newave.converters.hydro.productivity import (
 )
 from novomodelo_bridge.newave.converters.hydro.productivity import (
     convert_production_models as convert_production_models,
+)
+from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
+    fpha_reference_volumes as fpha_reference_volumes,
+)
+from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
+    initial_storage_hm3 as initial_storage_hm3,
 )

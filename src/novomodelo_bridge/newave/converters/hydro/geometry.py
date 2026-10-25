@@ -1,5 +1,5 @@
-"""Hydro geometry: the VHA volume->height->area table, seasonal reference-volume
-reads, the machine configuration an expanding plant declares, and FPHA
+"""Hydro geometry: the VHA volume->height->area table, the storage range a
+plant operates over, the machine configuration an expanding plant declares, and FPHA
 eligibility (the volume->cota polynomial, the specific productivity, and the
 rated capacity of that declared configuration).
 
@@ -188,95 +188,6 @@ _EVAP_MONTHS = [
 ]
 
 
-def _seasonal_reference_volume(
-    reference_volumes: Sequence[float],
-    *,
-    is_fpha: bool,
-    fpha_config: dict | None = None,
-) -> list[dict]:
-    """Build the 12 seasonal ``reference_volume`` entries from
-    :func:`seasonal_reference_volumes`.
-
-    ``season_id = calendar_month - 1`` (matching the ``stages.json`` season map).
-    FPHA seasons additionally carry ``fpha_config`` (see
-    :func:`_fpha_computed_config`); non-FPHA seasons declare only the reference
-    volume (their productivity comes from ``hydro_energy_productivity.parquet``), so
-    the value serves purely as the backwater reference for the upstream FPHA plant.
-    """
-    seasons: list[dict] = []
-    for season_id, volume in enumerate(reference_volumes):
-        season: dict = {
-            "season_id": season_id,
-            "model": "fpha" if is_fpha else "constant_productivity",
-            "reference_volume": {"volume_hm3": volume},
-        }
-        if is_fpha and fpha_config is not None:
-            season["fpha_config"] = fpha_config
-        seasons.append(season)
-    return seasons
-
-
-def seasonal_reference_volumes(
-    case: NewaveCase, cadastro: pd.DataFrame
-) -> dict[int, list[float]]:
-    """Each plant's twelve ``volref_saz.dat`` reference volumes in hm³, January first.
-
-    Only FPHA cases read the file. The source model stores useful storage above
-    ``volume_minimo`` (a missing month means ``volume_minimo``) and reads the
-    downstream level of the plant above at ``volume_minimo + useful`` even past
-    ``volume_maximo``, so the volume is not capped there;
-    :func:`generate_hydro_geometry` extends the plant's geometry to cover it.
-    """
-    if not case.fpha_enabled:
-        return {}
-    volumes: dict[int, list[float]] = {}
-    for code, monthly_useful in _read_volref_saz(case).items():
-        if code not in cadastro.index:
-            continue
-        vmin = float(cadastro.loc[code, "volume_minimo"])
-        volumes[code] = [
-            max(vmin, vmin + monthly_useful.get(month, 0.0)) for month in range(1, 13)
-        ]
-    return volumes
-
-
-def _read_volref_saz(case: NewaveCase) -> dict[int, dict[int, float]]:
-    """Read ``volref_saz.dat`` into ``{plant_code: {calendar_month: useful_vol_hm3}}``.
-
-    The source model uses two distinct conventions inside this file:
-
-    - **Row of all-zeros** — sentinel meaning "no seasonal reference for this
-      plant"; the source model falls back to its altura_65 / volume_referencia default.
-      We mirror this by *excluding* the plant from the returned mapping.
-    - **Row with at least one non-zero value** — real seasonal reference.
-      Individual zero months in such a row mean "operate at exactly
-      ``volume_minimo``" (useful = 0 above the dead-storage minimum), so we
-      keep all twelve monthly entries including explicit zeros.
-
-    Returns an empty dict when ``volref_saz.dat`` is absent.
-    """
-    vs = case.volref_saz
-    if vs is None:
-        _LOG.debug("volref_saz.dat not found; seasonal productivity disabled.")
-        return {}
-
-    df = vs.volumes
-    if df is None or df.empty:
-        return {}
-
-    by_plant: dict[int, dict[int, float]] = {}
-    for _, row in df.iterrows():
-        code = int(row["codigo_usina"])
-        month = int(row["mes"])
-        by_plant.setdefault(code, {})[month] = float(row["valor"])
-
-    return {
-        code: months
-        for code, months in by_plant.items()
-        if any(v > 0.0 for v in months.values())
-    }
-
-
 def generate_hydro_geometry(
     cadastro: pd.DataFrame,
     id_map: NewaveIdMap,
@@ -294,10 +205,10 @@ def generate_hydro_geometry(
     A plant whose range is a single volume emits one point there, so novomodelo
     reads the forebay level at the volume the reservoir is held at, for the
     plant's own head and as the downstream level of the plant above.  Any
-    other plant's range extends up to its highest ``reference_volumes`` entry,
-    because novomodelo reads the downstream level there and clamps a volume outside
-    the geometry to its range; the source model evaluates the polynomial past
-    ``volume_maximo`` for it too.  Plants
+    other plant's range extends to cover its ``reference_volumes``, because
+    novomodelo reads the downstream level there and clamps a volume outside the
+    geometry to its range; the source model evaluates the polynomial outside
+    ``[volume_minimo, volume_maximo]`` for it too.  Plants
     whose volume_cota polynomial coefficients are all zero are skipped and
     reported via a diagnostic.  Negative height or area values produced by the
     polynomials are clamped to 0.0.
@@ -311,7 +222,8 @@ def generate_hydro_geometry(
         Pre-built ID mapping; ``id_map.all_hydro_codes`` determines which
         plants are processed.
     reference_volumes:
-        :func:`seasonal_reference_volumes` of the case, keyed by plant code.
+        :func:`~novomodelo_bridge.newave.converters.hydro.reference_volumes.fpha_reference_volumes`
+        of the case, keyed by plant code.
 
     Returns
     -------
@@ -363,16 +275,20 @@ def generate_hydro_geometry(
         ca_coeffs = [float(hreg[f"a{i}_cota_area"]) for i in range(5)]
 
         plant_references = (reference_volumes or {}).get(newave_code)
-        if plant_references and vol_min < vol_max < max(plant_references):
-            extended.append(
-                [
-                    str(hreg.get("nome_usina", "?")).strip(),
-                    newave_code,
-                    vol_max,
-                    round(max(plant_references), 2),
-                ]
+        if plant_references and vol_min < vol_max:
+            sampled = (
+                min(vol_min, *plant_references),
+                max(vol_max, *plant_references),
             )
-            vol_max = max(plant_references)
+            if sampled != (vol_min, vol_max):
+                extended.append(
+                    [
+                        str(hreg.get("nome_usina", "?")).strip(),
+                        newave_code,
+                        *(round(v, 2) for v in (vol_min, vol_max, *sampled)),
+                    ]
+                )
+                vol_min, vol_max = sampled
 
         novomodelo_id = id_map.hydro_id(newave_code)
 
@@ -430,24 +346,27 @@ def generate_hydro_geometry(
                 severity=Severity.INFO,
                 category="Hydro geometry",
                 title=(
-                    "Hydro geometry extended past volume_maximo "
+                    "Hydro geometry extended past the storage range "
                     f"({len(extended)} plant(s))"
                 ),
                 summary=(
-                    f"{len(extended)} plant(s) have a volref_saz.dat reference "
-                    "volume above volume_maximo, where the source model reads the "
-                    "downstream level of the plant above. Their geometry samples "
-                    "the volume-to-height polynomial up to that volume."
+                    f"{len(extended)} plant(s) have an FPHA reference volume "
+                    "outside [volume_minimo, volume_maximo], where the source "
+                    "model reads the downstream level of the plant above. Their "
+                    "geometry samples the volume-to-height polynomial out to "
+                    "those volumes."
                 ),
                 table=DiagnosticTable(
                     columns=[
                         "Plant",
                         "Code",
+                        "volume_minimo (hm³)",
                         "volume_maximo (hm³)",
+                        "Sampled from (hm³)",
                         "Sampled to (hm³)",
                     ],
                     rows=extended,
-                    justify=["left", "right", "right", "right"],
+                    justify=["left", "right", "right", "right", "right", "right"],
                 ),
             ),
             logger=_LOG,

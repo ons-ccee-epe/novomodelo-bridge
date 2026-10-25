@@ -73,6 +73,7 @@ _NEWAVE_LABELS: dict[str, tuple[str, str | None]] = {
     "adterm": ("adterm.dat", "adterm"),
     "libs_index": ("indices.csv", None),
     "polinjus": ("polinjus.csv", None),
+    "volumes_referencia": ("volumes-referencia.csv", None),
     "tratamento_fpha": ("tratamento-fpha.csv", None),
     "restricao_eletrica": ("restricao-eletrica.csv", None),
     "estacao_bombeamento": ("estacao-bombeamento.csv", None),

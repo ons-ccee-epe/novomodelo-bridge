@@ -32,13 +32,15 @@ from novomodelo_bridge.newave.converters.hydro.bounds import (
 from novomodelo_bridge.newave.converters.hydro.geometry import (
     _EVAP_MONTHS,
     _expansion_configs,
-    _read_volref_saz,
     fpha_eligible_codes,
     operating_storage_range,
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
     read_diversion_records,
+)
+from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
+    evaporation_reference_volumes,
 )
 from novomodelo_bridge.newave.filling import (
     exph_unit_rows,
@@ -234,10 +236,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     if not min_outflow_on:
         emit(switch_off_diagnostic(case.switches.min_outflow), logger=_LOG)
 
-    # Seasonal reference volumes per plant — when present, fed back into the evaporation
-    # block as ``reference_volumes_hm3`` so novomodelo's evaporation linearization matches
-    # the per-month reference the source model itself uses.
-    seasonal_volref = _read_volref_saz(case)
+    evaporation_references = evaporation_reference_volumes(case, cadastro)
 
     # NE plants carrying an exph dead-volume filling row are admitted as real
     # downstream nodes (admission predicate, single source of truth). The
@@ -512,25 +511,9 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         evap_coeffs = [float(hreg[f"evaporacao_{m}"]) for m in _EVAP_MONTHS]
         has_evaporation = any(v != 0.0 for v in evap_coeffs)
 
-        # Evaporation linearization points: when the plant has a seasonal row in
-        # volref_saz.dat, emit one absolute hm³ value per calendar month (vmin +
-        # useful_volume).  Missing months default to vmin (matching the source model's
-        # "operate at vmin" semantics for zero entries). Clamped into [min_storage_hm3,
-        # max_storage_hm3] so novomodelo's dimensional validator accepts every value even if
-        # a permanent VOLMIN override raised vmin above what the file was written for.
-        plant_seasonal_for_evap = seasonal_volref.get(newave_code)
-        evap_reference_volumes: list[float] | None = None
-        if has_evaporation and plant_seasonal_for_evap:
-            evap_reference_volumes = [
-                max(
-                    vol_min,
-                    min(
-                        vol_max,
-                        vol_min + plant_seasonal_for_evap.get(m, 0.0),
-                    ),
-                )
-                for m in range(1, 13)
-            ]
+        evap_reference_volumes = (
+            evaporation_references.get(newave_code) if has_evaporation else None
+        )
 
         tipo_perda = int(hreg.get("tipo_perda", 0) or 0)
         perdas_val = float(hreg.get("perdas", 0.0) or 0.0)

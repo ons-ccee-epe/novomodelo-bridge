@@ -8,6 +8,7 @@ plant stays on the constant-productivity path (regression-preserving).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.productivity import fpha_efficiency
 from novomodelo_bridge.newave.converters.hydro import (
     _fpha_computed_config,
@@ -224,10 +226,12 @@ class TestFphaConverters:
         plant_1: dict[str, object] | None = None,
         plant_2: dict[str, object] | None = None,
         polinjus: MagicMock | None = None,
+        volumes_referencia: MagicMock | None = None,
     ):
         cadastro = _make_hidr_cadastro().copy()
         # Plant 1: realistic specific productivity -> FPHA.
         cadastro.loc[1, "produtibilidade_especifica"] = _REALISTIC_RHO_ESP
+        cadastro.loc[1, "queda_nominal_conjunto_1"] = 300.0
         for column, value in (plant_1 or {}).items():
             cadastro.loc[1, column] = value
         # Plant 2: zero the volume->cota polynomial (no forebay) -> non-FPHA.
@@ -266,6 +270,8 @@ class TestFphaConverters:
             parsed["modif"] = modif
         if polinjus is not None:
             parsed["polinjus"] = polinjus
+        if volumes_referencia is not None:
+            parsed["volumes_referencia"] = volumes_referencia
         if volref is not None:
             rows = [
                 {"codigo_usina": code, "mes": month, "valor": value}
@@ -360,11 +366,12 @@ class TestFphaConverters:
         }
         assert models[0]["model"] == "fpha"
         # Plant 1 is tipo_regulacao "M" (vmin=100, vmax=1000) -> multi-volume window.
-        assert models[0]["fpha_config"] == {
-            "source": "computed",
-            "fitting_window": {"volume_min_hm3": 100.0, "volume_max_hm3": 1000.0},
+        assert models[0]["fpha_config"]["fitting_window"] == {
+            "volume_min_hm3": 100.0,
+            "volume_max_hm3": 1000.0,
         }
-        assert models[0]["reference_volume"] == {"percentile": 0.65}
+        # No volumes-referencia.csv: the initial storage, 50 % of [100, 1000].
+        assert models[0]["reference_volume"] == {"volume_hm3": 550.0}
         assert "productivity_mw_per_m3s" not in models[0]
         assert models[1]["model"] == "constant_productivity"
 
@@ -452,26 +459,52 @@ class TestFphaConverters:
             4 * 222.2 * ((355.0 - (50.0 + 0.01 * flow)) / 300.0) ** 0.5, abs=1e-2
         )
 
-    def test_production_models_turbined_range_reads_the_downstream_at_its_minimum(
-        self, tmp_path: Path
-    ) -> None:
-        # Plant 2 ('M') sits downstream at 300 + 0.1 · 50 = 305 m, halfway
-        # between the 40 m and 50 m families: a 45 m tailrace, a 310 m head.
+    def _downstream_case(
+        self, tmp_path: Path, *, hidr_downstream: object, confhd_downstream: object
+    ):
+        """Plant 1 ('D', held at 550 hm³) over families at 40 m and 50 m; plant 2
+        ('M') sits at 300 + 0.1 · 50 = 305 m, halfway between them."""
         confhd = _make_confhd_df()
-        confhd["codigo_usina_jusante"] = [2, pd.NA]
-        case = self._case(
+        confhd["codigo_usina_jusante"] = [confhd_downstream, pd.NA]
+        return self._case(
             tmp_path,
             confhd=confhd,
             plant_1={
                 "tipo_regulacao": "D",
-                "queda_nominal_conjunto_1": 300.0,
                 "potencia_nominal_conjunto_1": 800.0,
+                "codigo_usina_jusante": hidr_downstream,
             },
-            plant_2={"a0_volume_cota": 300.0, "a1_volume_cota": 0.1},
+            plant_2={
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "queda_nominal_conjunto_1": 300.0,
+                "queda_nominal_conjunto_2": 300.0,
+            },
             polinjus=self._polinjus({300.0: (40.0, 0.0), 310.0: (50.0, 0.0)}),
+        )
+
+    def test_production_models_turbined_range_reads_the_hidr_downstream_at_its_minimum(
+        self, tmp_path: Path
+    ) -> None:
+        # A 45 m tailrace under the 355 m forebay: a 310 m head.
+        case = self._downstream_case(
+            tmp_path, hidr_downstream=2, confhd_downstream=pd.NA
         )
         assert self._turbined_fit_max(case) == pytest.approx(
             4 * 222.2 * (310.0 / 300.0) ** 0.5
+        )
+
+    @pytest.mark.parametrize("hidr_downstream", [pd.NA, 0, 99])
+    def test_production_models_turbined_range_lowest_family_without_a_listed_hidr_downstream(
+        self, tmp_path: Path, hidr_downstream: object
+    ) -> None:
+        # Not the confhd link: with no hidr downstream in confhd the lowest
+        # family (40 m) gives a 315 m head.
+        case = self._downstream_case(
+            tmp_path, hidr_downstream=hidr_downstream, confhd_downstream=2
+        )
+        assert self._turbined_fit_max(case) == pytest.approx(
+            4 * 222.2 * (315.0 / 300.0) ** 0.5
         )
 
     def test_production_models_unsettled_turbined_range_is_reported(
@@ -493,13 +526,37 @@ class TestFphaConverters:
         assert diagnostic.table is not None
         assert diagnostic.table.rows == [[1, "USINA_A"]]
 
-    def test_production_models_monthly_reservoir_keeps_novomodelo_turbined_range(
+    def test_production_models_monthly_reservoir_turbined_range_at_its_reference_volume(
         self, tmp_path: Path
     ) -> None:
-        case = self._case(tmp_path, plant_1={"queda_nominal_conjunto_1": 300.0})
-        result = convert_production_models(case, self._id_map())
-        fpha = result["production_models"][0]["stage_ranges"][0]
-        assert "turbined_fit_max_m3s" not in fpha["fpha_config"]
+        # Reference 1000 hm³: a 400 - 50 = 350 m turbine head. The generator head
+        # is the mean forebay over [100, 1000], 355 m, down to 50 m: 305 m, under
+        # which the 800 MW generators do not bind.
+        case = self._case(
+            tmp_path,
+            plant_1={"potencia_nominal_conjunto_1": 800.0},
+            volumes_referencia=self._volumes_referencia(
+                [(1, "2025-01-01", "2029-12-01", 1000.0)]
+            ),
+        )
+        assert self._turbined_fit_max(case) == pytest.approx(
+            4 * 222.2 * (350.0 / 300.0) ** 0.5
+        )
+
+    def test_production_models_monthly_reservoir_generator_head_is_the_mean_forebay(
+        self, tmp_path: Path
+    ) -> None:
+        # 200 MW generators bind at 200 / (ρ_esp · 305) under the mean forebay,
+        # whatever the reference volume.
+        case = self._case(
+            tmp_path,
+            volumes_referencia=self._volumes_referencia(
+                [(1, "2025-01-01", "2029-12-01", 1000.0)]
+            ),
+        )
+        assert self._turbined_fit_max(case) == pytest.approx(
+            4 * 200.0 / (_REALISTIC_RHO_ESP * 305.0)
+        )
 
     def test_production_models_expanding_plant_turbined_range_on_its_declared_machines(
         self, tmp_path: Path
@@ -586,57 +643,189 @@ class TestFphaConverters:
         assert rows[0]["equivalent_productivity_mw_per_m3s"] is not None
         assert rows[1]["equivalent_productivity_mw_per_m3s"] is not None
 
-    def test_seasonal_reference_volume_from_volref_saz(self, tmp_path: Path) -> None:
-        # Plant 1: vmin=100, vmax=1000. volref stores USEFUL storage above vmin.
-        case = self._case(
-            tmp_path,
-            volref={1: {1: 200.0, 6: 850.0, 7: 5000.0}},  # Jan, Jun, Jul (Jul > vmax)
+    @staticmethod
+    def _volumes_referencia(
+        rows: list[tuple[int, str, str, float]], tipo: int | None = 1
+    ) -> MagicMock:
+        """A ``volumes-referencia.csv`` reader: ``(code, first month, last month,
+        hm³)`` rows and the ``VOLUME-REFERENCIAL-TIPO-PADRAO`` value (``None``
+        for no record)."""
+        reader = MagicMock()
+        reader.volume_referencial_tipo_padrao.return_value = (
+            pd.DataFrame()
+            if tipo is None
+            else pd.DataFrame({"tipo_referencia": [tipo]})
         )
-        models = {
+        reader.volume_referencial_periodo.return_value = pd.DataFrame(
+            {
+                "codigo_usina": [row[0] for row in rows],
+                "data_inicio": pd.to_datetime([row[1] for row in rows]),
+                "data_fim": pd.to_datetime([row[2] for row in rows]),
+                "volume_referencia": [row[3] for row in rows],
+            }
+        )
+        return reader
+
+    @staticmethod
+    def _monthly_rows(
+        code: int, volume: Callable[[int, int], float]
+    ) -> list[tuple[int, str, str, float]]:
+        """One row per month of the 2025-2029 study, ``volume(year, month)``."""
+        return [
+            (
+                code,
+                f"{year}-{month:02d}-01",
+                f"{year}-{month:02d}-01",
+                volume(year, month),
+            )
+            for year in range(2025, 2030)
+            for month in range(1, 13)
+        ]
+
+    def _models(self, case) -> dict[int, dict]:
+        return {
             m["hydro_id"]: m
             for m in convert_production_models(case, self._id_map())[
                 "production_models"
             ]
         }
-        entry = models[0]
+
+    def test_calendar_periodic_reference_is_seasonal(self, tmp_path: Path) -> None:
+        case = self._case(
+            tmp_path,
+            plant_1={"potencia_nominal_conjunto_1": 800.0},
+            volumes_referencia=self._volumes_referencia(
+                self._monthly_rows(1, lambda _year, month: 100.0 + 50.0 * month)
+            ),
+        )
+        entry = self._models(case)[0]
         assert entry["selection_mode"] == "seasonal"
         assert entry["default_model"] == "constant_productivity"
         seasons = {s["season_id"]: s for s in entry["seasons"]}
         assert sorted(seasons) == list(range(12))
-        # season_id = month - 1; absolute = vmin + useful, not capped at vmax.
-        assert seasons[0]["reference_volume"] == {"volume_hm3": 300.0}  # Jan: 100+200
-        assert seasons[5]["reference_volume"] == {"volume_hm3": 950.0}  # Jun: 100+850
-        assert seasons[6]["reference_volume"] == {"volume_hm3": 5100.0}  # Jul: 100+5000
-        assert seasons[2]["reference_volume"] == {"volume_hm3": 100.0}  # unset -> vmin
-        # FPHA plant: every season carries model fpha + fpha_config (with window).
+        assert seasons[0]["reference_volume"] == {"volume_hm3": 150.0}
+        assert seasons[11]["reference_volume"] == {"volume_hm3": 700.0}
         assert all(s["model"] == "fpha" for s in entry["seasons"])
-        assert all(
-            s["fpha_config"]
-            == {
-                "source": "computed",
-                "fitting_window": {"volume_min_hm3": 100.0, "volume_max_hm3": 1000.0},
-            }
-            for s in entry["seasons"]
-        )
+        # The turbined fit range follows each season's reference volume.
+        fit = [s["fpha_config"]["turbined_fit_max_m3s"] for s in entry["seasons"]]
+        assert fit == sorted(fit)
+        assert fit[0] < fit[-1]
 
-    def test_nonfpha_downstream_plant_with_volref_is_seasonal_constant(
+    def test_non_periodic_reference_merges_runs_of_equal_stages(
         self, tmp_path: Path
     ) -> None:
-        # Plant 2 is non-FPHA but still gets seasonal reference volumes so it is
-        # a correct backwater reference for an upstream FPHA plant.
-        # (At least one non-zero month, else volref_saz treats the row as absent.)
-        case = self._case(tmp_path, volref={2: {1: 10.0}})
-        models = {
-            m["hydro_id"]: m
-            for m in convert_production_models(case, self._id_map())[
-                "production_models"
-            ]
-        }
-        entry = models[1]
-        assert entry["selection_mode"] == "seasonal"
-        assert all(s["model"] == "constant_productivity" for s in entry["seasons"])
-        assert all("fpha_config" not in s for s in entry["seasons"])
-        assert all("reference_volume" in s for s in entry["seasons"])
+        # 2025 at 400 hm³, every later stage at 800 hm³.
+        case = self._case(
+            tmp_path,
+            volumes_referencia=self._volumes_referencia(
+                [
+                    (1, "2025-01-01", "2025-12-01", 400.0),
+                    (1, "2026-01-01", "2029-12-01", 800.0),
+                ]
+            ),
+        )
+        entry = self._models(case)[0]
+        assert entry["selection_mode"] == "stage_ranges"
+        ranges = entry["stage_ranges"]
+        assert [(r["start_stage_id"], r["end_stage_id"]) for r in ranges] == [
+            (0, 11),
+            (12, None),
+        ]
+        assert [r["reference_volume"] for r in ranges] == [
+            {"volume_hm3": 400.0},
+            {"volume_hm3": 800.0},
+        ]
+
+    def test_plant_without_rows_reads_its_hidr_reference_volume(
+        self, tmp_path: Path
+    ) -> None:
+        case = self._case(
+            tmp_path,
+            plant_1={"volume_referencia": 700.0},
+            volumes_referencia=self._volumes_referencia(
+                [(2, "2025-01-01", "2029-12-01", 300.0)]
+            ),
+        )
+        models = self._models(case)
+        assert models[0]["stage_ranges"][0]["reference_volume"] == {"volume_hm3": 700.0}
+        assert models[1]["stage_ranges"][0]["reference_volume"] == {"volume_hm3": 300.0}
+
+    @pytest.mark.parametrize("tipo", [0, None])
+    def test_rows_off_read_the_initial_storage(
+        self, tmp_path: Path, tipo: int | None
+    ) -> None:
+        case = self._case(
+            tmp_path,
+            volumes_referencia=self._volumes_referencia(
+                [(1, "2025-01-01", "2029-12-01", 900.0)], tipo=tipo
+            ),
+        )
+        with dx.collect() as collected:
+            models = self._models(case)
+        # 50 % of [100, 1000] and 75 % of [50, 500].
+        assert models[0]["stage_ranges"][0]["reference_volume"] == {"volume_hm3": 550.0}
+        assert models[1]["stage_ranges"][0]["reference_volume"] == {"volume_hm3": 387.5}
+        [diagnostic] = [
+            d for d in collected if d.code == "fpha-reference-initial-storage"
+        ]
+        assert diagnostic.severity is Severity.INFO
+
+    def test_daily_plant_ignores_its_rows(self, tmp_path: Path) -> None:
+        case = self._case(
+            tmp_path,
+            plant_1={"tipo_regulacao": "D"},
+            volumes_referencia=self._volumes_referencia(
+                [(1, "2025-01-01", "2029-12-01", 900.0)]
+            ),
+        )
+        entry = self._models(case)[0]["stage_ranges"][0]
+        assert entry["reference_volume"] == {"volume_hm3": 550.0}
+
+    def test_volref_saz_does_not_move_the_reference_volume(
+        self, tmp_path: Path
+    ) -> None:
+        case = self._case(tmp_path, volref={1: {1: 200.0, 7: 5000.0}})
+        entry = self._models(case)[0]
+        assert entry["selection_mode"] == "stage_ranges"
+        assert entry["stage_ranges"][0]["reference_volume"] == {"volume_hm3": 550.0}
+
+    def test_plant_outside_the_fpha_declares_its_reference_volume(
+        self, tmp_path: Path
+    ) -> None:
+        # Plant 2 is the backwater reference of an upstream FPHA plant.
+        [entry] = self._models(self._case(tmp_path))[1]["stage_ranges"]
+        assert entry["model"] == "constant_productivity"
+        assert "fpha_config" not in entry
+        assert entry["reference_volume"] == {"volume_hm3": 387.5}
+
+    @pytest.mark.parametrize(
+        ("tipo", "rows", "message"),
+        [
+            (2, [(1, "2025-01-01", "2029-12-01", 900.0)], "TIPO-PADRAO"),
+            (1, [(1, "2025-01-01", "2029-11-01", 900.0)], "2029/12"),
+            (
+                1,
+                [
+                    (1, "2025-01-01", "2029-12-01", 900.0),
+                    (1, "2027-03-01", "2027-03-01", 900.0),
+                ],
+                "2027/03",
+            ),
+        ],
+        ids=["unknown-type", "uncovered-stage", "overlapping-rows"],
+    )
+    def test_rows_the_source_model_rejects_are_rejected(
+        self,
+        tmp_path: Path,
+        tipo: int,
+        rows: list[tuple[int, str, str, float]],
+        message: str,
+    ) -> None:
+        case = self._case(
+            tmp_path, volumes_referencia=self._volumes_referencia(rows, tipo=tipo)
+        )
+        with pytest.raises(SourceFileError, match=message):
+            convert_production_models(case, self._id_map())
 
     def test_volref_not_consulted_when_fpha_off(self, tmp_path: Path) -> None:
         case = self._case(tmp_path, fpha=False, volref={1: {1: 200.0}})
