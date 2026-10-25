@@ -133,6 +133,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   station 300 keeps that fallback, as in DECOMP, and a DECOMP deck without
   `mlt.dat` keeps it for every plant with an `fpha-mlt-absent` warning. The
   field needs the paired cobre release.
+- **`convert newave` sets the turbined-flow range of the FPHA fit for daily
+  and run-of-river plants.** NEWAVE fits a plant with `tipo_regulacao` D or S
+  up to the flow at which each machine set reaches its rated power or its
+  turbine limit at the head it sees there, from the forebay level at
+  `volume_referencia` down to the `polinjus` tailrace at that flow, with no
+  outage derating. Cobre fitted up to the plant's maximum turbined flow,
+  which for most of these plants is a different range, so the planes
+  departed from NEWAVE's at its operating points. Each such plant now emits
+  `fpha_config.turbined_fit_max_m3s`; monthly reservoirs keep Cobre's range.
+  An `fpha-turbined-fit-range-unconverged` warning names a plant where the
+  flow does not settle on the tailrace curve. The field needs the paired
+  cobre release.
 - **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
   An FPHA plant whose turbined limit is zero on a stage, such as one with
   every machine under maintenance, takes a zero constant productivity on that

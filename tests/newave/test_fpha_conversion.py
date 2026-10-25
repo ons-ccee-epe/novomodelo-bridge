@@ -142,6 +142,11 @@ class TestFphaComputedConfig:
             "volume_max_hm3": 900.0,
         }
 
+    def test_turbined_fit_range_when_given(self) -> None:
+        cfg = _fpha_computed_config(self._row("D"), turbined_fit_max_m3s=812.5)
+        assert cfg["turbined_fit_max_m3s"] == 812.5
+        assert "turbined_fit_max_m3s" not in _fpha_computed_config(self._row("D"))
+
 
 class TestParseFphaPlaneReduction:
     def _case(self, tmp_path: Path, text: str | None):
@@ -216,14 +221,21 @@ class TestFphaConverters:
         modif: MagicMock | None = None,
         confhd: pd.DataFrame | None = None,
         exph: MagicMock | None = None,
+        plant_1: dict[str, object] | None = None,
+        plant_2: dict[str, object] | None = None,
+        polinjus: MagicMock | None = None,
     ):
         cadastro = _make_hidr_cadastro().copy()
         # Plant 1: realistic specific productivity -> FPHA.
         cadastro.loc[1, "produtibilidade_especifica"] = _REALISTIC_RHO_ESP
+        for column, value in (plant_1 or {}).items():
+            cadastro.loc[1, column] = value
         # Plant 2: zero the volume->cota polynomial (no forebay) -> non-FPHA.
         for i in range(5):
             cadastro.loc[2, f"a{i}_volume_cota"] = 0.0
         cadastro.loc[2, "produtibilidade_especifica"] = 0.0088
+        for column, value in (plant_2 or {}).items():
+            cadastro.loc[2, column] = value
 
         mock_hidr = MagicMock()
         mock_hidr.cadastro = cadastro
@@ -252,6 +264,8 @@ class TestFphaConverters:
         }
         if modif is not None:
             parsed["modif"] = modif
+        if polinjus is not None:
+            parsed["polinjus"] = polinjus
         if volref is not None:
             rows = [
                 {"codigo_usina": code, "mes": month, "valor": value}
@@ -364,6 +378,155 @@ class TestFphaConverters:
         }
         assert models[0]["fpha_config"]["spillage_fit_max_m3s"] == 1800.0
         assert "fpha_config" not in models[1]
+
+    def test_production_models_daily_plant_turbined_range_at_its_held_volume(
+        self, tmp_path: Path
+    ) -> None:
+        # Held at 550 hm³: 300 + 0.1 · 550 - 50 = 305 m net head. Each of the 4
+        # machines swallows 222.2 · (305 / 300)^0.5 m³/s, but its 200 MW
+        # generator caps it at 200 / (ρ_esp · 305).
+        case = self._case(
+            tmp_path, plant_1={"tipo_regulacao": "D", "queda_nominal_conjunto_1": 300.0}
+        )
+        result = convert_production_models(case, self._id_map())
+        fpha = result["production_models"][0]["stage_ranges"][0]
+        per_machine = min(
+            222.2 * (305.0 / 300.0) ** 0.5, 200.0 / (_REALISTIC_RHO_ESP * 305.0)
+        )
+        assert fpha["fpha_config"]["turbined_fit_max_m3s"] == pytest.approx(
+            4 * per_machine
+        )
+
+    @staticmethod
+    def _polinjus(families: dict[float, tuple[float, float]]) -> MagicMock:
+        """Plant 1's tailrace families, ``{downstream reference level: (a0, a1)}``,
+        each one segment ``a0 + a1 · outflow``."""
+        polinjus = MagicMock()
+        polinjus.hidreletrica_curvajusante.return_value = pd.DataFrame(
+            {
+                "codigo_usina": [1] * len(families),
+                "indice_familia": list(range(1, len(families) + 1)),
+                "nivel_montante_referencia": list(families),
+            }
+        )
+        polinjus.hidreletrica_curvajusante_polinomio_segmento.return_value = (
+            pd.DataFrame(
+                {
+                    "codigo_usina": [1] * len(families),
+                    "indice_familia": list(range(1, len(families) + 1)),
+                    "indice_polinomio": [1] * len(families),
+                    "limite_inferior_vazao_jusante": [0.0] * len(families),
+                    "limite_superior_vazao_jusante": [1.0e6] * len(families),
+                    "coeficiente_a0": [a0 for a0, _ in families.values()],
+                    "coeficiente_a1": [a1 for _, a1 in families.values()],
+                    "coeficiente_a2": [0.0] * len(families),
+                    "coeficiente_a3": [0.0] * len(families),
+                    "coeficiente_a4": [0.0] * len(families),
+                }
+            )
+        )
+        return polinjus
+
+    def _turbined_fit_max(self, case) -> float | None:
+        result = convert_production_models(case, self._id_map())
+        config = result["production_models"][0]["stage_ranges"][0]["fpha_config"]
+        return config.get("turbined_fit_max_m3s")
+
+    def test_production_models_turbined_range_settles_on_the_tailrace_curve(
+        self, tmp_path: Path
+    ) -> None:
+        # The 800 MW generators never bind, so each turbine swallows
+        # 222.2 · (h / 300)^0.5 with the tailrace rising 0.01 m per m³/s.
+        case = self._case(
+            tmp_path,
+            plant_1={
+                "tipo_regulacao": "D",
+                "queda_nominal_conjunto_1": 300.0,
+                "potencia_nominal_conjunto_1": 800.0,
+            },
+            polinjus=self._polinjus({float("nan"): (50.0, 0.01)}),
+        )
+        flow = self._turbined_fit_max(case)
+        assert flow is not None
+        assert flow == pytest.approx(
+            4 * 222.2 * ((355.0 - (50.0 + 0.01 * flow)) / 300.0) ** 0.5, abs=1e-2
+        )
+
+    def test_production_models_turbined_range_reads_the_downstream_at_its_minimum(
+        self, tmp_path: Path
+    ) -> None:
+        # Plant 2 ('M') sits downstream at 300 + 0.1 · 50 = 305 m, halfway
+        # between the 40 m and 50 m families: a 45 m tailrace, a 310 m head.
+        confhd = _make_confhd_df()
+        confhd["codigo_usina_jusante"] = [2, pd.NA]
+        case = self._case(
+            tmp_path,
+            confhd=confhd,
+            plant_1={
+                "tipo_regulacao": "D",
+                "queda_nominal_conjunto_1": 300.0,
+                "potencia_nominal_conjunto_1": 800.0,
+            },
+            plant_2={"a0_volume_cota": 300.0, "a1_volume_cota": 0.1},
+            polinjus=self._polinjus({300.0: (40.0, 0.0), 310.0: (50.0, 0.0)}),
+        )
+        assert self._turbined_fit_max(case) == pytest.approx(
+            4 * 222.2 * (310.0 / 300.0) ** 0.5
+        )
+
+    def test_production_models_unsettled_turbined_range_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        # A tailrace rising 1 m per m³/s makes the flow alternate between two
+        # values instead of settling.
+        case = self._case(
+            tmp_path,
+            plant_1={"tipo_regulacao": "D", "queda_nominal_conjunto_1": 300.0},
+            polinjus=self._polinjus({float("nan"): (50.0, 1.0)}),
+        )
+        with dx.collect() as collected:
+            convert_production_models(case, self._id_map())
+        [diagnostic] = [
+            d for d in collected if d.code == "fpha-turbined-fit-range-unconverged"
+        ]
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[1, "USINA_A"]]
+
+    def test_production_models_monthly_reservoir_keeps_novomodelo_turbined_range(
+        self, tmp_path: Path
+    ) -> None:
+        case = self._case(tmp_path, plant_1={"queda_nominal_conjunto_1": 300.0})
+        result = convert_production_models(case, self._id_map())
+        fpha = result["production_models"][0]["stage_ranges"][0]
+        assert "turbined_fit_max_m3s" not in fpha["fpha_config"]
+
+    def test_production_models_expanding_plant_turbined_range_on_its_declared_machines(
+        self, tmp_path: Path
+    ) -> None:
+        # MODIF leaves no machine at the study start; the two exph machines are
+        # the configuration hydros.json declares.
+        nummaq_rec = MagicMock()
+        type(nummaq_rec).__name__ = "NUMMAQ"
+        nummaq_rec.conjunto = 1
+        nummaq_rec.numero_maquinas = 0
+        confhd = _make_confhd_df()
+        confhd["usina_existente"] = ["EE", "EX"]
+        case = self._case(
+            tmp_path,
+            modif=modif_mock((1, [nummaq_rec])),
+            confhd=confhd,
+            exph=_make_ee_exph_mock(entry="2025-07-01", code=1, conjunto=1),
+            plant_1={"tipo_regulacao": "D", "queda_nominal_conjunto_1": 300.0},
+        )
+        result = convert_production_models(case, self._id_map())
+        fpha = result["production_models"][0]["stage_ranges"][0]
+        per_machine = min(
+            222.2 * (305.0 / 300.0) ** 0.5, 200.0 / (_REALISTIC_RHO_ESP * 305.0)
+        )
+        assert fpha["fpha_config"]["turbined_fit_max_m3s"] == pytest.approx(
+            2 * per_machine
+        )
 
     def test_production_models_artificial_gauge_keeps_novomodelo_default_range(
         self, tmp_path: Path, natural_means: MagicMock

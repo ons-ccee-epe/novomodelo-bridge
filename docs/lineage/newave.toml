@@ -1823,8 +1823,9 @@ reads = [
   { file = "volref_saz" },
   { file = "tratamento_fpha" },
   { file = "vazoes" },
+  { file = "polinjus" },
 ]
-summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante), o volume de referência e, nas usinas FPHA, a faixa de vertimento do ajuste; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`."
+summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA ou produtividade constante), o volume de referência e, nas usinas FPHA, as faixas de vertimento e de turbinamento do ajuste; nenhuma produtibilidade numérica é escrita aqui, ela vai para `system/hydro_energy_productivity.parquet`."
 
   [[output.field]]
   path = "production_models[].hydro_id"
@@ -1900,6 +1901,37 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   ]
   status = "derived"
   how = "Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal, por mês-calendário, da vazão natural do posto da usina em `vazoes.dat`, sobre o mesmo histórico de `scenarios/inflow_history.parquet` (até o mês anterior ao início do estudo). É a regra do DECOMP com a média de longo termo do `mlt.dat`. Omitido no posto artificial 300 e num posto de média nula: o Novomodelo usa então o dobro do engolimento máximo da usina."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s"
+  when = "somente em faixas `fpha` de usina de regulação `D`/`S` com `volume_referencia`"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "hidr", item = "a0_volume_cota … a4_volume_cota" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "hidr", item = "perdas" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "tipo_turbina" },
+    { file = "hidr", item = "numero_conjuntos_maquinas" },
+    { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
+    { file = "hidr", item = "vazao_nominal_conjunto_1 … vazao_nominal_conjunto_5" },
+    { file = "hidr", item = "queda_nominal_conjunto_1 … queda_nominal_conjunto_5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1 … potencia_nominal_conjunto_5" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "modif", item = "NUMCNJ · numero" },
+    { file = "modif", item = "NUMMAQ · numero_maquinas" },
+    { file = "modif", item = "VOLCOTA · coeficientes a0 a a4" },
+    { file = "confhd", item = "codigo_usina_jusante" },
+    { file = "confhd", item = "usina_existente" },
+    { file = "exph", item = "data_entrada_operacao" },
+    { file = "exph", item = "conjunto_maquina_entrada" },
+    { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE · nivel_montante_referencia" },
+    { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a0 … coeficiente_a4" },
+  ]
+  status = "derived"
+  how = "Limite superior, em m³/s, da faixa de turbinamento sobre a qual o Novomodelo ajusta os hiperplanos, a regra do `fpha_eco` do NEWAVE: soma por conjunto de `n · min(vazao_nominal · (h_t / queda_nominal)^k, potencia_nominal / (ρ_esp · h_g))`, sem disponibilidade (`teif`/`ip`). `h_g` é a queda líquida da cota de `volume_referencia` ao `canal_fuga_medio`; `h_t` desce até o nível de jusante de `polinjus.csv` na própria vazão (ponto fixo), com a família interpolada no nível da usina de jusante do `confhd` no menor volume de operação (`volume_referencia` para `D`/`S`, `volume_minimo` para `M`). Sem família em `polinjus.csv`, `h_t = h_g`. Usina `EE` usa a configuração final de máquinas. Omitido nas usinas `M`: o Novomodelo ajusta até o engolimento máximo da usina."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].reference_volume.percentile"
@@ -1980,6 +2012,17 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
   ]
   status = "derived"
   how = "Igual a `stage_ranges[].fpha_config.spillage_fit_max_m3s`, repetido em cada estação."
+
+  [[output.field]]
+  path = "production_models[].seasons[].fpha_config.turbined_fit_max_m3s"
+  when = "somente em caso FPHA para usina `fpha` de regulação `D`/`S` com linha não nula em `volref_saz.dat`"
+  from = [
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "volume_referencia" },
+    { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a0 … coeficiente_a4" },
+  ]
+  status = "derived"
+  how = "Igual a `stage_ranges[].fpha_config.turbined_fit_max_m3s`, repetido em cada estação."
 
   [[output.field]]
   path = "fpha_plane_reduction.method"

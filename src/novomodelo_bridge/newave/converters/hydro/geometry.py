@@ -70,22 +70,27 @@ def _has_rated_capacity(hreg: pd.Series) -> bool:
     return max_turbined > 0.0 and max_generation > 0.0
 
 
-def operating_storage_range(hreg: pd.Series) -> tuple[float, float]:
-    """``(min, max)`` storage the plant operates over, in hm³.
+def held_volume(hreg: pd.Series) -> float | None:
+    """The ``volume_referencia`` (hm³) the source model holds a daily ('D') or
+    run-of-river ('S') plant at every stage, which may lie outside
+    ``[volume_minimo, volume_maximo]``; ``None`` for any other plant and for a
+    'D'/'S' plant without one."""
+    if str(hreg.get("tipo_regulacao", "")).strip() not in ("D", "S"):
+        return None
+    vol_ref_raw = hreg.get("volume_referencia")
+    if vol_ref_raw is None or pd.isna(vol_ref_raw):
+        return None
+    return float(vol_ref_raw)
 
-    The source model holds daily ('D') and run-of-river ('S') plants at
-    ``volume_referencia`` every stage, so their range collapses to that point,
-    which may lie outside ``[volume_minimo, volume_maximo]``. Every other plant,
-    and a 'D'/'S' plant without a ``volume_referencia``, keeps the hidr range.
-    The reservoir bounds, the VHA geometry and the FPHA volume window all read
-    this one range.
+
+def operating_storage_range(hreg: pd.Series) -> tuple[float, float]:
+    """``(min, max)`` storage the plant operates over, in hm³: the
+    :func:`held_volume` when there is one, else the hidr range. The reservoir
+    bounds, the VHA geometry and the FPHA volume window all read this one range.
     """
-    tipo_reg = str(hreg.get("tipo_regulacao", "")).strip()
-    if tipo_reg in ("D", "S"):
-        vol_ref_raw = hreg.get("volume_referencia")
-        if vol_ref_raw is not None and not pd.isna(vol_ref_raw):
-            vol_ref = float(vol_ref_raw)
-            return vol_ref, vol_ref
+    held = held_volume(hreg)
+    if held is not None:
+        return held, held
     return float(hreg["volume_minimo"]), float(hreg["volume_maximo"])
 
 
