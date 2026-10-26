@@ -16,301 +16,68 @@ links are cobre-bridge's.
 
 ### Added
 
-- **`compare decomp` compares both models at their operating points.** The
-  Productivity tab splits each plant and stage's realized-productivity gap
-  into a part from the fitted production functions and a part from where
-  Novomodelo operates, using DECOMP's planes (`avl_cortesfpha_dec.rvN`) and fit
-  windows (`eco_fpha_.rvN`). It plots generation against turbined flow at
-  DECOMP's mean operating point for both models' planes and the exact
-  production function, and lists each model's fit inputs and head
-  components. A point where the plant's energy or water is worth nothing in
-  either model is a tie: ties are left out of the split and of the per-plant
-  hydro ranking, and their share is reported per stage. The FPHA surface
-  comparison now uses DECOMP's own planes on its fit grid, as the NEWAVE
-  report does, instead of Novomodelo's planes against `dec_desvfpha.rvN`. The
-  static pmo section is no longer shown when it has no data.
-- **`compare newave` compares both models at their operating points.** In an
-  FPHA run, the Productivity tab now gives the realized-productivity split,
-  the generation-against-turbined-flow chart, each model's fit inputs and
-  head components, and the per-stage tie share, as the DECOMP report does.
-  NEWAVE's operating points come from the nwlistop plant tables, which
-  nwlistop writes for the plants in the `nwlistop.dat` plant list; without
-  them the tab says to set that list to `999` and leaves the operating
-  points out. The fit-inputs table gives the largest gap between the exact
-  production function rebuilt from the deck and NEWAVE's printed
-  `gh_fphexat`.
-- **`compare newave` and `compare decomp` net the penalties out of each
-  lower bound.** Below the Overview tab's convergence chart, a table gives
-  each model's final lower bound, its expected constraint-violation
-  penalties from the cost breakdown, and the bound net of them. A slack
-  priced far above any real cost can dominate one model's bound; the net
-  bounds compare the operation both models price. The table names the
-  categories it counts and any cost category it cannot classify.
-- **`convert decomp` warns about negative incremental inflows.** The values
-  are converted as the deck gives them. DECOMP reports a negative incremental
-  inflow as zero in its operation output, while Novomodelo removes that water from
-  the plant's balance unless its priced inflow slack adds it back. A
-  `decomp-negative-incremental-inflows` warning lists each plant and stage
-  with the number of negative values and the lowest one.
-- **`convert decomp` accepts a deck with a multi-month trunk, or with monthly
-  stages only.** The operative calendar admits any number of deterministic
-  months before the terminal month, and a deck with no operative weeks
-  starting on the first of a month. The inflows of a monthly trunk stage are
-  read from the deck's generated scenarios, where DECOMP records them, and
-  the boundary coupling reads its inflow lags there too. Reading that block
-  needs idecomp 1.15.1 or newer. In a deck of monthly stages only, each
-  fuel-constrained thermal takes its `NL` lag as a lead in stages: the first
-  `lag` months of the study carry the deck's `GL` commitments, made before
-  the study, and the months after the horizon that its study months decide
-  are priced from their own `TG` records. A deck that splits a `GS` month
-  into weeks, declares an `NL` lag longer than the study, or commits `GL`
-  dispatch past the horizon is refused with a message naming the plant.
-- **`convert decomp` emits water travel time.** A plant's `VI` register now
-  converts to the delayed cascade arc (`hydros[].travel_time_hours`) and the
-  in-transit water seeding it (`initial_conditions.past_defluences`), instead
-  of being read and deferred. The deferral stood on a novomodelo cut-generation
-  defect that produced an invalid in-transit cut; that defect is fixed in the
-  paired novomodelo release, so the emission is restored. A deck with no `VI`
-  register is unaffected (the arc stays instantaneous). At the imported
-  boundary, water still in transit toward a plant is valued with that plant's
-  boundary storage term, or with its first inflow-lag term when it takes no
-  storage term, the in-channel rule CEPEL documents for DECOMP's cost-to-go
-  function handed to DESSEM. DECOMP gives that water no value at the NEWAVE
-  boundary, so the boundary cost differs from DECOMP's by the value of the
-  water in transit; a `boundary-fcf-transit-water-priced` note lists the
-  plants and the term each takes.
-- **`export dessem` exports water travel time.** A case with water travel
-  time exports it the way DECOMP lays it out: `mapcut` gives each
-  travel-time plant the share of every lagged release arriving in each stage,
-  and each `cortdeco` cut values the water still in transit by stage of
-  release, from the transit-bucket coefficients of the cut. The deck's `VI`
-  record order numbers the travel-time plants. Before, a policy carrying
-  travel-time state was refused.
-- **`convert newave` and `convert decomp` list the FPHA plants whose spill
-  the source model keeps out of the tailrace.** Where `hidr.dat` sets
-  `influencia_vertimento_canal_fuga` to 0, the source model fits no spillage
-  term, while Novomodelo's fit always raises the tailrace with the spilled flow.
-  The new `fpha-spill-outside-tailrace` info diagnostic names those plants
-  and their stages; Novomodelo has no input to leave the spill out yet.
-- **`convert decomp` fits each FPHA plant's turbined flow over DECOMP's
-  range.** Each stage's `fpha_config` carries `turbined_fit_max_m3s`: the
-  stage's turbined limit without the `MP` maintenance and `FD`
-  availability factors, as in DECOMP's `eco_fpha_.rvN`, and Itaipu's
-  derated plant-wide limit. Novomodelo used to fit every stage up to the plant's
-  widest derated limit.
-- **`convert newave` and `convert decomp` warn when a plant's turbined-flow
-  limit leaves out part of the source model's rule.** A plant whose
-  `hidr.dat` record lacks a datum the limit is computed from (a machine
-  set's rated head, the specific productivity, the volume-to-cota
-  polynomial or the mean tailrace level) used to get a limit without that
-  part of the rule, and no notice; the `turbine-limit-data-missing`
-  warning now names the plant, the missing datum, the limit used instead
-  and the stages it applies to.
+- **`export dessem` exports water travel time** in the `mapcut`/`cortdeco`
+  files; a case with water travel time used to be refused.
+- **`compare newave` and `compare decomp` compare both models at their
+  operating points.** The Productivity tab splits each plant's productivity
+  gap into a part from the production functions and a part from where each
+  model operates, with each model's fit inputs. NEWAVE's operating points
+  need the `nwlistop.dat` plant list set to `999`.
+- **Both `compare` reports net the penalties out of the lower bounds**, in a
+  table under the Overview convergence chart.
+- **`convert decomp` accepts decks with a multi-month trunk or with monthly
+  stages only.**
+- **`convert decomp` converts water travel time** (`VI`). The boundary cost
+  then differs from DECOMP's by the value of the water in transit, and a note
+  lists the plants.
+- **New warnings in `convert`:**
+  - plants whose turbined-flow limit lacks part of its `hidr.dat` data
+    (`turbine-limit-data-missing`);
+  - FPHA plants whose spill the source model keeps out of the tailrace, which
+    Novomodelo cannot do yet (`fpha-spill-outside-tailrace`);
+  - negative incremental inflows in a DECOMP deck.
 
 ### Changed
 
-- **`convert decomp` caps turbined flow at DECOMP's stage limit.** A plant's
-  turbined flow was capped at its rated flow corrected for the head over its
-  whole storage range. It is now capped stage by stage at the limit DECOMP
-  computes before the optimization. The head is taken at the stage's initial
-  storage, with the tailrace rising with the flow until head and flow agree.
-  The limit is scaled by the plant's `MP` and `FD` factors and kept under the
-  flow of its available power. A plant that cannot hold back its stage inflow
-  turbines up to that inflow. Itaipu's limit is plant-wide: its two frequency
-  groups share it, and each group is held to its own available power.
-- **Both tracks set the spillage range of the FPHA fit.** Each FPHA plant's
-  `fpha_config.spillage_fit_max_m3s` is twice the largest monthly mean
-  inflow of its gauging station: DECOMP's long-term means in `mlt.dat` (the
-  `AC NUMPOS` station when the deck gives one), and on the NEWAVE track the
-  calendar-month means of the natural `vazoes.dat` record before the study
-  start. Novomodelo fitted the spillage coefficient over twice the maximum
-  turbined flow, a range a flood can exceed: the fitted plane then caps the
-  plant's spillage below the water it must pass. A plant on the artificial
-  station 300 keeps that fallback, as in DECOMP, and a DECOMP deck without
-  `mlt.dat` keeps it for every plant with an `fpha-mlt-absent` warning. The
-  field needs the paired novomodelo release.
-- **`convert newave` sets the turbined-flow range of the FPHA fit.** NEWAVE
-  fits each FPHA plant up to the flow at which every machine set reaches its
-  rated power or its turbine limit, with no outage derating. The turbine head
-  runs from the forebay level at the plant's FPHA reference volume down to
-  the `polinjus` tailrace at that flow, read at the forebay level of the
-  plant `hidr.dat` names downstream; the generator head runs from the mean
-  forebay over the plant's operating range. Novomodelo fitted up to the plant's
-  maximum turbined flow, which for most plants is a different range, so the
-  planes departed from NEWAVE's at its operating points. Each FPHA plant now
-  emits `fpha_config.turbined_fit_max_m3s`, stage by stage where its
-  reference volume changes. An `fpha-turbined-fit-range-unconverged` warning
-  names a plant where the flow does not settle on the tailrace curve. The
-  field needs the paired novomodelo release.
-- **`convert newave` takes the FPHA reference volume from
-  `volumes-referencia.csv`.** NEWAVE reads a monthly reservoir's FPHA
-  reference volume, the forebay level of its own fit and the downstream level
-  of the plant above, from the `CADH-VOL-REF-PER` rows of the file
-  `indices.csv` lists under `HIDRELETRICA-CADASTRO-RESERVATORIO` when
-  `VOLUME-REFERENCIAL-TIPO-PADRAO` is 1, from `volume_referencia` for a
-  reservoir without rows, and from the initial storage when the file is
-  absent or the type is 0; a daily or run-of-river plant reads
-  `volume_referencia`. The converter used `volref_saz.dat` or 65% of the
-  useful volume instead. Each plant of an FPHA case now declares NEWAVE's
-  volume, as twelve seasons when it repeats every calendar month and as stage
-  ranges otherwise, and an `fpha-reference-initial-storage` note marks the
-  initial-storage fallback. Rows that leave a study stage uncovered, two
-  values for one month, or an unknown type fail the conversion, as they stop
-  NEWAVE. Evaporation and the equivalent productivity keep reading
-  `volref_saz.dat`.
-- **`convert newave` caps turbined flow and generation as NEWAVE does.**
-  NEWAVE caps a plant's generation at its available power, the rated power
-  scaled by the plant's TEIF and IP availability, under FPHA and constant
-  productivity alike. The converter left generation at the rated power.
-  `hydro_bounds.parquet` now carries every plant's available power as
-  `max_generation_mw` on every stage; the declared `max_generation_mw` stays
-  the rated power, which caps the FPHA fit as it does NEWAVE's. Under a
-  `CFUGA` or `CMONT` record, the per-stage turbined cap of a monthly
-  reservoir read the forebay level at 65% of its useful volume, while NEWAVE
-  keeps the mean level between the minimum volume and that volume, as the
-  declared cap does, and a `volref_saz.dat` row moved the per-stage turbined
-  cap, which in NEWAVE it does not.
-- **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
-  An FPHA plant whose turbined limit is zero on a stage, such as one with
-  every machine under maintenance, takes a zero constant productivity on that
-  stage and the production function on the others. DECOMP builds no planes
-  for such a stage; fitted planes there forced generation and outflow slack.
-  Novomodelo fits the production function only on the stages that select it from
-  the paired release on.
+- **The FPHA is fitted as the source model fits it.** Results change for
+  most FPHA plants, and the cases need the paired novomodelo release.
+  - `convert newave` takes the reference volume from `volumes-referencia.csv`,
+    fits turbined flow over NEWAVE's range and spillage up to twice the
+    station's largest monthly mean inflow, and reads the levels of daily and
+    run-of-river plants at the volume they are held at.
+  - `convert decomp` fits over DECOMP's volume window and `FP` records,
+    DECOMP's turbined range and twice the largest `mlt.dat` mean inflow, and
+    gives a stage with a zero turbined limit zero productivity.
+- **Turbined-flow and generation caps follow the source model.** `convert
+  decomp` caps turbined flow stage by stage at DECOMP's own limit. `convert
+  newave` caps generation at the plant's available power on every stage.
+- **idecomp 1.17.0 or newer is required.**
 
 ### Fixed
 
-- **`convert newave` bounds cut selection to the last two iterations.** The
-  converted `config.json` now sets `lookback_iterations: 2` under
-  `training.cut_selection.selection`, so `level1` scores the trial states of
-  the last two iterations, the window `lml1` scored before 0.19.0. Since
-  0.19.0 it scored every trial state of the run, which kept about three times
-  as many cuts active and made each training iteration and the simulation
-  progressively slower.
-- **The Productivity tab reads Novomodelo's fit inputs for seasonal production
-  models.** The fit-inputs table read only the `stage_ranges` entries of
-  `hydro_production_models.json`, so a plant whose FPHA configuration is
-  given per season showed no Novomodelo volume window or turbined fit range. Each
-  season now covers the stages `stages.json` assigns it.
-- **`convert newave` writes a daily or run-of-river plant's geometry at the
-  volume its reservoir is held at.** A plant with `tipo_regulacao` D or S is
-  held at `volume_referencia`, which can lie outside its hidr volume range,
-  but `system/hydro_geometry.parquet` sampled that range. Novomodelo then read
-  the forebay level at the wrong volume, both for the plant's own head and
-  as the downstream level of the plant above, and the FPHA planes it fitted
-  for those plants departed from NEWAVE's. The geometry is now one point at
-  `volume_referencia`, as `convert decomp` already does.
-- **`convert newave` keeps an FPHA reference volume outside the storage
-  range.** In FPHA cases, a reference volume above `volume_maximo` was capped
-  at the maximum. NEWAVE reads the plant's forebay level and the downstream
-  level of the plant above at that volume, so the upstream plant's FPHA
-  tailrace was set too low. The reference volume is now emitted as given, and
-  the plant's geometry samples the volume-to-height polynomial over its
-  storage range widened to cover it, below `volume_minimo` as well as above
-  `volume_maximo`. A `hydro-geometry-extended` note names each plant.
-- **`convert decomp` converts two flow restrictions on one plant that no
-  value meets at once.** Single-plant `HQ` restrictions on the same variable,
-  such as a 0 m³/s ceiling and a 6 m³/s floor on a plant's outflow, failed the
-  conversion where their bounds were intersected. They now become generic
-  constraints, each with its own slack at the same penalty, so Novomodelo violates
-  the cheaper one as DECOMP does, whatever their order or numbers in the
-  deck. A `decomp-conflicting-flow-restrictions` warning names the plant, the
-  restrictions and both limits.
-- **`convert decomp` reads a value written without a decimal point as DECOMP
-  does.** A field the DECOMP manual declares with decimals takes Fortran's
-  implied point when the deck omits it: a `TG` cost written `299` in its
-  `F10.2` field is 2.99, not 299. This holds for the `CT`, `CD`, `CI`, `CE`
-  and `TG` costs and the `AC COTVOL` coefficients. Renewable generation in
-  `PEE-GER-PER-PAT-CEN`, and the reference levels of the `polinjus` tailrace
-  families, are no longer cut at eight characters. This needs idecomp 1.16.0
-  or newer, now the minimum.
-- **`convert decomp` reads a `dadgnl` with a single `GL` register.** The
-  conversion failed on such a deck.
-- **`compare decomp` renders the report when DECOMP's lower bound
-  overflowed.** DECOMP prints a lower bound too wide for its field as
-  asterisks; the convergence chart now draws each bound over the iterations
-  where it is present, instead of failing to build the HTML report.
-- **`compare decomp` puts DECOMP's cost breakdown at present value.** The
-  parcels of DECOMP's cost report are nominal, and they were summed against
-  Novomodelo's present-value costs. Each stage's parcels are now discounted by
-  that stage's ratio of present-value to nominal cost, both printed in the
-  report. The breakdown also shows DECOMP's deficit, priced from
-  `dec_oper_sist` and the deck's `CD` costs, its import and export
-  contracts as its stage total counts them, and the penalty left in the
-  stage total for the constraint slacks the report does not itemize. DECOMP
-  counts an export contract's take-or-pay minimum as a cost where Novomodelo
-  counts it as revenue; the comparison logs the difference. The two turbining parcels were shown
-  as turbining-bound violations; they are the price on turbined water and
-  now compare with Novomodelo's turbined cost. The per-stage operating cost is
-  the nominal stage total. This needs idecomp 1.17.0 or newer, now the
-  minimum.
-- **`compare decomp` counts the ANDE load in Net Load and shows the system
-  ENA in MW.** DECOMP's `dec_oper_sist` demand leaves out the ANDE load of the
-  `RI` register, which the converted case carries on Itaipu's submarket bus,
-  so the Energy Balance tab's Net Load on that bus was lower on the DECOMP
-  side by that load. It is now added there. The system ENA chart drew
-  DECOMP's ENA, energy over the stage in MWmês of 730 hours, against Novomodelo's
-  mean MW, which put a weekly stage at about a quarter of Novomodelo's value.
-  DECOMP's ENA is now converted to the stage's mean MW.
-- **DECOMP: an Itaipu `MP` or `FD` row without a frequency applies to both
-  frequency groups.** The frequency field of those registers is optional,
-  and a row that leaves it blank holds for the whole plant; the conversion
-  failed on it before. A plant mixing a blank row with per-frequency rows in
-  one register is refused.
 - **`convert decomp` couples the boundary cuts plant by plant, as DECOMP
-  does.** The cut values are scaled by the mean month of the DECOMP manual
-  (365.25 days × 24 h / 12) instead of the last stage's hours, and the
-  inflow-lag terms no longer subtract a long-term mean inflow, so `mlt.dat`
-  is no longer read. Only a reservoir (`M` or `S` in `hidr.dat`) takes a
-  storage term, priced above its minimum volume. A plant without its own
-  cut row takes its `CX` complex's row or else the first downstream plant's,
-  and a `boundary-fcf-coefficient-owners` note lists those plants; a plant
-  that finds no row is a `boundary-fcf-unowned-plants` error. The
-  inflow-lag terms are read on each plant's coupling gauge (`AC NPOSNW`,
-  else the `hidr.dat` gauge) with the artificial gauges computed, and so are
-  the pre-study observations that seed the lag state, which are now written
-  whenever the boundary is imported. The known difference from the operated
-  inflow and the lag terms of cut plants outside the case are folded into
-  each cut's constant term; what cannot be folded is reported by the
-  `boundary-fcf-coupling-inflow-unrepresented` and
-  `boundary-fcf-coupling-lag-carried-share` warnings. GNL deliveries are
-  priced in the month the `GS` register books their week to, with
-  `cortesh.dat`'s patamar shares of that month, and deliveries the deck has
-  already committed fold into the constant term.
-- **`convert decomp` fits each plant's FPHA over DECOMP's volume window.**
-  The fitting window was a band of ±10 % of useful volume around the initial
-  storage on every stage. It is now the window DECOMP builds for each stage:
-  the `UH` initial storage, as a percentage of that stage's useful volume,
-  minus a reduction and plus an increase, within the stage's storage limits.
-  Both default to 20 % of useful volume on a weekly stage and 50 % on a
-  monthly one, and a run-of-river plant keeps its single reference volume.
-  `FP` records set them, in % of useful volume or in hm³, from their stage
-  on. Each value is taken from the plant's own record when it sets it, else
-  from a `999` record, else from the default. The `hydro_geometry.parquet`
-  volume grid spans the plant's whole storage range, which holds every
-  window. `FP` turbined-flow windows and point counts are not converted; a
-  `decomp-fp-fit-fields-unconverted` warning lists the records that set them
-  to other values than the default fit. FPHA results change for every plant
-  with storage.
-- **`convert newave` caps the FPHA turbined fit range at the plant's rated
-  power, not at each machine set's.** NEWAVE's fit range is the lower of the
-  machine sets' head-limited flow and the plant's rated power over the
-  generator head. The conversion capped each set at its own generators, so a
-  plant whose generators bind some of its sets and not others got a lower
-  range than NEWAVE's `fpha_eco`. The turbined cap of `hydros.json` and
-  `hydro_bounds.parquet` already took the plant-level minimum and now uses the
-  same function.
-- **The convergence chart compares each upper bound with the same Novomodelo
-  statistic.** NEWAVE's `ZSUP` and DECOMP's `Zsup` are the lowest upper bound
-  reached so far, but the chart drew them against Novomodelo's upper bound at each
-  iteration, so the source model's line never rose where Novomodelo's did.
-  `compare newave` now reads `ZSUP ITER`, NEWAVE's upper bound at each
-  iteration, from `pmo.dat` and compares it with Novomodelo's, in the chart and in
-  the per-iteration comparison. Both reports add Novomodelo's running minimum
-  against the source model's `ZSUP`. The DECOMP report has no per-iteration
-  line, as the relato prints none. `compare newave` also read any `pmo.dat` row
-  with seven numbers, such as an electric-constraint year row, as an
-  iteration; it now reads only the convergence table.
+  does.** Notes and warnings list the plants that borrow another plant's
+  coefficients and what cannot be represented.
+- **`convert decomp` reads values written without a decimal point as DECOMP
+  does** (a `TG` cost `299` is 2.99).
+- **`convert decomp` converts two conflicting flow restrictions on one
+  plant** as soft constraints, as DECOMP does, with a warning, instead of
+  failing.
+- **Itaipu in `convert decomp`:** an `MP` or `FD` row without a frequency
+  applies to both halves.
+- **`convert decomp` reads a `dadgnl` with a single `GL` register.**
+- **`convert newave` scores `level1` cut selection over the last two
+  iterations**, as `lml1` did; 0.19.0 scored the whole run, which kept about
+  three times as many cuts active and slowed training.
+- **`compare decomp` puts DECOMP's cost breakdown at present value**, and
+  adds its deficit, contracts and unitemized penalties.
+- **`compare decomp` counts the ANDE load in Net Load and shows the system
+  ENA in MW.**
+- **`compare decomp` renders the report when DECOMP's lower bound
+  overflowed.**
+- **The convergence chart compares the source model's best upper bound with
+  Novomodelo's best**, and `compare newave` also compares the per-iteration
+  upper bounds.
 
 ## [0.19.0] - 2026-10-20
 
@@ -664,1130 +431,373 @@ boundary FCF an earlier bridge imported must be converted again.
 
 ## [cobre-bridge 0.18.0] - 2026-10-07
 
-Pairs the bridge with the **cobre 0.18.0** release and pins `cobre-python` to
-exactly that release. cobre 0.18.0 refuses policy checkpoints written by 0.17.0
-or earlier, so a DECOMP case whose boundary FCF an earlier bridge imported must
-be converted again.
+Pairs with cobre 0.18.0, which refuses policy checkpoints written by 0.17.0 or
+earlier: convert a DECOMP case with an imported boundary again.
 
 ### Changed
 
-- **`cobre-python` is pinned to exactly the paired cobre release.** The
-  dependency is now `cobre-python==0.18.0` instead of `>=0.17.0,<0.18`, and
-  `MIN_COBRE_VERSION` moves to `0.18.0`. cobre loads a policy checkpoint only
-  in the version that wrote it, so the boundary `convert decomp` writes loads
-  only in that release; a range let an installer pick a patch release that
-  refuses it. `tests/test_packaging.py` checks that the pin equals
-  `MIN_COBRE_VERSION`.
+- **`cobre-python` is pinned to exactly the paired cobre release**, so an
+  installer cannot pick a cobre that refuses the converted boundary.
 
 ### Fixed
 
-- **`compare` records the cobre version in its comparison manifest.** It read
-  a key cobre never writes, so the manifest's `cobre_version` was always
-  empty. The version now comes from `software_version`, the key cobre writes
-  from 0.18.0 on, or from `cobre_version` for outputs of cobre 0.17.0 and
-  earlier; the dashboard's run summary reads it the same way.
+- **`compare` records the cobre version in its comparison manifest.**
 
 ## [0.17.0] - 2026-10-01
 
-Pairs the bridge with the **cobre 0.17.0** release: the `cobre-python` pin and
-`MIN_COBRE_VERSION` floor move to `0.17.0` (bridge `X.Y.Z` pairs cobre `X.Y.Z`,
-guarded by `tests/test_packaging.py`). cobre 0.17.0 loads a policy checkpoint
-only in the version that wrote it, which ties the boundary `convert decomp`
-imports to that exact cobre release. The release also converts NEWAVE hydros
-under expansion, applies the `modif.dat` `POTEFE`, `VOLCOTA` and `COTAREA`
-records, and fixes NEWAVE thermal limits, minimum outflows and electric
-constraints, DECOMP minimum outflow and GNL commitments, and several CLI and
-dashboard defects.
+Pairs with cobre 0.17.0. A DECOMP case with an imported boundary runs only
+under the cobre release that matches the installed `cobre-python`.
 
 ### Added
 
-- **`modif.dat` `POTEFE`, `VOLCOTA` and `COTAREA` are applied to the
-  `hidr.dat` registry**, so a conjunto's effective power and both cota
-  polynomials reach the generation caps, the hydro geometry, the
-  productivities and the head-corrected turbined caps. They were previously
-  skipped without a warning.
+- **`modif.dat` `POTEFE`, `VOLCOTA` and `COTAREA` records are applied**;
+  they were skipped without a warning.
 
 ### Fixed
 
-- **NEWAVE hydros under expansion (`EE`) are converted.** They were dropped as
-  if not yet built, taking their reservoir out of the water balance and their
-  inflow into the plant below. An `EE` plant now starts at the configuration
-  `modif.dat` declares for the study start and gains capacity as its
-  `exph.dat` machines enter, through per-stage bounds; `hydros.json` and FPHA
-  eligibility use its final configuration.
-- **NEWAVE thermal limits.** The `thermals.json` pair is the envelope of the
-  plant's per-stage bounds, so it can no longer publish an inverted interval
-  that cobre rejects or a maximum below a stage's bound. Registry values are
-  discarded for `EE`/`NE` plants per `conft.dat`, not per presence in
-  `expt.dat`. `term.dat`'s monthly minimum applies to the first study year and
-  its remaining-years value afterwards (a blank value keeps the monthly one),
-  and the per-stage table is written whenever a plant's bounds vary, even
-  without `expt.dat` or `manutt.dat`.
-- **NEWAVE weekly-regulating (`S`) plants hold their reference volume.** Like
-  `D` plants, their storage range and initial storage collapse to
-  `volume_referencia` instead of `volume_minimo`; with no reference volume the
-  full range is kept. DECOMP is unchanged: there `S` plants are reservoirs.
-- **NEWAVE `VAZMINT` records marked `PRE` or `POS` are converted.** They
-  aborted the conversion. Each set is read as a step over one repeating year:
-  `PRE` sets the minimum outflow in force when the study starts, until the
-  first dated record, and `POS` sets the post-study months instead of
-  repeating the last study value.
+- **NEWAVE hydros under expansion (`EE`) are converted** instead of dropped.
+- **NEWAVE thermal limits follow `conft.dat`, `term.dat` and `expt.dat` as
+  NEWAVE reads them**, and no longer produce bounds cobre rejects.
+- **NEWAVE `S` plants hold their reference volume**, as `D` plants do.
+- **NEWAVE `VAZMINT` records marked `PRE` or `POS` are converted**; they
+  aborted the conversion.
 - **NEWAVE electric constraints stop at the end of their declared period.**
-  `re.dat` limits were carried to the end of the study and
-  `restricao-eletrica.csv` limits repeated by calendar month past it.
-- **A 600-posto `vazoes.dat` is read at its width.** The width comes from the
-  file size and the deck's history and study years; a 600-posto deck was read
-  as 320 postos and either failed or silently produced a different history.
-- **DECOMP `RQ` minimum outflow is read per stage**, not per block, and the
-  `RQ`/`UH` floor is released for run-of-river plants from a cascade headwater
-  down to the first reservoir, as DECOMP does. An explicit `RHQ` window is
-  kept.
-- **DECOMP weekly-regulating (`S`) plants count as reservoirs** for that
-  release and in `RHE` stored-energy constraints, which also evaluate them
-  with the volume-integrated productivity.
-- **The dashboard's Stochastic Model tab renders again.** It still read the
-  historical inflows by a single `date` column, which the windowed
-  `scenarios/inflow_history.parquet` replaced, so the tab showed an error
-  placeholder; it now reads each window's `start_date`. A case with no fitted
-  AR model shows a note instead of an empty order chart.
-- **`--log-file` creates its missing parent directories**, and a path that
-  cannot be written is reported as an option error instead of a traceback.
-- **Failure and diagnostics output names the command that ran.** `dashboard`
-  and `compare` failures were headed "Conversion notes" and "Comparison
-  failure" whatever the command, and several hints printed a doubled `→`.
+- **A 600-posto `vazoes.dat` is read at its width.**
 - **NEWAVE decks with empty or single-block files convert without false
-  warnings.** A maintenance file with no record means no maintenance, and a
-  single-block `patamar` file needs no load factors; both were reported as
-  unreadable or missing. Warnings name the file the deck's `arquivos` lists,
-  and `compare newave` reads `sistema` and `c_adic` through it too, so decks
-  that use another extension (such as `.eas`) are read in full.
-- **No GTMIN warning for a minimum the deck rounded to its capacity.** A
-  thermal GTMIN written as the available capacity rounded to 0.01 MW could
-  exceed it by a fraction of that step and was reported as a data error, with
-  both values shown as the same number. Excesses within that rounding are no
-  longer reported, and the warning's table shows values to 0.01 MW with the
-  excess in its own column.
-- **DECOMP GNL plants follow their `TG` records stage by stage.** Only the
-  first `TG` record of each plant was read, so a stage-1 inflexibility bounded
-  every committed delivery and clamped commitments the deck allows. `TG` is
-  now densified like `CT` (a stage inherits the last declared record): each
-  commitment is checked against its own stage, post-study pricing uses the
-  last declared record, and `thermals.json` declares the envelope over stages.
+  warnings**, and files named with another extension in `arquivos.dat` are
+  read.
+- **No GTMIN warning for a minimum the deck rounded to its capacity.**
+- **DECOMP `RQ` minimum outflow is read per stage**, and released for
+  run-of-river headwater plants as DECOMP does.
+- **DECOMP `S` plants count as reservoirs.**
+- **DECOMP GNL plants follow their `TG` records stage by stage.**
 - **A plant with zero rated turbined flow or rated power stays on constant
-  productivity** on both tracks, instead of being emitted as FPHA and making
-  cobre's fit abort the run; such plants are listed in an informational
-  diagnostic.
-
-### Changed
-
-- **cobre pairing.** `cobre-python>=0.17.0,<0.18` and `MIN_COBRE_VERSION =
-  "0.17.0"`; the conversion manifest records the `0.17.0` floor.
-- **The DECOMP boundary loads only in the cobre version that wrote it.**
-  cobre 0.17.0 stamps each policy checkpoint with the version of the build
-  that writes it and refuses one written by any other version, so a case with
-  an imported boundary must run under the `cobre` release that matches the
-  installed `cobre-python` exactly. A mismatched cobre names both versions;
-  converting again with the matching `cobre-python` resolves it. The bridge no
-  longer passes a version string to the checkpoint writer, which now ignores
-  it.
-- **Dependency floors.** `inewave>=1.16.1`, the first release that reads the
-  `VAZMINT` `PRE`/`POS` markers the fix above relies on, plus
-  `pyarrow>=25.0.1`, `pandas>=3.0.6`, `plotly>=7.1.0`, `polars>=1.44.2` and
-  `typer>=0.27.2`.
+  productivity** instead of making cobre's FPHA fit abort.
+- **The dashboard's Stochastic Model tab renders again.**
+- **`--log-file` creates missing parent directories.**
+- **Failure output names the command that ran.**
 
 ## [0.16.0] - 2026-09-22
 
-Pairs the bridge with the **cobre 0.16.0** release: the `cobre-python` pin and
-`MIN_COBRE_VERSION` floor move to `0.16.0` (bridge `X.Y.Z` pairs cobre `X.Y.Z`,
-guarded by `tests/test_packaging.py`). `convert decomp` now authors the terminal
-boundary with cobre 0.16.0's date-driven contract — the change that requires the
-pairing — and the release also honours the `dger.dat` input-gating switches,
-fixes `modif.dat` volume units, ships generated Portuguese data maps, and
-reorganises the internal package layout.
+Pairs with cobre 0.16.0.
 
 ### Added
 
-- **Data maps, in Portuguese.** `docs/newave-data-map.md` and
-  `docs/decomp-data-map.md` trace every file and field of the converted case
-  back to the deck file, record, and column it comes from, state the
-  transformation applied, and list what the converter does not convert yet.
-  Both pages are generated from `docs/lineage/` and gated by tests against a
-  real conversion of the mini decks, so they cannot drift from the code.
-
-### Fixed
-
-- `modif.dat` volume records (`VOLMAX`, `VOLMIN`, `VMAXT`, `VMINT`) now honour
-  their unit column: `h` is hm³ and `%` is a percentage of the plant's useful
-  volume, resolved against the `hidr.dat` registry. Before, permanent records
-  were always read as hm³ and dated records always as a percentage, so a
-  `VOLMAX` declared in percent became an absolute volume of a few hm³. A
-  record with no recognisable unit keeps the old reading and raises a warning.
-- `check decomp` no longer reports GNL anticipated dispatch and `MP`
-  availability factors as deferred; both are converted, and the stale
-  warnings padded the list of what the conversion leaves out.
+- **Data maps in Portuguese.** `docs/newave-data-map.md` and
+  `docs/decomp-data-map.md` trace each converted field to the deck file,
+  record and column it comes from, and list what is not converted yet.
 
 ### Changed
 
-- **cobre pairing.** `cobre-python>=0.16.0,<0.17` and `MIN_COBRE_VERSION =
-  "0.16.0"`; the conversion manifest records the `0.16.0` floor.
-- **`convert decomp` authors the terminal boundary with cobre's date-driven
-  contract.** The boundary cost-to-go function is now priced by calendar date —
-  the boundary pool carries the study horizon's terminal date, and each
-  anticipated delivery carries an explicit `interval_start`/`interval_end` date
-  window instead of a single delivery stage — and the case's season descriptor
-  round-trips through the policy checkpoint so cobre's season-compatibility gate
-  accepts the reconciled boundary. cobre now resolves `policy.boundary.path`
-  against the case directory, so a plain `cobre run <case>` loads the boundary;
-  the earlier `--output <case_dir>` guidance and its warning are retired. This is
-  the change that pairs the release with the next cobre.
-- **`dger.dat` switches are honoured.** `agrint.dat`, `c_adic.dat`,
-  `ghmin.dat`, `re.dat`, `restricao-eletrica.csv`, minimum outflow, and the
-  dated `TURBMAXT`/`TURBMINT` records of `modif.dat` are now left out when the
-  corresponding switch line (`AGRUPAMENTO LIVRE`, `CONS. CARGA ADICIONAL`,
-  `CONSIDERA GHMIN`, the two `RESTRICOES ELETRICAS` lines, `DESCONSIDERA
-  VAZMIN`, `REST. TURBINAMENTO`) turns them off, as NEWAVE leaves them out.
-  Each ignored input is reported by `check newave` and `convert newave` with an
-  informational `dger-switch-off` diagnostic; an absent switch line counts as
-  on, so decks without the line convert as before.
-- Internal package layout reorganised (`core/`, `cobre/`, `newave/`, `cli/`,
-  `comparators/{newave,decomp}/`, `ui/html/`); no CLI or output change.
-- **Documentation overhaul for onboarding.** The README now walks the
-  check → convert → solve → compare → dashboard flow and states every
-  command's exit codes, the `--json` envelope, and the configuration file
-  shape. New per-track pages `docs/newave.md` and `docs/decomp.md` (the latter
-  absorbs the former boundary-FCF page), a rewritten `docs/architecture.md`
-  with the end-to-end data flow and extension points, a new `CONTRIBUTING.md`,
-  and a project `CLAUDE.md` reduced to pointers instead of a stale module map.
-- `convert decomp --help` no longer describes the exchange network,
-  renewables, and GNL anticipation as deferred; all three are converted.
+- **`dger.dat` switches are honoured**: inputs a switch turns off are left
+  out, as NEWAVE leaves them out, and reported.
+- **`cobre run <case>` loads the DECOMP boundary** without `--output`.
+- **The README walks the check → convert → solve → compare → dashboard
+  flow**, with per-track pages `docs/newave.md` and `docs/decomp.md`.
 
-### Removed
+### Fixed
 
-- The unused per-REE `penalid.dat` reader in the NEWAVE hydro converters;
-  penalties are converted once, system-wide, into `penalties.json`.
-- **The real-deck test tier.** Forty-six tests skipped unless real decks were
-  present under the gitignored `example/` tree (some also needed a locally
-  built cobre binary at a fixed home-directory path), so they ran on one
-  machine at best and never in CI. They are removed and catalogued, with what
-  each verified and what it needs, in `docs/real-deck-checks.md`;
-  `tests/test_local_data_policy.py` now fails the build on any test that
-  reaches outside the repository. Small real-format excerpts under
-  `tests/fixtures/` replace the checks that only needed one, and the contract
-  tests read cobre's schema and example case from vendored copies instead of a
-  sibling checkout.
+- **`modif.dat` volume records honour their unit column** (hm³ or % of
+  useful volume).
+- **`check decomp` and `convert decomp --help` no longer list converted
+  inputs as deferred.**
 
 ## [0.15.0] - 2026-08-24
 
-Pairs the bridge with the **cobre 0.15.0** release: the `cobre-python` pin and
-`MIN_COBRE_VERSION` floor move to `0.15.0` (bridge `X.Y.Z` pairs cobre `X.Y.Z`,
-guarded by `tests/test_packaging.py`). The release adds DECOMP anticipated
-post-horizon support and lands a broad correctness and structural pass across
-both conversion tracks.
+Pairs with cobre 0.15.0.
 
 ### Added
 
-- **DECOMP anticipated post-horizon commitments.** `convert decomp` emits the
-  fixed post-horizon anticipated-thermal deliveries cobre 0.15.0 models: the
-  already-decided (já-comandada) generation is pinned as fixed past-horizon
-  commitments, the freshly-signaled post-study generation is left for the solver
-  to re-derive as `post_study_stages.json` thermal bounds, and the anticipation
-  lead is emitted uncapped. The boundary cost-to-go function is authored against
-  the excised anticipated ring and loads into the fanned terminal.
-- **Self-describing `manifest.bin` policy checkpoint.** The boundary policy
-  checkpoint carries its own per-pool provenance — cost scale, node and graph
-  stage ids, entity manifest — so a later layout change fails loudly at load
-  rather than silently; the sidecar `metadata.json` is retired.
+- **`convert decomp` carries GNL deliveries committed past the horizon.**
+- **The boundary policy checkpoint describes its own layout**, so a
+  mismatched one fails at load.
 
 ### Changed
 
-- **cobre pairing.** `cobre-python>=0.15.0,<0.16` and `MIN_COBRE_VERSION =
-"0.15.0"`; the conversion manifest records the `0.15.0` floor.
-- **Twin-track symmetry.** Physics, calendar/stage weighting, generic-constraint
-  emission, the case write path, and the `DecompCase` parse are single shared
-  implementations across the NEWAVE and DECOMP tracks; neither track imports the
-  other's private names.
-- **Exit-code and `--json` contracts.** An error status and a non-zero exit code
-  travel together; every failure path — early CLI-level ones included — emits one
-  `{schema_version, command, status, summary, diagnostics}` envelope.
-- **Presentation boundary.** Converters emit structured `Diagnostic` objects
-  through the `collect()` sink instead of pre-formatted strings, and Rich
-  rendering is confined to the `ui` package.
-- **Internals.** The comparators' chart code and the hydro converter are split
-  into packages; the compare data layer converges on one dataset model; the
-  Plotly model is unified across the dashboard and the compare report.
-- `convert decomp` gains `--force` pre-clear and rollback parity with the NEWAVE
-  track.
+- **Exit codes and `--json` agree**: an error status always comes with a
+  non-zero exit code, and every failure emits the `--json` envelope.
+- **`convert decomp` accepts `--force`**, as `convert newave` does.
 
 ### Fixed
 
-- **Chart and axis titles render again under plotly.js 3.x.** plotly.js 3.0
-  dropped bare-string `title` support, so raw-dict layouts reaching the browser —
-  the compare report's charts and the dashboard's client-side charts — lost their
-  titles; titles are normalized to the object form at both the Python and the
-  client-side seams.
-- **Itaipu 50/60 Hz split and the ANDE load.** `convert decomp` places the 50 Hz
-  unit group on the Sudeste bus with the ANDE load netted into it, and the 60 Hz
-  group on the Ivaiporã transshipment node, matching the source model.
-- **Dashboard VminOP / RHE constraint scale.** The dashboard evaluates a
-  storage-scaled constraint's left-hand side with the solver's per-stage
-  `rho_acum` override, so the plotted band and its bound share one scale.
-- **`compare` artifact export.** The comparison metadata stores each plant's bus
-  label as a JSON-native list, so `compare` writes its JSON artifacts instead of
-  raising at export.
-- Dashboard KPI weighting and guard corrections, and the migration of the NEWAVE
-  converter warnings to structured diagnostics.
-
-### Removed
-
-- The comparator's standalone bounds engine; bounds now compare through the
-  shared constraint evaluator both tracks use.
+- **Chart titles render again** under plotly.js 3.
+- **`convert decomp` splits Itaipu's 50 Hz and 60 Hz groups across their
+  buses with the ANDE load**, as DECOMP does.
+- **The dashboard's VminOP and RHE charts** plot the constraint and its bound
+  on one scale.
+- **`compare` writes its JSON artifacts** instead of failing at export.
 
 ## [0.14.3] - 2026-08-19
 
-Pairs the bridge with the **cobre 0.14.3** release and restores the boundary
-cost-to-go function's inflow-lag coupling for DECOMP-style decks. `convert decomp`
-now declares the boundary's inflow-lag depth so cobre reserves the matching state
-slots when it loads the checkpoint; without it those slots were absent and every
-inflow-lag term was silently dropped. The pin and `MIN_COBRE_VERSION` floor at
-`0.14.3` (the 0.14 input contract is unchanged).
+Pairs with cobre 0.14.3.
 
 ### Fixed
 
-- **`convert decomp` keeps the boundary cost-to-go function's inflow-lag
-  coupling.** A terminal cut carries a storage gradient plus per-lag inflow
-  gradients, but the deck has no autoregressive inflow model for the solver to
-  size the inflow-lag state from, so the written checkpoint reserved no lag slots
-  and every inflow-lag term was dropped on load — the reconciled boundary
-  collapsed to storage-only (a few hundred state slots where thousands were
-  expected). The checkpoint now declares its inflow-lag depth, so cobre reserves
-  the canonical inflow-lag slots and places the per-lag gradients; the loaded
-  boundary prices the inflow-lag coupling again.
-
-### Changed
-
-- **`MIN_COBRE_VERSION` raised to `0.14.3`** (pin `cobre-python>=0.14.3,<0.15`).
-  The 0.14 input contract is unchanged (a case converted here still loads on
-  0.14.1), but 0.14.3 is the first release whose checkpoint writer reserves the
-  canonical inflow-lag state slots the emitted boundary now depends on; on an
-  older cobre those slots are absent and the inflow-lag coupling is silently
-  dropped (recorded in the conversion manifest and enforced by the `--validate`
-  gate).
+- **`convert decomp` keeps the boundary's inflow-lag terms**, which were
+  dropped when cobre loaded the boundary.
 
 ## [0.14.2] - 2026-08-18
 
-Pairs the bridge with the **cobre 0.14.2** solver bug-fix release and makes a
-fresh `pip install cobre-bridge` work out of the box. The emitted policy (the
-CVaR gap rule and the loaded terminal boundary cost-to-go function) now converges
-and prices correctly against cobre 0.14.2's fixes, so the pin and
-`MIN_COBRE_VERSION` floor at `0.14.2` (the 0.14 input contract is unchanged).
-`cobre-python` is now a required runtime dependency, so `convert decomp` — which
-imports the deck's boundary cost-to-go function by default — no longer fails on a
-plain install. This release also completes `compare decomp` result parity and
-fixes several `compare`/dashboard rendering bugs.
+Pairs with cobre 0.14.2.
+
+### Added
+
+- **`compare decomp` weights DECOMP's results across its scenario fan**, and
+  the Overview cost includes the monthly fan stage.
+- **`compare decomp` reads DECOMP's results from the deck directory**; the
+  `saidas/` subfolder is no longer used.
+- **`compare decomp` file exports and `--json` match the HTML report.**
 
 ### Changed
 
-- **`cobre-python` is now a required runtime dependency** (`>=0.14.2,<0.15`),
-  moved from the optional `validation` / `test-roundtrip` extras into the core
-  `dependencies`. A plain `pip install cobre-bridge` now installs a cobre that
-  can validate converted output and import the boundary cost-to-go function. The
-  two extras, which only ever carried `cobre-python`, are **removed** (a plain
-  install now supersedes them); CI installs the dependency via `.[dev]` on every
-  supported Python.
-- **`MIN_COBRE_VERSION` raised to `0.14.2`.** The 0.14 input contract is
-  unchanged (a case converted here still loads on 0.14.1), but the emitted CVaR
-  gap rule and loaded terminal boundary cost-to-go function rely on cobre
-  0.14.2's solver fixes to converge and price correctly, so the bridge requires
-  it (recorded in the conversion manifest and enforced by the `--validate` gate).
-- **End-user-facing messages are self-contained.** The boundary cost-to-go
-  capability and writer diagnostics no longer point users at developer build
-  recipes or repo-internal documents (worktrees, `maturin` commands); they now
-  give an actionable `pip install` / `--no-fcf` remediation.
+- **`cobre-python` is a required dependency**, so `convert decomp` works on
+  a plain `pip install`. The `validation` and `test-roundtrip` extras are
+  removed.
+- **Error messages give a `pip install` or `--no-fcf` remedy** instead of
+  developer build steps.
 
 ### Fixed
 
 - **`convert newave` clamps per-stage hydro bounds into the plant's declared
-  envelope (cobre rule 43).** A per-stage override (TURBMAXT, VAZMAXT, or an RE
-  ceiling) could raise a `hydro_bounds` MAX column above the plant's own declared
-  value in `system/hydros.json`, which cobre rejects on load. A post-emission
-  pass now ceils each such value at the declared max and floors it at the
-  declared min, so every row stays a valid tightening of the envelope, and emits
-  a **warning** naming what was clamped rather than adjusting silently.
-- **`convert decomp` no longer aborts on a fresh install.** With the boundary
-  cost-to-go function imported by default and `cobre-python` merely optional, a
-  plain install failed on any deck that declares its cut files; making the
-  dependency required fixes it.
-- **`compare decomp --json` no longer crashes on network corridors.** The
-  unmapped-entity summary coerced every code with `int()`, but the `line` level
-  lists `[from, to]` submarket corridor _pairs_; those now serialize as lists,
-  so the JSON verdict is emitted correctly.
-- **`compare decomp` REE energy (ENA) is now a fair comparison.** cobre's
-  `incremental_inflow_energy_mw` is a stage-mean MW rate; DECOMP's `ena_MWmes`
-  is energy over the stage. The comparator converts the cobre rate to MWmês
-  (×stage-hours/730, mirroring the existing EARM handling), collapsing a
-  several-fold weekly-stage discrepancy to the residual model-coefficient offset.
-- **Dashboard per-submarket facets** are restricted to the four real submarkets
-  (a clean 2×2), no longer faceting fictitious/interconnection nodes — for both
-  the NEWAVE and DECOMP conventions.
-- **Dashboard Constraints tab** facets only constraints that carry a reference
-  LHS, and `facet_grid` no longer marches y-domains negative on tall grids
-  (the row-gap is capped so rows + gaps fit `[0, 1]`).
-- **`compare decomp` convergence bounds** are reconciled from DECOMP's k$ to
-  cobre's R$ (×1e3) so the Convergence section compares like for like.
-- **`convert decomp`** no longer emits a `state_space.inflow_lag_depth` override
-  that cobre 0.14 rejects on lag-coupled decks (cobre now sizes the inflow-lag
-  state from the PAR(p) order and boundary); this unblocks
-  `convert decomp --boundary-fcf` on those decks.
-
-### Added
-
-- **`compare decomp` probability-weights all physical DECOMP variables** across
-  the terminal scenario fan, so the reference series aggregate the stochastic
-  stage the same way the cost figures already did.
-- **The monthly scenario-fan stage is represented in the Overview cost**
-  (`relato2`, probability-weighted), completing the cost breakdown across the
-  weekly trunk and the monthly fan.
-- **Root-only result discovery** — `compare decomp` reads DECOMP results
-  (`dec_oper_*`, `relato*`, cut files) directly from the deck root; the legacy
-  `saidas/` subfolder convention is retired.
-- **`compare decomp` export / `--json` unified onto the canonical
-  `ComparisonDataset`** seam (same source of truth as the HTML report), with docs
-  and tests brought along.
-- Packaging-guard tests: `cobre-python` must be a core dependency (not an extra)
-  and its pin must floor at `MIN_COBRE_VERSION`; and a guard that the
-  boundary-FCF remediation never leaks a repo-internal reference.
+  range**, with a warning, instead of writing bounds cobre rejects.
+- **`convert decomp --boundary-fcf` works on lag-coupled decks.**
+- **`compare decomp --json` no longer crashes on network corridors.**
+- **`compare decomp` compares REE energy and convergence bounds in matching
+  units.**
+- **Dashboard per-submarket charts show only the real submarkets**, and the
+  Constraints tab lays out tall grids correctly.
 
 ## [0.14.1] - 2026-08-18
 
-Grows `compare decomp` to feature parity with `compare newave` — the rich
-multi-tab HTML report now ships from the CLI, correctly labelled "DECOMP" — and
-syncs the bridge to the **cobre 0.14.1** input contract.
+Pairs with cobre 0.14.1; converted cases need cobre 0.14.1 or newer.
 
 ### Added
 
-- **`compare decomp --format html` now renders the full multi-tab comparison
-  report.** Previously the CLI emitted a thin single-page report; it now builds
-  the same shared report `compare newave` produces, from the same canonical
-  `ComparisonDataset` seam: Overview/cost breakdown, System (per-bus + SIN),
-  Energy Balance, Network (corridor→line), Convergence, a DECOMP-vs-cobre
-  Performance benchmark, Hydro/Thermal Operation + Plant Details, Productivity
-  (realized), and FPHA — plus a DECOMP-specific **REE energy** rollup, a
-  **Generic Constraints (LHS vs bound)** section, and an **evaporation**
-  comparison. Every reference series/label/title reads "DECOMP" (a new additive
-  `reference_label` indirection; `compare newave` output is byte-identical at its
-  default). Modeling caveats are surfaced honestly, not papered over: DECOMP
-  costs are undiscounted-nominal vs cobre's discounted NPV; FPHA is metrics-only
-  (no fitted-surface overlay); the Productivity static/pmo half and the
-  constraints' interchange/pumping terms render cobre-only where the source model
-  has no counterpart; the cobre sub-monthly-stage evaporation over-scaling gap
-  (C11) is shown rather than corrected.
+- **`compare decomp --format html` builds the full multi-tab report**, as
+  `compare newave` does, plus REE energy, generic constraints and
+  evaporation.
 
 ### Changed
 
-- **`MIN_COBRE_VERSION` is now `0.14.1`** (was `0.13.0`), and the `cobre-python`
-  `validation` / `test-roundtrip` pins move to `>=0.14.1,<0.15`. cobre 0.14
-  carries breaking input-contract changes (sense-free generic constraints,
-  `constraints/generic_parameters.json`, the NCS `value` → `availability_factor`
-  rename); converted cases require cobre **>= 0.14.1**.
-- **`compare decomp --json` now emits a within-tolerance `status`.** A new
-  `--tolerance` option (env `COBRE_BRIDGE_RESULTS_TOLERANCE`, default `1e-2`,
-  same precedence chain as `compare newave`'s `--tolerance`) drives it: `status`
-  is now `ok`/`mismatch`/`no-comparable-rows` (was `ok`/`no-comparable-rows`) —
-  `mismatch` when any compared variable's per-row sMAPE exceeds the tolerance,
-  `ok` when every variable is within it, `no-comparable-rows` unchanged for an
-  empty comparison. The `summary` object gains `within_tol`/`total`/
-  `all_within_tol` (mirroring `compare newave`'s `summary`), appended after the
-  existing `stages`/`variables`/`unmapped` keys. Backward-compatible: only new
-  keys were added, `schema_version` is unchanged, and the command still always
-  exits 0 regardless of status.
+- **`compare decomp --json` reports a within-tolerance `status`**, set by the
+  new `--tolerance` option. The command still exits 0.
 
 ## [0.12.0] - 2026-07-22
 
-Syncs the bridge to the **cobre 0.12.0** ecosystem release (skipping the 0.11.x
-line, which carried no input-contract or output-format change relevant to the
-converter). An audit of the full 0.10.0 → 0.12.0 delta found that all 17
-system/entity/stage/constraint schemas are byte-identical to 0.10.0; only
-`config.json` gained fields, and every addition is optional. The v0.11.0 PAR
-`residual_std_ratio` derivation does not apply — the bridge ships inflow
-**history** and lets cobre fit PAR(p), never AR coefficients. Cobre's simulation
-and `training/` output columns are unchanged, so `compare newave` needs no work.
+Pairs with cobre 0.12.0; converted cases need cobre 0.12.0 or newer.
 
 ### Added
 
-- **`convert newave` now emits `training.parallelism.backward_scheduler`** in
-  `config.json` (cobre 0.12.0+). The bridge opts the training backward pass into
-  cobre's opening-block scheduler — `{ "method": "opening_block", "block_size":
-⌈openings / 2⌉ }` — where `openings` is the source deck's backward opening
-  count (`dger.dat`'s número de aberturas). The block size is half the openings
-  rounded up; it coincides with cobre's own per-stage `opening_block` default but
-  records the value taken from the deck.
-
-### Changed
-
-- **`convert --validate` now requires `cobre-python>=0.12,<0.13`** (was
-  `>=0.10,<0.11`), pairing with the cobre 0.12.0 release used to validate this
-  version.
-- **`MIN_COBRE_VERSION` is now `0.12.0`** (was `0.10.0`). Because every converted
-  `config.json` now carries the 0.12.0-only `training.parallelism.backward_scheduler`
-  block, and the config rejects unknown keys, the output is loadable only by
-  cobre **>= 0.12.0**. The value is recorded in `conversion_manifest.json` and the
-  `--validate` gate skips gracefully against an older `cobre-python`
-  (`skipped_reason: "cobre-python-too-old"`).
-
-### Notes
-
-- **`modeling.cost_scale_factor` (new in cobre 0.12.0) is intentionally not
-  emitted.** The source model has no equivalent, and omitting it reproduces
-  cobre's previous hard-coded objective scaling byte-for-byte.
-- Verified against the cobre 0.12.0 binary and `cobre-python` 0.12.0: `convert`
-  output validates with **0 errors** (`cobre validate`), the `--validate` path
-  runs clean, and the full test suite (1551 tests) passes.
+- **`convert newave` sets cobre's backward-pass scheduler from the deck's
+  number of openings.**
 
 ## [0.10.0] - 2026-07-10
 
-Syncs the bridge to the **cobre 0.10.0** ecosystem release. The conversion
-already emitted the two breaking 0.10.0 input-contract changes
-(`operational_start_date` on every entity; the `hydro_storage_final` generic
-constraint vocabulary); this release updates the version pin, the compatibility
-floor, and the documentation to match.
-
-Because every converted `system/*.json` entity now carries a required
-`operational_start_date` (introduced in cobre 0.10.0, absent in 0.9.x), a
-converted case now requires **cobre >= 0.10.0** — including EX-only cases, which
-previously loaded on cobre >= 0.8.2. This is a compatibility narrowing.
-
-Verified against the cobre 0.10.0 binary: `convert` output validates with **0
-errors** for both deterministic and stochastic (PAR(p)) cases, and `compare
-results` reads cobre 0.10.0 run output unchanged. No new converter work was
-required — cobre 0.10.0's optional `travel_time_hours` and chronological
-`block_mode` do not apply to a monthly NEWAVE model with parallel load blocks,
-so the bridge keeps cobre's defaults (instantaneous transfer, `"parallel"`
-blocks).
+Pairs with cobre 0.10.0; converted cases need cobre 0.10.0 or newer.
 
 ### Changed
 
-- **`convert --validate` now requires `cobre-python>=0.10,<0.11`** (was
-  `>=0.9.1,<0.10`), pairing with the cobre 0.10.0 release used to validate this
-  version.
-- **The minimum-cobre-version floor is now universal.** `MIN_COBRE_VERSION`
-  (`= "0.10.0"`, replacing the filling-only `MIN_COBRE_FILLING_VERSION`) is
-  recorded in `conversion_manifest.json` for _every_ case, and the `--validate`
-  gate skips gracefully whenever the installed `cobre-python` predates it (JSON
-  `skipped_reason: "cobre-python-too-old"`) — previously that skip fired only for
-  `NE`-with-filling cases, so an EX-only case validated against an older
-  cobre-python would have produced a false failure.
-- **`compare results` is renamed to `compare newave`.** The comparison subcommand
-  now names its source model, mirroring `convert newave` / `check newave`, so the
-  `convert` and `compare` interfaces are uniform and ready for a future
-  `compare decomp`. The `--json` verdict and provenance-manifest `command` field is
-  now `"compare newave"`; the command's options and behavior are otherwise unchanged.
+- **`compare results` is renamed `compare newave`.**
+- **`convert --validate` skips** (`cobre-python-too-old`) when the installed
+  `cobre-python` is older than the converted case needs.
 
 ### Removed
 
-- **The `compare bounds` command is removed.** The workflow standardized on
-  `compare newave` (the modelling-divergence tool), so the round-trip LP-bounds
-  check is no longer exposed as a CLI command. Its `--summary` / `--variables`
-  flags, the `[compare.bounds]` config table, and the
-  `COBRE_BRIDGE_BOUNDS_TOLERANCE` environment variable are gone with it. The
-  underlying comparator (`comparators/bounds.py`, `bounds_from_inputs.py`) is
-  retained as an internal library.
+- **The `compare bounds` command**, its `[compare.bounds]` config table and
+  its environment variable.
 
 ## [0.9.1] - 2026-06-27
 
-First release of the `NE` (future, will-be-built) hydro feature line: it adds
-first-class support for NEWAVE `NE` plants via cobre's dead-volume **filling**
-schema, and lands a broad CLI overhaul (preflight `check`, unified `--json`
-verdicts, config-file defaults, and provenance manifests). The planned 0.9.0
-was never released; 0.9.1 supersedes it.
-
-Paired with **cobre 0.9.1** and **cobre-python 0.9.1** — the versions used to
-validate this release — which fix a future-cost discounting bug in cobre's LP
-(the discount rate was not applied to the future-cost term). `convert
---validate` now requires `cobre-python>=0.9.1,<0.10`.
-
-The filling schema requires **cobre >= 0.9.1**; EX-only conversions are
-unchanged on the wire and still load on cobre >= 0.8.2. With
-`cobre-python >= 0.9.1` installed, `convert --validate` validates
-`NE`-with-filling cases; an older cobre-python that predates the filling schema
-is skipped gracefully (an informational diagnostic, never a failure).
+Pairs with cobre 0.9.1, which fixes the discounting of future cost. Cases with
+`NE` plants need cobre 0.9.1 or newer.
 
 ### Added
 
-- **`NE` (dead-volume-filling) hydro support.** `NE` plants — future units with
-  a dead-volume filling schedule and gradual generating-unit entry — were
-  previously dropped (and had to be hand-rewritten to `NC`). They are now
-  admitted as real cobre nodes that carry a dead-volume **filling** contract and
-  per-unit entry schedule read from `exph.dat`. The new
-  `example/newave_rodada_2001_completo` case exercises this with one `NE` plant
-  (309 JURUENA).
-- **`filling{}` + `entry_stage_id` emitted in `convert_hydros`.** Each `NE` plant
-  declares its filling window (start stage from `data_inicio_enchimento`, length
-  from `duracao_enchimento`) with `entry_stage_id` set to the fill-complete
-  stage, matching cobre's filling/entry-stage contract.
-- **Per-stage unit-ramp capacity bounds.** A `max_generation_mw` column is added
-  and per-stage generation caps ramp capacity in over the unit-entry schedule
-  (`data_entrada_operacao` rows in `exph.dat`) instead of switching the full
-  plant on at once.
-- **`filling_storage` initial condition.** `NE` plants are seeded into
-  `filling_storage` (from the `volume_morto` fraction impounded at filling start)
-  rather than `storage`.
-- **`min_cobre_version` in `conversion_manifest.json`** plus a per-`NE`
-  `Diagnostic`, both recording the cobre >= 0.9.1 requirement for cases that emit
-  the filling schema (`null` / absent for EX-only cases).
-- **`check newave` preflight command.** Validates NEWAVE inputs without
-  writing any output files — surfaces the same diagnostics as `convert`
-  but exits before the write phase, so authors can audit a case without
-  producing partial output.
-- **`convert --dry-run`.** Runs the full conversion pipeline in memory and
-  reports diagnostics and a summary without writing any files to the
-  destination directory.
-- **`dashboard --open`.** After building the HTML dashboard, opens it in
-  the default browser automatically.
-- **Unified `--json` verdict on every command.** Passing `--json` emits a
-  single machine-readable envelope
-  `{schema_version, command, status, summary, diagnostics}` on stdout, making
-  every command scriptable without parsing human-readable output.
-- **`--log-file PATH`.** Writes the full log stream to a file in addition
-  to stderr, shared across all commands.
-- **`cobre-bridge.toml` config file + `COBRE_BRIDGE_*` env vars** for
-  compare defaults (`tolerance`, `format`, `out_dir`). The file is
-  discovered from the working directory upward, then
-  `$XDG_CONFIG_HOME/cobre-bridge/config.toml`, then
-  `~/.config/cobre-bridge/config.toml`. Environment variables
-  (`COBRE_BRIDGE_BOUNDS_TOLERANCE`, `COBRE_BRIDGE_FORMAT`,
-  `COBRE_BRIDGE_OUT_DIR`) take precedence over the config file; explicit
-  flags take precedence over both.
-- **Conversion manifest (`conversion_manifest.json`).** Written to the
-  destination directory on every successful `convert newave` run: records
-  the source path, bridge version, cobre-python version, git sha, and
-  timestamp so the provenance of a converted case is always recoverable.
-- **`docs/cli.md` autogenerated command reference.** Full per-command,
-  per-flag reference generated from the live CLI; cross-linked from the
-  README.
+- **NEWAVE `NE` plants are converted**, with their dead-volume filling and
+  unit entry schedule from `exph.dat`; they were dropped before.
+- **`check newave`** reports a case's diagnostics without writing output.
+- **`convert --dry-run`** runs the conversion without writing files.
+- **`dashboard --open`** opens the dashboard in the browser.
+- **`--json` on every command** prints one machine-readable verdict.
+- **`--log-file PATH`** writes the full log to a file.
+- **`cobre-bridge.toml` and `COBRE_BRIDGE_*` environment variables** set the
+  `compare` defaults; flags override both.
+- **`conversion_manifest.json`** records each conversion's source, versions
+  and time.
+- **`docs/cli.md`**, the command reference generated from the CLI.
 
 ### Changed
 
-- **Storage / filling penalties derived from deficit × productivity.**
-  `storage_violation_below_cost` and `filling_target_violation_cost` were
-  hard-coded placeholders (`1e6`, `1e7`). They are now derived on the same
-  energy-equivalent basis as the other hydro penalties (deficit cost ×
-  ρ_max_acum, in $/hm³ with no time weighting, matching cobre's LP): the
-  storage-below tier at 10× the deficit cost (the greatest hydro penalty) and
-  the filling-target tier just below it. The `PENALID`/`VOLMIN` path now also
-  uses ρ_max_acum.
-- **`-v/--verbose` now raises the console log level to INFO** (`-vv` for
-  DEBUG). Previously a single `--verbose` went straight to DEBUG, making
-  it impractical as a routine "show progress" flag. Scripts that relied
-  on DEBUG output from a single `-v` must add a second `-v`.
+- **Storage and filling penalties are derived from the deficit cost**
+  instead of fixed values.
+- **`-v` shows INFO and `-vv` DEBUG**; a single `-v` used to show DEBUG.
 
 ### Fixed
 
-- **Per-stage head in the max-turbined (swallowing) cap.** `max_turbined` is now
-  evaluated with per-stage tailrace/forebay head, honouring temporal `CFUGA` /
-  `CMONT` overrides, instead of a single static head. Run-of-river plants whose
-  head varies by stage (e.g. STO. ANTÔNIO, JIRAU) were previously under-capped,
-  so cobre spilled flow the source model turbines (inflating thermal dispatch);
-  the cap is now emitted per stage in `constraints/hydro_bounds.parquet`.
+- **The turbined-flow cap uses each stage's head**, so run-of-river plants
+  such as STO ANTONIO and JIRAU are no longer under-capped.
 
 ## [0.8.2] - 2026-06-17
 
-Paired with **cobre 0.8.2** and **cobre-python 0.8.2** — the versions used to
-validate this release. `convert --validate` now requires `cobre-python>=0.8.2,<0.9`.
-
-cobre 0.8.2 ships **breaking config changes**: the top-level `energy` section is
-removed in favour of a per-production-model `reference_volume`, and
-`training.cut_selection` is restructured into a tagged `selection` object.
-`convert newave` now emits the v0.8.2 schema, so **converted cases load only on
-cobre / cobre-python >= 0.8.2**.
+Pairs with cobre 0.8.2; converted cases need cobre 0.8.2 or newer.
 
 ### Added
 
-- **Computed-FPHA production models.** In FPHA cases (`dger`
-  `funcao_producao_uhe == 0`), reservoir plants are emitted with `model: "fpha"`
-  and `fpha_config: { source: "computed" }` plus a per-plant volume fitting
-  window, so cobre fits the production function from geometry + tailrace.
-  Run-of-river and non-FPHA plants keep `constant_productivity`.
-- **`system/tailrace_curves.parquet`.** The source model's `polinjus`
-  downstream-level curve families are converted into cobre's exact
-  piecewise-quartic tailrace curves (eleven descriptive columns —
-  `downstream_reference_level_m`, `outflow_min_m3s`/`outflow_max_m3s`,
-  `coefficient_0`..`coefficient_4`, keyed by `hydro_id`/`family_id`/`segment_id`).
-  Drives the v0.8.2 exact-tailrace FPHA fit; omitted (and inert) when the case
-  ships no `polinjus`.
-- **`fpha_plane_reduction` config.** `tratamento-fpha` is parsed into cobre's
-  file-level `fpha_plane_reduction` block on `hydro_production_models.json`
-  (`angle` → `tolerance_deg`, or `distance` → `tolerance_pct` + `n_samples`).
-- **Per-model `reference_volume`.** The FPHA reference volume (V_ref) is now
-  declared per production model: seasonal references from `volref_saz.dat` are
-  emitted as `selection_mode: "seasonal"` with one absolute `reference_volume`
-  per season; plants without a seasonal row fall back to `percentile 0.65`. This
-  replaces reliance on cobre's removed top-level `energy.reference_volume_fraction`
-  default.
-- **FPHA production-function comparison** in `compare results` (Productivity
-  tab). Evaluates each model's lower-envelope production surface
-  `GH = min_k(g0 + gv·V + gq·Q + gs·S)` on the source model's own (V, Q) fitting
-  grid at S = 0 and compares the surfaces — per-plant fidelity metrics (NMAE /
-  bias / GHmax-ratio) plus a rotatable 3D NEWAVE/Cobre/Difference view (and a
-  Q-curve for run-of-river plants).
+- **FPHA cases are converted with FPHA production models**, fitted by cobre
+  from the plant geometry and the `polinjus` tailrace curves, with the
+  `volref_saz.dat` reference volumes and the `tratamento-fpha` plane
+  reduction.
+- **`compare results` compares the FPHA production functions** in the
+  Productivity tab.
 
 ### Changed
 
-- **`training.cut_selection` migrated to the v0.8.2 tagged `selection` object.**
-  The emitted block keeps the always-on `row_activity_tolerance` at the top level
-  and nests the method under `selection` (`{ "method": "lml1", "check_frequency":
-1 }`); `selection` is omitted (disabling row selection) when the source model
-  turns cut selection off in both passes.
-- **Hydro turbined/generation bounds unified** and computed independently of the
-  production function: `max_turbined` is the head-corrected swallowing capacity
-  (the operational dispatch cap that binds in the LP) and `max_generation` is the
-  rated installed power (Σ n·p_nom). Corrects FPHA reservoirs whose turbined cap
-  previously overshot.
-- **Source-model-neutral prose.** Comments, docstrings, and descriptive test
-  names drop explicit NEWAVE/CEPEL mentions in favour of "the source model";
-  identifiers, the `convert newave` CLI, the `source: "newave"` comparison label,
-  and user-facing display labels are intentionally unchanged.
+- **The turbined-flow cap is head-corrected and the generation cap is the
+  installed power**, so an FPHA reservoir's turbined cap no longer overshoots.
 
 ## [0.8.1] - 2026-06-13
 
-Paired with **cobre 0.8.1** and **cobre-python 0.8.1** — the versions used to
-validate this release. `convert --validate` now requires `cobre-python>=0.8.1,<0.9`.
+Pairs with cobre 0.8.1.
 
 ### Added
 
-- **Three-layer architecture for the `compare` command.** `compare bounds` and
-  `compare results` now flow through READ → ANALYZE → RENDER, with a canonical,
-  serializable `ComparisonDataset` (a tidy/long value frame + per-variable summary
-  frame + a typed metadata side-table) and a `ComparisonManifest` provenance object
-  as the single source of truth. Console, HTML, and file export are all pure
-  consumers of one dataset, ending the historical console-vs-HTML two-path divergence.
-- **Machine-readable comparison artifacts.** Every `compare` run now emits queryable
-  data — `comparison.parquet` (tidy frame), `summary.parquet`/`summary.json`,
-  `top_divergences.json`, and a `comparison.json` provenance manifest (case paths,
-  tolerance, bridge/cobre versions, git sha, timestamp) — so downstream tools and
-  agents can query the comparison directly instead of scraping HTML.
-- **Per-REE EARM** added to the VminOP generic-constraint comparison.
+- **`compare` writes queryable artifacts**: `comparison.parquet`,
+  `summary.parquet`/`summary.json`, `top_divergences.json` and the
+  `comparison.json` manifest.
+- **Per-REE stored energy in the VminOP comparison.**
 
 ### Changed
 
-- **Unified `compare` output flags.** The overloaded `--output` (Parquet for
-  `bounds`, HTML for `results`) is **replaced** by `--format {console,html,csv,
-parquet,json,all}` + `--out-dir`, shared across both subcommands. A plain run
-  still writes the queryable data artifacts by default (`console,parquet,json`);
-  `--format html` builds the single self-contained report.
-  **Breaking:** scripts passing `--output`/`-o` to `compare` must migrate to
-  `--format`/`--out-dir`.
-- **`charts.py` slimmed.** Per-bus / SIN / percentile aggregation moved out of the
-  chart functions into the analyze layer; the duplicated subplot-domain math is now
-  a single tested `facet_grid` helper. The 11-tab HTML report renders identically.
-- **Converters read parsed inputs through `NewaveCase`** (id-map, horizon,
-  active-hydro, constraints, network, stochastic), and the Cobre cost taxonomy is
-  single-sourced.
+- **`compare` takes `--format` and `--out-dir`.** Breaking: `--output`/`-o`
+  is removed.
 
 ### Fixed
 
-- **Run-of-river `'S'` plants** treated as fio-d'água (storage collapsed to Vmin,
-  head-corrected turbine cap) instead of as reservoirs.
-- **Fictitious plants** identified structurally, keeping orphaned reservoirs.
-- **`modif.dat` VOLMIN override** now applied to the initial-storage base.
-- **Thermal GTMIN** follows EXPT maintenance windows rather than TERM.DAT, removing
-  spurious must-run; no-POTEF thermals and anticipated thermal cost handled.
-- **Patamar (block) index mapping** corrected for NCS per-source load blocks and for
-  load-factor per-submarket blocks (global → per-block indices).
-- **NEWAVE VminOP LHS** compared on linear stored energy (`ρ_int × VARMUH`).
-- **Inflow handling**: post-horizon truncation with penalty made the default.
+- **NEWAVE `S` plants are converted as reservoirs.**
+- **Fictitious plants are identified by structure**, keeping orphaned
+  reservoirs.
+- **The `modif.dat` `VOLMIN` override applies to the initial storage.**
+- **Thermal GTMIN follows `expt.dat` maintenance windows.**
+- **Load-block indices are mapped correctly** for renewables and load
+  factors.
+- **The NEWAVE VminOP comparison uses linear stored energy.**
+- **Truncation with penalty is the default inflow treatment.**
 
 ## [0.8.0] - 2026-06-01
 
 ### Added
 
-- **Productivity tab overhaul** in `compare results`. The tab now explains
-  productivity in both models across three sections: (A) static-fidelity
-  scatters comparing NEWAVE pmo productivities against the converted Cobre
-  values, (B) a per-stage **realized productivity** (gen / turbined) chart
-  driven by the shared per-plant dropdown widget (all plants, one at a time),
-  and (C) a **building-blocks table** pairing each NEWAVE/Cobre input column
-  2-by-2 with Δ% highlighting. Productivity is shown as constant within a
-  stage and varying across stages.
-- **Operational hydro productivity** (gen / turbined) comparison, surfaced
-  per plant alongside the existing operation variables.
-- **Overview cost breakdown** gains thermal-cost and other-costs charts, and
-  the generic-constraint violation row now sums the matching NEWAVE parcelas
-  (`VIOLACAO CAR`, `VIOLACAO SAR`, `VIOL. RESTELETRICA`, `VIOL. INTERC. MIN.`,
-  `VIOLACAO RHQ`, `VIOLACAO RHV`, `VIOL.RLPP *`) so generic violations compare
-  like-for-like with Cobre's `storage_violation_cost`.
-- **Trustworthy results metrics**: each `ResultComparison` now reports
-  `WithinTol` and `sMAPE`, so large relative errors on tiny quantities are no
-  longer mistaken for structural divergences.
-- **Full-horizon net load** read from NWLISTOP `mercl` files for the Energy
-  Balance comparison.
-- **FIXA VminOP penalization warning**. `curva.dat`'s
-  `configuracoes_penalizacao` TIPO=0 (FIXA) is not supported by Cobre; the
-  conversion now warns when it is encountered. The unmodelled-`modif.dat`
-  `DefaultRegister` log was downgraded from a warning to debug.
-- **Per-stage hydro penalty overrides** with post-study productivity freeze.
-- **Visited cut-generation state export** from `convert`, emitted when the
-  source NEWAVE case exports them.
+- **`compare results` explains productivity**: static productivities against
+  `pmo.dat`, realized productivity per stage and a table of each model's
+  inputs.
+- **The Overview cost breakdown adds thermal and other costs**, and sums
+  NEWAVE's generic-violation parcels against Cobre's.
+- **Each comparison reports `WithinTol` and `sMAPE`.**
+- **The Energy Balance comparison reads the full-horizon net load** from
+  nwlistop.
+- **A warning for `curva.dat` FIXA penalization**, which Cobre does not
+  support.
+- **Per-stage hydro penalty overrides.**
+- **`convert` exports the visited states** when the NEWAVE case exports them.
 
 ### Changed
 
-- **Production-scale dashboard size**. The cut-cost diagnostic scatter
-  (`chart_cuts_vs_solve_time_scatter`) embedded one marker per backward LP
-  sample (~12 M points on a 2000-scenario / 50-iteration run → 191 MB and
-  unrenderable). It now collapses each `(iteration, stage)` group — where the
-  cut count and stage are constant — to a **median ms/LP with a p25–p75 error
-  bar**, preserving the cost-of-cut curve while cutting that chart from
-  ~191 MB to ~0.1 MB. The Spatial Correlation heatmaps (§D) now round their
-  matrices to 4 decimals (the hover shows `.3f`). Combined, a production
-  dashboard drops from **~208 MB to ~10 MB** with no perceptible visual loss.
-- **VminOP generic constraints** are now built only for genuine
-  stored-energy reservoirs (`tipo_regulacao == "M"` with a non-degenerate
-  `[vmin, vmax]`) rather than gating on a positive accumulated productivity,
-  and their coefficients use per-regulation reference productivities matched
-  to the pmo.dat `produtibilidade_acumulada_calculo_earm` values to the 4
-  decimals NEWAVE prints (equivalent own-productivity exact, accumulated
-  within ~0.01 %).
-- **NEWAVE penalty productivities** matched to pmo.dat: PRODT mean for
-  VAZMIN/turbined penalties, accumulated maximum-height productivity for
-  withdrawal/evaporation, with per-configuration CFUGA/CMONT variation.
-- **GNL anticipated dispatch** now seeds the real block-weighted `adterm`
-  MW values (honoured by cobre ≥ 0.7.0) instead of zeroing them.
-- **Theme single-source-of-truth**: one `hex_to_rgba`, an honest theme SSOT,
-  and a fix for the hydro colour collision across charts.
-- **Dependencies**: `cobre-python>=0.8.0` (validation extra), `pyarrow>=24.0.0`,
-  `pandas>=3.0.3`, `polars>=1.41.2`.
-- Large internal refactor toward architectural cleanliness — extracted
-  productivity / constraint-expression / study-horizon domain modules,
-  single-sourced the case↔output directory convention, replaced
-  hand-threaded constraint offsets with named result types and an ID
-  allocator, and promoted several cross-module reach-ins to public APIs.
+- **Production-size dashboards are about 20 times smaller.**
+- **VminOP constraints cover only real reservoirs**, with productivities that
+  match `pmo.dat`.
+- **NEWAVE penalty productivities match `pmo.dat`.**
+- **GNL anticipated dispatch carries the `adterm.dat` values** instead of
+  zeros.
 
 ### Fixed
 
-- **Security**: NEWAVE-derived strings (plant / line / case names) are now
-  HTML-escaped in the dashboard and comparison report, so a crafted name
-  cannot inject markup.
-- **Thermal `GTMIN`** is honoured independently of `FCMAX` — the converter no
-  longer clamps the minimum-generation bound down to a lowered maximum.
-- **Thermal post-study `EXPT` bounds** are frozen at the last study stage.
-- **AGRINT post-study exchange-group limits** are frozen at the last study
-  value rather than dropping to zero.
-- **Post-study seasonalization** now follows the `dger` flag, seasonalizing
-  flagged quantities and freezing only the flagless ones.
-- **`compare results`** robustness: fail loudly on unreadable Cobre output
-  (no false "no divergence"), corrected line direction and thermal `POTEF`
-  in the computed bounds, and fixed an `evaluate_lhs_cobre` crash on a real
-  simulation `LazyFrame`.
+- **Plant, line and case names are HTML-escaped** in the dashboard and the
+  report.
+- **Thermal GTMIN is kept when `FCMAX` lowers the maximum.**
+- **Post-study thermal, exchange-group and seasonal values** follow NEWAVE.
+- **`compare results` fails on unreadable Cobre output** instead of reporting
+  no divergence, and uses the right line direction and thermal `POTEF`.
 
 ## [0.7.0] - 2026-05-24
 
 ### Added
 
-- **GNL anticipated thermal dispatch**. New `converters/anticipated.py`
-  reads `adterm.dat` (gated by `dger.despacho_antecipado_gnl`) and
-  aggregates per-(thermal, lag, patamar) MW values via a
-  block-duration-weighted mean, preserving total committed MWh under
-  Cobre's constant-MW-per-stage convention. Each thermal now declares
-  `anticipated_config` (with `lead_stages`) in `thermals.json`,
-  replacing the dead `gnl_config: null` field. `adterm` is added as an
-  optional file to `NewaveFiles` resolved via `arquivos.dat`.
-- **Head-corrected turbined-flow cap** for hydro plants. NEWAVE's
-  effective turbination cap applies an affinity-law correction with the
-  volume-integrated head and a `pinst/prodt` clamp, not the nameplate
-  `Σ(n·q_nom)`. New `_compute_max_turbined_hypothesis` implements
-
-      qtur_max = min(Σ_c n_c · q_nom_c · (h_op / h_nom_c)^k_turb,
-                     pinst / (ρ_esp · h_int)) · (1 - teif) · (1 - ip)
-
-  with `h_op = mean_cota(V_min, V_65) - cota_jus - perdas` for reservoir
-  plants and the machine-count-weighted nominal head for D/F/S plants.
-  Reproduces M. DE MORAES's binding peak to within 0.0001 % across all
-  28 stages, closing a persistent ~108 m³/s gap that distorted hydro
-  operation. Legacy `_compute_max_turbined_simple` preserved as
-  fallback when `hidr.dat` columns are missing.
-
-- **PIMENTAL → BELO MONTE diversion** (13 000 m³/s nameplate)
-  restored. Without the explicit channel the Cobre LP had nowhere to
-  route the upstream water NEWAVE accounts for via the fictitious-plant
-  cascade, producing spurious spillage and downstream starvation.
-- **NC plant support** in converters.
-- **Operational-slack visibility** in both `cobre-bridge dashboard`
-  and `cobre-bridge compare results`:
-  - Plant-detail tab now plots `water_withdrawal_violation_{pos,neg}`
-    and `inflow_nonnegativity_slack` with p10/p50/p90 bands, so the
-    user can localize which plants/stages the LP had to relax under
-    stochastic noise.
-  - Plant-detail tab overlays NEWAVE `VIOL_POS/NEG_VRETIRUH` on the two
-    withdrawal-slack panels (converted /2.63 from hm³ to m³/s),
-    matching NEWAVE's sign convention.
-  - Hydro Operation tab gains per-bus + SIN-total aggregates for all
-    four paired hydro slacks (withdrawal + evaporation) plus the
-    Cobre-only inflow non-negativity slack — driven by
-    per-(entity_id, stage_id) frames since slacks don't go through the
-    `ResultComparison` pipeline.
-  - Dashed bound overlays for storage / generation / turbined / outflow
-    on the compare-results tab (the dashboard tab already had them).
-    Static values come from `hydros.json` via
-    `read_cobre_hydro_metadata` and are shadowed per-stage by overrides
-    from `constraints/hydro_bounds.parquet` via the new
-    `read_cobre_hydro_per_stage_bounds` reader.
-- **Risk-measure selection logging** in `convert_stages`. INFO log at
-  the top names the selected mode (expectation / constant-CVaR /
-  per-stage CVaR, from `dger.cvar`) and resolved alpha/lambda when CVaR
-  is in play. Per-stage branch refactored into four explicit cases
-  mirroring the log; output is bit-identical.
-- **Spec doc** `docs/findings/cobre-anticipated-thermal-pre-horizon-
-limitation.md` for the Cobre maintainers: self-contained spec of the
-  "non-zero `past_anticipated_commitments` rejected" limitation, the
-  bridge-side workaround, and the functional/acceptance requirements
-  that would let cobre-bridge restore NEWAVE-parity GNL dispatch by
-  flipping a single line.
+- **GNL anticipated thermal dispatch** from `adterm.dat`.
+- **A head-corrected turbined-flow cap**, as NEWAVE computes it.
+- **The PIMENTAL → BELO MONTE diversion.**
+- **NC plants.**
+- **Hydro slack charts** in the dashboard and in `compare results`, with
+  NEWAVE's withdrawal violations and the plant bounds overlaid.
+- **`convert` logs the risk measure** it selects.
 
 ### Changed
 
-- **Default cut selection** now emits `method: "lml1"` with
-  `memory_window: 0` (was `domination` + `domination_epsilon: 0.0`).
-  Aligns with the `RowSelectionConfig` schema (`memory_window` is
-  required for `lml1`).
-- **Default inflow non-negativity** now `truncation_with_penalty`:
-  clamp negative PAR(p) draws to zero before LP patching and keep the
-  non-negativity slack columns as a backstop. Closes the exploit where
-  the LP would otherwise route negative inflow noise through the
-  withdrawal-neg slack (priced 1 R$/(m³/s) below the nonneg slack on
-  the cobre-bridge calibration).
-- **`inflow_nonnegativity_cost`** anchored to
-  `water_withdrawal_violation_cost + 1` R$/m³/s (was 1.01 × max of
-  flow-domain slacks, which made it cheaper than withdrawal and let
-  the LP buy "free" water to dodge withdrawal violations).
-- **D-regulation plant initial storage** anchored to
-  `volume_referencia`, consistent with the collapsed
-  `[vmin, vmax] = vref` bounds (NEWAVE freezes D reservoirs across
-  stages).
-- Stronger guard rails in deterministic mode.
+- **Cut selection defaults to `lml1`.**
+- **Inflow non-negativity defaults to `truncation_with_penalty`**, and its
+  penalty sits above the withdrawal penalty.
+- **`D` plants start at `volume_referencia`.**
 
 ### Fixed
 
-- **Withdrawal slack sign labels** in `compare results` HTML. Cobre's
-  `water_withdrawal_violation_pos/neg` columns use the inverse sign
-  convention of NEWAVE's `VIOL_POS/NEG_VRETIRUH`; the NEWAVE → Cobre
-  column mapping and display labels are swapped so each "Pos" / "Neg"
-  panel pairs the columns that mean the same physical violation.
-  Evaporation slacks already shared NEWAVE's convention and are left
-  as-is.
-- **Slack p10/p90 emission**. `read_cobre_hydro_percentiles`'
-  `flow_cols` list now includes the three operational slacks added
-  above, so the percentile frame ships
-  `water_withdrawal_violation_{pos,neg}_m3s_{p10,p90}` and
-  `inflow_nonnegativity_slack_m3s_{p10,p90}` columns. Without them,
-  `_build_interactive_detail_html` emitted only the bare `Cobre Mean`
-  trace per slack chart and the `x unified` hover had nothing to lock
-  onto, breaking the band+P10/P90 tooltip every other flow variable
-  enjoys.
-- **P10–P90 unified-hover tooltip**: every band-trace site (5 in
-  `charts.py` plus the interactive plant-detail JS) now sets
-  `hoverinfo: "skip"` on the closing-polygon trace, and the visible
-  p10/p90 lines are renamed to "Cobre P10" / "Cobre P90". Previously
-  the unified hover showed the literal text `Cobre P10–P90` instead of
-  values at the cursor x.
-- **`past_anticipated_commitments` rejected by Cobre validator**.
-  `convert_initial_conditions` now zeroes the `values_mw` array
-  (length still `lead_stages`, as Cobre requires) and emits a WARNING
-  naming the `adterm.dat` code and the MW values being dropped — so
-  the user knows exactly what pre-horizon NEWAVE dispatch is not being
-  honoured. `read_anticipated_dispatch` keeps computing the true
-  block-weighted MW so the warning is informative; the zero-out
-  policy lives at the conversion site, not in the reader. Flipping a
-  single line restores genuine values when Cobre lifts the limitation.
-- Miscellaneous converter fixes uncovered during the `pmo_set_24`
-  stochastic-case investigation.
+- **Withdrawal slack labels in `compare results`** match NEWAVE's sign
+  convention.
+- **P10–P90 bands and hover** in the slack charts.
+- **Pre-horizon GNL commitments, which cobre rejected, are zeroed with a
+  warning.**
 
 ## [0.6.2] - 2026-05-21
 
 ### Added
 
-- New **Network** tab in `compare results` HTML comparing directional
-  submarket flow per line: NWLISTOP `int*.out` files vs Cobre
-  `output/simulation/exchanges`. Per-line small-multiples with Cobre
-  P10/P90 band, NEWAVE mean, and finite capacity bounds (the ±99999
-  NEWAVE big-M sentinel for fictitious connections is filtered so it
-  doesn't compress real flows into a flat strip).
-- New **Performance** tab comparing wall-clock timings: NEWAVE
-  `newave.tim` stage totals + per-iteration forward/backward breakdown
-  (parsed directly — inewave doesn't expose it) vs Cobre
-  `training/convergence.parquet` + `training/metadata.json`. Headline
-  cards for total/policy/training duration and a speedup ratio.
-- **Hydro Operation** tab now opens with per-bus facets
-  (SUDESTE / SUL / NORDESTE / NORTE) for storage, generation, spillage,
-  turbined, inflow, and water value, then stacks the EARM/ENA aggregate
-  charts and finally a **System Totals (SIN)** section that brings the
-  six original system-aggregate charts back at the bottom.
-- **Hydro Details** picker gains four new comparison panels per plant:
-  evaporation, water withdrawal, total inflow (≡ NEWAVE `QAFLUH`,
-  computed Cobre-side from incremental + upstream cascade outflow), and
-  total outflow (turbined + spilled). Generation panel carries a dashed
-  Cobre LP `gen_max` overlay. Tab renamed from "Plant Details".
-- **Hydro Details** and **Thermal Details** tabs open with a
-  per-plant **max relative difference** summary table — one column per
-  variable, NEWAVE-referenced, colored green/amber/red at ≤1%/≤10%/>10%
-  thresholds, sorted worst-first. Bold last row is a per-column
-  **Median** across plants (robust to outliers like LAJES's water-value
-  divergence).
-- **Overview** tab cards switched to thermal-generation NPV
-  (NEWAVE/Cobre/Δ R$/Δ%) — the prior meta cards
-  (Total Comparisons / Entity Types / Variables) offered no operational
-  insight. The cost-breakdown chart now uses a vertical right-side
-  legend (the previous horizontal layout collided with the chart
-  title), and the companion table has been restyled with proper CSS.
-- New readers: `read_nwlistop_intercambio`,
-  `read_cobre_line_means/percentiles`,
-  `read_cobre_hydro_total_flows`, `read_cobre_hydro_withdrawal`,
-  `read_cobre_lp_max_generation`, `read_cobre_spillage_energy`,
-  `read_cobre_training_duration`, `read_cobre_iteration_timing`,
-  `read_newave_tim_iterations`, `read_newave_tim_stages`.
+- **`compare results` gains Network and Performance tabs**, per-bus Hydro
+  Operation charts, more Hydro Details panels, per-plant summary tables of the
+  largest differences, and thermal-generation cost cards.
 
 ### Changed
 
-- `compare results` reconstructs _realized_ water-withdrawal and
-  evaporation on both sides via the LP slack convention
-  `realized = scheduled + violation_pos − violation_neg`. Sign matches
-  Cobre's `lp_builder/matrix.rs` water-balance row. Applied symmetrically
-  to NEWAVE's `VRETIRUH`/`VEVAPUH` + `VIOL_POS/VIOL_NEG` so the
-  comparison is realized-vs-realized.
-- NEWAVE `VEVAPUH` and `VRETIRUH` (reported in hm³/month, not flow) are
-  divided by 2.63 — NEWAVE's rounded `730 h × 3600 s / 10⁶` factor —
-  before comparison against Cobre's m³/s values. The converter side
-  still uses the exact 2.628 since it operates on input data with no
-  analogous rounding.
-
-- `convert_water_withdrawal` honours `dger.outros_usos_da_agua`: when
-  the flag is `0`, the converter short-circuits and emits no
-  withdrawal rows, matching NEWAVE's own behaviour (the solver
-  ignores `dsvagua.dat` regardless of its content when the flag is
-  off). When the flag is `1` (the default) it proceeds normally.
+- **Withdrawal and evaporation are compared as realized values** on both
+  sides, in m³/s.
+- **`dsvagua.dat` is skipped when `dger.dat` turns other water uses off**, as
+  NEWAVE does.
+- **Non-simulated sources are must-run**, as in NEWAVE.
 
 ### Fixed
 
-- `convert_water_withdrawal` was treating `dsvagua.dat::codigo_usina`
-  as a **posto** and routing it through `confhd.dat`'s posto→plant
-  map. The field is actually the **plant code** directly. The
-  miscoding swapped data between any plant pair whose code/posto values
-  collided (e.g. PICADA's plant code = SIMPLICIO's posto = 126 in the
-  bundled case) and silently dropped entries for plants whose code
-  didn't coincidentally exist as a posto. On the bundled example,
-  SIMPLICIO's withdrawal target moved from 1.09 m³/s to 89.71 m³/s,
-  dropping the `withdrawal_m3s` mean abs diff from 4.17 to 0.0009 m³/s
-  (r = 0.65 → 1.00). Users with `dsvagua.dat` in their case should
-  regenerate after upgrading.
-- Network tab small-multiples y-domain formula assumed ≤2 rows and
-  positioned panels 5–6 outside the chart area for cases with 5–6
-  lines. Now distributes any number of rows evenly across `[0, 1]`.
+- **`dsvagua.dat` plant codes are read as plant codes**, not gauging
+  stations; reconvert cases that have the file.
+- **The Network tab lays out five or more lines.**
 
 ### Removed
 
-- The dashboard-style Cobre-only capacity-utilisation heatmap from the
-  Network tab — a Cobre-only view doesn't belong in the comparison.
-- The "System Spillage (Energy Units)" section from the Hydro
-  Operation tab — superseded by the new per-bus facets.
-- The NEWAVE `GHMAX_FPHC` overlay trace from the Hydro Details
-  generation panel — wasn't helping interpretation.
-
-### Notes (carried forward from earlier "Unreleased")
-
-- `convert_non_controllable_sources` emits
-  `"allow_curtailment": false` on every NCS entity derived from
-  `sistema.dat::geracao_usinas_nao_simuladas`. NEWAVE pre-nets these
-  aggregates (PCH, PCT, EOL, UFV, MMGD) from MERC before the dispatch
-  LP runs, which makes them effectively must-run; setting
-  `allow_curtailment=false` instructs Cobre's LP to pin dispatch to
-  the realized per-scenario availability instead of leaving curtailment
-  as a cheap LP slack. On the bundled deterministic 1983 case this
-  restores parity with NEWAVE — eliminates ≈ 18 % of total NCS supply
-  being artificially curtailed, a ≈ +15 % hydro-dispatch swing, and a
-  ≈ −23 % spillage divergence. Requires Cobre with the
-  `non_controllable_sources.allow_curtailment` field. See
-  `docs/findings/ncs-must-run-treatment.md`.
-- Regenerated `example/convertido/system/non_controllable_sources.json`
-  to reflect the new emission. The 32 NCS aggregates in the bundled
-  NEWAVE-derived case now carry `"allow_curtailment": false`; all
-  other fields are unchanged.
+- **The Network capacity heatmap, the Hydro Operation spillage-energy section
+  and the `GHMAX_FPHC` overlay.**
 
 ## [0.6.1] - 2026-05-18
 
-First public release for the cobre v0.6.x line — bundles every change
-since v0.5.1 (the v0.6.0 milestone was never published to PyPI).
+First release for cobre 0.6.x, with every change since 0.5.1.
 
 ### Added
 
-- **Cobre v0.6 compatibility**: schema migration to
-  `hydro_production_models.json` + `hydro_energy_productivity.parquet`,
-  per-(hydro, stage) productivity overrides for CFUGA/CMONT temporal
-  changes, scalar parameters, and `scalar_parameters.json` emission.
-- **Energy-based hydro outputs**: dashboards and comparison reports now
-  surface EARM (stored energy, MWh) and ENA (natural energy from
-  incremental inflow, MW) at system, per-bus, and per-plant level.
-- **FICT-plant cascade resolution**
-  (`src/cobre_bridge/converters/fict_cascade.py`): walks NEWAVE
-  fictitious-plant chains so that real plants whose energy cascade
-  traverses `FICT.<NAME>` topology bridges (e.g. `TRES MARIAS → FICT.TRES
-MA → SOBRADINHO`) are correctly wired in `hydros.json::downstream_id`.
-  Restores cobre `ρ_acum` to within 0.004 of NEWAVE's
-  `produtibilidade_acumulada_calculo_earm` on the bundled case (was off
-  by up to 2.77 MW/(m³/s) on 7 plants). Includes ambiguity warnings
-  when the 7-char name-truncation key is shared by multiple real plants.
-- **PAR(p)-A `order_selection` mapping**: `dger.consideracao_media_anual`
-  → `"pacf"` (classic PAR(p)) or `"pacf_annual"` (NEWAVE option 3) so
-  cobre's stochastic estimator matches NEWAVE's configured method.
-- **Per-stage VminOP RHS**: bound now uses per-stage ρ_acum (built from
-  per-stage own productivities) rather than a static base productivity,
-  so the curva.dat percentage targets translate to correct absolute
-  bounds for plants with CFUGA temporal overrides.
-- **Lighter dashboards**: cached chart data, reduced JSON payload, and
-  smaller box-plot point counts in the performance tab. ~40 %
-  reduction in HTML file size on a 60-stage case.
-- **Comparison-report energy charts**: new aggregate-vs-NEWAVE SIN
-  comparison of EARM and ENA in the Hydro Operation and Energy Balance
-  tabs, plus per-plant cobre-only entries in the Plant Details tab.
-- Findings documentation in `docs/findings/`:
-  `evaporation-unidirectional-q_ev.md` (handoff that drove the cobre
-  v0.6.1 hotfix) and `fict-cascade-resolution.md` (rationale and
-  quantitative verification of the cascade fix).
+- **Converted cases use cobre 0.6's production-model files**, with
+  per-stage productivity for `CFUGA`/`CMONT` changes.
+- **Stored energy (EARM) and natural inflow energy (ENA)** in the dashboard
+  and the comparison report.
+- **Plants whose cascade passes through NEWAVE fictitious plants** get the
+  right downstream plant.
+- **The PAR(p) order selection follows `dger.dat`.**
+- **The VminOP bound uses each stage's productivity.**
+- **Dashboards are about 40 % smaller.**
 
 ### Changed
 
-- **`cobre-python>=0.6.1`** in the `validation` extra — required so
-  `cobre-bridge convert --validate` picks up cobre's signed `Q_ev`
-  evaporation fix.
-- **NEWAVE-aligned penalty conversion**
-  (`src/cobre_bridge/converters/network.py`): full rewrite of the
-  PENALID-to-cobre mapping using the four-family taxonomy from the
-  NEWAVE manual v29 §3.24. Documented module-level constants for
-  ρ_avg / ρ_max_acum derivation, `_EVAPORATION_MULT = 1.1` (down from a
-  literal 10× per the manual to keep the LP coefficient range below
-  HiGHS's 1e10 conditioning warning), tie-breaking factors on
-  flow-domain slacks that would otherwise share ρ_avg, and a 100×
-  uplift on NEWAVE micro-penalties to lift the LP coefficient floor
-  off HiGHS's noise threshold.
-- **Cost Breakdown chart** in the comparison report now truncates
-  Cobre to NEWAVE's reported stage range so the totals compare
-  like-for-like when Cobre simulates a longer horizon.
-- **All comparison-report charts** now use `hovermode: 'x unified'`
-  matching the dashboard convention so NEWAVE-vs-Cobre lines snap to
-  the same x-tooltip.
-- **Truncation to common-stage horizon** applied to every chart in the
-  comparison report (energy balance, hydro operation, plant details)
-  so visualizations never show unmatched Cobre-only stages.
+- **Penalties follow NEWAVE's penalty families.**
+- **Comparison charts show only the stages both models share**, with a
+  unified hover.
 
 ### Fixed
 
-- **Evaporation penalty conversion**: restored the `× ρ_max_acum`
-  factor on `evaporation_violation_cost` (was dropped when the
-  docstring on cobre's side appeared to suggest hm³ units), and
-  derived `inflow_nonnegativity_cost` as 1 % above the strictest
-  flow-domain slack so the slack is the LP's last resort.
-- **`config.json::modeling.inflow_non_negativity.penalty_cost`** is no
-  longer emitted — cobre treats this field as deprecated and reads the
-  live value from `penalties.json::hydro.inflow_nonnegativity_cost`.
-  The legacy field stayed in the converted output and confused users
-  about which value the LP would actually use.
+- **The evaporation penalty is scaled by productivity again.**
+- **`config.json` no longer carries the inflow penalty cost cobre ignores.**
 
 ## Earlier releases
 
