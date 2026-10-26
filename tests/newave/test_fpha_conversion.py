@@ -637,6 +637,29 @@ class TestFphaConverters:
         assert diagnostic.table is not None
         assert diagnostic.table.rows == [[1, "USINA_A"]]
 
+    def test_production_models_fpha_spill_outside_the_tailrace_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        # Plant 2 also keeps its spill out of the tailrace but is not FPHA.
+        case = self._case(
+            tmp_path,
+            plant_1={"influencia_vertimento_canal_fuga": 0},
+            plant_2={"influencia_vertimento_canal_fuga": 0},
+        )
+        with dx.collect() as collected:
+            convert_production_models(case, self._id_map())
+        [diagnostic] = [d for d in collected if d.code == "fpha-spill-outside-tailrace"]
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[1, "USINA_A", "0-59"]]
+
+    def test_production_models_spill_into_the_tailrace_is_not_reported(
+        self, tmp_path: Path
+    ) -> None:
+        with dx.collect() as collected:
+            convert_production_models(self._case(tmp_path), self._id_map())
+        assert [d for d in collected if d.code == "fpha-spill-outside-tailrace"] == []
+
     def test_production_models_monthly_reservoir_turbined_range_at_its_reference_volume(
         self, tmp_path: Path
     ) -> None:

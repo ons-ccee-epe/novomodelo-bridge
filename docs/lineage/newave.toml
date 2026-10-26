@@ -3289,8 +3289,8 @@ note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo n
 
   [[source.item]]
   item = "influencia_vertimento_canal_fuga"
-  status = "unread"
-  note = "Flag de influência do vertimento no canal de fuga. O Novomodelo avalia as curvas de jusante sobre a defluência total; o flag não é consultado."
+  status = "deferred"
+  note = "Flag de influência do vertimento no canal de fuga. Lido só pelo diagnóstico `fpha-spill-outside-tailrace`, que lista as usinas FPHA com flag 0: nelas o NEWAVE não ajusta coeficiente de vertimento, e o ajuste do Novomodelo sempre avalia as curvas de jusante sobre a defluência total."
 
   [[source.item]]
   item = "fator_carga_maximo · fator_carga_minimo"

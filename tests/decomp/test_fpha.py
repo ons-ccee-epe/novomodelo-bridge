@@ -24,6 +24,7 @@ from novomodelo_bridge.decomp.converters.fpha import (
     fpha_eligible_codes,
     is_fpha_eligible,
     mlt_absent_diagnostic,
+    spill_outside_tailrace,
     spillage_fit_max,
     turbine_efficiency,
     unconverted_fp_fields_diagnostic,
@@ -380,6 +381,52 @@ def test_mlt_absent_remediation_has_no_repo_internal_references() -> None:
     message = f"{diagnostic.summary} {diagnostic.remediation}"
     for leak in ("docs/", "plans/", "~/git", ".py", "TRACKED", "_"):
         assert leak not in message
+
+
+def _flagged_effective(
+    flags: dict[int, int],
+    stage_varying: dict[tuple[int, str], tuple[float, ...]] | None = None,
+) -> EffectiveCadastro:
+    hidr = pd.DataFrame(
+        {
+            code: {
+                "nome_usina": f"PLANT {code} ",
+                "influencia_vertimento_canal_fuga": flag,
+            }
+            for code, flag in flags.items()
+        }
+    ).T
+    return EffectiveCadastro(base=hidr, n_stages=3, stage_varying=stage_varying or {})
+
+
+_FPHA = {"model": "fpha"}
+_OUTAGE = {"model": "constant_productivity"}
+
+
+def test_spill_outside_tailrace_names_the_fpha_stages_of_each_flagged_plant() -> None:
+    diagnostic = spill_outside_tailrace(
+        _flagged_effective({1: 0, 2: 1}),
+        {1: [_FPHA, _OUTAGE, _FPHA], 2: [_FPHA] * 3},
+    )
+    assert diagnostic is not None
+    assert diagnostic.code == "fpha-spill-outside-tailrace"
+    assert diagnostic.severity is Severity.INFO
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "PLANT 1", "0, 2"]]
+
+
+def test_spill_outside_tailrace_reads_the_flag_in_force_at_each_stage() -> None:
+    effective = _flagged_effective(
+        {1: 1}, {(1, "influencia_vertimento_canal_fuga"): (1.0, 0.0, 0.0)}
+    )
+    diagnostic = spill_outside_tailrace(effective, {1: [_FPHA] * 3})
+    assert diagnostic is not None
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "PLANT 1", "1-2"]]
+
+
+def test_spill_outside_tailrace_none_when_every_spill_reaches_the_tailrace() -> None:
+    assert spill_outside_tailrace(_flagged_effective({1: 1}), {1: [_FPHA] * 3}) is None
 
 
 # ---------------------------------------------------------------------------
