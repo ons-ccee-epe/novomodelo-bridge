@@ -144,12 +144,13 @@ the same output.
   volume; `volref_saz.dat` sets the evaporation reference and the head of the
   equivalent productivity. A volume outside the plant's storage range widens
   its sampled geometry to cover it.
-- **Turbined fit range.** Each FPHA plant's fit runs up to the flow at which
-  every machine set reaches its rated power or its turbine limit, NEWAVE's
-  rule, with no outage derating: the turbine head runs from the forebay at the
-  reference volume down to the `polinjus` tailrace at that flow, read at the
-  forebay of the plant `hidr.dat` names downstream, and the generator head
-  from the mean forebay over the plant's operating range.
+- **Turbined fit range.** Each FPHA plant's fit runs up to the flow its
+  machine sets swallow at the turbine head, or the lower flow at which its
+  generators together reach the plant's rated power at the generator head,
+  NEWAVE's rule, with no outage derating. The turbine head runs from the
+  forebay at the reference volume down to the `polinjus` tailrace at that
+  flow, read at the forebay of the plant `hidr.dat` names downstream, and the
+  generator head from the mean forebay over the plant's operating range.
 - **Turbine and generation limits.** Under FPHA and constant productivity
   alike, a plant generates at most its rated power scaled by its TEIF and IP
   availability, and turbines at most its engolimento: its rated flow

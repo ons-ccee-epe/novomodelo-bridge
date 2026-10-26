@@ -262,7 +262,7 @@ def _turbined_fit_max(
     reference volume is *reference_volume_hm3*, and whether its fixed point
     settled.
 
-    The range is every machine set's
+    The range is the machine sets'
     :func:`~novomodelo_bridge.core.turbine.power_limited_flow`, with no TEIF/IP
     derating. The turbine head runs from the reference volume down to the
     tailrace at the turbined flow, on *families* at *downstream_level_m*

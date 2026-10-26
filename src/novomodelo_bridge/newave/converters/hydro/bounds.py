@@ -25,7 +25,7 @@ from novomodelo_bridge.core.productivity import (
     mean_cota,
 )
 from novomodelo_bridge.core.tolerances import BIG_M
-from novomodelo_bridge.core.turbine import head_limited_flow
+from novomodelo_bridge.core.turbine import MachineSet, power_limited_flow
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.geometry import _expansion_configs
 from novomodelo_bridge.newave.converters.hydro.overrides import (
@@ -143,10 +143,12 @@ def _operational_caps(
 
     The generation cap is the available power ``Σ_c n_c · p_nom_c ·
     availability``, the TEIF/IP availability of :func:`_availability`. The
-    turbined cap is the engolimento at the :func:`_operating_head` ``h_op``:
-    for each machine set *c* with ``n_c`` units of nominal head ``h_nom_c`` and
-    nominal flow ``q_nom_c``, the affinity-law flow ``q_eff_c = n_c · q_nom_c ·
-    (h_op / h_nom_c)^k`` (``k`` = 0.5 Francis/Pelton, 0.2 Kaplan), and::
+    turbined cap is the engolimento, the
+    :func:`~novomodelo_bridge.core.turbine.power_limited_flow` with both heads at
+    the :func:`_operating_head` ``h_op``: for each machine set *c* with ``n_c``
+    units of nominal head ``h_nom_c`` and nominal flow ``q_nom_c``, the
+    affinity-law flow ``q_eff_c = n_c · q_nom_c · (h_op / h_nom_c)^k`` (``k`` =
+    0.5 Francis/Pelton, 0.2 Kaplan), and::
 
         max_turbined = min(Σ_c q_eff_c, p_inst / (ρ_esp · h_op)) · availability
 
@@ -188,18 +190,22 @@ def _operational_caps(
     if h_op is None or h_op <= 0.0:
         return rated_flow * availability, available_power
 
-    kturb = KTURB_BY_TIPO_TURBINA.get(int(hreg.get("tipo_turbina", 0) or 0), 0.5)
-    head_limited = sum(
-        head_limited_flow(
-            h_op,
-            nominal_head_m=float(hreg[f"queda_nominal_conjunto_{i}"]),
-            nominal_flow_m3s=n * q,
-            exponent=kturb,
-        )
-        for i, (n, q, _p) in enumerate(sets, start=1)
+    engolimento = power_limited_flow(
+        h_op,
+        [
+            MachineSet(
+                units=n,
+                flow_m3s=q,
+                head_m=float(hreg[f"queda_nominal_conjunto_{i}"]),
+                power_mw=p,
+            )
+            for i, (n, q, p) in enumerate(sets, start=1)
+        ],
+        generator_head_m=h_op,
+        specific_productivity=float(rho_esp),
+        exponent=KTURB_BY_TIPO_TURBINA.get(int(hreg.get("tipo_turbina", 0) or 0), 0.5),
     )
-    power_limited = rated_power / (float(rho_esp) * h_op)
-    return min(head_limited, power_limited) * availability, available_power
+    return engolimento * availability, available_power
 
 
 def _reduced_caps(

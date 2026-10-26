@@ -34,9 +34,10 @@ def test_head_limited_flow_without_a_rated_head_is_the_rated_flow() -> None:
     assert flow == 100.0
 
 
-def test_power_limited_flow_caps_each_set_at_its_rated_power() -> None:
-    # At 20 m every turbine swallows 50 m³/s; the second set's 6 MW generators
-    # cap theirs at 6 / (0.009 × 20) ≈ 33.3 m³/s.
+def test_power_limited_flow_caps_the_plant_not_each_set() -> None:
+    # At 20 m every turbine swallows 50 m³/s. The second set's 6 MW generators
+    # alone would bind at 6 / (0.009 × 20) ≈ 33.3 m³/s, but the plant's 112 MW
+    # do not bind its 200 m³/s.
     sets = [
         MachineSet(units=2, flow_m3s=100.0, head_m=80.0, power_mw=50.0),
         MachineSet(units=2, flow_m3s=100.0, head_m=80.0, power_mw=6.0),
@@ -44,7 +45,18 @@ def test_power_limited_flow_caps_each_set_at_its_rated_power() -> None:
     flow = power_limited_flow(
         20.0, sets, generator_head_m=20.0, specific_productivity=0.009, exponent=0.5
     )
-    assert flow == pytest.approx(2 * 50.0 + 2 * 6.0 / (0.009 * 20.0))
+    assert flow == pytest.approx(4 * 50.0)
+
+
+def test_power_limited_flow_caps_the_plant_at_its_rated_power() -> None:
+    sets = [
+        MachineSet(units=2, flow_m3s=100.0, head_m=80.0, power_mw=6.0),
+        MachineSet(units=1, flow_m3s=100.0, head_m=80.0, power_mw=3.0),
+    ]
+    flow = power_limited_flow(
+        20.0, sets, generator_head_m=20.0, specific_productivity=0.009, exponent=0.5
+    )
+    assert flow == pytest.approx(15.0 / (0.009 * 20.0))
 
 
 def test_power_limited_flow_rates_generators_at_their_own_head() -> None:
