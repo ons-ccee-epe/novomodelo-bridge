@@ -482,7 +482,7 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
   path = "non_controllable_source.curtailment_cost"
   from = []
   status = "constant"
-  how = "Sempre 0.000344 R$/MWh (pCORTEOL, corte de geração não simulada). Sem fator de produtibilidade."
+  how = "Sempre 0.0001 R$/MWh (pCORTEOL, corte de geração não simulada), abaixo do 0.000344 do modelo de origem, para o corte ser a saída de sobra mais barata. Sem fator de produtibilidade."
 
   [[output.field]]
   path = "hydro.spillage_cost"

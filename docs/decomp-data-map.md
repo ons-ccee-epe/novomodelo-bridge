@@ -238,7 +238,7 @@ Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco
 | `hydro.water_withdrawal_violation_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_max` (folga de retirada de água para irrigação `TI`). |
 | `hydro.inflow_nonnegativity_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `water_withdrawal_violation_cost + 1` R$/(m³/s): a folga de vazão natural negativa nunca pode ser mais barata que a folga de retirada de água. |
 | `line.exchange_cost` | — *(constante)* | Micro-penalidade fixa `0.000273` R$/MWh (intercâmbio). |
-| `non_controllable_source.curtailment_cost` | — *(constante)* | Micro-penalidade fixa `0.000344` R$/MWh (corte de geração não controlável). |
+| `non_controllable_source.curtailment_cost` | — *(constante)* | Micro-penalidade fixa `0.0001` R$/MWh (corte de geração não controlável), abaixo do `0.000344` do modelo de origem, para o corte ser a saída de sobra mais barata. |
 
 ### `initial_conditions.json`
 
@@ -471,7 +471,7 @@ Uma fonte não controlável por série `PQ` (par submercado + nome), mais um par
 | `non_controllable_sources[].operational_start_date` | `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado)* | Data de início do estudo. |
 | `non_controllable_sources[].bus_id` | `dadger.rvN` › `PQ` › `codigo_submercado`, `renovaveis*` › `PEE-SUBM · codigo_submercado` | Barra do submercado da série; parques resolvem pelo cartão `PEE-SUBM`. |
 | `non_controllable_sources[].max_generation_mw` | `dadger.rvN` › `PQ` › `geracao`, `renovaveis*` › `PEE-GER-PER-PAT-CEN · geracao`, `renovaveis*` › `PEE-GER-PER-PAT · geracao` | Maior geração por patamar (`geracao_k`, em branco lido como 0) em todos os estágios, após preencher estágios não declarados com o último declarado (estágio 1 obrigatório). Parques: o valor modal entre cenários de cada (estágio, patamar), com aviso se os cenários divergirem. O perfil por estágio e patamar vai para as estatísticas e fatores de NCS. |
-| `non_controllable_sources[].allow_curtailment` | — *(constante)* | Sempre `false`: a geração é abatida da carga na origem, logo é must-run e fixada na disponibilidade. |
+| `non_controllable_sources[].allow_curtailment` | `renovaveis*` › `PEE-CONFIG-PER · estado_operacao` *(derivado)* | Séries `PQ`: sempre `false`, porque a geração é abatida da carga na origem e fica fixada na disponibilidade. Parques: `true` quando o estado de operação é `centralizado` (o Novomodelo pode cortar a geração, com o valor informado como limite máximo) e `false` em qualquer outro estado, como `fixo`. O estado vale para todos os estágios do parque; um parque com mais de um estado interrompe a conversão, e um parque com geração sem estado é convertido sem corte, com aviso. |
 
 ### `system/pumping_stations.json`
 
@@ -2050,7 +2050,7 @@ Médias de longo termo mensais das vazões naturais por posto, lidas só para a 
 
 **Estado:** convertido em parte. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `scenarios/external_ncs_scenarios.parquet`, `scenarios/non_controllable_factors.json`, `scenarios/non_controllable_stats.parquet`, `system/non_controllable_sources.json`.
 
-Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o submercado e a geração por período e patamar, do card `PEE-GER-PER-PAT-CEN` (com cenários, reduzidos a um valor) ou do card determinístico `PEE-GER-PER-PAT`; um parque declarado nos dois é rejeitado. O `PerFin` dos dois cards não é lido: cada linha vale só para o seu `PerIni`.
+Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o submercado, o estado de operação (`PEE-CONFIG-PER`, que decide se o parque pode ter a geração cortada) e a geração por período e patamar, do card `PEE-GER-PER-PAT-CEN` (com cenários, reduzidos a um valor) ou do card determinístico `PEE-GER-PER-PAT`; um parque declarado nos dois é rejeitado. O `PerFin` dos dois cards não é lido: cada linha vale só para o seu `PerIni`.
 
 - `PEE-GER-PER-PAT-CEN · codigo_pee` → `system/non_controllable_sources.json` › `non_controllable_sources[].id`
 - `PEE-GER-PER-PAT · codigo_pee` → `system/non_controllable_sources.json` › `non_controllable_sources[].id`
@@ -2059,6 +2059,7 @@ Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o subm
 - `PEE-SUBM · codigo_submercado` → `system/non_controllable_sources.json` › `non_controllable_sources[].bus_id`
 - `PEE-GER-PER-PAT-CEN · geracao` → `system/non_controllable_sources.json` › `non_controllable_sources[].max_generation_mw`
 - `PEE-GER-PER-PAT · geracao` → `system/non_controllable_sources.json` › `non_controllable_sources[].max_generation_mw`
+- `PEE-CONFIG-PER · estado_operacao` → `system/non_controllable_sources.json` › `non_controllable_sources[].allow_curtailment`
 - `PEE-GER-PER-PAT-CEN · codigo_pee` → `scenarios/non_controllable_stats.parquet` › `ncs_id`
 - `PEE-GER-PER-PAT · codigo_pee` → `scenarios/non_controllable_stats.parquet` › `ncs_id`
 - `PEE-GER-PER-PAT-CEN · geracao` → `scenarios/non_controllable_stats.parquet` › `mean`
@@ -2072,7 +2073,6 @@ Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro, o subm
 - `PEE-GER-PER-PAT-CEN · geracao` → `scenarios/external_ncs_scenarios.parquet` › `availability_factor`
 - `PEE-GER-PER-PAT · geracao` → `scenarios/external_ncs_scenarios.parquet` › `availability_factor`
 - `PEE-CAD · codigo_pee` → `constraints/generic_constraints.json` › `constraints[].expression`
-- `pee_config_per` — *não lido.* Configuração de operação do parque por período. Não lida: a geração por cenário já é o valor emitido como fonte não controlável.
 - `pee_pot_inst_per` — *não lido.* Potência instalada do parque por período. Não lida: a fonte não controlável do Novomodelo não carrega capacidade instalada.
 
 ### `polinjus.csv`
@@ -2274,7 +2274,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `polinjus.csv` › `hidreletrica_curvajusante_polinomio` — *não lido.* Cabeçalho de polinômio por família. Não lido: os segmentos trazem os coeficientes diretamente.
 - `polinjus.csv` › `hidreletrica_curvajusante_afogamentoexplicito_padrao` — *não lido.* Habilitação padrão do tratamento de afogamento explícito. Não lida: o Novomodelo escolhe a família pela defluência de jusante sem afogamento explícito.
 - `polinjus.csv` › `hidreletrica_curvajusante_afogamentoexplicito_usina` — *não lido.* Habilitação do afogamento explícito por usina. Não lida; ver o card padrão.
-- `renovaveis*` › `pee_config_per` — *não lido.* Configuração de operação do parque por período. Não lida: a geração por cenário já é o valor emitido como fonte não controlável.
 - `renovaveis*` › `pee_pot_inst_per` — *não lido.* Potência instalada do parque por período. Não lida: a fonte não controlável do Novomodelo não carrega capacidade instalada.
 - `lib_restricao-eletrica-especial*.csv` › `cards de forma curta (RE, RE-*, ALIAS-ELET*)` — *adiado.* Apelidos curtos dos mesmos cards. Não lidos: um arquivo só com forma curta cai no aviso `decomp-libs-electrical-present`. Converter exige ler os apelidos pelo acessor idecomp correspondente.
 - `lib_restricao-eletrica-especial*.csv` › `cards indexados por data (RESTRICAO-ELETRICA-HORIZONTE-DATA, -FORMULA-DATA-PATAMAR, -LIMITES-FORMULA-DATA-PATAMAR)` — *adiado.* Variantes em que o horizonte e os limites são dados por intervalo de datas em vez de estágios. Fora do escopo do leitor; ficam no aviso `decomp-libs-electrical-present`. Converter exige mapear as datas para índices de estágio do calendário operativo.

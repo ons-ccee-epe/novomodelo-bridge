@@ -1,4 +1,4 @@
-"""Small-plant conversion for DECOMP-like decks (``PQ`` → must-run NCS).
+"""Small-plant and renewable-park conversion for DECOMP-like decks (NCS).
 
 ``PQ`` records carry the non-simulated generation netted from load — one
 series per (subsystem, name), with per-block MW declared sparsely by stage
@@ -6,8 +6,11 @@ series per (subsystem, name), with per-block MW declared sparsely by stage
 non-controllable source on its subsystem's bus, emitted through the proven
 deterministic NCS path:
 
-- registry entry with ``allow_curtailment: false`` (the series is netted
+- registry entry with ``allow_curtailment``: ``false`` for ``PQ`` (netted
   from load at the source — must-run, pinning dispatch to availability);
+  a renewable park follows its ``PEE-CONFIG-PER`` operating state, where
+  ``centralizado`` may be curtailed below its availability and any other
+  state, or none, is must-run;
 - ``non_controllable_stats``: ``mean`` = availability fraction
   (energy-weighted stage mean / ``max_generation_mw``), ``std = 0``;
 - ``non_controllable_factors``: ``factor_b = MW_b / stage_mean`` with the
@@ -74,6 +77,7 @@ class _PqSeries:
     name: str
     bus_id: int
     per_stage_blocks: tuple[tuple[float, ...], ...]
+    allow_curtailment: bool
 
     @property
     def max_generation_mw(self) -> float:
@@ -131,6 +135,7 @@ def _pq_series(
                 name=f"{name}_{sub_code}",
                 bus_id=id_map.bus_id(sub_code),
                 per_stage_blocks=tuple(dense),
+                allow_curtailment=False,
             )
         )
     return series
@@ -157,10 +162,7 @@ def convert_non_controllable_sources(
             "operational_start_date": op_date,
             "bus_id": s.bus_id,
             "max_generation_mw": s.max_generation_mw,
-            # PQ generation is netted from load at the source — implicitly
-            # must-run; pinning dispatch to availability mirrors the treatment
-            # validated in docs/findings/ncs-must-run-treatment.md.
-            "allow_curtailment": False,
+            "allow_curtailment": s.allow_curtailment,
         }
         for s in _all_series(case.dadger, id_map, calendar, case.renovaveis)
     ]
@@ -444,6 +446,7 @@ def _pee_series(
     buses = {
         int(r["codigo_pee"]): int(r["codigo_submercado"]) for _, r in subm.iterrows()
     }
+    curtailable = _pee_curtailment_by_code(renovaveis)
 
     values: dict[tuple[int, int, int], dict[int, float]] = {}
     for _, row in ger.iterrows():
@@ -486,6 +489,7 @@ def _pee_series(
         stage_blocks[block] = representative
 
     series: list[_PqSeries] = []
+    without_state: list[int] = []
     for code in sorted_codes:
         stages = per_park[code]
         if 0 not in stages:
@@ -500,15 +504,75 @@ def _pee_series(
         sub_code = buses.get(code)
         if sub_code is None:
             raise ValueError(f"renewable park {code} has no subsystem record")
+        if code not in curtailable:
+            without_state.append(code)
         series.append(
             _PqSeries(
                 ncs_id=ncs_id_by_code[code],
                 name=f"{names.get(code, f'PEE_{code}')}_{sub_code}",
                 bus_id=id_map.bus_id(sub_code),
                 per_stage_blocks=tuple(dense),
+                allow_curtailment=curtailable.get(code, False),
             )
         )
+    if without_state:
+        _emit_pee_without_operating_state(without_state)
     return series
+
+
+_CURTAILABLE_OPERATING_STATE = "centralizado"
+
+
+def _pee_curtailment_by_code(renovaveis: Renovaveis) -> dict[int, bool]:
+    """``codigo_pee -> allow_curtailment`` from the ``PEE-CONFIG-PER`` card.
+
+    Only ``centralizado`` may be curtailed. A park's declared state applies
+    to every stage, so the card's period range is not read.
+
+    Raises
+    ------
+    ValueError
+        When a park declares more than one distinct state.
+    """
+    config = _non_empty_frame(renovaveis.pee_config_per(df=True))
+    if config is None:
+        return {}
+    states: dict[int, set[str]] = {}
+    for _, row in config.iterrows():
+        state = str(row["estado_operacao"]).strip().lower()
+        states.setdefault(int(row["codigo_pee"]), set()).add(state)
+    curtailable: dict[int, bool] = {}
+    for code, declared in states.items():
+        if len(declared) > 1:
+            raise ValueError(
+                f"renewable park {code} declares more than one PEE-CONFIG-PER "
+                f"operating state ({sorted(declared)}); one state per park is "
+                "supported"
+            )
+        curtailable[code] = declared.pop() == _CURTAILABLE_OPERATING_STATE
+    return curtailable
+
+
+def _emit_pee_without_operating_state(codes: Sequence[int]) -> None:
+    emit(
+        Diagnostic(
+            code="decomp-pee-operating-state-missing",
+            severity=Severity.WARNING,
+            category="Renewable parks",
+            title="Renewable parks without an operating state",
+            summary=(
+                f"{len(codes)} renewable park(s) have generation but no "
+                "PEE-CONFIG-PER operating state; they are converted without "
+                "curtailment."
+            ),
+            table=DiagnosticTable(columns=["Park"], rows=[[code] for code in codes]),
+            remediation=(
+                "Declare the park's operating state in the renewable file if "
+                "its generation may be curtailed."
+            ),
+        ),
+        logger=_LOG,
+    )
 
 
 def _all_series(
