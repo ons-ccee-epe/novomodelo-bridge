@@ -21,17 +21,17 @@ from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.productivity import fpha_efficiency
 from novomodelo_bridge.newave.converters.hydro import (
-    _compute_max_turbined_head_corrected,
     _fpha_computed_config,
     _is_fpha_eligible,
+    _operational_caps,
     _parse_fpha_plane_reduction,
     convert_hydro_energy_productivity,
     convert_hydros,
     convert_per_stage_capacity_caps,
     convert_production_models,
-    convert_storage_bounds,
     fpha_eligible_codes,
 )
+from novomodelo_bridge.newave.filling import hreg_with_machines
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
@@ -371,48 +371,43 @@ class TestFphaConverters:
         assert all(h["generation"]["model"] == "constant_productivity" for h in hydros)
         assert all(h["efficiency"] is None for h in hydros)
 
-    def test_fpha_plant_turbined_cap_is_the_available_nominal_flow(
-        self, tmp_path: Path
+    @pytest.mark.parametrize("fpha", [True, False])
+    def test_turbined_cap_is_the_head_corrected_engolimento(
+        self, tmp_path: Path, fpha: bool
     ) -> None:
-        hydros = convert_hydros(self._case(tmp_path, plant_1=_OUTAGES), self._id_map())[
-            "hydros"
-        ]
-        generation = hydros[0]["generation"]
-        assert generation["max_turbined_m3s"] == pytest.approx(
-            4 * 222.2 * _AVAILABILITY
-        )
-        assert generation["max_generation_mw"] == pytest.approx(4 * 200.0)
-        assert hydros[0]["unit_groups"][0]["max_turbined_m3s"] == pytest.approx(
-            generation["max_turbined_m3s"]
-        )
-
-    def test_constant_productivity_plant_keeps_the_head_corrected_cap(
-        self, tmp_path: Path
-    ) -> None:
-        case = self._case(tmp_path, fpha=False, plant_1=_OUTAGES)
-        expected = _compute_max_turbined_head_corrected(
-            case.hidr.cadastro.loc[1], "USINA_A"
-        )[0]
+        case = self._case(tmp_path, fpha=fpha, plant_1=_OUTAGES)
+        expected = _operational_caps(case.hidr.cadastro.loc[1], "USINA_A")[0]
         assert expected != pytest.approx(4 * 222.2 * _AVAILABILITY)
 
         hydros = convert_hydros(case, self._id_map())["hydros"]
 
-        assert hydros[0]["generation"]["max_turbined_m3s"] == pytest.approx(expected)
-
-    def test_fpha_plant_available_power_caps_every_stage(self, tmp_path: Path) -> None:
-        table = convert_per_stage_capacity_caps(
-            self._case(tmp_path, plant_1=_OUTAGES), self._id_map()
+        generation = hydros[0]["generation"]
+        assert generation["max_turbined_m3s"] == pytest.approx(expected)
+        assert generation["max_generation_mw"] == pytest.approx(4 * 200.0)
+        assert hydros[0]["unit_groups"][0]["max_turbined_m3s"] == pytest.approx(
+            expected
         )
+
+    @pytest.mark.parametrize("fpha", [True, False])
+    def test_available_power_caps_every_plant_at_every_stage(
+        self, tmp_path: Path, fpha: bool
+    ) -> None:
+        case = self._case(tmp_path, fpha=fpha, plant_1=_OUTAGES)
+        table = convert_per_stage_capacity_caps(case, self._id_map())
         assert table is not None
         rows = table.to_pylist()
-        plant_rows = [r for r in rows if r["hydro_id"] == 0]
-        assert [r["stage_id"] for r in plant_rows] == list(range(60))
-        for row in plant_rows:
-            assert row["max_generation_mw"] == pytest.approx(4 * 200.0 * _AVAILABILITY)
-            assert row["max_turbined_m3s"] is None
-        assert all(r["hydro_id"] == 0 for r in rows)
+        for hydro_id, code in ((0, 1), (1, 2)):
+            available = _operational_caps(case.hidr.cadastro.loc[code], "X")[1]
+            plant_rows = [r for r in rows if r["hydro_id"] == hydro_id]
+            assert [r["stage_id"] for r in plant_rows] == list(range(60))
+            for row in plant_rows:
+                assert row["max_generation_mw"] == pytest.approx(available)
+                assert row["max_turbined_m3s"] is None
+        assert _operational_caps(case.hidr.cadastro.loc[1], "X")[1] == pytest.approx(
+            4 * 200.0 * _AVAILABILITY
+        )
 
-    def test_fpha_plant_turbined_cap_ignores_a_tailrace_override(
+    def test_tailrace_override_moves_the_turbined_cap_under_either_model(
         self, tmp_path: Path
     ) -> None:
         cfuga = MagicMock()
@@ -421,15 +416,20 @@ class TestFphaConverters:
         cfuga.nivel = 30.0
 
         def turbined(fpha: bool) -> list[float | None]:
-            case = self._case(tmp_path, fpha=fpha, modif=modif_mock((1, [cfuga])))
+            case = self._case(
+                tmp_path, fpha=fpha, modif=modif_mock((1, [cfuga])), plant_1=_OUTAGES
+            )
             table = convert_per_stage_capacity_caps(case, self._id_map())
             assert table is not None
             return [
                 r["max_turbined_m3s"] for r in table.to_pylist() if r["hydro_id"] == 0
             ]
 
-        assert all(value is not None for value in turbined(fpha=False))
-        assert set(turbined(fpha=True)) == {None}
+        hreg = self._case(tmp_path, plant_1=_OUTAGES).hidr.cadastro.loc[1]
+        expected = _operational_caps(hreg, "USINA_A", canal_fuga_override=30.0)[0]
+        assert expected != pytest.approx(_operational_caps(hreg, "USINA_A")[0])
+        assert turbined(fpha=True) == [pytest.approx(expected)] * 60
+        assert turbined(fpha=False) == [pytest.approx(expected)] * 60
 
     def test_expanding_fpha_plant_caps_follow_the_machines_in_service(
         self, tmp_path: Path
@@ -449,6 +449,9 @@ class TestFphaConverters:
             plant_1=_OUTAGES,
         )
         id_map = self._id_map()
+        hreg = case.hidr.cadastro.loc[1]
+        start = _operational_caps(hreg_with_machines(hreg, {1: 1}), "USINA_A")
+        final = _operational_caps(hreg_with_machines(hreg, {1: 3}), "USINA_A")
 
         caps = {
             r["stage_id"]: r
@@ -456,26 +459,15 @@ class TestFphaConverters:
             if r["hydro_id"] == 0
         }
         for stage_id in range(6):
-            assert caps[stage_id]["max_turbined_m3s"] == pytest.approx(
-                222.2 * _AVAILABILITY
-            )
+            assert caps[stage_id]["max_turbined_m3s"] == pytest.approx(start[0])
             assert caps[stage_id]["max_generation_mw"] == pytest.approx(
                 200.0 * _AVAILABILITY
             )
         assert caps[6]["max_turbined_m3s"] is None
         assert caps[6]["max_generation_mw"] == pytest.approx(3 * 200.0 * _AVAILABILITY)
 
-        ramp = {
-            r["stage_id"]: r["max_generation_mw"]
-            for r in convert_storage_bounds(case, id_map).to_pylist()
-            if r["hydro_id"] == 0
-        }
-        assert ramp == {s: pytest.approx(200.0 * _AVAILABILITY) for s in range(6)}
-
         generation = convert_hydros(case, id_map)["hydros"][0]["generation"]
-        assert generation["max_turbined_m3s"] == pytest.approx(
-            3 * 222.2 * _AVAILABILITY
-        )
+        assert generation["max_turbined_m3s"] == pytest.approx(final[0])
         assert generation["max_generation_mw"] == pytest.approx(3 * 200.0)
 
     def test_production_models_reservoir_fpha(self, tmp_path: Path) -> None:
@@ -645,6 +637,29 @@ class TestFphaConverters:
         assert diagnostic.table is not None
         assert diagnostic.table.rows == [[1, "USINA_A"]]
 
+    def test_production_models_fpha_spill_outside_the_tailrace_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        # Plant 2 also keeps its spill out of the tailrace but is not FPHA.
+        case = self._case(
+            tmp_path,
+            plant_1={"influencia_vertimento_canal_fuga": 0},
+            plant_2={"influencia_vertimento_canal_fuga": 0},
+        )
+        with dx.collect() as collected:
+            convert_production_models(case, self._id_map())
+        [diagnostic] = [d for d in collected if d.code == "fpha-spill-outside-tailrace"]
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[1, "USINA_A", "0-59"]]
+
+    def test_production_models_spill_into_the_tailrace_is_not_reported(
+        self, tmp_path: Path
+    ) -> None:
+        with dx.collect() as collected:
+            convert_production_models(self._case(tmp_path), self._id_map())
+        assert [d for d in collected if d.code == "fpha-spill-outside-tailrace"] == []
+
     def test_production_models_monthly_reservoir_turbined_range_at_its_reference_volume(
         self, tmp_path: Path
     ) -> None:
@@ -675,6 +690,30 @@ class TestFphaConverters:
         )
         assert self._turbined_fit_max(case) == pytest.approx(
             4 * 200.0 / (_REALISTIC_RHO_ESP * 305.0)
+        )
+
+    def test_production_models_turbined_range_caps_the_plant_not_each_set(
+        self, tmp_path: Path
+    ) -> None:
+        # The second set's 50 MW generators alone would bind at
+        # 50 / (ρ_esp · 305); the plant's 1700 MW bind its four turbines as a
+        # whole.
+        case = self._case(
+            tmp_path,
+            plant_1={
+                "tipo_regulacao": "D",
+                "numero_conjuntos_maquinas": 2,
+                "maquinas_conjunto_1": 2,
+                "maquinas_conjunto_2": 2,
+                "vazao_nominal_conjunto_2": 222.2,
+                "queda_nominal_conjunto_1": 300.0,
+                "queda_nominal_conjunto_2": 300.0,
+                "potencia_nominal_conjunto_1": 800.0,
+                "potencia_nominal_conjunto_2": 50.0,
+            },
+        )
+        assert self._turbined_fit_max(case) == pytest.approx(
+            1700.0 / (_REALISTIC_RHO_ESP * 305.0)
         )
 
     def test_production_models_expanding_plant_turbined_range_on_its_declared_machines(

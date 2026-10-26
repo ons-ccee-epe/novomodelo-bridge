@@ -116,6 +116,7 @@ def _make_hidr_cadastro() -> pd.DataFrame:
         "ip": [0.0, 0.0],
         "fator_carga_maximo": [1.0, 1.0],
         "fator_carga_minimo": [0.0, 0.0],
+        "influencia_vertimento_canal_fuga": [1, 1],
     }
     for m in months:
         base[f"evaporacao_{m}"] = [1.5, 2.0]

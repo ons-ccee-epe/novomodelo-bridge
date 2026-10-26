@@ -86,6 +86,26 @@ links are cobre-bridge's.
   release, from the transit-bucket coefficients of the cut. The deck's `VI`
   record order numbers the travel-time plants. Before, a policy carrying
   travel-time state was refused.
+- **`convert newave` and `convert decomp` list the FPHA plants whose spill
+  the source model keeps out of the tailrace.** Where `hidr.dat` sets
+  `influencia_vertimento_canal_fuga` to 0, the source model fits no spillage
+  term, while Novomodelo's fit always raises the tailrace with the spilled flow.
+  The new `fpha-spill-outside-tailrace` info diagnostic names those plants
+  and their stages; Novomodelo has no input to leave the spill out yet.
+- **`convert decomp` fits each FPHA plant's turbined flow over DECOMP's
+  range.** Each stage's `fpha_config` carries `turbined_fit_max_m3s`: the
+  stage's turbined limit without the `MP` maintenance and `FD`
+  availability factors, as in DECOMP's `eco_fpha_.rvN`, and Itaipu's
+  derated plant-wide limit. Novomodelo used to fit every stage up to the plant's
+  widest derated limit.
+- **`convert newave` and `convert decomp` warn when a plant's turbined-flow
+  limit leaves out part of the source model's rule.** A plant whose
+  `hidr.dat` record lacks a datum the limit is computed from (a machine
+  set's rated head, the specific productivity, the volume-to-cota
+  polynomial or the mean tailrace level) used to get a limit without that
+  part of the rule, and no notice; the `turbine-limit-data-missing`
+  warning now names the plant, the missing datum, the limit used instead
+  and the stages it applies to.
 
 ### Changed
 
@@ -136,19 +156,20 @@ links are cobre-bridge's.
   ranges otherwise, and an `fpha-reference-initial-storage` note marks the
   initial-storage fallback. Rows that leave a study stage uncovered, two
   values for one month, or an unknown type fail the conversion, as they stop
-  NEWAVE. Evaporation, the equivalent productivity and the turbine limit of a
-  constant-productivity plant keep reading `volref_saz.dat`.
-- **`convert newave` caps an FPHA plant's turbined flow and generation as
-  NEWAVE does.** Under FPHA, NEWAVE caps a plant's turbined flow at its rated
-  flow and its generation at its rated power, both scaled by the plant's TEIF
-  and IP availability, with no head correction. The converter capped the flow
-  at the rated flow corrected for the operating head, NEWAVE's rule under
-  constant productivity, and left generation at the rated power. An FPHA plant
-  now declares the available rated flow as `max_turbined_m3s`, and
-  `hydro_bounds.parquet` carries its available power as `max_generation_mw`
-  on every stage. The declared `max_generation_mw` stays the rated power,
-  which caps the fit as it does NEWAVE's. A constant-productivity plant keeps
-  the head-corrected cap.
+  NEWAVE. Evaporation and the equivalent productivity keep reading
+  `volref_saz.dat`.
+- **`convert newave` caps turbined flow and generation as NEWAVE does.**
+  NEWAVE caps a plant's generation at its available power, the rated power
+  scaled by the plant's TEIF and IP availability, under FPHA and constant
+  productivity alike. The converter left generation at the rated power.
+  `hydro_bounds.parquet` now carries every plant's available power as
+  `max_generation_mw` on every stage; the declared `max_generation_mw` stays
+  the rated power, which caps the FPHA fit as it does NEWAVE's. Under a
+  `CFUGA` or `CMONT` record, the per-stage turbined cap of a monthly
+  reservoir read the forebay level at 65% of its useful volume, while NEWAVE
+  keeps the mean level between the minimum volume and that volume, as the
+  declared cap does, and a `volref_saz.dat` row moved the per-stage turbined
+  cap, which in NEWAVE it does not.
 - **`convert decomp` drops the FPHA on stages with a zero turbined limit.**
   An FPHA plant whose turbined limit is zero on a stage, such as one with
   every machine under maintenance, takes a zero constant productivity on that
@@ -271,6 +292,25 @@ links are cobre-bridge's.
   `decomp-fp-fit-fields-unconverted` warning lists the records that set them
   to other values than the default fit. FPHA results change for every plant
   with storage.
+- **`convert newave` caps the FPHA turbined fit range at the plant's rated
+  power, not at each machine set's.** NEWAVE's fit range is the lower of the
+  machine sets' head-limited flow and the plant's rated power over the
+  generator head. The conversion capped each set at its own generators, so a
+  plant whose generators bind some of its sets and not others got a lower
+  range than NEWAVE's `fpha_eco`. The turbined cap of `hydros.json` and
+  `hydro_bounds.parquet` already took the plant-level minimum and now uses the
+  same function.
+- **The convergence chart compares each upper bound with the same Novomodelo
+  statistic.** NEWAVE's `ZSUP` and DECOMP's `Zsup` are the lowest upper bound
+  reached so far, but the chart drew them against Novomodelo's upper bound at each
+  iteration, so the source model's line never rose where Novomodelo's did.
+  `compare newave` now reads `ZSUP ITER`, NEWAVE's upper bound at each
+  iteration, from `pmo.dat` and compares it with Novomodelo's, in the chart and in
+  the per-iteration comparison. Both reports add Novomodelo's running minimum
+  against the source model's `ZSUP`. The DECOMP report has no per-iteration
+  line, as the relato prints none. `compare newave` also read any `pmo.dat` row
+  with seven numbers, such as an electric-constraint year row, as an
+  iteration; it now reads only the convergence table.
 
 ## [0.19.0] - 2026-10-20
 

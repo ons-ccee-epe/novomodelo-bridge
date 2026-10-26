@@ -62,7 +62,7 @@ def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
 def _head_corrected_two_plant_cadastro() -> pd.DataFrame:
     """Two-plant cadastro with the head-correction inputs the shared "simple"
     fixture (``_make_hidr_cadastro``) lacks — ``queda_nominal_conjunto_*`` —
-    so ``_compute_max_turbined_head_corrected`` runs its head-corrected branch
+    so ``_operational_caps`` runs its head-corrected branch
     instead of falling back to the plain ``Σ n·q_nom`` sum.
 
     Both plants (USINA_A code 1, USINA_B code 2) share the same polynomial /
@@ -141,6 +141,17 @@ def _head_corrected_two_plant_cadastro() -> pd.DataFrame:
     return pd.DataFrame(base, index=pd.Index([1, 2], name="codigo_usina"))
 
 
+def _capacity_cap_rows(case, id_map: NewaveIdMap) -> list[dict]:
+    """The rows of :func:`convert_per_stage_capacity_caps` for *case*."""
+    from novomodelo_bridge.newave.converters.hydro import (
+        convert_per_stage_capacity_caps,
+    )
+
+    table = convert_per_stage_capacity_caps(case, id_map)
+    assert table is not None
+    return table.to_pylist()
+
+
 def _cfuga_modif_mock(code: int, *, month: int, year: int, nivel: float) -> MagicMock:
     """A MODIF.DAT mock carrying a single CFUGA record for *code* only."""
     mock_modif = modif_mock(
@@ -155,13 +166,12 @@ class TestConvertHydrosMaxTurbinedEnvelope:
     emits for that hydro (novomodelo rule 43), instead of staying pinned at the
     single reference-head value it used to declare unconditionally.
 
-    ``130.0961183125769`` (offset from the reference ``120.26013470805694``)
-    is the exact value ``_compute_max_turbined_head_corrected`` returns for
-    USINA_A's fixture with a CFUGA-override head of 338.5 m — cross-checked
-    directly against that function in
-    ``test_per_stage_envelope_exceeds_reference_head_value`` rather than
-    hand-derived, so a fixture-numbers change cannot silently desync the
-    hard-coded expectations below it.
+    ``124.34830115445888`` (offset from the reference ``120.26013470805694``)
+    is the exact value ``_operational_caps`` returns for USINA_A's fixture with
+    a CFUGA-override head of 309.25 m — cross-checked directly against that
+    function in ``test_per_stage_envelope_exceeds_reference_head_value``, so a
+    fixture-numbers change cannot silently desync the hard-coded expectations
+    below it.
     """
 
     def _make_id_map(self) -> NewaveIdMap:
@@ -192,23 +202,75 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         this CFUGA override produces genuinely exceeds the reference-head
         value — otherwise the rest of this class would be exercising a no-op."""
         from novomodelo_bridge.newave.converters.hydro import (
-            _compute_max_turbined_head_corrected,
+            _operational_caps,
             convert_per_stage_capacity_caps,
         )
 
         case = self._case_with_cfuga_on_usina_a(tmp_path)
         hreg_a = _head_corrected_two_plant_cadastro().loc[1]
 
-        reference = _compute_max_turbined_head_corrected(hreg_a, "USINA_A")[0]
+        reference = _operational_caps(hreg_a, "USINA_A")[0]
         assert reference == pytest.approx(120.26013470805694)
+
+        per_stage = _operational_caps(hreg_a, "USINA_A", canal_fuga_override=30.0)[0]
+        assert per_stage == pytest.approx(124.34830115445888)
 
         table = convert_per_stage_capacity_caps(case, self._make_id_map())
         assert table is not None
         rows = [r for r in table.to_pylist() if r["hydro_id"] == 0]
         assert len(rows) == 12  # every stage of the 1-year horizon
         for row in rows:
-            assert row["max_turbined_m3s"] == pytest.approx(130.0961183125769)
+            assert row["max_turbined_m3s"] == pytest.approx(per_stage)
         assert rows[0]["max_turbined_m3s"] > reference
+
+    def test_tailrace_override_keeps_the_mean_forebay_of_a_reservoir_plant(
+        self, tmp_path: Path
+    ) -> None:
+        """Under CFUGA an ``M`` plant's head is still the mean cota over
+        ``[V_min, V_65]`` (``300 + 0.1 · 392.5``), not the cota at ``V_65``."""
+        table = _capacity_cap_rows(
+            self._case_with_cfuga_on_usina_a(tmp_path), self._make_id_map()
+        )
+        head = 300.0 + 0.1 * (100.0 + 685.0) / 2.0 - 30.0
+        assert [r["max_turbined_m3s"] for r in table if r["hydro_id"] == 0] == [
+            pytest.approx(100.0 * (head / 200.0) ** 0.5)
+        ] * 12
+
+    def test_seasonal_reference_volume_leaves_the_turbined_cap(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``volref_saz.dat`` row moves the productivity, never the cap."""
+        from novomodelo_bridge.newave.converters.hydro import (
+            _operational_caps,
+            convert_hydros,
+        )
+
+        volref = pd.DataFrame(
+            {
+                "codigo_usina": [1] * 12,
+                "nome_usina": ["USINA_A"] * 12,
+                "mes": list(range(1, 13)),
+                "valor": [75.0 * m for m in range(1, 13)],
+            }
+        )
+        case = _hydro_case(
+            tmp_path,
+            cadastro=_head_corrected_two_plant_cadastro(),
+            confhd=_make_confhd_df(),
+            rees=_make_ree_df(),
+            volref_volumes=volref,
+            volref_saz=tmp_path / "volref_saz.dat",
+            dger=_make_hydro_dger_mock(
+                start_year=2025, start_month=1, num_anos=1, num_anos_pos=0
+            ),
+        )
+
+        rows = _capacity_cap_rows(case, self._make_id_map())
+        assert {r["max_turbined_m3s"] for r in rows} == {None}
+        hydro_a = convert_hydros(case, self._make_id_map())["hydros"][0]
+        assert hydro_a["generation"]["max_turbined_m3s"] == pytest.approx(
+            _operational_caps(_head_corrected_two_plant_cadastro().loc[1], "A")[0]
+        )
 
     def test_declared_value_raised_to_per_stage_envelope(self, tmp_path: Path) -> None:
         """The declared value equals ``max(reference, per-stage max)``."""
@@ -219,7 +281,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         hydro_a = next(h for h in result["hydros"] if h["name"] == "USINA_A")
 
         assert hydro_a["generation"]["max_turbined_m3s"] == pytest.approx(
-            130.0961183125769
+            124.34830115445888
         )
 
     def test_mirror_group_matches_raised_declared_value(self, tmp_path: Path) -> None:
@@ -239,17 +301,17 @@ class TestConvertHydrosMaxTurbinedEnvelope:
     def test_plant_without_per_stage_variation_keeps_reference_value(
         self, tmp_path: Path
     ) -> None:
-        """USINA_B carries no CFUGA/CMONT/VOLREF_SAZ override, so it is
+        """USINA_B carries no CFUGA/CMONT override, so it is
         absent from the envelope and keeps its un-raised reference-head value
         — the CFUGA override on its sibling USINA_A must not leak into it."""
         from novomodelo_bridge.newave.converters.hydro import (
-            _compute_max_turbined_head_corrected,
+            _operational_caps,
             convert_hydros,
         )
 
         case = self._case_with_cfuga_on_usina_a(tmp_path)
         hreg_b = _head_corrected_two_plant_cadastro().loc[2]
-        expected_b = _compute_max_turbined_head_corrected(hreg_b, "USINA_B")[0]
+        expected_b = _operational_caps(hreg_b, "USINA_B")[0]
 
         result = convert_hydros(case, self._make_id_map())
         hydro_b = next(h for h in result["hydros"] if h["name"] == "USINA_B")
@@ -262,12 +324,11 @@ class TestConvertHydrosMaxTurbinedEnvelope:
     def test_no_overrides_anywhere_keeps_declared_value_unchanged(
         self, tmp_path: Path
     ) -> None:
-        """A hydro case with no MODIF/VOLREF_SAZ at all (the common case) must
-        declare exactly the reference-head value — the envelope lookup is a
-        pure no-op when ``convert_per_stage_capacity_caps`` returns
-        ``None``."""
+        """A hydro case with no MODIF at all (the common case) must declare
+        exactly the reference-head value — the envelope lookup is a pure no-op
+        when ``convert_per_stage_capacity_caps`` carries no turbined cap."""
         from novomodelo_bridge.newave.converters.hydro import (
-            _compute_max_turbined_head_corrected,
+            _operational_caps,
             convert_hydros,
         )
 
@@ -281,7 +342,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
             ),
         )
         hreg_a = _head_corrected_two_plant_cadastro().loc[1]
-        expected_a = _compute_max_turbined_head_corrected(hreg_a, "USINA_A")[0]
+        expected_a = _operational_caps(hreg_a, "USINA_A")[0]
 
         result = convert_hydros(case, self._make_id_map())
         hydro_a = next(h for h in result["hydros"] if h["name"] == "USINA_A")
@@ -328,7 +389,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         assert len(rows_without_declaration_fix) == len(rows_with_declaration_fix) == 12
         assert rows_without_declaration_fix == rows_with_declaration_fix
         assert all(
-            r["max_turbined_m3s"] == pytest.approx(130.0961183125769)
+            r["max_turbined_m3s"] == pytest.approx(124.34830115445888)
             for r in rows_with_declaration_fix
         )
 
@@ -872,40 +933,48 @@ class TestConvertStorageBoundsRamp:
             }
         )
         # No machines online ⇒ both caps are an explicit zero.
-        assert _reduced_caps(hreg, {}, "X", fpha=False) == (0.0, 0.0)
+        assert _reduced_caps(hreg, {}, "X") == (0.0, 0.0)
         # Only conjunto 1 online: 2×50 = 100 m³/s, 2×100 = 200 MW.
-        assert _reduced_caps(hreg, {1: 2}, "X", fpha=False) == (100.0, 200.0)
+        assert _reduced_caps(hreg, {1: 2}, "X") == (100.0, 200.0)
         # Both groups online: 100 + 3×80 = 340 m³/s, 200 + 3×200 = 800 MW.
-        assert _reduced_caps(hreg, {1: 2, 2: 3}, "X", fpha=False) == (
+        assert _reduced_caps(hreg, {1: 2, 2: 3}, "X") == (
             340.0,
             800.0,
         )
         # Generation cap rises monotonically as units come online.
         mgs = [
-            _reduced_caps(hreg, online, "X", fpha=False)[1]
-            for online in ({}, {1: 2}, {1: 2, 2: 3})
+            _reduced_caps(hreg, online, "X")[1] for online in ({}, {1: 2}, {1: 2, 2: 3})
         ]
         assert mgs == sorted(mgs)
         assert mgs[0] < mgs[1] < mgs[2]
 
-    def test_reduced_caps_fpha_derates_both_axes(self) -> None:
-        """Under FPHA both ramp caps are the online nameplate times the TEIF/IP
-        availability, with no head correction even when the head data is there."""
-        from novomodelo_bridge.newave.converters.hydro import _reduced_caps
+    def test_reduced_caps_rate_the_online_machines_at_the_operating_head(
+        self,
+    ) -> None:
+        """The turbined ramp cap is the head-corrected engolimento of the online
+        machines and the generation cap their available power."""
+        from novomodelo_bridge.newave.converters.hydro import (
+            _operational_caps,
+            _reduced_caps,
+        )
 
         hreg = _head_corrected_two_plant_cadastro().loc[1].copy()
+        hreg["maquinas_conjunto_1"] = 3
         hreg["teif"] = 5.0
         hreg["ip"] = 2.0
-        online = {1: int(hreg["maquinas_conjunto_1"]) - 1}
+        online = {1: 2}
         availability = 0.95 * 0.98
 
-        max_turbined, max_generation = _reduced_caps(hreg, online, "X", fpha=True)
+        max_turbined, max_generation = _reduced_caps(hreg, online, "X")
 
-        assert max_turbined == pytest.approx(
-            online[1] * float(hreg["vazao_nominal_conjunto_1"]) * availability
+        hreg_online = hreg.copy()
+        hreg_online["maquinas_conjunto_1"] = 2
+        assert max_turbined == pytest.approx(_operational_caps(hreg_online, "X")[0])
+        assert max_turbined != pytest.approx(
+            2 * float(hreg["vazao_nominal_conjunto_1"]) * availability
         )
         assert max_generation == pytest.approx(
-            online[1] * float(hreg["potencia_nominal_conjunto_1"]) * availability
+            2 * float(hreg["potencia_nominal_conjunto_1"]) * availability
         )
 
     def test_ramp_branch_skips_unit_row_with_missing_date(self, tmp_path) -> None:
@@ -1344,24 +1413,20 @@ class TestClampOutagePctDiagnostics:
 
         _assert_no_repo_internal_leaks(collected)
 
-    def test_same_plant_field_clamped_on_two_paths_dedups_to_one(self) -> None:
-        """TEIF > 100 clamped on both ``_available_capacity`` and
-        ``_compute_max_turbined_head_corrected`` — the two real computation
-        paths ``_clamp_outage_pct`` sits on — collapses to one diagnostic once
+    def test_same_plant_field_clamped_on_two_calls_dedups_to_one(self) -> None:
+        """TEIF > 100 clamped on two ``_operational_caps`` calls — the plant's
+        declaration and a per-stage cap — collapses to one diagnostic once
         ``finalize_diagnostics`` applies its ``(code, summary)`` de-dup (the
         raw ``collect()`` sink itself holds both emits verbatim)."""
-        from novomodelo_bridge.newave.converters.hydro.bounds import (
-            _available_capacity,
-            _compute_max_turbined_head_corrected,
-        )
+        from novomodelo_bridge.newave.converters.hydro.bounds import _operational_caps
 
         cadastro = _head_corrected_two_plant_cadastro()
         cadastro.loc[1, "teif"] = 150.0
         hreg = cadastro.loc[1]
 
         with dx.collect() as collected:
-            _available_capacity(hreg, "USINA_A")
-            _compute_max_turbined_head_corrected(hreg, "USINA_A")
+            _operational_caps(hreg, "USINA_A")
+            _operational_caps(hreg, "USINA_A", canal_fuga_override=30.0)
 
         assert len(collected) == 2  # both call sites emitted, verbatim
         finalized = dx.finalize_diagnostics(collected, [])
@@ -1410,9 +1475,9 @@ class TestClampOutagePctDiagnostics:
 
 
 class TestExpansionRampBounds:
-    """An ``EE`` plant's reduced capacity is written over its ramp window only,
-    onto the same ``(hydro, stage)`` row as any MODIF/GHMIN bound — never as a
-    competing row that the de-dup pass would have to choose against."""
+    """An ``EE`` plant's capacity follows the machines in service, and the
+    folded ``hydro_bounds`` carries it on the same ``(hydro, stage)`` row as any
+    MODIF/GHMIN bound — never as a competing row."""
 
     # Both plants carry a VMINT from Mar-2024 (stage 2), inside plant 2's ramp.
     _VMINT = [
@@ -1430,7 +1495,11 @@ class TestExpansionRampBounds:
         return NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
 
     def _run(self, tmp_path) -> pd.DataFrame:
-        from novomodelo_bridge.newave.converters.hydro import convert_storage_bounds
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_per_stage_capacity_caps,
+            convert_storage_bounds,
+        )
+        from novomodelo_bridge.newave.pipeline import _fold_per_stage_capacity_caps
 
         case = _ee_expansion_case(tmp_path, modif=modif_mock())
         case.files = dataclasses.replace(case.files, modif=tmp_path / "modif.dat")
@@ -1438,23 +1507,32 @@ class TestExpansionRampBounds:
             "novomodelo_bridge.newave.converters.hydro.bounds._extract_temporal_overrides",
             return_value={1: self._VMINT, 2: self._VMINT},
         ):
-            tbl = convert_storage_bounds(case, self._id_map())
+            tbl = _fold_per_stage_capacity_caps(
+                convert_storage_bounds(case, self._id_map()),
+                convert_per_stage_capacity_caps(case, self._id_map()),
+            )
         assert tbl is not None
         return tbl.to_pandas()
 
-    def test_reduced_capacity_covers_only_the_pre_entry_stages(self, tmp_path) -> None:
+    def test_generation_cap_follows_the_machines_in_service(self, tmp_path) -> None:
         # Jul-2024 entry under a Jan-2024 horizon is stage 6, so stages 0-5 carry
-        # conjunto 1 alone (3 x 150 = 450 MW) and stage 6 onward carries no cap:
-        # the plant's declared 690 MW applies there.
-        df = self._run(tmp_path)
-        ramp = df[(df.hydro_id == 1) & df.max_generation_mw.notna()]
-        assert sorted(ramp.stage_id) == [0, 1, 2, 3, 4, 5]
-        assert list(ramp.max_generation_mw) == [pytest.approx(450.0)] * 6
+        # conjunto 1 alone (3 x 150 = 450 MW) and stage 6 onward the full 690 MW.
+        plant = self._run(tmp_path).query("hydro_id == 1")
+        assert list(plant.stage_id) == list(range(12))
+        assert list(plant.max_generation_mw) == (
+            [pytest.approx(450.0)] * 6 + [pytest.approx(690.0)] * 6
+        )
 
-    def test_non_expanding_plant_gets_no_generation_cap(self, tmp_path) -> None:
+    def test_non_expanding_plant_gets_its_available_power(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro import _operational_caps
+
+        hreg = _ee_expansion_case(tmp_path).hidr.cadastro.loc[1]
         other = self._run(tmp_path).query("hydro_id == 0")
-        assert not other.empty
-        assert other.max_generation_mw.isna().all()
+        assert list(other.stage_id) == list(range(12))
+        assert (
+            list(other.max_generation_mw)
+            == [pytest.approx(_operational_caps(hreg, "USINA_A")[1])] * 12
+        )
 
     def test_ramp_cap_and_modif_bound_share_one_row(self, tmp_path) -> None:
         df = self._run(tmp_path)
@@ -1490,10 +1568,89 @@ class TestExpansionRampBounds:
         ee_case = _ee_expansion_case(tmp_path, cadastro=cadastro)
         table = convert_per_stage_capacity_caps(ee_case, self._id_map())
         assert table is not None
-        ramp = table.to_pandas().query("hydro_id == 1")
+        ramp = table.to_pandas().query("hydro_id == 1 and max_turbined_m3s.notna()")
         assert list(ramp.stage_id) == [0, 1, 2, 3, 4, 5]
         start_cap = declared_turbined(_hydro_case(tmp_path, cadastro=start_only))
         assert list(ramp.max_turbined_m3s) == [pytest.approx(start_cap)] * 6
         assert declared_turbined(ee_case) == pytest.approx(
             declared_turbined(_hydro_case(tmp_path, cadastro=cadastro))
         )
+
+
+class TestTurbineLimitDataMissing:
+    """A plant whose engolimento lacks a ``hidr.dat`` datum warns once, with
+    the stages its cap was computed without it."""
+
+    def _gap_rows(self, tmp_path: Path, cadastro: pd.DataFrame) -> list[list]:
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_per_stage_capacity_caps,
+        )
+
+        case = _hydro_case(
+            tmp_path,
+            cadastro=cadastro,
+            confhd=_make_confhd_df(),
+            rees=_make_ree_df(),
+            dger=_make_hydro_dger_mock(
+                start_year=2025, start_month=1, num_anos=1, num_anos_pos=0
+            ),
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
+        with dx.collect() as collected:
+            convert_per_stage_capacity_caps(case, id_map)
+        gaps = [d for d in collected if d.code == "turbine-limit-data-missing"]
+        _assert_no_repo_internal_leaks(gaps)
+        if not gaps:
+            return []
+        (diagnostic,) = gaps
+        assert diagnostic.table is not None
+        return diagnostic.table.rows
+
+    def test_complete_head_data_emits_no_warning(self, tmp_path: Path) -> None:
+        assert self._gap_rows(tmp_path, _head_corrected_two_plant_cadastro()) == []
+
+    def test_missing_rated_head_columns_warn_on_every_stage(
+        self, tmp_path: Path
+    ) -> None:
+        cadastro = _head_corrected_two_plant_cadastro().drop(
+            columns=[f"queda_nominal_conjunto_{i}" for i in range(1, 6)]
+        )
+        assert self._gap_rows(tmp_path, cadastro) == [
+            [
+                code,
+                name,
+                "queda_nominal_conjunto_*",
+                "rated flow × availability",
+                "0-11",
+            ]
+            for code, name in ((1, "USINA_A"), (2, "USINA_B"))
+        ]
+
+    def test_missing_specific_productivity_is_named(self, tmp_path: Path) -> None:
+        cadastro = _head_corrected_two_plant_cadastro()
+        cadastro.loc[2, "produtibilidade_especifica"] = 0.0
+        assert self._gap_rows(tmp_path, cadastro) == [
+            [
+                2,
+                "USINA_B",
+                "produtibilidade_especifica",
+                "rated flow × availability",
+                "0-11",
+            ]
+        ]
+
+    def test_set_with_machines_and_no_rated_head_is_named(self, tmp_path: Path) -> None:
+        cadastro = _head_corrected_two_plant_cadastro()
+        cadastro.loc[1, "numero_conjuntos_maquinas"] = 2
+        cadastro.loc[1, "maquinas_conjunto_2"] = 2
+        cadastro.loc[1, "potencia_nominal_conjunto_2"] = 500.0
+        cadastro.loc[1, "vazao_nominal_conjunto_2"] = 50.0
+        assert self._gap_rows(tmp_path, cadastro) == [
+            [
+                1,
+                "USINA_A",
+                "queda_nominal_conjunto_2",
+                "rated flow of those sets, not head-corrected",
+                "0-11",
+            ]
+        ]

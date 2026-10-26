@@ -496,27 +496,27 @@ def reconcile_kdollars_to_reais(value: float) -> float:
     return value * 1e3
 
 
-#: Canonical convergence-chart schema -- matches
-#: :func:`novomodelo_readers.read_novomodelo_convergence`'s own return schema exactly,
-#: so :func:`~novomodelo_bridge.comparators.charts.convergence_chart` can read
-#: either side without a source-specific branch.
+#: Canonical convergence-chart schema -- :func:`novomodelo_readers.read_novomodelo_convergence`'s
+#: own return schema plus ``upper_bound_best``, so
+#: :func:`~novomodelo_bridge.comparators.charts.convergence_chart` can read either side
+#: without a source-specific branch.
 _CONVERGENCE_SCHEMA: dict[str, type[pl.DataType]] = {
     "iteration": pl.Int64,
     "lower_bound": pl.Float64,
     "upper_bound_mean": pl.Float64,
+    "upper_bound_best": pl.Float64,
 }
 
 
 def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
     """DECOMP-side convergence bounds in the canonical chart schema.
 
-    Renames ``relato.convergencia``'s ``iteracao``/``zinf``/
-    ``zsup`` onto the ``iteration``/``lower_bound``/``upper_bound_mean``
-    columns :func:`novomodelo_readers.read_novomodelo_convergence` emits -- the shape
-    :func:`~novomodelo_bridge.comparators.charts.convergence_chart` reads on each
-    side separately (not a per-iteration join shape). The
-    iteration axis stays 1-based as reported, no offset -- the chart plots
-    it directly. ``zinf``/``zsup`` are native k$ and are reconciled to R$
+    Renames ``relato.convergencia``'s ``iteracao``/``zinf``/``zsup`` onto
+    ``iteration``/``lower_bound``/``upper_bound_best``: ``zsup`` is the lowest
+    upper bound so far, and the relato prints no per-iteration one, so
+    ``upper_bound_mean`` stays null. The iteration axis stays 1-based as
+    reported, no offset -- the chart plots it directly. ``zinf``/``zsup`` are
+    native k$ and are reconciled to R$
     (:func:`reconcile_kdollars_to_reais`, x1e3) so the bounds are
     unit-comparable to novomodelo's R$-denominated convergence.
 
@@ -539,7 +539,8 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
     return source.select(
         pl.col(columns["iteracao"]).cast(pl.Int64).alias("iteration"),
         (pl.col(columns["zinf"]).cast(pl.Float64) * k_to_r).alias("lower_bound"),
-        (pl.col(columns["zsup"]).cast(pl.Float64) * k_to_r).alias("upper_bound_mean"),
+        pl.lit(None, dtype=pl.Float64).alias("upper_bound_mean"),
+        (pl.col(columns["zsup"]).cast(pl.Float64) * k_to_r).alias("upper_bound_best"),
     )
 
 

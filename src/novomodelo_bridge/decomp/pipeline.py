@@ -1006,12 +1006,22 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
                 else {
                     "model": "fpha",
                     "fpha_config": fpha_conv.fpha_config(
-                        effective, case.mlt, code, stage.index, fpha_windows
+                        effective,
+                        case.mlt,
+                        code,
+                        stage.index,
+                        fpha_windows,
+                        turbined_fit_max_m3s=turbine_limits.fit_maxima[code][
+                            stage.index
+                        ],
                     ),
                     "reference_volume": reference_volume,
                 }
                 for stage in artifacts.calendar
             ]
+        outside_tailrace = fpha_conv.spill_outside_tailrace(effective, stage_models)
+        if outside_tailrace is not None:
+            dx.emit(outside_tailrace, logger=_LOG)
 
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes

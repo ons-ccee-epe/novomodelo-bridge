@@ -24,6 +24,7 @@ from novomodelo_bridge.decomp.converters.fpha import (
     fpha_eligible_codes,
     is_fpha_eligible,
     mlt_absent_diagnostic,
+    spill_outside_tailrace,
     spillage_fit_max,
     turbine_efficiency,
     unconverted_fp_fields_diagnostic,
@@ -355,13 +356,16 @@ def test_spillage_fit_max_none_without_mlt_or_for_an_unlisted_gauge() -> None:
 
 def test_fpha_config_carries_the_spillage_range_only_when_there_is_one() -> None:
     windows = VolumeWindowRule.from_fp(None, {1: 50.0}, weekly_stages=2)
-    assert fpha_config(_gauged_effective(12), _MLT, 1, 0, windows) == {
+    assert fpha_config(
+        _gauged_effective(12), _MLT, 1, 0, windows, turbined_fit_max_m3s=250.0
+    ) == {
         "source": "computed",
         "fitting_window": {"volume_min_hm3": 220.0, "volume_max_hm3": 380.0},
+        "turbined_fit_max_m3s": 250.0,
         "spillage_fit_max_m3s": 1400.0,
     }
     assert "spillage_fit_max_m3s" not in fpha_config(
-        _gauged_effective(12), None, 1, 0, windows
+        _gauged_effective(12), None, 1, 0, windows, turbined_fit_max_m3s=250.0
     )
 
 
@@ -377,6 +381,52 @@ def test_mlt_absent_remediation_has_no_repo_internal_references() -> None:
     message = f"{diagnostic.summary} {diagnostic.remediation}"
     for leak in ("docs/", "plans/", "~/git", ".py", "TRACKED", "_"):
         assert leak not in message
+
+
+def _flagged_effective(
+    flags: dict[int, int],
+    stage_varying: dict[tuple[int, str], tuple[float, ...]] | None = None,
+) -> EffectiveCadastro:
+    hidr = pd.DataFrame(
+        {
+            code: {
+                "nome_usina": f"PLANT {code} ",
+                "influencia_vertimento_canal_fuga": flag,
+            }
+            for code, flag in flags.items()
+        }
+    ).T
+    return EffectiveCadastro(base=hidr, n_stages=3, stage_varying=stage_varying or {})
+
+
+_FPHA = {"model": "fpha"}
+_OUTAGE = {"model": "constant_productivity"}
+
+
+def test_spill_outside_tailrace_names_the_fpha_stages_of_each_flagged_plant() -> None:
+    diagnostic = spill_outside_tailrace(
+        _flagged_effective({1: 0, 2: 1}),
+        {1: [_FPHA, _OUTAGE, _FPHA], 2: [_FPHA] * 3},
+    )
+    assert diagnostic is not None
+    assert diagnostic.code == "fpha-spill-outside-tailrace"
+    assert diagnostic.severity is Severity.INFO
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "PLANT 1", "0, 2"]]
+
+
+def test_spill_outside_tailrace_reads_the_flag_in_force_at_each_stage() -> None:
+    effective = _flagged_effective(
+        {1: 1}, {(1, "influencia_vertimento_canal_fuga"): (1.0, 0.0, 0.0)}
+    )
+    diagnostic = spill_outside_tailrace(effective, {1: [_FPHA] * 3})
+    assert diagnostic is not None
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "PLANT 1", "1-2"]]
+
+
+def test_spill_outside_tailrace_none_when_every_spill_reaches_the_tailrace() -> None:
+    assert spill_outside_tailrace(_flagged_effective({1: 1}), {1: [_FPHA] * 3}) is None
 
 
 # ---------------------------------------------------------------------------

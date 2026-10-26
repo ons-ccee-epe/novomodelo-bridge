@@ -144,20 +144,32 @@ the same output.
   volume; `volref_saz.dat` sets the evaporation reference and the head of the
   equivalent productivity. A volume outside the plant's storage range widens
   its sampled geometry to cover it.
-- **Turbined fit range.** Each FPHA plant's fit runs up to the flow at which
-  every machine set reaches its rated power or its turbine limit, NEWAVE's
-  rule, with no outage derating: the turbine head runs from the forebay at the
-  reference volume down to the `polinjus` tailrace at that flow, read at the
-  forebay of the plant `hidr.dat` names downstream, and the generator head
-  from the mean forebay over the plant's operating range.
-- **Turbine and generation limits.** Under FPHA, a plant turbines at most its
-  rated flow and generates at most its rated power, both scaled by its TEIF
-  and IP availability, with no head correction. `max_turbined_m3s` declares
-  that flow and `hydro_bounds.parquet` gives the available power on every
-  stage, while the declared `max_generation_mw` stays the rated power the fit
-  is capped at. A constant-productivity plant is capped at its rated flow
-  corrected for the operating head, which also keeps it under its available
-  power.
+- **Turbined fit range.** Each FPHA plant's fit runs up to the flow its
+  machine sets swallow at the turbine head, or the lower flow at which its
+  generators together reach the plant's rated power at the generator head,
+  NEWAVE's rule, with no outage derating. The turbine head runs from the
+  forebay at the reference volume down to the `polinjus` tailrace at that
+  flow, read at the forebay of the plant `hidr.dat` names downstream, and the
+  generator head from the mean forebay over the plant's operating range.
+- **Spill and the tailrace.** Where `hidr.dat` keeps a plant's spilled flow
+  out of its tailrace (`influencia_vertimento_canal_fuga` 0), NEWAVE's planes
+  carry no spillage term. Novomodelo's fit always raises the tailrace with the
+  spilled flow, so the planes of such an FPHA plant lose generation as it
+  spills. `convert newave` lists these plants in an info diagnostic.
+- **Turbine and generation limits.** Under FPHA and constant productivity
+  alike, a plant generates at most its rated power scaled by its TEIF and IP
+  availability, and turbines at most its engolimento: its rated flow
+  corrected for the operating head, capped by the flow that reaches the
+  rated power at that head, and scaled by the same availability. The
+  operating head of a monthly reservoir runs from the mean forebay level
+  between its minimum volume and 65% of its useful volume, that of a daily
+  or run-of-river plant from the forebay at `volume_referencia`, down to the
+  tailrace and less the hydraulic losses. A `CFUGA` record replaces the
+  tailrace and a `CMONT` record the forebay level, stage by stage;
+  `volref_saz.dat` does not enter the head. `hydro_bounds.parquet` gives the
+  available power on every stage, and the turbined cap on the stages a
+  `CFUGA`/`CMONT` record or a machine entry moves it, while the declared
+  `max_generation_mw` stays the rated power the fit is capped at.
 
 Anything the converter cannot carry over faithfully is reported rather than
 dropped silently: `convert newave` renders diagnostics as grouped panels,
@@ -248,10 +260,12 @@ comparable:
 
 Then read the report cost-first: the cost breakdown says which component
 differs, the per-stage costs say where, and the system and per-bus operation
-tabs localize it. Below the convergence chart, a table nets each model's
-expected constraint-violation penalties out of its final lower bound, so a
-slack priced far above any real cost on one side does not hide how close the
-priced operation is. Load and non-controllable generation are converted directly
+tabs localize it. The convergence chart sets NEWAVE's upper bound at each
+iteration, `ZSUP ITER` in `pmo.dat`, against Novomodelo's, and NEWAVE's `ZSUP`,
+the lowest upper bound so far, against Novomodelo's running minimum. Below the
+chart, a table nets each model's expected constraint-violation penalties out
+of its final lower bound, so a slack priced far above any real cost on one
+side does not hide how close the priced operation is. Load and non-controllable generation are converted directly
 from the inputs and are rarely the cause.
 
 In an FPHA run, the Productivity tab compares the two models' fitted planes on

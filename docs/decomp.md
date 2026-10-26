@@ -114,11 +114,21 @@ inputs follow DECOMP:
   is fitted at its reference volume. The turbined-flow window and point
   counts of `FP` are not converted; the conversion warns when a record sets
   them away from DECOMP's defaults.
+- The turbined-flow range of the fit runs up to the stage's turbined limit
+  computed without the `MP` and `FD` factors, the range DECOMP fits over: a
+  plant under maintenance keeps the planes of its full machine set, and the
+  factors cap only its turbined flow. Itaipu's range is its plant-wide
+  limit, derated as in the turbined cap.
 - The spillage range of the fit is twice the largest monthly long-term mean
   inflow in `mlt.dat` of the plant's station (`AC NUMPOS` included). A plant
   on the artificial station 300, or on a station with a zero mean, is fitted
   over twice its maximum turbined flow, as in DECOMP. A deck without `mlt.dat`
   gets that fallback for every plant, and the conversion warns.
+- Where `hidr.dat` keeps a plant's spilled flow out of its tailrace
+  (`influencia_vertimento_canal_fuga` 0), DECOMP's planes carry no spillage
+  term. Novomodelo's fit always raises the tailrace with the spilled flow, so the
+  planes of such a plant lose generation as it spills. `convert decomp` lists
+  these plants in an info diagnostic; an `AC VERTJU` override is not read.
 - A stage where the plant's turbined limit is zero, for example with every
   machine under maintenance, gets a zero constant productivity in place of
   the production function. DECOMP builds no planes for such a stage.
@@ -245,6 +255,10 @@ minimum of an export contract at its price as a cost, and only the energy
 above it as revenue. Novomodelo counts every exported MWh as revenue, so on a deck
 with an export minimum the two contract costs differ by twice the minimum's
 value; the comparison logs that amount.
+
+DECOMP's `Zsup` is the lowest upper bound reached so far, and the relato
+prints no upper bound per iteration, so the convergence chart sets it against
+Novomodelo's running minimum.
 
 Below the convergence chart, a table gives each model's final lower bound with
 and without its expected constraint-violation penalties. One slack priced far
