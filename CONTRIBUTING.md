@@ -113,7 +113,9 @@ on them, and they are the canonical statements for humans too. In short:
 - `README.md` is also the PyPI description, so it links to `docs/` with
   absolute URLs and cites no repository-only paths.
 - Add a line under `Unreleased` in `CHANGELOG.md` for every user-visible
-  change.
+  change, written for a CLI user: the command and its effect in one or two
+  lines, folded into an existing entry that serves the same goal.
+  `.claude/rules/doc-integrity.md` gives the full rule.
 
 ## Adding a converter
 
