@@ -266,7 +266,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # novomodelo rule 43 forbids any hydro_bounds row from raising max_turbined_m3s
     # above the plant's own declared value, so the reference-head value below
     # must be raised to cover every emitted per-stage row. Empty
-    # for a hydro with no per-stage head variation, which keeps its declared
+    # for a hydro with no per-stage turbined cap, which keeps its declared
     # value unchanged.
     turbined_envelope = _per_stage_turbined_envelope(case, id_map)
 
@@ -409,26 +409,22 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # Generation parameters. Productivity lives in
         # ``hydro_production_models.json`` on novomodelo HEAD; callers that need
         # the per-hydro base value call ``compute_base_productivities``.
-        is_fpha = newave_code in fpha_codes
-        # Turbined cap: the source model's operational dispatch cap,
-        # _operational_caps for the plant's production function.
+        # Turbined cap: the source model's engolimento, _operational_caps.
         # Generation cap: rated installed power Σ n·p_nom = the FPHA GHmax the
-        # fit clamps at. It never binds before a constant-productivity plant's
-        # head-corrected turbined cap; an FPHA plant's available power is a
-        # per-stage hydro_bounds row below it.
+        # fit clamps at; the available power below it is a per-stage
+        # hydro_bounds row.
         #
-        # The declaration itself is the ENVELOPE over that reference-head value
-        # and every per-stage head-corrected cap this hydro emits into
-        # hydro_bounds: a plant with per-stage head variation
-        # (MODIF.DAT CFUGA/CMONT or seasonal VOLREF_SAZ) can turbine more at a
-        # higher-head stage than at the reference head, and novomodelo rule 43
-        # forbids a hydro_bounds row from exceeding the plant's own declared
-        # value. A hydro with no per-stage variation is absent from
+        # The declared turbined cap is the ENVELOPE over that reference-head
+        # value and every per-stage cap this hydro emits into hydro_bounds: a
+        # plant with MODIF.DAT CFUGA/CMONT can turbine more at a higher-head
+        # stage than at the reference head, and novomodelo rule 43 forbids a
+        # hydro_bounds row from exceeding the plant's own declared value. A
+        # hydro with no per-stage turbined cap is absent from
         # ``turbined_envelope`` and keeps its reference-head value unchanged.
         novomodelo_hydro_id = id_map.hydro_id(newave_code)
         config = expansion_configs.get(newave_code)
         hreg_declared = hreg if config is None else config.declared_hreg(hreg)
-        max_turbined_reference = _operational_caps(hreg_declared, name, fpha=is_fpha)[0]
+        max_turbined_reference = _operational_caps(hreg_declared, name)[0]
         envelope_value = turbined_envelope.get(novomodelo_hydro_id)
         max_turbined = (
             max_turbined_reference
@@ -544,7 +540,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         # (eta = rho_esp / K) and select the "fpha" generation model. Eligibility
         # guarantees rho_esp is present. Non-eligible plants (run-of-river, or
         # non-FPHA cases) keep the constant-productivity path with no efficiency.
-        # ``is_fpha`` was computed above for the capacity-cap branch.
+        is_fpha = newave_code in fpha_codes
         efficiency: dict | None = None
         if is_fpha and rho_esp is not None:
             efficiency = {

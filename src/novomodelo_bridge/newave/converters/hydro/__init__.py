@@ -13,7 +13,7 @@ Thin facade — defines nothing itself. Re-exports the package's public API from
 from __future__ import annotations
 
 from novomodelo_bridge.newave.converters.hydro.bounds import (
-    _compute_max_turbined_head_corrected as _compute_max_turbined_head_corrected,
+    _operational_caps as _operational_caps,
 )
 from novomodelo_bridge.newave.converters.hydro.bounds import (
     _per_stage_turbined_envelope as _per_stage_turbined_envelope,

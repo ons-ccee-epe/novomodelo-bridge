@@ -278,6 +278,21 @@ def test_availability_factor_scales_both_limits(p_nom: float, expected: float) -
     assert limits.cap(1, 0, 0) == pytest.approx(expected)
 
 
+@pytest.mark.parametrize(
+    ("p_nom", "expected"),
+    [
+        pytest.param(1000.0, 100.0, id="head-limited-flow"),
+        pytest.param(40.0, 40.0 / 0.8, id="generator-limit"),
+    ],
+)
+def test_fit_maximum_leaves_the_availability_factor_out(
+    p_nom: float, expected: float
+) -> None:
+    row = _plant_row(conjuntos=((1, 100.0, p_nom, 80.0),))
+    limits = _limits({1: row}, factors={(1, 0): 0.5})
+    assert limits.fit_maxima[1] == pytest.approx((expected,) * 3)
+
+
 def _itaipu_limits(p_nom_50: float, p_nom_60: float) -> TurbineLimits:
     """Itaipu with a 100 m³/s and an 80 m³/s set at the rated head (a 180 m³/s
     head-limited flow) and an ``MP × FD`` of 0.5 on its 60 Hz group."""
@@ -304,6 +319,11 @@ def test_itaipu_limit_is_plant_wide_and_its_groups_take_their_generator_limits()
 def test_itaipu_plant_limit_takes_the_summed_generator_limits() -> None:
     limits = _itaipu_limits(40.0, 40.0)
     assert limits.plant_caps[66][0] == pytest.approx(40.0 / 0.8 + 20.0 / 0.8)
+
+
+def test_itaipu_fit_maximum_is_its_derated_plant_limit() -> None:
+    limits = _itaipu_limits(40.0, 40.0)
+    assert limits.fit_maxima[66] == pytest.approx((40.0 / 0.8 + 20.0 / 0.8,) * 3)
 
 
 def test_plant_limit_below_the_groups_sum_becomes_a_turbined_bound() -> None:
@@ -353,6 +373,34 @@ def test_converged_limits_emit_no_diagnostic() -> None:
     with collect() as sink:
         _limits({1: _plant_row()}, tailrace={1: _RISING_TAILRACE})
     assert sink == []
+
+
+def _gap_rows(row: dict) -> list[list[object]]:
+    with collect() as sink:
+        _limits({1: row})
+    (diagnostic,) = [d for d in sink if d.code == "turbine-limit-data-missing"]
+    assert diagnostic.table is not None
+    return diagnostic.table.rows
+
+
+def test_set_without_a_rated_head_warns_on_every_stage() -> None:
+    row = _plant_row(conjuntos=((2, 50.0, 1000.0, 80.0), (1, 30.0, 500.0, math.nan)))
+    assert _gap_rows(row) == [
+        [
+            1,
+            "PLANT",
+            "queda_nominal_conjunto_2",
+            "rated flow, not head-corrected",
+            "0-2",
+        ]
+    ]
+
+
+def test_non_positive_productivity_warns_of_no_generator_limit() -> None:
+    row = _plant_row() | {"produtibilidade_especifica": 0.0}
+    assert _gap_rows(row) == [
+        [1, "PLANT", "positive equivalent productivity", "no generator limit", "0-2"]
+    ]
 
 
 def test_plant_limit_sums_the_groups_unless_the_plant_cap_is_tighter() -> None:

@@ -100,8 +100,8 @@ class TestConvertHydros:
         with dx.collect() as collected:
             result = convert_hydros(off, self._make_id_map())
         assert all(h["outflow"]["min_outflow_m3s"] == 0.0 for h in result["hydros"])
-        assert [d.code for d in collected] == ["dger-switch-off"]
-        assert collected[0].severity is Severity.INFO
+        [switch] = [d for d in collected if d.code == "dger-switch-off"]
+        assert switch.severity is Severity.INFO
 
     def test_hydro_ids_are_zero_based_and_sorted(self, tmp_path) -> None:
         case = _hydro_case(tmp_path)

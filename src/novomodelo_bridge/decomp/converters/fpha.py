@@ -32,14 +32,22 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    Severity,
+    emit,
+    format_stage_ranges,
+)
 from novomodelo_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
 from novomodelo_bridge.core.productivity import (
     evaluate_cota,
     fpha_efficiency,
     fpha_spillage_fit_max_m3s,
 )
-from novomodelo_bridge.core.tailrace import build_tailrace_table
+from novomodelo_bridge.core.tailrace import (
+    build_tailrace_table,
+    spill_outside_tailrace_diagnostic,
+)
 from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
     storage_envelope,
@@ -363,13 +371,17 @@ def fpha_config(
     code: int,
     stage_index: int,
     windows: VolumeWindowRule,
+    *,
+    turbined_fit_max_m3s: float,
 ) -> dict:
     """Plant *code*'s computed ``fpha_config`` at *stage_index*: its volume
-    ``fitting_window`` and, when :func:`spillage_fit_max` has one, its
-    ``spillage_fit_max_m3s``."""
+    ``fitting_window``, its ``turbined_fit_max_m3s``
+    (:attr:`~novomodelo_bridge.decomp.converters.hydro.TurbineLimits.fit_maxima`)
+    and, when :func:`spillage_fit_max` has one, its ``spillage_fit_max_m3s``."""
     config: dict = {
         "source": "computed",
         "fitting_window": windows.fitting_window(effective, code, stage_index),
+        "turbined_fit_max_m3s": turbined_fit_max_m3s,
     }
     spillage_max = spillage_fit_max(effective, mlt, code, stage_index)
     if spillage_max is not None:
@@ -393,6 +405,32 @@ def spillage_fit_max(
     if table is None or str(posto) not in table.columns:
         return None
     return fpha_spillage_fit_max_m3s(posto, table[str(posto)].tolist())
+
+
+def spill_outside_tailrace(
+    effective: EffectiveCadastro, stage_models: Mapping[int, Sequence[dict]]
+) -> Diagnostic | None:
+    """:func:`~novomodelo_bridge.core.tailrace.spill_outside_tailrace_diagnostic`
+    for the FPHA stages of *stage_models* (per plant code, one model per
+    stage) whose plant keeps its spilled flow out of the tailrace, or ``None``.
+    """
+    rows: list[list[object]] = []
+    for code, models in sorted(stage_models.items()):
+        stages = [
+            index
+            for index, model in enumerate(models)
+            if model["model"] == "fpha"
+            and effective.value(code, "influencia_vertimento_canal_fuga", index) == 0
+        ]
+        if stages:
+            rows.append(
+                [
+                    code,
+                    str(effective.base.loc[code, "nome_usina"]).strip(),
+                    format_stage_ranges(stages),
+                ]
+            )
+    return spill_outside_tailrace_diagnostic(rows) if rows else None
 
 
 def mlt_absent_diagnostic(plant_count: int) -> Diagnostic:

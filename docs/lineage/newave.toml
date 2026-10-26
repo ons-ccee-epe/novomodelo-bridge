@@ -1563,14 +1563,12 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "modif", item = "VOLMAX · volume" },
     { file = "modif", item = "CFUGA · nivel" },
     { file = "modif", item = "CMONT · nivel" },
-    { file = "volref_saz", item = "valor" },
     { file = "dger", item = "sazonaliza_cfuga_cmont" },
     { file = "confhd", item = "usina_existente" },
     { file = "exph", item = "data_entrada_operacao" },
     { file = "exph", item = "conjunto_maquina_entrada" },
-    { file = "dger", item = "funcao_producao_uhe" },
   ]
-  how = "Usina `fpha` em caso FPHA (`funcao_producao_uhe = 0`): soma por conjunto de `n · vazao_nominal`, multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)` e sem correção pela queda, o limite que o NEWAVE aplica sob FPHA. Demais usinas: engolimento máximo na queda de operação, soma por conjunto de `n · vazao_nominal · (h_op / queda_nominal)^k` (k = 0,5 para Francis/Pelton, 0,2 para Kaplan), limitada por `potência instalada / (ρ_esp · h_op)` e multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. `h_op` é a queda líquida média entre `volume_minimo` e 65% do volume útil (regulação `M`) ou na cota de `volume_referencia` (`D`/`S`), descontados canal de fuga e perdas. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final, com todas as máquinas em operação; a rampa até ela vai para `hydro_bounds.parquet`. Para usina de produtibilidade constante com `CFUGA`/`CMONT` ou linha em `volref_saz.dat`, o valor é elevado ao máximo dos limites por estágio emitidos em `hydro_bounds.parquet`, pois o Novomodelo não admite limite por estágio acima do declarado."
+  how = "Engolimento máximo na queda de operação, a mesma regra sob FPHA e sob produtibilidade constante: soma por conjunto de `n · vazao_nominal · (h_op / queda_nominal)^k` (k = 0,5 para Francis/Pelton, 0,2 para Kaplan), limitada por `potência instalada / (ρ_esp · h_op)` e multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. `h_op` é a cota média entre `volume_minimo` e 65% do volume útil (regulação `M`) ou a cota de `volume_referencia` (`D`/`S`), descontados canal de fuga e perdas; `volref_saz.dat` não entra na queda. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final, com todas as máquinas em operação; a rampa até ela vai para `hydro_bounds.parquet`. Para usina com `CFUGA`/`CMONT`, o valor é elevado ao máximo dos limites por estágio emitidos em `hydro_bounds.parquet`, pois o Novomodelo não admite limite por estágio acima do declarado."
 
   [[output.field]]
   path = "hydros[].generation.min_generation_mw"
@@ -1591,7 +1589,7 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
     { file = "exph", item = "data_entrada_operacao" },
     { file = "exph", item = "conjunto_maquina_entrada" },
   ]
-  how = "Potência instalada nominal: soma por conjunto de `maquinas_conjunto · potencia_nominal_conjunto` (potência do conjunto sobrescrita pelo registro permanente `POTEFE` de `modif.dat`), sem desconto de `teif`/`ip` (o teto GHmax da FPHA do NEWAVE). Em caso FPHA, a potência disponível das usinas `fpha` vai, por estágio, para `hydro_bounds.parquet`. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final: a de `modif.dat` no início do estudo mais as máquinas que entram, até o total de `hidr.dat`."
+  how = "Potência instalada nominal: soma por conjunto de `maquinas_conjunto · potencia_nominal_conjunto` (potência do conjunto sobrescrita pelo registro permanente `POTEFE` de `modif.dat`), sem desconto de `teif`/`ip` (o teto GHmax da FPHA do NEWAVE). A potência disponível de toda usina vai, por estágio, para `hydro_bounds.parquet`. Usina `EE` com entrada de máquinas em `exph.dat` declara a configuração final: a de `modif.dat` no início do estudo mais as máquinas que entram, até o total de `hidr.dat`."
 
   [[output.field]]
   path = "hydros[].unit_groups[].id"
@@ -1941,7 +1939,7 @@ summary = "Uma entrada por usina ativa selecionando o modelo de produção (FPHA
     { file = "polinjus", item = "HIDRELETRICA-CURVAJUSANTE-POLINOMIOPORPARTES-SEGMENTO · coeficiente_a0 … coeficiente_a4" },
   ]
   status = "derived"
-  how = "Limite superior, em m³/s, da faixa de turbinamento sobre a qual o Novomodelo ajusta os hiperplanos do estágio, a regra do `fpha_eco` do NEWAVE: soma por conjunto de `n · min(vazao_nominal · (h_t / queda_nominal)^k, potencia_nominal / (ρ_esp · h_g))`, sem disponibilidade (`teif`/`ip`). `h_g` é a queda líquida da cota média sobre a faixa de operação (de `volume_minimo` a `volume_maximo` para `M`, a cota de `volume_referencia` para `D`/`S`) ao `canal_fuga_medio`. `h_t` parte da cota do volume de referência da FPHA do estágio (`reference_volume.volume_hm3`) e desce até o nível de jusante de `polinjus.csv` na própria vazão (ponto fixo), com a família interpolada no nível da usina que o cadastro do `hidr.dat` põe a jusante (`codigo_usina_jusante`) no menor volume de operação dela (`volume_referencia` para `D`/`S`, `volume_minimo` para `M`); quando essa usina não está no `confhd.dat`, vale a família de menor nível. Sem família em `polinjus.csv`, `h_t` desce até `canal_fuga_medio`. Usina `EE` usa a configuração final de máquinas. O valor muda de estágio quando o volume de referência muda."
+  how = "Limite superior, em m³/s, da faixa de turbinamento sobre a qual o Novomodelo ajusta os hiperplanos do estágio, a regra do `fpha_eco` do NEWAVE: o menor entre a soma por conjunto de `n · vazao_nominal · (h_t / queda_nominal)^k` e a potência instalada `Σ n · potencia_nominal` dividida por `ρ_esp · h_g`, sem disponibilidade (`teif`/`ip`). O gerador de um conjunto não limita só o seu conjunto: o limite de potência vale para a usina inteira, como no engolimento de `hydros[].generation.max_turbined_m3s`. `h_g` é a queda líquida da cota média sobre a faixa de operação (de `volume_minimo` a `volume_maximo` para `M`, a cota de `volume_referencia` para `D`/`S`) ao `canal_fuga_medio`. `h_t` parte da cota do volume de referência da FPHA do estágio (`reference_volume.volume_hm3`) e desce até o nível de jusante de `polinjus.csv` na própria vazão (ponto fixo), com a família interpolada no nível da usina que o cadastro do `hidr.dat` põe a jusante (`codigo_usina_jusante`) no menor volume de operação dela (`volume_referencia` para `D`/`S`, `volume_minimo` para `M`); quando essa usina não está no `confhd.dat`, vale a família de menor nível. Sem família em `polinjus.csv`, `h_t` desce até `canal_fuga_medio`. Usina `EE` usa a configuração final de máquinas. O valor muda de estágio quando o volume de referência muda."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].reference_volume.volume_hm3"
@@ -2299,7 +2297,7 @@ summary = "Famílias de curvas de nível de jusante (polinômios por partes na v
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma fonte produz linhas: `dsvagua.dat` com desvios (e `outros_usos_da_agua` de `dger.dat` diferente de 0), registros temporais `VMAXT`/`VMINT`/`TURBMAXT`/`TURBMINT`/`VAZMINT` em `modif.dat`, `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas em `exph.dat`, usina com `CFUGA`/`CMONT`/linha em `volref_saz.dat`, ou usina `fpha` em caso FPHA"
+when = "sempre que o caso tem usina hidrelétrica ativa: toda usina recebe, em todo estágio, a potência disponível como `max_generation_mw`"
 module = "src/novomodelo_bridge/newave/converters/hydro/bounds.py"
 reads = [
   { file = "dsvagua" },
@@ -2309,9 +2307,8 @@ reads = [
   { file = "modif" },
   { file = "ghmin" },
   { file = "exph" },
-  { file = "volref_saz" },
 ]
-summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`, resultado da junção externa de três tabelas: retirada de água (`dsvagua.dat`), limites temporais (`modif.dat`, `ghmin.dat`, rampa de máquinas de `exph.dat`) e limites de capacidade por estágio (turbinamento máximo corrigido pela queda, com `CFUGA`/`CMONT`/`volref_saz.dat`, e, em caso FPHA, a potência disponível das usinas `fpha`). Colunas de máximo acima do valor declarado em `hydros.json` são limitadas ao declarado, com aviso. A coluna `max_generation_mw` só existe quando há usina NE em enchimento, usina EE com entrada de máquinas ou usina `fpha`."
+summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`, resultado da junção externa de três tabelas: retirada de água (`dsvagua.dat`), limites temporais (`modif.dat`, `ghmin.dat`, rampa de máquinas de enchimento de `exph.dat`) e limites de capacidade por estágio (a potência disponível de toda usina e, com `CFUGA`/`CMONT` ou entrada de máquinas, o engolimento do estágio). Colunas de máximo acima do valor declarado em `hydros.json` são limitadas ao declarado, com aviso."
 
   [[output.field]]
   path = "hydro_id"
@@ -2386,14 +2383,12 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "max_turbined_m3s"
-  when = "somente quando o caso tem fonte de limites temporais (registro de `modif.dat`, linha em `ghmin.dat`, usina NE com enchimento ou usina EE com entrada de máquinas) ou de limites de capacidade por estágio (`CFUGA`/`CMONT`/linha em `volref_saz.dat` ou usina `fpha`); a coluna é omitida nos demais casos"
   from = [
     { file = "dger", item = "restricao_turbinamento" },
     { file = "modif", item = "TURBMAXT · turbinamento" },
     { file = "modif", item = "TURBMAXT · data_inicio" },
     { file = "modif", item = "CFUGA · nivel" },
     { file = "modif", item = "CMONT · nivel" },
-    { file = "volref_saz", item = "valor" },
     { file = "dger", item = "sazonaliza_cfuga_cmont" },
     { file = "hidr", item = "maquinas_conjunto_1 … maquinas_conjunto_5" },
     { file = "hidr", item = "vazao_nominal_conjunto_1 … vazao_nominal_conjunto_5" },
@@ -2408,9 +2403,8 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "exph", item = "conjunto_maquina_entrada" },
     { file = "exph", item = "data_inicio_enchimento" },
     { file = "exph", item = "duracao_enchimento" },
-    { file = "dger", item = "funcao_producao_uhe" },
   ]
-  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o limite de `hydros[].generation.max_turbined_m3s` com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, para usina de produtibilidade constante, o engolimento corrigido pela queda do estágio (`h = ρ_eq / ρ_esp`, com `CFUGA`/`CMONT` e `volref_saz.dat`), pela mesma fórmula de `hydros[].generation.max_turbined_m3s`, com as máquinas em operação no estágio para usina `EE`; usina `EE` sem queda por estágio, e toda usina `EE` `fpha` (cujo limite não depende da queda), recebe linha só nos estágios anteriores à entrada da última máquina de `exph.dat`, pela regra do valor declarado. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o limite de `hydros[].generation.max_turbined_m3s` com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, o engolimento de `hydros[].generation.max_turbined_m3s` no estágio, sob FPHA e sob produtibilidade constante: em todo estágio de usina com `CFUGA`/`CMONT`, com o canal de fuga e o nível de montante vigentes no estágio, e, para usina `EE`, com as máquinas em operação no estágio; usina `EE` sem `CFUGA`/`CMONT` recebe linha só nos estágios anteriores à entrada da última máquina de `exph.dat`. Nulo nas demais linhas. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
 
   [[output.field]]
   path = "min_outflow_m3s"
@@ -2438,9 +2432,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
 
   [[output.field]]
   path = "max_generation_mw"
-  when = "somente quando o caso tem usina NE com registro de enchimento, usina EE com entrada de máquinas em `exph.dat` ou usina `fpha` (a coluna é omitida nos demais casos)"
   from = [
-    { file = "dger", item = "funcao_producao_uhe" },
     { file = "hidr", item = "teif" },
     { file = "hidr", item = "ip" },
     { file = "exph", item = "data_entrada_operacao" },
@@ -2454,7 +2446,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "modif", item = "NUMCNJ · numero" },
     { file = "modif", item = "NUMMAQ · numero_maquinas" },
   ]
-  how = "Potência nominal (MW) das máquinas em operação em cada estágio anterior à entrada da última máquina: soma de `n_online · potencia_nominal_conjunto` por conjunto. Para usina NE, 0 antes do fim do enchimento; para usina EE, a configuração de `modif.dat` no início do estudo mais as máquinas de `exph.dat` já entradas, na mesma linha de qualquer limite de `modif.dat`/`ghmin.dat` do estágio. Usina `fpha` recebe linha em todo estágio, com a potência das máquinas em operação multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`: o NEWAVE limita a geração sob FPHA à potência disponível, abaixo da potência nominal que `hydros.json` declara como teto do ajuste. Nulo nas demais linhas de `modif.dat`/`ghmin.dat`. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+  how = "Potência disponível (MW) das máquinas em operação, em todo estágio de toda usina, sob FPHA e sob produtibilidade constante: soma de `n_online · potencia_nominal_conjunto` por conjunto, multiplicada pela disponibilidade `(1 − teif/100) · (1 − ip/100)`. O NEWAVE limita a geração à potência disponível, abaixo da potência nominal que `hydros.json` declara como teto do ajuste da FPHA. Para usina NE, 0 antes do fim do enchimento, e a linha de enchimento prevalece; para usina EE, a configuração de `modif.dat` no início do estudo mais as máquinas de `exph.dat` já entradas. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
 
 # ===== frag_C_nw_scenarios_constraints =====
 # Fragment C — NEWAVE: scenarios/* e constraints/generic_constraint*.
@@ -3297,8 +3289,8 @@ note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo n
 
   [[source.item]]
   item = "influencia_vertimento_canal_fuga"
-  status = "unread"
-  note = "Flag de influência do vertimento no canal de fuga. O Novomodelo avalia as curvas de jusante sobre a defluência total; o flag não é consultado."
+  status = "deferred"
+  note = "Flag de influência do vertimento no canal de fuga. Lido só pelo diagnóstico `fpha-spill-outside-tailrace`, que lista as usinas FPHA com flag 0: nelas o NEWAVE não ajusta coeficiente de vertimento, e o ajuste do Novomodelo sempre avalia as curvas de jusante sobre a defluência total."
 
   [[source.item]]
   item = "fator_carga_maximo · fator_carga_minimo"

@@ -26,7 +26,8 @@ def flat_turbine_limits(
     *,
     group_counts: Mapping[int, int] | None = None,
 ) -> TurbineLimits:
-    """Every operated plant's turbined-flow cap at *cap_m3s* on every stage.
+    """Every operated plant's turbined-flow cap at *cap_m3s* on every stage,
+    and its FPHA fit range at its groups' summed caps.
 
     A plant has one unit group unless *group_counts* gives its count by code.
     """
@@ -36,7 +37,11 @@ def flat_turbine_limits(
             (code, group_id): (cap_m3s,) * n_stages
             for code in id_map.hydro_codes
             for group_id in range(counts.get(code, 1))
-        }
+        },
+        fit_maxima={
+            code: (cap_m3s * counts.get(code, 1),) * n_stages
+            for code in id_map.hydro_codes
+        },
     )
 
 

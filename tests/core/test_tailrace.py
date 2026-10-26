@@ -7,9 +7,11 @@ import math
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.tailrace import (
     TailraceFamily,
     TailraceSegment,
+    spill_outside_tailrace_diagnostic,
     tailrace_families_from_hidr,
     tailrace_families_from_polinjus,
     tailrace_level_m,
@@ -141,3 +143,18 @@ def test_polinjus_families_order_segments_and_reference_levels() -> None:
 def test_polinjus_families_with_a_blank_reference_raise() -> None:
     with pytest.raises(ValueError, match="plant 7: a tailrace family has no"):
         tailrace_families_from_polinjus(*_polinjus_frames([30.0, None]))
+
+
+def test_spill_outside_tailrace_diagnostic_is_info_with_one_row_per_plant() -> None:
+    diagnostic = spill_outside_tailrace_diagnostic(
+        [[185, "BARRA BRAUNA", "0-3"], [225, "SLT APIACAS", "0-3"]]
+    )
+    assert diagnostic.code == "fpha-spill-outside-tailrace"
+    assert diagnostic.severity is Severity.INFO
+    assert "(2)" in diagnostic.title
+    assert diagnostic.table is not None
+    assert diagnostic.table.columns == ["Code", "Name", "Stages"]
+    assert diagnostic.table.rows == [
+        [185, "BARRA BRAUNA", "0-3"],
+        [225, "SLT APIACAS", "0-3"],
+    ]
