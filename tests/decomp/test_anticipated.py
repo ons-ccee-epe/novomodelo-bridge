@@ -34,6 +34,7 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     _study_lead_hours,
     classify_gnl_windows,
     convert_gnl,
+    gnl_block_commitments,
     is_gnl_enabled,
     operative_week_months,
     read_gnl_model,
@@ -126,6 +127,58 @@ def test_committed_mw_is_block_duration_weighted() -> None:
     assert abs(got - expected) < 1e-9
     assert model.commitments[86].stages[0].hours == 168.0  # sum of duracao
     assert model.commitments[86].stages[0].block_mw == (107.0, 131.0, 97.0)
+
+
+def _two_stage_calendar() -> list[OperativeStage]:
+    """A weekly stage, then a two-week stage standing in for a monthly one."""
+    return [
+        OperativeStage(
+            index=0,
+            start_date=date(2026, 3, 14),
+            end_date=date(2026, 3, 21),
+            season_id=2,
+            block_hours=(40.0, 48.0, 80.0),
+        ),
+        OperativeStage(
+            index=1,
+            start_date=date(2026, 3, 21),
+            end_date=date(2026, 4, 4),
+            season_id=2,
+            block_hours=(50.0, 96.0, 190.0),
+        ),
+    ]
+
+
+def test_gnl_block_commitments_weights_each_block_by_its_duracao() -> None:
+    gl = [
+        _GlReg(86, 1, "14032026", [40.0, 48.0, 80.0], [100.0, 200.0, 300.0]),
+        _GlReg(86, 2, "21032026", [40.0, 48.0, 80.0], [100.0, 100.0, 100.0]),
+        _GlReg(86, 3, "28032026", [10.0, 48.0, 110.0], [400.0, 300.0, 100.0]),
+    ]
+    model = read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
+    assert model is not None
+
+    got = gnl_block_commitments(model, _two_stage_calendar())
+
+    assert got[86][0] == (100.0, 200.0, 300.0)
+    assert got[86][1] == pytest.approx(((40 * 100 + 10 * 400) / 50, 200.0, 100.0))
+
+
+def test_gnl_block_commitments_stage_without_gl_week_is_uncommanded() -> None:
+    gl = [_GlReg(86, 1, "14032026", [40.0, 48.0, 80.0], [500.0, 500.0, 500.0])]
+    model = read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
+    assert model is not None
+
+    assert gnl_block_commitments(model, _two_stage_calendar())[86][1] is None
+
+
+def test_gnl_block_commitments_block_count_mismatch_raises() -> None:
+    gl = [_GlReg(86, 1, "14032026", [84.0, 84.0], [500.0, 500.0])]
+    model = read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
+    assert model is not None
+
+    with pytest.raises(ValueError, match="declares 2 block"):
+        gnl_block_commitments(model, _two_stage_calendar())
 
 
 def test_gate_off_when_gl_absent() -> None:

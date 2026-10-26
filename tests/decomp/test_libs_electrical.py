@@ -18,7 +18,14 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.anticipated import (
+    GnlCommitment,
+    GnlCommitmentModel,
+    GnlStageCommitment,
+    GnlThermal,
+)
 from novomodelo_bridge.decomp.converters.libs_electrical import (
+    _GNL_TOKEN,
     ActivationRule,
     AssembledBound,
     AvailablePower,
@@ -1093,6 +1100,82 @@ def test_build_data_context_peq_accepts_sb_mnemonic_or_region_name(
 def test_build_data_context_peq_unresolvable_raises(text: str, match: str) -> None:
     with pytest.raises(_UnresolvableBucketBTerm, match=match):
         _peq_factory()(0, 0)(_peq_term(text))
+
+
+def _gnl_model() -> GnlCommitmentModel:
+    """SANTA CRUZ (86) commanded only in the first of two weekly stages."""
+    return GnlCommitmentModel(
+        thermals=(GnlThermal(86, "SANTA CRUZ", 1),),
+        commitments={
+            86: GnlCommitment(
+                86,
+                (
+                    GnlStageCommitment(
+                        1,
+                        date(2026, 7, 4),
+                        450.0,
+                        48.0,
+                        block_mw=(500.0, 400.0),
+                        block_hours=(24.0, 24.0),
+                    ),
+                ),
+            )
+        },
+        weeks_per_month={},
+        nl_lag_months={},
+        tg=pd.DataFrame(),
+    )
+
+
+def _gnl_factory():  # noqa: ANN202 - test helper
+    calendar = [
+        OperativeStage(
+            index=i,
+            start_date=date(2026, 7, 4 + 7 * i),
+            end_date=date(2026, 7, 11 + 7 * i),
+            season_id=6,
+            block_hours=(24.0, 24.0),
+        )
+        for i in range(2)
+    ]
+    dadger = _StubElectricalDadger(dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2))
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    return build_data_context(
+        _case(dadger, calendar), id_map, model=_model(), gnl_model=_gnl_model()
+    )
+
+
+def test_parse_ger_usit_of_gnl_plant_is_input_data() -> None:
+    model = replace(_model(), gnl_thermal_codes=frozenset({86}))
+    gnl, ct = parse_linear_expression("0.5*ger_usit(86) + ger_usit(1)", model)
+    assert gnl == ParsedTerm(coefficient=0.5, token=_GNL_TOKEN, args=(86,))
+    assert classify_term(gnl) is Bucket.B
+    assert ct == ParsedTerm(coefficient=1.0, token="ger_usit", args=(1,))
+    assert classify_term(ct) is Bucket.A
+
+
+def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
+    term = ParsedTerm(coefficient=1.0, token=_GNL_TOKEN, args=(86,))
+    factory = _gnl_factory()
+    assert factory(0, 0)(term) == 500.0
+    assert factory(0, 1)(term) == 400.0
+
+
+def test_build_data_context_gnl_uncommanded_stage_aborts() -> None:
+    term = ParsedTerm(coefficient=1.0, token=_GNL_TOKEN, args=(86,))
+    with pytest.raises(ValueError, match="not commanded at stage 1"):
+        _gnl_factory()(1, 0)(term)
+
+
+def test_assemble_bound_abates_gnl_commanded_generation() -> None:
+    model = replace(_model(), gnl_thermal_codes=frozenset({86}))
+    restriction = _inequacao(434, "ger_usih(1)", "<=", "0.5*ger_usit(86) + 11180")
+    assembled = assemble_bound(restriction, model, 0, 0, _gnl_factory()(0, 0))
+    assert assembled == AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
+        lower=None,
+        upper=11430.0,
+    )
 
 
 def _inequacao(

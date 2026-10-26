@@ -85,7 +85,8 @@ links are cobre-bridge's.
   that uses the `PEE-GER-PER-PAT` card**; they used to be dropped with no
   warning.
 - **`convert decomp` converts more LIBs electrical restrictions**: those
-  with `peq_` terms, those declared only by
+  with `peq_` terms or with the `ger_usit` of a `dadgnl` GNL plant (its `GL`
+  commanded generation), those declared only by
   `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR` rows, and numbers such as
   `1E+31`.
 

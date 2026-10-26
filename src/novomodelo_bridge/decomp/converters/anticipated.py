@@ -104,7 +104,8 @@ class GnlStageCommitment:
     the emission track compares it against the study horizon to route the
     commitment to the left or right temporal boundary. ``committed_mw`` is the
     block-duration-weighted mean of that register's ``geracao``, ``block_mw`` the
-    ``geracao`` per patamar itself; ``hours`` is the stage span (sum of its
+    ``geracao`` per patamar itself and ``block_hours`` its ``duracao``
+    (:func:`gnl_block_commitments`); ``hours`` is the stage span (sum of its
     ``duracao`` blocks), so the emission track can size a post-horizon delivery
     window ``[start_date, start_date + hours)``.
     """
@@ -114,6 +115,7 @@ class GnlStageCommitment:
     committed_mw: float
     hours: float
     block_mw: tuple[float, ...] = ()
+    block_hours: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -306,6 +308,7 @@ def _read_gl_commitments(
                 committed_mw=_block_weighted_mean(geracao, duracao),
                 hours=sum(duracao),
                 block_mw=tuple(geracao),
+                block_hours=tuple(duracao),
             )
         )
     return {
@@ -314,6 +317,57 @@ def _read_gl_commitments(
         )
         for code, stages in by_code.items()
     }
+
+
+def gnl_block_commitments(
+    model: GnlCommitmentModel, calendar: Sequence[OperativeStage]
+) -> dict[int, list[tuple[float, ...] | None]]:
+    """Each GNL plant's committed MW per study stage and block, from ``gl``.
+
+    A stage's block value is the ``duracao``-weighted mean of that block's
+    ``geracao`` over every ``gl`` week starting inside the stage — one week
+    for a weekly stage, every week of the month for a monthly one, the same
+    stage assignment :func:`convert_gnl` folds its per-stage commitment with.
+    A stage no ``gl`` week starts in maps to ``None``: the plant's dispatch
+    there is not commanded.
+
+    Raises
+    ------
+    ValueError
+        If a ``gl`` week inside a stage declares a different block count than
+        the stage itself.
+    """
+    commitments: dict[int, list[tuple[float, ...] | None]] = {}
+    for thermal in model.thermals:
+        stages = model.commitments[thermal.code].stages
+        per_stage: list[tuple[float, ...] | None] = []
+        for stage in calendar:
+            weeks = [
+                c for c in stages if stage.start_date <= c.start_date < stage.end_date
+            ]
+            if not weeks:
+                per_stage.append(None)
+                continue
+            n_blocks = len(stage.block_hours)
+            for week in weeks:
+                if len(week.block_mw) != n_blocks:
+                    raise ValueError(
+                        f"gl for GNL plant {thermal.code} at "
+                        f"{week.start_date.isoformat()} declares "
+                        f"{len(week.block_mw)} block(s); stage {stage.index} "
+                        f"has {n_blocks}"
+                    )
+            per_stage.append(
+                tuple(
+                    _block_weighted_mean(
+                        [week.block_mw[b] for week in weeks],
+                        [week.block_hours[b] for week in weeks],
+                    )
+                    for b in range(n_blocks)
+                )
+            )
+        commitments[thermal.code] = per_stage
+    return commitments
 
 
 def _read_weeks_per_month(dadgnl: Dadgnl) -> dict[int, int]:

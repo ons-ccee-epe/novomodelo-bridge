@@ -151,6 +151,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | LIBs electrical restrictions | Every restriction of the shadow-process deck's `lib_restricao-eletrica-especial.csv` converts, among them the ones reading `peq_<name>_<subsystem>` series and the ones declared only by `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR` rows. On a copy of `DEC_ONS_062026_RV0_VE_LPPs_COMPLETAS`, whose `RESTRICAO-ELETRICA-HABILITA` rules compare the `DP` load and aliases, the restrictions the conversion leaves inactive are the ones an independent evaluation of every rule, stage and block finds inactive, and the restrictions whose limit is `1E+31` convert with that side unbounded. Captured in October 2026. |
 
+### The same copy of the complete deck, with the GNL plant's `GL` generation varied
+
+| Check | Verified |
+| --- | --- |
+| GNL `ger_usit` abated with its `GL` commanded generation | On the copy of `DEC_ONS_062026_RV0_VE_LPPs_COMPLETAS`, the restrictions whose `GPC`/`GPC2` expressions include the `ger_usit` of the `dadgnl` GNL plant convert, and their bound is the deck's limit less the formula coefficient times the plant's commanded generation. A further copy with that plant's `GL` generation made different per block, and in one week of the monthly stage, moves each such bound in every active cell by its formula coefficient times the change in the block's commanded value, the monthly stage taking the `duracao`-weighted mean of its `GL` weeks; no other restriction moves. Captured in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the
