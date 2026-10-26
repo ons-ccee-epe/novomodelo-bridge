@@ -1590,8 +1590,10 @@ reads = [
   { file = "dadger", register = "FP" },
   { file = "hidr" },
   { file = "mlt" },
+  { file = "polinjus" },
+  { file = "vazoes" },
 ]
-summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte."
+summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume e na faixa de turbinamento do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte."
 
   [[output.field]]
   path = "production_models[].hydro_id"
@@ -1694,6 +1696,55 @@ summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA co
   ]
   status = "derived"
   how = "Limite superior, em m³/s, da faixa de vertimento sobre a qual o Novomodelo ajusta o coeficiente de vertimento dos hiperplanos: o dobro da maior média mensal de longo termo do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, no estágio inicial do intervalo), como no DECOMP. Omitido no posto artificial 300, num posto de média nula e quando o deck não traz `mlt.dat` (diagnóstico `fpha-mlt-absent`): o Novomodelo usa então o dobro do engolimento máximo da usina, o mesmo recurso do DECOMP para média nula."
+
+  [[output.field]]
+  path = "production_models[].stage_ranges[].fpha_config.turbined_fit_max_m3s"
+  when = "somente para usinas com modelo `fpha`"
+  from = [
+    { file = "hidr", item = "numero_conjuntos_maquinas" },
+    { file = "hidr", item = "maquinas_conjunto_1..5" },
+    { file = "hidr", item = "vazao_nominal_conjunto_1..5" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1..5" },
+    { file = "hidr", item = "queda_nominal_conjunto_1..5" },
+    { file = "hidr", item = "tipo_turbina" },
+    { file = "hidr", item = "a0_volume_cota..a4_volume_cota" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+    { file = "hidr", item = "produtibilidade_especifica" },
+    { file = "hidr", item = "canal_fuga_medio" },
+    { file = "hidr", item = "perdas" },
+    { file = "hidr", item = "tipo_perda" },
+    { file = "dadger", register = "AC", item = "NUMCON" },
+    { file = "dadger", register = "AC", item = "NUMMAQ" },
+    { file = "dadger", register = "AC", item = "VAZEFE" },
+    { file = "dadger", register = "AC", item = "POTEFE" },
+    { file = "dadger", register = "AC", item = "COTVOL" },
+    { file = "dadger", register = "AC", item = "VOLMIN" },
+    { file = "dadger", register = "AC", item = "VOLMAX" },
+    { file = "dadger", register = "AC", item = "PROESP" },
+    { file = "dadger", register = "AC", item = "JUSMED" },
+    { file = "dadger", register = "AC", item = "PERHID" },
+    { file = "hidr", item = "tipo_regulacao" },
+    { file = "hidr", item = "codigo_usina_jusante" },
+    { file = "hidr", item = "numero_polinomios_jusante" },
+    { file = "hidr", item = "referencia_jusante_k" },
+    { file = "hidr", item = "a0_jusante_k..a4_jusante_k" },
+    { file = "hidr", item = "posto" },
+    { file = "polinjus", item = "hidreletrica_curvajusante · nivel_montante_referencia" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · limite_superior_vazao_jusante" },
+    { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4" },
+    { file = "vazoes", item = "previsoes · coluna do posto" },
+    { file = "vazoes", item = "cenarios_gerados · coluna do posto" },
+    { file = "vazoes", item = "probabilidades · probabilidade (estagio terminal)" },
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "dadger", register = "DP", item = "duracao_patamar" },
+    { file = "dadger", register = "AC", item = "NUMJUS" },
+    { file = "dadger", register = "AC", item = "NUMPOS" },
+    { file = "dadger", register = "MP", item = "manutencao" },
+    { file = "dadger", register = "FD", item = "fator" },
+  ]
+  status = "derived"
+  how = "Limite superior, em m³/s, da faixa de turbinamento sobre a qual o Novomodelo ajusta os hiperplanos no estágio: o limite de turbinamento a priori do DECOMP no estágio, como em `hydros[].generation.max_turbined_m3s`, mas sem o fator `MP` × `FD` nos dois termos, `min(qmaxT, P_inst / ρ_eq)`. É a faixa de vazão turbinada do `eco_fpha_` do DECOMP: uma usina em manutenção mantém os hiperplanos do conjunto completo de máquinas. Para Itaipu (código 66), o limite da usina `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`, com Pdisp_g já reduzido por `MP` × `FD`. O valor muda de estágio quando o cadastro efetivo ou a afluência que a usina não consegue reter mudam."
 
   [[output.field]]
   path = "production_models[].stage_ranges[].reference_volume.volume_hm3"
