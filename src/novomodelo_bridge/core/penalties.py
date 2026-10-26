@@ -12,9 +12,12 @@ from novomodelo_bridge.core.units import HM3_TO_MWH_PER_RHO
 #
 # These are the source model's v30 values verbatim: tiny (~1e-4 R$/MWh) regularization
 # costs whose only role is to break LP ties in a fixed merit order (exchange < spillage
-# < … < excess), well below any operational or deterrent cost.
+# < … < excess), well below any operational or deterrent cost. PCORTEOL is the one
+# exception: lowered from v30's 0.000344 below every other micro-penalty, so curtailing
+# a park is the cheapest surplus outlet. It must stay > 0 (novomodelo rejects a zero
+# penalty).
 PINT = 0.000273  # intercâmbio  → line.exchange_cost
-PCORTEOL = 0.000344  # corte geração eólica → ncs.curtailment_cost
+PCORTEOL = 0.0001  # corte geração eólica → ncs.curtailment_cost
 PEXC = 0.000355  # excesso de energia → bus.excess_cost
 
 # Flow-domain (R$/MWh equivalent, multiplied by ρ_avg before emission). Novomodelo's

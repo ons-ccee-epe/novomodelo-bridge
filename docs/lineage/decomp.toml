@@ -377,7 +377,7 @@ summary = "Custo de déficit de `CD` e micro-penalidades fixas do modelo de orig
   path = "non_controllable_source.curtailment_cost"
   from = []
   status = "constant"
-  how = "Micro-penalidade fixa `0.000344` R$/MWh (corte de geração não controlável)."
+  how = "Micro-penalidade fixa `0.0001` R$/MWh (corte de geração não controlável), abaixo do `0.000344` do modelo de origem, para o corte ser a saída de sobra mais barata."
 
 # ---------------------------------------------------------------------------
 # initial_conditions.json

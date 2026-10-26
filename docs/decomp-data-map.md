@@ -238,7 +238,7 @@ Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco
 | `hydro.water_withdrawal_violation_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_max` (folga de retirada de água para irrigação `TI`). |
 | `hydro.inflow_nonnegativity_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `water_withdrawal_violation_cost + 1` R$/(m³/s): a folga de vazão natural negativa nunca pode ser mais barata que a folga de retirada de água. |
 | `line.exchange_cost` | — *(constante)* | Micro-penalidade fixa `0.000273` R$/MWh (intercâmbio). |
-| `non_controllable_source.curtailment_cost` | — *(constante)* | Micro-penalidade fixa `0.000344` R$/MWh (corte de geração não controlável). |
+| `non_controllable_source.curtailment_cost` | — *(constante)* | Micro-penalidade fixa `0.0001` R$/MWh (corte de geração não controlável), abaixo do `0.000344` do modelo de origem, para o corte ser a saída de sobra mais barata. |
 
 ### `initial_conditions.json`
 
