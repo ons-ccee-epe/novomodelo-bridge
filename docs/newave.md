@@ -151,6 +151,11 @@ the same output.
   forebay at the reference volume down to the `polinjus` tailrace at that
   flow, read at the forebay of the plant `hidr.dat` names downstream, and the
   generator head from the mean forebay over the plant's operating range.
+- **Spill and the tailrace.** Where `hidr.dat` keeps a plant's spilled flow
+  out of its tailrace (`influencia_vertimento_canal_fuga` 0), NEWAVE's planes
+  carry no spillage term. Novomodelo's fit always raises the tailrace with the
+  spilled flow, so the planes of such an FPHA plant lose generation as it
+  spills. `convert newave` lists these plants in an info diagnostic.
 - **Turbine and generation limits.** Under FPHA and constant productivity
   alike, a plant generates at most its rated power scaled by its TEIF and IP
   availability, and turbines at most its engolimento: its rated flow

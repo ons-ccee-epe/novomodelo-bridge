@@ -82,6 +82,7 @@ def _plant_row(
         "produtibilidade_especifica": 0.009,
         "tipo_perda": 0,
         "perdas": 0.0,
+        "influencia_vertimento_canal_fuga": 1,
     }
 
 

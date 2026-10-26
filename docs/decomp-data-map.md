@@ -931,7 +931,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Lido pelo `check decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
 - `TIPERH` — *adiado.* Alteração do tipo de perdas hidráulicas. Lido pelo `check decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade.
-- `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante.
+- `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante, e o diagnóstico `fpha-spill-outside-tailrace` lê o flag do `hidr.dat` sem esta alteração.
 
 ### `dadger.rvN` › `AR`
 
@@ -1992,7 +1992,7 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `fator_carga_maximo, fator_carga_minimo` — *não lido.* Fatores de carga máximo e mínimo. Não lidos; o Novomodelo não limita o fator de carga.
 - `teif, ip` — *não lido.* Taxas de indisponibilidade forçada e programada. Não lidas na via DECOMP: a disponibilidade vem dos registros `MP` e `FD` do `dadger`.
 - `numero_unidades_base, representacao_conjunto` — *não lido.* Número de unidades de base e forma de representação dos conjuntos. Não lidos: os grupos de unidades são derivados de `numero_conjuntos_maquinas` e das colunas por conjunto.
-- `influencia_vertimento_canal_fuga` — *não lido.* Sinalizador de influência do vertimento no canal de fuga. Não lido: o Novomodelo não modela essa influência.
+- `influencia_vertimento_canal_fuga` — *adiado.* Sinalizador de influência do vertimento no canal de fuga. Lido só pelo diagnóstico `fpha-spill-outside-tailrace`, que lista as usinas FPHA com sinalizador 0: nelas o DECOMP não ajusta coeficiente de vertimento, e o ajuste do Novomodelo sempre avalia as curvas de jusante sobre a defluência total.
 - `empresa, observacao, data` — *não lido.* Metadados do cadastro (empresa, observação, data). Não lidos.
 
 ### `mlt.dat`
@@ -2212,7 +2212,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `AC` › `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Lido pelo `check decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `dadger.rvN` › `AC` › `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
 - `dadger.rvN` › `AC` › `TIPERH` — *adiado.* Alteração do tipo de perdas hidráulicas. Lido pelo `check decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade.
-- `dadger.rvN` › `AC` › `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante.
+- `dadger.rvN` › `AC` › `VERTJU` — *adiado.* Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante, e o diagnóstico `fpha-spill-outside-tailrace` lê o flag do `hidr.dat` sem esta alteração.
 - `dadger.rvN` › `CE` › `fator_perdas` — *adiado.* Fator de perdas do contrato de exportação. Lido e ignorado com o diagnóstico `contract-loss-factor-unmapped`: `energy_contracts` do Novomodelo não tem campo equivalente e o fator não é dobrado no preço nem nos limites.
 - `dadger.rvN` › `CI` › `fator_perdas` — *adiado.* Fator de perdas do contrato de importação; mesmo tratamento do `CE`.
 - `dadger.rvN` › `CV` › `tipo (VDEF, VDES, VBOM)` — *adiado.* Tipos de volume de uma `HV` além de `VARM`. A forma hm³-para-vazão exige um coeficiente por estágio (as horas de patamar variam), expressável como parâmetro `per_stage` do Novomodelo, mas ainda não convertida: a restrição é descartada com `decomp-rhv-volume-tipo-deferred`.
@@ -2258,7 +2258,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `hidr.dat` › `fator_carga_maximo, fator_carga_minimo` — *não lido.* Fatores de carga máximo e mínimo. Não lidos; o Novomodelo não limita o fator de carga.
 - `hidr.dat` › `teif, ip` — *não lido.* Taxas de indisponibilidade forçada e programada. Não lidas na via DECOMP: a disponibilidade vem dos registros `MP` e `FD` do `dadger`.
 - `hidr.dat` › `numero_unidades_base, representacao_conjunto` — *não lido.* Número de unidades de base e forma de representação dos conjuntos. Não lidos: os grupos de unidades são derivados de `numero_conjuntos_maquinas` e das colunas por conjunto.
-- `hidr.dat` › `influencia_vertimento_canal_fuga` — *não lido.* Sinalizador de influência do vertimento no canal de fuga. Não lido: o Novomodelo não modela essa influência.
+- `hidr.dat` › `influencia_vertimento_canal_fuga` — *adiado.* Sinalizador de influência do vertimento no canal de fuga. Lido só pelo diagnóstico `fpha-spill-outside-tailrace`, que lista as usinas FPHA com sinalizador 0: nelas o DECOMP não ajusta coeficiente de vertimento, e o ajuste do Novomodelo sempre avalia as curvas de jusante sobre a defluência total.
 - `hidr.dat` › `empresa, observacao, data` — *não lido.* Metadados do cadastro (empresa, observação, data). Não lidos.
 - `vazoes.rvN` › `previsoes_com_postos_artificiais` — *não lido.* Previsões incluindo os postos artificiais de acoplamento. Não lidas: só os postos das usinas operadas interessam.
 - `vazoes.rvN` › `cenarios_calculados_com_postos_artificiais` — *não lido.* Cenários gerados incluindo postos artificiais. Não lidos, pelo mesmo motivo.

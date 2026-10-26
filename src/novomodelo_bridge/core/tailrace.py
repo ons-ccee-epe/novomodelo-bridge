@@ -13,7 +13,9 @@ six unsegmented polynomials, so one core serves both tracks:
   :mod:`novomodelo_bridge.decomp.converters.fpha`);
 - :class:`TailraceFamily` and :func:`tailrace_level_m` evaluate them, built by
   :func:`tailrace_families_from_polinjus` or
-  :func:`tailrace_families_from_hidr`.
+  :func:`tailrace_families_from_hidr`;
+- :func:`spill_outside_tailrace_diagnostic` names the FPHA plants whose
+  spilled flow the source model leaves out of the tailrace.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.productivity import evaluate_cota
 
 if TYPE_CHECKING:
@@ -292,6 +295,33 @@ def tailrace_families_from_hidr(
             )
         )
     return _sorted_families(code, found)
+
+
+def spill_outside_tailrace_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic:
+    """INFO for FPHA plants whose spilled flow does not raise their tailrace in
+    the source model (``hidr.dat`` ``influencia_vertimento_canal_fuga`` 0).
+
+    Each row is ``[code, name, stages]``.
+    """
+    # TRACKED NOVOMODELO-GAP (C33): novomodelo's FPHA fit reads the tailrace at the
+    # turbined plus spilled flow, with no input to leave the spill out.
+    return Diagnostic(
+        code="fpha-spill-outside-tailrace",
+        severity=Severity.INFO,
+        category="Hydro production model",
+        title=f"FPHA spillage outside the tailrace not converted ({len(rows)})",
+        summary=(
+            f"The source model leaves the spilled flow of {len(rows)} FPHA "
+            "plant(s) out of their tailrace level, so their planes carry no "
+            "spillage term. Novomodelo's fit raises the tailrace with the spilled "
+            "flow, so their planes lose generation as they spill."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Stages"],
+            rows=[list(row) for row in rows],
+            caption="Stage ids are 0-based.",
+        ),
+    )
 
 
 def _sorted_families(

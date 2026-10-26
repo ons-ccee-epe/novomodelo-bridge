@@ -124,6 +124,11 @@ inputs follow DECOMP:
   on the artificial station 300, or on a station with a zero mean, is fitted
   over twice its maximum turbined flow, as in DECOMP. A deck without `mlt.dat`
   gets that fallback for every plant, and the conversion warns.
+- Where `hidr.dat` keeps a plant's spilled flow out of its tailrace
+  (`influencia_vertimento_canal_fuga` 0), DECOMP's planes carry no spillage
+  term. Novomodelo's fit always raises the tailrace with the spilled flow, so the
+  planes of such a plant lose generation as it spills. `convert decomp` lists
+  these plants in an info diagnostic; an `AC VERTJU` override is not read.
 - A stage where the plant's turbined limit is zero, for example with every
   machine under maintenance, gets a zero constant productivity in place of
   the production function. DECOMP builds no planes for such a stage.

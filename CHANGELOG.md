@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`convert newave` and `convert decomp` list the FPHA plants whose spill
+  the source model keeps out of the tailrace.** Where `hidr.dat` sets
+  `influencia_vertimento_canal_fuga` to 0, the source model fits no spillage
+  term, while Cobre's fit always raises the tailrace with the spilled flow.
+  The new `fpha-spill-outside-tailrace` info diagnostic names those plants
+  and their stages; Cobre has no input to leave the spill out yet.
 - **`convert decomp` fits each FPHA plant's turbined flow over DECOMP's
   range.** Each stage's `fpha_config` carries `turbined_fit_max_m3s`: the
   stage's turbined limit without the `MP` maintenance and `FD`

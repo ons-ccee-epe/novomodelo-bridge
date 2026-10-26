@@ -3094,7 +3094,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "AC"
   item = "VERTJU"
   status = "deferred"
-  note = "Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante."
+  note = "Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante, e o diagnóstico `fpha-spill-outside-tailrace` lê o flag do `hidr.dat` sem esta alteração."
 
   [[source.item]]
   register = "CE"
@@ -3358,8 +3358,8 @@ note = "Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As col
 
   [[source.item]]
   item = "influencia_vertimento_canal_fuga"
-  status = "unread"
-  note = "Sinalizador de influência do vertimento no canal de fuga. Não lido: o Novomodelo não modela essa influência."
+  status = "deferred"
+  note = "Sinalizador de influência do vertimento no canal de fuga. Lido só pelo diagnóstico `fpha-spill-outside-tailrace`, que lista as usinas FPHA com sinalizador 0: nelas o DECOMP não ajusta coeficiente de vertimento, e o ajuste do Novomodelo sempre avalia as curvas de jusante sobre a defluência total."
 
   [[source.item]]
   item = "empresa, observacao, data"
