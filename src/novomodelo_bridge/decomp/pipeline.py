@@ -130,6 +130,7 @@ class DecompCaseArtifacts:
     stages_dict: dict | None = None
     hydros_dict: dict | None = None
     thermals_dict: dict | None = None
+    gnl_model: anticipated_conv.GnlCommitmentModel | None = None
     buses_doc: dict | None = None
     lines_doc: dict | None = None
     line_bounds: pa.Table | None = None
@@ -839,6 +840,29 @@ def _libs_electrical_census_diagnostic(
     )
 
 
+def _gnl_thermal_codes(
+    gnl_model: anticipated_conv.GnlCommitmentModel | None, id_map: DecompIdMap
+) -> frozenset[int]:
+    """The ``dadgnl`` GNL plant codes, whose LIBs ``ger_usit`` is input data.
+
+    Raises
+    ------
+    ValueError
+        If a code is declared both in ``CT`` and in ``TG``: its ``ger_usit``
+        would be read as a commanded GNL generation and leave the equation.
+    """
+    codes = frozenset(t.code for t in gnl_model.thermals) if gnl_model else frozenset()
+    shared = sorted(codes.intersection(id_map.thermal_codes))
+    if shared:
+        raise ValueError(
+            f"thermal code(s) {shared} are declared both in the dadger CT "
+            "registry and in the dadgnl TG registry; an electrical restriction's "
+            "ger_usit for them cannot be told apart as a decision or a "
+            "commanded GNL generation"
+        )
+    return codes
+
+
 def _discover(src: Path) -> DecompCaseArtifacts:
     """The ``step("Discovering deck")`` phase: parse *src* via one
     :class:`DecompCase`, resolve the cadastro override view (emitting its
@@ -1129,6 +1153,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
             len(gnl.thermals),
         )
     artifacts.thermals_dict = thermals_dict
+    artifacts.gnl_model = gnl_model
     writer.write_json("system/thermals.json", thermals_dict)
     # The PAR inflow-lag seed (initial_conditions.recent_observations) is
     # written by `fcf/importer.py::import_boundary_fcf`, not here: it is read on
@@ -1656,6 +1681,7 @@ def _emit_and_write(
     assert stages_dict is not None
     deficit_cost = artifacts.deficit_cost
     assert deficit_cost is not None
+    gnl_model = artifacts.gnl_model
     hydro_bounds = artifacts.hydro_bounds
     assert hydro_bounds is not None
     thermal_bounds_table = artifacts.thermal_bounds_table
@@ -1759,7 +1785,9 @@ def _emit_and_write(
     libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None = None
     if case.libs_restricao_eletrica is not None:
         libs_electrical_model = libs_electrical_conv.read_libs_electrical(
-            case.libs_restricao_eletrica, calendar
+            case.libs_restricao_eletrica,
+            calendar,
+            gnl_thermal_codes=_gnl_thermal_codes(gnl_model, id_map),
         )
 
     generic_constraints: list[dict] = []
@@ -1814,7 +1842,7 @@ def _emit_and_write(
     libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None = None
     if libs_electrical_model is not None:
         context_factory = libs_electrical_conv.build_data_context(
-            case, id_map, model=libs_electrical_model
+            case, id_map, model=libs_electrical_model, gnl_model=gnl_model
         )
         a_h = libs_electrical_conv.build_available_power(
             case, id_map, overlay=availability_values, effective=effective

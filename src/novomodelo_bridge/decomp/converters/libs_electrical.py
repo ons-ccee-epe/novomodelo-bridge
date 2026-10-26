@@ -69,6 +69,7 @@ import pandas as pd
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
+from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
 from novomodelo_bridge.decomp.converters.hydro import _ITAIPU_CODE, _rated_envelope
 from novomodelo_bridge.decomp.converters.ncs import pq_block_generation
 from novomodelo_bridge.decomp.load import _per_stage_block_loads
@@ -80,6 +81,7 @@ if TYPE_CHECKING:
     from idecomp.libs.restricoes import Restricoes
 
     from novomodelo_bridge.decomp.case import DecompCase
+    from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -200,13 +202,15 @@ class LibsElectricalModel:
     ``expressions``/``aliases`` are keyed by their string identifier
     (``identificador_expressao``/``identificador_alias``); ``restrictions``
     by ``codigo_restricao``; ``rules`` (the raw ``regra_ativacao`` text) by
-    ``codigo_regra_ativacao``.
+    ``codigo_regra_ativacao``. ``gnl_thermal_codes`` are the deck's ``dadgnl``
+    GNL plants, whose ``ger_usit`` the parser reads as input data.
     """
 
     expressions: Mapping[str, ElectricalExpression]
     aliases: Mapping[str, ElectricalAlias]
     restrictions: Mapping[int, ElectricalRestriction]
     rules: Mapping[int, str]
+    gnl_thermal_codes: frozenset[int] = frozenset()
 
 
 def _df(source: Restricoes, attr: str) -> pd.DataFrame | None:
@@ -550,6 +554,8 @@ def _emit_unused_period_rows(card: str, codes: Sequence[int]) -> None:
 def read_libs_electrical(
     restricoes: Restricoes,
     calendar: Sequence[OperativeStage],
+    *,
+    gnl_thermal_codes: frozenset[int] = frozenset(),
 ) -> LibsElectricalModel | None:
     """Read every period-keyed long-form electrical card into a structured model.
 
@@ -576,6 +582,7 @@ def read_libs_electrical(
         aliases=aliases,
         restrictions=restrictions,
         rules=rules,
+        gnl_thermal_codes=gnl_thermal_codes,
     )
 
 
@@ -690,6 +697,10 @@ _PEQ_PREFIX = "peq_"
 #: mnemonics, mapped to the mnemonic they stand for.
 _PEQ_SUBMARKET_ALIASES = {"SECO": "SE", "SUL": "S"}
 
+#: Reserved token for a ``ger_usit(c)`` whose ``c`` is a ``dadgnl`` GNL plant:
+#: its generation is commanded by ``gl``, so it is input data, not a decision.
+_GNL_TOKEN = "__ger_usit_gnl__"
+
 #: Reserved token for a bare numeric constant; its value lives in
 #: :attr:`ParsedTerm.coefficient`.
 _CONST_TOKEN = "__const__"
@@ -723,6 +734,9 @@ class ParsedTerm:
       per-(stage,block) later, never here;
     - a built-in bare token (``demanda_sin`` / ``val_demanda_sin`` /
       ``carga_ande``), ``args`` empty;
+    - the reserved :data:`_GNL_TOKEN` for a ``ger_usit(c)`` naming a GNL plant
+      (:attr:`LibsElectricalModel.gnl_thermal_codes`), the code in ``args``;
+      its commanded generation is resolved per-(stage,block) later;
     - the reserved :data:`_PEQ_TOKEN` (``"peq"``) for a ``peq_<name>_<sub>``
       reference — the ``PQ`` series name is in ``pq_name`` and the raw
       subsystem suffix in ``pq_submarket``; resolved per-(stage,block) later;
@@ -900,6 +914,8 @@ class _ExpressionParser:
         if name == "re":
             return self._parse_re(scale)
         args = self._parse_int_args(name)
+        if name == "ger_usit" and args and args[0] in self._model.gnl_thermal_codes:
+            return [ParsedTerm(coefficient=scale, token=_GNL_TOKEN, args=args)]
         return [ParsedTerm(coefficient=scale, token=name, args=args)]
 
     def _parse_int_args(self, fn_name: str) -> tuple[int, ...]:
@@ -1108,7 +1124,8 @@ _BUCKET_A_TOKENS = frozenset(
 #: Bucket B — input-data tokens the bridge evaluates to a number and
 #: folds into the bound: the built-in demand/load tokens, plus the parser's
 #: reserved tokens (a bare numeric constant, an unresolved ``ALIAS-ELETRICO``
-#: reference, a ``peq_`` series, and a ``se(cond, X, Y)`` conditional).
+#: reference, a ``peq_`` series, a GNL plant's commanded ``ger_usit``, and a
+#: ``se(cond, X, Y)`` conditional).
 _BUCKET_B_TOKENS = frozenset(
     {
         "demanda",
@@ -1119,6 +1136,7 @@ _BUCKET_B_TOKENS = frozenset(
         _CONST_TOKEN,
         _ALIAS_TOKEN,
         _PEQ_TOKEN,
+        _GNL_TOKEN,
         _SE_TOKEN,
     }
 )
@@ -1566,11 +1584,39 @@ def _peq_block_generation(
     return series[stage_index][block_index]
 
 
+def _gnl_block_generation(
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    term: ParsedTerm,
+    stage_index: int,
+    block_index: int,
+) -> float:
+    """A GNL plant's ``ger_usit`` at one cell: its ``gl`` commanded generation (MW).
+
+    Raises
+    ------
+    ValueError
+        When the plant's generation is not commanded at the cell's stage
+        (no ``gl`` week starts in it): the term would be a decision the
+        abatement cannot represent, so the conversion aborts.
+    """
+    code = term.args[0]
+    per_stage = gnl_generation.get(code)
+    blocks = per_stage[stage_index] if per_stage is not None else None
+    if blocks is None:
+        raise ValueError(
+            f"ger_usit({code}) names a GNL plant whose generation is not "
+            f"commanded at stage {stage_index} (no dadgnl GL week starts in "
+            "it); an uncommanded GNL term cannot be abated into the bound"
+        )
+    return blocks[block_index]
+
+
 def build_data_context(
     case: DecompCase,
     id_map: DecompIdMap,
     *,
     model: LibsElectricalModel,
+    gnl_model: GnlCommitmentModel | None = None,
 ) -> Callable[[int, int], DataContext]:
     """Build the per-(stage,block) :data:`DataContext` factory that drives
     :func:`assemble_bound` and the activation gate.
@@ -1596,6 +1642,8 @@ def build_data_context(
     - ``carga_ande`` — the series from :func:`read_carga_ande`;
     - a ``peq_<name>_<sub>`` token — that ``PQ`` series' block generation
       (:func:`_peq_block_generation`);
+    - a GNL plant's ``ger_usit`` — its commanded ``gl`` generation at the
+      cell (:func:`_gnl_block_generation`), read from *gnl_model*;
     - an ``alias`` token — the model alias's value
       (:func:`_resolve_alias_value`: stage-inherited, ``NA``-patamar applies
       to all blocks);
@@ -1614,11 +1662,17 @@ def build_data_context(
         before the cell. :func:`assemble_bound` is the sole catcher —
         turning this into a ``Severity.WARNING`` diagnostic and dropping the
         constraint (skip-not-partial), never a silently wrong bound.
+    ValueError
+        From the returned per-cell context, when a GNL plant's ``ger_usit``
+        is not commanded at the cell (:func:`_gnl_block_generation`).
     """
     calendar = case.calendar
     demand = _per_stage_block_loads(case.dadger, id_map, calendar)
     carga_ande_series = read_carga_ande(case.dadger, calendar)
     pq_generation = pq_block_generation(case.dadger, calendar)
+    gnl_generation = (
+        gnl_block_commitments(gnl_model, calendar) if gnl_model is not None else {}
+    )
     n_submarkets = len(id_map.bus_codes)
 
     def context_for_cell(stage_index: int, block_index: int) -> DataContext:
@@ -1656,6 +1710,10 @@ def build_data_context(
             if term.token == _PEQ_TOKEN:
                 return _peq_block_generation(
                     pq_generation, id_map, term, stage_index, block_index
+                )
+            if term.token == _GNL_TOKEN:
+                return _gnl_block_generation(
+                    gnl_generation, term, stage_index, block_index
                 )
             if term.token == _SE_TOKEN:
                 return evaluate_se(term, model, stage_index, block_index, resolve)

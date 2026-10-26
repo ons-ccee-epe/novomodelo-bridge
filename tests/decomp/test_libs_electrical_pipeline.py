@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
@@ -26,6 +27,10 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
+)
+from novomodelo_bridge.decomp.converters.anticipated import (
+    GnlCommitmentModel,
+    GnlThermal,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     ElectricalRestriction,
@@ -38,7 +43,7 @@ from novomodelo_bridge.decomp.converters.thermal import (
 )
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.pipeline import ConversionReport
+from novomodelo_bridge.decomp.pipeline import ConversionReport, _gnl_thermal_codes
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
@@ -532,3 +537,30 @@ class TestLibsElectricalPipelineWiring:
         assert counts["unresolved-bucket-bc"] == 0
 
         assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics_out}
+
+
+# ---------------------------------------------------------------------------
+# _gnl_thermal_codes -- which LIBs ger_usit codes are commanded GNL data
+# ---------------------------------------------------------------------------
+
+
+def _gnl_registry(*codes: int) -> GnlCommitmentModel:
+    return GnlCommitmentModel(
+        thermals=tuple(GnlThermal(code, f"GNL {code}", 1) for code in codes),
+        commitments={},
+        weeks_per_month={},
+        nl_lag_months={},
+        tg=pd.DataFrame(),
+    )
+
+
+def test_gnl_thermal_codes_are_the_tg_registry_codes() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), thermal_codes=(1, 13))
+    assert _gnl_thermal_codes(_gnl_registry(86, 224), id_map) == {86, 224}
+    assert _gnl_thermal_codes(None, id_map) == frozenset()
+
+
+def test_gnl_thermal_codes_shared_with_ct_raises() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), thermal_codes=(1, 86))
+    with pytest.raises(ValueError, match=r"\[86\] are declared both"):
+        _gnl_thermal_codes(_gnl_registry(86, 224), id_map)
