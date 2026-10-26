@@ -295,9 +295,16 @@ class _StubDadger:
 
 class _StubRenovaveis:
     def __init__(
-        self, cad: pd.DataFrame, subm: pd.DataFrame, ger: pd.DataFrame
+        self,
+        cad: pd.DataFrame,
+        subm: pd.DataFrame,
+        ger: pd.DataFrame,
+        ger_deterministic: pd.DataFrame | None = None,
     ) -> None:
         self._cad, self._subm, self._ger = cad, subm, ger
+        self._ger_deterministic = (
+            pd.DataFrame() if ger_deterministic is None else ger_deterministic
+        )
 
     def pee_cad(self, df: bool = False) -> pd.DataFrame:
         return self._cad
@@ -307,6 +314,9 @@ class _StubRenovaveis:
 
     def pee_ger_per_pat_cen(self, df: bool = False) -> pd.DataFrame:
         return self._ger
+
+    def pee_ger_per_pat(self, df: bool = False) -> pd.DataFrame:
+        return self._ger_deterministic
 
 
 def _pq_frame(n_series: int, *, n_blocks: int) -> pd.DataFrame:
@@ -365,6 +375,36 @@ def test_build_pee_ncs_id_map_sorted_offset_matches_pee_series() -> None:
     assert [s.ncs_id for s in series] == [ncs_map[3], ncs_map[7]]
     assert series[0].name.startswith("PARK3")
     assert series[1].name.startswith("PARK7")
+
+
+def test_build_pee_ncs_id_map_deterministic_card_matches_pee_series() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    calendar = _emit_calendar(1, n_blocks=1)
+    dadger = _StubDadger(_pq_frame(n_series=1, n_blocks=1))
+    cad = pd.DataFrame([{"codigo_pee": c, "nome_pee": f"PARK{c}"} for c in (9, 6)])
+    subm = pd.DataFrame([{"codigo_pee": c, "codigo_submercado": 1} for c in (9, 6)])
+    det = pd.DataFrame(
+        [
+            {
+                "codigo_pee": code,
+                "estagio": 1,
+                "estagio_final": 1,
+                "patamar": 1,
+                "geracao": 5.0,
+            }
+            for code in (9, 6)
+        ]
+    )
+    renovaveis = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
+
+    case = make_decomp_case(
+        Path("unused"), dadger=dadger, calendar=calendar, renovaveis=renovaveis
+    )
+    ncs_map = build_pee_ncs_id_map(case, id_map)
+    assert ncs_map == {6: 1, 9: 2}
+
+    series = _pee_series(renovaveis, id_map, calendar, first_ncs_id=1)
+    assert [s.ncs_id for s in series] == [ncs_map[6], ncs_map[9]]
 
 
 def test_build_pee_ncs_id_map_none_renovaveis_returns_empty() -> None:

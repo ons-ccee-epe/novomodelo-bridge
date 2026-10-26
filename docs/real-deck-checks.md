@@ -133,6 +133,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | NEWAVE's operating-point conventions against its printed heads and exact production | With the `nwlistop.dat` plant list set to `999`, nwlistop writes each plant's per-block generation, flows, storage, heads (`hmont`, `hjus`, `hliq`) and exact production (`gh_fphexat`). The planes in `fpha_cortes.csv`, evaluated with the stage's mean storage above the `hidr.dat` minimum, reproduce `ghiduh`. The exact production function rebuilt from the deck (cota polynomial at that storage, `polinjus` families read at the downstream plant's forebay at the same point, spill in the tailrace only where `hidr.dat` says it reaches it, `hidr.dat` losses, the `fpha_eco.csv` generation limit) reproduces `gh_fphexat` for every plant and stage within 0.07 MW, the print resolution of a block's MWmes divided by its share of the month. `compare newave` reports that gap in the fit-inputs table, so rerunning it on such a run repeats the check. The unit tests in `tests/comparators/test_newave_operating_points.py` pin the storage, generation and tie conventions on the mini-deck. Captured on a September 2024 case with a historical final simulation, NEWAVE 30.0.4, in October 2026. |
 
+### A LIBs shadow-process DECOMP deck, with its parks on either generation card
+
+| Check | Verified |
+| --- | --- |
+| `PEE-GER-PER-PAT` read like `PEE-GER-PER-PAT-CEN` | The deck declares its parks' generation on the scenario-free `PEE-GER-PER-PAT` card. A copy with the same generation rewritten on `PEE-GER-PER-PAT-CEN`, the scenario column added, converts to the same renewable registry, `non_controllable_stats.parquet` and `external_ncs_scenarios.parquet`. A bridge that reads only `PEE-GER-PER-PAT-CEN` converts the original deck with its `PQ` series alone, and warns about nothing. Captured in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the

@@ -143,9 +143,16 @@ class TestFactors:
 
 class _StubRenovaveis:
     def __init__(
-        self, cad: pd.DataFrame, subm: pd.DataFrame, ger: pd.DataFrame
+        self,
+        cad: pd.DataFrame,
+        subm: pd.DataFrame,
+        ger: pd.DataFrame,
+        ger_deterministic: pd.DataFrame | None = None,
     ) -> None:
         self._cad, self._subm, self._ger = cad, subm, ger
+        self._ger_deterministic = (
+            pd.DataFrame() if ger_deterministic is None else ger_deterministic
+        )
 
     def pee_cad(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
         return self._cad
@@ -155,6 +162,9 @@ class _StubRenovaveis:
 
     def pee_ger_per_pat_cen(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
         return self._ger
+
+    def pee_ger_per_pat(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+        return self._ger_deterministic
 
 
 def test_pee_series_deterministic_typo_uses_modal_value(
@@ -195,3 +205,120 @@ def test_pee_series_deterministic_typo_uses_modal_value(
     # block 0 (patamar 1) resolves to the modal 77.07, NOT the 77.9 outlier.
     assert series[0].per_stage_blocks[0] == (77.07, 50.0, 60.0)
     assert any("modal value" in r.message for r in caplog.records)
+
+
+def _pee_registry(*codes: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cad = pd.DataFrame([{"codigo_pee": c, "nome_pee": f"PARK{c}"} for c in codes])
+    subm = pd.DataFrame([{"codigo_pee": c, "codigo_submercado": 1} for c in codes])
+    return cad, subm
+
+
+def _deterministic_rows(
+    code: int, stage: int, generation_by_patamar: tuple[float, ...]
+) -> list[dict[str, float]]:
+    return [
+        {
+            "codigo_pee": code,
+            "estagio": stage,
+            "estagio_final": stage,
+            "patamar": pat,
+            "geracao": g,
+        }
+        for pat, g in enumerate(generation_by_patamar, start=1)
+    ]
+
+
+def test_pee_series_deterministic_card_only_reads_generation() -> None:
+    from novomodelo_bridge.decomp.converters.ncs import _pee_series
+
+    cad, subm = _pee_registry(4)
+    det = pd.DataFrame(
+        _deterministic_rows(4, 1, (10.0, 20.0, 30.0))
+        + _deterministic_rows(4, 3, (11.0, 21.0, 31.0))
+    )
+    renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
+
+    series = _pee_series(renov, _ID_MAP, _calendar(), 0)
+
+    assert len(series) == 1
+    assert series[0].name == "PARK4_1"
+    # stage 2 is undeclared and inherits stage 1
+    assert series[0].per_stage_blocks == (
+        (10.0, 20.0, 30.0),
+        (10.0, 20.0, 30.0),
+        (11.0, 21.0, 31.0),
+    )
+
+
+def test_pee_series_deterministic_repeated_key_uses_last_row_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from novomodelo_bridge.decomp.converters.ncs import _pee_series
+
+    cad, subm = _pee_registry(4)
+    det = pd.DataFrame(
+        _deterministic_rows(4, 1, (10.0, 20.0, 30.0))
+        + _deterministic_rows(4, 1, (99.0,))
+    )
+    renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
+
+    with caplog.at_level(
+        logging.WARNING, logger="novomodelo_bridge.decomp.converters.ncs"
+    ):
+        series = _pee_series(renov, _ID_MAP, _calendar(), 0)
+
+    assert series[0].per_stage_blocks[0] == (99.0, 20.0, 30.0)
+    assert any("PEE-GER-PER-PAT row(s) repeat" in r.message for r in caplog.records)
+
+
+def test_pee_series_cards_with_distinct_parks_are_combined() -> None:
+    from novomodelo_bridge.decomp.converters.ncs import _pee_series
+
+    cad, subm = _pee_registry(2, 5)
+    per_scenario = pd.DataFrame(
+        [
+            {
+                "codigo_pee": 5,
+                "estagio": 1,
+                "estagio_final": 1,
+                "patamar": pat,
+                "cenario": cen,
+                "geracao": 40.0,
+            }
+            for pat in (1, 2, 3)
+            for cen in (1, 2)
+        ]
+    )
+    det = pd.DataFrame(_deterministic_rows(2, 1, (10.0, 20.0, 30.0)))
+    renov = _StubRenovaveis(cad, subm, per_scenario, det)
+
+    series = _pee_series(renov, _ID_MAP, _calendar(), 7)
+
+    assert [(s.ncs_id, s.name) for s in series] == [(7, "PARK2_1"), (8, "PARK5_1")]
+    assert series[0].per_stage_blocks[0] == (10.0, 20.0, 30.0)
+    assert series[1].per_stage_blocks[0] == (40.0, 40.0, 40.0)
+
+
+def test_pee_series_park_on_both_cards_raises() -> None:
+    from novomodelo_bridge.decomp.converters.ncs import _pee_series
+
+    cad, subm = _pee_registry(4)
+    per_scenario = pd.DataFrame(
+        [
+            {
+                "codigo_pee": 4,
+                "estagio": 1,
+                "estagio_final": 1,
+                "patamar": 1,
+                "cenario": 1,
+                "geracao": 1.0,
+            }
+        ]
+    )
+    det = pd.DataFrame(_deterministic_rows(4, 1, (10.0, 20.0, 30.0)))
+    renov = _StubRenovaveis(cad, subm, per_scenario, det)
+
+    with pytest.raises(ValueError, match=r"park\(s\) \[4\] declared on both"):
+        _pee_series(renov, _ID_MAP, _calendar(), 0)
