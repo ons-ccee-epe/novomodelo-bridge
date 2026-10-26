@@ -22,7 +22,7 @@ jobs:
           python-version: "3.13"
       # The ruff uv.lock pins, which the pre-commit hook runs from .venv;
       # tests/test_packaging.py fails if the two differ.
-      - run: pip install "ruff==0.17.1"
+      - run: pip install "ruff==0.17.2"
       - run: ruff check .
       - run: ruff format --check .
       # Drift/rot gates — conventions in .claude/rules/, docs in scripts/README.md

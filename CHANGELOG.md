@@ -14,6 +14,12 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-26
+
+Pairs the bridge with the **novomodelo 0.19.1** release and pins
+`novomodelo-python` to it; convert again a DECOMP case whose boundary FCF an
+earlier bridge imported.
+
 ### Added
 
 - **`export dessem` exports water travel time** in the `mapcut`/`cortdeco`
@@ -51,7 +57,8 @@ links are cobre-bridge's.
 - **Turbined-flow and generation caps follow the source model.** `convert
   decomp` caps turbined flow stage by stage at DECOMP's own limit. `convert
   newave` caps generation at the plant's available power on every stage.
-- **idecomp 1.17.0 or newer is required.**
+- **The bridge requires idecomp 1.17.1, pandas 3.1 and polars 2.1 or newer**,
+  the releases it is tested with.
 - **`convert decomp` lets `centralizado` renewable parks be curtailed**, from
   their `PEE-CONFIG-PER` state, as the cheapest way to absorb a surplus;
   results change for decks with such parks.
