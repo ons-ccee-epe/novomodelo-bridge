@@ -851,13 +851,12 @@ def test_emit_sorted_restriction_codes_deterministic_ids() -> None:
 
 
 def test_emit_unrecognized_token_defers_one_restriction_sibling_converts() -> None:
-    # a well-formed but undeclared identifier
-    # (peq_N_PCHgd_N -- the MMGD family, deliberately unmodeled) in one
+    # a well-formed but undeclared identifier in one
     # restriction's formula drops only that restriction; a fully resolvable
     # sibling still converts.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
     calendar = _emit_calendar(1, n_blocks=1)
-    unrecognized = _restriction(709, "peq_N_PCHgd_N", "<=", "500")
+    unrecognized = _restriction(709, "mmgd_N_PCHgd", "<=", "500")
     resolvable = _restriction(710, "ger_usih(1)", "<=", "500")
     model = LibsElectricalModel(
         expressions={},
@@ -889,7 +888,7 @@ def test_emit_unrecognized_token_defers_one_restriction_sibling_converts() -> No
     warnings = [d for d in sink if d.severity is dx.Severity.WARNING]
     assert len(warnings) == 1
     assert "709" in warnings[0].summary
-    assert "peq_N_PCHgd_N" in warnings[0].summary
+    assert "mmgd_N_PCHgd" in warnings[0].summary
 
 
 def test_emit_no_unrecognized_tokens_leaves_deferred_reason_empty() -> None:
@@ -982,7 +981,7 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
         expressions={},
         aliases={},
         restrictions={720: rule_broken, 721: resolvable},
-        rules={20: "peq_N_PCHgd_N >= 50000"},
+        rules={20: "mmgd_N_PCHgd >= 50000"},
     )
     a_h = AvailablePower(overlay={}, rated_envelope={})
 
@@ -1008,7 +1007,7 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
     warnings = [d for d in sink if d.severity is dx.Severity.WARNING]
     assert len(warnings) == 1
     assert "720" in warnings[0].summary
-    assert "peq_N_PCHgd_N" in warnings[0].summary
+    assert "mmgd_N_PCHgd" in warnings[0].summary
 
 
 def test_emit_malformed_activation_rule_propagates_value_error() -> None:

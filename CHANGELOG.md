@@ -84,6 +84,10 @@ links are cobre-bridge's.
 - **`convert decomp` keeps the renewable parks of a `renovaveis` file
   that uses the `PEE-GER-PER-PAT` card**; they used to be dropped with no
   warning.
+- **`convert decomp` converts more LIBs electrical restrictions**: those
+  with `peq_` terms, those declared only by
+  `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR` rows, and numbers such as
+  `1E+31`.
 
 ## [0.19.0] - 2026-10-20
 
