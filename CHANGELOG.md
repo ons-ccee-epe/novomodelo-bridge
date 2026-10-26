@@ -14,6 +14,10 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+Pairs the bridge with the **novomodelo 0.19.1** release and pins
+`novomodelo-python` to it; convert again a DECOMP case whose boundary FCF an
+earlier bridge imported.
+
 ### Added
 
 - **`export dessem` exports water travel time** in the `mapcut`/`cortdeco`
