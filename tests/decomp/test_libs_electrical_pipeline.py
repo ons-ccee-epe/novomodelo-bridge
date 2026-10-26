@@ -152,7 +152,7 @@ def _dp_frame() -> pd.DataFrame:
 class _MockDadger:
     """Covers only what the real (unmocked) consumers this fixture exercises
     need: ``.tx.taxa``, ``.uh(df=True)``, ``.vi``, ``.ac(...)``, ``.dp(...)``,
-    ``.ri(...)`` -- mirrors the ``test_pipeline`` module's own
+    ``.ri(...)``, ``.pq(...)`` -- mirrors the ``test_pipeline`` module's own
     ``_CadastroDadger``, extended for ``build_data_context``'s own reads."""
 
     class _Tx:
@@ -191,6 +191,9 @@ class _MockDadger:
         return None
 
     def fp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+        return None
+
+    def pq(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
         return None
 
     def ac(

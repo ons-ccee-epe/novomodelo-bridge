@@ -87,12 +87,12 @@ class _PqSeries:
         )
 
 
-def _pq_series(
+def pq_block_generation(
     dadger: Dadger,
-    id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
-) -> list[_PqSeries]:
-    """Read ``PQ`` into dense per-stage series, sorted (subsystem, name).
+) -> dict[tuple[int, str], tuple[tuple[float, ...], ...]]:
+    """Per-stage block generation (MW) of every ``PQ`` series, keyed by
+    (subsystem code, name) and sorted by that key.
 
     Declared stages inherit forward (a stage without a record repeats the
     last declared one); stage 1 must be declared. Missing generation
@@ -100,7 +100,7 @@ def _pq_series(
     """
     pq = dadger.pq(df=True)
     if pq is None or pq.empty:
-        return []
+        return {}
 
     declared: dict[tuple[int, str], dict[int, tuple[float, ...]]] = {}
     for _, row in pq.iterrows():
@@ -118,8 +118,8 @@ def _pq_series(
         key = (int(row["codigo_submercado"]), str(row["nome"]).strip())
         declared.setdefault(key, {})[stage_index] = values
 
-    series: list[_PqSeries] = []
-    for ncs_id, (key, stages) in enumerate(sorted(declared.items())):
+    generation: dict[tuple[int, str], tuple[tuple[float, ...], ...]] = {}
+    for key, stages in sorted(declared.items()):
         sub_code, name = key
         if 0 not in stages:
             raise ValueError(
@@ -129,16 +129,29 @@ def _pq_series(
         dense: list[tuple[float, ...]] = []
         for stage in calendar:
             dense.append(stages.get(stage.index, dense[-1] if dense else ()))
-        series.append(
-            _PqSeries(
-                ncs_id=ncs_id,
-                name=f"{name}_{sub_code}",
-                bus_id=id_map.bus_id(sub_code),
-                per_stage_blocks=tuple(dense),
-                allow_curtailment=False,
-            )
+        generation[key] = tuple(dense)
+    return generation
+
+
+def _pq_series(
+    dadger: Dadger,
+    id_map: DecompIdMap,
+    calendar: Sequence[OperativeStage],
+) -> list[_PqSeries]:
+    """``PQ`` series as must-run NCS, ids in :func:`pq_block_generation`'s
+    (subsystem, name) order."""
+    return [
+        _PqSeries(
+            ncs_id=ncs_id,
+            name=f"{name}_{sub_code}",
+            bus_id=id_map.bus_id(sub_code),
+            per_stage_blocks=per_stage_blocks,
+            allow_curtailment=False,
         )
-    return series
+        for ncs_id, ((sub_code, name), per_stage_blocks) in enumerate(
+            pq_block_generation(dadger, calendar).items()
+        )
+    ]
 
 
 def _stage_mean_mw(blocks: Sequence[float], stage: OperativeStage) -> float:

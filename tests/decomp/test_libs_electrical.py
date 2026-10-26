@@ -7,6 +7,7 @@ like idecomp's ``df=True`` accessors, so these run in CI with no real deck.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,7 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     ActivationRule,
@@ -395,6 +397,32 @@ def test_standalone_constant_and_explicit_coefficient_terms() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ("1E2", 100.0),
+        ("1e2", 100.0),
+        ("1E+2", 100.0),
+        ("1.5E3", 1500.0),
+        ("2.5e-3", 0.0025),
+        ("1E+31", 1e31),
+    ],
+)
+def test_constant_with_exponent(text: str, value: float) -> None:
+    assert parse_linear_expression(text, _model()) == [
+        ParsedTerm(coefficient=value, token="__const__")
+    ]
+
+
+def test_exponent_constant_beside_names_starting_with_e() -> None:
+    model = _model(expressions={"EXPNE": "ger_usih(1)"}, aliases=("E1",))
+    assert parse_linear_expression("1E2 + EXPNE - 2*E1", model) == [
+        ParsedTerm(coefficient=100.0, token="__const__"),
+        ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),
+        ParsedTerm(coefficient=-2.0, token="alias", alias_name="E1"),
+    ]
+
+
 def test_named_expression_inlined_no_reference_token_remains() -> None:
     model = _model(expressions={"RNE": "ener_interc(3,1) - ener_interc(1,3)"})
     terms = parse_linear_expression("RNE", model)
@@ -507,17 +535,16 @@ def test_unrecognized_bare_identifier_raises_unrecognized_electrical_token() -> 
 
 
 def test_unrecognized_token_message_names_identifier_and_expression() -> None:
-    # the motivating example -- an undeclared
-    # peq_*gd_* MMGD token alongside a resolvable ger_usih(...) term. The
-    # message must name both the offending identifier and the enclosing
+    # an undeclared identifier alongside a resolvable ger_usih(...) term.
+    # The message must name both the offending identifier and the enclosing
     # expression, so a diagnostic built from it is actionable.
     model = _model()
-    text = "peq_N_PCHgd_N + ger_usih(1)"
+    text = "mmgd_N_PCHgd + ger_usih(1)"
     with pytest.raises(UnrecognizedElectricalToken) as exc_info:
         parse_linear_expression(text, model)
     assert isinstance(exc_info.value, ValueError)
     message = str(exc_info.value)
-    assert "peq_N_PCHgd_N" in message
+    assert "mmgd_N_PCHgd" in message
     assert text in message
 
 
@@ -978,6 +1005,94 @@ def test_build_data_context_alias_with_no_value_raises_unresolvable() -> None:
     ctx = build_data_context(_case(dadger, calendar), id_map, model=model)(0, 0)
     with pytest.raises(_UnresolvableBucketBTerm, match="MMGDSIN"):
         ctx(ParsedTerm(coefficient=1.0, token="alias", alias_name="MMGDSIN"))
+
+
+def _pq(*rows: tuple, n_patamares: int) -> pd.DataFrame:
+    """``PQ`` rows shaped as idecomp's ``df=True`` accessor: (nome,
+    codigo_submercado, estagio, geracao_1, ..., geracao_n)."""
+    columns = ["nome", "codigo_submercado", "estagio"] + [
+        f"geracao_{k}" for k in range(1, n_patamares + 1)
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
+_PEQ_ID_MAP = DecompIdMap(bus_codes=(1, 2, 3, 4), bus_names=("SE", "S", "NE", "N"))
+
+
+def _peq_factory(n_stages: int = 2):  # noqa: ANN202 - test helper
+    calendar = _ri_calendar(n_stages, n_blocks=2)
+    dadger = _StubElectricalDadger(
+        dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2),
+        pq=_pq(
+            ("N_PCHgd", 4, 1, 10.0, 20.0),
+            ("N_PCHgd", 4, 2, 11.0, 21.0),
+            ("SECO_PCHgd", 1, 1, 30.0, 40.0),
+            ("SUL_EOLgd", 2, 1, 50.0, 60.0),
+            n_patamares=2,
+        ),
+    )
+    return build_data_context(_case(dadger, calendar), _PEQ_ID_MAP, model=_model())
+
+
+def _peq_term(text: str) -> ParsedTerm:
+    (term,) = parse_linear_expression(text, _model())
+    return term
+
+
+def test_parse_peq_splits_series_name_at_last_underscore() -> None:
+    assert _peq_term("peq_N_PCHgd_N") == ParsedTerm(
+        coefficient=1.0, token="peq", pq_name="N_PCHgd", pq_submarket="N"
+    )
+    assert classify_term(_peq_term("peq_N_PCHgd_N")) is Bucket.B
+
+
+def test_parse_peq_survives_named_expression_expansion() -> None:
+    model = _model(expressions={"MMGD_NRed": "peq_N_PCHgd_N - MMGD_AMexp"})
+    model = replace(model, aliases=_model(aliases=("MMGD_AMexp",)).aliases)
+    terms = parse_linear_expression("2*MMGD_NRed", model)
+    assert terms == [
+        ParsedTerm(coefficient=2.0, token="peq", pq_name="N_PCHgd", pq_submarket="N"),
+        ParsedTerm(coefficient=-2.0, token="alias", alias_name="MMGD_AMexp"),
+    ]
+
+
+def test_build_data_context_peq_reads_pq_generation_per_stage_and_block() -> None:
+    factory = _peq_factory(n_stages=3)
+    term = _peq_term("peq_N_PCHgd_N")
+    assert factory(0, 0)(term) == 10.0
+    assert factory(0, 1)(term) == 20.0
+    assert factory(1, 1)(term) == 21.0
+    # stage 3 has no PQ row and inherits stage 2
+    assert factory(2, 0)(term) == 11.0
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("peq_SECO_PCHgd_SE", 30.0),
+        ("peq_SECO_PCHgd_SECO", 30.0),
+        ("peq_SUL_EOLgd_S", 50.0),
+        ("peq_SUL_EOLgd_SUL", 50.0),
+        ("peq_SUL_EOLgd_sul", 50.0),
+    ],
+)
+def test_build_data_context_peq_accepts_sb_mnemonic_or_region_name(
+    text: str, expected: float
+) -> None:
+    assert _peq_factory()(0, 0)(_peq_term(text)) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ("peq_SECO_PCHgd_SUDESTE", "unknown subsystem 'SUDESTE'"),
+        ("peq_N_BIOgd_N", "no PQ series 'N_BIOgd' in subsystem 4"),
+        ("peq_SECO_PCHgd_N", "no PQ series 'SECO_PCHgd' in subsystem 4"),
+    ],
+)
+def test_build_data_context_peq_unresolvable_raises(text: str, match: str) -> None:
+    with pytest.raises(_UnresolvableBucketBTerm, match=match):
+        _peq_factory()(0, 0)(_peq_term(text))
 
 
 def _inequacao(
@@ -1592,3 +1707,132 @@ def test_fold_reserve_disp_usih_takes_precomputed_partitions() -> None:
         lower=None,
         upper=700.0,
     )
+
+
+# ---------------------------------------------------------------------------
+# inequalities declared only by RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR
+# ---------------------------------------------------------------------------
+
+
+def test_read_inequacao_declared_only_by_period_rows() -> None:
+    stub = _StubRestricoes(
+        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+            (449, 1, 7, None, "FSILE", "<=", "0.45*(C_AM_cMMGD - MMGD_AMexp)"),
+        ),
+        restricao_eletrica_horizonte_periodo=_horizonte((449, 1, 7)),
+        restricao_eletrica_habilita=_habilita((449, 524)),
+    )
+    model = read_libs_electrical(stub, _calendar(7))
+    assert model is not None
+    restriction = model.restrictions[449]
+    assert restriction.is_formula is False
+    assert (restriction.lhs, restriction.operator, restriction.rhs) == (
+        None,
+        None,
+        None,
+    )
+    assert restriction.overrides == (
+        PeriodPatamarOverride(
+            0, 6, None, "FSILE", "<=", "0.45*(C_AM_cMMGD - MMGD_AMexp)"
+        ),
+    )
+    assert (restriction.stage_start, restriction.stage_end) == (0, 6)
+    assert restriction.habilita == 524
+
+
+def test_read_period_rows_not_matching_the_card_shape_are_reported() -> None:
+    stub = _StubRestricoes(
+        restricao_eletrica_formula=_re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+            (401, 1, 1, None, "ger_usih(285)", "<=", "10"),
+            (449, 1, 1, None, "ger_usih(1)", "<=", "10"),
+        ),
+        restricao_eletrica_limite_formula_periodo_patamar=_re_lim_formula(
+            (449, 1, 1, None, -1e31, 5.0),
+        ),
+    )
+    with dx.collect() as sink:
+        model = read_libs_electrical(stub, _calendar(1))
+    assert model is not None
+    assert model.restrictions[401].overrides == ()
+    summaries = [
+        d.summary for d in sink if d.code == "decomp-electrical-period-rows-unused"
+    ]
+    assert len(summaries) == 2
+    assert "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR" in summaries[0]
+    assert "[401]" in summaries[0]
+    assert "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR" in summaries[1]
+    assert "[449]" in summaries[1]
+
+
+def _period_only_inequacao(
+    *overrides: PeriodPatamarOverride,
+) -> ElectricalRestriction:
+    return ElectricalRestriction(
+        code=460,
+        lhs=None,
+        operator=None,
+        rhs=None,
+        is_formula=False,
+        limits={},
+        overrides=overrides,
+    )
+
+
+_PERIOD_ONLY = _period_only_inequacao(
+    PeriodPatamarOverride(0, 0, 1, "ger_usih(9)", "<=", "100"),
+    PeriodPatamarOverride(1, 1, None, "ger_usih(9)", "<=", "200"),
+)
+
+
+def test_effective_inequacao_sides_period_only_uncovered_cell_returns_none() -> None:
+    assert _effective_inequacao_sides(_PERIOD_ONLY, 0, 2) is None
+    assert _effective_inequacao_sides(_PERIOD_ONLY, 1, 2) == (
+        "ger_usih(9)",
+        "<=",
+        "200",
+    )
+
+
+def test_active_cells_period_only_inequacao_limited_to_covered_cells() -> None:
+    model = LibsElectricalModel(expressions={}, aliases={}, restrictions={}, rules={})
+    calendar = _ri_calendar(2, n_blocks=2)
+    factory = _demanda_sin_context_factory({})
+    assert active_cells(_PERIOD_ONLY, model, factory, calendar) == {
+        (0, 0),
+        (1, 0),
+        (1, 1),
+    }
+
+
+def test_assemble_bound_period_only_inequacao_uses_the_covering_row() -> None:
+    model = _model()
+    ctx = _dict_context({})
+    first = assemble_bound(_PERIOD_ONLY, model, 0, 0, ctx)
+    second = assemble_bound(_PERIOD_ONLY, model, 1, 1, ctx)
+    assert first is not None
+    assert first.upper == 100.0
+    assert second is not None
+    assert second.upper == 200.0
+    assert first.terms == second.terms
+
+
+def test_assemble_bound_period_only_inequacao_uncovered_cell_raises() -> None:
+    with pytest.raises(ValueError, match="no inequality in effect"):
+        assemble_bound(_PERIOD_ONLY, _model(), 0, 1, _dict_context({}))
+
+
+def test_re_reference_to_period_only_inequacao_raises() -> None:
+    model = replace(_model(), restrictions={460: _PERIOD_ONLY})
+    with pytest.raises(ValueError, match="declared only by period rows"):
+        parse_linear_expression("re(460)", model)
+
+
+def test_assemble_bound_period_only_inequacao_no_limit_sentinel_is_unbounded() -> None:
+    restriction = _period_only_inequacao(
+        PeriodPatamarOverride(0, 0, None, "ger_usih(9)", "<=", "1E+31"),
+    )
+    assembled = assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
+    assert assembled is not None
+    assert assembled.upper == 1e31
+    assert not is_bounded(assembled.upper)

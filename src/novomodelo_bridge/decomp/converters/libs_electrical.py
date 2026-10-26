@@ -70,6 +70,7 @@ import pandas as pd
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.decomp.converters.hydro import _ITAIPU_CODE, _rated_envelope
+from novomodelo_bridge.decomp.converters.ncs import pq_block_generation
 from novomodelo_bridge.decomp.load import _per_stage_block_loads
 
 if TYPE_CHECKING:
@@ -167,7 +168,10 @@ class ElectricalRestriction:
     ``patamar=None`` meaning "all blocks" and an absent side normalized from
     DECOMP's ``±1E+31`` sentinel to ``None``. An INEQUACAO-form restriction
     carries the constant ``lhs op rhs`` plus any per-(stage-range,patamar)
-    ``overrides``. ``stage_start``/``stage_end`` come from
+    ``overrides``; one declared only by
+    ``RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`` rows has ``lhs``,
+    ``operator`` and ``rhs`` all ``None`` and is active only in the cells its
+    ``overrides`` cover. ``stage_start``/``stage_end`` come from
     ``RESTRICAO-ELETRICA-HORIZONTE-PERIODO`` (``None`` when absent);
     ``habilita`` is the bound ``REGRA-ATIVACAO`` id — look its text up in
     :attr:`LibsElectricalModel.rules`; ``violation`` is the raw
@@ -176,7 +180,7 @@ class ElectricalRestriction:
     """
 
     code: int
-    lhs: str
+    lhs: str | None
     operator: str | None
     rhs: str | None
     is_formula: bool
@@ -431,15 +435,21 @@ def _read_restrictions(
 ) -> dict[int, ElectricalRestriction]:
     """Join the FORMULA and INEQUACAO restriction cards to their per-(period,
     patamar) limit/override rows, horizonte, habilita, and violation rows by
-    ``codigo_restricao``."""
+    ``codigo_restricao``.
+
+    A code with ``RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`` rows but no
+    FORMULA or INEQUACAO card is an INEQUACAO restriction declared by those
+    rows alone. Period rows that cannot apply to any restriction (inequality
+    rows on a FORMULA code, limit rows on a non-FORMULA code) are reported.
+    """
     formula = _df(restricoes, "restricao_eletrica_formula")
     inequacao = _df(restricoes, "restricao_eletrica_inequacao")
-    if formula is None and inequacao is None:
+    overrides = _read_inequacao_overrides(restricoes, calendar)
+    if formula is None and inequacao is None and not overrides:
         return {}
 
     horizonte = _read_horizonte(restricoes, calendar)
     limits = _read_formula_limits(restricoes, calendar)
-    overrides = _read_inequacao_overrides(restricoes, calendar)
     habilita = _read_habilita(restricoes)
     violations = _read_violations(restricoes)
 
@@ -481,7 +491,60 @@ def _read_restrictions(
                 violation=violations.get(code),
             )
 
+    for code, rows in overrides.items():
+        if code in restrictions:
+            continue
+        stage_start, stage_end = horizonte.get(code, (None, None))
+        restrictions[code] = ElectricalRestriction(
+            code=code,
+            lhs=None,
+            operator=None,
+            rhs=None,
+            is_formula=False,
+            limits={},
+            overrides=rows,
+            stage_start=stage_start,
+            stage_end=stage_end,
+            habilita=habilita.get(code),
+            violation=violations.get(code),
+        )
+
+    _emit_unused_period_rows(
+        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+        sorted(code for code in overrides if restrictions[code].is_formula),
+    )
+    _emit_unused_period_rows(
+        "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR",
+        sorted(
+            code
+            for code in limits
+            if code not in restrictions or not restrictions[code].is_formula
+        ),
+    )
     return restrictions
+
+
+def _emit_unused_period_rows(card: str, codes: Sequence[int]) -> None:
+    if not codes:
+        return
+    emit(
+        Diagnostic(
+            code="decomp-electrical-period-rows-unused",
+            severity=Severity.WARNING,
+            category="Special constraints",
+            title=f"{card} rows not applied",
+            summary=(
+                f"{card} rows of {len(codes)} electrical restriction(s) do not "
+                "match the restriction's card shape and are ignored: "
+                f"{list(codes)}."
+            ),
+            remediation=(
+                "Check the source model's electrical restriction file: "
+                "inequality period rows apply to inequality restrictions and "
+                "limit period rows to formula restrictions."
+            ),
+        )
+    )
 
 
 def read_libs_electrical(
@@ -490,7 +553,8 @@ def read_libs_electrical(
 ) -> LibsElectricalModel | None:
     """Read every period-keyed long-form electrical card into a structured model.
 
-    Joins the ``RESTRICAO-ELETRICA-FORMULA``/``-INEQUACAO`` restrictions to
+    Joins the ``RESTRICAO-ELETRICA-FORMULA``/``-INEQUACAO`` restrictions (and
+    the inequalities declared by ``-INEQUACAO-PERIODO-PATAMAR`` rows alone) to
     their per-(period,patamar) limit/override rows, horizonte, habilita, rule,
     and violation rows by ``codigo_restricao``, and maps every période (1-based)
     onto its 0-based stage index against *calendar*.
@@ -616,6 +680,16 @@ def ande_load(case: DecompCase) -> tuple[int, dict[int, list[float]]] | None:
 #: is an unrecognized identifier.
 _BUILTIN_BARE_TOKENS = frozenset({"demanda_sin", "val_demanda_sin", "carga_ande"})
 
+#: Reserved token for a bare ``peq_<PQ name>_<subsystem>`` reference to one
+#: ``dadger`` ``PQ`` series' generation. The series name keeps its own
+#: underscores (``N_PCHgd``), so only the last ``_`` separates the suffix.
+_PEQ_TOKEN = "peq"
+_PEQ_PREFIX = "peq_"
+
+#: Region names accepted as a ``peq_`` subsystem suffix besides the ``SB``
+#: mnemonics, mapped to the mnemonic they stand for.
+_PEQ_SUBMARKET_ALIASES = {"SECO": "SE", "SUL": "S"}
+
 #: Reserved token for a bare numeric constant; its value lives in
 #: :attr:`ParsedTerm.coefficient`.
 _CONST_TOKEN = "__const__"
@@ -627,7 +701,8 @@ _ALIAS_TOKEN = "alias"
 #: Reserved token for a structural ``se(cond, X, Y)`` conditional.
 _SE_TOKEN = "se"
 
-_NUMBER_RE = re.compile(r"\d+\.?\d*")
+#: The optional exponent covers the source model's ``1E+31`` "no limit" value.
+_NUMBER_RE = re.compile(r"\d+\.?\d*(?:[eE][+-]?\d+)?")
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -648,6 +723,9 @@ class ParsedTerm:
       per-(stage,block) later, never here;
     - a built-in bare token (``demanda_sin`` / ``val_demanda_sin`` /
       ``carga_ande``), ``args`` empty;
+    - the reserved :data:`_PEQ_TOKEN` (``"peq"``) for a ``peq_<name>_<sub>``
+      reference — the ``PQ`` series name is in ``pq_name`` and the raw
+      subsystem suffix in ``pq_submarket``; resolved per-(stage,block) later;
     - the reserved :data:`_SE_TOKEN` (``"se"``) for a ``se(cond, X, Y)``
       conditional, kept structural: ``condition``, ``branch_true``, and
       ``branch_false`` carry the raw, unparsed sub-expression text (evaluated
@@ -662,6 +740,8 @@ class ParsedTerm:
     token: str
     args: tuple[int, ...] = ()
     alias_name: str | None = None
+    pq_name: str | None = None
+    pq_submarket: str | None = None
     condition: str | None = None
     branch_true: str | None = None
     branch_false: str | None = None
@@ -861,6 +941,12 @@ class _ExpressionParser:
                 f"re({code}) references unknown restriction {code} in "
                 f"electrical expression {self._text!r}"
             )
+        if restriction.lhs is None:
+            raise ValueError(
+                f"re({code}) references restriction {code}, which is declared "
+                "only by period rows and has no single formula, in electrical "
+                f"expression {self._text!r}"
+            )
         return self._expand_reference(f"re({code})", restriction.lhs, scale)
 
     def _parse_se(self, scale: float) -> list[ParsedTerm]:
@@ -910,8 +996,9 @@ class _ExpressionParser:
         ]
 
     def _parse_bare_name(self, name: str, scale: float) -> list[ParsedTerm]:
-        """Disambiguate a bare name: a named expression, else a data
-        alias, else a built-in bare token — else an unrecognized identifier."""
+        """Disambiguate a bare name: a named expression, else a data alias,
+        else a built-in bare token, else a ``peq_`` ``PQ`` reference — else an
+        unrecognized identifier."""
         if name in self._model.expressions:
             return self._expand_reference(
                 name, self._model.expressions[name].formula, scale
@@ -920,10 +1007,20 @@ class _ExpressionParser:
             return [ParsedTerm(coefficient=scale, token=_ALIAS_TOKEN, alias_name=name)]
         if name in _BUILTIN_BARE_TOKENS:
             return [ParsedTerm(coefficient=scale, token=name)]
+        pq_name, _, submarket = name.removeprefix(_PEQ_PREFIX).rpartition("_")
+        if name.startswith(_PEQ_PREFIX) and pq_name and submarket:
+            return [
+                ParsedTerm(
+                    coefficient=scale,
+                    token=_PEQ_TOKEN,
+                    pq_name=pq_name,
+                    pq_submarket=submarket,
+                )
+            ]
         raise UnrecognizedElectricalToken(
             f"unrecognized identifier {name!r} in electrical expression "
-            f"{self._text!r} (not a declared named expression, data alias, or "
-            "built-in bare token)"
+            f"{self._text!r} (not a declared named expression, data alias, "
+            "built-in bare token, or peq_ small-plant reference)"
         )
 
     def _expand_reference(
@@ -939,16 +1036,7 @@ class _ExpressionParser:
             formula, self._model, _seen=self._seen | {key}
         )
         return [
-            ParsedTerm(
-                coefficient=scale * term.coefficient,
-                token=term.token,
-                args=term.args,
-                alias_name=term.alias_name,
-                condition=term.condition,
-                branch_true=term.branch_true,
-                branch_false=term.branch_false,
-            )
-            for term in sub_terms
+            replace(term, coefficient=scale * term.coefficient) for term in sub_terms
         ]
 
 
@@ -1019,8 +1107,8 @@ _BUCKET_A_TOKENS = frozenset(
 
 #: Bucket B — input-data tokens the bridge evaluates to a number and
 #: folds into the bound: the built-in demand/load tokens, plus the parser's
-#: three reserved structural tokens (a bare numeric constant, an unresolved
-#: ``ALIAS-ELETRICO`` reference, and a ``se(cond, X, Y)`` conditional).
+#: reserved tokens (a bare numeric constant, an unresolved ``ALIAS-ELETRICO``
+#: reference, a ``peq_`` series, and a ``se(cond, X, Y)`` conditional).
 _BUCKET_B_TOKENS = frozenset(
     {
         "demanda",
@@ -1030,6 +1118,7 @@ _BUCKET_B_TOKENS = frozenset(
         "carga_ande",
         _CONST_TOKEN,
         _ALIAS_TOKEN,
+        _PEQ_TOKEN,
         _SE_TOKEN,
     }
 )
@@ -1438,6 +1527,45 @@ def _submarket_bus_id(id_map: DecompIdMap, term: ParsedTerm) -> int:
         ) from err
 
 
+def _peq_block_generation(
+    pq_generation: Mapping[tuple[int, str], Sequence[Sequence[float]]],
+    id_map: DecompIdMap,
+    term: ParsedTerm,
+    stage_index: int,
+    block_index: int,
+) -> float:
+    """A ``peq_<name>_<sub>`` term's ``PQ`` series generation (MW) at one cell.
+
+    The suffix is an ``SB`` mnemonic or a :data:`_PEQ_SUBMARKET_ALIASES`
+    region name, compared case-insensitively; the series name must match a
+    ``PQ`` record of that subsystem exactly.
+
+    Raises
+    ------
+    _UnresolvableBucketBTerm
+        When the suffix names no declared subsystem, or that subsystem has no
+        ``PQ`` series of that name.
+    """
+    assert term.pq_name is not None and term.pq_submarket is not None
+    reference = f"{_PEQ_PREFIX}{term.pq_name}_{term.pq_submarket}"
+    mnemonics = [name.strip().upper() for name in id_map.bus_names]
+    suffix = term.pq_submarket.upper()
+    if suffix not in mnemonics:
+        suffix = _PEQ_SUBMARKET_ALIASES.get(suffix, suffix)
+    if suffix not in mnemonics:
+        raise _UnresolvableBucketBTerm(
+            f"{reference} references unknown subsystem {term.pq_submarket!r}"
+        )
+    sub_code = id_map.bus_codes[mnemonics.index(suffix)]
+    series = pq_generation.get((sub_code, term.pq_name))
+    if series is None:
+        raise _UnresolvableBucketBTerm(
+            f"{reference} references no PQ series {term.pq_name!r} in "
+            f"subsystem {sub_code}"
+        )
+    return series[stage_index][block_index]
+
+
 def build_data_context(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -1466,6 +1594,8 @@ def build_data_context(
     - ``demanda_sin``/``val_demanda_sin`` — the block load summed over every
       declared submarket;
     - ``carga_ande`` — the series from :func:`read_carga_ande`;
+    - a ``peq_<name>_<sub>`` token — that ``PQ`` series' block generation
+      (:func:`_peq_block_generation`);
     - an ``alias`` token — the model alias's value
       (:func:`_resolve_alias_value`: stage-inherited, ``NA``-patamar applies
       to all blocks);
@@ -1488,6 +1618,7 @@ def build_data_context(
     calendar = case.calendar
     demand = _per_stage_block_loads(case.dadger, id_map, calendar)
     carga_ande_series = read_carga_ande(case.dadger, calendar)
+    pq_generation = pq_block_generation(case.dadger, calendar)
     n_submarkets = len(id_map.bus_codes)
 
     def context_for_cell(stage_index: int, block_index: int) -> DataContext:
@@ -1522,6 +1653,10 @@ def build_data_context(
                         "stage"
                     )
                 return value
+            if term.token == _PEQ_TOKEN:
+                return _peq_block_generation(
+                    pq_generation, id_map, term, stage_index, block_index
+                )
             if term.token == _SE_TOKEN:
                 return evaluate_se(term, model, stage_index, block_index, resolve)
             raise ValueError(
@@ -1647,10 +1782,11 @@ def _fold_formula_bound(
 
 def _effective_inequacao_sides(
     restriction: ElectricalRestriction, stage_index: int, patamar: int
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str] | None:
     """The ``(lhs, operator, rhs)`` DSL strings in effect for one INEQUACAO
     restriction's ``(stage_index, patamar)`` cell (precedence:
-    ``période-patamar > data-patamar > constante``).
+    ``période-patamar > data-patamar > constante``), or ``None`` when no
+    override covers the cell and the restriction has no constant form.
 
     Scans :attr:`ElectricalRestriction.overrides` for rows whose
     ``[stage_start, stage_end]`` range contains *stage_index*: an exact
@@ -1667,8 +1803,6 @@ def _effective_inequacao_sides(
     appears on this deck's cards (only période-patamar and the constant do)
     and is not synthesized here.
     """
-    assert restriction.operator is not None  # INEQUACAO invariant
-    assert restriction.rhs is not None  # INEQUACAO invariant
     exact: PeriodPatamarOverride | None = None
     na: PeriodPatamarOverride | None = None
     for override in restriction.overrides:
@@ -1679,9 +1813,13 @@ def _effective_inequacao_sides(
         elif override.patamar is None:
             na = override
     chosen = exact if exact is not None else na
-    if chosen is None:
-        return restriction.lhs, restriction.operator, restriction.rhs
-    return chosen.lhs, chosen.operator, chosen.rhs
+    if chosen is not None:
+        return chosen.lhs, chosen.operator, chosen.rhs
+    if restriction.lhs is None:
+        return None
+    assert restriction.operator is not None  # INEQUACAO invariant
+    assert restriction.rhs is not None  # INEQUACAO invariant
+    return restriction.lhs, restriction.operator, restriction.rhs
 
 
 def _fold_inequacao_bound(
@@ -1796,6 +1934,7 @@ def assemble_bound(
     patamar = block_index + 1
     try:
         if restriction.is_formula:
+            assert restriction.lhs is not None  # FORMULA invariant
             lhs_partition = classify_terms(
                 parse_linear_expression(restriction.lhs, model)
             )
@@ -1810,7 +1949,14 @@ def assemble_bound(
                 restriction, stage_index, patamar, ctx, lhs_partition
             )
 
-        lhs, op, rhs = _effective_inequacao_sides(restriction, stage_index, patamar)
+        sides = _effective_inequacao_sides(restriction, stage_index, patamar)
+        if sides is None:
+            raise ValueError(
+                f"restriction {restriction.code} has no inequality in effect at "
+                f"stage {stage_index}, patamar {patamar}; active_cells excludes "
+                "such cells"
+            )
+        lhs, op, rhs = sides
         effective = replace(restriction, lhs=lhs, operator=op, rhs=rhs)
         lhs_partition = classify_terms(parse_linear_expression(lhs, model))
         rhs_partition = classify_terms(parse_linear_expression(rhs, model))
@@ -1900,7 +2046,8 @@ def active_cells(
 ) -> set[tuple[int, int]]:
     """The set of ``(stage_index, block_index)`` cells where *restriction* is
     active: its horizonte stage range intersected with the cells where its
-    activation rule evaluates ``True``.
+    activation rule evaluates ``True`` and, for an inequality declared only by
+    period rows, with the cells those rows cover.
 
     Resolves *restriction*'s rule once — from its ``habilita`` binding
     (looked up in ``model.rules`` and parsed with
@@ -1971,6 +2118,14 @@ def active_cells(
     for stage_index in range(stage_start, stage_end + 1):
         n_blocks = len(calendar[stage_index].block_hours)
         for block_index in range(n_blocks):
+            if (
+                restriction.lhs is None
+                and _effective_inequacao_sides(
+                    restriction, stage_index, block_index + 1
+                )
+                is None
+            ):
+                continue
             if always_active or evaluate_rule(
                 rule, context_factory(stage_index, block_index)
             ):
