@@ -1575,3 +1575,82 @@ class TestExpansionRampBounds:
         assert declared_turbined(ee_case) == pytest.approx(
             declared_turbined(_hydro_case(tmp_path, cadastro=cadastro))
         )
+
+
+class TestTurbineLimitDataMissing:
+    """A plant whose engolimento lacks a ``hidr.dat`` datum warns once, with
+    the stages its cap was computed without it."""
+
+    def _gap_rows(self, tmp_path: Path, cadastro: pd.DataFrame) -> list[list]:
+        from novomodelo_bridge.newave.converters.hydro import (
+            convert_per_stage_capacity_caps,
+        )
+
+        case = _hydro_case(
+            tmp_path,
+            cadastro=cadastro,
+            confhd=_make_confhd_df(),
+            rees=_make_ree_df(),
+            dger=_make_hydro_dger_mock(
+                start_year=2025, start_month=1, num_anos=1, num_anos_pos=0
+            ),
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1, 2], thermal_codes=[])
+        with dx.collect() as collected:
+            convert_per_stage_capacity_caps(case, id_map)
+        gaps = [d for d in collected if d.code == "turbine-limit-data-missing"]
+        _assert_no_repo_internal_leaks(gaps)
+        if not gaps:
+            return []
+        (diagnostic,) = gaps
+        assert diagnostic.table is not None
+        return diagnostic.table.rows
+
+    def test_complete_head_data_emits_no_warning(self, tmp_path: Path) -> None:
+        assert self._gap_rows(tmp_path, _head_corrected_two_plant_cadastro()) == []
+
+    def test_missing_rated_head_columns_warn_on_every_stage(
+        self, tmp_path: Path
+    ) -> None:
+        cadastro = _head_corrected_two_plant_cadastro().drop(
+            columns=[f"queda_nominal_conjunto_{i}" for i in range(1, 6)]
+        )
+        assert self._gap_rows(tmp_path, cadastro) == [
+            [
+                code,
+                name,
+                "queda_nominal_conjunto_*",
+                "rated flow × availability",
+                "0-11",
+            ]
+            for code, name in ((1, "USINA_A"), (2, "USINA_B"))
+        ]
+
+    def test_missing_specific_productivity_is_named(self, tmp_path: Path) -> None:
+        cadastro = _head_corrected_two_plant_cadastro()
+        cadastro.loc[2, "produtibilidade_especifica"] = 0.0
+        assert self._gap_rows(tmp_path, cadastro) == [
+            [
+                2,
+                "USINA_B",
+                "produtibilidade_especifica",
+                "rated flow × availability",
+                "0-11",
+            ]
+        ]
+
+    def test_set_with_machines_and_no_rated_head_is_named(self, tmp_path: Path) -> None:
+        cadastro = _head_corrected_two_plant_cadastro()
+        cadastro.loc[1, "numero_conjuntos_maquinas"] = 2
+        cadastro.loc[1, "maquinas_conjunto_2"] = 2
+        cadastro.loc[1, "potencia_nominal_conjunto_2"] = 500.0
+        cadastro.loc[1, "vazao_nominal_conjunto_2"] = 50.0
+        assert self._gap_rows(tmp_path, cadastro) == [
+            [
+                1,
+                "USINA_A",
+                "queda_nominal_conjunto_2",
+                "rated flow of those sets, not head-corrected",
+                "0-11",
+            ]
+        ]

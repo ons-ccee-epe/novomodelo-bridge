@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`convert newave` and `convert decomp` warn when a plant's turbined-flow
+  limit leaves out part of the source model's rule.** A plant whose
+  `hidr.dat` record lacks a datum the limit is computed from (a machine
+  set's rated head, the specific productivity, the volume-to-cota
+  polynomial or the mean tailrace level) used to get a limit without that
+  part of the rule, and no notice; the `turbine-limit-data-missing`
+  warning now names the plant, the missing datum, the limit used instead
+  and the stages it applies to.
 - **`compare decomp` compares both models at their operating points.** The
   Productivity tab splits each plant and stage's realized-productivity gap
   into a part from the fitted production functions and a part from where

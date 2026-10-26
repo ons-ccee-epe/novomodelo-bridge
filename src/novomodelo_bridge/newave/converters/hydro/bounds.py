@@ -16,7 +16,12 @@ from collections.abc import Callable
 import pandas as pd
 import pyarrow as pa
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    Severity,
+    emit,
+    format_stage_ranges,
+)
 from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.productivity import (
     KTURB_BY_TIPO_TURBINA,
@@ -25,7 +30,11 @@ from novomodelo_bridge.core.productivity import (
     mean_cota,
 )
 from novomodelo_bridge.core.tolerances import BIG_M
-from novomodelo_bridge.core.turbine import MachineSet, power_limited_flow
+from novomodelo_bridge.core.turbine import (
+    MachineSet,
+    power_limited_flow,
+    turbine_limit_gap_diagnostic,
+)
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.geometry import _expansion_configs
 from novomodelo_bridge.newave.converters.hydro.overrides import (
@@ -131,6 +140,61 @@ def _operating_head(
     )
 
 
+def _rating_head(
+    hreg: pd.Series,
+    *,
+    canal_fuga_override: float | None,
+    cmont_override: float | None,
+) -> tuple[float | None, str | None]:
+    """``(h_op, None)`` with the positive :func:`_operating_head` the
+    engolimento rates the machines of *hreg* at, or ``(None, datum)`` naming
+    the ``hidr.dat`` datum whose absence leaves the engolimento without one."""
+    if not all(f"queda_nominal_conjunto_{i}" in hreg.index for i in range(1, 6)):
+        return None, "queda_nominal_conjunto_*"
+    rho_esp = hreg.get("produtibilidade_especifica")
+    if rho_esp is None or is_na(rho_esp) or float(rho_esp) <= 0.0:
+        return None, "produtibilidade_especifica"
+    h_op = _operating_head(
+        hreg, canal_fuga_override=canal_fuga_override, cmont_override=cmont_override
+    )
+    if h_op is None:
+        return None, "a0_volume_cota … a4_volume_cota, canal_fuga_medio"
+    if h_op <= 0.0:
+        return None, "positive operating head"
+    return h_op, None
+
+
+def _turbine_limit_gap(
+    hreg: pd.Series,
+    *,
+    canal_fuga_override: float | None = None,
+    cmont_override: float | None = None,
+) -> tuple[str, str] | None:
+    """``(missing datum, turbined cap used)`` when :func:`_operational_caps`
+    cannot apply the engolimento to the machines of *hreg* in full, else
+    ``None``. A set with machines and no rated head keeps its rated flow."""
+    n_sets = int(hreg["numero_conjuntos_maquinas"])
+    units = [int(hreg[f"maquinas_conjunto_{i}"]) for i in range(1, n_sets + 1)]
+    if sum(units) <= 0:
+        return None
+    _h_op, missing = _rating_head(
+        hreg, canal_fuga_override=canal_fuga_override, cmont_override=cmont_override
+    )
+    if missing is not None:
+        return missing, "rated flow × availability"
+    unrated = [
+        i
+        for i, n in enumerate(units, start=1)
+        if n > 0 and not float(hreg[f"queda_nominal_conjunto_{i}"]) > 0.0
+    ]
+    if unrated:
+        return (
+            ", ".join(f"queda_nominal_conjunto_{i}" for i in unrated),
+            "rated flow of those sets, not head-corrected",
+        )
+    return None
+
+
 def _operational_caps(
     hreg: pd.Series,
     name: str,
@@ -153,9 +217,8 @@ def _operational_caps(
         max_turbined = min(Σ_c q_eff_c, p_inst / (ρ_esp · h_op)) · availability
 
     The turbined cap falls back to the available flow ``Σ_c n_c · q_nom_c ·
-    availability`` when the head data is missing (``queda_nominal_conjunto_*``
-    columns, cota polynomial, tailrace, positive ``ρ_esp``) or ``h_op`` is not
-    positive.
+    availability`` without a :func:`_rating_head`; :func:`_turbine_limit_gap`
+    names what is missing.
     """
     sets = [
         (
@@ -170,24 +233,10 @@ def _operational_caps(
     rated_power = sum(n * p for n, _q, p in sets)
     available_power = rated_power * availability
 
-    rho_esp = hreg.get("produtibilidade_especifica")
-    has_head_data = all(
-        f"queda_nominal_conjunto_{i}" in hreg.index for i in range(1, 6)
+    h_op, _missing = _rating_head(
+        hreg, canal_fuga_override=canal_fuga_override, cmont_override=cmont_override
     )
-    h_op = (
-        _operating_head(
-            hreg,
-            canal_fuga_override=canal_fuga_override,
-            cmont_override=cmont_override,
-        )
-        if has_head_data
-        and sum(n for n, _q, _p in sets) > 0
-        and rho_esp is not None
-        and not is_na(rho_esp)
-        and float(rho_esp) > 0.0
-        else None
-    )
-    if h_op is None or h_op <= 0.0:
+    if h_op is None:
         return rated_flow * availability, available_power
 
     engolimento = power_limited_flow(
@@ -202,7 +251,7 @@ def _operational_caps(
             for i, (n, q, p) in enumerate(sets, start=1)
         ],
         generator_head_m=h_op,
-        specific_productivity=float(rho_esp),
+        specific_productivity=float(hreg["produtibilidade_especifica"]),
         exponent=KTURB_BY_TIPO_TURBINA.get(int(hreg.get("tipo_turbina", 0) or 0), 0.5),
     )
     return engolimento * availability, available_power
@@ -259,6 +308,7 @@ def convert_per_stage_capacity_caps(
     stage_ids: list[int] = []
     max_turbined_vals: list[float | None] = []
     max_generation_vals: list[float] = []
+    gap_stages: dict[tuple[int, str, str, str], list[int]] = {}
 
     for newave_code in sorted(confhd_codes):
         if newave_code not in cadastro.index:
@@ -278,14 +328,20 @@ def convert_per_stage_capacity_caps(
         ]
         drops = _per_stage_drop_overrides(drop_overrides, case, total_stages)
         caps: dict[tuple[int, float | None, float | None], tuple[float, float]] = {}
+        gaps: dict[tuple[int, float | None, float | None], tuple[str, str] | None] = {}
         for stage_id, (cfuga, cmont) in enumerate(drops):
             key = (min(stage_id, ramp_end), cfuga, cmont)
             if key not in caps:
+                rated = hreg if config is None else config.hreg_at(hreg, stage_id)
                 caps[key] = _operational_caps(
-                    hreg if config is None else config.hreg_at(hreg, stage_id),
-                    name,
-                    canal_fuga_override=cfuga,
-                    cmont_override=cmont,
+                    rated, name, canal_fuga_override=cfuga, cmont_override=cmont
+                )
+                gaps[key] = _turbine_limit_gap(
+                    rated, canal_fuga_override=cfuga, cmont_override=cmont
+                )
+            if gaps[key] is not None:
+                gap_stages.setdefault((newave_code, name, *gaps[key]), []).append(
+                    stage_id
                 )
             max_turbined, max_generation = caps[key]
             hydro_ids.append(hydro_id)
@@ -295,6 +351,16 @@ def convert_per_stage_capacity_caps(
             )
             max_generation_vals.append(max_generation)
 
+    if gap_stages:
+        emit(
+            turbine_limit_gap_diagnostic(
+                [
+                    [code, name.strip(), missing, used, format_stage_ranges(stages)]
+                    for (code, name, missing, used), stages in gap_stages.items()
+                ]
+            ),
+            logger=_LOG,
+        )
     if not hydro_ids:
         return None
 

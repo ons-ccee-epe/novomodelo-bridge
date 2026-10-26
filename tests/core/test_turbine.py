@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.turbine import (
     MachineSet,
     head_limited_flow,
     power_limited_flow,
     settled_flow,
     tailrace_limited_flow,
+    turbine_limit_gap_diagnostic,
 )
 
 
@@ -130,3 +132,13 @@ def test_tailrace_limited_flow_reports_an_oscillation() -> None:
     )
     assert not converged
     assert flow == 100.0
+
+
+def test_turbine_limit_gap_diagnostic_warns_one_row_per_plant() -> None:
+    rows = [[7, "PLANT", "queda_nominal_conjunto_2", "rated flow", "0-11"]]
+    diagnostic = turbine_limit_gap_diagnostic(rows)
+    assert diagnostic.code == "turbine-limit-data-missing"
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == rows
+    assert diagnostic.summary.startswith("1 plant(s)")
