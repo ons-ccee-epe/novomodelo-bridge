@@ -258,71 +258,85 @@ def read_medias_system(case_dir: Path) -> pl.DataFrame:
 # -------------------------------------------------------------------
 
 
+# The pmo.dat convergence table runs from its header to the next page header.
+# Only its rows are read: a row of any other table with seven numbers (an
+# electric-constraint year row, say) parses as an iteration too.
+_PMO_CONV_HEADER = re.compile(
+    r"^\s*ITER\s+LIM\.INF\.\s+ZINF\s+LIM\.SUP\.\s+ZSUP\s+DZINF\s+ZSUP ITER\.",
+    re.MULTILINE,
+)
+_PMO_PAGE_HEADER = re.compile(r"^\s*CEPEL\s", re.MULTILINE)
+
 # Match one data row of the pmo.dat convergence table:
-#   iter   LIM.INF   ZINF   LIM.SUP   ZSUP   DZINF   ZSUP_ITER   [tempo]
-# Column semantics (the source model manual):
-#   - ZINF        = cuts-based lower bound at end of iteration (SDDP LB)
-#   - ZSUP        = mean forward-simulation cost (SDDP UB)
-#   - LIM.INF/SUP = lower/upper confidence-interval brackets on ZSUP; collapse
-#                   to ZSUP when there is a single forward sample
-#   - ZSUP_ITER   = current-iteration forward cost (per-sample, not aggregated)
-# DZINF is "-" on the first iteration and numeric afterwards. The trailing
-# wall-clock field is optional. We greedily consume six numeric columns
-# (treating "-" as a missing DZINF) so that subsequent layout drift in
-# pmo.dat (longer decimal widths, extra padding) does not break us.
+#   iter   LIM.INF   ZINF   LIM.SUP   ZSUP   DZINF   ZSUP ITER   [tempo]
+# ZSUP is the lowest ZSUP ITER so far, never the iteration's own forward cost:
+# set against Novomodelo's per-iteration upper bound it hides every rise. DZINF is
+# "-" on the first iteration and numeric afterwards; the trailing wall-clock
+# field is optional. The deficit-risk year rows interleaved with the iterations
+# are indented far past the iteration column, which keeps them out.
 _PMO_CONV_ROW = re.compile(
-    r"^\s*(\d+)"  # iteration -> group 1
+    r"^ {0,12}(\d+)"  # iteration -> group 1
     r"\s+(?:\d+\.\d+)"  # LIM.INF (not captured)
     r"\s+(\d+\.\d+)"  # ZINF -> group 2
     r"\s+(?:\d+\.\d+)"  # LIM.SUP (not captured)
     r"\s+(\d+\.\d+)"  # ZSUP -> group 3
     r"\s+(?:-|\d+\.\d+)"  # DZINF
-    r"\s+(?:\d+\.\d+)"  # ZSUP_ITER (not captured)
+    r"\s+(\d+\.\d+)"  # ZSUP ITER -> group 4
     r"(?:\s+\S+)?\s*$",  # optional tempo column
     re.MULTILINE,
 )
 
+_PMO_CONVERGENCE_SCHEMA: dict[str, type[pl.DataType]] = {
+    "iteration": pl.Int64,
+    "lower_bound": pl.Float64,
+    "upper_bound_mean": pl.Float64,
+    "upper_bound_best": pl.Float64,
+}
 
-def _parse_pmo_convergence_text(text: str) -> dict[int, tuple[float, float]]:
+
+def _parse_pmo_convergence_text(
+    text: str,
+) -> dict[int, tuple[float, float, float]]:
     """Extract the iteration table from raw pmo.dat text.
 
-    Returns ``{iteration: (zinf, zsup)}`` keyed on iteration number, taking the LAST
-    occurrence per iteration (the source model writes two lines per iteration; only the
-    second carries DZINF and ZSUP_ITER, which the regex requires, so this naturally
-    selects the post-backward summary line).
+    Returns ``{iteration: (zinf, zsup_iter, zsup)}`` keyed on iteration number.
+    The source model writes two lines per iteration, three with several forward
+    series (a 99% interval line between them); only the last carries DZINF and
+    ZSUP ITER, which the regex requires, and it holds the values the source
+    model's own ``CONVERG.TMP`` records.
     """
-    out: dict[int, tuple[float, float]] = {}
-    for match in _PMO_CONV_ROW.finditer(text):
-        it = int(match.group(1))
-        zinf = float(match.group(2))
-        zsup = float(match.group(3))
-        out[it] = (zinf, zsup)
+    header = _PMO_CONV_HEADER.search(text)
+    if header is None:
+        return {}
+    page = _PMO_PAGE_HEADER.search(text, header.end())
+    section = text[header.end() : len(text) if page is None else page.start()]
+    out: dict[int, tuple[float, float, float]] = {}
+    for match in _PMO_CONV_ROW.finditer(section):
+        out[int(match.group(1))] = (
+            float(match.group(2)),
+            float(match.group(4)),
+            float(match.group(3)),
+        )
     return out
 
 
 def read_pmo_convergence(newave_dir: Path) -> pl.DataFrame:
-    """Read pmo.dat convergence table.
+    """Read pmo.dat convergence table, in R$.
 
-    Returns DataFrame with columns: ``iteration`` (Int64),
-    ``lower_bound`` (Float64), ``upper_bound_mean`` (Float64).
+    Returns ``iteration`` (Int64) and the Float64 bounds ``lower_bound``
+    (``ZINF``), ``upper_bound_mean`` (``ZSUP ITER``, the iteration's forward
+    cost, Novomodelo's ``upper_bound_mean``) and ``upper_bound_best`` (``ZSUP``, the
+    lowest ``ZSUP ITER`` so far).
 
-    The bound columns come from the source model's ``ZINF`` (cuts-based lower bound) and
-    ``ZSUP`` (mean forward-simulation cost) fields, parsed directly from the pmo.dat
-    iteration table via regex. inewave's tabular parser misaligns the high-precision
-    columns on real-world pmo.dat layouts (truncates ``LIM.INF`` to 3 decimals, drops
-    the leading digit of ``LIM.SUP``, and frequently returns ``NaN`` for ``ZINF``), so
-    we cannot use ``Pmo.convergencia`` here.
+    The table is parsed with a regex: inewave's tabular parser misaligns the
+    high-precision columns on real-world pmo.dat layouts (truncates ``LIM.INF``
+    to 3 decimals, drops the leading digit of ``LIM.SUP``, and frequently
+    returns ``NaN`` for ``ZINF``), so we cannot use ``Pmo.convergencia`` here.
 
     Returns empty DataFrame if pmo.dat is not found or the iteration
     table cannot be located.
     """
-    empty = pl.DataFrame(
-        schema={
-            "iteration": pl.Int64,
-            "lower_bound": pl.Float64,
-            "upper_bound_mean": pl.Float64,
-        }
-    )
+    empty = pl.DataFrame(schema=_PMO_CONVERGENCE_SCHEMA)
 
     pmo_path = _find_pmo(newave_dir)
     if pmo_path is None:
@@ -340,30 +354,21 @@ def read_pmo_convergence(newave_dir: Path) -> pl.DataFrame:
         _LOG.warning(
             "No convergence-table rows matched in %s; "
             "expected the NEWAVE 'ITER LIM.INF ZINF LIM.SUP ZSUP DZINF "
-            "ZSUP_ITER' table",
+            "ZSUP ITER' table",
             pmo_path,
         )
         return empty
 
     iters = sorted(rows)
-    result = pl.DataFrame(
+    # pmo.dat prints the bounds in 10^6 R$; Novomodelo's are R$.
+    return pl.DataFrame(
         {
             "iteration": iters,
-            "lower_bound": [rows[i][0] for i in iters],
-            "upper_bound_mean": [rows[i][1] for i in iters],
+            "lower_bound": [rows[i][0] * 1e6 for i in iters],
+            "upper_bound_mean": [rows[i][1] * 1e6 for i in iters],
+            "upper_bound_best": [rows[i][2] * 1e6 for i in iters],
         },
-        schema={
-            "iteration": pl.Int64,
-            "lower_bound": pl.Float64,
-            "upper_bound_mean": pl.Float64,
-        },
-    )
-
-    # The source model pmo.dat exports convergence values in 10^6 R$. Multiply by 1e6 to
-    # convert to R$ (matching Novomodelo convention).
-    return result.with_columns(
-        pl.col("lower_bound") * 1e6,
-        pl.col("upper_bound_mean") * 1e6,
+        schema=_PMO_CONVERGENCE_SCHEMA,
     )
 
 

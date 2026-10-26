@@ -254,10 +254,12 @@ comparable:
 
 Then read the report cost-first: the cost breakdown says which component
 differs, the per-stage costs say where, and the system and per-bus operation
-tabs localize it. Below the convergence chart, a table nets each model's
-expected constraint-violation penalties out of its final lower bound, so a
-slack priced far above any real cost on one side does not hide how close the
-priced operation is. Load and non-controllable generation are converted directly
+tabs localize it. The convergence chart sets NEWAVE's upper bound at each
+iteration, `ZSUP ITER` in `pmo.dat`, against Novomodelo's, and NEWAVE's `ZSUP`,
+the lowest upper bound so far, against Novomodelo's running minimum. Below the
+chart, a table nets each model's expected constraint-violation penalties out
+of its final lower bound, so a slack priced far above any real cost on one
+side does not hide how close the priced operation is. Load and non-controllable generation are converted directly
 from the inputs and are rarely the cause.
 
 In an FPHA run, the Productivity tab compares the two models' fitted planes on

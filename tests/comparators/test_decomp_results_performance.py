@@ -71,14 +71,15 @@ def _novomodelo_convergence_fixture() -> pl.DataFrame:
 class TestDecompConvergenceFrame:
     """``_decomp_convergence_frame`` -- renames the source
     model's ``relato.convergencia`` onto the canonical ``iteration``/
-    ``lower_bound``/``upper_bound_mean`` schema ``read_novomodelo_convergence``
-    emits, so ``convergence_chart`` can read both sides without a
-    source-specific branch."""
+    ``lower_bound``/``upper_bound_mean``/``upper_bound_best`` schema, so
+    ``convergence_chart`` can read both sides without a source-specific
+    branch."""
 
     _CANONICAL_SCHEMA = {
         "iteration": pl.Int64,
         "lower_bound": pl.Float64,
         "upper_bound_mean": pl.Float64,
+        "upper_bound_best": pl.Float64,
     }
 
     def _patch(self, monkeypatch: pytest.MonkeyPatch, frame: pl.DataFrame) -> None:
@@ -94,16 +95,25 @@ class TestDecompConvergenceFrame:
 
         frame = _decomp_convergence_frame(tmp_path)
 
-        assert frame.columns == ["iteration", "lower_bound", "upper_bound_mean"]
         assert frame.schema == self._CANONICAL_SCHEMA
         assert frame["iteration"].to_list() == [1, 2, 3]
         # zinf/zsup (native k$) reconciled to R$ (x1e3) to match novomodelo's bounds.
         assert frame["lower_bound"].to_list() == pytest.approx(
             [100_000.0, 150_000.0, 180_000.0]
         )
-        assert frame["upper_bound_mean"].to_list() == pytest.approx(
+        assert frame["upper_bound_best"].to_list() == pytest.approx(
             [500_000.0, 300_000.0, 190_000.0]
         )
+
+    def test_zsup_is_the_best_upper_bound_not_the_iteration_one(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The relato prints only the lowest upper bound so far."""
+        self._patch(monkeypatch, _relato_convergence_frame())
+
+        frame = _decomp_convergence_frame(tmp_path)
+
+        assert frame["upper_bound_mean"].null_count() == frame.height
 
     def test_gap_and_timing_columns_are_not_carried_over(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -175,13 +185,18 @@ class TestBuildDecompDatasetConvergence:
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
         nw_conv = dataset.render.nw_convergence
-        assert nw_conv.columns == ["iteration", "lower_bound", "upper_bound_mean"]
+        assert nw_conv.columns == [
+            "iteration",
+            "lower_bound",
+            "upper_bound_mean",
+            "upper_bound_best",
+        ]
         assert nw_conv["iteration"].to_list() == [1, 2, 3]
         # native k$ zinf/zsup reconciled to R$ (x1e3).
         assert nw_conv["lower_bound"].to_list() == pytest.approx(
             [100_000.0, 150_000.0, 180_000.0]
         )
-        assert nw_conv["upper_bound_mean"].to_list() == pytest.approx(
+        assert nw_conv["upper_bound_best"].to_list() == pytest.approx(
             [500_000.0, 300_000.0, 190_000.0]
         )
 
@@ -242,7 +257,12 @@ class TestBuildDecompDatasetConvergence:
 
         nw_conv = dataset.render.nw_convergence
         assert nw_conv.is_empty()
-        assert nw_conv.columns == ["iteration", "lower_bound", "upper_bound_mean"]
+        assert nw_conv.columns == [
+            "iteration",
+            "lower_bound",
+            "upper_bound_mean",
+            "upper_bound_best",
+        ]
 
         html = build_comparison_report(dataset)
         assert "Convergence" in html
