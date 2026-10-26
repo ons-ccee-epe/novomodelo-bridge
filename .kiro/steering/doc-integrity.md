@@ -18,8 +18,9 @@ counterpart is `.claude/rules/comments.md`.
 
 - **CLAUDE.md / `.claude/rules/*`** — an agent that acts on assertions.
   Durability and anti-drift dominate; a stale claim here is executed, not read.
-- **CHANGELOG.md** — release history. Provenance is *inverted* (history is the
-  job); plan-leakage still applies (no epic/ticket tokens in released entries).
+- **CHANGELOG.md** — release history for a CLI user. Provenance is *inverted*
+  (history is the job); plan-leakage still applies (no epic/ticket tokens in
+  released entries). Entries follow §6.
 - **README.md / docs/** — newcomers and users, most with **no repo checkout**
   (pip install). Teaching voice is the job; promotional voice is not (§4).
   README.md doubles as the PyPI description, so it links to `docs/` by
@@ -88,3 +89,24 @@ No `epic`/`ticket`/`sprint` vocabulary or plan ids in shipped docs — plans liv
 in `plans/` (gitignored); public artifacts describe behavior, not how the work
 was organized. Gate: `scripts/ci/check_no_plan_leaks.py`. Commit messages may
 reference plan structure — they target git-log readers.
+
+## 6. CHANGELOG entries
+
+The reader runs the commands and reads the results, not the code. Every entry
+is written for that reader:
+
+- **One or two lines.** A bold lead naming the command and its user-visible
+  effect, then at most one clause on what changes in the results or what the
+  user must do (reconvert, a newer dependency, the paired novomodelo release).
+- **Keep the names the user meets** — commands, flags, diagnostic ids, deck
+  files and records. Leave out output field paths, parquet columns, formulas,
+  internal modules and functions, and how the change works; that belongs in
+  `docs/`, the lineage TOML and the commit message.
+- **No entry for a change the user cannot see**: refactors, tests and CI,
+  guards, contributor docs, packaging internals, or a fix to something not
+  yet released.
+- **Merge by theme.** A change that serves the same user-visible goal as an
+  existing `[Unreleased]` entry is folded into it, rewording it if needed,
+  instead of adding a sibling entry.
+- **A release intro is one line**: the novomodelo pairing and any action the user
+  must take.
