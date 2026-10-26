@@ -14,6 +14,8 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-26
+
 Pairs the bridge with the **novomodelo 0.19.1** release and pins
 `novomodelo-python` to it; convert again a DECOMP case whose boundary FCF an
 earlier bridge imported.
