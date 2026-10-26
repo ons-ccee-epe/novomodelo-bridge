@@ -139,6 +139,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | `PEE-GER-PER-PAT` read like `PEE-GER-PER-PAT-CEN` | The deck declares its parks' generation on the scenario-free `PEE-GER-PER-PAT` card. A copy with the same generation rewritten on `PEE-GER-PER-PAT-CEN`, the scenario column added, converts to the same renewable registry, `non_controllable_stats.parquet` and `external_ncs_scenarios.parquet`. A bridge that reads only `PEE-GER-PER-PAT-CEN` converts the original deck with its `PQ` series alone, and warns about nothing. Captured in October 2026. |
 
+### The same shadow-process deck, with `centralizado` and `fixo` parks
+
+| Check | Verified |
+| --- | --- |
+| `PEE-CONFIG-PER` operating state against curtailment | The deck's `PEE-CONFIG-PER` declares each park `centralizado` or `fixo`. Matching each park to its converted source by name, every `centralizado` park and no other carries `allow_curtailment: true`; the `fixo` parks and every `PQ` series stay must-run, and `penalties.json` prices curtailment at `PCORTEOL`. Captured in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the
