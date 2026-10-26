@@ -145,6 +145,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | `PEE-CONFIG-PER` operating state against curtailment | The deck's `PEE-CONFIG-PER` declares each park `centralizado` or `fixo`. Matching each park to its converted source by name, every `centralizado` park and no other carries `allow_curtailment: true`; the `fixo` parks and every `PQ` series stay must-run, and `penalties.json` prices curtailment at `PCORTEOL`. Captured in October 2026. |
 
+### Two LIBs DECOMP decks, with `peq_` terms, period-only inequalities and load-driven activation rules
+
+| Check | Verified |
+| --- | --- |
+| LIBs electrical restrictions | Every restriction of the shadow-process deck's `lib_restricao-eletrica-especial.csv` converts, among them the ones reading `peq_<name>_<subsystem>` series and the ones declared only by `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR` rows. On a copy of `DEC_ONS_062026_RV0_VE_LPPs_COMPLETAS`, whose `RESTRICAO-ELETRICA-HABILITA` rules compare the `DP` load and aliases, the restrictions the conversion leaves inactive are the ones an independent evaluation of every rule, stage and block finds inactive, and the restrictions whose limit is `1E+31` convert with that side unbounded. Captured in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the
