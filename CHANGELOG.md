@@ -55,7 +55,8 @@ earlier bridge imported.
 - **Turbined-flow and generation caps follow the source model.** `convert
   decomp` caps turbined flow stage by stage at DECOMP's own limit. `convert
   newave` caps generation at the plant's available power on every stage.
-- **idecomp 1.17.0 or newer is required.**
+- **The bridge requires idecomp 1.17.1, pandas 3.1 and polars 2.1 or newer**,
+  the releases it is tested with.
 - **`convert decomp` lets `centralizado` renewable parks be curtailed**, from
   their `PEE-CONFIG-PER` state, as the cheapest way to absorb a surplus;
   results change for decks with such parks.

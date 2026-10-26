@@ -10,14 +10,14 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
-    "idecomp>=1.17.0",
+    "idecomp>=1.17.1",
     # 1.16.1: first to read modif.dat VAZMINT PRE/POS markers (1.16.0: modif.dat
     # POTEFE/VOLCOTA/COTAREA and vazoes.dat at 600 postos).
     "inewave>=1.16.2",
     "pyarrow>=26.0.0",
-    "pandas>=3.0.6",
+    "pandas>=3.1.0",
     "plotly>=7.1.0",
-    "polars>=2.0.0",
+    "polars>=2.1.0",
     "rich>=15.0.0",
     "typer>=0.27.3",
     # REQUIRED runtime dep, not an optional extra: `convert decomp` imports the
@@ -30,7 +30,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1",
-    "ty>=0.0.90",
+    "ty>=0.0.92",
     "pytest-cov",
     "ruff",
     "jsonschema",
