@@ -21,6 +21,7 @@ make_case``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 from collections.abc import Iterator
 from pathlib import Path
@@ -92,6 +93,25 @@ requires_writer_binding = pytest.mark.skipif(
         "writer binding"
     ),
 )
+
+
+def case_json_floats(case_dir: Path) -> list[float]:
+    """Every float literal in the JSON files of a converted case directory."""
+    floats: list[float] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, float):
+            floats.append(value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    for path in sorted(case_dir.rglob("*.json")):
+        walk(json.loads(path.read_text(encoding="utf-8")))
+    return floats
 
 
 @pytest.fixture

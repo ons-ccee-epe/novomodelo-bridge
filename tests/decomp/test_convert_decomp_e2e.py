@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from novomodelo_bridge.decomp.pipeline import convert_decomp_case
-from tests.conftest import requires_novomodelo_python
+from tests.conftest import case_json_floats, requires_novomodelo_python
 
 
 @requires_novomodelo_python
@@ -27,3 +29,17 @@ def test_decomp_mini_deck_converts_and_validates(
     result = novomodelo.io.validate(str(dst))
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "digits"), [({"float_digits": 4}, 4), ({}, 15)], ids=["4", "default"]
+)
+def test_decomp_mini_deck_writes_json_floats_at_requested_digits(
+    decomp_mini_deck: Path, tmp_path: Path, kwargs: dict[str, int], digits: int
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True, **kwargs)
+
+    floats = case_json_floats(dst)
+    assert floats
+    assert all(value == float(f"{value:.{digits}g}") for value in floats)

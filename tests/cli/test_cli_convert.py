@@ -2688,3 +2688,89 @@ class TestConversionDiagnosticsRendering:
         assert payload["summary"]["hydros"] == 1
         codes = [d["code"] for d in payload["diagnostics"]]
         assert "thermal-gtmin-above-capacity" in codes
+
+
+class TestJsonFloatDigits:
+    """``--json-float-digits`` reaches every writer on both conversion tracks."""
+
+    @staticmethod
+    def _invoke(argv: list[str]):
+        from typer.testing import CliRunner
+
+        from novomodelo_bridge.cli import app
+
+        return CliRunner().invoke(app, argv)
+
+    @staticmethod
+    def _report():
+        from novomodelo_bridge.core.conversion import ConversionReport
+
+        return ConversionReport(
+            hydro_count=1, thermal_count=1, bus_count=1, line_count=0, stage_count=4
+        )
+
+    def test_newave_passes_float_digits_to_the_pipeline(self, tmp_path: Path) -> None:
+        src = _make_fake_newave_dir(tmp_path)
+        with patch(
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
+            return_value=self._report(),
+        ) as mock_convert:
+            result = self._invoke(
+                ["convert", "newave", str(src), str(tmp_path / "dst")]
+                + ["--json-float-digits", "9"]
+            )
+
+        assert result.exit_code == 0
+        assert mock_convert.call_args.kwargs["float_digits"] == 9
+
+    def test_newave_uses_15_digits_without_the_flag(self, tmp_path: Path) -> None:
+        src = _make_fake_newave_dir(tmp_path)
+        with patch(
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
+            return_value=self._report(),
+        ) as mock_convert:
+            result = self._invoke(
+                ["convert", "newave", str(src), str(tmp_path / "dst")]
+            )
+
+        assert result.exit_code == 0
+        assert mock_convert.call_args.kwargs["float_digits"] == 15
+
+    def test_decomp_passes_float_digits_to_pipeline_and_fcf_import(
+        self, tmp_path: Path
+    ) -> None:
+        src = _make_fake_decomp_dir_with_cuts(tmp_path)
+        dst = tmp_path / "dst"
+        with (
+            patch(
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
+                return_value=self._report(),
+            ) as mock_convert,
+            patch(
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
+                return_value=dst / "boundary",
+            ) as mock_import,
+        ):
+            result = self._invoke(
+                ["convert", "decomp", str(src), str(dst), "--json-float-digits", "9"]
+            )
+
+        assert result.exit_code == 0
+        assert mock_convert.call_args.kwargs["float_digits"] == 9
+        assert mock_import.call_args.kwargs["float_digits"] == 9
+
+    @pytest.mark.parametrize("track", ["newave", "decomp"])
+    @pytest.mark.parametrize("digits", ["0", "18"])
+    def test_out_of_range_digits_is_a_usage_error(
+        self, tmp_path: Path, track: str, digits: str
+    ) -> None:
+        result = self._invoke(
+            ["convert", track, str(tmp_path / "src"), str(tmp_path / "dst")]
+            + ["--json-float-digits", digits]
+        )
+
+        assert result.exit_code == 2
+        assert "1<=x<=17" in result.output

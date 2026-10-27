@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from novomodelo_bridge.newave.pipeline import convert_newave_case
-from tests.conftest import requires_novomodelo_python
+from tests.conftest import case_json_floats, requires_novomodelo_python
 
 
 @requires_novomodelo_python
@@ -31,3 +33,17 @@ def test_newave_mini_deck_converts_and_validates(
     # Pins the CaseWriter Option-A byte format (a single trailing newline),
     # the one on-disk change from routing NEWAVE writes through the writer.
     assert (dst / "config.json").read_text().endswith("\n")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "digits"), [({"float_digits": 4}, 4), ({}, 15)], ids=["4", "default"]
+)
+def test_newave_mini_deck_writes_json_floats_at_requested_digits(
+    newave_mini_deck: Path, tmp_path: Path, kwargs: dict[str, int], digits: int
+) -> None:
+    dst = tmp_path / "converted"
+    convert_newave_case(newave_mini_deck, dst, **kwargs)
+
+    floats = case_json_floats(dst)
+    assert floats
+    assert all(value == float(f"{value:.{digits}g}") for value in floats)
