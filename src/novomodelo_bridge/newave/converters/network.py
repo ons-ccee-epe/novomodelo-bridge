@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import date
 
 import pandas as pd
@@ -780,6 +781,226 @@ def convert_hydro_penalty_overrides(
     return pa.table(data, schema=schema)
 
 
+_LINE_BOUNDS_SCHEMA = pa.schema(
+    [
+        pa.field("line_id", pa.int32(), nullable=False),
+        pa.field("stage_id", pa.int32(), nullable=False),
+        pa.field("block_id", pa.int32(), nullable=True),
+        pa.field("direct_mw", pa.float64(), nullable=False),
+        pa.field("reverse_mw", pa.float64(), nullable=False),
+    ]
+)
+
+
+def _latest_year_values[K: tuple[int, ...], V](
+    by_year: Mapping[K, V],
+) -> dict[tuple[int, ...], V]:
+    """Re-key a ``(src, tgt, year, cal_month, ...)`` lookup without its year,
+    keeping the latest year's value for each remaining key."""
+    latest: dict[tuple[int, ...], tuple[int, V]] = {}
+    for key, value in by_year.items():
+        yr = key[2]
+        seasonal_key = key[:2] + key[3:]
+        existing = latest.get(seasonal_key)
+        if existing is None or yr > existing[0]:
+            latest[seasonal_key] = (yr, value)
+    return {k: v for k, (_, v) in latest.items()}
+
+
+@dataclass(frozen=True)
+class _InterchangeCaps:
+    """``sistema.dat::limites_intercambio`` as ``{direct_mw, reverse_mw}`` caps.
+
+    ``by_date`` is keyed by canonical ``(src, tgt, year, cal_month)``;
+    ``last_year`` by ``(src, tgt, cal_month)``, holding the latest listed year.
+    """
+
+    by_date: dict[tuple[int, int, int, int], dict[str, float]]
+    last_year: dict[tuple[int, ...], dict[str, float]]
+
+    @classmethod
+    def from_limites(cls, limites_df: pd.DataFrame) -> _InterchangeCaps:
+        date_lookup: dict[tuple[int, int, int, int], dict[str, float]] = {}
+
+        for _, row in limites_df.iterrows():
+            de = int(row["submercado_de"])
+            para = int(row["submercado_para"])
+            valor = float(row["valor"])
+            sentido = int(row["sentido"])
+            dt = row["data"]
+            yr = int(dt.year)
+            cal_month = int(dt.month)
+
+            src, tgt = (de, para) if de < para else (para, de)
+            key = (src, tgt, yr, cal_month)
+
+            if key not in date_lookup:
+                date_lookup[key] = {"direct_mw": 0.0, "reverse_mw": 0.0}
+
+            _assign_flow_direction(date_lookup[key], de, para, sentido, valor)
+
+        return cls(by_date=date_lookup, last_year=_latest_year_values(date_lookup))
+
+    def at(self, src: int, tgt: int, y: int, m: int) -> dict[str, float]:
+        """Caps of a study month, falling back to the last listed year's month."""
+        caps = self.by_date.get((src, tgt, y, m))
+        if caps is None:
+            caps = self.last_year.get(
+                (src, tgt, m), {"direct_mw": 0.0, "reverse_mw": 0.0}
+            )
+        return caps
+
+    def frozen_at(self, src: int, tgt: int, y: int, m: int) -> dict[str, float]:
+        """Caps the post-study tail freezes at, taken at the last study stage."""
+        return self.by_date.get((src, tgt, y, m)) or self.last_year.get(
+            (src, tgt, m), {"direct_mw": 0.0, "reverse_mw": 0.0}
+        )
+
+
+@dataclass(frozen=True)
+class _ExchangeBlockFactors:
+    """Per-block direct/reverse multipliers (novomodelo decision 10) folded from
+    ``patamar.dat::intercambio_patamares``, keyed like :class:`_InterchangeCaps`
+    plus a block so block rows derive as base × factor.
+
+    ``direct``/``reverse`` are keyed by ``(src, tgt, year, cal_month, block_id)``;
+    ``block_id`` is 0-based (patamar is 1-based in the source).
+    """
+
+    direct: dict[tuple[int, int, int, int, int], float]
+    reverse: dict[tuple[int, int, int, int, int], float]
+    num_blocks: int
+    last_direct: dict[tuple[int, ...], float]
+    last_reverse: dict[tuple[int, ...], float]
+
+    @classmethod
+    def from_patamar(cls, factors_df: pd.DataFrame | None) -> _ExchangeBlockFactors:
+        direct_factor_map: dict[tuple[int, int, int, int, int], float] = {}
+        reverse_factor_map: dict[tuple[int, int, int, int, int], float] = {}
+        num_blocks = 0
+
+        if factors_df is not None and not factors_df.empty:
+            all_blocks: set[int] = set()
+            for _, row in factors_df.iterrows():
+                de = int(row["submercado_de"])
+                para = int(row["submercado_para"])
+                val = float(row["valor"])
+                block_id = int(row["patamar"]) - 1
+                dt = row["data"]
+                yr = int(dt.year)
+                cal_month = int(dt.month)
+                all_blocks.add(block_id)
+
+                src, tgt = (de, para) if de < para else (para, de)
+                key = (src, tgt, yr, cal_month, block_id)
+                if de < para:
+                    direct_factor_map[key] = val
+                else:
+                    reverse_factor_map[key] = val
+
+            num_blocks = max(all_blocks) + 1
+
+        return cls(
+            direct=direct_factor_map,
+            reverse=reverse_factor_map,
+            num_blocks=num_blocks,
+            last_direct=_latest_year_values(direct_factor_map),
+            last_reverse=_latest_year_values(reverse_factor_map),
+        )
+
+    def for_month(
+        self, src: int, tgt: int, y: int, m: int, is_post_study: bool
+    ) -> list[tuple[int, float, float]]:
+        """Per-block ``(block_id, direct_factor, reverse_factor)`` for one
+        ``(src, tgt, year, month)``. A post-study stage, or a month the deck
+        omits, repeats the last listed year's factor for the same calendar month.
+        """
+        out: list[tuple[int, float, float]] = []
+        for block_id in range(self.num_blocks):
+            if is_post_study:
+                d_factor = self.last_direct.get((src, tgt, m, block_id), 1.0)
+                r_factor = self.last_reverse.get((src, tgt, m, block_id), 1.0)
+            else:
+                key_lookup = (src, tgt, y, m, block_id)
+                d_factor = self.direct.get(
+                    key_lookup,
+                    self.last_direct.get((src, tgt, m, block_id), 1.0),
+                )
+                r_factor = self.reverse.get(
+                    key_lookup,
+                    self.last_reverse.get((src, tgt, m, block_id), 1.0),
+                )
+            out.append((block_id, d_factor, r_factor))
+        return out
+
+
+@dataclass
+class _LineBoundRows:
+    """Column buffers of ``line_bounds.parquet``."""
+
+    line_id: list[int] = field(default_factory=list)
+    stage_id: list[int] = field(default_factory=list)
+    block_id: list[int | None] = field(default_factory=list)
+    direct_mw: list[float] = field(default_factory=list)
+    reverse_mw: list[float] = field(default_factory=list)
+    block_rows_emitted: int = 0
+
+    def _append(
+        self,
+        line_id: int,
+        stage_id: int,
+        block_id: int | None,
+        direct_mw: float,
+        reverse_mw: float,
+    ) -> None:
+        self.line_id.append(line_id)
+        self.stage_id.append(stage_id)
+        self.direct_mw.append(direct_mw)
+        self.reverse_mw.append(reverse_mw)
+        self.block_id.append(block_id)
+
+    def add_stage(
+        self,
+        line_id: int,
+        stage_id: int,
+        caps: dict[str, float],
+        block_factors: list[tuple[int, float, float]],
+    ) -> None:
+        """Append one line-stage's base row and its per-block override rows."""
+        base_direct = caps["direct_mw"]
+        base_reverse = caps["reverse_mw"]
+
+        # Stage-level base row (block_id = None) — kept unchanged and
+        # unconditionally, per novomodelo rule 36.
+        self._append(line_id, stage_id, None, base_direct, base_reverse)
+
+        # Per-block override rows, only where the factor differs from the
+        # base (i.e. is not 1.0 in both directions).
+        for block_id, d_factor, r_factor in block_factors:
+            if d_factor == 1.0 and r_factor == 1.0:
+                continue
+            self._append(
+                line_id,
+                stage_id,
+                block_id,
+                base_direct * d_factor,
+                base_reverse * r_factor,
+            )
+            self.block_rows_emitted += 1
+
+    def to_table(self) -> pa.Table:
+        return pa.table(
+            {
+                "line_id": pa.array(self.line_id, type=pa.int32()),
+                "stage_id": pa.array(self.stage_id, type=pa.int32()),
+                "block_id": pa.array(self.block_id, type=pa.int32()),
+                "direct_mw": pa.array(self.direct_mw, type=pa.float64()),
+                "reverse_mw": pa.array(self.reverse_mw, type=pa.float64()),
+            },
+            schema=_LINE_BOUNDS_SCHEMA,
+        )
+
+
 def convert_line_bounds(
     case: NewaveCase,
     id_map: NewaveIdMap,
@@ -830,16 +1051,6 @@ def convert_line_bounds(
     sistema = case.sistema
     limites_df: pd.DataFrame | None = sistema.limites_intercambio
 
-    _LINE_BOUNDS_SCHEMA = pa.schema(
-        [
-            pa.field("line_id", pa.int32(), nullable=False),
-            pa.field("stage_id", pa.int32(), nullable=False),
-            pa.field("block_id", pa.int32(), nullable=True),
-            pa.field("direct_mw", pa.float64(), nullable=False),
-            pa.field("reverse_mw", pa.float64(), nullable=False),
-        ]
-    )
-
     if limites_df is None or limites_df.empty:
         return pa.table(
             {
@@ -863,128 +1074,10 @@ def convert_line_bounds(
     study_end_month = ((start_month - 1 + study_months) % 12) + 1
 
     pair_to_line_id = _build_canonical_pair_to_line_id(case)
+    caps = _InterchangeCaps.from_limites(limites_df)
+    factors = _ExchangeBlockFactors.from_patamar(case.patamar.intercambio_patamares)
 
-    # Build per-date lookup:
-    # {(src, tgt, year, cal_month) -> {direct_mw, reverse_mw}}
-    date_lookup: dict[tuple[int, int, int, int], dict[str, float]] = {}
-
-    for _, row in limites_df.iterrows():
-        de = int(row["submercado_de"])
-        para = int(row["submercado_para"])
-        valor = float(row["valor"])
-        sentido = int(row["sentido"])
-        dt = row["data"]
-        yr = int(dt.year)
-        cal_month = int(dt.month)
-
-        src, tgt = (de, para) if de < para else (para, de)
-        key = (src, tgt, yr, cal_month)
-
-        if key not in date_lookup:
-            date_lookup[key] = {"direct_mw": 0.0, "reverse_mw": 0.0}
-
-        _assign_flow_direction(date_lookup[key], de, para, sentido, valor)
-
-    # Build last-year lookup for post-study:
-    # {(src, tgt, cal_month) -> {direct_mw, reverse_mw}} — use the latest year.
-    last_year_per_key: dict[tuple[int, int, int], tuple[int, dict[str, float]]] = {}
-    for (src, tgt, yr, cal_month), caps in date_lookup.items():
-        key3 = (src, tgt, cal_month)
-        existing = last_year_per_key.get(key3)
-        if existing is None or yr > existing[0]:
-            last_year_per_key[key3] = (yr, caps)
-    last_year_lookup: dict[tuple[int, int, int], dict[str, float]] = {
-        k: v for k, (_, v) in last_year_per_key.items()
-    }
-
-    # Per-block factors (novomodelo decision 10): fold
-    # ``patamar.dat::intercambio_patamares`` into per-block direct/reverse
-    # multipliers, keyed like the base lookup above so block rows derive as
-    # base × factor.
-    patamar = case.patamar
-    factors_df: pd.DataFrame | None = patamar.intercambio_patamares
-
-    # {(src, tgt, year, cal_month, block_id) -> factor}; block_id is 0-based
-    # (patamar is 1-based in the source).
-    direct_factor_map: dict[tuple[int, int, int, int, int], float] = {}
-    reverse_factor_map: dict[tuple[int, int, int, int, int], float] = {}
-    num_blocks = 0
-
-    if factors_df is not None and not factors_df.empty:
-        all_blocks: set[int] = set()
-        for _, row in factors_df.iterrows():
-            de = int(row["submercado_de"])
-            para = int(row["submercado_para"])
-            val = float(row["valor"])
-            block_id = int(row["patamar"]) - 1
-            dt = row["data"]
-            yr = int(dt.year)
-            cal_month = int(dt.month)
-            all_blocks.add(block_id)
-
-            src, tgt = (de, para) if de < para else (para, de)
-            key = (src, tgt, yr, cal_month, block_id)
-            if de < para:
-                direct_factor_map[key] = val
-            else:
-                reverse_factor_map[key] = val
-
-        num_blocks = max(all_blocks) + 1
-
-    # Last-year seasonal lookups for post-study factor stages:
-    # {(src, tgt, cal_month, block_id) -> factor}
-    last_yr_direct_factor: dict[tuple[int, int, int, int], tuple[int, float]] = {}
-    last_yr_reverse_factor: dict[tuple[int, int, int, int], tuple[int, float]] = {}
-
-    for (src, tgt, yr, cal_month, block_id), val in direct_factor_map.items():
-        k4 = (src, tgt, cal_month, block_id)
-        existing = last_yr_direct_factor.get(k4)
-        if existing is None or yr > existing[0]:
-            last_yr_direct_factor[k4] = (yr, val)
-
-    for (src, tgt, yr, cal_month, block_id), val in reverse_factor_map.items():
-        k4 = (src, tgt, cal_month, block_id)
-        existing = last_yr_reverse_factor.get(k4)
-        if existing is None or yr > existing[0]:
-            last_yr_reverse_factor[k4] = (yr, val)
-
-    last_direct_factor: dict[tuple[int, int, int, int], float] = {
-        k: v for k, (_, v) in last_yr_direct_factor.items()
-    }
-    last_reverse_factor: dict[tuple[int, int, int, int], float] = {
-        k: v for k, (_, v) in last_yr_reverse_factor.items()
-    }
-
-    def _block_factors(
-        src: int, tgt: int, y: int, m: int, is_post_study: bool
-    ) -> list[tuple[int, float, float]]:
-        """Per-block (block_id, direct_factor, reverse_factor) for one
-        (src, tgt, year, month), applying the same post-study freeze-to-last-
-        seasonal-year fallback used for the base bounds above."""
-        out: list[tuple[int, float, float]] = []
-        for block_id in range(num_blocks):
-            if is_post_study:
-                d_factor = last_direct_factor.get((src, tgt, m, block_id), 1.0)
-                r_factor = last_reverse_factor.get((src, tgt, m, block_id), 1.0)
-            else:
-                key_lookup = (src, tgt, y, m, block_id)
-                d_factor = direct_factor_map.get(
-                    key_lookup,
-                    last_direct_factor.get((src, tgt, m, block_id), 1.0),
-                )
-                r_factor = reverse_factor_map.get(
-                    key_lookup,
-                    last_reverse_factor.get((src, tgt, m, block_id), 1.0),
-                )
-            out.append((block_id, d_factor, r_factor))
-        return out
-
-    rows_line_id: list[int] = []
-    rows_stage_id: list[int] = []
-    rows_direct: list[float] = []
-    rows_reverse: list[float] = []
-    rows_block_id: list[int | None] = []
-    block_rows_emitted = 0
+    rows = _LineBoundRows()
 
     # Last study stage's (year, calendar month). Interchange limits have no
     # seasonalize flag, so the post-study tail freezes at this stage's value
@@ -994,48 +1087,19 @@ def convert_line_bounds(
 
     for pair, line_id in sorted(pair_to_line_id.items(), key=lambda x: x[1]):
         src, tgt = pair
-        freeze_caps = date_lookup.get((src, tgt, ls_y, ls_m)) or last_year_lookup.get(
-            (src, tgt, ls_m), {"direct_mw": 0.0, "reverse_mw": 0.0}
-        )
+        freeze_caps = caps.frozen_at(src, tgt, ls_y, ls_m)
         y, m = start_year, start_month
         for stage_id in range(total_stages):
             is_post_study = (y > study_end_year) or (
                 y == study_end_year and m >= study_end_month
             )
-
-            if is_post_study:
-                caps = freeze_caps
-            else:
-                caps = date_lookup.get((src, tgt, y, m))
-                if caps is None:
-                    caps = last_year_lookup.get(
-                        (src, tgt, m), {"direct_mw": 0.0, "reverse_mw": 0.0}
-                    )
-
-            base_direct = caps["direct_mw"]
-            base_reverse = caps["reverse_mw"]
-
-            # Stage-level base row (block_id = None) — kept unchanged and
-            # unconditionally, per novomodelo rule 36.
-            rows_line_id.append(line_id)
-            rows_stage_id.append(stage_id)
-            rows_direct.append(base_direct)
-            rows_reverse.append(base_reverse)
-            rows_block_id.append(None)
-
-            # Per-block override rows, only where the factor differs from the
-            # base (i.e. is not 1.0 in both directions).
-            for block_id, d_factor, r_factor in _block_factors(
-                src, tgt, y, m, is_post_study
-            ):
-                if d_factor == 1.0 and r_factor == 1.0:
-                    continue
-                rows_line_id.append(line_id)
-                rows_stage_id.append(stage_id)
-                rows_direct.append(base_direct * d_factor)
-                rows_reverse.append(base_reverse * r_factor)
-                rows_block_id.append(block_id)
-                block_rows_emitted += 1
+            stage_caps = freeze_caps if is_post_study else caps.at(src, tgt, y, m)
+            rows.add_stage(
+                line_id,
+                stage_id,
+                stage_caps,
+                factors.for_month(src, tgt, y, m, is_post_study),
+            )
 
             m += 1
             if m > 12:
@@ -1046,20 +1110,11 @@ def convert_line_bounds(
         "line_bounds: emitted %d per-block override row(s) folded from "
         "patamar.dat exchange factors (novomodelo decision 10), alongside %d "
         "stage-level base row(s).",
-        block_rows_emitted,
-        len(rows_line_id) - block_rows_emitted,
+        rows.block_rows_emitted,
+        len(rows.line_id) - rows.block_rows_emitted,
     )
 
-    return pa.table(
-        {
-            "line_id": pa.array(rows_line_id, type=pa.int32()),
-            "stage_id": pa.array(rows_stage_id, type=pa.int32()),
-            "block_id": pa.array(rows_block_id, type=pa.int32()),
-            "direct_mw": pa.array(rows_direct, type=pa.float64()),
-            "reverse_mw": pa.array(rows_reverse, type=pa.float64()),
-        },
-        schema=_LINE_BOUNDS_SCHEMA,
-    )
+    return rows.to_table()
 
 
 def _in_study_horizon(
