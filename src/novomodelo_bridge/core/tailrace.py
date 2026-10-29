@@ -219,13 +219,10 @@ def tailrace_families_from_polinjus(
         the families cannot be ordered for interpolation.
     """
     reference = {
-        (int(code), int(family)): level
-        for code, family, level in zip(
-            families["codigo_usina"],
-            families["indice_familia"],
-            families["nivel_montante_referencia"],
-            strict=True,
-        )
+        (int(row["codigo_usina"]), int(row["indice_familia"])): row[
+            "nivel_montante_referencia"
+        ]
+        for row in families.to_dict("records")
     }
     by_code: dict[int, list[TailraceFamily]] = {}
     ordered = segments.sort_values(
