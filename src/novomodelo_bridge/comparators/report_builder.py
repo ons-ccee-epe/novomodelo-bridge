@@ -67,6 +67,7 @@ from novomodelo_bridge.comparators.model import (
     ResultsSummary,
     ResultVariableStats,
 )
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.summary_counts import footer_counts
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
@@ -125,13 +126,13 @@ def build_energy_balance_tab(
 
     nw_offset = 0
     if not nw_market.is_empty():
-        nw_offset = int(nw_market["stage"].min())
+        nw_offset = as_int(nw_market["stage"].min())
 
     # Merge the source model net load into nw_market if available.
     if nw_net_load is not None and not nw_net_load.is_empty():
         nw_market = pl.concat([nw_market, nw_net_load], how="diagonal_relaxed")
         if nw_offset == 0:
-            nw_offset = int(nw_net_load["stage"].min())
+            nw_offset = as_int(nw_net_load["stage"].min())
 
     # Build Novomodelo bus_id → name and the source model code → bus_id lookups.
     novomodelo_name_to_id: dict[str, int] = {

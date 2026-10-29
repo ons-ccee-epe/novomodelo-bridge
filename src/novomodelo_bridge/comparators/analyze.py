@@ -1495,7 +1495,7 @@ def build_fpha_comparison(
     if not geo_cid:
         return empty
 
-    names = pl.DataFrame(
+    name_table = pl.DataFrame(
         {
             "novomodelo_id": list(name_of.keys()),
             "plant_name": list(name_of.values()),
@@ -1518,7 +1518,7 @@ def build_fpha_comparison(
         pl.concat(
             [_stack_surface(gh_nw, "newave"), _stack_surface(gh_cb, "novomodelo")]
         )
-        .join(names, on="novomodelo_id", how="left")
+        .join(name_table, on="novomodelo_id", how="left")
         .select(list(FPHA_SURFACE_SCHEMA))
         .cast({col: dtype() for col, dtype in FPHA_SURFACE_SCHEMA.items()})
         .sort(["novomodelo_id", "stage", "source", "v_hm3", "q_m3s"])
@@ -1538,7 +1538,7 @@ def build_fpha_comparison(
         pl.concat(
             [_stack_spill(sp_gh_nw, "newave"), _stack_spill(sp_gh_cb, "novomodelo")]
         )
-        .join(names, on="novomodelo_id", how="left")
+        .join(name_table, on="novomodelo_id", how="left")
         .select(list(FPHA_SPILL_SCHEMA))
         .cast({col: dtype() for col, dtype in FPHA_SPILL_SCHEMA.items()})
         .sort(["novomodelo_id", "stage", "source", "s_m3s"])
