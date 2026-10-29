@@ -58,6 +58,7 @@ from novomodelo_bridge.newave.switches import switch_off_diagnostic
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from collections.abc import Set as AbstractSet
 
     from novomodelo_bridge.newave.horizon import StudyHorizon
@@ -1043,6 +1044,27 @@ def _parse_yyyymm(period_str: str) -> tuple[int, int]:
     return int(parts[0]), int(parts[1])
 
 
+def _stage_ids_between(
+    first: tuple[int, int],
+    last: tuple[int, int],
+    *,
+    start_year: int,
+    start_month: int,
+) -> Iterator[int]:
+    """0-based stage id of every ``(year, month)`` from *first* through *last*.
+
+    Months outside the horizon yield out-of-range ids; callers keep the stages
+    they cover.
+    """
+    year, month = first
+    while (year, month) <= last:
+        yield (year - start_year) * 12 + (month - start_month)
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+
+
 # Sentinel stage index returned when the individualizado cutoff date is
 # unavailable: a value past any realistic horizon, so every stage is treated
 # as individualised (no cutoff applied).
@@ -1176,15 +1198,11 @@ def _parse_re_dat(
             value = float(row["restricao"])
 
             # Expand date range into individual stages.
-            y, m = ai, mi
-            while (y, m) <= (af, mf):
-                sid = (y - start_year) * 12 + (m - start_month)
+            for sid in _stage_ids_between(
+                (ai, mi), (af, mf), start_year=start_year, start_month=start_month
+            ):
                 if 0 <= sid < num_stages:
                     changepoints.append((sid, pat, value))
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
 
         if not changepoints:
             continue
@@ -1240,6 +1258,113 @@ def convert_electric_constraints(
         single-sided (a ``<=`` ceiling or a ``>=`` floor, never both), so
         exactly one endpoint is populated per row.
     """
+    re_path, has_re_dat = _enabled_electric_sources(case)
+    if re_path is None and not has_re_dat:
+        _LOG.debug("No electric constraints found; skipping.")
+        return None
+
+    sources, grid = _read_electric_sources(case, re_path, has_re_dat=has_re_dat)
+    if not sources.expressions and not sources.re_conjuntos:
+        _LOG.debug("No electric constraints found; skipping.")
+        return None
+
+    line_id_map = _build_line_id_map(case)
+
+    eletri_penalty = _resolve_eletri_penalty(case)
+    slack_config = (
+        soft_slack(eletri_penalty, "per_hour")
+        if eletri_penalty is not None and eletri_penalty > 0.0
+        else hard_slack()
+    )
+
+    allocator = allocator or ConstraintIdAllocator()
+    builder = GenericConstraintBuilder(allocator)
+
+    # Loop-accumulate-then-emit-once: one record per dropped term / skipped
+    # constraint, grouped by kind and emitted once after the loop (see
+    # converters/thermal.py's _GtminRecord idiom).
+    elec_term_skips: list[_ElectricTermSkip] = []
+    elec_constraint_skips: list[_ElectricConstraintSkip] = []
+
+    for cod in sorted(set(sources.expressions) | set(sources.re_conjuntos)):
+        novomodelo_expr = _electric_expression(
+            cod, sources, id_map, line_id_map, elec_term_skips
+        )
+        if novomodelo_expr is None:
+            elec_constraint_skips.append(
+                _ElectricConstraintSkip(
+                    constraint_code=cod, reason="no valid terms in expression"
+                )
+            )
+            continue
+
+        bounds = _electric_bounds(cod, sources, grid.horizon)
+        if not bounds.has_sup and not bounds.has_inf:
+            elec_constraint_skips.append(
+                _ElectricConstraintSkip(constraint_code=cod, reason="no bound data")
+            )
+            continue
+
+        _add_electric_constraint(
+            builder, cod, novomodelo_expr, slack_config, bounds, grid
+        )
+
+    _emit_electric_term_skips(elec_term_skips)
+    _emit_electric_constraint_skips(elec_constraint_skips)
+
+    result = builder.result()
+    if result is None:
+        return None
+
+    _LOG.info(
+        "Generated %d electric constraints with %d bounds "
+        "(individualizado cutoff at stage %d).",
+        len(result.constraints),
+        result.bounds.num_rows,
+        grid.cutoff,
+    )
+
+    return result
+
+
+@dataclass(frozen=True)
+class _ElectricSources:
+    """restricao-eletrica.csv's and RE.DAT's electric constraints, by constraint code."""
+
+    expressions: dict[int, str]
+    horizons: dict[int, tuple[str, str]]
+    csv_bounds: dict[int, list[tuple[str, str, int, float, float]]]
+    re_conjuntos: dict[int, list[int]]
+    re_dat_bounds: dict[int, dict[tuple[int, int], float]]
+
+
+class _ElectricGrid(NamedTuple):
+    """The stage/block grid electric bounds are laid on."""
+
+    horizon: StudyHorizon
+    num_patamares: int
+    cutoff: int
+    """First post-individualizado stage (:func:`_get_individualizado_cutoff`)."""
+
+
+class _ElectricBounds(NamedTuple):
+    """One electric constraint's limits by ``(stage_id, block_id)``, per source."""
+
+    csv_sup: dict[tuple[int, int], float]
+    csv_inf: dict[tuple[int, int], float]
+    re_sup: dict[tuple[int, int], float]
+
+    @property
+    def has_sup(self) -> bool:
+        return bool(self.csv_sup) or bool(self.re_sup)
+
+    @property
+    def has_inf(self) -> bool:
+        return bool(self.csv_inf)
+
+
+def _enabled_electric_sources(case: NewaveCase) -> tuple[Path | None, bool]:
+    """restricao-eletrica.csv's path and whether RE.DAT is read, per dger.dat."""
     switches = case.switches
     re_path = case.files.restricao_eletrica
     if re_path is not None and not switches.restricao_eletrica.on:
@@ -1249,12 +1374,13 @@ def convert_electric_constraints(
     if has_re_dat and not switches.re_dat.on:
         emit(switch_off_diagnostic(switches.re_dat), logger=_LOG)
         has_re_dat = False
+    return re_path, has_re_dat
 
-    if re_path is None and not has_re_dat:
-        _LOG.debug("No electric constraints found; skipping.")
-        return None
 
-    # Parse restricao-eletrica.csv (individualised period data).
+def _read_electric_sources(
+    case: NewaveCase, re_path: Path | None, *, has_re_dat: bool
+) -> tuple[_ElectricSources, _ElectricGrid]:
+    """Parse restricao-eletrica.csv and RE.DAT, and the grid they are laid on."""
     expressions: dict[int, str] = {}
     horizons: dict[int, tuple[str, str]] = {}
     bounds_rows: list[tuple[int, str, str, int, float, float]] = []
@@ -1262,31 +1388,34 @@ def convert_electric_constraints(
     if re_path is not None:
         expressions, horizons, bounds_rows = _parse_restricao_eletrica(re_path)
 
-    _horizon = case.horizon
-    start_month = _horizon.start_month
-    start_year = _horizon.start_year
-    num_anos = _horizon.num_anos
-    num_stages = _horizon.total_stages
-
+    horizon = case.horizon
     patamar = case.patamar
     num_patamares: int = patamar.numero_patamares or 1
-
-    # Individualised period cutoff.
-    cutoff = _get_individualizado_cutoff(case, start_year, start_month)
+    cutoff = _get_individualizado_cutoff(case, horizon.start_year, horizon.start_month)
 
     re_conjuntos: dict[int, list[int]] = {}
     re_dat_bounds: dict[int, dict[tuple[int, int], float]] = {}
     if has_re_dat:
         re_conjuntos, re_dat_bounds = _parse_re_dat(
-            case, start_year, start_month, num_stages, num_patamares
+            case,
+            horizon.start_year,
+            horizon.start_month,
+            horizon.total_stages,
+            num_patamares,
         )
 
-    if not expressions and not re_conjuntos:
-        _LOG.debug("No electric constraints found; skipping.")
-        return None
+    csv_bounds: dict[int, list[tuple[str, str, int, float, float]]] = defaultdict(list)
+    for cod, per_ini, per_fin, pat, lim_inf, lim_sup in bounds_rows:
+        csv_bounds[cod].append((per_ini, per_fin, pat, lim_inf, lim_sup))
 
-    line_id_map = _build_line_id_map(case)
+    sources = _ElectricSources(
+        expressions, horizons, csv_bounds, re_conjuntos, re_dat_bounds
+    )
+    return sources, _ElectricGrid(horizon, num_patamares, cutoff)
 
+
+def _resolve_eletri_penalty(case: NewaveCase) -> float | None:
+    """The electric slack penalty in R$/MWh, or ``None`` when none is readable."""
     # Read ELETRI penalty from PENALID.DAT for slack costs. The source model manual v29
     # §3.24: ELETRI is energy-domain (R$/MWh) and applies only in individualized
     # periods. When absent in PENALID.DAT, the source model considers the constraint
@@ -1334,295 +1463,267 @@ def convert_electric_constraints(
         except (OSError, ValueError, KeyError):
             pass
 
-    slack_config = (
-        soft_slack(eletri_penalty, "per_hour")
-        if eletri_penalty is not None and eletri_penalty > 0.0
-        else hard_slack()
-    )
+    return eletri_penalty
 
-    allocator = allocator or ConstraintIdAllocator()
-    builder = GenericConstraintBuilder(allocator)
 
-    # Index restricao-eletrica.csv bounds by constraint code.
-    csv_bounds_by_code: dict[int, list[tuple[str, str, int, float, float]]] = (
-        defaultdict(list)
-    )
-    for cod, per_ini, per_fin, pat, lim_inf, lim_sup in bounds_rows:
-        csv_bounds_by_code[cod].append((per_ini, per_fin, pat, lim_inf, lim_sup))
+def _electric_expression(
+    cod: int,
+    sources: _ElectricSources,
+    id_map: NewaveIdMap,
+    line_id_map: dict[tuple[int, int], int],
+    term_skips: list[_ElectricTermSkip],
+) -> str | None:
+    """Constraint ``cod``'s expression, from its restricao-eletrica.csv formula
+    when it has one, else the sum of its RE.DAT plants' ``hydro_generation``.
 
-    # All constraint codes from both sources.
-    all_codes = sorted(set(expressions.keys()) | set(re_conjuntos.keys()))
+    Every dropped term is recorded on *term_skips*; ``None`` when none is left.
+    """
+    if cod in sources.expressions:
+        return _parse_formula(
+            sources.expressions[cod],
+            id_map,
+            line_id_map,
+            constraint_code=cod,
+            skipped=term_skips,
+        )
 
-    # Loop-accumulate-then-emit-once: one record per dropped term / skipped
-    # constraint, grouped by kind and emitted once after the loop (see
-    # converters/thermal.py's _GtminRecord idiom).
-    elec_term_skips: list[_ElectricTermSkip] = []
-    elec_constraint_skips: list[_ElectricConstraintSkip] = []
-
-    for cod in all_codes:
-        # --- Build expression ---
-        has_csv = cod in expressions
-        has_re_dat = cod in re_conjuntos
-
-        if has_csv:
-            novomodelo_expr = _parse_formula(
-                expressions[cod],
-                id_map,
-                line_id_map,
-                constraint_code=cod,
-                skipped=elec_term_skips,
-            )
-        elif has_re_dat:
-            # RE.DAT-only: expression is sum of hydro_generation for plants.
-            terms: list[str] = []
-            for plant_code in sorted(re_conjuntos[cod]):
-                try:
-                    novomodelo_id = id_map.hydro_id(plant_code)
-                except KeyError:
-                    elec_term_skips.append(
-                        _ElectricTermSkip(
-                            constraint_code=cod,
-                            kind="hydro-unmapped",
-                            source="RE.DAT",
-                            hydro_code=plant_code,
-                        )
-                    )
-                    continue
-                terms.append(f"hydro_generation({novomodelo_id})")
-            novomodelo_expr = " + ".join(terms) if terms else None
-        else:
-            continue
-
-        if novomodelo_expr is None:
-            elec_constraint_skips.append(
-                _ElectricConstraintSkip(
-                    constraint_code=cod, reason="no valid terms in expression"
+    terms: list[str] = []
+    for plant_code in sorted(sources.re_conjuntos[cod]):
+        try:
+            novomodelo_id = id_map.hydro_id(plant_code)
+        except KeyError:
+            term_skips.append(
+                _ElectricTermSkip(
+                    constraint_code=cod,
+                    kind="hydro-unmapped",
+                    source="RE.DAT",
+                    hydro_code=plant_code,
                 )
             )
             continue
+        terms.append(f"hydro_generation({novomodelo_id})")
+    return " + ".join(terms) if terms else None
 
-        # --- Build bound maps for this constraint ---
-        # csv_sup/csv_inf: restricao-eletrica.csv bounds by (stage, block)
-        csv_sup: dict[tuple[int, int], float] = {}
-        csv_inf: dict[tuple[int, int], float] = {}
 
-        entries_for_code = csv_bounds_by_code.get(cod, [])
-        horizon = horizons.get(cod)
-        horiz_ini = _parse_yyyymm(horizon[0]) if horizon else (start_year, start_month)
-        horiz_fin = (
-            _parse_yyyymm(horizon[1]) if horizon else (start_year + num_anos - 1, 12)
+def _electric_bounds(
+    cod: int, sources: _ElectricSources, horizon: StudyHorizon
+) -> _ElectricBounds:
+    """Constraint ``cod``'s restricao-eletrica.csv limits and RE.DAT ceilings.
+
+    A csv limit is clipped to the constraint's ``RE-HORIZ-PER`` window, or to the
+    study years when it declares none.
+    """
+    csv_sup: dict[tuple[int, int], float] = {}
+    csv_inf: dict[tuple[int, int], float] = {}
+    start_year = horizon.start_year
+    start_month = horizon.start_month
+
+    window = sources.horizons.get(cod)
+    horiz_ini = _parse_yyyymm(window[0]) if window else (start_year, start_month)
+    horiz_fin = (
+        _parse_yyyymm(window[1]) if window else (start_year + horizon.num_anos - 1, 12)
+    )
+
+    for per_ini, per_fin, pat, lim_inf, lim_sup in sources.csv_bounds.get(cod, []):
+        ini_year, ini_month = _parse_yyyymm(per_ini)
+        fin_year, fin_month = _parse_yyyymm(per_fin)
+
+        ini_year, ini_month = max(
+            (ini_year, ini_month), horiz_ini, key=lambda t: t[0] * 12 + t[1]
+        )
+        fin_year, fin_month = min(
+            (fin_year, fin_month), horiz_fin, key=lambda t: t[0] * 12 + t[1]
         )
 
-        for per_ini, per_fin, pat, lim_inf, lim_sup in entries_for_code:
-            ini_year, ini_month = _parse_yyyymm(per_ini)
-            fin_year, fin_month = _parse_yyyymm(per_fin)
+        block_id = pat - 1  # 1-based -> 0-based
 
-            ini_year, ini_month = max(
-                (ini_year, ini_month), horiz_ini, key=lambda t: t[0] * 12 + t[1]
-            )
-            fin_year, fin_month = min(
-                (fin_year, fin_month), horiz_fin, key=lambda t: t[0] * 12 + t[1]
-            )
+        for sid in _stage_ids_between(
+            (ini_year, ini_month),
+            (fin_year, fin_month),
+            start_year=start_year,
+            start_month=start_month,
+        ):
+            if 0 <= sid < horizon.total_stages:
+                if lim_sup > _UNBOUNDED_THRESHOLD:
+                    csv_sup[(sid, block_id)] = lim_sup
+                if lim_inf > _UNBOUNDED_THRESHOLD:
+                    csv_inf[(sid, block_id)] = lim_inf
 
-            block_id = pat - 1  # 1-based -> 0-based
+    return _ElectricBounds(csv_sup, csv_inf, sources.re_dat_bounds.get(cod, {}))
 
-            y, m = ini_year, ini_month
-            while (y, m) <= (fin_year, fin_month):
-                sid = (y - start_year) * 12 + (m - start_month)
-                if 0 <= sid < num_stages:
-                    if lim_sup > _UNBOUNDED_THRESHOLD:
-                        csv_sup[(sid, block_id)] = lim_sup
-                    if lim_inf > _UNBOUNDED_THRESHOLD:
-                        csv_inf[(sid, block_id)] = lim_inf
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
 
-        # RE.DAT upper bounds for post-individualised stages.
-        re_sup = re_dat_bounds.get(cod, {})
+def _add_electric_constraint(
+    builder: GenericConstraintBuilder,
+    cod: int,
+    expression: str,
+    slack: dict[str, object],
+    bounds: _ElectricBounds,
+    grid: _ElectricGrid,
+) -> None:
+    """Add ``RE_{cod}``'s ceiling and floor and one row per declared (stage, block).
 
-        # --- Determine senses ---
-        has_sup = bool(csv_sup) or bool(re_sup)
-        has_inf = bool(csv_inf)
+    The ceiling is RE.DAT's from the individualizado cutoff on and the csv's
+    elsewhere; the floor is the csv's.
+    """
+    sup_id: int | None = None
+    inf_id: int | None = None
 
-        if not has_sup and not has_inf:
-            elec_constraint_skips.append(
-                _ElectricConstraintSkip(constraint_code=cod, reason="no bound data")
-            )
-            continue
+    if bounds.has_sup:
+        sup_id = builder.add_constraint(
+            name=f"RE_{cod}",
+            description=f"Electric constraint {cod}",
+            expression=expression,
+            slack=slack,
+        )
+    if bounds.has_inf:
+        inf_id = builder.add_constraint(
+            name=f"RE_{cod}",
+            description=f"Electric constraint {cod}",
+            expression=expression,
+            slack=slack,
+        )
 
-        sup_id: int | None = None
-        inf_id: int | None = None
+    for stage_id in range(grid.horizon.total_stages):
+        is_post_indiv = stage_id >= grid.cutoff
 
-        if has_sup:
-            sup_id = builder.add_constraint(
-                name=f"RE_{cod}",
-                description=f"Electric constraint {cod}",
-                expression=novomodelo_expr,
-                slack=slack_config,
-            )
-        if has_inf:
-            inf_id = builder.add_constraint(
-                name=f"RE_{cod}",
-                description=f"Electric constraint {cod}",
-                expression=novomodelo_expr,
-                slack=slack_config,
-            )
+        for block_id in range(grid.num_patamares):
+            # Upper bound.
+            if sup_id is not None:
+                sup_val: float | None = None
+                if is_post_indiv and (stage_id, block_id) in bounds.re_sup:
+                    sup_val = bounds.re_sup[(stage_id, block_id)]
+                elif (stage_id, block_id) in bounds.csv_sup:
+                    sup_val = bounds.csv_sup[(stage_id, block_id)]
+                if sup_val is not None:
+                    builder.add_bound_row(
+                        sup_id,
+                        stage_id=stage_id,
+                        block_id=block_id,
+                        lower=None,
+                        upper=sup_val,
+                    )
 
-        # --- Emit one row per declared (stage, block) bound ---
-        for stage_id in range(num_stages):
-            is_post_indiv = stage_id >= cutoff
+            # Lower bound.
+            if inf_id is not None:
+                inf_val: float | None = None
+                if (stage_id, block_id) in bounds.csv_inf:
+                    inf_val = bounds.csv_inf[(stage_id, block_id)]
+                if inf_val is not None:
+                    builder.add_bound_row(
+                        inf_id,
+                        stage_id=stage_id,
+                        block_id=block_id,
+                        lower=inf_val,
+                        upper=None,
+                    )
 
-            for block_id in range(num_patamares):
-                # Upper bound.
-                if sup_id is not None:
-                    sup_val: float | None = None
-                    if is_post_indiv and (stage_id, block_id) in re_sup:
-                        sup_val = re_sup[(stage_id, block_id)]
-                    elif (stage_id, block_id) in csv_sup:
-                        sup_val = csv_sup[(stage_id, block_id)]
-                    if sup_val is not None:
-                        builder.add_bound_row(
-                            sup_id,
-                            stage_id=stage_id,
-                            block_id=block_id,
-                            lower=None,
-                            upper=sup_val,
-                        )
 
-                # Lower bound.
-                if inf_id is not None:
-                    inf_val: float | None = None
-                    if (stage_id, block_id) in csv_inf:
-                        inf_val = csv_inf[(stage_id, block_id)]
-                    if inf_val is not None:
-                        builder.add_bound_row(
-                            inf_id,
-                            stage_id=stage_id,
-                            block_id=block_id,
-                            lower=inf_val,
-                            upper=None,
-                        )
+def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
+    """Emit one WARNING per kind of dropped electric-constraint term."""
+    if not skips:
+        return
+    by_kind: dict[str, list[_ElectricTermSkip]] = defaultdict(list)
+    for skip in skips:
+        by_kind[skip.kind].append(skip)
 
-    if elec_term_skips:
-        by_kind: dict[str, list[_ElectricTermSkip]] = defaultdict(list)
-        for skip in elec_term_skips:
-            by_kind[skip.kind].append(skip)
-
-        hydro_unmapped = by_kind.get("hydro-unmapped", [])
-        if hydro_unmapped:
-            emit(
-                Diagnostic(
-                    code="electric-constraint-hydro-unmapped",
-                    severity=Severity.WARNING,
-                    category=_CATEGORY,
-                    title=(
-                        "Electric constraint references an unmapped hydro "
-                        f"plant ({len(hydro_unmapped)})"
-                    ),
-                    summary=(
-                        f"{len(hydro_unmapped)} electric constraint term(s) "
-                        "reference a hydro plant code with no matching novomodelo "
-                        "entity; the term is dropped."
-                    ),
-                    table=DiagnosticTable(
-                        columns=["Constraint", "Hydro code", "Source"],
-                        rows=[
-                            [s.constraint_code, s.hydro_code, s.source]
-                            for s in hydro_unmapped
-                        ],
-                        justify=["right", "right", "left"],
-                    ),
-                ),
-                logger=_LOG,
-            )
-
-        no_line = by_kind.get("no-line", [])
-        if no_line:
-            emit(
-                Diagnostic(
-                    code="electric-constraint-interchange-no-line",
-                    severity=Severity.WARNING,
-                    category=_CATEGORY,
-                    title=(
-                        "Electric constraint interchange has no matching line "
-                        f"({len(no_line)})"
-                    ),
-                    summary=(
-                        f"{len(no_line)} electric constraint interchange "
-                        "term(s) reference a subsystem pair with no matching "
-                        "novomodelo line; the term is dropped."
-                    ),
-                    table=DiagnosticTable(
-                        columns=["Constraint", "From", "To"],
-                        rows=[
-                            [s.constraint_code, s.sys_from, s.sys_to] for s in no_line
-                        ],
-                        justify=["right", "right", "right"],
-                    ),
-                    remediation="Declare the pair as an interchange line.",
-                ),
-                logger=_LOG,
-            )
-
-        malformed = by_kind.get("malformed", [])
-        if malformed:
-            emit(
-                Diagnostic(
-                    code="electric-constraint-malformed-term",
-                    severity=Severity.WARNING,
-                    category=_CATEGORY,
-                    title=(
-                        f"Electric constraint has a malformed term ({len(malformed)})"
-                    ),
-                    summary=(
-                        f"{len(malformed)} electric constraint interchange "
-                        "term(s) declared fewer than 2 arguments; the term is "
-                        "dropped."
-                    ),
-                    table=DiagnosticTable(
-                        columns=["Constraint", "Term"],
-                        rows=[[s.constraint_code, s.raw] for s in malformed],
-                        justify=["right", "left"],
-                    ),
-                ),
-                logger=_LOG,
-            )
-
-    if elec_constraint_skips:
+    hydro_unmapped = by_kind.get("hydro-unmapped", [])
+    if hydro_unmapped:
         emit(
             Diagnostic(
-                code="electric-constraint-skipped",
+                code="electric-constraint-hydro-unmapped",
                 severity=Severity.WARNING,
                 category=_CATEGORY,
-                title=f"Electric constraint skipped ({len(elec_constraint_skips)})",
+                title=(
+                    "Electric constraint references an unmapped hydro "
+                    f"plant ({len(hydro_unmapped)})"
+                ),
                 summary=(
-                    f"{len(elec_constraint_skips)} electric constraint(s) "
-                    "could not be converted; skipping."
+                    f"{len(hydro_unmapped)} electric constraint term(s) "
+                    "reference a hydro plant code with no matching novomodelo "
+                    "entity; the term is dropped."
                 ),
                 table=DiagnosticTable(
-                    columns=["Constraint", "Reason"],
-                    rows=[[s.constraint_code, s.reason] for s in elec_constraint_skips],
+                    columns=["Constraint", "Hydro code", "Source"],
+                    rows=[
+                        [s.constraint_code, s.hydro_code, s.source]
+                        for s in hydro_unmapped
+                    ],
+                    justify=["right", "right", "left"],
+                ),
+            ),
+            logger=_LOG,
+        )
+
+    no_line = by_kind.get("no-line", [])
+    if no_line:
+        emit(
+            Diagnostic(
+                code="electric-constraint-interchange-no-line",
+                severity=Severity.WARNING,
+                category=_CATEGORY,
+                title=(
+                    "Electric constraint interchange has no matching line "
+                    f"({len(no_line)})"
+                ),
+                summary=(
+                    f"{len(no_line)} electric constraint interchange "
+                    "term(s) reference a subsystem pair with no matching "
+                    "novomodelo line; the term is dropped."
+                ),
+                table=DiagnosticTable(
+                    columns=["Constraint", "From", "To"],
+                    rows=[[s.constraint_code, s.sys_from, s.sys_to] for s in no_line],
+                    justify=["right", "right", "right"],
+                ),
+                remediation="Declare the pair as an interchange line.",
+            ),
+            logger=_LOG,
+        )
+
+    malformed = by_kind.get("malformed", [])
+    if malformed:
+        emit(
+            Diagnostic(
+                code="electric-constraint-malformed-term",
+                severity=Severity.WARNING,
+                category=_CATEGORY,
+                title=f"Electric constraint has a malformed term ({len(malformed)})",
+                summary=(
+                    f"{len(malformed)} electric constraint interchange "
+                    "term(s) declared fewer than 2 arguments; the term is "
+                    "dropped."
+                ),
+                table=DiagnosticTable(
+                    columns=["Constraint", "Term"],
+                    rows=[[s.constraint_code, s.raw] for s in malformed],
                     justify=["right", "left"],
                 ),
             ),
             logger=_LOG,
         )
 
-    result = builder.result()
-    if result is None:
-        return None
 
-    _LOG.info(
-        "Generated %d electric constraints with %d bounds "
-        "(individualizado cutoff at stage %d).",
-        len(result.constraints),
-        result.bounds.num_rows,
-        cutoff,
+def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> None:
+    """Emit the ``electric-constraint-skipped`` WARNING, one row per constraint."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="electric-constraint-skipped",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"Electric constraint skipped ({len(skips)})",
+            summary=(
+                f"{len(skips)} electric constraint(s) could not be converted; skipping."
+            ),
+            table=DiagnosticTable(
+                columns=["Constraint", "Reason"],
+                rows=[[s.constraint_code, s.reason] for s in skips],
+                justify=["right", "left"],
+            ),
+        ),
+        logger=_LOG,
     )
-
-    return result
 
 
 # ---------------------------------------------------------------------------
