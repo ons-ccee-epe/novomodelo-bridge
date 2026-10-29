@@ -119,7 +119,7 @@ These were never tests. They are recorded so they can be repeated.
 
 | Check | Verified |
 | --- | --- |
-| `export dessem` on transit buckets past the study end | On a seven-stage deck whose two plants, each with a 360 h travel time, leave transit buckets undated in its last stages, the export completes, reports three undated buckets in the travel-time note and, in its log, one in the fifth stage's pool and two in the sixth's, raises no dropped-coefficient warning (every cut's coefficient on them is zero), and writes a pair that passes the read-back check. The first four stages' pools carry no undated bucket, so their in-transit coefficients come from the dated path, which this change leaves as it was. Captured with novomodelo 0.19.1 in October 2026. |
+| `export dessem` on transit buckets past the study end | On a seven-stage deck whose two plants, each with a 360 h travel time, leave transit buckets undated in its last stages, the export completes, reports three undated buckets in the travel-time note and, in its log, one in the fifth stage's pool and two in the sixth's, raises no dropped-coefficient warning (every cut's coefficient on them is zero), and writes a pair that passes the read-back check. The first four stages' pools carry no undated bucket, so the undated-bucket rule does not touch their in-transit coefficients. Captured with novomodelo 0.19.1 in October 2026. |
 
 ### The reduced DECOMP deck and a monthly-stage deck, run by DECOMP with its turbined-flow report
 

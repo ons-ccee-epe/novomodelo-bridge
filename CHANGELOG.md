@@ -17,9 +17,9 @@ links are cobre-bridge's.
 ### Fixed
 
 - **`export dessem` exports a case whose water in transit outlives the study**
-  instead of failing with `year -214749 is out of range`; the transit buckets
-  Novomodelo leaves undated past the last stage take no weight, and a cut
-  coefficient found on one is dropped with a warning.
+  instead of failing with `year -214749 is out of range`; a cut coefficient on
+  water that would arrive after the study ends is dropped with a
+  `dessem-fcf-undated-buckets-priced` warning.
 
 ## [0.19.1] - 2026-10-26
 
