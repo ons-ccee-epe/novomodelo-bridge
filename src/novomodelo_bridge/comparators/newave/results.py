@@ -1062,7 +1062,7 @@ def compare_results(
     cb_accumulated: dict[int, float] = {}
     try:
         nw_cadastro = read_cadastro(case)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to read HIDR cadastro for productivity building blocks")
         nw_cadastro = pd.DataFrame()
     if not nw_cadastro.empty:
@@ -1075,7 +1075,7 @@ def compare_results(
             cb_accumulated = compute_accumulated_integrated_productivities(
                 nw_cadastro, confhd_df, fictitious=case.fictitious_codes
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOG.warning("Failed to compute accumulated productivities for the tab")
     from novomodelo_bridge.comparators.analyze import build_productivity_detail
 
@@ -1158,7 +1158,7 @@ def compare_results(
             line_meta = _json.loads(lines_json_path.read_text(encoding="utf-8")).get(
                 "lines", []
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOG.warning("Failed to read lines.json")
 
     # The source model typically reports a shorter horizon than Novomodelo.  Truncate all

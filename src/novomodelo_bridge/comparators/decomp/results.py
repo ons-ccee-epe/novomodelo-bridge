@@ -2145,7 +2145,7 @@ def _novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:
     available" and degrades to no evaporation rows, rather than fabricating
     one.
     """
-    block_hours = novomodelo_readers._load_block_hours(novomodelo_output_dir)  # noqa: SLF001
+    block_hours = novomodelo_readers._load_block_hours(novomodelo_output_dir)
     if block_hours is None or block_hours.is_empty():
         return {}
     totals = block_hours.group_by("stage_id").agg(pl.col("hours").sum().alias("hours"))

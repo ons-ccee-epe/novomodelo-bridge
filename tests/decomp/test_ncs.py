@@ -33,7 +33,7 @@ class _StubDadger:
     def __init__(self, pq: pd.DataFrame | None) -> None:
         self._pq = pq
 
-    def pq(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def pq(self, df: bool = False) -> pd.DataFrame | None:
         return self._pq
 
 
@@ -193,19 +193,19 @@ class _StubRenovaveis:
             else config
         )
 
-    def pee_cad(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def pee_cad(self, df: bool = False) -> pd.DataFrame:
         return self._cad
 
-    def pee_subm(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def pee_subm(self, df: bool = False) -> pd.DataFrame:
         return self._subm
 
-    def pee_ger_per_pat_cen(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def pee_ger_per_pat_cen(self, df: bool = False) -> pd.DataFrame:
         return self._ger
 
-    def pee_ger_per_pat(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def pee_ger_per_pat(self, df: bool = False) -> pd.DataFrame:
         return self._ger_deterministic
 
-    def pee_config_per(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def pee_config_per(self, df: bool = False) -> pd.DataFrame:
         return self._config
 
 

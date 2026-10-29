@@ -25,7 +25,7 @@ class _StubDadger:
     def __getattr__(self, name: str):
         if name in self._frames:
             frame = self._frames[name]
-            return lambda df=False, **kwargs: frame  # noqa: ARG005
+            return lambda df=False, **kwargs: frame
         raise AttributeError(name)
 
 

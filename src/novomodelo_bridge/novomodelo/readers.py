@@ -65,7 +65,7 @@ def _parsed_stages(novomodelo_output_dir: Path) -> Iterator[list[dict]]:
             try:
                 with p.open(encoding="utf-8") as f:
                     yield json.load(f).get("stages", [])
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
 
 
@@ -94,7 +94,7 @@ def _load_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame | None:
                         "hours": pl.Float64,
                     }
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     return None
 
@@ -181,7 +181,7 @@ def read_novomodelo_generic_constraint_echo(
         return None
     try:
         return pl.read_parquet(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(f"Failed to read {path}") from exc
 
 
@@ -215,7 +215,7 @@ def scan_simulation_entity(
         # the single choke point every simulation reader shares — instead of
         # leaking a raw polars error past each reader's narrower try/except.
         lf.collect_schema()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(f"Failed to scan parquets in {sim_dir}") from exc
 
     return lf
@@ -422,7 +422,7 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate hydro simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
@@ -473,7 +473,7 @@ def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.Dat
             .join(block_hours.lazy(), on=["stage_id", "block_id"])
             .collect()
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read the hydro simulation rows in {novomodelo_output_dir}"
         ) from exc
@@ -494,7 +494,7 @@ def read_novomodelo_bus_block_prices(novomodelo_output_dir: Path) -> pl.DataFram
         return pl.DataFrame(schema=schema)
     try:
         frame = lf.select(list(schema)).collect()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read the bus simulation rows in {novomodelo_output_dir}"
         ) from exc
@@ -555,7 +555,7 @@ def read_novomodelo_hydro_total_flows(
     try:
         with hydros_path.open(encoding="utf-8") as f:
             hydros_data = json.load(f)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to parse hydros.json for total-inflow topology: {hydros_path}"
         ) from exc
@@ -622,7 +622,7 @@ def _load_hydro_reservoir_flag(novomodelo_output_dir: Path) -> dict[int, bool]:
     try:
         with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {}
     out: dict[int, bool] = {}
     for h in data.get("hydros", []):
@@ -714,7 +714,7 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
             .agg(pl.col("mw_mean").mean())
             .collect(engine="streaming")
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate Novomodelo spillage-energy: "
             f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
@@ -765,7 +765,7 @@ def read_novomodelo_iteration_timing(novomodelo_output_dir: Path) -> pl.DataFram
         return empty
     try:
         df = pl.read_parquet(conv_path)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to read convergence.parquet for timings")
         return empty
     keep = ["iteration", "time_forward_ms", "time_backward_ms", "time_total_ms"]
@@ -889,7 +889,7 @@ def read_novomodelo_line_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate exchange simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'exchanges'}"
@@ -914,7 +914,7 @@ def read_novomodelo_line_percentiles(novomodelo_output_dir: Path) -> pl.DataFram
     try:
         per_sc = _weighted_scenario_values(lf, id_col, ["net_flow_mw"], [], block_hours)
         return _compute_percentiles(per_sc, ["net_flow_mw"])
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute line percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'exchanges'}"
@@ -945,7 +945,7 @@ def read_novomodelo_lp_max_generation(novomodelo_output_dir: Path) -> pl.DataFra
         return empty
     try:
         df = pl.read_parquet(bounds_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read bounds.parquet: {bounds_path}"
         ) from exc
@@ -996,7 +996,7 @@ def read_novomodelo_hydro_withdrawal(novomodelo_output_dir: Path) -> pl.DataFram
         return empty
     try:
         df = pl.read_parquet(bounds_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read hydro_bounds.parquet: {bounds_path}"
         ) from exc
@@ -1046,7 +1046,7 @@ def read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir: Path) -> pl.Da
         return pl.DataFrame(schema=empty_schema)
     try:
         df = pl.read_parquet(bounds_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read hydro_bounds.parquet for dashboard bounds: {bounds_path}"
         ) from exc
@@ -1095,7 +1095,7 @@ def read_novomodelo_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
         return empty
     try:
         return pl.read_parquet(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read line_bounds.parquet: {path}"
         ) from exc
@@ -1146,7 +1146,7 @@ def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate thermal simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'thermals'}"
@@ -1204,7 +1204,7 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate bus simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'buses'}"
@@ -1331,7 +1331,7 @@ def read_novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFra
             lf, id_col, avail_flow, avail_stage, block_hours
         )
         return _compute_percentiles(per_sc, all_vars)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute hydro percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
@@ -1355,7 +1355,7 @@ def read_novomodelo_thermal_percentiles(novomodelo_output_dir: Path) -> pl.DataF
             lf, id_col, ["generation_mw"], [], block_hours
         )
         return _compute_percentiles(per_sc, ["generation_mw"])
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute thermal percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'thermals'}"
@@ -1378,7 +1378,7 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
     try:
         per_sc = _weighted_scenario_values(lf, id_col, flow_cols, [], block_hours)
         return _compute_percentiles(per_sc, flow_cols)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute bus percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'buses'}"
@@ -1406,7 +1406,7 @@ def _load_entity_bus_map(
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
         return {int(e["id"]): int(e["bus_id"]) for e in data.get(entity, [])}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read {entity} bus map from {path}"
         ) from exc
@@ -1711,7 +1711,7 @@ def read_novomodelo_cost_breakdown(
 
         per_sc = lf.group_by("scenario_id").agg(disc_exprs)
         means = per_sc.select([pl.col(c).mean() for c in cols]).collect()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to read Novomodelo cost breakdown: "
             f"{novomodelo_output_dir / 'simulation' / 'costs'}"
@@ -1785,7 +1785,7 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
         per_sc = lf.group_by(["scenario_id", "stage_id"]).agg(agg_exprs)
         mean_cols = [pl.col(c).mean() for c in _ALL_COLS if c in available]
         df = per_sc.group_by("stage_id").agg(mean_cols).sort("stage_id").collect()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to read Novomodelo per-stage costs: "
             f"{novomodelo_output_dir / 'simulation' / 'costs'}"
@@ -1855,7 +1855,7 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     try:
         df = pl.read_parquet(conv_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read convergence.parquet: {conv_path}"
         ) from exc
@@ -2139,7 +2139,7 @@ def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, d
     try:
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to parse thermals.json")
         return {}
 
@@ -2162,7 +2162,7 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
     try:
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to parse buses.json")
         return {}
 
@@ -2264,7 +2264,7 @@ def read_novomodelo_fpha_planes(novomodelo_output_dir: Path) -> pl.DataFrame | N
         return None
     try:
         df = pl.read_parquet(path)
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         msg = f"Failed to read {path}"
         raise NovomodeloReadError(msg) from err
     return None if df.is_empty() else df

@@ -97,7 +97,7 @@ def get_renderable_tabs(data: DashboardData) -> list[tuple[str, str, str]]:
             continue
         try:
             html = module.render(data)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "Tab %r raised an exception during render; showing an error "
                 "placeholder instead of dropping it: %s",

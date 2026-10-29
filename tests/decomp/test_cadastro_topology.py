@@ -65,15 +65,15 @@ class _FakeDadger:
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
+        codigo_usina: int | None = None,
         modificacao: type | None = None,
-        df: bool = True,  # noqa: ARG002
+        df: bool = True,
     ) -> pd.DataFrame | None:
         if modificacao is None:
             return None
         return self._frames.get(modificacao)
 
-    def uh(self, df: bool = True) -> pd.DataFrame | None:  # noqa: ARG002
+    def uh(self, df: bool = True) -> pd.DataFrame | None:
         return self._uh
 
 

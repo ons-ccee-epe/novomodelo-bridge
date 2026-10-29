@@ -569,12 +569,12 @@ class _FakePolinjus:
         self._families = families
         self._segments = segments
 
-    def hidreletrica_curvajusante(self, df: bool = True) -> pd.DataFrame:  # noqa: ARG002
+    def hidreletrica_curvajusante(self, df: bool = True) -> pd.DataFrame:
         return self._families
 
     def hidreletrica_curvajusante_polinomio_segmento(
         self,
-        df: bool = True,  # noqa: ARG002
+        df: bool = True,
     ) -> pd.DataFrame:
         return self._segments
 

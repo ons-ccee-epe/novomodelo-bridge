@@ -495,7 +495,7 @@ class _StageBoundsModel:
                             "data_fim": row["data_fim"],
                         }
                     )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOG.warning("expt.dat could not be parsed; EXPT overrides skipped.")
 
         potef_windows: dict[int, list[tuple[date, date]]] = {}
@@ -527,7 +527,7 @@ class _StageBoundsModel:
         if case.files.manutt is not None:
             try:
                 manutt_df = case.manutt.manutencoes
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOG.warning(
                     "%s could not be parsed; maintenance skipped.",
                     case.files.manutt.name,

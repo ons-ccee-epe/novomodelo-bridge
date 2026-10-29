@@ -54,9 +54,9 @@ class _FakeDadger:
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
+        codigo_usina: int | None = None,
         modificacao: type | None = None,
-        df: bool = True,  # noqa: ARG002
+        df: bool = True,
     ) -> pd.DataFrame | None:
         if modificacao is None:
             return None
@@ -69,10 +69,10 @@ class _StubDadger:
     the overlay's hydraulic ceiling is the only thing under test.
     """
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
 

@@ -58,10 +58,10 @@ class _StubDadger:
     ) -> None:
         self._ci, self._ce = ci, ce
 
-    def ci(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ci(self, df: bool = False) -> pd.DataFrame | None:
         return self._ci
 
-    def ce(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ce(self, df: bool = False) -> pd.DataFrame | None:
         return self._ce
 
 

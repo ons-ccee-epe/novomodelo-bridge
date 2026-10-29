@@ -21,7 +21,7 @@ class _EzDadger:
     def __init__(self, frame: pd.DataFrame | None) -> None:
         self._frame = frame
 
-    def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ez(self, df: bool = False) -> pd.DataFrame | None:
         return self._frame
 
 

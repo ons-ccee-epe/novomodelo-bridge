@@ -395,7 +395,7 @@ def _chart_cut_activity_heatmap(
             y=[stage_labels.get(s, str(s)) for s in stages],
             colorscale="YlOrRd",
             colorbar={"title": "Cuts Active"},
-            hovertemplate="Iteration: %{x}<br>Stage: %{y}<br>Cuts Active: %{z}<extra></extra>",  # noqa: E501
+            hovertemplate="Iteration: %{x}<br>Stage: %{y}<br>Cuts Active: %{z}<extra></extra>",
         )
     )
     fig.update_layout(
@@ -450,7 +450,7 @@ def _chart_cut_deactivation_heatmap(
             y=[stage_labels.get(s, str(s)) for s in stages],
             colorscale="Blues",
             colorbar={"title": "Cuts Deactivated"},
-            hovertemplate="Iteration: %{x}<br>Stage: %{y}<br>Cuts Deactivated: %{z}<extra></extra>",  # noqa: E501
+            hovertemplate="Iteration: %{x}<br>Stage: %{y}<br>Cuts Deactivated: %{z}<extra></extra>",
         )
     )
     fig.update_layout(

@@ -382,7 +382,7 @@ class _FakeDadger:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
+    def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
 

@@ -74,7 +74,7 @@ class _StubRestricoes:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
+    def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -912,7 +912,7 @@ class _StubElectricalDadger:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
+    def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -1026,7 +1026,7 @@ def _pq(*rows: tuple, n_patamares: int) -> pd.DataFrame:
 _PEQ_ID_MAP = DecompIdMap(bus_codes=(1, 2, 3, 4), bus_names=("SE", "S", "NE", "N"))
 
 
-def _peq_factory(n_stages: int = 2):  # noqa: ANN202 - test helper
+def _peq_factory(n_stages: int = 2):
     calendar = _ri_calendar(n_stages, n_blocks=2)
     dadger = _StubElectricalDadger(
         dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2),
@@ -1127,7 +1127,7 @@ def _gnl_model() -> GnlCommitmentModel:
     )
 
 
-def _gnl_factory():  # noqa: ANN202 - test helper
+def _gnl_factory():
     calendar = [
         OperativeStage(
             index=i,

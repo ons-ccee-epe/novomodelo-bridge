@@ -429,20 +429,20 @@ class _FakeDadger:
     ) -> None:
         self._uh, self._altefe, self._mp, self._fd = uh, altefe, mp, fd
 
-    def uh(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return self._mp
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return self._fd
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
+        codigo_usina: int | None = None,
         modificacao: type | None = None,
-        df: bool = False,  # noqa: ARG002
+        df: bool = False,
     ) -> pd.DataFrame | None:
         return self._altefe if modificacao is ACALTEFE else None
 

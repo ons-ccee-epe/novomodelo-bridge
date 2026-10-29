@@ -265,8 +265,8 @@ _NON_COST_COLS: frozenset[str] = COST_PARTITION_COLUMNS | AGGREGATE_COST_COLUMNS
 
 def compute_npv_costs(
     costs_df: pd.DataFrame,
-    discount_rate: float,  # noqa: ARG001 — retained for API compat; unused
-    stage_start: int = 0,  # noqa: ARG001 — retained for API compat; unused
+    discount_rate: float,  # retained for API compat; unused
+    stage_start: int = 0,  # retained for API compat; unused
 ) -> pd.DataFrame:
     """Apply per-stage NPV discount factors to cost component columns.
 

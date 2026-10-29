@@ -29,7 +29,7 @@ class _FakeDadger:
     def __init__(self, vi: pd.DataFrame | None) -> None:
         self._vi = vi
 
-    def vi(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def vi(self, df: bool = False) -> pd.DataFrame | None:
         return self._vi
 
 
@@ -40,10 +40,10 @@ class _FakeEffective:
         self._downstream = downstream
         self.base = pd.DataFrame(index=pd.Index(codes, name="codigo_usina"))
 
-    def downstream_plant_varies(self, code: int) -> bool:  # noqa: ARG002
+    def downstream_plant_varies(self, code: int) -> bool:
         return False
 
-    def downstream_plant(self, code: int, stage_index: int) -> int:  # noqa: ARG002
+    def downstream_plant(self, code: int, stage_index: int) -> int:
         return self._downstream.get(code, 0)
 
 

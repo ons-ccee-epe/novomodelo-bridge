@@ -71,7 +71,7 @@ class _StubTimFile:
 def _stub_reader(table: pd.DataFrame | None) -> type:
     class _Reader:
         @staticmethod
-        def read(path: str) -> _StubFile:  # noqa: ARG004
+        def read(path: str) -> _StubFile:
             return _StubFile(table)
 
     return _Reader

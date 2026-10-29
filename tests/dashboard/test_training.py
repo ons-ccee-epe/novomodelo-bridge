@@ -241,7 +241,7 @@ def test_chart_convergence_hero_button_labels() -> None:
 def test_chart_convergence_hero_null_upper_bound_std_collapses_band() -> None:
     """novomodelo 0.14 leaves ``upper_bound_std`` NULL for an exact (enumerated)
     upper bound; the ±std band must collapse to the mean line rather than
-    render NaN y-values that break the trace."""  # noqa: E501
+    render NaN y-values that break the trace."""
     import math
 
     conv = _make_conv(6)
@@ -265,7 +265,7 @@ def test_chart_convergence_hero_null_upper_bound_std_collapses_band() -> None:
 
 def test_render_with_empty_cut_selection() -> None:
     """render() must not raise and must contain 'No cut selection data' when
-    cut_selection is empty."""  # noqa: E501
+    cut_selection is empty."""
     data = _make_mock_data(
         conv=_make_conv(10),
         cut_selection=pd.DataFrame(),
@@ -282,7 +282,7 @@ def test_render_with_empty_cut_selection() -> None:
 
 def test_render_with_empty_timing() -> None:
     """render() must not raise and must contain 'No timing data' when timing is
-    empty."""  # noqa: E501
+    empty."""
     data = _make_mock_data(
         conv=_make_conv(10),
         cut_selection=_make_cut_selection(),

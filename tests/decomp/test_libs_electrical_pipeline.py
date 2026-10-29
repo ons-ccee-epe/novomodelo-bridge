@@ -174,38 +174,38 @@ class _MockDadger:
         self._dp = _dp_frame()
         self.data = self._Data()
 
-    def uh(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
 
-    def vi(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def vi(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def ve(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ve(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def ti(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ti(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def dp(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def dp(self, df: bool = False) -> pd.DataFrame:
         return self._dp
 
-    def ri(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ri(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ez(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def fp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fp(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def pq(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def pq(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
-        modificacao: type | None = None,  # noqa: ARG002
-        df: bool = False,  # noqa: ARG002
+        codigo_usina: int | None = None,
+        modificacao: type | None = None,
+        df: bool = False,
     ) -> pd.DataFrame | None:
         return None
 

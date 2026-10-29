@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lineage import model, render, trace  # noqa: E402 (path set above)
+from lineage import model, render, trace
 
 
 def check(track: str) -> list[str]:

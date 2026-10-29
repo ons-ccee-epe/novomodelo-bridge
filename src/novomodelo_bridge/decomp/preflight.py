@@ -457,7 +457,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
 
     try:
         files = discover_decomp_files(src)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PreflightResult(
             verdict=PreflightVerdict.WILL_NOT_CONVERT,
             diagnostics=[diagnostic_from_exception(exc, context=_CONTEXT)],
@@ -498,7 +498,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         # not the calling subclass; narrow back to Dadger so downstream
         # helpers (typed Dadger, not the object escape hatch) type-check.
         dadger = cast(Dadger, Dadger.read(str(files.dadger)))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         checks.append(
             CheckItem(label="Deck registers readable", passed=False, detail=str(exc))
         )
@@ -541,7 +541,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         checks.append(_load_factor_check(case, id_map))
         try:
             vazoes = cast(Vazoes, Vazoes.read(str(files.vazoes)))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             checks.append(
                 CheckItem(label="Scenario tree readable", passed=False, detail=str(exc))
             )

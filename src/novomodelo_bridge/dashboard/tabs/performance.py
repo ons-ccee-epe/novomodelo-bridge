@@ -275,7 +275,7 @@ def _chart_retry_histogram(retry_histogram: pd.DataFrame) -> str:
 # ---------------------------------------------------------------------------
 
 
-def can_render(data: DashboardData) -> bool:  # noqa: ARG001
+def can_render(data: DashboardData) -> bool:
     """Return True — performance tab is always shown."""
     return True
 

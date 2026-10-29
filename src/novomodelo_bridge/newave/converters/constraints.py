@@ -1031,7 +1031,7 @@ def _get_individualizado_cutoff(
         end_month = int(row["mes_fim_individualizado"])
         end_year = int(row["ano_fim_individualizado"])
         return (end_year - start_year) * 12 + (end_month - start_month)
-    except Exception:  # noqa: BLE001
+    except Exception:
         emit(
             Diagnostic(
                 code="individualizado-cutoff-unknown",
@@ -1079,7 +1079,7 @@ def _parse_re_dat(
 
     try:
         re_file = case.re_dat
-    except Exception:  # noqa: BLE001
+    except Exception:
         emit(
             Diagnostic(
                 code="re-dat-unreadable",

@@ -221,7 +221,7 @@ class NewaveFiles:
             """Resolve an optional Arquivos attribute, returning None if absent."""
             try:
                 fname: str | None = getattr(arq, attr, None)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return None
             if not fname:
                 return None

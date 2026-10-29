@@ -130,7 +130,7 @@ def _run_novomodelo_validation(
         # novomodelo v0.6.x: novomodelo.io.validate is a function returning a
         # report dict; it never raises (errors are surfaced as data).
         result = novomodelo.io.validate(str(dst))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         render_error(f"Validation error: {exc}", console=err_console)
         if json_output:
             # Validation raised unexpectedly; still emit one JSON object so

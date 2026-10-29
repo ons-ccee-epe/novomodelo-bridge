@@ -178,7 +178,7 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
             report: ConversionReport = convert_newave_case(
                 src, dst, on_phase=step, dry_run=args.dry_run
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _handle_conversion_pipeline_failure(
             exc,
             args,
@@ -385,7 +385,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
                 dry_run=args.dry_run,
                 fcf_inputs_out=fcf_inputs,
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _handle_conversion_pipeline_failure(
             exc,
             args,
@@ -522,7 +522,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
                     config=fcf_inputs.config,
                     initial_conditions=fcf_inputs.initial_conditions,
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             diag = diagnostic_from_exception(exc, context="Boundary FCF import")
             failure_diagnostics = [*report.diagnostics, *fcf_diags, diag]
             if args.diagnostics_json is not None:

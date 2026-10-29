@@ -101,7 +101,7 @@ _GEOMETRY_SCHEMA = pa.schema(
 )
 
 
-def read_polinjus(path: Path):  # noqa: ANN201 (idecomp.libs type is optional)
+def read_polinjus(path: Path):
     """Read the ``polinjus`` tailrace-curve-family cadastro, or ``None``.
 
     Returns an ``idecomp.libs.UsinasHidreletricas`` (the same accessor surface

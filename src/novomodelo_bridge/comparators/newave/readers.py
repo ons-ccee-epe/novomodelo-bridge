@@ -94,7 +94,7 @@ def _read_medias_csv(
             )
             if len(df.columns) > 2:
                 break
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     else:
         _LOG.warning("Failed to parse %s", path)
@@ -186,7 +186,7 @@ def _read_medias_csv(
             variable_name="stage_col",
             value_name="value",
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to unpivot %s", filename)
         return empty
 
@@ -423,7 +423,7 @@ def read_pmo_productivity_detail(newave_dir: Path) -> pl.DataFrame:
 
         pmo = Pmo.read(str(pmo_path))
         prod_df = pmo.produtibilidades_equivalentes
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to read productivities from pmo.dat")
         return empty
 
@@ -520,7 +520,7 @@ def read_nwlistop_intercambio(case_dir: Path) -> pl.DataFrame:
     for from_code, to_code, path in matches:
         try:
             obj = Intercambio.read(str(path))
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOG.warning("Failed to parse %s", path)
             continue
         df = obj.valores
@@ -733,7 +733,7 @@ def read_newave_net_load(files: NewaveFiles) -> pl.DataFrame:
         sistema = Sistema.read(str(sistema_path))
         load_df = sistema.mercado_energia
         ncs_df = sistema.geracao_usinas_nao_simuladas
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to read %s for net load", sistema_path.name)
         return empty
 
@@ -766,7 +766,7 @@ def read_newave_net_load(files: NewaveFiles) -> pl.DataFrame:
                 ),
                 axis=1,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOG.warning(
                 "Failed to parse %s for net load adjustment", cadical_path.name
             )
@@ -831,7 +831,7 @@ def read_pmo_cost_breakdown(newave_dir: Path) -> dict[str, float]:
 
         pmo = Pmo.read(str(pmo_path))
         df = pmo.custo_operacao_series_simuladas
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to read cost breakdown from pmo.dat")
         return {}
 
@@ -936,7 +936,7 @@ def read_newave_tim_stages(newave_dir: Path) -> dict[str, float]:
         from inewave.newave import Newavetim
 
         tim = Newavetim.read(str(tim_path))
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to parse newave.tim via inewave at %s", tim_path)
         return {}
     df = tim.tempos_etapas
@@ -1141,7 +1141,7 @@ def _read_nwlistop_table(
     """
     try:
         table = cls.read(str(path)).valores
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to parse %s", path, exc_info=True)
         return None
     if table is None or table.empty:

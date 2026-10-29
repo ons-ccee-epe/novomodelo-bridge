@@ -306,7 +306,7 @@ def _vazpast_incremental(
 
     try:
         vazpast_obj = case.vazpast
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("vazpast.dat could not be parsed; skipping recent lags.")
         return {}
 
@@ -777,7 +777,7 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
                 len(cadical_lookup),
                 case.files.c_adic,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning(
                 "c_adic.dat could not be parsed; no additional load will be added.",
                 exc_info=True,

@@ -21,7 +21,7 @@ from novomodelo_bridge.cli.convert import _run_decomp_conversion, _run_newave_co
 from novomodelo_bridge.cli.dashboard import _run_dashboard
 from novomodelo_bridge.cli.export import export_app
 
-# noqa: F401 below -- re-exported so `cli._NULL_HANDLER` keeps resolving for the
+# Re-exported so ``cli._NULL_HANDLER`` keeps resolving for the
 # ``test_configure_logging_levels`` import + the ``cli._configure_logging`` spy sites.
 from novomodelo_bridge.cli.logging_config import NULL_HANDLER as _NULL_HANDLER  # noqa: F401
 from novomodelo_bridge.cli.logging_config import configure_logging as _configure_logging

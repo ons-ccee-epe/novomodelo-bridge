@@ -89,7 +89,7 @@ def block_fractions(case: NewaveCase) -> list[tuple[float, ...]]:
     return fractions
 
 
-def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:  # noqa: ARG001
+def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     """Convert the source model temporal configuration to a Novomodelo ``stages.json`` dict.
 
     Reads ``dger.dat`` and ``patamar.dat`` from *case* and produces a
