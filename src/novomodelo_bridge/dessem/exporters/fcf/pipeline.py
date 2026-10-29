@@ -22,6 +22,8 @@ from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
     zeroed_gnl_block,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
+    CortdecoContents,
+    MapcutContents,
     cross_check_pair,
     reject_pair,
 )
@@ -32,6 +34,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     read_case_inputs,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    CutBlockOffsets,
     LayoutError,
     assert_uniform_blocks,
     cortdeco_block_offsets,
@@ -58,6 +61,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     PolicyFormatError,
+    StageCutPool,
     nodes_by_pool,
     read_policy,
     select_pools,
@@ -330,6 +334,210 @@ def _assemble_cuts(
     return cuts
 
 
+@dataclass
+class _ExportProgress:
+    """The step an export run is in, which ``run_export``'s failure handlers read."""
+
+    on_phase: Callable[[str], None] | None
+    current_step: str = "initialize"
+    unvalidated_pair_published: bool = False
+
+    @contextmanager
+    def step(
+        self, step_name: str, phase: int, *, publishes_pair: bool = False
+    ) -> Generator[None, None, None]:
+        """Enter *step_name*, report ``EXPORT_PHASE_LABELS[phase]``, log timing."""
+        self.current_step = step_name
+        if self.on_phase is not None:
+            self.on_phase(EXPORT_PHASE_LABELS[phase])
+        if publishes_pair:
+            self.unvalidated_pair_published = True
+        with _log_step(step_name):
+            yield
+
+
+@dataclass(frozen=True)
+class _ExportPlan:
+    """Everything the binary pair and its content CSVs are written from."""
+
+    pools: dict[int, StageCutPool]
+    trunk_pool_ids: tuple[int, ...]
+    plant_ids: tuple[int, ...]
+    travel_time: tuple[TravelTimePlant, ...]
+    stages: tuple[StageInfo, ...]
+    n_patamares: int
+    offsets: CutBlockOffsets
+    header: MapcutHeader
+
+
+def _plan_export(
+    case_dir: Path,
+    source: SourceDeck,
+    output_dir: Path,
+    settings: ExportSettings,
+    progress: _ExportProgress,
+) -> _ExportPlan:
+    """Read the case and its policy, check the premises, and lay out the pair."""
+    with progress.step("read settings-derived inputs", 0):
+        inputs = read_case_inputs(case_dir)
+        match_source_hydros(inputs.hydros, source.hydros)
+
+    with progress.step("read the policy checkpoint", 1):
+        checkpoint = read_policy(case_dir)
+        manifest = checkpoint.manifest
+
+    with progress.step("select the trunk pools", 2):
+        pool_ids = sorted(nodes_by_pool(manifest))
+        pools = select_pools(
+            checkpoint, pool_ids, include_terminal=settings.include_terminal_pool
+        )
+        trunk_pool_ids = cut_building_pools(pools, len(pool_ids) - 1)
+        terminal_pool_id = pool_ids[-1]
+
+    with progress.step("validate premises", 3):
+        travel_time = travel_time_plants(
+            inputs.hydros, source.hydros, source.travel_time_codes, inputs.stages
+        )
+        _emit_travel_time_info(travel_time)
+
+        # P8: Audit inflow lag drops
+        inflow_lag_drop_audit(pools)
+
+        gnl_thermals = anticipated_thermals(inputs)
+        gnl_lags = gnl_lag_months(gnl_thermals, source.gnl_thermals)
+
+    with progress.step("emit ECO CSVs", 4):
+        if settings.emit_audit_csv:
+            emit_eco_csvs(
+                pools,
+                pool_ids,
+                output_dir,
+                settings.eco_subdirectory,
+                terminal_pool_id,
+                settings.include_terminal_pool,
+            )
+
+    with progress.step("build mapping quantities", 5):
+        plant_ids = storage_plant_ids(pools[trunk_pool_ids[0]].slots)
+        hydro_codes = plant_codes(plant_ids, source.hydros)
+
+        # P6: GNL submarket codes
+        gnl_submarket_codes = tuple(submarket_for_bus(t.bus_id) for t in gnl_thermals)
+
+        # Uniform blocks for P3/NCOEF
+        n_patamares = assert_uniform_blocks(tuple(len(s.blocks) for s in inputs.stages))
+
+        offsets = cortdeco_block_offsets(
+            n_uhes=len(hydro_codes),
+            n_utv=len(travel_time),
+            max_lag=max_lag(travel_time),
+            n_sbm_gnl=len(gnl_submarket_codes),
+            n_estagios=manifest.num_stages,
+            n_patamares=n_patamares,
+        )
+
+    with progress.step("assemble mapcut header", 6):
+        header = _assemble_mapcut_header(
+            manifest,
+            pools,
+            trunk_pool_ids,
+            inputs,
+            plant_ids,
+            hydro_codes,
+            gnl_thermals,
+            gnl_submarket_codes,
+            gnl_lags,
+            n_patamares,
+            travel_time,
+        )
+
+    return _ExportPlan(
+        pools=pools,
+        trunk_pool_ids=trunk_pool_ids,
+        plant_ids=plant_ids,
+        travel_time=travel_time,
+        stages=inputs.stages,
+        n_patamares=n_patamares,
+        offsets=offsets,
+        header=header,
+    )
+
+
+def _write_validated_pair(
+    plan: _ExportPlan, paths: OutputPaths, progress: _ExportProgress
+) -> tuple[MapcutContents, CortdecoContents]:
+    """Write mapcut and cortdeco, then cross-check the pair as read back."""
+    with progress.step("write mapcut", 7, publishes_pair=True):
+        write_mapcut(plan.header, paths.mapcut)
+
+    with progress.step("assemble cut inputs", 8):
+        cuts = _assemble_cuts(
+            plan.pools,
+            plan.trunk_pool_ids,
+            plan.plant_ids,
+            plan.offsets,
+            plan.travel_time,
+            plan.stages,
+        )
+
+    with progress.step("write cortdeco", 9):
+        write_cortdeco(
+            cuts,
+            paths.cortdeco,
+            numero_cortes=plan.header.numero_cortes,
+            offsets=plan.offsets,
+        )
+
+    with progress.step("cross-check the pair", 10):
+        contents = cross_check_pair(paths.mapcut, paths.cortdeco)
+        progress.unvalidated_pair_published = False
+    return contents
+
+
+def _write_content_csvs(
+    plan: _ExportPlan,
+    mapcut_contents: MapcutContents,
+    cortdeco_contents: CortdecoContents,
+    paths: OutputPaths,
+) -> None:
+    """Write the audit CSV mirrors of the read-back pair."""
+    write_mapcut_content_csv(mapcut_contents, paths.mapcut_content)
+    write_cortdeco_content_csv(
+        cortdeco_contents,
+        paths.cortdeco_content,
+        hydro_codes=plan.header.codigos_uhes,
+        submarket_codes=plan.header.codigos_submercados_gnl,
+        n_estagios=plan.header.numero_estagios,
+        n_patamares=plan.n_patamares,
+        travel_time_codes=tuple(plant.code for plant in plan.travel_time),
+        max_lag=plan.header.max_lag,
+    )
+
+
+def _write_success_manifest(
+    case_dir: Path,
+    source: SourceDeck,
+    settings: ExportSettings,
+    paths: OutputPaths,
+) -> None:
+    """Write the manifest of a completed export."""
+    outputs: dict[str, Path] = {
+        "mapcut": paths.mapcut,
+        "cortdeco": paths.cortdeco,
+    }
+    if settings.emit_audit_csv:
+        outputs["mapcut_content"] = paths.mapcut_content
+        outputs["cortdeco_content"] = paths.cortdeco_content
+    manifest = build_export_manifest(
+        case_path=case_dir,
+        source_path=source.directory,
+        revision=source.revision,
+        settings_snapshot=asdict(settings),
+        outputs=outputs,
+    )
+    write_export_manifest(manifest, paths.manifest)
+
+
 def run_export(
     case_dir: Path,
     source: SourceDeck,
@@ -348,183 +556,30 @@ def run_export(
 
     Returns exit code: 0 success, non-zero failure.
     """
-    revision = source.revision
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths = _resolve_output_paths(output_dir, revision, settings)
+    paths = _resolve_output_paths(output_dir, source.revision, settings)
+    progress = _ExportProgress(on_phase)
 
-    def _step(label: str) -> None:
-        if on_phase is not None:
-            on_phase(label)
-
-    current_step = "initialize"
-    unvalidated_pair_published = False
-
-    # Emit warnings about known limitations upfront.
     _emit_export_warnings()
 
     try:
-        current_step = "read settings-derived inputs"
-        _step(EXPORT_PHASE_LABELS[0])
-        with _log_step(current_step):
-            inputs = read_case_inputs(case_dir)
-            match_source_hydros(inputs.hydros, source.hydros)
+        plan = _plan_export(case_dir, source, output_dir, settings, progress)
+        mapcut_contents, cortdeco_contents = _write_validated_pair(
+            plan, paths, progress
+        )
 
-        current_step = "read the policy checkpoint"
-        _step(EXPORT_PHASE_LABELS[1])
-        with _log_step(current_step):
-            checkpoint = read_policy(case_dir)
-            manifest = checkpoint.manifest
-
-        current_step = "select the trunk pools"
-        _step(EXPORT_PHASE_LABELS[2])
-        with _log_step(current_step):
-            pool_ids = sorted(nodes_by_pool(manifest))
-            pools = select_pools(
-                checkpoint, pool_ids, include_terminal=settings.include_terminal_pool
-            )
-            trunk_pool_ids = cut_building_pools(pools, len(pool_ids) - 1)
-            terminal_pool_id = pool_ids[-1]
-
-        current_step = "validate premises"
-        _step(EXPORT_PHASE_LABELS[3])
-        with _log_step(current_step):
-            travel_time = travel_time_plants(
-                inputs.hydros, source.hydros, source.travel_time_codes, inputs.stages
-            )
-            _emit_travel_time_info(travel_time)
-
-            # P8: Audit inflow lag drops
-            inflow_lag_drop_audit(pools)
-
-            gnl_thermals = anticipated_thermals(inputs)
-            gnl_lags = gnl_lag_months(gnl_thermals, source.gnl_thermals)
-
-        current_step = "emit ECO CSVs"
-        _step(EXPORT_PHASE_LABELS[4])
-        with _log_step(current_step):
+        with progress.step("write content CSVs", 11):
             if settings.emit_audit_csv:
-                emit_eco_csvs(
-                    pools,
-                    pool_ids,
-                    output_dir,
-                    settings.eco_subdirectory,
-                    terminal_pool_id,
-                    settings.include_terminal_pool,
-                )
+                _write_content_csvs(plan, mapcut_contents, cortdeco_contents, paths)
 
-        current_step = "build mapping quantities"
-        _step(EXPORT_PHASE_LABELS[5])
-        with _log_step(current_step):
-            plant_ids = storage_plant_ids(pools[trunk_pool_ids[0]].slots)
-            hydro_codes = plant_codes(plant_ids, source.hydros)
-
-            # P6: GNL submarket codes
-            gnl_submarket_codes = tuple(
-                submarket_for_bus(t.bus_id) for t in gnl_thermals
-            )
-
-            # Uniform blocks for P3/NCOEF
-            n_patamares = assert_uniform_blocks(
-                tuple(len(s.blocks) for s in inputs.stages)
-            )
-
-            offsets = cortdeco_block_offsets(
-                n_uhes=len(hydro_codes),
-                n_utv=len(travel_time),
-                max_lag=max_lag(travel_time),
-                n_sbm_gnl=len(gnl_submarket_codes),
-                n_estagios=manifest.num_stages,
-                n_patamares=n_patamares,
-            )
-
-        current_step = "assemble mapcut header"
-        _step(EXPORT_PHASE_LABELS[6])
-        with _log_step(current_step):
-            header = _assemble_mapcut_header(
-                manifest,
-                pools,
-                trunk_pool_ids,
-                inputs,
-                plant_ids,
-                hydro_codes,
-                gnl_thermals,
-                gnl_submarket_codes,
-                gnl_lags,
-                n_patamares,
-                travel_time,
-            )
-
-        current_step = "write mapcut"
-        _step(EXPORT_PHASE_LABELS[7])
-        unvalidated_pair_published = True
-        with _log_step(current_step):
-            write_mapcut(header, paths.mapcut)
-
-        current_step = "assemble cut inputs"
-        _step(EXPORT_PHASE_LABELS[8])
-        with _log_step(current_step):
-            cuts = _assemble_cuts(
-                pools, trunk_pool_ids, plant_ids, offsets, travel_time, inputs.stages
-            )
-
-        current_step = "write cortdeco"
-        _step(EXPORT_PHASE_LABELS[9])
-        with _log_step(current_step):
-            write_cortdeco(
-                cuts,
-                paths.cortdeco,
-                numero_cortes=header.numero_cortes,
-                offsets=offsets,
-            )
-
-        current_step = "cross-check the pair"
-        _step(EXPORT_PHASE_LABELS[10])
-        with _log_step(current_step):
-            mapcut_contents, cortdeco_contents = cross_check_pair(
-                paths.mapcut, paths.cortdeco
-            )
-            unvalidated_pair_published = False  # Validated
-
-        current_step = "write content CSVs"
-        _step(EXPORT_PHASE_LABELS[11])
-        with _log_step(current_step):
-            if settings.emit_audit_csv:
-                write_mapcut_content_csv(mapcut_contents, paths.mapcut_content)
-                write_cortdeco_content_csv(
-                    cortdeco_contents,
-                    paths.cortdeco_content,
-                    hydro_codes=header.codigos_uhes,
-                    submarket_codes=header.codigos_submercados_gnl,
-                    n_estagios=header.numero_estagios,
-                    n_patamares=n_patamares,
-                    travel_time_codes=tuple(plant.code for plant in travel_time),
-                    max_lag=header.max_lag,
-                )
-
-        current_step = "write export manifest"
-        _step(EXPORT_PHASE_LABELS[12])
-        with _log_step(current_step):
-            outputs: dict[str, Path] = {
-                "mapcut": paths.mapcut,
-                "cortdeco": paths.cortdeco,
-            }
-            if settings.emit_audit_csv:
-                outputs["mapcut_content"] = paths.mapcut_content
-                outputs["cortdeco_content"] = paths.cortdeco_content
-            manifest_obj = build_export_manifest(
-                case_path=case_dir,
-                source_path=source.directory,
-                revision=revision,
-                settings_snapshot=asdict(settings),
-                outputs=outputs,
-            )
-            write_export_manifest(manifest_obj, paths.manifest)
+        with progress.step("write export manifest", 12):
+            _write_success_manifest(case_dir, source, settings, paths)
 
         _LOG.info("export completed successfully")
         return 0
 
     except (LayoutError, MappingError, PolicyFormatError) as exc:
-        _LOG.error("export failed at step '%s': %s", current_step, exc)
+        _LOG.error("export failed at step '%s': %s", progress.current_step, exc)
         emit(
             Diagnostic(
                 code="dessem-fcf-export-failed",
@@ -532,17 +587,21 @@ def run_export(
                 category="Export failure",
                 title="Export failed",
                 summary=str(exc),
-                notes=[f"Failed step: {current_step}"],
+                notes=[f"Failed step: {progress.current_step}"],
             )
         )
-        if unvalidated_pair_published:
+        if progress.unvalidated_pair_published:
             reject_pair(paths.mapcut, paths.cortdeco)
-        _write_failure_manifest(case_dir, source, settings, paths, current_step)
+        _write_failure_manifest(
+            case_dir, source, settings, paths, progress.current_step
+        )
         return 1
 
     except BaseException as exc:
-        _LOG.error("export failed at step '%s': %s", current_step, exc)
-        if unvalidated_pair_published:
+        _LOG.error("export failed at step '%s': %s", progress.current_step, exc)
+        if progress.unvalidated_pair_published:
             reject_pair(paths.mapcut, paths.cortdeco)
-        _write_failure_manifest(case_dir, source, settings, paths, current_step)
+        _write_failure_manifest(
+            case_dir, source, settings, paths, progress.current_step
+        )
         raise

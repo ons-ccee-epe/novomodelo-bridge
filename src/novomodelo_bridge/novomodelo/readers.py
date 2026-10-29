@@ -1417,6 +1417,191 @@ def _load_entity_bus_map(
         ) from exc
 
 
+def _agg_bus_level_vars(
+    bus_lf: pl.LazyFrame | None,
+    block_hours: pl.DataFrame | None,
+) -> tuple[pl.DataFrame, list[str]] | None:
+    """Per-scenario load, deficit and excess by bus, with the variables present."""
+    if bus_lf is None:
+        return None
+
+    avail = set(bus_lf.collect_schema().names())
+    bus_avail = [c for c in ("load_mw", "deficit_mw", "excess_mw") if c in avail]
+    if not bus_avail:
+        return None
+
+    bid_col = "bus_id" if "bus_id" in avail else "entity_id"
+    if block_hours is not None:
+        bh = block_hours.lazy()
+        weighted_means = [
+            ((pl.col(c) * pl.col("hours")).sum() / pl.col("hours").sum()).alias(c)
+            for c in bus_avail
+        ]
+        bus_sc = (
+            bus_lf.join(bh, on=["stage_id", "block_id"])
+            .group_by(["scenario_id", bid_col, "stage_id"])
+            .agg(weighted_means)
+            .rename({bid_col: "bus_id"})
+            .collect(engine="streaming")
+        )
+    else:
+        bus_sc = (
+            bus_lf.filter(pl.col("block_id") == 0)
+            .group_by(["scenario_id", bid_col, "stage_id"])
+            .agg([pl.col(c).mean() for c in bus_avail])
+            .rename({bid_col: "bus_id"})
+            .collect(engine="streaming")
+        )
+    return bus_sc, bus_avail
+
+
+def _agg_entity_by_bus(
+    lf: pl.LazyFrame | None,
+    id_col: str,
+    value_col: str,
+    bus_map: dict[int, int],
+    out_col: str,
+    block_hours: pl.DataFrame | None,
+) -> pl.DataFrame | None:
+    """Aggregate an entity variable by bus with block-hours weighting."""
+    if lf is None or not bus_map:
+        return None
+
+    available = set(lf.collect_schema().names())
+    if value_col not in available:
+        return None
+
+    mapping = pl.DataFrame(
+        {id_col: list(bus_map.keys()), "bus_id": list(bus_map.values())}
+    )
+    joined = lf.join(mapping.lazy(), on=id_col)
+
+    bus_totals = joined.group_by(["scenario_id", "bus_id", "stage_id", "block_id"]).agg(
+        pl.col(value_col).sum()
+    )
+
+    if block_hours is not None:
+        bh = block_hours.lazy()
+        per_sc = (
+            bus_totals.join(bh, on=["stage_id", "block_id"])
+            .group_by(["scenario_id", "bus_id", "stage_id"])
+            .agg(
+                (pl.col(value_col) * pl.col("hours")).sum().alias("_w"),
+                pl.col("hours").sum().alias("_h"),
+            )
+            .with_columns((pl.col("_w") / pl.col("_h")).alias(out_col))
+            .drop("_w", "_h")
+        )
+    else:
+        per_sc = (
+            bus_totals.filter(pl.col("block_id") == 0)
+            .group_by(["scenario_id", "bus_id", "stage_id"])
+            .agg(pl.col(value_col).sum().alias(out_col))
+        )
+    return per_sc.collect(engine="streaming")
+
+
+def _agg_hydro_bus_generation(
+    novomodelo_output_dir: Path,
+    block_hours: pl.DataFrame | None,
+) -> pl.DataFrame:
+    """Aggregate hydro generation by bus from the 0.13 partition.
+
+    The partition already carries ``bus_id`` per row, so — unlike
+    thermal/NCS — no plant→bus map or join is needed here.
+
+    When ``block_hours`` (``stages.json``) is available, ``generation_mwh``
+    is already hours-weighted energy per block (novomodelo applies that
+    weighting on the writer side), so summing it across ``hydro_id`` and
+    ``block_id`` — including any null-``block_id`` stage-level row —
+    gives the bus/stage/scenario total energy with NO re-weighting.
+    Dividing that total by the stage's total hours converts it back into
+    the same hours-weighted mean-MW figure the thermal/NCS branches
+    compute, so ``hydro_gen_mw`` stays comparable to them and to the
+    pre-migration plant-keyed total.
+
+    Without ``stages.json`` there is no stage-hours denominator to
+    convert the energy total back to a power figure, so this branch
+    mirrors every sibling aggregator in this module (``_agg_entity_by_bus``,
+    :func:`read_novomodelo_hydro_means`, :func:`read_novomodelo_thermal_means`,
+    :func:`read_novomodelo_bus_means`): take the ``block_id == 0`` row — novomodelo's
+    per-block ``generation_mw`` is already a genuine MW figure, no
+    weighting needed — and sum it across hydros per bus/stage/scenario.
+    A null-``block_id`` stage-level row does not equal ``0`` and is
+    excluded here, exactly as the sibling branches exclude every
+    non-representative block. Summing ``generation_mwh`` instead (the
+    bug this branch fixes) would silently relabel an energy total as a
+    power figure, off by the block-hours factor.
+
+    Absence of the partition is deliberately NOT caught here — a
+    missing ``simulation/hydro_bus_generation/`` directory must surface
+    :class:`NovomodeloPartitionMissingError` to the caller of
+    :func:`read_novomodelo_bus_aggregates`, not degrade to zero hydro
+    generation per bus (the regression this function exists to fix).
+    """
+    lf = read_novomodelo_hydro_bus_generation(novomodelo_output_dir)
+
+    if block_hours is not None:
+        energy = lf.group_by(["scenario_id", "bus_id", "stage_id"]).agg(
+            pl.col("generation_mwh").sum().alias("_energy_mwh")
+        )
+        stage_hours = (
+            block_hours.lazy()
+            .group_by("stage_id")
+            .agg(pl.col("hours").sum().alias("_hours"))
+        )
+        per_sc = (
+            energy.join(stage_hours, on="stage_id")
+            .with_columns(
+                (pl.col("_energy_mwh") / pl.col("_hours")).alias("hydro_gen_mw")
+            )
+            .drop("_energy_mwh", "_hours")
+        )
+    else:
+        per_sc = (
+            lf.filter(pl.col("block_id") == 0)
+            .group_by(["scenario_id", "bus_id", "stage_id"])
+            .agg(pl.col("generation_mw").sum().alias("hydro_gen_mw"))
+        )
+
+    return per_sc.collect(engine="streaming")
+
+
+def _join_bus_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
+    """Full-join the per-scenario bus frames on scenario, bus and stage."""
+    merged = frames[0]
+    for f in frames[1:]:
+        merged = merged.join(
+            f,
+            on=["scenario_id", "bus_id", "stage_id"],
+            how="full",
+            coalesce=True,
+        )
+    return merged
+
+
+def _bus_scenario_percentiles(
+    merged: pl.DataFrame, variables: list[str]
+) -> pl.DataFrame:
+    """p10/p50/p90 across scenarios of each present *variables* column per bus/stage."""
+    aggs: list[pl.Expr] = []
+    for c in variables:
+        if c not in merged.columns:
+            continue
+        aggs.extend(
+            [
+                pl.col(c).quantile(0.1, interpolation="linear").alias(f"{c}_p10"),
+                pl.col(c).quantile(0.5, interpolation="linear").alias(f"{c}_p50"),
+                pl.col(c).quantile(0.9, interpolation="linear").alias(f"{c}_p90"),
+            ]
+        )
+
+    if not aggs:
+        return pl.DataFrame()
+
+    return merged.group_by("bus_id", "stage_id").agg(aggs).sort("bus_id", "stage_id")
+
+
 def read_novomodelo_bus_aggregates(
     novomodelo_output_dir: Path,
 ) -> pl.DataFrame:
@@ -1442,7 +1627,6 @@ def read_novomodelo_bus_aggregates(
     block_hours = _load_block_hours(novomodelo_output_dir)
 
     bus_lf = scan_simulation_entity(novomodelo_output_dir, "buses")
-    bus_vars = ["load_mw", "deficit_mw", "excess_mw"]
 
     thermal_bus_map = _load_entity_bus_map(
         novomodelo_output_dir, "thermals", "thermal_id"
@@ -1454,156 +1638,20 @@ def read_novomodelo_bus_aggregates(
     )
     ncs_lf = scan_simulation_entity(novomodelo_output_dir, "non_controllables")
 
-    def _agg_entity_by_bus(
-        lf: pl.LazyFrame | None,
-        id_col: str,
-        value_col: str,
-        bus_map: dict[int, int],
-        out_col: str,
-    ) -> pl.DataFrame | None:
-        """Aggregate an entity variable by bus with block-hours weighting."""
-        if lf is None or not bus_map:
-            return None
-
-        available = set(lf.collect_schema().names())
-        if value_col not in available:
-            return None
-
-        mapping = pl.DataFrame(
-            {id_col: list(bus_map.keys()), "bus_id": list(bus_map.values())}
-        )
-        joined = lf.join(mapping.lazy(), on=id_col)
-
-        bus_totals = joined.group_by(
-            ["scenario_id", "bus_id", "stage_id", "block_id"]
-        ).agg(pl.col(value_col).sum())
-
-        if block_hours is not None:
-            bh = block_hours.lazy()
-            per_sc = (
-                bus_totals.join(bh, on=["stage_id", "block_id"])
-                .group_by(["scenario_id", "bus_id", "stage_id"])
-                .agg(
-                    (pl.col(value_col) * pl.col("hours")).sum().alias("_w"),
-                    pl.col("hours").sum().alias("_h"),
-                )
-                .with_columns((pl.col("_w") / pl.col("_h")).alias(out_col))
-                .drop("_w", "_h")
-            )
-        else:
-            per_sc = (
-                bus_totals.filter(pl.col("block_id") == 0)
-                .group_by(["scenario_id", "bus_id", "stage_id"])
-                .agg(pl.col(value_col).sum().alias(out_col))
-            )
-        return per_sc.collect(engine="streaming")
-
-    def _agg_hydro_bus_generation() -> pl.DataFrame:
-        """Aggregate hydro generation by bus from the 0.13 partition.
-
-        The partition already carries ``bus_id`` per row, so — unlike
-        thermal/NCS — no plant→bus map or join is needed here.
-
-        When ``block_hours`` (``stages.json``) is available, ``generation_mwh``
-        is already hours-weighted energy per block (novomodelo applies that
-        weighting on the writer side), so summing it across ``hydro_id`` and
-        ``block_id`` — including any null-``block_id`` stage-level row —
-        gives the bus/stage/scenario total energy with NO re-weighting.
-        Dividing that total by the stage's total hours converts it back into
-        the same hours-weighted mean-MW figure the thermal/NCS branches
-        compute, so ``hydro_gen_mw`` stays comparable to them and to the
-        pre-migration plant-keyed total.
-
-        Without ``stages.json`` there is no stage-hours denominator to
-        convert the energy total back to a power figure, so this branch
-        mirrors every sibling aggregator in this module (``_agg_entity_by_bus``,
-        :func:`read_novomodelo_hydro_means`, :func:`read_novomodelo_thermal_means`,
-        :func:`read_novomodelo_bus_means`): take the ``block_id == 0`` row — novomodelo's
-        per-block ``generation_mw`` is already a genuine MW figure, no
-        weighting needed — and sum it across hydros per bus/stage/scenario.
-        A null-``block_id`` stage-level row does not equal ``0`` and is
-        excluded here, exactly as the sibling branches exclude every
-        non-representative block. Summing ``generation_mwh`` instead (the
-        bug this branch fixes) would silently relabel an energy total as a
-        power figure, off by the block-hours factor.
-
-        Absence of the partition is deliberately NOT caught here — a
-        missing ``simulation/hydro_bus_generation/`` directory must surface
-        :class:`NovomodeloPartitionMissingError` to the caller of
-        :func:`read_novomodelo_bus_aggregates`, not degrade to zero hydro
-        generation per bus (the regression this function exists to fix).
-        """
-        lf = read_novomodelo_hydro_bus_generation(novomodelo_output_dir)
-
-        if block_hours is not None:
-            energy = lf.group_by(["scenario_id", "bus_id", "stage_id"]).agg(
-                pl.col("generation_mwh").sum().alias("_energy_mwh")
-            )
-            stage_hours = (
-                block_hours.lazy()
-                .group_by("stage_id")
-                .agg(pl.col("hours").sum().alias("_hours"))
-            )
-            per_sc = (
-                energy.join(stage_hours, on="stage_id")
-                .with_columns(
-                    (pl.col("_energy_mwh") / pl.col("_hours")).alias("hydro_gen_mw")
-                )
-                .drop("_energy_mwh", "_hours")
-            )
-        else:
-            per_sc = (
-                lf.filter(pl.col("block_id") == 0)
-                .group_by(["scenario_id", "bus_id", "stage_id"])
-                .agg(pl.col("generation_mw").sum().alias("hydro_gen_mw"))
-            )
-
-        return per_sc.collect(engine="streaming")
-
-    # Collect per-scenario frames.
     frames: list[pl.DataFrame] = []
     all_vars: list[str] = []
 
-    # Bus-level variables.
-    if bus_lf is not None:
-        avail = set(bus_lf.collect_schema().names())
-        bus_avail = [c for c in bus_vars if c in avail]
-        bid_col = "bus_id" if "bus_id" in avail else "entity_id"
-        if bus_avail and block_hours is not None:
-            bh = block_hours.lazy()
-            bus_sc = (
-                bus_lf.join(bh, on=["stage_id", "block_id"])
-                .group_by(["scenario_id", bid_col, "stage_id"])
-                .agg(
-                    [
-                        (
-                            (pl.col(c) * pl.col("hours")).sum() / pl.col("hours").sum()
-                        ).alias(c)
-                        for c in bus_avail
-                    ]
-                )
-                .rename({bid_col: "bus_id"})
-                .collect(engine="streaming")
-            )
-        elif bus_avail:
-            bus_sc = (
-                bus_lf.filter(pl.col("block_id") == 0)
-                .group_by(["scenario_id", bid_col, "stage_id"])
-                .agg([pl.col(c).mean() for c in bus_avail])
-                .rename({bid_col: "bus_id"})
-                .collect(engine="streaming")
-            )
-        else:
-            bus_sc = None
-        if bus_sc is not None:
-            frames.append(bus_sc)
-            all_vars.extend(bus_avail)
+    bus_level = _agg_bus_level_vars(bus_lf, block_hours)
+    if bus_level is not None:
+        bus_sc, bus_avail = bus_level
+        frames.append(bus_sc)
+        all_vars.extend(bus_avail)
 
     # Hydro generation: the partition already carries bus_id, so it is
     # aggregated directly rather than through the map/join loop below —
     # absence must raise, not silently drop out
     # of ``frames`` the way a ``None``-returning entity aggregation would.
-    frames.append(_agg_hydro_bus_generation())
+    frames.append(_agg_hydro_bus_generation(novomodelo_output_dir, block_hours))
     all_vars.append("hydro_gen_mw")
 
     # Thermal / NCS entity aggregations (still map-and-join: those entities
@@ -1624,22 +1672,12 @@ def read_novomodelo_bus_aggregates(
             "ncs_gen_mw",
         ),
     ]:
-        result = _agg_entity_by_bus(lf, id_col, val_col, bmap, out)
+        result = _agg_entity_by_bus(lf, id_col, val_col, bmap, out, block_hours)
         if result is not None:
             frames.append(result)
             all_vars.append(out)
 
-    if not frames:
-        return pl.DataFrame()
-
-    merged = frames[0]
-    for f in frames[1:]:
-        merged = merged.join(
-            f,
-            on=["scenario_id", "bus_id", "stage_id"],
-            how="full",
-            coalesce=True,
-        )
+    merged = _join_bus_frames(frames)
 
     if "load_mw" in merged.columns and "ncs_gen_mw" in merged.columns:
         merged = merged.with_columns(
@@ -1649,23 +1687,7 @@ def read_novomodelo_bus_aggregates(
         )
         all_vars.append("net_load_mw")
 
-    # Compute percentiles across scenarios.
-    aggs: list[pl.Expr] = []
-    for c in all_vars:
-        if c not in merged.columns:
-            continue
-        aggs.extend(
-            [
-                pl.col(c).quantile(0.1, interpolation="linear").alias(f"{c}_p10"),
-                pl.col(c).quantile(0.5, interpolation="linear").alias(f"{c}_p50"),
-                pl.col(c).quantile(0.9, interpolation="linear").alias(f"{c}_p90"),
-            ]
-        )
-
-    if not aggs:
-        return pl.DataFrame()
-
-    return merged.group_by("bus_id", "stage_id").agg(aggs).sort("bus_id", "stage_id")
+    return _bus_scenario_percentiles(merged, all_vars)
 
 
 def read_novomodelo_cost_breakdown(
