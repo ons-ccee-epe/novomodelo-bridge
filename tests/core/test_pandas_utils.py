@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -11,6 +13,7 @@ from novomodelo_bridge.core.pandas_utils import (
     as_frame,
     as_frame_or_empty,
     as_int,
+    as_timestamp,
     is_na,
 )
 
@@ -64,3 +67,13 @@ def test_as_int_raises_like_int_on_a_missing_cell() -> None:
         as_int(None)
     with pytest.raises(ValueError):
         as_int(float("nan"))
+
+
+def test_as_timestamp_converts_datetime_cells() -> None:
+    assert as_timestamp(np.datetime64("2026-01-05")) == pd.Timestamp("2026-01-05")
+    assert as_timestamp(date(2026, 1, 5)).date() == date(2026, 1, 5)
+
+
+def test_as_timestamp_rejects_nat() -> None:
+    with pytest.raises(TypeError):
+        as_timestamp(pd.NaT)

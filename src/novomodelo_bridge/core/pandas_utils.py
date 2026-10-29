@@ -56,3 +56,15 @@ def as_int(value: object) -> int:
 def as_float(value: object) -> float:
     """Convert a pandas/polars cell to ``float`` (see :func:`as_int`)."""
     return float(value)  # ty: ignore[invalid-argument-type] cell typed as a scalar union
+
+
+def as_timestamp(value: object) -> pd.Timestamp:
+    """Convert a pandas/NumPy datetime cell to a ``Timestamp``; ``NaT`` raises ``TypeError``.
+
+    ``pd.Timestamp(...)`` is typed as possibly ``NaT``, which only fails later in the
+    date arithmetic with the same ``TypeError``.
+    """
+    stamp = pd.Timestamp(value)  # ty: ignore[invalid-argument-type] cell typed as a scalar union
+    if not isinstance(stamp, pd.Timestamp):
+        raise TypeError("expected a datetime, got NaT")
+    return stamp
