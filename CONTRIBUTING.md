@@ -9,7 +9,7 @@ and quality gates are organised, and lists the conventions CI enforces. Read
 ```bash
 git clone https://github.com/ons-ccee-epe/novomodelo-bridge.git
 cd novomodelo-bridge
-uv sync --extra dev             # or: python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+uv sync                         # dev group included; or: python -m venv .venv && . .venv/bin/activate && pip install -e . --group dev
 uv run novomodelo-bridge --version
 ```
 

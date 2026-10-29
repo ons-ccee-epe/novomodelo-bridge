@@ -270,7 +270,7 @@ dependencies = [
     { name = "typer" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "jsonschema" },
     { name = "pytest" },
@@ -283,20 +283,23 @@ dev = [
 requires-dist = [
     { name = "idecomp", specifier = ">=1.17.1" },
     { name = "inewave", specifier = ">=1.16.2" },
-    { name = "jsonschema", marker = "extra == 'dev'" },
     { name = "novomodelo-python", specifier = "==0.19.1" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "plotly", specifier = ">=7.1.0" },
     { name = "polars", specifier = ">=2.1.0" },
     { name = "pyarrow", specifier = ">=26.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "rich", specifier = ">=15.0.0" },
-    { name = "ruff", marker = "extra == 'dev'" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.92" },
     { name = "typer", specifier = ">=0.27.3" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "jsonschema" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "ty", specifier = ">=0.0.92" },
+]
 
 [[package]]
 name = "novomodelo-python"

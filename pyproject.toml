@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,7 +7,8 @@ name = "novomodelo-bridge"
 version = "0.19.1"
 description = "Convert NEWAVE and DECOMP cases to Novomodelo input format and compare the results"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 dependencies = [
     "idecomp>=1.17.1",
@@ -27,7 +28,7 @@ dependencies = [
     "novomodelo-python==0.19.1",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "ty>=0.0.92",
@@ -41,6 +42,11 @@ novomodelo-bridge = "novomodelo_bridge.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/novomodelo_bridge"]
+
+[tool.hatch.build.targets.sdist]
+# Agent rules and tooling dotfiles, caches and root-level checkouts stay out.
+# Hatchling keeps .gitignore regardless.
+exclude = ["/.*", "/_*", "/CLAUDE.md", "/AGENTS.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
