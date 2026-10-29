@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pyarrow as pa
@@ -19,7 +20,10 @@ from novomodelo_bridge.core.conversion import (
     ConversionReport,
     run_conversion,
 )
-from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.generic_constraint_builder import (
+    ConstraintIdAllocator,
+    GenericConstraintResult,
+)
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters import constraints as constraints_conv
@@ -33,6 +37,7 @@ from novomodelo_bridge.newave.converters import tailrace as tailrace_conv
 from novomodelo_bridge.newave.converters import temporal as temporal_conv
 from novomodelo_bridge.newave.converters import thermal as thermal_conv
 from novomodelo_bridge.newave.files import unindexed_libs_diagnostic
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -172,6 +177,515 @@ def _fold_per_stage_capacity_caps(
     return merged.to_arrow()
 
 
+@dataclass(frozen=True)
+class _EntityArtifacts:
+    """What the ``step("Converting entities")`` phase produces."""
+
+    hydros: dict
+    geometry: pa.Table
+    thermals: dict
+    buses: dict
+    lines: dict
+    pumping: dict
+    pumping_bounds: pa.Table | None
+    penalties: dict
+
+
+@dataclass(frozen=True)
+class _TemporalStochasticArtifacts:
+    """What the ``step("Converting temporal & stochastic")`` phase produces."""
+
+    stages: dict
+    config: dict
+    initial_conditions: dict
+    inflow_stats: pa.Table
+    load_stats: pa.Table
+    inflow_history: pa.Table
+    water_withdrawal: pa.Table | None
+    storage_bounds: pa.Table | None
+    capacity_caps: pa.Table | None
+
+
+@dataclass(frozen=True)
+class _ConstraintArtifacts:
+    """What the ``step("Converting constraints")`` phase produces."""
+
+    vminop: constraints_conv.VminopResult | None
+    electric: GenericConstraintResult | None
+    agrint: GenericConstraintResult | None
+    load_factors: dict
+    line_bounds: pa.Table
+    ncs: dict
+    ncs_factors: dict
+    ncs_stats: pa.Table
+    production_models: dict
+    hydro_energy_productivity: pa.Table
+    tailrace: pa.Table | None
+    thermal_bounds: pa.Table | None
+
+
+def _discover(src: Path) -> tuple[NewaveCase, NewaveIdMap]:
+    """The ``step("Discovering files")`` phase: bind *src* into one
+    :class:`NewaveCase`, emit its deck-hygiene diagnostics, and build its id map.
+    """
+    logger.debug("Discovering NEWAVE files from %s", src)
+    # Build the parsed-case object once; every converter reads its parsed inputs from
+    # ``case`` (each source-model file parsed once and cached).
+    case = NewaveCase.from_directory(src)
+    tabs = tab_character_diagnostic(case.files.fixed_column_files)
+    if tabs is not None:
+        dx.emit(tabs)
+    unindexed = unindexed_libs_diagnostic(case.files)
+    if unindexed is not None:
+        dx.emit(unindexed)
+
+    logger.debug("Building NewaveIdMap from %s", src)
+    return case, case.id_map
+
+
+def _convert_core_entities(case: NewaveCase, id_map: NewaveIdMap) -> _EntityArtifacts:
+    """The ``step("Converting entities")`` phase: hydros and their geometry,
+    thermals, buses, lines, pumping stations, and ``penalties.json``.
+    """
+    logger.debug("Converting hydros")
+    hydros_dict = hydro_conv.convert_hydros(case, id_map)
+
+    logger.debug("Computing base hydro productivities")
+    base_productivities = hydro_conv.compute_base_productivities(case, id_map)
+
+    logger.debug("Generating hydro geometry")
+    cadastro = hydro_conv.read_cadastro(case)
+    geometry_table = hydro_conv.generate_hydro_geometry(
+        cadastro, id_map, hydro_conv.fpha_reference_volumes(case, cadastro)
+    )
+
+    logger.debug("Converting thermals")
+    thermals_dict = thermal_conv.convert_thermals(case, id_map)
+
+    logger.debug("Converting buses")
+    buses_dict = network_conv.convert_buses(case, id_map)
+
+    logger.debug("Converting lines")
+    lines_dict = network_conv.convert_lines(case, id_map)
+
+    logger.debug("Converting pumping stations")
+    pumping_inputs = pumping_conv.read_pumping_inputs(case)
+    pumping_station_ids = (
+        pumping_conv.pumping_station_id_map(pumping_inputs)
+        if pumping_inputs is not None
+        else {}
+    )
+    pumping_dict = pumping_conv.convert_pumping_stations(
+        case, id_map, pumping_inputs, pumping_station_ids
+    )
+    pumping_bounds_table = pumping_conv.convert_pumping_bounds(
+        case, pumping_inputs, pumping_station_ids
+    )
+
+    logger.debug("Converting penalties")
+    # DESVIO ("outros usos") + evaporation use MAX_PRODTACUM_SIN (max accumulated ρ at
+    # altura máxima, constant); VAZMIN/TURBMN/TURBMX use PROD_MEDIA_SIN (mean PRODT,
+    # drifting per CFUGA/CMONT config). Both come from the source model inputs and
+    # return None when files are absent (mocked-pipeline tests), so convert_penalties
+    # falls back to its own legacy approximation.
+    max_prodtacum_sin = constraints_conv.compute_max_prodtacum_sin(case)
+    prod_media_sin = _compute_prod_media_sin_safe(case)
+    penalties_dict = network_conv.convert_penalties(
+        case,
+        hydros_dict,
+        productivities=base_productivities,
+        max_accumulated_productivity=max_prodtacum_sin,
+        prod_media_sin=prod_media_sin,
+    )
+
+    return _EntityArtifacts(
+        hydros=hydros_dict,
+        geometry=geometry_table,
+        thermals=thermals_dict,
+        buses=buses_dict,
+        lines=lines_dict,
+        pumping=pumping_dict,
+        pumping_bounds=pumping_bounds_table,
+        penalties=penalties_dict,
+    )
+
+
+def _convert_temporal_and_stochastic(
+    case: NewaveCase, id_map: NewaveIdMap
+) -> _TemporalStochasticArtifacts:
+    """The ``step("Converting temporal & stochastic")`` phase: stages, config,
+    initial conditions, the inflow/load statistics and history, and the per-stage
+    hydro bound sources.
+    """
+    logger.debug("Converting stages")
+    stages_dict = temporal_conv.convert_stages(case, id_map)
+
+    logger.debug("Converting config")
+    config_dict = temporal_conv.convert_config(case)
+
+    logger.debug("Converting initial conditions")
+    ic_dict = ic_conv.convert_initial_conditions(case, id_map)
+
+    logger.debug("Converting the hydrological tendency to conditioning windows")
+    observation_windows = inflow_windows.convert_recent_observation_windows(
+        case, id_map
+    )
+    if observation_windows:
+        ic_dict["recent_observations"] = observation_windows
+
+    logger.debug("Converting inflow stats")
+    inflow_table = stochastic_conv.convert_inflow_stats(case, id_map)
+
+    logger.debug("Converting load stats")
+    load_table = stochastic_conv.convert_load_stats(case, id_map)
+
+    logger.debug("Converting inflow history from vazoes.dat")
+    inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)
+
+    logger.debug("Converting water withdrawal")
+    withdrawal_table = hydro_conv.convert_water_withdrawal(case, id_map)
+
+    logger.debug("Converting storage bounds from VMAXT/VMINT")
+    storage_bounds_table = hydro_conv.convert_storage_bounds(case, id_map)
+
+    logger.debug("Converting per-stage capacity caps")
+    capacity_caps_table = hydro_conv.convert_per_stage_capacity_caps(case, id_map)
+
+    return _TemporalStochasticArtifacts(
+        stages=stages_dict,
+        config=config_dict,
+        initial_conditions=ic_dict,
+        inflow_stats=inflow_table,
+        load_stats=load_table,
+        inflow_history=inflow_history_table,
+        water_withdrawal=withdrawal_table,
+        storage_bounds=storage_bounds_table,
+        capacity_caps=capacity_caps_table,
+    )
+
+
+def _convert_constraints(case: NewaveCase, id_map: NewaveIdMap) -> _ConstraintArtifacts:
+    """The ``step("Converting constraints")`` phase: the VminOP, electric and
+    AGRINT generic constraints over one shared :class:`ConstraintIdAllocator`,
+    plus the load factors, line and thermal bounds, non-controllable sources,
+    production models, energy-productivity overrides, and tailrace curves.
+    """
+    allocator = ConstraintIdAllocator()
+
+    logger.debug("Converting VminOP constraints")
+    vminop_result = constraints_conv.convert_vminop_constraints(
+        case, id_map, allocator=allocator
+    )
+
+    logger.debug("Converting electric constraints")
+    electric_result = constraints_conv.convert_electric_constraints(
+        case, id_map, allocator=allocator
+    )
+
+    logger.debug("Converting AGRINT group constraints")
+    agrint_result = constraints_conv.convert_agrint_constraints(
+        case, id_map, allocator=allocator
+    )
+
+    logger.debug("Converting load factors")
+    load_factors_dict = stochastic_conv.convert_load_factors(case, id_map)
+
+    logger.debug("Converting line bounds (folds in per-block exchange factors)")
+    line_bounds_table = network_conv.convert_line_bounds(case, id_map)
+
+    logger.debug("Converting non-controllable sources")
+    ncs_dict = network_conv.convert_non_controllable_sources(case, id_map)
+
+    logger.debug("Converting NCS block factors")
+    ncs_factors_dict = network_conv.convert_ncs_factors(case, id_map)
+
+    logger.debug("Converting NCS stats")
+    ncs_stats_table = network_conv.convert_ncs_stats(case, id_map)
+
+    logger.debug("Converting production models")
+    production_models_dict = hydro_conv.convert_production_models(case, id_map)
+
+    logger.debug("Converting hydro energy productivity overrides")
+    hydro_energy_productivity_table = hydro_conv.convert_hydro_energy_productivity(
+        case, id_map
+    )
+
+    logger.debug("Converting tailrace curves from polinjus")
+    tailrace_table = tailrace_conv.convert_tailrace_curves(case, id_map)
+
+    logger.debug("Converting thermal bounds from expt.dat and manutt.dat")
+    thermal_bounds_table = thermal_conv.convert_thermal_bounds(case, id_map)
+
+    return _ConstraintArtifacts(
+        vminop=vminop_result,
+        electric=electric_result,
+        agrint=agrint_result,
+        load_factors=load_factors_dict,
+        line_bounds=line_bounds_table,
+        ncs=ncs_dict,
+        ncs_factors=ncs_factors_dict,
+        ncs_stats=ncs_stats_table,
+        production_models=production_models_dict,
+        hydro_energy_productivity=hydro_energy_productivity_table,
+        tailrace=tailrace_table,
+        thermal_bounds=thermal_bounds_table,
+    )
+
+
+def _resolve_hydro_bounds(
+    hydros_dict: dict, temporal: _TemporalStochasticArtifacts
+) -> pa.Table | None:
+    """Merge the per-stage hydro bound sources into ``hydro_bounds.parquet``.
+
+    Resolved before the write phase so the post-emission self-checks see the
+    exact table that will be written.
+    """
+    hydro_bounds_table = _merge_hydro_bounds(
+        temporal.water_withdrawal, temporal.storage_bounds
+    )
+    hydro_bounds_table = _fold_per_stage_capacity_caps(
+        hydro_bounds_table, temporal.capacity_caps
+    )
+
+    # Clamp any per-stage MAX bound above the plant's declared envelope back to
+    # the declared value (WARNING, not silent), so the rule-43 self-check in
+    # ``_run_emission_checks`` passes on the result.
+    return emission_checks.clamp_hydro_bounds_to_declared(
+        hydros_dict, hydro_bounds_table
+    )
+
+
+def _run_emission_checks(
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    constraints: _ConstraintArtifacts,
+    hydro_bounds_table: pa.Table | None,
+) -> None:
+    """Gate the write phase on the post-emission self-checks.
+
+    They mirror cheap novomodelo load invariants (rules 43, 41, 36, and the
+    block_id-range rule) over the in-memory artifacts before anything is
+    written. See novomodelo_bridge.core.emission_checks for the rule scope.
+    """
+    hydros_dict = entities.hydros
+    bound_families = [
+        emission_checks.BoundFamily("Hydro", "hydro_id", hydro_bounds_table),
+        emission_checks.BoundFamily(
+            "Thermal", "thermal_id", constraints.thermal_bounds
+        ),
+        emission_checks.BoundFamily("Line", "line_id", constraints.line_bounds),
+    ]
+
+    def _run_checks() -> None:
+        emission_checks.check_hydro_bounds_no_raising(hydros_dict, hydro_bounds_table)
+        emission_checks.check_unit_group_envelope(hydros_dict)
+        emission_checks.check_bound_row_uniqueness(bound_families)
+        emission_checks.check_bound_block_id_range(temporal.stages, bound_families)
+        emission_checks.check_diversion_has_channel(hydros_dict, hydro_bounds_table)
+
+    emission_checks.run_and_gate(_run_checks)
+
+
+def _scalar_parameters(constraints: _ConstraintArtifacts) -> dict:
+    """Build ``constraints/generic_parameters.json``.
+
+    novomodelo rejects an undeclared @name, so the file always declares the
+    per-hydro computed parameters of every hydro a VminOP share references
+    or a production model names (for handwritten constraints), plus the
+    VminOP curve fractions and coupled-cascade shares.
+    """
+    vminop_result = constraints.vminop
+    vminop_referenced_ids: list[int] = []
+    vminop_per_stage_parameters: dict[str, list[float]] = {}
+    if vminop_result is not None:
+        vminop_referenced_ids = list(vminop_result.referenced_hydro_ids)
+        vminop_per_stage_parameters = vminop_result.per_stage_parameters
+
+    all_hydro_ids = sorted(
+        set(vminop_referenced_ids)
+        | {
+            int(m["hydro_id"])
+            for m in constraints.production_models.get("production_models", [])
+        }
+    )
+    return scalar_params_conv.build_scalar_parameters(
+        all_hydro_ids,
+        per_stage=vminop_per_stage_parameters,
+    )
+
+
+def _write_json_outputs(
+    writer: CaseWriter,
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    constraints: _ConstraintArtifacts,
+) -> None:
+    """The ``step("Writing JSON")`` phase."""
+    writer.write_json("config.json", temporal.config)
+    writer.write_json("stages.json", temporal.stages)
+    writer.write_json("penalties.json", entities.penalties)
+    writer.write_json("initial_conditions.json", temporal.initial_conditions)
+    writer.write_json("system/hydros.json", entities.hydros)
+    writer.write_json("system/thermals.json", entities.thermals)
+    writer.write_json("system/buses.json", entities.buses)
+    writer.write_json("system/lines.json", entities.lines)
+    writer.write_json("system/pumping_stations.json", entities.pumping)
+    writer.write_json("system/non_controllable_sources.json", constraints.ncs)
+    writer.write_json("scenarios/load_factors.json", constraints.load_factors)
+    writer.write_json(
+        "scenarios/non_controllable_factors.json", constraints.ncs_factors
+    )
+
+    writer.write_json(
+        "system/hydro_production_models.json", constraints.production_models
+    )
+    writer.write_json(
+        "constraints/generic_parameters.json", _scalar_parameters(constraints)
+    )
+
+
+def _write_parquet_outputs(
+    writer: CaseWriter,
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    constraints: _ConstraintArtifacts,
+    hydro_bounds_table: pa.Table | None,
+) -> None:
+    """Write the ``step("Writing Parquet")`` phase's converted tables, skipping
+    the optional ones the case does not ship."""
+    writer.write_parquet("system/hydro_geometry.parquet", entities.geometry)
+
+    hydro_energy_productivity_table = constraints.hydro_energy_productivity
+    if hydro_energy_productivity_table.num_rows > 0:
+        writer.write_parquet(
+            "system/hydro_energy_productivity.parquet",
+            hydro_energy_productivity_table,
+        )
+
+    tailrace_table = constraints.tailrace
+    if tailrace_table is not None and tailrace_table.num_rows > 0:
+        writer.write_parquet("system/tailrace_curves.parquet", tailrace_table)
+
+    writer.write_parquet(
+        "scenarios/inflow_seasonal_stats.parquet", temporal.inflow_stats
+    )
+
+    writer.write_parquet("scenarios/load_seasonal_stats.parquet", temporal.load_stats)
+
+    writer.write_parquet("scenarios/inflow_history.parquet", temporal.inflow_history)
+
+    writer.write_parquet("constraints/line_bounds.parquet", constraints.line_bounds)
+
+    writer.write_parquet(
+        "scenarios/non_controllable_stats.parquet", constraints.ncs_stats
+    )
+
+    if hydro_bounds_table is not None:
+        writer.write_parquet("constraints/hydro_bounds.parquet", hydro_bounds_table)
+
+    thermal_bounds_table = constraints.thermal_bounds
+    if thermal_bounds_table is not None:
+        writer.write_parquet("constraints/thermal_bounds.parquet", thermal_bounds_table)
+
+    pumping_bounds_table = entities.pumping_bounds
+    if pumping_bounds_table is not None and pumping_bounds_table.num_rows > 0:
+        writer.write_parquet("constraints/pumping_bounds.parquet", pumping_bounds_table)
+
+
+def _write_penalty_overrides(
+    writer: CaseWriter,
+    case: NewaveCase,
+    id_map: NewaveIdMap,
+    entities: _EntityArtifacts,
+) -> None:
+    """Convert and write the per-bus and per-stage hydro penalty overrides."""
+    # Per-bus excess-cost override: forbid energy excess at fictitious
+    # submarkets (pure transshipment nodes) by pricing it prohibitively.
+    bus_penalty_table = network_conv.convert_bus_penalty_overrides(case, id_map)
+    if bus_penalty_table is not None:
+        writer.write_parquet(
+            "constraints/penalty_overrides_bus.parquet", bus_penalty_table
+        )
+
+    # Per-stage hydro penalty override: The source model's PROD_MEDIA_SIN /
+    # MAX_PRODTACUM_SIN shift with seasonal (VOLREF_SAZ) and temporal (CFUGA/CMONT)
+    # productivity changes, so the ρ-scaled flow-domain hydro penalties are
+    # stage-varying. Emitted sparsely (only stages/columns that differ from
+    # penalties.json), keeping the penalty conversion coherent with the per-stage ρ
+    # already shipped in system/hydro_energy_productivity.parquet.
+    per_stage_sin = _compute_per_stage_sin_productivities(case)
+    if per_stage_sin is not None:
+        per_stage_rho_avg, per_stage_rho_max_acum = per_stage_sin
+        hydro_ids = [
+            int(h["id"]) for h in entities.hydros.get("hydros", []) if "id" in h
+        ]
+        hydro_penalty_table = network_conv.convert_hydro_penalty_overrides(
+            case,
+            hydro_ids,
+            entities.penalties["hydro"],
+            per_stage_rho_avg,
+            per_stage_rho_max_acum,
+        )
+        if hydro_penalty_table is not None:
+            writer.write_parquet(
+                "constraints/penalty_overrides_hydro.parquet", hydro_penalty_table
+            )
+
+
+def _write_generic_constraints(
+    writer: CaseWriter, constraints: _ConstraintArtifacts
+) -> None:
+    """Merge the VminOP, electric and AGRINT generic constraints into one
+    ``generic_constraints.json`` and one bounds parquet."""
+    all_constraints: list[dict] = []
+    bounds_tables: list[pa.Table] = []
+
+    vminop_result = constraints.vminop
+    if vminop_result is not None:
+        all_constraints.extend(vminop_result.constraints_dict.get("constraints", []))
+        bounds_tables.append(vminop_result.bounds)
+
+    electric_result = constraints.electric
+    if electric_result is not None:
+        all_constraints.extend(electric_result.constraints)
+        bounds_tables.append(electric_result.bounds)
+
+    agrint_result = constraints.agrint
+    if agrint_result is not None:
+        all_constraints.extend(agrint_result.constraints)
+        bounds_tables.append(agrint_result.bounds)
+
+    if all_constraints:
+        merged_dict = {
+            "$schema": novomodelo_schemas.schema_url_for(
+                "constraints/generic_constraints.json"
+            ),
+            "constraints": all_constraints,
+        }
+        writer.write_json("constraints/generic_constraints.json", merged_dict)
+
+        if bounds_tables:
+            merged_bounds = pa.concat_tables(bounds_tables)
+            writer.write_parquet(
+                "constraints/generic_constraint_bounds.parquet", merged_bounds
+            )
+
+
+def _build_report(
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    writer: CaseWriter,
+) -> ConversionReport:
+    return ConversionReport(
+        hydro_count=len(entities.hydros.get("hydros", [])),
+        thermal_count=len(entities.thermals.get("thermals", [])),
+        bus_count=len(entities.buses.get("buses", [])),
+        line_count=len(entities.lines.get("lines", [])),
+        stage_count=len(temporal.stages.get("stages", [])),
+        would_write_paths=[str(p) for p in writer.would_write],
+    )
+
+
 def convert_newave_case(
     src: Path,
     dst: Path,
@@ -241,195 +755,21 @@ def _convert_newave_case_impl(
     but the write phase creates no directories and writes no files; the paths that
     would have been written are still accumulated and recorded on the report.
     """
-    report = ConversionReport()
     step = on_phase if on_phase is not None else (lambda _label: None)
 
     step("Discovering files")
-    logger.debug("Discovering NEWAVE files from %s", src)
-    # Build the parsed-case object once; every converter reads its parsed inputs from
-    # ``case`` (each source-model file parsed once and cached).
-    case = NewaveCase.from_directory(src)
-    tabs = tab_character_diagnostic(case.files.fixed_column_files)
-    if tabs is not None:
-        dx.emit(tabs)
-    unindexed = unindexed_libs_diagnostic(case.files)
-    if unindexed is not None:
-        dx.emit(unindexed)
-
-    logger.debug("Building NewaveIdMap from %s", src)
-    id_map = case.id_map
+    case, id_map = _discover(src)
 
     step("Converting entities")
-    logger.debug("Converting hydros")
-    hydros_dict = hydro_conv.convert_hydros(case, id_map)
-
-    logger.debug("Computing base hydro productivities")
-    base_productivities = hydro_conv.compute_base_productivities(case, id_map)
-
-    logger.debug("Generating hydro geometry")
-    cadastro = hydro_conv.read_cadastro(case)
-    geometry_table = hydro_conv.generate_hydro_geometry(
-        cadastro, id_map, hydro_conv.fpha_reference_volumes(case, cadastro)
-    )
-
-    logger.debug("Converting thermals")
-    thermals_dict = thermal_conv.convert_thermals(case, id_map)
-
-    logger.debug("Converting buses")
-    buses_dict = network_conv.convert_buses(case, id_map)
-
-    logger.debug("Converting lines")
-    lines_dict = network_conv.convert_lines(case, id_map)
-
-    logger.debug("Converting pumping stations")
-    pumping_inputs = pumping_conv.read_pumping_inputs(case)
-    pumping_station_ids = (
-        pumping_conv.pumping_station_id_map(pumping_inputs)
-        if pumping_inputs is not None
-        else {}
-    )
-    pumping_dict = pumping_conv.convert_pumping_stations(
-        case, id_map, pumping_inputs, pumping_station_ids
-    )
-    pumping_bounds_table = pumping_conv.convert_pumping_bounds(
-        case, pumping_inputs, pumping_station_ids
-    )
-
-    logger.debug("Converting penalties")
-    # DESVIO ("outros usos") + evaporation use MAX_PRODTACUM_SIN (max accumulated ρ at
-    # altura máxima, constant); VAZMIN/TURBMN/TURBMX use PROD_MEDIA_SIN (mean PRODT,
-    # drifting per CFUGA/CMONT config). Both come from the source model inputs and
-    # return None when files are absent (mocked-pipeline tests), so convert_penalties
-    # falls back to its own legacy approximation.
-    max_prodtacum_sin = constraints_conv.compute_max_prodtacum_sin(case)
-    prod_media_sin = _compute_prod_media_sin_safe(case)
-    penalties_dict = network_conv.convert_penalties(
-        case,
-        hydros_dict,
-        productivities=base_productivities,
-        max_accumulated_productivity=max_prodtacum_sin,
-        prod_media_sin=prod_media_sin,
-    )
+    entities = _convert_core_entities(case, id_map)
 
     step("Converting temporal & stochastic")
-    logger.debug("Converting stages")
-    stages_dict = temporal_conv.convert_stages(case, id_map)
-
-    logger.debug("Converting config")
-    config_dict = temporal_conv.convert_config(case)
-
-    logger.debug("Converting initial conditions")
-    ic_dict = ic_conv.convert_initial_conditions(case, id_map)
-
-    logger.debug("Converting the hydrological tendency to conditioning windows")
-    observation_windows = inflow_windows.convert_recent_observation_windows(
-        case, id_map
-    )
-    if observation_windows:
-        ic_dict["recent_observations"] = observation_windows
-
-    logger.debug("Converting inflow stats")
-    inflow_table = stochastic_conv.convert_inflow_stats(case, id_map)
-
-    logger.debug("Converting load stats")
-    load_table = stochastic_conv.convert_load_stats(case, id_map)
-
-    logger.debug("Converting inflow history from vazoes.dat")
-    inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)
-
-    logger.debug("Converting water withdrawal")
-    withdrawal_table = hydro_conv.convert_water_withdrawal(case, id_map)
-
-    logger.debug("Converting storage bounds from VMAXT/VMINT")
-    storage_bounds_table = hydro_conv.convert_storage_bounds(case, id_map)
-
-    logger.debug("Converting per-stage capacity caps")
-    capacity_caps_table = hydro_conv.convert_per_stage_capacity_caps(case, id_map)
-
-    allocator = ConstraintIdAllocator()
+    temporal = _convert_temporal_and_stochastic(case, id_map)
 
     step("Converting constraints")
-    logger.debug("Converting VminOP constraints")
-    vminop_result = constraints_conv.convert_vminop_constraints(
-        case, id_map, allocator=allocator
-    )
-    vminop_referenced_ids: list[int] = []
-    vminop_per_stage_parameters: dict[str, list[float]] = {}
-    if vminop_result is not None:
-        vminop_referenced_ids = list(vminop_result.referenced_hydro_ids)
-        vminop_per_stage_parameters = vminop_result.per_stage_parameters
-
-    logger.debug("Converting electric constraints")
-    electric_result = constraints_conv.convert_electric_constraints(
-        case, id_map, allocator=allocator
-    )
-
-    logger.debug("Converting AGRINT group constraints")
-    agrint_result = constraints_conv.convert_agrint_constraints(
-        case, id_map, allocator=allocator
-    )
-
-    logger.debug("Converting load factors")
-    load_factors_dict = stochastic_conv.convert_load_factors(case, id_map)
-
-    logger.debug("Converting line bounds (folds in per-block exchange factors)")
-    line_bounds_table = network_conv.convert_line_bounds(case, id_map)
-
-    logger.debug("Converting non-controllable sources")
-    ncs_dict = network_conv.convert_non_controllable_sources(case, id_map)
-
-    logger.debug("Converting NCS block factors")
-    ncs_factors_dict = network_conv.convert_ncs_factors(case, id_map)
-
-    logger.debug("Converting NCS stats")
-    ncs_stats_table = network_conv.convert_ncs_stats(case, id_map)
-
-    logger.debug("Converting production models")
-    production_models_dict = hydro_conv.convert_production_models(case, id_map)
-
-    logger.debug("Converting hydro energy productivity overrides")
-    hydro_energy_productivity_table = hydro_conv.convert_hydro_energy_productivity(
-        case, id_map
-    )
-
-    logger.debug("Converting tailrace curves from polinjus")
-    tailrace_table = tailrace_conv.convert_tailrace_curves(case, id_map)
-
-    logger.debug("Converting thermal bounds from expt.dat and manutt.dat")
-    thermal_bounds_table = thermal_conv.convert_thermal_bounds(case, id_map)
-
-    # Merge hydro_bounds before the write phase so the post-emission
-    # self-checks see the exact table that will be written.
-    hydro_bounds_table = _merge_hydro_bounds(withdrawal_table, storage_bounds_table)
-    hydro_bounds_table = _fold_per_stage_capacity_caps(
-        hydro_bounds_table, capacity_caps_table
-    )
-
-    # Clamp any per-stage MAX bound above the plant's declared envelope back to
-    # the declared value (WARNING, not silent), so the rule-43 self-check below
-    # passes on the result.
-    hydro_bounds_table = emission_checks.clamp_hydro_bounds_to_declared(
-        hydros_dict, hydro_bounds_table
-    )
-
-    # Post-emission self-checks: mirror cheap novomodelo load invariants
-    # (rules 43, 41, 36, and the block_id-range rule) over the in-memory
-    # artifacts before anything is written. See novomodelo_bridge.core.emission_checks
-    # for the rule scope.
-    bound_families = [
-        emission_checks.BoundFamily("Hydro", "hydro_id", hydro_bounds_table),
-        emission_checks.BoundFamily("Thermal", "thermal_id", thermal_bounds_table),
-        emission_checks.BoundFamily("Line", "line_id", line_bounds_table),
-    ]
-
-    def _run_checks() -> None:
-        emission_checks.check_hydro_bounds_no_raising(hydros_dict, hydro_bounds_table)
-        emission_checks.check_unit_group_envelope(hydros_dict)
-        emission_checks.check_bound_row_uniqueness(bound_families)
-        emission_checks.check_bound_block_id_range(stages_dict, bound_families)
-        emission_checks.check_diversion_has_channel(hydros_dict, hydro_bounds_table)
-
-    emission_checks.run_and_gate(_run_checks)
+    constraints = _convert_constraints(case, id_map)
+    hydro_bounds_table = _resolve_hydro_bounds(entities.hydros, temporal)
+    _run_emission_checks(entities, temporal, constraints, hydro_bounds_table)
 
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in
@@ -437,138 +777,14 @@ def _convert_newave_case_impl(
     writer = CaseWriter(dst, dry_run=dry_run)
 
     step("Writing JSON")
-    writer.write_json("config.json", config_dict)
-    writer.write_json("stages.json", stages_dict)
-    writer.write_json("penalties.json", penalties_dict)
-    writer.write_json("initial_conditions.json", ic_dict)
-    writer.write_json("system/hydros.json", hydros_dict)
-    writer.write_json("system/thermals.json", thermals_dict)
-    writer.write_json("system/buses.json", buses_dict)
-    writer.write_json("system/lines.json", lines_dict)
-    writer.write_json("system/pumping_stations.json", pumping_dict)
-    writer.write_json("system/non_controllable_sources.json", ncs_dict)
-    writer.write_json("scenarios/load_factors.json", load_factors_dict)
-    writer.write_json("scenarios/non_controllable_factors.json", ncs_factors_dict)
-
-    writer.write_json("system/hydro_production_models.json", production_models_dict)
-
-    # novomodelo rejects an undeclared @name, so the file always declares the
-    # per-hydro computed parameters of every hydro a VminOP share references
-    # or a production model names (for handwritten constraints), plus the
-    # VminOP curve fractions and coupled-cascade shares.
-    all_hydro_ids = sorted(
-        set(vminop_referenced_ids)
-        | {
-            int(m["hydro_id"])
-            for m in production_models_dict.get("production_models", [])
-        }
-    )
-    scalar_parameters_dict = scalar_params_conv.build_scalar_parameters(
-        all_hydro_ids,
-        per_stage=vminop_per_stage_parameters,
-    )
-    writer.write_json("constraints/generic_parameters.json", scalar_parameters_dict)
+    _write_json_outputs(writer, entities, temporal, constraints)
 
     step("Writing Parquet")
-    writer.write_parquet("system/hydro_geometry.parquet", geometry_table)
+    _write_parquet_outputs(writer, entities, temporal, constraints, hydro_bounds_table)
+    _write_penalty_overrides(writer, case, id_map, entities)
+    _write_generic_constraints(writer, constraints)
 
-    if hydro_energy_productivity_table.num_rows > 0:
-        writer.write_parquet(
-            "system/hydro_energy_productivity.parquet",
-            hydro_energy_productivity_table,
-        )
-
-    # Optional tailrace curves (polinjus) — only written when the case ships them.
-    if tailrace_table is not None and tailrace_table.num_rows > 0:
-        writer.write_parquet("system/tailrace_curves.parquet", tailrace_table)
-
-    writer.write_parquet("scenarios/inflow_seasonal_stats.parquet", inflow_table)
-
-    writer.write_parquet("scenarios/load_seasonal_stats.parquet", load_table)
-
-    writer.write_parquet("scenarios/inflow_history.parquet", inflow_history_table)
-
-    writer.write_parquet("constraints/line_bounds.parquet", line_bounds_table)
-
-    writer.write_parquet("scenarios/non_controllable_stats.parquet", ncs_stats_table)
-
-    if hydro_bounds_table is not None:
-        writer.write_parquet("constraints/hydro_bounds.parquet", hydro_bounds_table)
-
-    if thermal_bounds_table is not None:
-        writer.write_parquet("constraints/thermal_bounds.parquet", thermal_bounds_table)
-
-    if pumping_bounds_table is not None and pumping_bounds_table.num_rows > 0:
-        writer.write_parquet("constraints/pumping_bounds.parquet", pumping_bounds_table)
-
-    # Per-bus excess-cost override: forbid energy excess at fictitious
-    # submarkets (pure transshipment nodes) by pricing it prohibitively.
-    bus_penalty_table = network_conv.convert_bus_penalty_overrides(case, id_map)
-    if bus_penalty_table is not None:
-        writer.write_parquet(
-            "constraints/penalty_overrides_bus.parquet", bus_penalty_table
-        )
-
-    # Per-stage hydro penalty override: The source model's PROD_MEDIA_SIN /
-    # MAX_PRODTACUM_SIN shift with seasonal (VOLREF_SAZ) and temporal (CFUGA/CMONT)
-    # productivity changes, so the ρ-scaled flow-domain hydro penalties are
-    # stage-varying. Emitted sparsely (only stages/columns that differ from
-    # penalties.json), keeping the penalty conversion coherent with the per-stage ρ
-    # already shipped in system/hydro_energy_productivity.parquet.
-    per_stage_sin = _compute_per_stage_sin_productivities(case)
-    if per_stage_sin is not None:
-        per_stage_rho_avg, per_stage_rho_max_acum = per_stage_sin
-        hydro_ids = [int(h["id"]) for h in hydros_dict.get("hydros", []) if "id" in h]
-        hydro_penalty_table = network_conv.convert_hydro_penalty_overrides(
-            case,
-            hydro_ids,
-            penalties_dict["hydro"],
-            per_stage_rho_avg,
-            per_stage_rho_max_acum,
-        )
-        if hydro_penalty_table is not None:
-            writer.write_parquet(
-                "constraints/penalty_overrides_hydro.parquet", hydro_penalty_table
-            )
-
-    all_constraints: list[dict] = []
-    bounds_tables: list[pa.Table] = []
-
-    if vminop_result is not None:
-        all_constraints.extend(vminop_result.constraints_dict.get("constraints", []))
-        bounds_tables.append(vminop_result.bounds)
-
-    if electric_result is not None:
-        all_constraints.extend(electric_result.constraints)
-        bounds_tables.append(electric_result.bounds)
-
-    if agrint_result is not None:
-        all_constraints.extend(agrint_result.constraints)
-        bounds_tables.append(agrint_result.bounds)
-
-    if all_constraints:
-        merged_dict = {
-            "$schema": novomodelo_schemas.schema_url_for(
-                "constraints/generic_constraints.json"
-            ),
-            "constraints": all_constraints,
-        }
-        writer.write_json("constraints/generic_constraints.json", merged_dict)
-
-        if bounds_tables:
-            merged_bounds = pa.concat_tables(bounds_tables)
-            writer.write_parquet(
-                "constraints/generic_constraint_bounds.parquet", merged_bounds
-            )
-
-    report.hydro_count = len(hydros_dict.get("hydros", []))
-    report.thermal_count = len(thermals_dict.get("thermals", []))
-    report.bus_count = len(buses_dict.get("buses", []))
-    report.line_count = len(lines_dict.get("lines", []))
-    report.stage_count = len(stages_dict.get("stages", []))
-    report.would_write_paths = [str(p) for p in writer.would_write]
-
-    return report
+    return _build_report(entities, temporal, writer)
 
 
 NEWAVE_CLEARED_ARTIFACTS = ClearedArtifacts(

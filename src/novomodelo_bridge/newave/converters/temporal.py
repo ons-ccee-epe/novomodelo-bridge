@@ -10,7 +10,9 @@ from __future__ import annotations
 import calendar
 import logging
 import math
+from dataclasses import dataclass, field
 from datetime import date
+from typing import TYPE_CHECKING, NamedTuple
 
 from inewave.newave import Dger
 
@@ -24,6 +26,9 @@ from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import stage_dates_for, study_horizon
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +94,205 @@ def block_fractions(case: NewaveCase) -> list[tuple[float, ...]]:
     return fractions
 
 
+def _cvar_percent_overrides(
+    df: pd.DataFrame | None, fallback: float
+) -> dict[tuple[int, int], float]:
+    """``{(year, month): fraction}`` for the study rows of a ``cvar.dat`` table.
+
+    A zero percentage falls back to *fallback*, the ``valores_constantes`` value.
+    """
+    overrides: dict[tuple[int, int], float] = {}
+    if df is not None and not df.empty:
+        for _, row in df.iterrows():
+            y = int(row["data"].year)
+            m = int(row["data"].month)
+            if y < 9000:  # skip post-study sentinel rows (year 9999)
+                val = float(row["valor"])
+                overrides[(y, m)] = val / 100.0 if val != 0.0 else fallback
+    return overrides
+
+
+@dataclass(frozen=True)
+class _RiskMeasurePolicy:
+    """The ``dger.cvar`` mode and the ``cvar.dat`` values it selects."""
+
+    deterministic: bool
+    dger_cvar: int
+    constant: dict | None = None
+    const_alpha: float = 0.0
+    const_lambda: float = 0.0
+    alpha_override: dict[tuple[int, int], float] = field(default_factory=dict)
+    lambda_override: dict[tuple[int, int], float] = field(default_factory=dict)
+
+    def log_mode(self) -> None:
+        """Announce the chosen mode, so the conversion log shows the
+        cvar/expectation switch without inspecting ``stages.json``."""
+        if self.deterministic:
+            logger.info(
+                "Risk measure: forcing 'expectation' on every stage "
+                "(deterministic mode active — single inflow path, no CVaR tail)."
+            )
+        elif self.dger_cvar == 0:
+            logger.info("Risk measure: 'expectation' on every stage (dger.cvar=0).")
+        elif self.dger_cvar == 1 and self.constant is not None:
+            cvar_p = self.constant["cvar"]
+            logger.info(
+                "Risk measure: constant CVaR(alpha=%.4f, lambda=%.4f) on every "
+                "stage (dger.cvar=1, cvar.dat::valores_constantes).",
+                cvar_p["alpha"],
+                cvar_p["lambda"],
+            )
+        elif self.dger_cvar == 2:
+            logger.info(
+                "Risk measure: per-stage CVaR with constant fallback "
+                "alpha=%.4f, lambda=%.4f (dger.cvar=2, "
+                "cvar.dat::alfa_variavel + lambda_variavel).",
+                self.const_alpha,
+                self.const_lambda,
+            )
+
+    def for_month(self, year: int, month: int) -> str | dict:
+        """The ``risk_measure`` of the stage in calendar *year*/*month*.
+
+        Deterministic mode overrides all: a single inflow path has no tail for
+        CVaR to penalise, so expectation is correct.
+        """
+        if self.deterministic or self.dger_cvar == 0:
+            return "expectation"
+        if self.dger_cvar == 1 and self.constant is not None:
+            return self.constant
+        if self.dger_cvar == 2:
+            a = self.alpha_override.get((year, month), self.const_alpha)
+            lbd = self.lambda_override.get((year, month), self.const_lambda)
+            return {"cvar": {"alpha": a, "lambda": lbd}}
+        # Defensive: should only fire if dger.cvar ∈ {1, 2} but cvar.dat
+        # was missing (``_resolve_risk_measure_policy`` downgrades to
+        # dger_cvar=0 and warns, so we shouldn't reach here in practice).
+        return "expectation"
+
+
+def _resolve_risk_measure_policy(
+    case: NewaveCase, dger: Dger, deterministic: bool
+) -> _RiskMeasurePolicy:
+    """Read the CVaR configuration from ``dger.dat`` and ``cvar.dat``.
+
+    ``dger.cvar`` 0 (or None) selects expectation, 1 one constant CVaR from
+    ``cvar.dat::valores_constantes`` on every stage, 2 a per-stage CVaR from
+    ``cvar.dat::alfa_variavel``/``lambda_variavel`` falling back to the
+    constant values.
+    """
+    _raw_cvar = getattr(dger, "cvar", None)
+    dger_cvar: int = int(_raw_cvar) if isinstance(_raw_cvar, int) else 0
+
+    if dger_cvar in (1, 2) and case.cvar is not None:
+        cvar_file = case.cvar
+        const_values: list[float] = cvar_file.valores_constantes or [0.0, 0.0]
+        const_alpha = const_values[0] / 100.0
+        const_lambda = const_values[1] / 100.0
+        if dger_cvar == 1:
+            return _RiskMeasurePolicy(
+                deterministic,
+                dger_cvar,
+                constant={"cvar": {"alpha": const_alpha, "lambda": const_lambda}},
+                const_alpha=const_alpha,
+                const_lambda=const_lambda,
+            )
+        df_alpha = cvar_file.alfa_variavel
+        df_lambda = cvar_file.lambda_variavel
+        return _RiskMeasurePolicy(
+            deterministic,
+            dger_cvar,
+            const_alpha=const_alpha,
+            const_lambda=const_lambda,
+            alpha_override=_cvar_percent_overrides(df_alpha, const_alpha),
+            lambda_override=_cvar_percent_overrides(df_lambda, const_lambda),
+        )
+    if dger_cvar in (1, 2) and case.cvar is None:
+        logger.warning(
+            "dger.cvar=%d requires cvar.dat but file is missing; "
+            "falling back to expectation for all stages.",
+            dger_cvar,
+        )
+        return _RiskMeasurePolicy(deterministic, 0)
+    return _RiskMeasurePolicy(deterministic, dger_cvar)
+
+
+def _study_stage(
+    stage_id: int,
+    year: int,
+    month: int,
+    fractions: tuple[float, ...],
+    names: list[str],
+    *,
+    num_openings: int,
+    risk_measure: str | dict,
+    deterministic: bool,
+) -> dict:
+    """The ``stages.json`` entry of study or post-study stage *stage_id*."""
+    total_hours = _month_hours(year, month)
+    blocks = [
+        {"id": block, "name": names[block], "hours": fraction * total_hours}
+        for block, fraction in enumerate(fractions)
+    ]
+    stage_entry: dict = {
+        "id": stage_id,
+        "start_date": _month_start_date(year, month).isoformat(),
+        "end_date": _month_end_date(year, month).isoformat(),
+        "season_id": month - 1,  # 0-based: Jan=0, ..., Dec=11
+        "blocks": blocks,
+        "num_openings": num_openings,
+        "risk_measure": risk_measure,
+        "state_variables": {
+            "storage": True,
+            # Inflow lags add no information in deterministic mode — every
+            # stage already sees a single fixed historical residual — so
+            # drop them to keep the LP smaller.
+            "inflow_lags": not deterministic,
+        },
+    }
+    if deterministic:
+        # The source model's deterministic mode: each stage samples its inflow
+        # residual directly from the (single) historical scenario instead of drawing
+        # from the synthetic PAR(p) distribution.
+        stage_entry["sampling_method"] = "historical_residuals"
+    return stage_entry
+
+
+def _pre_study_stages(
+    start_year: int, start_month: int, num_anos_pre: int
+) -> list[dict]:
+    """The pre-study stages (ids ``-N .. -1``) of the *num_anos_pre* years before
+    the study start."""
+    pre_study_stages: list[dict] = []
+    if num_anos_pre > 0:
+        num_pre_months = num_anos_pre * 12
+        pre_year = start_year
+        pre_month = start_month
+        # Walk backwards num_pre_months months from the study start.
+        pre_dates: list[tuple[int, int]] = []
+        for _ in range(num_pre_months):
+            pre_month -= 1
+            if pre_month < 1:
+                pre_month = 12
+                pre_year -= 1
+            pre_dates.append((pre_year, pre_month))
+
+        # pre_dates is in reverse order; reverse it so IDs go -N..-1.
+        pre_dates.reverse()
+
+        for offset, (py, pm) in enumerate(pre_dates):
+            pre_id = -(num_pre_months - offset)
+            pre_study_stages.append(
+                {
+                    "id": pre_id,
+                    "start_date": _month_start_date(py, pm).isoformat(),
+                    "end_date": _month_end_date(py, pm).isoformat(),
+                    "season_id": pm - 1,  # 0-based calendar month index
+                }
+            )
+    return pre_study_stages
+
+
 def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     """Convert the source model temporal configuration to a Novomodelo ``stages.json`` dict.
 
@@ -127,103 +331,12 @@ def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     taxa = dger.taxa_de_desconto or 0.0
     annual_discount_rate = float(taxa) / 100.0
 
-    # ------------------------------------------------------------------
-    # Read CVaR configuration from dger.dat and cvar.dat.
-    # dger.cvar == 0 (or None): expectation
-    # dger.cvar == 1: constant CVaR from cvar.dat::valores_constantes
-    # dger.cvar == 2: temporal CVaR from cvar.dat::alfa_variavel / lambda_variavel
-    # ------------------------------------------------------------------
-    _raw_cvar = getattr(dger, "cvar", None)
-    dger_cvar: int = int(_raw_cvar) if isinstance(_raw_cvar, int) else 0
-
-    # Default: each stage uses "expectation"
-    _cvar_by_stage: dict[int, dict] = {}  # stage_id -> {"alpha": ..., "lambda": ...}
-
-    if dger_cvar in (1, 2) and case.cvar is not None:
-        cvar_file = case.cvar
-        const_values: list[float] = cvar_file.valores_constantes or [0.0, 0.0]
-        const_alpha = const_values[0] / 100.0
-        const_lambda = const_values[1] / 100.0
-
-        if dger_cvar == 1:
-            # Same constant CVaR for ALL stages — populate lazily in loop below.
-            _cvar_constant: dict | None = {
-                "cvar": {"alpha": const_alpha, "lambda": const_lambda}
-            }
-        else:
-            # dger_cvar == 2: build per-stage override maps from DataFrames.
-            _cvar_constant = None
-            df_alpha = cvar_file.alfa_variavel
-            df_lambda = cvar_file.lambda_variavel
-
-            # Build {(year, month): alpha_value_fraction} for study rows only.
-            alpha_override: dict[tuple[int, int], float] = {}
-            if df_alpha is not None and not df_alpha.empty:
-                for _, row in df_alpha.iterrows():
-                    y = int(row["data"].year)
-                    m = int(row["data"].month)
-                    if y < 9000:  # skip post-study sentinel rows (year 9999)
-                        val = float(row["valor"])
-                        alpha_override[(y, m)] = (
-                            val / 100.0 if val != 0.0 else const_alpha
-                        )
-
-            lambda_override: dict[tuple[int, int], float] = {}
-            if df_lambda is not None and not df_lambda.empty:
-                for _, row in df_lambda.iterrows():
-                    y = int(row["data"].year)
-                    m = int(row["data"].month)
-                    if y < 9000:
-                        val = float(row["valor"])
-                        lambda_override[(y, m)] = (
-                            val / 100.0 if val != 0.0 else const_lambda
-                        )
-    elif dger_cvar in (1, 2) and case.cvar is None:
-        logger.warning(
-            "dger.cvar=%d requires cvar.dat but file is missing; "
-            "falling back to expectation for all stages.",
-            dger_cvar,
-        )
-        dger_cvar = 0
-        _cvar_constant = None
-    else:
-        _cvar_constant = None
-
-    # Announce the chosen risk-measure mode so the conversion log makes
-    # the cvar/expectation switch obvious without having to inspect
-    # stages.json.  Deterministic mode always wins; otherwise dger.cvar
-    # drives the selection (0 → expectation, 1 → constant CVaR, 2 →
-    # per-stage CVaR).
-    if deterministic:
-        logger.info(
-            "Risk measure: forcing 'expectation' on every stage "
-            "(deterministic mode active — single inflow path, no CVaR tail)."
-        )
-    elif dger_cvar == 0:
-        logger.info("Risk measure: 'expectation' on every stage (dger.cvar=0).")
-    elif dger_cvar == 1 and _cvar_constant is not None:
-        cvar_p = _cvar_constant["cvar"]
-        logger.info(
-            "Risk measure: constant CVaR(alpha=%.4f, lambda=%.4f) on every "
-            "stage (dger.cvar=1, cvar.dat::valores_constantes).",
-            cvar_p["alpha"],
-            cvar_p["lambda"],
-        )
-    elif dger_cvar == 2:
-        logger.info(
-            "Risk measure: per-stage CVaR with constant fallback "
-            "alpha=%.4f, lambda=%.4f (dger.cvar=2, "
-            "cvar.dat::alfa_variavel + lambda_variavel).",
-            const_alpha,
-            const_lambda,
-        )
+    risk_policy = _resolve_risk_measure_policy(case, dger, deterministic)
+    risk_policy.log_mode()
 
     fractions = block_fractions(case)
     names = block_names(patamar.numero_patamares or 1)
 
-    # ------------------------------------------------------------------
-    # Build study stages (IDs 0 .. N-1).
-    # ------------------------------------------------------------------
     stages: list[dict] = []
     transitions: list[dict] = []
 
@@ -237,57 +350,18 @@ def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     year = start_year
     month = start_month
     for stage_id in range(total_months):
-        start_date = _month_start_date(year, month)
-        end_date = _month_end_date(year, month)
-        total_hours = _month_hours(year, month)
-
-        blocks = [
-            {"id": block, "name": names[block], "hours": fraction * total_hours}
-            for block, fraction in enumerate(fractions[stage_id])
-        ]
-
-        # risk_measure per stage.  ``dger.cvar``: 0 → expectation; 1 → one constant
-        # CVaR(alpha,lambda) on every stage (reuse ``_cvar_constant``); 2 → per-stage
-        # alpha/lambda from cvar.dat, falling back to ``valores_constantes``.
-        # Deterministic mode overrides all: a single inflow path has no tail for
-        # CVaR to penalise, so expectation is correct.
-        risk_measure: str | dict
-        if deterministic or dger_cvar == 0:
-            risk_measure = "expectation"
-        elif dger_cvar == 1 and _cvar_constant is not None:
-            risk_measure = _cvar_constant
-        elif dger_cvar == 2:
-            a = alpha_override.get((year, month), const_alpha)
-            lbd = lambda_override.get((year, month), const_lambda)
-            risk_measure = {"cvar": {"alpha": a, "lambda": lbd}}
-        else:
-            # Defensive: should only fire if dger.cvar ∈ {1, 2} but cvar.dat
-            # was missing (the top-of-function block downgrades to
-            # dger_cvar=0 and warns, so we shouldn't reach here in practice).
-            risk_measure = "expectation"
-
-        stage_entry: dict = {
-            "id": stage_id,
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "season_id": month - 1,  # 0-based: Jan=0, ..., Dec=11
-            "blocks": blocks,
-            "num_openings": num_scenarios,
-            "risk_measure": risk_measure,
-            "state_variables": {
-                "storage": True,
-                # Inflow lags add no information in deterministic mode — every
-                # stage already sees a single fixed historical residual — so
-                # drop them to keep the LP smaller.
-                "inflow_lags": not deterministic,
-            },
-        }
-        if deterministic:
-            # The source model's deterministic mode: each stage samples its inflow
-            # residual directly from the (single) historical scenario instead of drawing
-            # from the synthetic PAR(p) distribution.
-            stage_entry["sampling_method"] = "historical_residuals"
-        stages.append(stage_entry)
+        stages.append(
+            _study_stage(
+                stage_id,
+                year,
+                month,
+                fractions[stage_id],
+                names,
+                num_openings=num_scenarios,
+                risk_measure=risk_policy.for_month(year, month),
+                deterministic=deterministic,
+            )
+        )
 
         if stage_id < total_months - 1:
             transitions.append(
@@ -303,37 +377,9 @@ def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             month = 1
             year += 1
 
-    # ------------------------------------------------------------------
-    # Build pre-study stages (IDs -N .. -1), if requested.
-    # ------------------------------------------------------------------
-    pre_study_stages: list[dict] = []
-    num_anos_pre = dger.num_anos_pre_estudo or 0
-    if num_anos_pre > 0:
-        num_pre_months = num_anos_pre * 12
-        pre_year = start_year
-        pre_month = start_month
-        # Walk backwards num_pre_months months from the study start.
-        pre_dates: list[tuple[int, int]] = []
-        for _ in range(num_pre_months):
-            pre_month -= 1
-            if pre_month < 1:
-                pre_month = 12
-                pre_year -= 1
-            pre_dates.append((pre_year, pre_month))
-
-        # pre_dates is in reverse order; reverse it so IDs go -N..-1.
-        pre_dates.reverse()
-
-        for offset, (py, pm) in enumerate(pre_dates):
-            pre_id = -(num_pre_months - offset)
-            pre_study_stages.append(
-                {
-                    "id": pre_id,
-                    "start_date": _month_start_date(py, pm).isoformat(),
-                    "end_date": _month_end_date(py, pm).isoformat(),
-                    "season_id": pm - 1,  # 0-based calendar month index
-                }
-            )
+    pre_study_stages = _pre_study_stages(
+        start_year, start_month, dger.num_anos_pre_estudo or 0
+    )
 
     policy_graph: dict = {
         "type": "finite_horizon",
@@ -462,54 +508,47 @@ def _count_historical_years(
     return max(0, int(historical_years["to"]) - int(historical_years["from"]) + 1)
 
 
-def convert_config(case: NewaveCase) -> dict:
-    """Convert the source model training parameters to a Novomodelo ``config.json`` dict.
+def _order_selection(consideracao_anual: int | None) -> str | None:
+    """Map ``consideracao_media_anual_afluencias`` (dger.dat line 83) to
+    ``estimation.order_selection``.
 
-    Reads ``dger.dat`` from *case* and produces a dict that conforms
-    to ``config.schema.json``.
-
-    Parameters
-    ----------
-    case:
-        Parsed the source model case.
-
-    Returns
-    -------
-    dict
-        JSON-serializable dict conforming to ``config.schema.json``.
+    0 → classical PAR(p), maps to Novomodelo "pacf"; 1, 2, 3 → PAR(p)-A variants;
+    Novomodelo implements the exact PDDE form (the source model option 3) under
+    "pacf_annual".
     """
-    dger = case.dger
-
-    forward_passes: int = dger.num_forwards or 1
-    max_iterations: int = dger.num_max_iteracoes or 200
-    num_series: int = dger.num_series_sinteticas or 200
-    max_order: int = dger.ordem_maxima_parp or 6
-    num_openings: int = dger.num_aberturas or 1
-
-    # consideracao_media_anual_afluencias (dger.dat line 83):
-    # 0 → classical PAR(p), maps to Novomodelo "pacf" 1, 2, 3 → PAR(p)-A variants; Novomodelo
-    # implements the exact PDDE form (the source model option 3) under "pacf_annual".
-    consideracao_anual: int | None = dger.consideracao_media_anual_afluencias
     if consideracao_anual is None:
-        order_selection: str | None = None
-    elif consideracao_anual == 0:
-        order_selection = "pacf"
-    else:
-        if consideracao_anual not in (1, 2, 3):
-            logger.warning(
-                "Unexpected consideracao_media_anual_afluencias=%d; "
-                "treating as PAR(p)-A (pacf_annual).",
-                consideracao_anual,
-            )
-        elif consideracao_anual in (1, 2):
-            logger.warning(
-                "consideracao_media_anual_afluencias=%d (approximate PAR(p)-A) "
-                "mapped to Novomodelo 'pacf_annual', which implements only the exact "
-                "12-axis variant (NEWAVE option 3).",
-                consideracao_anual,
-            )
-        order_selection = "pacf_annual"
+        return None
+    if consideracao_anual == 0:
+        return "pacf"
+    if consideracao_anual not in (1, 2, 3):
+        logger.warning(
+            "Unexpected consideracao_media_anual_afluencias=%d; "
+            "treating as PAR(p)-A (pacf_annual).",
+            consideracao_anual,
+        )
+    elif consideracao_anual in (1, 2):
+        logger.warning(
+            "consideracao_media_anual_afluencias=%d (approximate PAR(p)-A) "
+            "mapped to Novomodelo 'pacf_annual', which implements only the exact "
+            "12-axis variant (NEWAVE option 3).",
+            consideracao_anual,
+        )
+    return "pacf_annual"
 
+
+class _RunMode(NamedTuple):
+    """The training/simulation switches ``dger.dat`` selects."""
+
+    training_enabled: bool
+    simulation_enabled: bool
+    tipo_simulacao_final: int
+    considera_reamostragem: int
+    deterministic: bool
+
+
+def _run_mode(case: NewaveCase, dger: Dger) -> _RunMode:
+    """Decode ``tipo_execucao``/``tipo_simulacao_final``/``considera_reamostragem``
+    and the deterministic mode."""
     tipo_execucao: int = dger.tipo_execucao if dger.tipo_execucao is not None else 1
     tipo_simulacao_final: int = (
         dger.tipo_simulacao_final if dger.tipo_simulacao_final is not None else 1
@@ -519,13 +558,6 @@ def convert_config(case: NewaveCase) -> dict:
         if dger.considera_reamostragem_cenarios is not None
         else 0
     )
-
-    # impressao_estados_geracao_cortes (dger.dat line 90): when 0, the source model
-    # writes the visited cut-generation states (the per-stage cortese*.dat files).
-    # Mirror that on the Novomodelo side via `exports.states` so the two models' visited
-    # forward-pass trial points can be compared.  A None or non-zero value leaves the
-    # Novomodelo default (states export off).
-    export_states: bool = dger.impressao_estados_geracao_cortes == 0
 
     # tipo_execucao: 0 = simulation only, 1 = training (+ simulation).
     training_enabled: bool = tipo_execucao == 1
@@ -537,7 +569,18 @@ def convert_config(case: NewaveCase) -> dict:
     else:
         simulation_enabled = tipo_simulacao_final != 0
 
-    # -- Cut selection -- The source model's cut-selection knobs are independent for the
+    return _RunMode(
+        training_enabled=training_enabled,
+        simulation_enabled=simulation_enabled,
+        tipo_simulacao_final=tipo_simulacao_final,
+        considera_reamostragem=considera_reamostragem,
+        deterministic=_is_deterministic_mode(case, dger),
+    )
+
+
+def _cut_selection(dger: Dger) -> dict:
+    """Build ``training.cut_selection`` from the deck's cut-selection flags."""
+    # The source model's cut-selection knobs are independent for the
     # forward and backward passes (`selecao_de_cortes_forward` /
     # `selecao_de_cortes_backward`); novomodelo's training pipeline applies a single toggle
     # to both passes.  Mirror the union: cut selection is enabled if the source model
@@ -567,8 +610,17 @@ def convert_config(case: NewaveCase) -> dict:
             "no cut window: it keeps every cut, the exact policy the window "
             "approximates, so the two models' policies can differ."
         )
+    return cut_selection
 
-    # -- Backward-pass scheduler --
+
+def _training_section(
+    case: NewaveCase, dger: Dger, cut_selection: dict, mode: _RunMode
+) -> dict:
+    """Build ``config.json``'s ``training`` section."""
+    forward_passes: int = dger.num_forwards or 1
+    max_iterations: int = dger.num_max_iteracoes or 200
+    num_openings: int = dger.num_aberturas or 1
+
     # Opt into ``by_node`` so each backward work unit is a (trial point, opening
     # block) pair rather than a whole trial point, with block size
     # ceil(num_openings / 2).  This coincides with novomodelo's own per-node default but
@@ -580,7 +632,6 @@ def convert_config(case: NewaveCase) -> dict:
         }
     }
 
-    # -- Training scenario source --
     training_section: dict = {
         "selection": {"method": "sampled", "forward_passes": forward_passes},
         "stopping_rules": [
@@ -589,9 +640,9 @@ def convert_config(case: NewaveCase) -> dict:
         "cut_selection": cut_selection,
         "parallelism": parallelism,
     }
-    if not training_enabled:
+    if not mode.training_enabled:
         training_section["enabled"] = False
-    if training_enabled and considera_reamostragem == 1:
+    if mode.training_enabled and mode.considera_reamostragem == 1:
         training_section["scenario_source"] = {
             "seed": 42,
             "inflow": {"scheme": "out_of_sample"},
@@ -599,26 +650,31 @@ def convert_config(case: NewaveCase) -> dict:
 
     # Deterministic mode: training reuses the simulation's historical pool
     # (single year), so set the training scenario_source to mirror it.
-    deterministic = _is_deterministic_mode(case, dger)
-    if training_enabled and deterministic:
+    if mode.training_enabled and mode.deterministic:
         training_section["scenario_source"] = {
             "seed": 42,
             "inflow": {"scheme": "historical"},
             "historical_years": _historical_years_from_shist(case, dger),
         }
+    return training_section
 
-    # -- Simulation scenario source --
-    # Priority: tipo_simulacao_final=2 forces "historical"; otherwise
-    # considera_reamostragem determines the scheme (1=out_of_sample, 0=in_sample).
+
+def _simulation_section(case: NewaveCase, dger: Dger, mode: _RunMode) -> dict:
+    """Build ``config.json``'s ``simulation`` section.
+
+    Priority: tipo_simulacao_final=2 forces "historical"; otherwise
+    considera_reamostragem determines the scheme (1=out_of_sample, 0=in_sample).
+    """
+    num_series: int = dger.num_series_sinteticas or 200
     simulation_section: dict = {
-        "enabled": simulation_enabled,
+        "enabled": mode.simulation_enabled,
         "selection": {"method": "sampled", "num_scenarios": num_series},
         "cut_set": SIMULATION_CUT_SET,
     }
-    if simulation_enabled:
-        if tipo_simulacao_final == 2:
+    if mode.simulation_enabled:
+        if mode.tipo_simulacao_final == 2:
             inflow_scheme = "historical"
-        elif considera_reamostragem == 1:
+        elif mode.considera_reamostragem == 1:
             inflow_scheme = "out_of_sample"
         else:
             inflow_scheme = "in_sample"
@@ -634,6 +690,14 @@ def convert_config(case: NewaveCase) -> dict:
                 historical_years
             )
         simulation_section["scenario_source"] = sim_source
+    return simulation_section
+
+
+def _estimation_section(
+    dger: Dger, order_selection: str | None, deterministic: bool
+) -> dict:
+    """Build ``config.json``'s ``estimation`` section."""
+    max_order: int = dger.ordem_maxima_parp or 6
 
     # Deterministic-mode workaround: force max_order = 0 so the LP carries
     # no inflow-lag state.  Novomodelo's SDDP exhibits a negative-gap regression
@@ -656,6 +720,40 @@ def convert_config(case: NewaveCase) -> dict:
     estimation: dict = {"max_order": max_order}
     if order_selection is not None:
         estimation["order_selection"] = order_selection
+    return estimation
+
+
+def convert_config(case: NewaveCase) -> dict:
+    """Convert the source model training parameters to a Novomodelo ``config.json`` dict.
+
+    Reads ``dger.dat`` from *case* and produces a dict that conforms
+    to ``config.schema.json``.
+
+    Parameters
+    ----------
+    case:
+        Parsed the source model case.
+
+    Returns
+    -------
+    dict
+        JSON-serializable dict conforming to ``config.schema.json``.
+    """
+    dger = case.dger
+    order_selection = _order_selection(dger.consideracao_media_anual_afluencias)
+
+    # impressao_estados_geracao_cortes (dger.dat line 90): when 0, the source model
+    # writes the visited cut-generation states (the per-stage cortese*.dat files).
+    # Mirror that on the Novomodelo side via `exports.states` so the two models' visited
+    # forward-pass trial points can be compared.  A None or non-zero value leaves the
+    # Novomodelo default (states export off).
+    export_states: bool = dger.impressao_estados_geracao_cortes == 0
+
+    cut_selection = _cut_selection(dger)
+    mode = _run_mode(case, dger)
+    training_section = _training_section(case, dger, cut_selection, mode)
+    simulation_section = _simulation_section(case, dger, mode)
+    estimation = _estimation_section(dger, order_selection, mode.deterministic)
 
     config: dict = {
         "$schema": novomodelo_schemas.schema_url_for("config.json"),
