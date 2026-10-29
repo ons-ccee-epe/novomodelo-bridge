@@ -17,7 +17,8 @@ Implements six sections of the Energy Balance tab (Tab 4):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import math
+from typing import TYPE_CHECKING, NamedTuple
 
 import plotly.graph_objects as go
 import polars as pl
@@ -318,100 +319,45 @@ def _chart_gen_mix_hero(data: DashboardData) -> go.Figure:
 # ---------------------------------------------------------------------------
 
 
-def _chart_gen_by_bus(data: DashboardData) -> go.Figure:
-    """Build subplots per non-fictitious bus: hydro+thermal+NCS+net import vs LP load.
+class _BusGenerationSeries(NamedTuple):
+    """Per-bus stage-average MW series on the stage axis shared by every subplot."""
 
-    One row per bus in ``data.non_fictitious_bus_ids``.  Each subplot shows
-    stacked area traces for hydro, thermal, and NCS generation plus a net
-    import area trace and a dashed LP load overlay.  Y-axis scales are
-    independent across buses.
+    stages: list[int]
+    xlabels: list[str]
+    xdates: list[str]
+    hydro: pl.DataFrame
+    thermal: pl.DataFrame
+    ncs: pl.DataFrame
+    net_import: dict[int, dict[int, float]]
 
-    Args:
-        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
 
-    Returns:
-        A :class:`plotly.graph_objects.Figure` with one subplot row per bus.
-    """
-    bus_ids = sorted(data.non_fictitious_bus_ids)
-    n_buses = len(bus_ids)
-
-    if n_buses == 0:
-        fig = go.Figure()
-        fig.update_layout(
-            title="No non-fictitious buses found",
-            legend=_LEGEND,
-            margin=_MARGIN,
-        )
-        return fig
-
-    # Build mapping DataFrames for LazyFrame joins
-    hbus_df = pl.DataFrame(
-        {
-            "hydro_id": list(data.hydro_bus_map.keys()),
-            "bus_id": list(data.hydro_bus_map.values()),
-        }
-    )
-    tbus_map = {k: v["bus_id"] for k, v in data.thermal_meta.items()}
-    tbus_df = pl.DataFrame(
-        {
-            "thermal_id": list(tbus_map.keys()),
-            "bus_id": list(tbus_map.values()),
-        }
-    )
-    nbus_df = pl.DataFrame(
-        {
-            "non_controllable_id": list(data.ncs_bus_map.keys()),
-            "bus_id": list(data.ncs_bus_map.values()),
-        }
-    )
-    hours_df = pl.DataFrame(
-        {
-            "stage_id": list(data.stage_hours.keys()),
-            "_hours": list(data.stage_hours.values()),
-        }
+def _bus_stage_avg_mw(
+    lf: pl.LazyFrame,
+    mwh_col: str,
+    id_col: str,
+    mapping_df: pl.DataFrame,
+    hours_df: pl.DataFrame,
+) -> pl.DataFrame:
+    """Join lf to mapping_df, compute per-bus stage-average MW."""
+    return (
+        lf.join(mapping_df.lazy(), on=id_col)
+        .group_by(["scenario_id", "stage_id", "bus_id"])
+        .agg(pl.col(mwh_col).sum())
+        .join(hours_df.lazy(), on="stage_id")
+        .with_columns((pl.col(mwh_col) / pl.col("_hours")).alias("_avg_mw"))
+        .group_by(["stage_id", "bus_id"])
+        .agg(pl.col("_avg_mw").mean())
+        .sort("stage_id")
+        .collect(engine="streaming")
     )
 
-    def _bus_stage_avg(
-        lf: pl.LazyFrame,
-        mwh_col: str,
-        id_col: str,
-        mapping_df: pl.DataFrame,
-    ) -> pl.DataFrame:
-        """Join lf to mapping_df, compute per-bus stage-average MW."""
-        return (
-            lf.join(mapping_df.lazy(), on=id_col)
-            .group_by(["scenario_id", "stage_id", "bus_id"])
-            .agg(pl.col(mwh_col).sum())
-            .join(hours_df.lazy(), on="stage_id")
-            .with_columns((pl.col(mwh_col) / pl.col("_hours")).alias("_avg_mw"))
-            .group_by(["stage_id", "bus_id"])
-            .agg(pl.col("_avg_mw").mean())
-            .sort("stage_id")
-            .collect(engine="streaming")
-        )
 
-    h_by_bus = _bus_stage_avg(data.hydros_lf, "generation_mwh", "hydro_id", hbus_df)
-    t_by_bus = _bus_stage_avg(data.thermals_lf, "generation_mwh", "thermal_id", tbus_df)
-    n_by_bus = _bus_stage_avg(
-        data.ncs_lf, "generation_mwh", "non_controllable_id", nbus_df
-    )
-
-    # Collect the union of stage IDs across all entity types
-    stages_all = sorted(
-        set(h_by_bus["stage_id"].to_list())
-        | set(t_by_bus["stage_id"].to_list())
-        | set(n_by_bus["stage_id"].to_list())
-    )
-    if not stages_all:
-        stages_all = sorted(data.stage_hours.keys())
-    xlabels = stage_x_labels(stages_all, data.stage_labels)
-    xdates = stage_x_dates(stages_all, data.stage_dates)
-
-    def _to_map(df: pl.DataFrame, bus_id: int) -> dict[int, float]:
-        sub = df.filter(pl.col("bus_id") == bus_id)
-        return dict(zip(sub["stage_id"].to_list(), sub["_avg_mw"].to_list()))
-
-    # Compute net exchange import per bus
+def _bus_net_import_mw(
+    data: DashboardData,
+    bus_ids: list[int],
+    hours_df: pl.DataFrame,
+) -> dict[int, dict[int, float]]:
+    """Scenario-mean stage-average MW imported into each bus over its lines."""
     ex_import: dict[int, dict[int, float]] = {}
     for bus_id in bus_ids:
         parts: list[pl.DataFrame] = []
@@ -441,8 +387,152 @@ def _chart_gen_by_bus(data: DashboardData) -> go.Figure:
             )
         else:
             ex_import[bus_id] = {}
+    return ex_import
 
-    import math
+
+def _bus_generation_series(
+    data: DashboardData, bus_ids: list[int]
+) -> _BusGenerationSeries:
+    """Per-bus hydro, thermal, NCS and net-import series for ``_chart_gen_by_bus``."""
+    # Build mapping DataFrames for LazyFrame joins
+    hbus_df = pl.DataFrame(
+        {
+            "hydro_id": list(data.hydro_bus_map.keys()),
+            "bus_id": list(data.hydro_bus_map.values()),
+        }
+    )
+    tbus_map = {k: v["bus_id"] for k, v in data.thermal_meta.items()}
+    tbus_df = pl.DataFrame(
+        {
+            "thermal_id": list(tbus_map.keys()),
+            "bus_id": list(tbus_map.values()),
+        }
+    )
+    nbus_df = pl.DataFrame(
+        {
+            "non_controllable_id": list(data.ncs_bus_map.keys()),
+            "bus_id": list(data.ncs_bus_map.values()),
+        }
+    )
+    hours_df = pl.DataFrame(
+        {
+            "stage_id": list(data.stage_hours.keys()),
+            "_hours": list(data.stage_hours.values()),
+        }
+    )
+    h_by_bus = _bus_stage_avg_mw(
+        data.hydros_lf, "generation_mwh", "hydro_id", hbus_df, hours_df
+    )
+    t_by_bus = _bus_stage_avg_mw(
+        data.thermals_lf, "generation_mwh", "thermal_id", tbus_df, hours_df
+    )
+    n_by_bus = _bus_stage_avg_mw(
+        data.ncs_lf, "generation_mwh", "non_controllable_id", nbus_df, hours_df
+    )
+
+    # Collect the union of stage IDs across all entity types
+    stages_all = sorted(
+        set(h_by_bus["stage_id"].to_list())
+        | set(t_by_bus["stage_id"].to_list())
+        | set(n_by_bus["stage_id"].to_list())
+    )
+    if not stages_all:
+        stages_all = sorted(data.stage_hours.keys())
+    return _BusGenerationSeries(
+        stages=stages_all,
+        xlabels=stage_x_labels(stages_all, data.stage_labels),
+        xdates=stage_x_dates(stages_all, data.stage_dates),
+        hydro=h_by_bus,
+        thermal=t_by_bus,
+        ncs=n_by_bus,
+        net_import=_bus_net_import_mw(data, bus_ids, hours_df),
+    )
+
+
+def _bus_stage_map(df: pl.DataFrame, bus_id: int) -> dict[int, float]:
+    """``stage_id -> _avg_mw`` for one bus of a ``_bus_stage_avg_mw`` frame."""
+    sub = df.filter(pl.col("bus_id") == bus_id)
+    return dict(zip(sub["stage_id"].to_list(), sub["_avg_mw"].to_list()))
+
+
+def _bus_generation_traces(
+    data: DashboardData,
+    series: _BusGenerationSeries,
+    bus_id: int,
+    show_legend: bool,
+) -> list[go.Scatter]:
+    """Stacked generation and net-import areas plus the dashed LP load of one bus."""
+    h_gen = _bus_stage_map(series.hydro, bus_id)
+    t_gen = _bus_stage_map(series.thermal, bus_id)
+    n_gen = _bus_stage_map(series.ncs, bus_id)
+    load_s = _compute_lp_load(
+        data.load_stats,
+        data.load_factors_list,
+        data.stage_hours,
+        data.block_hours,
+        bus_filter=[bus_id],
+    )
+    net_imp = series.net_import.get(bus_id, {})
+
+    traces = [
+        go.Scatter(
+            x=series.xdates,
+            y=[vals.get(s, 0) for s in series.stages],
+            name=name,
+            stackgroup=f"g{bus_id}",
+            mode="lines",
+            line={"color": color},
+            legendgroup=lgroup,
+            showlegend=show_legend,
+        )
+        for name, vals, color, lgroup in [
+            ("Hydro", h_gen, GENERATION_COLORS["hydro"], "hydro"),
+            ("Thermal", t_gen, GENERATION_COLORS["thermal"], "thermal"),
+            ("NCS", n_gen, GENERATION_COLORS["ncs"], "ncs"),
+            ("Net Import", net_imp, COLORS["exchange"], "import"),
+        ]
+    ]
+    traces.append(
+        go.Scatter(
+            x=series.xdates,
+            y=[load_s.get(s, 0) for s in series.stages],
+            name="LP Load",
+            mode="lines",
+            line={"color": COLORS["load"], "width": 2, "dash": "dash"},
+            legendgroup="load",
+            showlegend=show_legend,
+        )
+    )
+    return traces
+
+
+def _chart_gen_by_bus(data: DashboardData) -> go.Figure:
+    """Build subplots per non-fictitious bus: hydro+thermal+NCS+net import vs LP load.
+
+    One row per bus in ``data.non_fictitious_bus_ids``.  Each subplot shows
+    stacked area traces for hydro, thermal, and NCS generation plus a net
+    import area trace and a dashed LP load overlay.  Y-axis scales are
+    independent across buses.
+
+    Args:
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
+
+    Returns:
+        A :class:`plotly.graph_objects.Figure` with one subplot row per bus.
+    """
+    bus_ids = sorted(data.non_fictitious_bus_ids)
+    n_buses = len(bus_ids)
+
+    if n_buses == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title="No non-fictitious buses found",
+            legend=_LEGEND,
+            margin=_MARGIN,
+        )
+        return fig
+
+    series = _bus_generation_series(data, bus_ids)
 
     n_cols = 2
     n_rows = math.ceil(n_buses / n_cols)
@@ -463,52 +553,8 @@ def _chart_gen_by_bus(data: DashboardData) -> go.Figure:
     for idx, bus_id in enumerate(bus_ids):
         row = idx // n_cols + 1
         col = idx % n_cols + 1
-        show_legend = idx == 0
-        h_gen = _to_map(h_by_bus, bus_id)
-        t_gen = _to_map(t_by_bus, bus_id)
-        n_gen = _to_map(n_by_bus, bus_id)
-        load_s = _compute_lp_load(
-            data.load_stats,
-            data.load_factors_list,
-            data.stage_hours,
-            data.block_hours,
-            bus_filter=[bus_id],
-        )
-        net_imp = ex_import.get(bus_id, {})
-
-        for name, vals, color, lgroup in [
-            ("Hydro", h_gen, GENERATION_COLORS["hydro"], "hydro"),
-            ("Thermal", t_gen, GENERATION_COLORS["thermal"], "thermal"),
-            ("NCS", n_gen, GENERATION_COLORS["ncs"], "ncs"),
-            ("Net Import", net_imp, COLORS["exchange"], "import"),
-        ]:
-            fig.add_trace(
-                go.Scatter(
-                    x=xdates,
-                    y=[vals.get(s, 0) for s in stages_all],
-                    name=name,
-                    stackgroup=f"g{bus_id}",
-                    mode="lines",
-                    line={"color": color},
-                    legendgroup=lgroup,
-                    showlegend=show_legend,
-                ),
-                row=row,
-                col=col,
-            )
-        fig.add_trace(
-            go.Scatter(
-                x=xdates,
-                y=[load_s.get(s, 0) for s in stages_all],
-                name="LP Load",
-                mode="lines",
-                line={"color": COLORS["load"], "width": 2, "dash": "dash"},
-                legendgroup="load",
-                showlegend=show_legend,
-            ),
-            row=row,
-            col=col,
-        )
+        for trace in _bus_generation_traces(data, series, bus_id, idx == 0):
+            fig.add_trace(trace, row=row, col=col)
 
     fig.update_layout(
         height=350 * n_rows,
@@ -522,7 +568,7 @@ def _chart_gen_by_bus(data: DashboardData) -> go.Figure:
         ),
         margin=dict(l=60, r=30, t=80, b=50),
     )
-    apply_stage_date_axis(fig, xdates, xlabels)
+    apply_stage_date_axis(fig, series.xdates, series.xlabels)
     return fig
 
 
@@ -641,29 +687,8 @@ def _render_deficit_excess(data: DashboardData) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_reservoir_storage(data: DashboardData) -> str:
-    """Build system aggregate storage trajectory and per-bus storage % charts.
-
-    Left chart: sum of ``storage_final_hm3`` across all hydros per stage,
-    with mean+p50+p10-p90 band and horizontal reference lines for total
-    system ``vol_min`` / ``vol_max`` from ``data.hydro_meta``.
-
-    Right chart: per-bus storage as percentage of useful volume
-    (``vol_max - vol_min`` for hydros in that bus), one subplot per
-    non-fictitious bus that has hydros.
-
-    Args:
-        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
-
-    Returns:
-        An HTML string: a ``collapsible_section`` wrapping a ``chart_grid``
-        with two chart cards.
-    """
-    bus_ids = sorted(data.non_fictitious_bus_ids)
-
-    # ------------------------------------------------------------------
-    # System aggregate storage as % of total useful volume
-    # ------------------------------------------------------------------
+def _system_storage_pct_fig(data: DashboardData) -> go.Figure:
+    """System storage as % of total useful volume: p10/p50/p90 lines per stage."""
     total_vol_max = sum(float(m.get("vol_max", 0)) for m in data.hydro_meta.values())
     total_vol_min = sum(float(m.get("vol_min", 0)) for m in data.hydro_meta.values())
     total_useful = total_vol_max - total_vol_min
@@ -736,15 +761,16 @@ def _render_reservoir_storage(data: DashboardData) -> str:
         ),
         margin=_MARGIN,
     )
+    return sys_fig
 
-    # ------------------------------------------------------------------
-    # By-bus storage as % of useful volume
-    # ------------------------------------------------------------------
-    # Build hydro-to-bus mapping and per-bus useful volume / vol_min
-    hydro_to_bus: dict[int, int] = data.hydro_bus_map
+
+def _bus_useful_volumes(
+    data: DashboardData,
+) -> tuple[dict[int, float], dict[int, float]]:
+    """Per-bus ``(useful volume, vol_min)`` totals in hm³ over the bus's hydros."""
     bus_useful_vol: dict[int, float] = {}
     bus_vol_min: dict[int, float] = {}
-    for hid, bus_id in hydro_to_bus.items():
+    for hid, bus_id in data.hydro_bus_map.items():
         if bus_id not in bus_useful_vol:
             bus_useful_vol[bus_id] = 0.0
             bus_vol_min[bus_id] = 0.0
@@ -753,15 +779,21 @@ def _render_reservoir_storage(data: DashboardData) -> str:
         vol_min = float(meta.get("vol_min", 0))
         bus_useful_vol[bus_id] += vol_max - vol_min
         bus_vol_min[bus_id] += vol_min
+    return bus_useful_vol, bus_vol_min
 
-    # Filter to buses that have hydros and are non-fictitious
-    active_bus_ids = [b for b in bus_ids if b in bus_useful_vol]
 
+def _bus_storage_pct_fig(
+    data: DashboardData,
+    active_bus_ids: list[int],
+    bus_useful_vol: dict[int, float],
+    bus_vol_min: dict[int, float],
+) -> go.Figure:
+    """Per-bus storage as % of useful volume, one subplot per bus, or a no-data figure."""
     try:
         hbus_df = pl.DataFrame(
             {
-                "hydro_id": list(hydro_to_bus.keys()),
-                "bus_id": list(hydro_to_bus.values()),
+                "hydro_id": list(data.hydro_bus_map.keys()),
+                "bus_id": list(data.hydro_bus_map.values()),
             }
         )
         bus_stor = (
@@ -776,12 +808,10 @@ def _render_reservoir_storage(data: DashboardData) -> str:
     except (pl.exceptions.ColumnNotFoundError, KeyError):
         bus_stor = pl.DataFrame()
 
-    import math as _math
-
     n_buses = len(active_bus_ids)
     if n_buses > 0 and not bus_stor.is_empty():
         n_cols_bus = 2
-        n_rows_bus = _math.ceil(n_buses / n_cols_bus)
+        n_rows_bus = math.ceil(n_buses / n_cols_bus)
         bus_titles = [data.bus_names.get(b, str(b)) for b in active_bus_ids]
         while len(bus_titles) < n_rows_bus * n_cols_bus:
             bus_titles.append("")
@@ -836,6 +866,34 @@ def _render_reservoir_storage(data: DashboardData) -> str:
             text="No data.", showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5
         )
         bus_fig.update_layout(legend=_LEGEND, margin=_MARGIN)
+    return bus_fig
+
+
+def _render_reservoir_storage(data: DashboardData) -> str:
+    """Build system aggregate storage trajectory and per-bus storage % charts.
+
+    Left chart: sum of ``storage_final_hm3`` across all hydros per stage,
+    with mean+p50+p10-p90 band and horizontal reference lines for total
+    system ``vol_min`` / ``vol_max`` from ``data.hydro_meta``.
+
+    Right chart: per-bus storage as percentage of useful volume
+    (``vol_max - vol_min`` for hydros in that bus), one subplot per
+    non-fictitious bus that has hydros.
+
+    Args:
+        data: Full :class:`~novomodelo_bridge.dashboard.data.DashboardData` instance.
+
+    Returns:
+        An HTML string: a ``collapsible_section`` wrapping a ``chart_grid``
+        with two chart cards.
+    """
+    bus_ids = sorted(data.non_fictitious_bus_ids)
+    sys_fig = _system_storage_pct_fig(data)
+
+    bus_useful_vol, bus_vol_min = _bus_useful_volumes(data)
+    active_bus_ids = [b for b in bus_ids if b in bus_useful_vol]
+    bus_fig = _bus_storage_pct_fig(data, active_bus_ids, bus_useful_vol, bus_vol_min)
+    n_buses = len(active_bus_ids)
 
     sys_card = make_chart_card(
         sys_fig,
@@ -843,7 +901,7 @@ def _render_reservoir_storage(data: DashboardData) -> str:
         "v2-energy-storage-system",
         height=420,
     )
-    n_rows_bus_h = _math.ceil(n_buses / 2) if n_buses > 0 else 1
+    n_rows_bus_h = math.ceil(n_buses / 2) if n_buses > 0 else 1
     bus_card = make_chart_card(
         bus_fig,
         "Storage by Bus (% useful volume)",
@@ -1026,12 +1084,10 @@ def _render_stored_energy(data: DashboardData) -> str:
     )
 
     if not by_bus_df.is_empty():
-        import math as _math
-
         bus_ids = sorted(by_bus_df["bus_id"].unique().to_list())
         bus_ids = [b for b in bus_ids if b in data.non_fictitious_bus_ids]
         n_cols = 2
-        n_rows = _math.ceil(max(len(bus_ids), 1) / n_cols)
+        n_rows = math.ceil(max(len(bus_ids), 1) / n_cols)
         titles = [data.bus_names.get(b, str(b)) for b in bus_ids]
         while len(titles) < n_rows * n_cols:
             titles.append("")
