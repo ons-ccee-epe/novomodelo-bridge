@@ -212,3 +212,51 @@ class TestReleaseLagWeights:
 
         with pytest.raises(MappingError, match="beyond max_lag 0"):
             release_lag_weights(slots, (plant,), _STAGES[:1], 0, pool_id=0)
+
+    def test_undated_buckets_take_no_weight(
+        self, plants: tuple[TravelTimePlant, ...]
+    ) -> None:
+        dated = _STORAGE_SLOTS + _STAGE_0_BUCKETS
+        slots = dated + (_bucket(2, UNDATED, UNDATED),)
+
+        weights = release_lag_weights(slots, plants, _STAGES, 0, pool_id=0)
+
+        np.testing.assert_allclose(
+            weights[:, : len(dated)],
+            release_lag_weights(dated, plants, _STAGES, 0, pool_id=0),
+        )
+        assert not weights[:, len(dated)].any()
+
+    def test_undated_buckets_without_plants_are_refused_as_orphans(self) -> None:
+        slots = _STORAGE_SLOTS + (_bucket(2, UNDATED, UNDATED),)
+
+        with pytest.raises(MappingError, match=r"hydros \[2\], which no plant"):
+            release_lag_weights(slots, (), _STAGES, 0, pool_id=0)
+
+    def test_undated_bucket_cannot_stand_in_for_water_in_transit(
+        self, plants: tuple[TravelTimePlant, ...]
+    ) -> None:
+        slots = _STORAGE_SLOTS + _STAGE_0_BUCKETS[:2] + (_bucket(2, UNDATED, UNDATED),)
+
+        with pytest.raises(MappingError, match="cover 0.0 of its 168.0 h"):
+            release_lag_weights(slots, plants, _STAGES, 0, pool_id=0)
+
+    def test_undated_bucket_no_plant_flows_into_is_refused(
+        self, plants: tuple[TravelTimePlant, ...]
+    ) -> None:
+        slots = _STORAGE_SLOTS + _STAGE_0_BUCKETS + (_bucket(0, UNDATED, UNDATED),)
+
+        with pytest.raises(MappingError, match=r"hydros \[0\], which no plant"):
+            release_lag_weights(slots, plants, _STAGES, 0, pool_id=0)
+
+    @pytest.mark.parametrize(
+        ("start", "end", "bad"),
+        [(20261399, 20270101, 20261399), (20260404, UNDATED, UNDATED)],
+    )
+    def test_bucket_date_that_is_not_yyyymmdd_is_refused(
+        self, plants: tuple[TravelTimePlant, ...], start: int, end: int, bad: int
+    ) -> None:
+        slots = _STORAGE_SLOTS + _STAGE_0_BUCKETS[:2] + (_bucket(2, start, end),)
+
+        with pytest.raises(MappingError, match=f"{bad} is not a YYYYMMDD date"):
+            release_lag_weights(slots, plants, _STAGES, 0, pool_id=0)

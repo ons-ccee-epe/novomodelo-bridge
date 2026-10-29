@@ -24,7 +24,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from novomodelo_bridge.dessem.exporters.fcf.core.mapper import MappingError, index_slots
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
+    MappingError,
+    has_interval,
+    index_slots,
+)
 
 if TYPE_CHECKING:
     from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
@@ -73,7 +77,10 @@ def _hours_since(origin: date, day: date) -> float:
 
 
 def _yyyymmdd(value: int) -> date:
-    return date(value // 10000, value // 100 % 100, value % 100)
+    try:
+        return date(value // 10000, value // 100 % 100, value % 100)
+    except ValueError as exc:
+        raise MappingError(f"{value} is not a YYYYMMDD date") from exc
 
 
 def stage_windows(stages: Sequence[StageInfo]) -> tuple[Window, ...]:
@@ -203,15 +210,25 @@ def travel_time_plants(
 def _bucket_windows(
     slots: Sequence[EntitySlotRecord], origin: date, pool_id: int
 ) -> dict[int, list[tuple[int, Window]]]:
-    """Each downstream plant's transit-bucket positions and arrival windows."""
+    """Each downstream plant's transit-bucket positions and arrival windows.
+
+    Undated buckets count for the orphan check but get no window.
+    """
     by_plant: dict[int, list[tuple[int, Window]]] = {}
     for position in index_slots(slots).transit_bucket:
         slot = slots[position]
-        window = (
-            _hours_since(origin, _yyyymmdd(slot.interval_start)),
-            _hours_since(origin, _yyyymmdd(slot.interval_end)),
+        buckets = by_plant.setdefault(slot.entity_id, [])
+        if not has_interval(slot):
+            continue
+        buckets.append(
+            (
+                position,
+                (
+                    _hours_since(origin, _yyyymmdd(slot.interval_start)),
+                    _hours_since(origin, _yyyymmdd(slot.interval_end)),
+                ),
+            )
         )
-        by_plant.setdefault(slot.entity_id, []).append((position, window))
     for plant_id, buckets in by_plant.items():
         ordered = sorted(window for _, window in buckets)
         for earlier, later in itertools.pairwise(ordered):
