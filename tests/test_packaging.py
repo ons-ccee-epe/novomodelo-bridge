@@ -107,7 +107,8 @@ def test_workflows_install_from_the_lock() -> None:
     release cannot turn a workflow red, or green on code the pre-commit hook
     rejects, without a change in the repository: no `pip install`, and every
     `uv sync` is `--locked`."""
-    workflows = [_WORKFLOWS / "ci.yml"]
+    workflows = sorted(_WORKFLOWS.glob("*.yml"))
+    assert workflows, f"no workflow found under {_WORKFLOWS}"
     for workflow in workflows:
         text = workflow.read_text(encoding="utf-8")
         assert not re.search(r"(?<!uv )pip install", text), (
