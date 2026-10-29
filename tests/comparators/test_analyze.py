@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 import polars as pl
 import pytest
@@ -47,6 +46,7 @@ from novomodelo_bridge.comparators.verdict import (
     build_compare_verdict,
 )
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.pandas_utils import as_float
 
 
 def _make_results() -> list[ResultComparison]:
@@ -286,7 +286,7 @@ def test_top_divergences_sorted_and_truncated() -> None:
     top = top_divergences_from_results(results, 5)
 
     assert len(top) == 5
-    abs_diffs = [d["abs_diff"] for d in top]
+    abs_diffs = [as_float(d["abs_diff"]) for d in top]
     assert abs_diffs == sorted(abs_diffs, reverse=True)
     assert top[0]["abs_diff"] == max(r.abs_diff for r in results)
     assert set(top[0].keys()) == {
@@ -344,7 +344,9 @@ def test_build_results_dataset_validates_and_carries_metadata() -> None:
     dataset = build_results_dataset(results, pct, 1e-2)
 
     dataset.validate()
-    assert len(dataset.metadata["top_divergences"]) == len(results)
+    top_divergences = dataset.metadata["top_divergences"]
+    assert isinstance(top_divergences, list)
+    assert len(top_divergences) == len(results)
     assert dataset.render.nw_costs == {"deficit": 1.0}
     assert dataset.render.novomodelo_costs == {"deficit": 2.0}
     assert dataset.render.nw_bus_names == {0: "SUDESTE"}
@@ -1014,9 +1016,9 @@ def test_plant_percentile_arrays_filters_once_per_plant() -> None:
         def is_empty(self) -> bool:
             return self._inner.is_empty()
 
-        def filter(self, *args: object, **kwargs: object) -> pl.DataFrame:
+        def filter(self, *predicates: pl.Expr) -> pl.DataFrame:
             self.filter_calls += 1
-            return self._inner.filter(*args, **kwargs)
+            return self._inner.filter(*predicates)
 
     pct = pl.DataFrame(
         {
@@ -1032,7 +1034,7 @@ def test_plant_percentile_arrays_filters_once_per_plant() -> None:
 
     # Three variables, yet only ONE filter call for the single plant.
     out = plant_percentile_arrays(
-        cast("pl.DataFrame", counting),
+        counting,
         [("a", "A", [1, 2]), ("b", "B", [1, 2]), ("missing", "M", [1, 2])],
         0,
     )

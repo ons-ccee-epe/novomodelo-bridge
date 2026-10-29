@@ -24,6 +24,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_avl_cortesfpha,
     read_dec_desvfpha,
 )
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import (
     build_effective_cadastro,
@@ -332,8 +333,8 @@ class TestSourceModelConventions:
         hours = pl.Series([_HOURS[p - 1] for p in printed["patamar"]])
         (row,) = result.split.iter_rows(named=True)
         assert row["rho_exact_at_source"] == pytest.approx(
-            (hours * printed["geracao_hidraulica_fph"]).sum()
-            / (hours * printed["vazao_turbinada_m3s"]).sum(),
+            as_float((hours * printed["geracao_hidraulica_fph"]).sum())
+            / as_float((hours * printed["vazao_turbinada_m3s"]).sum()),
             rel=1e-3,
         )
 
@@ -447,7 +448,8 @@ class TestSourceModelConventions:
         result = _compare(monkeypatch, tmp_path, case, runs)
 
         assert result is not None
-        va = case.dadger.va(df=True)
+        va = as_frame(case.dadger.va(df=True))
+        assert va is not None
         (factor,) = va.loc[
             va["codigo_usina_influenciada"] == _BELO_MONTE, "fator_impacto_incremental"
         ]

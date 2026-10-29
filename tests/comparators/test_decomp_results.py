@@ -676,7 +676,7 @@ class TestBuildDecompDatasetSingleParse:
                 }
             ),
         )
-        dadger.dt = SimpleNamespace(ano=2026, mes=1, dia=3)
+        setattr(dadger, "dt", SimpleNamespace(ano=2026, mes=1, dia=3))
         spy = MagicMock(return_value=dadger)
         monkeypatch.setattr("idecomp.decomp.Dadger.read", spy)
         monkeypatch.setattr(

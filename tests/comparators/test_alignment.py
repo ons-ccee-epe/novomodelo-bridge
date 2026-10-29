@@ -52,33 +52,33 @@ class _FakeSistema:
         self.custo_deficit = custo_deficit
 
 
-class _KeyErrorIdMap:
-    """Duck-typed ``NewaveIdMap`` stand-in whose enumeration and lookup
-    disagree, to hit ``build_entity_alignment``'s defensive KeyError-skip.
+class _KeyErrorIdMap(NewaveIdMap):
+    """``NewaveIdMap`` whose enumeration and lookup disagree, to hit
+    ``build_entity_alignment``'s defensive KeyError-skip.
 
-    The real ``NewaveIdMap.all_hydro_codes``/``all_thermal_codes`` are drawn
-    from the exact dict ``hydro_id``/``thermal_id`` look up, so that lookup
-    can never raise for a code the real class itself enumerated;
-    ``build_entity_alignment`` only calls these four documented members, so a
-    duck-typed double can exercise the skip branch directly.
+    The real ``all_hydro_codes``/``all_thermal_codes`` are drawn from the exact
+    dict ``hydro_id``/``thermal_id`` look up, so that lookup can never raise for
+    a code the real class itself enumerated; overriding the lookups exercises
+    the skip branch directly.
     """
 
-    all_hydro_codes = [10, 999]
-    all_thermal_codes = [100, 888]
-    all_bus_ids: list[int] = []
+    def __init__(self) -> None:
+        super().__init__(
+            subsystem_ids=[], hydro_codes=[10, 999], thermal_codes=[100, 888]
+        )
 
-    def hydro_id(self, code: int) -> int:
-        if code == 999:
-            raise KeyError(code)
+    def hydro_id(self, newave_hydro_code: int) -> int:
+        if newave_hydro_code == 999:
+            raise KeyError(newave_hydro_code)
         return 0
 
-    def thermal_id(self, code: int) -> int:
-        if code == 888:
-            raise KeyError(code)
+    def thermal_id(self, newave_thermal_code: int) -> int:
+        if newave_thermal_code == 888:
+            raise KeyError(newave_thermal_code)
         return 0
 
-    def bus_id(self, code: int) -> int:
-        raise KeyError(code)
+    def bus_id(self, newave_subsystem_id: int) -> int:
+        raise KeyError(newave_subsystem_id)
 
 
 class TestReadReferenceNames:

@@ -33,6 +33,7 @@ from tests.comparators.conftest import (
     _aligned_fixture,
     _patch_aligned_frames,
     _patch_shared_case,
+    _unmapped_codes,
 )
 
 
@@ -761,6 +762,6 @@ class TestBuildDecompDatasetNetwork:
 
         dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
-        assert dataset.metadata["unmapped"]["line"] == [[1, 3]]
+        assert _unmapped_codes(dataset, "line") == [[1, 3]]
         line_rows = dataset.tidy.filter(pl.col("entity_type") == "line")
         assert line_rows.is_empty()
