@@ -60,9 +60,13 @@ from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
 
+    from novomodelo_bridge.newave.horizon import StudyHorizon
+
 _LOG = logging.getLogger(__name__)
 
 _CATEGORY = "Special constraints"
+
+_VMINOP_DEFAULT_PENALTY = 1000.0
 
 
 @dataclass
@@ -136,6 +140,15 @@ class VminopResult(NamedTuple):
     bounds: pa.Table
     referenced_hydro_ids: list[int]
     per_stage_parameters: dict[str, list[float]]
+
+
+class _VminopRees(NamedTuple):
+    """Per-REE inputs of the VminOP constraints, keyed by REE code."""
+
+    plants: dict[int, list[int]]
+    shares: dict[int, list[StoredEnergyShare]]
+    penalties: dict[int, float]
+    names: dict[int, str]
 
 
 def vminop_pct_name(ree_code: int) -> str:
@@ -549,195 +562,17 @@ def convert_vminop_constraints(
     # whole tail. Default (parse failure / absent) is freeze, matching the manual.
     seasonalize_curve_post_study = _curve_seasonalizes(curva.configuracoes_penalizacao)
 
-    penalty_df = curva.custos_penalidades
-    confhd = case.confhd
-    hidr = case.hidr
-    ree_file = case.ree
-
-    cadastro = _apply_permanent_overrides(hidr.cadastro, case)
-    confhd_df = confhd.usinas
-
-    _horizon = case.horizon
-    start_month = _horizon.start_month
-    start_year = _horizon.start_year
-    num_stages = _horizon.total_stages
-
-    # Plants with no positive integrated cascade productivity store no energy.
-    fictitious = case.fictitious_codes
-    acc_prod = compute_accumulated_integrated_productivities(
-        cadastro, confhd_df, fictitious=fictitious
-    )
-
-    hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
-    ree_terms = _vminop_ree_shares(cadastro, id_map, acc_prod, hydro_to_ree)
-    per_stage_parameters: dict[str, list[float]] = {}
-
-    ree_hydros: dict[int, list[int]] = defaultdict(list)
-    for code, ree_code in hydro_to_ree.items():
-        ree_hydros[ree_code].append(code)
-
-    # Build penalty lookup: ree_code -> penalty value
-    penalty_map: dict[int, float] = {}
-    if penalty_df is not None and not penalty_df.empty:
-        for _, row in penalty_df.iterrows():
-            penalty_map[int(row["codigo_ree"])] = float(row["penalidade"])
-
-    # REE names from ree.dat
-    ree_names: dict[int, str] = {}
-    ree_df = ree_file.rees
-    if ree_df is not None:
-        for _, row in ree_df.iterrows():
-            ree_names[int(row["codigo"])] = str(row["nome"]).strip()
-
-    # REEs that have constraints in curva.dat
-    constraint_rees = sorted(curva_df["codigo_ree"].unique())
+    rees = _read_vminop_rees(case, id_map, curva.custos_penalidades)
 
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
-    all_referenced_ids: set[int] = set()
-
-    # Loop-accumulate-then-emit-once: one record per skipped/clamped REE,
-    # emitted after the loop so the per-REE detail survives finalize_diagnostics'
-    # (code, summary) de-dup (see converters/thermal.py's _GtminRecord idiom).
-    vminop_skips: list[_VminopSkip] = []
-    penalty_clamps: list[_VminopPenaltyClamp] = []
-
-    for ree_code in constraint_rees:
-        ree_code = int(ree_code)
-        hydros_in_ree = ree_hydros.get(ree_code, [])
-
-        if not hydros_in_ree:
-            vminop_skips.append(
-                _VminopSkip(
-                    ree_code=ree_code,
-                    ree_name=ree_names.get(ree_code, str(ree_code)),
-                    reason="no hydro plants",
-                )
-            )
-            continue
-
-        shares = ree_terms.get(ree_code, [])
-        if not shares:
-            vminop_skips.append(
-                _VminopSkip(
-                    ree_code=ree_code,
-                    ree_name=ree_names.get(ree_code, "?"),
-                    reason="no valid terms for VminOP expression",
-                )
-            )
-            continue
-
-        pct_name = vminop_pct_name(ree_code)
-        expression = stored_energy_floor([(1.0, s) for s in shares], pct_name)
-        # Every hydro an ``@…_h{id}`` parameter names must be declared.
-        referenced_ids = [int(h) for h in re.findall(r"@\w+?_h(\d+)\b", expression)]
-        ree_name = ree_names.get(ree_code, str(ree_code))
-        penalty = penalty_map.get(ree_code, 1000.0)
-        if penalty <= 0.0:
-            penalty_clamps.append(
-                _VminopPenaltyClamp(
-                    ree_code=ree_code,
-                    ree_name=ree_name,
-                    declared=penalty,
-                    applied=1000.0,
-                )
-            )
-            penalty = 1000.0
-
-        # Curve percentage per stage. curva.dat only covers the study period.
-        # Extend into the post-study ("Período Estático Final") per source-model's
-        # rule (manual table p.32-33): seasonalize (repeat the last study year's
-        # monthly curve) when curva.dat's third penalization field is set,
-        # otherwise freeze December's value across the whole tail.
-        study_months = _horizon.study_months
-        ree_curva = curva_df[curva_df["codigo_ree"] == ree_code].sort_values("data")
-
-        seasonal_pct: dict[int, float] = {}  # calendar_month -> last percentage
-        pct_by_stage: dict[int, float] = {}
-        for _, crow in ree_curva.iterrows():
-            dt: datetime = crow["data"]
-            stage_id = (dt.year - start_year) * 12 + (dt.month - start_month)
-            if stage_id < 0 or stage_id >= num_stages:
-                continue
-            percentage = float(crow["valor"])
-            seasonal_pct[dt.month] = percentage  # last value wins
-            pct_by_stage[stage_id] = percentage
-
-        # In-study gaps (and the post-study tail when seasonalized) use the
-        # seasonal pattern; otherwise the tail freezes at the last in-study
-        # stage's percentage (December of the last study year, forward-filled if
-        # that exact stage had no explicit row).
-        if seasonal_pct:
-            in_study = [s for s in pct_by_stage if s < study_months]
-            freeze_pct = pct_by_stage[max(in_study)] if in_study else None
-            for stage_id in range(num_stages):
-                if stage_id in pct_by_stage:
-                    continue
-                if stage_id >= study_months and not seasonalize_curve_post_study:
-                    pct = freeze_pct
-                else:
-                    cal_month = ((start_month - 1 + stage_id) % 12) + 1
-                    pct = seasonal_pct.get(cal_month)
-                if pct is not None:
-                    pct_by_stage[stage_id] = pct
-
-        if not pct_by_stage:
-            continue
-
-        builder.add(
-            name=f"VminOP_{ree_name}",
-            description=f"Minimum stored energy for REE {ree_code} ({ree_name})",
-            expression=expression,
-            slack=soft_slack(penalty, "per_unit"),
-            slots=[(stage_id, None, 0.0, None) for stage_id in sorted(pct_by_stage)],
-        )
-        per_stage_parameters[pct_name] = [
-            pct_by_stage.get(stage_id, 0.0) / 100.0 for stage_id in range(num_stages)
-        ]
-        all_referenced_ids.update(referenced_ids)
-
-    if vminop_skips:
-        emit(
-            Diagnostic(
-                code="vminop-ree-not-expressible",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=f"VminOP constraint not expressible ({len(vminop_skips)} REE(s))",
-                summary=(
-                    f"{len(vminop_skips)} REE(s) with a curva.dat VminOP entry "
-                    "could not be expressed as a generic constraint; skipping."
-                ),
-                table=DiagnosticTable(
-                    columns=["REE", "Name", "Reason"],
-                    rows=[[s.ree_code, s.ree_name, s.reason] for s in vminop_skips],
-                    justify=["right", "left", "left"],
-                ),
-            ),
-            logger=_LOG,
-        )
-    if penalty_clamps:
-        emit(
-            Diagnostic(
-                code="vminop-penalty-nonpositive",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=f"VminOP penalty not positive ({len(penalty_clamps)} REE(s))",
-                summary=(
-                    f"{len(penalty_clamps)} REE(s) declare a curva.dat VminOP "
-                    "penalty that is not positive; using 1000.0 instead."
-                ),
-                table=DiagnosticTable(
-                    columns=["REE", "Name", "Declared", "Applied"],
-                    rows=[
-                        [c.ree_code, c.ree_name, c.declared, c.applied]
-                        for c in penalty_clamps
-                    ],
-                    justify=["right", "left", "right", "right"],
-                ),
-                remediation="Check curva.dat's penalty column for these REEs.",
-            ),
-            logger=_LOG,
-        )
+    per_stage_parameters, all_referenced_ids = _add_vminop_constraints(
+        builder,
+        curva_df,
+        rees,
+        case.horizon,
+        seasonalize=seasonalize_curve_post_study,
+    )
 
     result = builder.result()
     if result is None:
@@ -761,6 +596,227 @@ def convert_vminop_constraints(
         result.bounds,
         sorted(all_referenced_ids),
         per_stage_parameters,
+    )
+
+
+def _read_vminop_rees(
+    case: NewaveCase, id_map: NewaveIdMap, penalty_df: pd.DataFrame | None
+) -> _VminopRees:
+    """Each REE's plants, VminOP shares, curva.dat penalty and ree.dat name."""
+    confhd = case.confhd
+    hidr = case.hidr
+    ree_file = case.ree
+
+    cadastro = _apply_permanent_overrides(hidr.cadastro, case)
+    confhd_df = confhd.usinas
+
+    # Plants with no positive integrated cascade productivity store no energy.
+    fictitious = case.fictitious_codes
+    acc_prod = compute_accumulated_integrated_productivities(
+        cadastro, confhd_df, fictitious=fictitious
+    )
+
+    hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
+    shares = _vminop_ree_shares(cadastro, id_map, acc_prod, hydro_to_ree)
+
+    plants: dict[int, list[int]] = defaultdict(list)
+    for code, ree_code in hydro_to_ree.items():
+        plants[ree_code].append(code)
+
+    penalties: dict[int, float] = {}
+    if penalty_df is not None and not penalty_df.empty:
+        for _, row in penalty_df.iterrows():
+            penalties[int(row["codigo_ree"])] = float(row["penalidade"])
+
+    names: dict[int, str] = {}
+    ree_df = ree_file.rees
+    if ree_df is not None:
+        for _, row in ree_df.iterrows():
+            names[int(row["codigo"])] = str(row["nome"]).strip()
+
+    return _VminopRees(plants, shares, penalties, names)
+
+
+def _add_vminop_constraints(
+    builder: GenericConstraintBuilder,
+    curva_df: pd.DataFrame,
+    rees: _VminopRees,
+    horizon: StudyHorizon,
+    *,
+    seasonalize: bool,
+) -> tuple[dict[str, list[float]], set[int]]:
+    """Add one VminOP constraint per curva.dat REE that can carry one.
+
+    Returns the ``pct_vminop_ree{code}`` per-stage parameters and the hydro ids
+    the added expressions reference.
+    """
+    per_stage_parameters: dict[str, list[float]] = {}
+    all_referenced_ids: set[int] = set()
+
+    # Loop-accumulate-then-emit-once: one record per skipped/clamped REE,
+    # emitted after the loop so the per-REE detail survives finalize_diagnostics'
+    # (code, summary) de-dup (see converters/thermal.py's _GtminRecord idiom).
+    vminop_skips: list[_VminopSkip] = []
+    penalty_clamps: list[_VminopPenaltyClamp] = []
+
+    for ree_code in sorted(curva_df["codigo_ree"].unique()):
+        ree_code = int(ree_code)
+        hydros_in_ree = rees.plants.get(ree_code, [])
+
+        if not hydros_in_ree:
+            vminop_skips.append(
+                _VminopSkip(
+                    ree_code=ree_code,
+                    ree_name=rees.names.get(ree_code, str(ree_code)),
+                    reason="no hydro plants",
+                )
+            )
+            continue
+
+        shares = rees.shares.get(ree_code, [])
+        if not shares:
+            vminop_skips.append(
+                _VminopSkip(
+                    ree_code=ree_code,
+                    ree_name=rees.names.get(ree_code, "?"),
+                    reason="no valid terms for VminOP expression",
+                )
+            )
+            continue
+
+        pct_name = vminop_pct_name(ree_code)
+        expression = stored_energy_floor([(1.0, s) for s in shares], pct_name)
+        # Every hydro an ``@…_h{id}`` parameter names must be declared.
+        referenced_ids = [int(h) for h in re.findall(r"@\w+?_h(\d+)\b", expression)]
+        ree_name = rees.names.get(ree_code, str(ree_code))
+        penalty = rees.penalties.get(ree_code, _VMINOP_DEFAULT_PENALTY)
+        if penalty <= 0.0:
+            penalty_clamps.append(
+                _VminopPenaltyClamp(
+                    ree_code=ree_code,
+                    ree_name=ree_name,
+                    declared=penalty,
+                    applied=_VMINOP_DEFAULT_PENALTY,
+                )
+            )
+            penalty = _VMINOP_DEFAULT_PENALTY
+
+        ree_curva = curva_df[curva_df["codigo_ree"] == ree_code].sort_values("data")
+        pct_by_stage = _vminop_pct_by_stage(ree_curva, horizon, seasonalize=seasonalize)
+        if not pct_by_stage:
+            continue
+
+        builder.add(
+            name=f"VminOP_{ree_name}",
+            description=f"Minimum stored energy for REE {ree_code} ({ree_name})",
+            expression=expression,
+            slack=soft_slack(penalty, "per_unit"),
+            slots=[(stage_id, None, 0.0, None) for stage_id in sorted(pct_by_stage)],
+        )
+        per_stage_parameters[pct_name] = [
+            pct_by_stage.get(stage_id, 0.0) / 100.0
+            for stage_id in range(horizon.total_stages)
+        ]
+        all_referenced_ids.update(referenced_ids)
+
+    _emit_vminop_skips(vminop_skips)
+    _emit_vminop_penalty_clamps(penalty_clamps)
+    return per_stage_parameters, all_referenced_ids
+
+
+def _vminop_pct_by_stage(
+    ree_curva: pd.DataFrame, horizon: StudyHorizon, *, seasonalize: bool
+) -> dict[int, float]:
+    """One REE's security-curve percentage on each stage it binds, by stage id."""
+    # Curve percentage per stage. curva.dat only covers the study period.
+    # Extend into the post-study ("Período Estático Final") per source-model's
+    # rule (manual table p.32-33): seasonalize (repeat the last study year's
+    # monthly curve) when curva.dat's third penalization field is set,
+    # otherwise freeze December's value across the whole tail.
+    start_year = horizon.start_year
+    start_month = horizon.start_month
+    num_stages = horizon.total_stages
+    study_months = horizon.study_months
+
+    seasonal_pct: dict[int, float] = {}  # calendar_month -> last percentage
+    pct_by_stage: dict[int, float] = {}
+    for _, crow in ree_curva.iterrows():
+        dt: datetime = crow["data"]
+        stage_id = (dt.year - start_year) * 12 + (dt.month - start_month)
+        if stage_id < 0 or stage_id >= num_stages:
+            continue
+        percentage = float(crow["valor"])
+        seasonal_pct[dt.month] = percentage  # last value wins
+        pct_by_stage[stage_id] = percentage
+
+    # In-study gaps (and the post-study tail when seasonalized) use the
+    # seasonal pattern; otherwise the tail freezes at the last in-study
+    # stage's percentage (December of the last study year, forward-filled if
+    # that exact stage had no explicit row).
+    if seasonal_pct:
+        in_study = [s for s in pct_by_stage if s < study_months]
+        freeze_pct = pct_by_stage[max(in_study)] if in_study else None
+        for stage_id in range(num_stages):
+            if stage_id in pct_by_stage:
+                continue
+            if stage_id >= study_months and not seasonalize:
+                pct = freeze_pct
+            else:
+                cal_month = ((start_month - 1 + stage_id) % 12) + 1
+                pct = seasonal_pct.get(cal_month)
+            if pct is not None:
+                pct_by_stage[stage_id] = pct
+
+    return pct_by_stage
+
+
+def _emit_vminop_skips(skips: list[_VminopSkip]) -> None:
+    """Emit the ``vminop-ree-not-expressible`` WARNING, one row per skipped REE."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="vminop-ree-not-expressible",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"VminOP constraint not expressible ({len(skips)} REE(s))",
+            summary=(
+                f"{len(skips)} REE(s) with a curva.dat VminOP entry "
+                "could not be expressed as a generic constraint; skipping."
+            ),
+            table=DiagnosticTable(
+                columns=["REE", "Name", "Reason"],
+                rows=[[s.ree_code, s.ree_name, s.reason] for s in skips],
+                justify=["right", "left", "left"],
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
+def _emit_vminop_penalty_clamps(clamps: list[_VminopPenaltyClamp]) -> None:
+    """Emit the ``vminop-penalty-nonpositive`` WARNING, one row per clamped REE."""
+    if not clamps:
+        return
+    emit(
+        Diagnostic(
+            code="vminop-penalty-nonpositive",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"VminOP penalty not positive ({len(clamps)} REE(s))",
+            summary=(
+                f"{len(clamps)} REE(s) declare a curva.dat VminOP "
+                f"penalty that is not positive; using {_VMINOP_DEFAULT_PENALTY} "
+                "instead."
+            ),
+            table=DiagnosticTable(
+                columns=["REE", "Name", "Declared", "Applied"],
+                rows=[[c.ree_code, c.ree_name, c.declared, c.applied] for c in clamps],
+                justify=["right", "left", "right", "right"],
+            ),
+            remediation="Check curva.dat's penalty column for these REEs.",
+        ),
+        logger=_LOG,
     )
 
 
