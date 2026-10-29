@@ -14,6 +14,27 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`compare decomp` exits 1 when the DECOMP deck is not found**, as
+  `compare newave` does; it used to exit 2. An unreadable Novomodelo output
+  still exits 2 on both tracks.
+- **The development tools are a dependency group, not the `dev` extra.**
+  `uv sync` installs them; `pip install -e '.[dev]'` no longer does.
+- **The sdist no longer carries agent rules, caches or checkouts** (dotfiles,
+  `_*` folders, `CLAUDE.md`, `AGENTS.md`); it still carries `tests/`.
+- **The license is declared as the SPDX expression `Apache-2.0`**, with
+  `LICENSE` and `NOTICE` as license files, in place of the license classifier.
+
+### Fixed
+
+- **`--json` prints the verdict envelope for a command line the parser
+  rejects.** An unknown option or command, a missing argument or an invalid
+  value left stdout empty; it now prints the envelope, with status `error` and
+  a `usage-error` diagnostic, and still exits 2.
+- **Text files are read and written as UTF-8 on every platform.** On Windows
+  they used the locale's code page, so accented text could be misread.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins
