@@ -371,7 +371,6 @@ _HYDRO_BOUND_OVERLAY: dict[str, dict[str, tuple[str | None, str | None]]] = {
     },
 }
 
-
 _NW_WITHDRAWAL_SLACK_VARS = (
     "water_withdrawal_violation_pos_m3s",
     "water_withdrawal_violation_neg_m3s",
@@ -680,48 +679,23 @@ def build_thermal_detail_tab(
     return summary_table + detail_html
 
 
-def build_comparison_report(
-    dataset: ComparisonDataset, reference_label: str = "NEWAVE"
+def _full_width_chart(chart_html: str) -> str:
+    return chart_grid([wrap_chart(chart_html)], single=True)
+
+
+def _build_overview_tab(
+    dataset: ComparisonDataset, summary: ResultsSummary, reference_label: str
 ) -> str:
-    """Build a complete HTML comparison report.
-
-    Every tab sources its non-tidy inputs from ``dataset.render`` (see
-    :class:`~novomodelo_bridge.comparators.dataset.RenderInputs`): each tab reads
-    its own named, already-typed fields, and the chart functions that still
-    take ``list[ResultComparison]`` directly read ``dataset.render.results``.
-
-    Parameters
-    ----------
-    dataset:
-        The canonical comparison dataset. Its ``render`` carries every render
-        input (named per-tab fields plus the ``results`` list).
-    reference_label:
-        Display name for the reference series (trace names, chart titles,
-        prose). Defaults to ``"NEWAVE"``; ``compare decomp`` passes ``"DECOMP"``.
-
-    Returns
-    -------
-    str
-        Complete HTML document string.
-    """
-    results = dataset.render.results
-    # Reconstruct the overview summary from the dataset's already-computed
-    # summary rows + footer counts rather than recomputing it from the raw
-    # ``results`` list — the chart functions below still consume ``results``
-    # directly, but ``overview_metrics`` reads only the reconstructed summary.
-    summary = _results_summary_from_dataset(dataset)
-
-    tab_contents: dict[str, str] = {}
-
-    # --- Overview tab ---
-    overview_parts: list[str] = []
     nw_costs = dataset.render.nw_costs
     novomodelo_costs = dataset.render.novomodelo_costs
-    overview_parts.append(
-        overview_metrics(summary, nw_costs, novomodelo_costs, reference_label)
-    )
-    overview_parts.append(section_title("Cost Breakdown"))
-    overview_parts.append(
+    nw_sin = dataset.render.nw_sin
+    novomodelo_stage_costs = dataset.render.novomodelo_stage_costs
+    nw_offset = dataset.render.nw_offset
+    nw_conv = dataset.render.nw_convergence
+    cb_conv = dataset.render.novomodelo_convergence
+    parts = [
+        overview_metrics(summary, nw_costs, novomodelo_costs, reference_label),
+        section_title("Cost Breakdown"),
         chart_grid(
             [
                 wrap_chart(
@@ -731,16 +705,11 @@ def build_comparison_report(
                     cost_breakdown_table(nw_costs, novomodelo_costs, reference_label)
                 ),
             ],
-        )
-    )
-    overview_parts.append(section_title("Per-Stage Cost"))
-    nw_sin = dataset.render.nw_sin
-    novomodelo_stage_costs = dataset.render.novomodelo_stage_costs
-    nw_offset = dataset.render.nw_offset
-    # Two side-by-side charts — immediate and future cost have very
-    # different scales (one is per-stage operating cost, the other is a
-    # cumulative future expectation), so we don't share an axis.
-    overview_parts.append(
+        ),
+        section_title("Per-Stage Cost"),
+        # Two side-by-side charts — immediate and future cost have very
+        # different scales (one is per-stage operating cost, the other is a
+        # cumulative future expectation), so we don't share an axis.
         chart_grid(
             [
                 wrap_chart(
@@ -754,12 +723,10 @@ def build_comparison_report(
                     )
                 ),
             ],
-        )
-    )
-    # Thermal-only (CTERM, live on both sides) and the non-thermal remainder (COPER −
-    # CTERM) — the latter goes negative for the source model in the post-study because
-    # COPER is frozen at the last study value while CTERM stays live.
-    overview_parts.append(
+        ),
+        # Thermal-only (CTERM, live on both sides) and the non-thermal remainder (COPER −
+        # CTERM) — the latter goes negative for the source model in the post-study because
+        # COPER is frozen at the last study value while CTERM stays live.
         chart_grid(
             [
                 wrap_chart(
@@ -773,57 +740,89 @@ def build_comparison_report(
                     )
                 ),
             ],
-        )
-    )
-
-    overview_parts.append(section_title("Convergence"))
-    nw_conv = dataset.render.nw_convergence
-    cb_conv = dataset.render.novomodelo_convergence
-    overview_parts.append(
-        chart_grid(
-            [wrap_chart(convergence_chart(nw_conv, cb_conv, reference_label))],
-            single=True,
-        )
-    )
+        ),
+        section_title("Convergence"),
+        _full_width_chart(convergence_chart(nw_conv, cb_conv, reference_label)),
+    ]
     net_table = net_of_penalties_table(
         nw_conv, cb_conv, nw_costs, novomodelo_costs, reference_label
     )
     if net_table:
-        overview_parts.append(chart_grid([wrap_chart(net_table)], single=True))
-    tab_contents["tab-overview"] = "\n".join(overview_parts)
+        parts.append(_full_width_chart(net_table))
+    return "\n".join(parts)
 
-    # --- System tab ---
+
+def _build_system_tab(dataset: ComparisonDataset, reference_label: str) -> str:
+    results = dataset.render.results
     bus_pct = dataset.render.bus
-    system_parts: list[str] = []
-    system_parts.append(section_title("Spot Price by Bus"))
-    system_parts.append(
-        chart_grid(
-            [
-                wrap_chart(
-                    system_per_bus_chart(
-                        results, "spot_price", "CMO by Bus", bus_pct, reference_label
-                    )
+    return "\n".join(
+        [
+            section_title("Spot Price by Bus"),
+            _full_width_chart(
+                system_per_bus_chart(
+                    results, "spot_price", "CMO by Bus", bus_pct, reference_label
                 )
-            ],
-            single=True,
-        )
-    )
-    system_parts.append(section_title("Deficit"))
-    system_parts.append(
-        chart_grid(
-            [
-                wrap_chart(
-                    system_comparison_chart(
-                        results, "deficit_mw", "Deficit", bus_pct, reference_label
-                    )
+            ),
+            section_title("Deficit"),
+            _full_width_chart(
+                system_comparison_chart(
+                    results, "deficit_mw", "Deficit", bus_pct, reference_label
                 )
-            ],
-            single=True,
-        )
+            ),
+        ]
     )
-    tab_contents["tab-system"] = "\n".join(system_parts)
 
-    # --- Energy Balance tab ---
+
+def _system_energy_charts(
+    dataset: ComparisonDataset,
+    earm_title: str,
+    ena_title: str,
+    matched_ids: set[int] | None,
+    reference_label: str,
+) -> list[str]:
+    # System-level EARM and ENA (Novomodelo per-hydro aggregate vs the source model SIN). The
+    # source model EARMF is in MWmes (mean MW over a month); convert to MWh via the
+    # canonical 730 h/month factor used by the source model.  ENA is already in MW (mean
+    # power) on both sides.
+    novomodelo_hydro_means = dataset.render.novomodelo_hydro_means
+    hydro_pct = dataset.render.hydro
+    nw_sin = dataset.render.nw_sin
+    nw_offset = dataset.render.nw_offset
+    return [
+        wrap_chart(
+            novomodelo_aggregate_chart(
+                novomodelo_hydro_means,
+                "stored_energy_final_mwh",
+                earm_title,
+                "MWh",
+                hydro_pct,
+                nw_sin=nw_sin,
+                nw_variable="EARMF",
+                nw_factor=730.0,
+                nw_offset=nw_offset,
+                matched_ids=matched_ids,
+                reference_label=reference_label,
+            )
+        ),
+        wrap_chart(
+            novomodelo_aggregate_chart(
+                novomodelo_hydro_means,
+                "incremental_inflow_energy_mw",
+                ena_title,
+                "MW",
+                hydro_pct,
+                nw_sin=nw_sin,
+                nw_variable="ENA",
+                nw_factor=1.0,
+                nw_offset=nw_offset,
+                matched_ids=matched_ids,
+                reference_label=reference_label,
+            )
+        ),
+    ]
+
+
+def _build_balance_tab(dataset: ComparisonDataset, reference_label: str) -> str:
     balance_html = build_energy_balance_tab(
         dataset.render.nw_market,
         dataset.render.bus_aggregates,
@@ -832,51 +831,24 @@ def build_comparison_report(
         nw_net_load=dataset.render.nw_net_load,
         reference_label=reference_label,
     )
-    balance_novomodelo_hydro_means = dataset.render.novomodelo_hydro_means
-    balance_hydro = dataset.render.hydro
-    balance_nw_sin = dataset.render.nw_sin
-    balance_nw_offset = dataset.render.nw_offset
     energy_balance_extra: list[str] = []
-    if not balance_novomodelo_hydro_means.is_empty():
+    if not dataset.render.novomodelo_hydro_means.is_empty():
         energy_balance_extra.append(section_title("System Energy (EARM / ENA)"))
         energy_balance_extra.append(
             chart_grid(
-                [
-                    wrap_chart(
-                        novomodelo_aggregate_chart(
-                            balance_novomodelo_hydro_means,
-                            "stored_energy_final_mwh",
-                            "System Stored Energy (EARM)",
-                            "MWh",
-                            balance_hydro,
-                            nw_sin=balance_nw_sin,
-                            nw_variable="EARMF",
-                            nw_factor=730.0,
-                            nw_offset=balance_nw_offset,
-                            reference_label=reference_label,
-                        )
-                    ),
-                    wrap_chart(
-                        novomodelo_aggregate_chart(
-                            balance_novomodelo_hydro_means,
-                            "incremental_inflow_energy_mw",
-                            "System Natural Inflow Energy (ENA)",
-                            "MW",
-                            balance_hydro,
-                            nw_sin=balance_nw_sin,
-                            nw_variable="ENA",
-                            nw_factor=1.0,
-                            nw_offset=balance_nw_offset,
-                            reference_label=reference_label,
-                        )
-                    ),
-                ]
+                _system_energy_charts(
+                    dataset,
+                    "System Stored Energy (EARM)",
+                    "System Natural Inflow Energy (ENA)",
+                    None,
+                    reference_label,
+                )
             )
         )
-    # --- REE energy rollup (additive; absent for `compare
-    # newave` datasets, which never carry `entity_type == "ree"` rows) ---
-    ree_results = [r for r in results if r.entity_type == "ree"]
-    if ree_results:
+    # REE energy rollup (additive; absent for `compare newave` datasets, which
+    # never carry `entity_type == "ree"` rows).
+    results = dataset.render.results
+    if any(r.entity_type == "ree" for r in results):
         energy_balance_extra.append(section_title("REE Energy (ENA / EARM)"))
         energy_balance_extra.append(
             chart_grid(
@@ -900,41 +872,38 @@ def build_comparison_report(
                 ]
             )
         )
-    tab_contents["tab-balance"] = balance_html + "\n" + "\n".join(energy_balance_extra)
+    return balance_html + "\n" + "\n".join(energy_balance_extra)
 
-    # --- Network tab ---
-    line_pct = dataset.render.line
-    line_bounds = dataset.render.line_bounds
-    line_meta = dataset.render.line_meta
-    network_parts: list[str] = []
-    network_parts.append(section_title("Line Net Flow"))
-    network_parts.append(
-        chart_grid(
-            [
-                wrap_chart(
-                    line_summary_chart(
-                        results, line_pct, line_bounds, line_meta, reference_label
-                    )
+
+def _build_network_tab(dataset: ComparisonDataset, reference_label: str) -> str:
+    return "\n".join(
+        [
+            section_title("Line Net Flow"),
+            _full_width_chart(
+                line_summary_chart(
+                    dataset.render.results,
+                    dataset.render.line,
+                    dataset.render.line_bounds,
+                    dataset.render.line_meta,
+                    reference_label,
                 )
-            ],
-            single=True,
-        )
+            ),
+        ]
     )
-    tab_contents["tab-network"] = "\n".join(network_parts)
 
-    # --- Constraints tab --- Per-constraint LHS comparison: The source-model-side LHS
-    # evaluated against MEDIAS-USIH / int*.out output, Novomodelo-side LHS as the mean across
+
+def _build_constraints_tab(dataset: ComparisonDataset, reference_label: str) -> str:
+    # Per-constraint LHS comparison: The source-model-side LHS evaluated against
+    # MEDIAS-USIH / int*.out output, Novomodelo-side LHS as the mean across
     # scenarios and blocks from the simulation parquet. Bounds are taken from
     # constraints/generic_constraint_bounds.parquet's sense-free `bound_lower`/
     # `bound_upper` endpoints via `per_stage_bounds` (block 0 preferred when blocks
     # disagree; the resolved `ResolvedBound.shape` — not a removed `sense` field —
     # drives the chart's direction label, see `constraints_comparison_chart`).
-    gc_constraints = dataset.render.gc_constraints
-    gc_bounds_df = dataset.render.gc_bounds
     gc_lhs_nw = dataset.render.gc_lhs_newave
     gc_lhs_cb = dataset.render.gc_lhs_novomodelo
     gc_max_stage = dataset.render.nw_max_stage
-    bound_lookup = per_stage_bounds(gc_bounds_df, max_stage=gc_max_stage)
+    bound_lookup = per_stage_bounds(dataset.render.gc_bounds, max_stage=gc_max_stage)
     if gc_max_stage is not None:
         gc_lhs_nw = (
             gc_lhs_nw.filter(pl.col("stage_id") <= gc_max_stage)
@@ -946,35 +915,88 @@ def build_comparison_report(
             if not gc_lhs_cb.is_empty()
             else gc_lhs_cb
         )
-    constraints_parts: list[str] = []
-    constraints_parts.append(section_title("Generic Constraints — LHS vs Bound"))
-    constraints_parts.append(
-        chart_grid(
-            [
-                wrap_chart(
-                    constraints_comparison_chart(
-                        gc_constraints,
-                        gc_lhs_nw,
-                        gc_lhs_cb,
-                        bound_lookup,
-                        reference_label,
-                    )
+    return "\n".join(
+        [
+            section_title("Generic Constraints — LHS vs Bound"),
+            _full_width_chart(
+                constraints_comparison_chart(
+                    dataset.render.gc_constraints,
+                    gc_lhs_nw,
+                    gc_lhs_cb,
+                    bound_lookup,
+                    reference_label,
                 )
-            ],
-            single=True,
-        )
+            ),
+        ]
     )
-    tab_contents["tab-constraints"] = "\n".join(constraints_parts)
 
-    # --- Hydro Operation tab ---
-    hydro_pct = dataset.render.hydro
+
+def _hydro_slack_sections(
+    dataset: ComparisonDataset, matched_ids: set[int] | None, reference_label: str
+) -> list[str]:
+    # Slack variables: same per-bus + SIN-total treatment as the operational
+    # variables above, but driven by the per-(entity_id, stage_id) Novomodelo frame and the
+    # source model slack frame (no ResultComparison rows exist for slacks).  The inflow
+    # non-negativity slack has no source-model counterpart, so its the source model
+    # source is passed as None — the chart still renders the Novomodelo Mean + p10/p90 band,
+    # just without an overlaid the source model line.
     novomodelo_hydro_means = dataset.render.novomodelo_hydro_means
-    nw_sin = dataset.render.nw_sin
-    nw_offset = dataset.render.nw_offset
-    matched_hydro_ids = {r.novomodelo_id for r in results if r.entity_type == "hydro"}
+    nw_hydro_slacks = dataset.render.nw_hydro_slacks
+    hydro_pct = dataset.render.hydro
+    # Withdrawal pos/neg are SWAPPED to follow the source model's sign convention; the
+    # ``_NW_HYDRO_SLACK_VARS`` mapping in ``results.py`` is correspondingly swapped so
+    # each panel pairs the right Novomodelo column with the right The source model series.
+    # Evaporation pos/neg already share the source model's convention.
+    slack_specs: list[tuple[str, str, bool]] = [
+        ("water_withdrawal_violation_neg_m3s", "Withdrawal Slack Pos (m³/s)", True),
+        ("water_withdrawal_violation_pos_m3s", "Withdrawal Slack Neg (m³/s)", True),
+        ("evaporation_violation_pos_m3s", "Evaporation Slack Pos (m³/s)", True),
+        ("evaporation_violation_neg_m3s", "Evaporation Slack Neg (m³/s)", True),
+        ("inflow_nonnegativity_slack_m3s", "Inflow Non-Negativity Slack (m³/s)", False),
+    ]
+    parts: list[str] = []
+    for var, slack_title, has_newave in slack_specs:
+        parts.append(section_title(slack_title + " by Bus"))
+        parts.append(
+            _full_width_chart(
+                hydro_slack_per_bus_chart(
+                    novomodelo_hydro_means,
+                    nw_hydro_slacks if has_newave else None,
+                    var,
+                    slack_title + " by Bus",
+                    hydro_pct,
+                    dataset.render.novomodelo_hydro_meta,
+                    dataset.render.novomodelo_bus_meta,
+                    matched_ids=matched_ids,
+                    reference_label=reference_label,
+                )
+            )
+        )
 
-    hydro_meta = dataset.render.novomodelo_hydro_meta
-    bus_meta = dataset.render.novomodelo_bus_meta
+    parts.append(section_title("Hydro Slacks (SIN)"))
+    slack_sin_charts = [
+        wrap_chart(
+            hydro_slack_aggregate_chart(
+                novomodelo_hydro_means,
+                nw_hydro_slacks if has_newave else None,
+                var,
+                slack_title,
+                hydro_pct,
+                matched_ids=matched_ids,
+                reference_label=reference_label,
+            )
+        )
+        for var, slack_title, has_newave in slack_specs
+    ]
+    parts.append(chart_grid(slack_sin_charts))
+    return parts
+
+
+def _build_hydro_operation_tab(dataset: ComparisonDataset, reference_label: str) -> str:
+    results = dataset.render.results
+    hydro_pct = dataset.render.hydro
+    matched_ids = {r.novomodelo_id for r in results if r.entity_type == "hydro"} or None
+
     hydro_parts: list[str] = []
     for var, title in [
         ("storage_final_hm3", "Storage by Bus (hm³)"),
@@ -986,62 +1008,31 @@ def build_comparison_report(
     ]:
         hydro_parts.append(section_title(title))
         hydro_parts.append(
-            chart_grid(
-                [
-                    wrap_chart(
-                        hydro_per_bus_chart(
-                            results,
-                            var,
-                            title,
-                            hydro_pct,
-                            hydro_meta,
-                            bus_meta,
-                            reference_label,
-                        )
-                    )
-                ],
-                single=True,
+            _full_width_chart(
+                hydro_per_bus_chart(
+                    results,
+                    var,
+                    title,
+                    hydro_pct,
+                    dataset.render.novomodelo_hydro_meta,
+                    dataset.render.novomodelo_bus_meta,
+                    reference_label,
+                )
             )
         )
 
-    # System-level EARM and ENA (Novomodelo per-hydro aggregate vs the source model SIN). The
-    # source model EARMF is in MWmes (mean MW over a month); convert to MWh via the
-    # canonical 730 h/month factor used by the source model.  ENA is already in MW (mean
-    # power) on both sides.
     hydro_parts.append(section_title("Aggregate Energy Variables"))
-    energy_charts = [
-        wrap_chart(
-            novomodelo_aggregate_chart(
-                novomodelo_hydro_means,
-                "stored_energy_final_mwh",
+    hydro_parts.append(
+        chart_grid(
+            _system_energy_charts(
+                dataset,
                 "Stored Energy (EARM)",
-                "MWh",
-                hydro_pct,
-                nw_sin=nw_sin,
-                nw_variable="EARMF",
-                nw_factor=730.0,
-                nw_offset=nw_offset,
-                matched_ids=matched_hydro_ids or None,
-                reference_label=reference_label,
-            )
-        ),
-        wrap_chart(
-            novomodelo_aggregate_chart(
-                novomodelo_hydro_means,
-                "incremental_inflow_energy_mw",
                 "Natural Inflow Energy (ENA)",
-                "MW",
-                hydro_pct,
-                nw_sin=nw_sin,
-                nw_variable="ENA",
-                nw_factor=1.0,
-                nw_offset=nw_offset,
-                matched_ids=matched_hydro_ids or None,
-                reference_label=reference_label,
+                matched_ids,
+                reference_label,
             )
-        ),
-    ]
-    hydro_parts.append(chart_grid(energy_charts))
+        )
+    )
 
     # System-aggregate (SIN) totals for each hydro variable. Sums Novomodelo plant values per
     # stage and overlays the source model total. Mirrors the per-bus facet section but
@@ -1064,103 +1055,31 @@ def build_comparison_report(
         )
     hydro_parts.append(chart_grid(aggregate_charts))
 
-    # Slack variables: same per-bus + SIN-total treatment as the operational
-    # variables above, but driven by the per-(entity_id, stage_id) Novomodelo frame and the
-    # source model slack frame (no ResultComparison rows exist for slacks).  The inflow
-    # non-negativity slack has no source-model counterpart, so its the source model
-    # source is passed as None — the chart still renders the Novomodelo Mean + p10/p90 band,
-    # just without an overlaid the source model line.
-    nw_hydro_slacks = dataset.render.nw_hydro_slacks
-    # Withdrawal pos/neg are SWAPPED to follow the source model's sign convention; the
-    # ``_NW_HYDRO_SLACK_VARS`` mapping in ``results.py`` is correspondingly swapped so
-    # each panel pairs the right Novomodelo column with the right The source model series.
-    # Evaporation pos/neg already share the source model's convention.
-    slack_specs: list[tuple[str, str, bool]] = [
-        ("water_withdrawal_violation_neg_m3s", "Withdrawal Slack Pos (m³/s)", True),
-        ("water_withdrawal_violation_pos_m3s", "Withdrawal Slack Neg (m³/s)", True),
-        ("evaporation_violation_pos_m3s", "Evaporation Slack Pos (m³/s)", True),
-        ("evaporation_violation_neg_m3s", "Evaporation Slack Neg (m³/s)", True),
-        ("inflow_nonnegativity_slack_m3s", "Inflow Non-Negativity Slack (m³/s)", False),
-    ]
-    for var, slack_title, has_newave in slack_specs:
-        hydro_parts.append(section_title(slack_title + " by Bus"))
-        hydro_parts.append(
-            chart_grid(
-                [
-                    wrap_chart(
-                        hydro_slack_per_bus_chart(
-                            novomodelo_hydro_means,
-                            nw_hydro_slacks if has_newave else None,
-                            var,
-                            slack_title + " by Bus",
-                            hydro_pct,
-                            hydro_meta,
-                            bus_meta,
-                            matched_ids=matched_hydro_ids or None,
-                            reference_label=reference_label,
-                        )
-                    )
-                ],
-                single=True,
-            )
-        )
+    hydro_parts.extend(_hydro_slack_sections(dataset, matched_ids, reference_label))
+    return "\n".join(hydro_parts)
 
-    hydro_parts.append(section_title("Hydro Slacks (SIN)"))
-    slack_sin_charts = [
-        wrap_chart(
-            hydro_slack_aggregate_chart(
-                novomodelo_hydro_means,
-                nw_hydro_slacks if has_newave else None,
-                var,
-                slack_title,
-                hydro_pct,
-                matched_ids=matched_hydro_ids or None,
-                reference_label=reference_label,
-            )
-        )
-        for var, slack_title, has_newave in slack_specs
-    ]
-    hydro_parts.append(chart_grid(slack_sin_charts))
 
-    tab_contents["tab-hydro"] = "\n".join(hydro_parts)
-
-    # --- Hydro Plant Details tab ---
-    tab_contents["tab-hydro-detail"] = build_hydro_detail_tab(
-        results,
-        hydro_pct,
-        novomodelo_hydro_means,
-        novomodelo_hydro_meta=hydro_meta,
-        novomodelo_hydro_per_stage_bounds=dataset.render.novomodelo_hydro_per_stage_bounds,
-        nw_hydro_slacks=nw_hydro_slacks,
-        reference_label=reference_label,
-        masked_hydro=dataset.render.hydro_masked,
-    )
-
-    # --- Thermal Operation tab ---
-    thermal_pct = dataset.render.thermal
-    thermal_parts: list[str] = []
-    thermal_parts.append(section_title("Thermal Generation Comparison"))
-    thermal_parts.append(
-        chart_grid(
-            [
-                wrap_chart(
-                    thermal_generation_chart(results, thermal_pct, reference_label)
+def _build_thermal_operation_tab(
+    dataset: ComparisonDataset, reference_label: str
+) -> str:
+    return "\n".join(
+        [
+            section_title("Thermal Generation Comparison"),
+            _full_width_chart(
+                thermal_generation_chart(
+                    dataset.render.results, dataset.render.thermal, reference_label
                 )
-            ],
-            single=True,
-        )
-    )
-    tab_contents["tab-thermal"] = "\n".join(thermal_parts)
-
-    # --- Thermal Plant Details tab ---
-    tab_contents["tab-thermal-detail"] = build_thermal_detail_tab(
-        results, thermal_pct, reference_label
+            ),
+        ]
     )
 
-    # --- Productivity tab ---
+
+def _productivity_sections(
+    dataset: ComparisonDataset, reference_label: str
+) -> list[str]:
     prod_df = dataset.render.productivity_detail
     per_stage_df = dataset.render.productivity_per_stage
-    prod_parts: list[str] = []
+    parts: list[str] = []
     static_title = (
         "Static productivity — pmo vs novomodelo-bridge conversion "
         "(point / equivalent / accumulated)"
@@ -1170,8 +1089,8 @@ def build_comparison_report(
     # non-empty ``per_stage_df`` while ``prod_df`` stays empty -- so each
     # section is gated on its own frame.
     if not prod_df.is_empty():
-        prod_parts.append(section_title(static_title))
-        prod_parts.append(
+        parts.append(section_title(static_title))
+        parts.append(
             chart_grid(
                 [
                     wrap_chart(
@@ -1203,8 +1122,8 @@ def build_comparison_report(
         )
 
     if not per_stage_df.is_empty():
-        prod_parts.append(section_title("Realized productivity across stages"))
-        prod_parts.append(
+        parts.append(section_title("Realized productivity across stages"))
+        parts.append(
             '<p style="color:#64748B;margin:-8px 0 12px">Productivity is constant'
             " within a stage but varies across stages, tracking the reservoir"
             f" head reached each stage — pick a reservoir to compare {reference_label}"
@@ -1212,23 +1131,25 @@ def build_comparison_report(
         )
         # Reuses the shared per-plant dropdown widget (same as the hydro/thermal
         # detail tabs), so every reservoir is selectable — not a fixed subset.
-        prod_parts.append(productivity_per_stage_chart(per_stage_df, reference_label))
+        parts.append(productivity_per_stage_chart(per_stage_df, reference_label))
 
     if not prod_df.is_empty():
-        prod_parts.append(section_title("Productivity Building Blocks"))
-        prod_parts.append(
-            chart_grid(
-                [wrap_chart(productivity_blocks_table(prod_df, reference_label))],
-                single=True,
-            )
+        parts.append(section_title("Productivity Building Blocks"))
+        parts.append(
+            _full_width_chart(productivity_blocks_table(prod_df, reference_label))
         )
+    return parts
 
-    # --- Both models at their operating points ---
+
+def _operating_point_sections(
+    dataset: ComparisonDataset, reference_label: str
+) -> list[str]:
     fpha_split = dataset.render.fpha_split
     tie_share = dataset.render.tie_share
+    parts: list[str] = []
     if not fpha_split.is_empty():
-        prod_parts.append(section_title("Why the realized productivities differ"))
-        prod_parts.append(
+        parts.append(section_title("Why the realized productivities differ"))
+        parts.append(
             '<p style="color:#64748B;margin:-8px 0 12px">Each row splits the gap'
             " between the two realized productivities of a plant and stage into"
             " a part from the fitted production functions (Novomodelo's planes against"
@@ -1236,20 +1157,15 @@ def build_comparison_report(
             " operating points) and a part from where Novomodelo operates. Largest gap"
             " in MW first.</p>"
         )
-        prod_parts.append(fpha_split_table(fpha_split, reference_label))
+        parts.append(fpha_split_table(fpha_split, reference_label))
     elif not tie_share.is_empty():
-        prod_parts.append(section_title("Tie points"))
+        parts.append(section_title("Tie points"))
     if not tie_share.is_empty():
-        prod_parts.append(
-            chart_grid(
-                [wrap_chart(tie_share_table(tie_share, reference_label))],
-                single=True,
-            )
-        )
+        parts.append(_full_width_chart(tie_share_table(tie_share, reference_label)))
     fpha_slices = dataset.render.fpha_slices
     if not fpha_slices.is_empty():
-        prod_parts.append(section_title("Production function at the operating point"))
-        prod_parts.append(
+        parts.append(section_title("Production function at the operating point"))
+        parts.append(
             '<p style="color:#64748B;margin:-8px 0 12px">Generation against'
             f" turbined flow at {reference_label}'s mean storage, spill and lateral"
             f" flow for the stage: {reference_label}'s planes, Novomodelo's planes, the"
@@ -1258,7 +1174,7 @@ def build_comparison_report(
             " function. The table lists each model's fit inputs and the head"
             " components at its mean operating point. Pick a plant and stage.</p>"
         )
-        prod_parts.append(
+        parts.append(
             fpha_slice_chart(
                 fpha_slices,
                 dataset.render.fpha_fit_inputs,
@@ -1266,73 +1182,125 @@ def build_comparison_report(
                 reference_label,
             )
         )
+    return parts
 
-    # --- Fitted production functions (FPHA) --- Present only when both sides
-    # fitted FPHA hyperplanes; compares the production surfaces GH(V, Q) the two
-    # solvers fit, on a shared grid (run-of-river plants reduce to a Q-curve).
+
+def _fpha_surface_sections(
+    dataset: ComparisonDataset, reference_label: str
+) -> list[str]:
+    # Present only when both sides fitted FPHA hyperplanes; compares the production
+    # surfaces GH(V, Q) the two solvers fit, on a shared grid (run-of-river plants
+    # reduce to a Q-curve).
     fpha_metrics = dataset.render.fpha_metrics
-    if not fpha_metrics.is_empty():
-        fpha_surface = dataset.render.fpha_surface
-        fpha_spill = dataset.render.fpha_spill
-        prod_parts.append(section_title("Fitted production functions (FPHA)"))
-        prod_parts.append(
-            '<p style="color:#64748B;margin:-8px 0 12px">Both solvers fit the'
-            " hydro production surface GH(V, Q, S) as a set of hyperplanes; this"
-            " compares the resulting surfaces at the fitting-grid nodes. Use the"
-            f" {reference_label} / Novomodelo / Both / Difference buttons to isolate each"
-            f" surface or their difference (Novomodelo − {reference_label}, MW); they"
-            " nearly coincide at S = 0. Spillage (S) is shown separately at the max"
-            " V/Q corner. Pick a plant and stage.</p>"
-        )
-        prod_parts.append(fpha_detail_chart(fpha_surface, fpha_spill, reference_label))
-        prod_parts.append(section_title("FPHA surface fidelity by plant"))
-        prod_parts.append(
-            chart_grid(
-                [wrap_chart(fpha_metrics_table(fpha_metrics, reference_label))],
-                single=True,
-            )
-        )
+    if fpha_metrics.is_empty():
+        return []
+    return [
+        section_title("Fitted production functions (FPHA)"),
+        '<p style="color:#64748B;margin:-8px 0 12px">Both solvers fit the'
+        " hydro production surface GH(V, Q, S) as a set of hyperplanes; this"
+        " compares the resulting surfaces at the fitting-grid nodes. Use the"
+        f" {reference_label} / Novomodelo / Both / Difference buttons to isolate each"
+        f" surface or their difference (Novomodelo − {reference_label}, MW); they"
+        " nearly coincide at S = 0. Spillage (S) is shown separately at the max"
+        " V/Q corner. Pick a plant and stage.</p>",
+        fpha_detail_chart(
+            dataset.render.fpha_surface, dataset.render.fpha_spill, reference_label
+        ),
+        section_title("FPHA surface fidelity by plant"),
+        _full_width_chart(fpha_metrics_table(fpha_metrics, reference_label)),
+    ]
 
+
+def _build_productivity_tab(dataset: ComparisonDataset, reference_label: str) -> str:
+    prod_parts = [
+        *_productivity_sections(dataset, reference_label),
+        *_operating_point_sections(dataset, reference_label),
+        *_fpha_surface_sections(dataset, reference_label),
+    ]
     if not prod_parts:
         prod_parts.append("<p>No productivity data available.</p>")
-    tab_contents["tab-productivity"] = "\n".join(prod_parts)
+    return "\n".join(prod_parts)
 
-    # --- Performance tab ---
+
+def _build_performance_tab(dataset: ComparisonDataset, reference_label: str) -> str:
     nw_tim_iters = dataset.render.nw_tim_iterations
-    nw_tim_stages = dataset.render.nw_tim_stages
-    cb_train_secs = dataset.render.novomodelo_training_seconds
     cb_conv_perf = dataset.render.novomodelo_iteration_timing
-    perf_parts: list[str] = []
-    perf_parts.append(
-        performance_metric_cards(nw_tim_stages, cb_train_secs, reference_label)
-    )
-    perf_parts.append(section_title("Time per Iteration"))
-    perf_parts.append(
-        chart_grid(
-            [
-                wrap_chart(
-                    performance_iteration_chart(
-                        nw_tim_iters, cb_conv_perf, reference_label
-                    )
+    return "\n".join(
+        [
+            performance_metric_cards(
+                dataset.render.nw_tim_stages,
+                dataset.render.novomodelo_training_seconds,
+                reference_label,
+            ),
+            section_title("Time per Iteration"),
+            _full_width_chart(
+                performance_iteration_chart(nw_tim_iters, cb_conv_perf, reference_label)
+            ),
+            section_title("Forward / Backward Split"),
+            _full_width_chart(
+                performance_fwd_bwd_split_chart(
+                    nw_tim_iters, cb_conv_perf, reference_label
                 )
-            ],
-            single=True,
-        )
+            ),
+        ]
     )
-    perf_parts.append(section_title("Forward / Backward Split"))
-    perf_parts.append(
-        chart_grid(
-            [
-                wrap_chart(
-                    performance_fwd_bwd_split_chart(
-                        nw_tim_iters, cb_conv_perf, reference_label
-                    )
-                )
-            ],
-            single=True,
-        )
-    )
-    tab_contents["tab-performance"] = "\n".join(perf_parts)
+
+
+def build_comparison_report(
+    dataset: ComparisonDataset, reference_label: str = "NEWAVE"
+) -> str:
+    """Build a complete HTML comparison report.
+
+    Every tab sources its non-tidy inputs from ``dataset.render`` (see
+    :class:`~novomodelo_bridge.comparators.dataset.RenderInputs`): each tab reads
+    its own named, already-typed fields, and the chart functions that still
+    take ``list[ResultComparison]`` directly read ``dataset.render.results``.
+
+    Parameters
+    ----------
+    dataset:
+        The canonical comparison dataset. Its ``render`` carries every render
+        input (named per-tab fields plus the ``results`` list).
+    reference_label:
+        Display name for the reference series (trace names, chart titles,
+        prose). Defaults to ``"NEWAVE"``; ``compare decomp`` passes ``"DECOMP"``.
+
+    Returns
+    -------
+    str
+        Complete HTML document string.
+    """
+    results = dataset.render.results
+    # Reconstruct the overview summary from the dataset's already-computed
+    # summary rows + footer counts rather than recomputing it from the raw
+    # ``results`` list — the chart functions below still consume ``results``
+    # directly, but ``overview_metrics`` reads only the reconstructed summary.
+    summary = _results_summary_from_dataset(dataset)
+
+    tab_contents: dict[str, str] = {
+        "tab-overview": _build_overview_tab(dataset, summary, reference_label),
+        "tab-system": _build_system_tab(dataset, reference_label),
+        "tab-balance": _build_balance_tab(dataset, reference_label),
+        "tab-network": _build_network_tab(dataset, reference_label),
+        "tab-constraints": _build_constraints_tab(dataset, reference_label),
+        "tab-hydro": _build_hydro_operation_tab(dataset, reference_label),
+        "tab-hydro-detail": build_hydro_detail_tab(
+            results,
+            dataset.render.hydro,
+            dataset.render.novomodelo_hydro_means,
+            novomodelo_hydro_meta=dataset.render.novomodelo_hydro_meta,
+            novomodelo_hydro_per_stage_bounds=dataset.render.novomodelo_hydro_per_stage_bounds,
+            nw_hydro_slacks=dataset.render.nw_hydro_slacks,
+            reference_label=reference_label,
+            masked_hydro=dataset.render.hydro_masked,
+        ),
+        "tab-thermal": _build_thermal_operation_tab(dataset, reference_label),
+        "tab-thermal-detail": build_thermal_detail_tab(
+            results, dataset.render.thermal, reference_label
+        ),
+        "tab-productivity": _build_productivity_tab(dataset, reference_label),
+        "tab-performance": _build_performance_tab(dataset, reference_label),
+    }
 
     return build_comparison_html(
         title=f"Novomodelo vs {reference_label} Results Comparison",
