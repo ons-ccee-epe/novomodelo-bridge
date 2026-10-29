@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
@@ -1336,6 +1337,192 @@ def _plane_arrays(
     )
 
 
+def _partition_by_pair(
+    frame: pl.DataFrame, a: str, b: str
+) -> dict[tuple[int, int], pl.DataFrame]:
+    """Split ``frame`` into one sub-frame per ``(a, b)`` integer key pair."""
+    parts = frame.partition_by([a, b], as_dict=True)
+    return {(int(k[0]), int(k[1])): v for k, v in parts.items()}
+
+
+@dataclass(frozen=True)
+class _FphaPairSamples:
+    """One (plant, stage)'s two envelopes sampled for the FPHA frames.
+
+    ``v_hm3``/``q_m3s`` and both ``gh_*`` surfaces are ``(n_v, n_q)`` grids on
+    the source model's fitting nodes; the ``spill_*`` arrays share the ``s_m3s``
+    sweep at the max V/Q corner.
+    """
+
+    novomodelo_id: int
+    stage: int
+    n_v: int
+    n_planes_newave: int
+    n_planes_novomodelo: int
+    v_hm3: np.ndarray
+    q_m3s: np.ndarray
+    gh_newave: np.ndarray
+    gh_novomodelo: np.ndarray
+    s_m3s: np.ndarray
+    spill_gh_newave: np.ndarray
+    spill_gh_novomodelo: np.ndarray
+
+
+def _sample_fpha_pair(
+    novomodelo_id: int,
+    stage: int,
+    nw_sub: pl.DataFrame,
+    cb_sub: pl.DataFrame,
+    grid_row: pl.DataFrame,
+    *,
+    spill_n: int,
+) -> _FphaPairSamples:
+    """Evaluate both envelopes on the source model's grid and the spillage slice."""
+    g = grid_row.row(0, named=True)
+    v_min = float(g["v_min_hm3"])
+    offset = float(g.get("volume_offset_hm3", v_min))
+    v_max = float(g["v_max_hm3"])
+    q_min = float(g["q_min_m3s"])
+    q_max = float(g["q_max_m3s"])
+    n_v = int(g["n_v"])
+
+    # Sample at the source model's own fitting-grid nodes (Npt_V x Npt_Q).
+    if n_v <= 1 or v_max <= v_min:
+        v_axis = np.array([v_min], dtype=float)
+    else:
+        v_axis = np.linspace(v_min, v_max, n_v)
+    q_axis = np.linspace(q_min, q_max, max(int(g["n_q"]), 2))
+    vv, qq = np.meshgrid(v_axis, q_axis, indexing="ij")
+    ss = np.zeros_like(vv)
+
+    nw_arr = _plane_arrays(nw_sub, "fator_correcao")
+    cb_arr = novomodelo_plane_arrays(cb_sub)
+    nw_gh = dense_grid(*nw_arr, vv, qq, ss, volume_offset=offset)
+    cb_gh = dense_grid(*cb_arr, vv, qq, ss, volume_offset=0.0)
+
+    # Spillage slice at the max V/Q corner: GH vs spill up to ~2x q_max.
+    s_axis = (
+        np.linspace(0.0, 2.0 * q_max, max(spill_n, 2))
+        if q_max > 0.0
+        else np.array([0.0], dtype=float)
+    )
+    v_fix = np.full_like(s_axis, v_max)
+    q_fix = np.full_like(s_axis, q_max)
+    nw_sp = dense_grid(*nw_arr, v_fix, q_fix, s_axis, volume_offset=offset)
+    cb_sp = dense_grid(*cb_arr, v_fix, q_fix, s_axis, volume_offset=0.0)
+
+    return _FphaPairSamples(
+        novomodelo_id=novomodelo_id,
+        stage=stage,
+        n_v=n_v,
+        n_planes_newave=nw_sub.height,
+        n_planes_novomodelo=cb_sub.height,
+        v_hm3=vv,
+        q_m3s=qq,
+        gh_newave=nw_gh,
+        gh_novomodelo=cb_gh,
+        s_m3s=s_axis,
+        spill_gh_newave=nw_sp,
+        spill_gh_novomodelo=cb_sp,
+    )
+
+
+def _fpha_metric_row(pair: _FphaPairSamples, plant_name: str) -> dict[str, object]:
+    """One :data:`~novomodelo_bridge.comparators.fpha.FPHA_METRICS_SCHEMA` row."""
+    # Fidelity metrics, normalized to the plant's max generation (the corner
+    # value v_max/q_max, which the grid includes as its last point).
+    gh_max_nw = float(pair.gh_newave[-1, -1])
+    gh_max_cb = float(pair.gh_novomodelo[-1, -1])
+    diff = pair.gh_novomodelo - pair.gh_newave
+    denom = abs(gh_max_nw)
+    scaled = denom > 1e-9
+    return {
+        "novomodelo_id": pair.novomodelo_id,
+        "plant_name": plant_name,
+        "stage": pair.stage,
+        "n_planes_newave": pair.n_planes_newave,
+        "n_planes_novomodelo": pair.n_planes_novomodelo,
+        "n_v": pair.n_v,
+        "nmae": float(np.mean(np.abs(diff)) / denom) if scaled else None,
+        "bias": float(np.mean(diff) / denom) if scaled else None,
+        "max_abs_dev": float(np.max(np.abs(diff))),
+        "gh_max_ratio": (gh_max_cb / gh_max_nw) if scaled else None,
+    }
+
+
+def _fpha_surface_frame(
+    pairs: Sequence[_FphaPairSamples], name_table: pl.DataFrame
+) -> pl.DataFrame:
+    """Stack both models' sampled ``(V, Q)`` surfaces into the surface frame."""
+
+    def _stack(gh: list[np.ndarray], source: str) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "novomodelo_id": np.concatenate(
+                    [
+                        np.full(p.v_hm3.size, p.novomodelo_id, dtype=np.int64)
+                        for p in pairs
+                    ]
+                ),
+                "stage": np.concatenate(
+                    [np.full(p.v_hm3.size, p.stage, dtype=np.int64) for p in pairs]
+                ),
+                "v_hm3": np.concatenate([p.v_hm3.reshape(-1) for p in pairs]),
+                "q_m3s": np.concatenate([p.q_m3s.reshape(-1) for p in pairs]),
+                "gh_mw": np.concatenate(gh),
+            }
+        ).with_columns(pl.lit(source).alias("source"))
+
+    return (
+        pl.concat(
+            [
+                _stack([p.gh_newave.reshape(-1) for p in pairs], "newave"),
+                _stack([p.gh_novomodelo.reshape(-1) for p in pairs], "novomodelo"),
+            ]
+        )
+        .join(name_table, on="novomodelo_id", how="left")
+        .select(list(FPHA_SURFACE_SCHEMA))
+        .cast({col: dtype() for col, dtype in FPHA_SURFACE_SCHEMA.items()})
+        .sort(["novomodelo_id", "stage", "source", "v_hm3", "q_m3s"])
+    )
+
+
+def _fpha_spill_frame(
+    pairs: Sequence[_FphaPairSamples], name_table: pl.DataFrame
+) -> pl.DataFrame:
+    """Stack both models' sampled spillage slices into the spill frame."""
+
+    def _stack(gh: list[np.ndarray], source: str) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "novomodelo_id": np.concatenate(
+                    [
+                        np.full(p.s_m3s.size, p.novomodelo_id, dtype=np.int64)
+                        for p in pairs
+                    ]
+                ),
+                "stage": np.concatenate(
+                    [np.full(p.s_m3s.size, p.stage, dtype=np.int64) for p in pairs]
+                ),
+                "s_m3s": np.concatenate([p.s_m3s for p in pairs]),
+                "gh_mw": np.concatenate(gh),
+            }
+        ).with_columns(pl.lit(source).alias("source"))
+
+    return (
+        pl.concat(
+            [
+                _stack([p.spill_gh_newave for p in pairs], "newave"),
+                _stack([p.spill_gh_novomodelo for p in pairs], "novomodelo"),
+            ]
+        )
+        .join(name_table, on="novomodelo_id", how="left")
+        .select(list(FPHA_SPILL_SCHEMA))
+        .cast({col: dtype() for col, dtype in FPHA_SPILL_SCHEMA.items()})
+        .sort(["novomodelo_id", "stage", "source", "s_m3s"])
+    )
+
+
 def build_fpha_comparison(
     nw_planes: pl.DataFrame | None,
     nw_grid: pl.DataFrame | None,
@@ -1396,31 +1583,11 @@ def build_fpha_comparison(
     periods = sorted({int(p) for p in nw_planes.get_column("periodo").to_list()})
     stage_of = {p: i for i, p in enumerate(periods)}
 
-    def _key2(
-        frame: pl.DataFrame, a: str, b: str
-    ) -> dict[tuple[int, int], pl.DataFrame]:
-        parts = frame.partition_by([a, b], as_dict=True)
-        return {(int(k[0]), int(k[1])): v for k, v in parts.items()}
+    nw_lookup = _partition_by_pair(nw_planes, "newave_code", "periodo")
+    grid_lookup = _partition_by_pair(nw_grid, "newave_code", "periodo")
+    cb_lookup = _partition_by_pair(cb_planes, "hydro_id", "stage_id")
 
-    nw_lookup = _key2(nw_planes, "newave_code", "periodo")
-    grid_lookup = _key2(nw_grid, "newave_code", "periodo")
-    cb_lookup = _key2(cb_planes, "hydro_id", "stage_id")
-
-    geo_cid: list[np.ndarray] = []
-    geo_stage: list[np.ndarray] = []
-    geo_v: list[np.ndarray] = []
-    geo_q: list[np.ndarray] = []
-    gh_nw: list[np.ndarray] = []
-    gh_cb: list[np.ndarray] = []
-
-    sp_cid: list[np.ndarray] = []
-    sp_stage: list[np.ndarray] = []
-    sp_s: list[np.ndarray] = []
-    sp_gh_nw: list[np.ndarray] = []
-    sp_gh_cb: list[np.ndarray] = []
-
-    metric_rows: list[dict[str, object]] = []
-
+    pairs: list[_FphaPairSamples] = []
     for (code, periodo), nw_sub in nw_lookup.items():
         novomodelo_id = code_to_novomodelo.get(code)
         stage = stage_of.get(periodo)
@@ -1430,78 +1597,13 @@ def build_fpha_comparison(
         grid_row = grid_lookup.get((code, periodo))
         if cb_sub is None or grid_row is None:
             continue
-
-        g = grid_row.row(0, named=True)
-        v_min = float(g["v_min_hm3"])
-        offset = float(g.get("volume_offset_hm3", v_min))
-        v_max = float(g["v_max_hm3"])
-        q_min = float(g["q_min_m3s"])
-        q_max = float(g["q_max_m3s"])
-        n_v = int(g["n_v"])
-
-        # Sample at the source model's own fitting-grid nodes (Npt_V x Npt_Q).
-        if n_v <= 1 or v_max <= v_min:
-            v_axis = np.array([v_min], dtype=float)
-        else:
-            v_axis = np.linspace(v_min, v_max, n_v)
-        q_axis = np.linspace(q_min, q_max, max(int(g["n_q"]), 2))
-        vv, qq = np.meshgrid(v_axis, q_axis, indexing="ij")
-        ss = np.zeros_like(vv)
-
-        nw_arr = _plane_arrays(nw_sub, "fator_correcao")
-        cb_arr = novomodelo_plane_arrays(cb_sub)
-        nw_gh = dense_grid(*nw_arr, vv, qq, ss, volume_offset=offset)
-        cb_gh = dense_grid(*cb_arr, vv, qq, ss, volume_offset=0.0)
-
-        flat_v = vv.reshape(-1)
-        n = flat_v.size
-        geo_cid.append(np.full(n, novomodelo_id, dtype=np.int64))
-        geo_stage.append(np.full(n, stage, dtype=np.int64))
-        geo_v.append(flat_v)
-        geo_q.append(qq.reshape(-1))
-        gh_nw.append(nw_gh.reshape(-1))
-        gh_cb.append(cb_gh.reshape(-1))
-
-        # Spillage slice at the max V/Q corner: GH vs spill up to ~2x q_max.
-        s_axis = (
-            np.linspace(0.0, 2.0 * q_max, max(spill_n, 2))
-            if q_max > 0.0
-            else np.array([0.0], dtype=float)
-        )
-        v_fix = np.full_like(s_axis, v_max)
-        q_fix = np.full_like(s_axis, q_max)
-        nw_sp = dense_grid(*nw_arr, v_fix, q_fix, s_axis, volume_offset=offset)
-        cb_sp = dense_grid(*cb_arr, v_fix, q_fix, s_axis, volume_offset=0.0)
-        ns = s_axis.size
-        sp_cid.append(np.full(ns, novomodelo_id, dtype=np.int64))
-        sp_stage.append(np.full(ns, stage, dtype=np.int64))
-        sp_s.append(s_axis)
-        sp_gh_nw.append(nw_sp)
-        sp_gh_cb.append(cb_sp)
-
-        # Fidelity metrics, normalized to the plant's max generation (the corner
-        # value v_max/q_max, which the grid includes as its last point).
-        gh_max_nw = float(nw_gh[-1, -1])
-        gh_max_cb = float(cb_gh[-1, -1])
-        diff = cb_gh - nw_gh
-        denom = abs(gh_max_nw)
-        scaled = denom > 1e-9
-        metric_rows.append(
-            {
-                "novomodelo_id": novomodelo_id,
-                "plant_name": name_of.get(novomodelo_id, f"hydro_{novomodelo_id}"),
-                "stage": stage,
-                "n_planes_newave": nw_sub.height,
-                "n_planes_novomodelo": cb_sub.height,
-                "n_v": n_v,
-                "nmae": float(np.mean(np.abs(diff)) / denom) if scaled else None,
-                "bias": float(np.mean(diff) / denom) if scaled else None,
-                "max_abs_dev": float(np.max(np.abs(diff))),
-                "gh_max_ratio": (gh_max_cb / gh_max_nw) if scaled else None,
-            }
+        pairs.append(
+            _sample_fpha_pair(
+                novomodelo_id, stage, nw_sub, cb_sub, grid_row, spill_n=spill_n
+            )
         )
 
-    if not geo_cid:
+    if not pairs:
         return empty
 
     name_table = pl.DataFrame(
@@ -1511,51 +1613,17 @@ def build_fpha_comparison(
         },
         schema={"novomodelo_id": pl.Int64, "plant_name": pl.Utf8},
     )
-
-    def _stack_surface(gh: list[np.ndarray], source: str) -> pl.DataFrame:
-        return pl.DataFrame(
-            {
-                "novomodelo_id": np.concatenate(geo_cid),
-                "stage": np.concatenate(geo_stage),
-                "v_hm3": np.concatenate(geo_v),
-                "q_m3s": np.concatenate(geo_q),
-                "gh_mw": np.concatenate(gh),
-            }
-        ).with_columns(pl.lit(source).alias("source"))
-
-    surface = (
-        pl.concat(
-            [_stack_surface(gh_nw, "newave"), _stack_surface(gh_cb, "novomodelo")]
-        )
-        .join(name_table, on="novomodelo_id", how="left")
-        .select(list(FPHA_SURFACE_SCHEMA))
-        .cast({col: dtype() for col, dtype in FPHA_SURFACE_SCHEMA.items()})
-        .sort(["novomodelo_id", "stage", "source", "v_hm3", "q_m3s"])
-    )
-
-    def _stack_spill(gh: list[np.ndarray], source: str) -> pl.DataFrame:
-        return pl.DataFrame(
-            {
-                "novomodelo_id": np.concatenate(sp_cid),
-                "stage": np.concatenate(sp_stage),
-                "s_m3s": np.concatenate(sp_s),
-                "gh_mw": np.concatenate(gh),
-            }
-        ).with_columns(pl.lit(source).alias("source"))
-
-    spill = (
-        pl.concat(
-            [_stack_spill(sp_gh_nw, "newave"), _stack_spill(sp_gh_cb, "novomodelo")]
-        )
-        .join(name_table, on="novomodelo_id", how="left")
-        .select(list(FPHA_SPILL_SCHEMA))
-        .cast({col: dtype() for col, dtype in FPHA_SPILL_SCHEMA.items()})
-        .sort(["novomodelo_id", "stage", "source", "s_m3s"])
-    )
-
-    metrics = pl.DataFrame(metric_rows, schema=FPHA_METRICS_SCHEMA).sort(
-        ["novomodelo_id", "stage"]
-    )
+    surface = _fpha_surface_frame(pairs, name_table)
+    spill = _fpha_spill_frame(pairs, name_table)
+    metrics = pl.DataFrame(
+        [
+            _fpha_metric_row(
+                pair, name_of.get(pair.novomodelo_id, f"hydro_{pair.novomodelo_id}")
+            )
+            for pair in pairs
+        ],
+        schema=FPHA_METRICS_SCHEMA,
+    ).sort(["novomodelo_id", "stage"])
     return metrics, surface, spill
 
 
