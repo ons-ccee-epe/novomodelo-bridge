@@ -14,19 +14,18 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.converters.thermal import _hours_weighted
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from idecomp.decomp import Dadger
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -84,8 +83,14 @@ def _is_placeholder_row(row: pd.Series) -> bool:
     )
 
 
+class _ContractRegisters(Protocol):
+    def ci(self, *, df: bool) -> object: ...
+
+    def ce(self, *, df: bool) -> object: ...
+
+
 def read_contracts(
-    dadger: Dadger,
+    dadger: _ContractRegisters,
     calendar: Sequence[OperativeStage],
 ) -> list[Contract]:
     """Read ``CI``/``CE`` into a deterministic, densely-id'd contract list.
@@ -98,8 +103,8 @@ def read_contracts(
     """
     declared: dict[tuple[str, int], dict] = {}
     for kind, frame in (
-        ("import", dadger.ci(df=True)),
-        ("export", dadger.ce(df=True)),
+        ("import", as_frame(dadger.ci(df=True))),
+        ("export", as_frame(dadger.ce(df=True))),
     ):
         if frame is None or frame.empty:
             continue

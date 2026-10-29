@@ -10,6 +10,7 @@ import shutil
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -59,6 +60,11 @@ from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
+
+if TYPE_CHECKING:
+    from idecomp.decomp import Dadger, Vazoes
+
+    from novomodelo_bridge.decomp.case import DecompCase
 
 _ID_MAP = DecompIdMap(
     bus_codes=(1, 2),
@@ -451,12 +457,12 @@ class TestDecompCaseArtifacts:
         # field defaults to None until _convert_core_entities/_convert_scenarios
         # populate it.
         artifacts = DecompCaseArtifacts(
-            case=object(),
+            case=cast("DecompCase", object()),
             id_map=_ID_MAP,
-            dadger=object(),
+            dadger=cast("Dadger", object()),
             calendar=[],
-            vazoes=object(),
-            effective=object(),
+            vazoes=cast("Vazoes", object()),
+            effective=cast("EffectiveCadastro", object()),
             itaipu_operated=False,
             fan_probabilities=[1.0],
             tx=0.1,

@@ -30,8 +30,9 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.stored_energy import (
     StoredEnergyShare,
     cascade_share,
@@ -52,21 +53,23 @@ from novomodelo_bridge.novomodelo.scalar_parameters import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from idecomp.decomp.dadger import Dadger
-
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
 
 
-def read_ez_fractions(dadger: Dadger) -> dict[int, float]:
+class _EzRegisters(Protocol):
+    def ez(self, *, df: bool) -> object: ...
+
+
+def read_ez_fractions(dadger: _EzRegisters) -> dict[int, float]:
     """``{plant code: fraction of useful volume}`` from the deck's ``EZ`` records.
 
     Raises:
         ValueError: a record's percentage lies outside ``[0, 100]``.
     """
-    frame = dadger.ez(df=True)
+    frame = as_frame(dadger.ez(df=True))
     if frame is None or frame.empty:
         return {}
     fractions: dict[int, float] = {}

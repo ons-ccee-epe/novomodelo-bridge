@@ -290,7 +290,7 @@ class TestConvertPumpingBounds:
 
     def _mock_case_with_horizon(
         self, start: date, total_stages: int, n_blocks: int = 3
-    ) -> MagicMock:
+    ) -> tuple[MagicMock, list[date]]:
         """Create a mock case with a real-ish horizon for bounds tests."""
         case = MagicMock()
         case.horizon.start_year = start.year

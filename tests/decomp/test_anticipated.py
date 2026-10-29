@@ -15,6 +15,7 @@ import logging
 from collections.abc import Mapping
 from datetime import date, timedelta
 from pathlib import Path
+from typing import TypedDict
 
 import pandas as pd
 import pytest
@@ -534,7 +535,14 @@ def test_build_post_study_calendar_empty_when_no_stage_spans() -> None:
 # Emission (convert_gnl) — single global lead, free-only, index-direct
 # --------------------------------------------------------------------------
 
-_EMIT_STAGES = [
+
+class _EmitStage(TypedDict):
+    start_date: str
+    end_date: str
+    blocks: list[dict[str, float]]
+
+
+_EMIT_STAGES: list[_EmitStage] = [
     {
         "start_date": "2026-03-14",
         "end_date": "2026-03-21",
@@ -557,7 +565,7 @@ _EMIT_STAGES = [
     },
 ]
 _EMIT_WEEKS_PER_MONTH = {1: 3, 2: 4, 3: 5}
-_BUS_OF = {1: 0, 3: 2}.get
+_BUS_OF = {1: 0, 3: 2}.__getitem__
 _EMIT_CALENDAR = [
     OperativeStage(
         index=i,

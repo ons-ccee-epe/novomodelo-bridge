@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import dataclasses
 from typing import TYPE_CHECKING
 
-from novomodelo_bridge.cli.args import CompareArgs, _parse_formats
+from novomodelo_bridge.cli.args import CompareArgs, ResolvedCompareArgs, _parse_formats
 from novomodelo_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, load_config
 from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
 from novomodelo_bridge.cli.verdict import (
@@ -146,7 +145,7 @@ def _write_html_compare_report(
     )
 
 
-def _resolve_compare_settings(args: CompareArgs) -> CompareArgs:
+def _resolve_compare_settings(args: CompareArgs) -> ResolvedCompareArgs:
     """Return *args* with tolerance/format/out_dir filled in from config.
 
     Implements the bottom two rungs of the precedence chain
@@ -191,8 +190,14 @@ def _resolve_compare_settings(args: CompareArgs) -> CompareArgs:
             style="#F5A623",
         )
 
-    return dataclasses.replace(
-        args,
+    return ResolvedCompareArgs(
+        json_output=args.json_output,
+        verbose=args.verbose,
+        log_file=args.log_file,
+        no_color=args.no_color,
+        quiet=args.quiet,
+        source_dir=args.source_dir,
+        novomodelo_output_dir=args.novomodelo_output_dir,
         tolerance=resolved_tolerance,
         format=resolved_format,
         out_dir=resolved_out_dir,

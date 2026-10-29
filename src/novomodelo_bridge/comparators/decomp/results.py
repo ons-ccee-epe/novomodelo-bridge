@@ -74,6 +74,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
 from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
@@ -324,7 +325,7 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
     return (
         combined.select("estagio", "cenario", "probabilidade")
         .unique()
-        .cast(_SCENARIO_PROBABILITY_SCHEMA)
+        .cast(pl.Schema(_SCENARIO_PROBABILITY_SCHEMA))
         .sort(["estagio", "cenario"])
     )
 
@@ -1621,7 +1622,7 @@ def _decomp_max_stage(aligned: _AlignedDecompFrames) -> int | None:
             continue
         values = frame["stage_id"].drop_nulls()
         if not values.is_empty():
-            candidates.append(int(values.max()))  # type: ignore[arg-type]
+            candidates.append(as_int(values.max()))
     return max(candidates) if candidates else None
 
 
@@ -3065,11 +3066,12 @@ def build_decomp_dataset(
         gc_lhs_novomodelo=gc_lhs_cb,
     )
     dataset = build_results_dataset(results, pct, tolerance)
-    dataset.metadata["unmapped"] = {
+    unmapped: dict[str, list[int] | list[list[int]]] = {
         level: [int(code) for code in codes]
         for level, codes in aligned.unmapped.items()
     }
-    dataset.metadata["unmapped"]["line"] = unresolved_lines
-    dataset.metadata["unmapped"]["ree"] = unmapped_ree
-    dataset.metadata["unmapped"]["evaporation"] = unmapped_evaporation
+    unmapped["line"] = unresolved_lines
+    unmapped["ree"] = unmapped_ree
+    unmapped["evaporation"] = unmapped_evaporation
+    dataset.metadata["unmapped"] = unmapped
     return dataset

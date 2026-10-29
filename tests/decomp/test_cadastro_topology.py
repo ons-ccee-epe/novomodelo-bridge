@@ -42,6 +42,8 @@ from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
@@ -82,7 +84,7 @@ class _StubVazoes:
     below, keyed by ``posto`` station columns as strings.
     """
 
-    def __init__(self, columns: dict[str, tuple[float, float, float]]) -> None:
+    def __init__(self, columns: Mapping[str, tuple[float, ...]]) -> None:
         self.previsoes = pd.DataFrame(
             [
                 {"estagio": 1, **{k: v[0] for k, v in columns.items()}},

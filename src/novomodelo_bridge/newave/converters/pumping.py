@@ -16,6 +16,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
 )
 from novomodelo_bridge.core.errors import SourceFileError
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.newave.horizon import stage_dates_for
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -43,7 +44,7 @@ def read_pumping_inputs(case: NewaveCase) -> PumpingInputs | None:
     if reader is None:
         return None
 
-    stations_df = reader.estacao_bombeamento(df=True)
+    stations_df = as_frame(reader.estacao_bombeamento(df=True))
     if stations_df is None or stations_df.empty:
         return None
 
@@ -55,7 +56,7 @@ def read_pumping_inputs(case: NewaveCase) -> PumpingInputs | None:
             path="indices.csv",
             field="ESTACAO-BOMBEAMENTO-SUBMERCADO",
         )
-    submercado_df = submercado_reader.estacao_bombeamento_submercado(df=True)
+    submercado_df = as_frame(submercado_reader.estacao_bombeamento_submercado(df=True))
     if submercado_df is None or submercado_df.empty:
         raise SourceFileError(
             "Pumping submercado file empty",
@@ -97,7 +98,7 @@ def read_pumping_inputs(case: NewaveCase) -> PumpingInputs | None:
     )
 
     # Get limits
-    limits_df = reader.estacao_bombeamento_limites_periodo_patamar(df=True)
+    limits_df = as_frame(reader.estacao_bombeamento_limites_periodo_patamar(df=True))
     if limits_df is None:
         limits_df = pd.DataFrame()
 

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet
+    from collections.abc import Set as AbstractSet
 
 from novomodelo_bridge.core.productivity import compute_productivity
 from novomodelo_bridge.newave.plants import IN_SERVICE_STATUSES

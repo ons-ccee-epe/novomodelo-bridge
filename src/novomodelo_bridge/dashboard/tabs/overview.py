@@ -13,6 +13,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import polars as pl
 
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.dashboard.chart_helpers import (
     COST_GROUP_COLORS,
     build_cost_table,
@@ -60,7 +61,7 @@ def _format_duration(elapsed_seconds: object) -> str:
     if elapsed_seconds is None:
         return "N/A"
     try:
-        total = int(elapsed_seconds)
+        total = as_int(elapsed_seconds)
     except (ValueError, TypeError):
         return "N/A"
     hours = total // 3600

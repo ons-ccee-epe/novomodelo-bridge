@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 import polars as pl
@@ -60,6 +60,15 @@ _PCT_SUFFIX_TO_SOURCE: dict[str, str] = {
 #: Identifier columns expected on every percentile frame.
 _PCT_ENTITY_COL: str = "entity_id"
 _PCT_STAGE_COL: str = "stage_id"
+
+
+class _FilterableFrame(Protocol):
+    """The ``pl.DataFrame`` members :func:`plant_percentile_arrays` calls on the
+    percentile frame."""
+
+    def is_empty(self) -> bool: ...
+
+    def filter(self, *predicates: pl.Expr) -> pl.DataFrame: ...
 
 
 def tidy_from_results(results: Sequence[ResultComparison]) -> pl.DataFrame:
@@ -869,7 +878,7 @@ def per_bus_band_from_pct(
 
 
 def plant_percentile_arrays(
-    pct_df: pl.DataFrame | None,
+    pct_df: _FilterableFrame | None,
     var_stages: Sequence[tuple[str, str, list[int]]],
     plant_novomodelo_id: int,
 ) -> dict[str, list[float]]:
@@ -1495,7 +1504,7 @@ def build_fpha_comparison(
     if not geo_cid:
         return empty
 
-    names = pl.DataFrame(
+    name_table = pl.DataFrame(
         {
             "novomodelo_id": list(name_of.keys()),
             "plant_name": list(name_of.values()),
@@ -1518,7 +1527,7 @@ def build_fpha_comparison(
         pl.concat(
             [_stack_surface(gh_nw, "newave"), _stack_surface(gh_cb, "novomodelo")]
         )
-        .join(names, on="novomodelo_id", how="left")
+        .join(name_table, on="novomodelo_id", how="left")
         .select(list(FPHA_SURFACE_SCHEMA))
         .cast({col: dtype() for col, dtype in FPHA_SURFACE_SCHEMA.items()})
         .sort(["novomodelo_id", "stage", "source", "v_hm3", "q_m3s"])
@@ -1538,7 +1547,7 @@ def build_fpha_comparison(
         pl.concat(
             [_stack_spill(sp_gh_nw, "newave"), _stack_spill(sp_gh_cb, "novomodelo")]
         )
-        .join(names, on="novomodelo_id", how="left")
+        .join(name_table, on="novomodelo_id", how="left")
         .select(list(FPHA_SPILL_SCHEMA))
         .cast({col: dtype() for col, dtype in FPHA_SPILL_SCHEMA.items()})
         .sort(["novomodelo_id", "stage", "source", "s_m3s"])

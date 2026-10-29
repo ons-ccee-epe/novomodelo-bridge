@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Protocol
 
 import pandas as pd
 import polars as pl
@@ -1114,7 +1115,18 @@ _NWLISTOP_BLOCK_TABLES: dict[str, str] = {
 _NWLISTOP_KEYS = ["stage", "scenario", "block"]
 
 
-def _nwlistop_classes() -> dict[str, type]:
+class _ValuesFile(Protocol):
+    """The inewave ``nwlistop`` reader surface :func:`_read_nwlistop_table` relies on."""
+
+    @property
+    def valores(self) -> pd.DataFrame | None: ...
+
+
+class _ValuesReader(Protocol):
+    def read(self, path: str, /) -> _ValuesFile: ...
+
+
+def _nwlistop_classes() -> dict[str, _ValuesReader]:
     from inewave.nwlistop import Cmarg, Ghiduh, Qturuh, Qvertuh, Varmuh
     from inewave.nwlistop.gh_fphexat import GhFphexat
 
@@ -1129,7 +1141,7 @@ def _nwlistop_classes() -> dict[str, type]:
 
 
 def _read_nwlistop_table(
-    path: Path, cls: type, start_year: int, start_month: int
+    path: Path, cls: _ValuesReader, start_year: int, start_month: int
 ) -> pl.DataFrame | None:
     """One nwlistop table keyed by study stage, series and block.
 
@@ -1233,7 +1245,7 @@ def read_nwlistop_hydro_blocks(
             if column not in frame.columns
         )
         .select(list(schema))
-        .cast(schema)
+        .cast(pl.Schema(schema))
         .sort("newave_code", *_NWLISTOP_KEYS)
     )
 
@@ -1322,6 +1334,6 @@ def _read_numbered_tables(
     return (
         pl.concat(tables)
         .select(list(schema))
-        .cast(schema)
+        .cast(pl.Schema(schema))
         .sort(code_column, *(k for k in _NWLISTOP_KEYS if k in schema))
     )

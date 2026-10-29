@@ -40,7 +40,7 @@ the returned dict to stdout.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, SupportsInt
 
 from novomodelo_bridge.core.diagnostics import Severity
 
@@ -55,6 +55,8 @@ if TYPE_CHECKING:
 # Bump only on a breaking change: a key rename/removal or a meaning change.
 # Adding a NEW optional key under ``summary`` is backward-compatible — do NOT bump.
 SCHEMA_VERSION: int = 1
+
+_Code = SupportsInt | str
 
 
 def build_verdict(
@@ -147,7 +149,9 @@ def compare_summary(verdict: CompareVerdict) -> dict[str, object]:
     }
 
 
-def _coerce_unmapped_code(code: object) -> int | list[int]:
+def _coerce_unmapped_code(
+    code: _Code | list[_Code] | tuple[_Code, ...],
+) -> int | list[int]:
     """JSON-friendly coercion for one ``unmapped`` entry.
 
     Most levels list scalar entity codes (coerced to ``int``); the network
@@ -190,9 +194,14 @@ def decomp_dataset_summary(
     summary = compare_summary(build_compare_verdict(dataset))
     summary["stages"] = int(dataset.tidy["stage"].n_unique())
     summary["variables"] = dataset.summary.to_dicts()
+    unmapped = dataset.metadata["unmapped"]
+    if not isinstance(unmapped, dict):
+        raise TypeError(
+            f"dataset metadata 'unmapped' must be a dict, got {type(unmapped).__name__}"
+        )
     summary["unmapped"] = {
         level: [_coerce_unmapped_code(code) for code in codes]
-        for level, codes in dataset.metadata["unmapped"].items()
+        for level, codes in unmapped.items()
     }
     return summary
 

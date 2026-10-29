@@ -32,6 +32,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintTerm,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.novomodelo.constraint_expr import ResolvedGenericConstraints
 from tests.comparators.conftest import (
     GC_STAGE_HOURS,
     _aligned_fixture,
@@ -679,12 +680,12 @@ class TestBuildDecompDatasetConstraints:
                 }
             ),
         )
-        calls: list[tuple[object, ...]] = []
+        calls: list[tuple[ResolvedGenericConstraints, Path]] = []
 
         def _capturing_evaluate_lhs_novomodelo(
-            *args: object, **_kw: object
+            resolved: ResolvedGenericConstraints, novomodelo_output_dir: Path
         ) -> pl.DataFrame:
-            calls.append(args)
+            calls.append((resolved, novomodelo_output_dir))
             return pl.DataFrame(
                 {"constraint_id": [0], "stage_id": [0], "lhs_value": [3000.0]}
             )

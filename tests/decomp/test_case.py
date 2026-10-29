@@ -44,18 +44,16 @@ _BANNED_MODULE_SCOPE_SUBSTRINGS = (
 
 
 class TestRequiredReaders:
-    def test_dadger_parses_once_and_caches(self, tmp_path: Path) -> None:
+    def test_dadger_parses_once_and_caches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         sentinel = object()
         mock_read = MagicMock(return_value=sentinel)
-        original_read = case_module.Dadger.read
-        case_module.Dadger.read = mock_read  # type: ignore[method-assign]
-        try:
-            case = DecompCase(files=make_decomp_files(tmp_path))
+        monkeypatch.setattr(case_module.Dadger, "read", mock_read)
+        case = DecompCase(files=make_decomp_files(tmp_path))
 
-            first = case.dadger
-            second = case.dadger
-        finally:
-            case_module.Dadger.read = original_read  # type: ignore[method-assign]
+        first = case.dadger
+        second = case.dadger
 
         assert first is sentinel
         assert second is sentinel
@@ -90,37 +88,24 @@ class TestRequiredReaders:
 
 class TestOptionalReaders:
     def test_optional_readers_return_none_and_attempt_no_parse(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         dadgnl_read = MagicMock()
         renovaveis_read = MagicMock()
         restricoes_read = MagicMock()
         polinjus_read = MagicMock()
-        originals = (
-            case_module.Dadgnl.read,
-            case_module.Renovaveis.read,
-            case_module.Restricoes.read,
-            fpha_module.read_polinjus,
-        )
-        case_module.Dadgnl.read = dadgnl_read  # type: ignore[method-assign]
-        case_module.Renovaveis.read = renovaveis_read  # type: ignore[method-assign]
-        case_module.Restricoes.read = restricoes_read  # type: ignore[method-assign]
-        fpha_module.read_polinjus = polinjus_read  # type: ignore[assignment]
-        try:
-            # make_decomp_files defaults every optional path to None.
-            case = make_decomp_case(tmp_path)
+        monkeypatch.setattr(case_module.Dadgnl, "read", dadgnl_read)
+        monkeypatch.setattr(case_module.Renovaveis, "read", renovaveis_read)
+        monkeypatch.setattr(case_module.Restricoes, "read", restricoes_read)
+        monkeypatch.setattr(fpha_module, "read_polinjus", polinjus_read)
 
-            assert case.dadgnl is None
-            assert case.renovaveis is None
-            assert case.polinjus is None
-            assert case.libs_restricao_eletrica is None
-        finally:
-            (
-                case_module.Dadgnl.read,
-                case_module.Renovaveis.read,
-                case_module.Restricoes.read,
-                fpha_module.read_polinjus,
-            ) = originals
+        # make_decomp_files defaults every optional path to None.
+        case = make_decomp_case(tmp_path)
+
+        assert case.dadgnl is None
+        assert case.renovaveis is None
+        assert case.polinjus is None
+        assert case.libs_restricao_eletrica is None
 
         dadgnl_read.assert_not_called()
         renovaveis_read.assert_not_called()

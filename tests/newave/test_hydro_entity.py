@@ -10,6 +10,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.pandas_utils import as_float
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import hydro_with_group, modif_mock
 from tests.newave.conftest import (
@@ -600,7 +601,7 @@ class TestConvertHydros:
         assert juruena["Fill start"] == 1
         assert juruena["Operates from"] == 2
         assert juruena["Vol. morto %"] == "0.0"
-        assert "stage 4" in juruena["Unit ramp"]
+        assert "stage 4" in str(juruena["Unit ramp"])
 
     def test_ex_only_emits_no_filling_diagnostic(self, tmp_path) -> None:
         """An EX-only case emits no ``ne-filling-plant`` diagnostic."""
@@ -911,35 +912,36 @@ class TestBuildMirrorUnitGroup:
 
         plant_max_generation_mw = 1400.0
         plant_max_turbined_m3s = 980.3
+        unit_groups = [
+            build_mirror_unit_group(
+                name="PLANT",
+                bus_id=2,
+                min_generation_mw=12.5,
+                max_generation_mw=plant_max_generation_mw,
+                min_turbined_m3s=0.0,
+                max_turbined_m3s=plant_max_turbined_m3s,
+            )
+        ]
         plant = {
             "name": "PLANT",
             "max_generation_mw": plant_max_generation_mw,
             "max_turbined_m3s": plant_max_turbined_m3s,
-            "unit_groups": [
-                build_mirror_unit_group(
-                    name="PLANT",
-                    bus_id=2,
-                    min_generation_mw=12.5,
-                    max_generation_mw=plant_max_generation_mw,
-                    min_turbined_m3s=0.0,
-                    max_turbined_m3s=plant_max_turbined_m3s,
-                )
-            ],
+            "unit_groups": unit_groups,
         }
 
-        assert sum(
-            g["max_generation_mw"] for g in plant["unit_groups"]
-        ) == pytest.approx(plant["max_generation_mw"])
-        assert sum(
-            g["max_turbined_m3s"] for g in plant["unit_groups"]
-        ) == pytest.approx(plant["max_turbined_m3s"])
+        assert sum(as_float(g["max_generation_mw"]) for g in unit_groups) == (
+            pytest.approx(plant["max_generation_mw"])
+        )
+        assert sum(as_float(g["max_turbined_m3s"]) for g in unit_groups) == (
+            pytest.approx(plant["max_turbined_m3s"])
+        )
 
     def test_keyword_only_signature_enforced(self) -> None:
         """A positional call raises ``TypeError``."""
         from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 
         with pytest.raises(TypeError):
-            build_mirror_unit_group("PLANT", 2, 0.0, 100.0, 0.0, 50.0)
+            build_mirror_unit_group("PLANT", 2, 0.0, 100.0, 0.0, 50.0)  # ty: ignore[missing-argument,too-many-positional-arguments] positional call is the point
 
 
 class TestLegacyHydroShapeRejectedBy013:

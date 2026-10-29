@@ -114,7 +114,7 @@ class TestUhSpillCeiling:
         plant2_rows = [
             c for c in contributions if c.entity_id == self._ID_MAP.hydro_id(2)
         ]
-        assert all(c.upper >= UNBOUNDED for c in plant2_rows)
+        assert all(c.upper is not None and c.upper >= UNBOUNDED for c in plant2_rows)
 
     def test_missing_column_emits_nothing(self) -> None:
         # UH frame without the field-9 column (older idecomp): no raise.

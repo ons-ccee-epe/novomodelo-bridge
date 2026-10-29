@@ -65,7 +65,7 @@ def test_hash_input_files_hashes_present_files(tmp_path: Path) -> None:
     assert by_field["hidr"]["sha256"] == hashlib.sha256(hidr_bytes).hexdigest()
     assert by_field["hidr"]["size_bytes"] == len(hidr_bytes)
 
-    field_order = [entry["field"] for entry in entries]
+    field_order = [str(entry["field"]) for entry in entries]
     assert field_order == sorted(field_order)
 
 

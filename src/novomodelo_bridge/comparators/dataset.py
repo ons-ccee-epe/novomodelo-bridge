@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, cast
 import polars as pl
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from novomodelo_bridge.comparators.model import ResultComparison
@@ -368,7 +369,7 @@ def _metadata_to_json(meta: dict[str, object]) -> dict[str, object]:
     return view
 
 
-def _metadata_from_json(view: dict[str, object]) -> dict[str, object]:
+def _metadata_from_json(view: Mapping[str, object]) -> dict[str, object]:
     """Reconstruct a metadata dict from its JSON view (inverse of to-json).
 
     Entries shaped like ``{_FRAME_SENTINEL: "polars", "records": [...],
@@ -440,7 +441,7 @@ def _render_to_json(render: RenderInputs) -> dict[str, object]:
     return _metadata_to_json(raw)
 
 
-def _render_from_json(view: dict[str, object]) -> RenderInputs:
+def _render_from_json(view: Mapping[str, object]) -> RenderInputs:
     """Reconstruct a :class:`RenderInputs` from its JSON view.
 
     Inverse of :func:`_render_to_json`: reuses :func:`_metadata_from_json` to

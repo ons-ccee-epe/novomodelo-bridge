@@ -35,6 +35,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     _resolve_relato2,
     _resolve_result_file,
     _resolve_revisioned_file,
+    _TableReader,
     read_avl_cortesfpha,
     read_dec_desvfpha,
     read_dec_estatfpha,
@@ -68,7 +69,7 @@ class _StubTimFile:
         self.tempos_etapas = table
 
 
-def _stub_reader(table: pd.DataFrame | None) -> type:
+def _stub_reader(table: pd.DataFrame | None) -> _TableReader:
     class _Reader:
         @staticmethod
         def read(path: str) -> _StubFile:

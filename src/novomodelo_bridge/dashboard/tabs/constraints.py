@@ -32,6 +32,8 @@ from novomodelo_bridge.ui.html.document import (
 from novomodelo_bridge.ui.html.plotly import stage_x_dates, stage_x_labels
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from novomodelo_bridge.dashboard.data import DashboardData
 
 # ---------------------------------------------------------------------------
@@ -123,10 +125,10 @@ def _build_metrics_row(data: DashboardData) -> str:
 
 
 def _compute_violation_zones(
-    p10: list[float],
-    p90: list[float],
-    bound_lower: list[float | None],
-    bound_upper: list[float | None],
+    p10: Sequence[float],
+    p90: Sequence[float],
+    bound_lower: Sequence[float | None],
+    bound_upper: Sequence[float | None],
 ) -> list[dict[str, int]]:
     """Compute contiguous stage index intervals where the band crosses either bound.
 

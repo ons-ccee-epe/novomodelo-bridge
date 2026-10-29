@@ -18,6 +18,7 @@ import polars as pl
 
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.novomodelo.case_io import case_dir_for
 
 if TYPE_CHECKING:
@@ -106,7 +107,7 @@ def _nw_stage_offset(nw_df: pl.DataFrame) -> int:
     stages = nw_df["stage"].drop_nulls()
     if stages.is_empty():
         return 1
-    return int(stages.min())
+    return as_int(stages.min())
 
 
 def _build_gen_max_overlay(
@@ -975,7 +976,7 @@ def compare_results(
             if not stages_col.is_empty():
                 max_val = stages_col.max()
                 if max_val is not None:
-                    nw_max_stage_1based = int(max_val)  # type: ignore[arg-type]
+                    nw_max_stage_1based = as_int(max_val)
         if not novomodelo_hydro.is_empty():
             # Generation upper-bound overlay (the source model GHMAX_FPHC vs Novomodelo LP).
             gen_max_overlay = _build_gen_max_overlay(

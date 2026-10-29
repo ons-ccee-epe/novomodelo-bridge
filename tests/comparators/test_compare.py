@@ -26,7 +26,13 @@ from novomodelo_bridge.comparators.model import (
 from novomodelo_bridge.core.tolerances import is_effectively_infinite
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from rich.console import JustifyMethod
+    from rich.table import Table
+
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
     from novomodelo_bridge.core.diagnostics import Diagnostic
 
 # -------------------------------------------------------------------
@@ -191,11 +197,34 @@ class _MakeTableSpy:
     def __init__(self) -> None:
         self.records: list[dict[str, object]] = []
 
-    def __call__(self, *args: object, **kwargs: object) -> object:
+    def __call__(
+        self,
+        columns: Sequence[str],
+        rows: Sequence[Sequence[object]],
+        *,
+        title: str | None = None,
+        justify: Sequence[JustifyMethod] | None = None,
+        caption: str | None = None,
+        row_styles: Sequence[str | None] | None = None,
+    ) -> Table:
         from novomodelo_bridge.ui.console import make_table
 
-        self.records.append(dict(kwargs))
-        return make_table(*args, **kwargs)  # type: ignore[arg-type]
+        self.records.append(
+            {
+                "title": title,
+                "justify": justify,
+                "caption": caption,
+                "row_styles": row_styles,
+            }
+        )
+        return make_table(
+            columns,
+            rows,
+            title=title,
+            justify=justify,
+            caption=caption,
+            row_styles=row_styles,
+        )
 
 
 class TestToleranceRowColouring:
@@ -1374,9 +1403,21 @@ class TestCompareResultsReturnsDataset:
 
         real_detail = analyze.build_productivity_detail
 
-        def _detail(*args: object) -> object:
-            seen["accumulated"] = args[4]
-            return real_detail(*args)
+        def _detail(
+            alignment: EntityAlignment,
+            nw_prod_detail: pl.DataFrame,
+            nw_cadastro: pd.DataFrame,
+            novomodelo_prod_detail: dict[int, dict],
+            cb_accumulated: dict[int, float],
+        ) -> pl.DataFrame:
+            seen["accumulated"] = cb_accumulated
+            return real_detail(
+                alignment,
+                nw_prod_detail,
+                nw_cadastro,
+                novomodelo_prod_detail,
+                cb_accumulated,
+            )
 
         monkeypatch.setattr(analyze, "build_productivity_detail", _detail)
 

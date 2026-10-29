@@ -51,23 +51,27 @@ _BLOCK_KINDS: dict[str, tuple[str, str, str]] = {
 #: Every term kind the LHS evaluators can value from simulation output.
 SUPPORTED_KINDS = STORAGE_KINDS | frozenset(_BLOCK_KINDS)
 
-TERMS_SCHEMA: dict[str, pl.DataType] = {
-    "constraint_id": pl.Int32,
-    "stage_id": pl.Int32,
-    "block_id": pl.Int32,
-    "term_index": pl.Int32,
-    "variable_kind": pl.String,
-    "entity_id": pl.Int32,
-    "term_block_id": pl.Int32,
-    "coefficient": pl.Float64,
-}
-BOUNDS_SCHEMA: dict[str, pl.DataType] = {
-    "constraint_id": pl.Int32,
-    "stage_id": pl.Int32,
-    "block_id": pl.Int32,
-    "bound_lower": pl.Float64,
-    "bound_upper": pl.Float64,
-}
+TERMS_SCHEMA = pl.Schema(
+    {
+        "constraint_id": pl.Int32,
+        "stage_id": pl.Int32,
+        "block_id": pl.Int32,
+        "term_index": pl.Int32,
+        "variable_kind": pl.String,
+        "entity_id": pl.Int32,
+        "term_block_id": pl.Int32,
+        "coefficient": pl.Float64,
+    }
+)
+BOUNDS_SCHEMA = pl.Schema(
+    {
+        "constraint_id": pl.Int32,
+        "stage_id": pl.Int32,
+        "block_id": pl.Int32,
+        "bound_lower": pl.Float64,
+        "bound_upper": pl.Float64,
+    }
+)
 _LHS_COLUMNS = ["constraint_id", "scenario_id", "stage_id", "block_id", "lhs_value"]
 
 

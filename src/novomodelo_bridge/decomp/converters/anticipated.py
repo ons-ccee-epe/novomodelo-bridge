@@ -65,8 +65,9 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
 from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
 
@@ -74,8 +75,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     import pandas as pd
-    from idecomp.decomp import Dadgnl
-    from idecomp.decomp.modelos.dadgnl import GL
 
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -83,6 +82,34 @@ _LOG = logging.getLogger(__name__)
 
 _NONZERO_TOLERANCE = 1e-9
 _HOURS_PER_OPERATIVE_WEEK = 168  # 7 days x 24 h; the study/post-study grid step
+
+
+@runtime_checkable
+class _GlRegister(Protocol):
+    @property
+    def codigo_usina(self) -> int: ...
+
+    @property
+    def estagio(self) -> int: ...
+
+    @property
+    def data_inicio(self) -> object: ...
+
+    @property
+    def geracao(self) -> object: ...
+
+    @property
+    def duracao(self) -> object: ...
+
+
+class _GnlRegisters(Protocol):
+    def gl(self) -> object: ...
+
+    def tg(self, *, df: bool) -> object: ...
+
+    def gs(self, *, df: bool) -> object: ...
+
+    def nl(self, *, df: bool) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -172,16 +199,16 @@ def _as_floats(value: object) -> list[float]:
         return []
     if isinstance(value, Sequence) and not isinstance(value, str | bytes):
         return [float(v) for v in value]
-    return [float(value)]  # type: ignore[arg-type]
+    return [as_float(value)]
 
 
-def _gl_registers(dadgnl: Dadgnl) -> list[GL]:
+def _gl_registers(dadgnl: _GnlRegisters) -> list[_GlRegister]:
     """Every ``gl`` register of ``dadgnl``, in deck order."""
     registers = dadgnl.gl()
-    if registers is None:
-        return []
+    if isinstance(registers, list):
+        return registers
     # idecomp returns a lone register bare, not as a one-item list.
-    return registers if isinstance(registers, list) else [registers]
+    return [registers] if isinstance(registers, _GlRegister) else []
 
 
 def _block_weighted_mean(values: Sequence[float], weights: Sequence[float]) -> float:
@@ -217,7 +244,7 @@ def _parse_data_inicio(raw: object) -> date:
     return date(year, month, day)
 
 
-def is_gnl_enabled(dadgnl: Dadgnl | None) -> bool:
+def is_gnl_enabled(dadgnl: _GnlRegisters | None) -> bool:
     """Whether ``dadgnl`` declares any committed GNL dispatch.
 
     ``True`` iff ``dadgnl`` is present and at least one ``gl`` register carries a
@@ -234,7 +261,7 @@ def is_gnl_enabled(dadgnl: Dadgnl | None) -> bool:
     )
 
 
-def read_gnl_model(dadgnl: Dadgnl) -> GnlCommitmentModel | None:
+def read_gnl_model(dadgnl: _GnlRegisters) -> GnlCommitmentModel | None:
     """Read ``dadgnl`` into a :class:`GnlCommitmentModel`, or ``None`` if GNL-off.
 
     Returns ``None`` when :func:`is_gnl_enabled` is ``False``. Otherwise builds
@@ -252,7 +279,11 @@ def read_gnl_model(dadgnl: Dadgnl) -> GnlCommitmentModel | None:
     if not is_gnl_enabled(dadgnl):
         return None
 
-    tg = dadgnl.tg(df=True)
+    tg = as_frame(dadgnl.tg(df=True))
+    if tg is None:
+        raise ValueError(
+            "gl declares committed dispatch but the deck has no tg registry"
+        )
     first_records = tg.sort_values(["codigo_usina", "estagio"]).drop_duplicates(
         "codigo_usina", keep="first"
     )
@@ -283,7 +314,7 @@ def read_gnl_model(dadgnl: Dadgnl) -> GnlCommitmentModel | None:
 
 
 def _read_gl_commitments(
-    dadgnl: Dadgnl, known_codes: set[int]
+    dadgnl: _GnlRegisters, known_codes: set[int]
 ) -> dict[int, GnlCommitment]:
     """Build ``{code: GnlCommitment}`` by iterating ``gl`` registers.
 
@@ -370,9 +401,9 @@ def gnl_block_commitments(
     return commitments
 
 
-def _read_weeks_per_month(dadgnl: Dadgnl) -> dict[int, int]:
+def _read_weeks_per_month(dadgnl: _GnlRegisters) -> dict[int, int]:
     """The ``gs`` weeks-per-month map ``{mes: semanas}`` (empty when absent)."""
-    frame = dadgnl.gs(df=True)
+    frame = as_frame(dadgnl.gs(df=True))
     if frame is None or frame.empty:
         return {}
     return {int(row["mes"]): int(row["semanas"]) for _, row in frame.iterrows()}
@@ -407,7 +438,7 @@ def operative_week_months(
     return weeks
 
 
-def _read_nl_lags(dadgnl: Dadgnl) -> dict[int, int]:
+def _read_nl_lags(dadgnl: _GnlRegisters) -> dict[int, int]:
     """The ``nl`` dispatch-anticipation lags ``{codigo_usina: months}``.
 
     Each ``nl`` register carries ``codigo_usina``, ``codigo_submercado`` and
@@ -415,7 +446,7 @@ def _read_nl_lags(dadgnl: Dadgnl) -> dict[int, int]:
     fixed-shape register, so ``nl(df=True)`` is well-formed. Empty when the deck
     declares no ``nl`` block.
     """
-    frame = dadgnl.nl(df=True)
+    frame = as_frame(dadgnl.nl(df=True))
     if frame is None or frame.empty:
         return {}
     return {int(row["codigo_usina"]): int(row["lag"]) for _, row in frame.iterrows()}
@@ -598,8 +629,8 @@ def _reject_straddling_windows(
     the horizon instead of tiling either side of it.
     """
     for row in past:
-        start = date.fromisoformat(row["start_date"])
-        end = date.fromisoformat(row["end_date"])
+        start = date.fromisoformat(str(row["start_date"]))
+        end = date.fromisoformat(str(row["end_date"]))
         if start < horizon_end < end:
             raise ValueError(
                 f"past_anticipated_commitment for thermal {row['thermal_id']} "

@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 import pytest
@@ -13,6 +13,9 @@ import pytest
 from novomodelo_bridge.comparators.decomp.results import _AlignedDecompFrames
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.conftest import _FakeDadger, make_decomp_case
+
+if TYPE_CHECKING:
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
 
 
 def _patch_shared_case(
@@ -276,6 +279,14 @@ def _extract_tab_content(html: str, tab_id: str) -> str:
 
     match = re.search(rf'id="{tab_id}".*?(?=id="tab-|\Z)', html, re.S)
     return match.group(0) if match else ""
+
+
+def _unmapped_codes(dataset: ComparisonDataset, level: str) -> object:
+    """The ``dataset.metadata["unmapped"][level]`` entry, narrowing the ``object``
+    side-table to the per-level mapping first."""
+    unmapped = dataset.metadata["unmapped"]
+    assert isinstance(unmapped, dict)
+    return unmapped[level]
 
 
 #: Hours of every stage `_write_generic_constraints_case` declares.

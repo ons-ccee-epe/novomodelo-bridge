@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.temporal import hours_weighted as _hours_weighted
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
@@ -119,7 +120,7 @@ def _ct_dense(
     calendar: Sequence[OperativeStage],
 ) -> dict[int, dict]:
     return dense_stage_records(
-        dadger.ct(df=True), calendar, register="CT", name_column="nome_usina"
+        as_frame(dadger.ct(df=True)), calendar, register="CT", name_column="nome_usina"
     )
 
 

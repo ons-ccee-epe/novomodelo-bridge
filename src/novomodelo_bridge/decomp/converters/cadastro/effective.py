@@ -17,11 +17,10 @@ from idecomp.decomp.modelos.dadger import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from idecomp.decomp import Dadger
-
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
+    AcRegisters,
     DiversionChannel,
     MachineSet,
     OutOfHorizon,
@@ -377,7 +376,7 @@ def _require_cadastro_row(hidr: pd.DataFrame, code: int) -> None:
 
 
 def build_effective_cadastro(
-    dadger: Dadger,
+    dadger: AcRegisters,
     hidr: pd.DataFrame,
     calendar: Sequence[OperativeStage],
 ) -> tuple[EffectiveCadastro, CadastroResolutionReport]:

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
@@ -39,6 +39,7 @@ from novomodelo_bridge.core.diagnostics import (
     format_stage_ranges,
 )
 from novomodelo_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.productivity import (
     evaluate_cota,
     fpha_efficiency,
@@ -59,8 +60,6 @@ from novomodelo_bridge.decomp.temporal import weekly_stage_count
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
-
-    from idecomp.decomp import Dadger, Mlt
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
@@ -127,8 +126,8 @@ def convert_tailrace_curves(case: DecompCase, id_map: DecompIdMap) -> pa.Table |
     polinjus = case.polinjus
     if polinjus is None:
         return None
-    families = polinjus.hidreletrica_curvajusante(df=True)
-    segments = polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True)
+    families = as_frame(polinjus.hidreletrica_curvajusante(df=True))
+    segments = as_frame(polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True))
     return build_tailrace_table(families, segments, id_map.hydro_id)
 
 
@@ -247,18 +246,18 @@ class VolumeWindowRule:
         """
         by_code: dict[int, list[_FpRecord]] = {}
         if fp is not None and not fp.empty:
-            for row in fp.itertuples(index=False):
-                code, estagio = int(row.codigo_usina), int(row.estagio)
+            for row in fp.to_dict("records"):
+                code, estagio = int(row["codigo_usina"]), int(row["estagio"])
                 in_hm3 = _volume_entry_in_hm3(
-                    row.tipo_entrada_janela_volume, code, estagio
+                    row["tipo_entrada_janela_volume"], code, estagio
                 )
                 record = _FpRecord(
                     first_stage=estagio - 1,
                     reduction=_window_delta(
-                        row.limite_inferior_janela_volume, in_hm3, code, estagio
+                        row["limite_inferior_janela_volume"], in_hm3, code, estagio
                     ),
                     increase=_window_delta(
-                        row.limite_superior_janela_volume, in_hm3, code, estagio
+                        row["limite_superior_janela_volume"], in_hm3, code, estagio
                     ),
                 )
                 by_code.setdefault(code, []).append(record)
@@ -299,7 +298,7 @@ class VolumeWindowRule:
 
 def _volume_entry_in_hm3(flag: object, code: int, estagio: int) -> bool:
     # A blank I1 field reads as 0, as the source model reads it.
-    entry = 0 if flag is None or pd.isna(flag) else int(flag)
+    entry = 0 if flag is None or pd.isna(flag) else as_int(flag)
     if entry not in (0, 1):
         raise ValueError(
             f"FP record of plant {code} at stage {estagio}: volume window entry "
@@ -313,20 +312,26 @@ def _window_delta(
 ) -> _WindowDelta | None:
     if value is None or pd.isna(value):
         return None
-    if float(value) < 0.0:
+    if as_float(value) < 0.0:
         raise ValueError(
             f"FP record of plant {code} at stage {estagio}: negative volume "
             f"window delta {value}"
         )
-    return _WindowDelta(float(value), in_hm3)
+    return _WindowDelta(as_float(value), in_hm3)
+
+
+class _FpRegisters(Protocol):
+    def fp(self, *, df: bool) -> object: ...
+
+    def uh(self, *, df: bool) -> object: ...
 
 
 def volume_window_rule(
-    dadger: Dadger, calendar: Sequence[OperativeStage]
+    dadger: _FpRegisters, calendar: Sequence[OperativeStage]
 ) -> VolumeWindowRule:
     """The deck's :class:`VolumeWindowRule`, from its ``FP`` and ``UH`` records;
     emits :func:`unconverted_fp_fields_diagnostic` when it applies."""
-    fp = dadger.fp(df=True)
+    fp = as_frame(dadger.fp(df=True))
     warning = unconverted_fp_fields_diagnostic(fp)
     if warning is not None:
         emit(warning, logger=_LOG)
@@ -365,9 +370,14 @@ def unconverted_fp_fields_diagnostic(fp: pd.DataFrame | None) -> Diagnostic | No
     )
 
 
+class _MonthlyMeans(Protocol):
+    @property
+    def valores(self) -> pd.DataFrame | None: ...
+
+
 def fpha_config(
     effective: EffectiveCadastro,
-    mlt: Mlt | None,
+    mlt: _MonthlyMeans | None,
     code: int,
     stage_index: int,
     windows: VolumeWindowRule,
@@ -390,7 +400,10 @@ def fpha_config(
 
 
 def spillage_fit_max(
-    effective: EffectiveCadastro, mlt: Mlt | None, code: int, stage_index: int
+    effective: EffectiveCadastro,
+    mlt: _MonthlyMeans | None,
+    code: int,
+    stage_index: int,
 ) -> float | None:
     """The FPHA spillage fit range (m³/s) of plant *code* at *stage_index*, from
     the ``mlt.dat`` means of the inflow gauge in force (``AC NUMPOS``, else the

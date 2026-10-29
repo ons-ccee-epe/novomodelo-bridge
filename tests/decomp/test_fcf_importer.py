@@ -284,7 +284,9 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
 
     assert calls[0]["stage_id"] == 4
     assert calls[0]["graph_stage_id"] == 3
-    assert config["policy"]["boundary"] == {"path": "boundary"}
+    policy = config["policy"]
+    assert isinstance(policy, dict)
+    assert policy["boundary"] == {"path": "boundary"}
 
 
 # ---------------------------------------------------------------------------

@@ -16,11 +16,12 @@ have no Novomodelo encoding today).
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
     curve per subsystem, 100 % depth, one cost uniform across blocks and
     across every declared stage.
     """
-    cd = dadger.cd(df=True)
+    cd = as_frame(dadger.cd(df=True))
     if cd is None or cd.empty:
         return {}
 
@@ -53,7 +54,7 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
 
     costs: dict[int, float] = {}
     for code, group in cd.groupby("codigo_submercado"):
-        code = int(code)
+        code = as_int(code)
         if group["codigo_curva"].nunique() != 1:
             raise ValueError(
                 f"subsystem {code}: multi-segment deficit curves are not "
@@ -132,7 +133,7 @@ def _ia_dense(
     Returns ``{(name_de, name_para): [{"de_para": [...], "para_de": [...]}
     per stage]}`` with declared stages forward-filled (stage 1 mandatory).
     """
-    ia = dadger.ia(df=True)
+    ia = as_frame(dadger.ia(df=True))
     if ia is None or ia.empty:
         return {}
 
@@ -315,7 +316,11 @@ _GERACAO_MAXIMA_60HZ_COLUMN = re.compile(r"^geracao_maxima_60_hz_(\d+)$")
 _UNBOUNDED_LINE_CAPACITY_MW = 99999.0
 
 
-def _itaipu_60hz_capacity_mw(dadger: Dadger) -> float:
+class _RiRegisters(Protocol):
+    def ri(self, *, df: bool) -> object: ...
+
+
+def _itaipu_60hz_capacity_mw(dadger: _RiRegisters) -> float:
     """The SE<->IV line's capacity: the largest declared ``RI``
     ``geracao_maxima_60_hz`` value across every stage and patamar, or
     :data:`_UNBOUNDED_LINE_CAPACITY_MW` when the deck carries no ``RI``
@@ -324,7 +329,7 @@ def _itaipu_60hz_capacity_mw(dadger: Dadger) -> float:
     An absent register means "no limit", not zero -- the line must never
     bind the 60 Hz output.
     """
-    ri = dadger.ri(df=True)
+    ri = as_frame(dadger.ri(df=True))
     if ri is None or ri.empty:
         return _UNBOUNDED_LINE_CAPACITY_MW
     columns = [c for c in ri.columns if _GERACAO_MAXIMA_60HZ_COLUMN.match(c)]
@@ -411,7 +416,11 @@ def append_iv_se_line(
     return extended_lines_doc, pa.concat_tables([line_bounds, new_bounds])
 
 
-def pumping_station_id_map(dadger: Dadger) -> dict[int, int]:
+class _UeRegisters(Protocol):
+    def ue(self, *, df: bool) -> object: ...
+
+
+def pumping_station_id_map(dadger: _UeRegisters) -> dict[int, int]:
     """``{codigo_usina: 0-based pumping-station id}`` — the single authority
     for ``UE`` id assignment.
 
@@ -422,7 +431,7 @@ def pumping_station_id_map(dadger: Dadger) -> dict[int, int]:
     ``pumping_station_ids`` argument), since the QBOM term's ``code`` is a
     pumping-station ``codigo_usina``, not a hydro one.
     """
-    ue = dadger.ue(df=True)
+    ue = as_frame(dadger.ue(df=True))
     if ue is None or ue.empty:
         return {}
     codes = sorted(int(c) for c in ue["codigo_usina"])
@@ -441,7 +450,7 @@ def convert_pumping_stations(
     assignment.
     """
     dadger = case.dadger
-    ue = dadger.ue(df=True)
+    ue = as_frame(dadger.ue(df=True))
     if ue is None or ue.empty:
         return {
             "$schema": novomodelo_schemas.schema_url_for(

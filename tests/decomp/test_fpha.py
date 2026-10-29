@@ -122,7 +122,7 @@ def _fp(*records: tuple) -> pd.DataFrame:
 
 def _windows(
     eff: EffectiveCadastro, rule: VolumeWindowRule, code: int = 1
-) -> list[tuple[float, float]]:
+) -> list[tuple[float, ...]]:
     return [
         tuple(rule.fitting_window(eff, code, t).values()) for t in range(eff.n_stages)
     ]

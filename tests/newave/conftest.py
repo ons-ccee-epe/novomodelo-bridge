@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 from inewave.newave import Modif
 
+from novomodelo_bridge.core.conversion import ConversionReport
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import _all_converter_patches, make_case, make_nw_files
 
@@ -626,7 +627,7 @@ def _make_dger_mock(start_year: int, start_month: int, num_anos: int) -> MagicMo
     return mock
 
 
-def _run_with_all_mocks(src: Path, dst: Path) -> object:
+def _run_with_all_mocks(src: Path, dst: Path) -> ConversionReport:
     """Run convert_newave_case with all converters replaced by canned fakes."""
     import contextlib
 

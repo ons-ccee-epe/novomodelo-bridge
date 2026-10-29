@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
@@ -37,6 +37,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -98,7 +99,7 @@ def pq_block_generation(
     last declared one); stage 1 must be declared. Missing generation
     fields read as 0.0.
     """
-    pq = dadger.pq(df=True)
+    pq = as_frame(dadger.pq(df=True))
     if pq is None or pq.empty:
         return {}
 
@@ -322,7 +323,19 @@ def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
     )
 
 
-def _pee_generation_rows(renovaveis: Renovaveis) -> pd.DataFrame | None:
+class _PeeRegisters(Protocol):
+    def pee_cad(self, *, df: bool) -> object: ...
+
+    def pee_subm(self, *, df: bool) -> object: ...
+
+    def pee_ger_per_pat_cen(self, *, df: bool) -> object: ...
+
+    def pee_ger_per_pat(self, *, df: bool) -> object: ...
+
+    def pee_config_per(self, *, df: bool) -> object: ...
+
+
+def _pee_generation_rows(renovaveis: _PeeRegisters) -> pd.DataFrame | None:
     """Rows of both renewable generation cards, as
     ``codigo_pee, estagio, patamar, cenario, geracao``.
 
@@ -368,7 +381,7 @@ def _pee_generation_rows(renovaveis: Renovaveis) -> pd.DataFrame | None:
 
 
 def _sorted_pee_codes(
-    renovaveis: Renovaveis, calendar: Sequence[OperativeStage]
+    renovaveis: _PeeRegisters, calendar: Sequence[OperativeStage]
 ) -> list[int]:
     """Every declared renewable park's ``codigo_pee``, sorted — the ncs_id
     assignment order :func:`_pee_series` (the NCS series writer) and
@@ -387,7 +400,7 @@ def _sorted_pee_codes(
     ValueError
         When a row's ``estagio`` falls outside *calendar*.
     """
-    cad = renovaveis.pee_cad(df=True)
+    cad = as_frame(renovaveis.pee_cad(df=True))
     ger = _pee_generation_rows(renovaveis)
     if cad is None or cad.empty or ger is None:
         return []
@@ -431,7 +444,7 @@ def build_pee_ncs_id_map(
 
 
 def _pee_series(
-    renovaveis: Renovaveis,
+    renovaveis: _PeeRegisters,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
     first_ncs_id: int,
@@ -442,8 +455,8 @@ def _pee_series(
     fills it uniformly, so its scenarios collapse to one value per (park,
     stage, block); ``PEE-GER-PER-PAT`` carries that value directly.
     """
-    cad = renovaveis.pee_cad(df=True)
-    subm = renovaveis.pee_subm(df=True)
+    cad = as_frame(renovaveis.pee_cad(df=True))
+    subm = as_frame(renovaveis.pee_subm(df=True))
     ger = _pee_generation_rows(renovaveis)
     if cad is None or cad.empty or ger is None:
         return []
@@ -456,9 +469,14 @@ def _pee_series(
     names = {
         int(r["codigo_pee"]): str(r["nome_pee"]).strip() for _, r in cad.iterrows()
     }
-    buses = {
-        int(r["codigo_pee"]): int(r["codigo_submercado"]) for _, r in subm.iterrows()
-    }
+    buses = (
+        {}
+        if subm is None
+        else {
+            int(r["codigo_pee"]): int(r["codigo_submercado"])
+            for _, r in subm.iterrows()
+        }
+    )
     curtailable = _pee_curtailment_by_code(renovaveis)
 
     values: dict[tuple[int, int, int], dict[int, float]] = {}
@@ -536,7 +554,7 @@ def _pee_series(
 _CURTAILABLE_OPERATING_STATE = "centralizado"
 
 
-def _pee_curtailment_by_code(renovaveis: Renovaveis) -> dict[int, bool]:
+def _pee_curtailment_by_code(renovaveis: _PeeRegisters) -> dict[int, bool]:
     """``codigo_pee -> allow_curtailment`` from the ``PEE-CONFIG-PER`` card.
 
     Only ``centralizado`` may be curtailed. A park's declared state applies

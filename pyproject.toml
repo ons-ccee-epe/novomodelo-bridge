@@ -83,3 +83,12 @@ typeCheckingMode = "off"
 reportMissingImports = "error"
 reportMissingModuleSource = "none"
 reportInvalidTypeForm = "none"
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.terminal]
+error-on-warning = true

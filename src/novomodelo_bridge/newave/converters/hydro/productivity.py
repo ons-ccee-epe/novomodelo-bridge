@@ -24,7 +24,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
-from novomodelo_bridge.core.pandas_utils import is_na
+from novomodelo_bridge.core.pandas_utils import as_frame_or_empty, is_na
 from novomodelo_bridge.core.productivity import (
     KTURB_BY_TIPO_TURBINA,
     apply_hydraulic_loss,
@@ -359,8 +359,10 @@ def _turbined_fit_maxima(
         {}
         if polinjus is None
         else tailrace_families_from_polinjus(
-            polinjus.hidreletrica_curvajusante(df=True),
-            polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True),
+            as_frame_or_empty(polinjus.hidreletrica_curvajusante(df=True)),
+            as_frame_or_empty(
+                polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True)
+            ),
         )
     )
     confhd_codes = {int(code) for code in case.confhd.usinas["codigo_usina"]}

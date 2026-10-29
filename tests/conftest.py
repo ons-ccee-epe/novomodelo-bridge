@@ -213,7 +213,8 @@ def make_nw_files(tmp_path: Path, **overrides: Path | None) -> NewaveFiles:
     for name in _OPTIONAL:
         fields[name] = None
     fields.update(overrides)
-    return NewaveFiles(**fields)  # type: ignore[arg-type]
+    # ty cannot tie the keyword names computed from _REQUIRED/_OPTIONAL to the Path fields
+    return NewaveFiles(**fields)  # ty: ignore[invalid-argument-type]
 
 
 def modif_mock(*blocks: tuple[int, list]) -> MagicMock:
@@ -376,7 +377,10 @@ class _FakeDadger:
     """Return a preset DataFrame (or ``None``) for each register accessor.
 
     Shared across the decomp constraint-register and results-compare test
-    modules; import with ``from tests.conftest import _FakeDadger``.
+    modules; import with ``from tests.conftest import _FakeDadger``. The
+    special-constraint accessors are explicit so the double satisfies
+    ``ConstraintRegisters``; every other register resolves through
+    ``__getattr__``.
     """
 
     def __init__(self, **frames: pd.DataFrame) -> None:
@@ -390,6 +394,45 @@ class _FakeDadger:
             return self._frames.get(name)
 
         return accessor
+
+    def re(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("re")
+
+    def fu(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("fu")
+
+    def ft(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("ft")
+
+    def fi(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("fi")
+
+    def lu(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("lu")
+
+    def hq(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("hq")
+
+    def lq(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("lq")
+
+    def cq(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("cq")
+
+    def hv(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("hv")
+
+    def lv(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("lv")
+
+    def cv(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("cv")
+
+    def he(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("he")
+
+    def cm(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("cm")
 
 
 def _fake_dataset(*, all_within_tol: bool = False) -> ComparisonDataset:

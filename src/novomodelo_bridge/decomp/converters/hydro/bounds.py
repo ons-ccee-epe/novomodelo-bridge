@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 
@@ -464,8 +465,8 @@ def stage_availability_factors(
     (:func:`_split_plant_frequencies`).
     """
     calendar = case.calendar
-    mp = case.dadger.mp(df=True)
-    fd = case.dadger.fd(df=True)
+    mp = as_frame(case.dadger.mp(df=True))
+    fd = as_frame(case.dadger.fd(df=True))
     mp_by_code = _single_group_factor_rows(mp)
     fd_by_code = _single_group_factor_rows(fd)
 
@@ -602,7 +603,7 @@ def convert_itaipu_frequency_min_generation(
     if _ITAIPU_CODE not in id_map.hydro_codes:
         return {}
     calendar = case.calendar
-    ri = case.dadger.ri(df=True)
+    ri = as_frame(case.dadger.ri(df=True))
     if ri is None or ri.empty:
         return {}
 

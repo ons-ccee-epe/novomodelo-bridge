@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 import polars as pl
@@ -297,9 +297,23 @@ def window_gh_max(
     return float(window.gh_max_mw)
 
 
+class OperatingPointFields(TypedDict, total=False):
+    """The :class:`~novomodelo_bridge.comparators.model.PercentileData` fields
+    :func:`operating_point_fields` fills; the keys are absent without a comparison."""
+
+    fpha_metrics: pl.DataFrame | None
+    fpha_surface: pl.DataFrame | None
+    fpha_spill: pl.DataFrame | None
+    fpha_split: pl.DataFrame
+    fpha_fit_inputs: pl.DataFrame
+    fpha_slices: pl.DataFrame
+    tie_share: pl.DataFrame
+    hydro_masked: pl.DataFrame
+
+
 def operating_point_fields(
     comparison: OperatingPointComparison | None,
-) -> dict[str, pl.DataFrame | None]:
+) -> OperatingPointFields:
     """The :class:`~novomodelo_bridge.comparators.model.PercentileData` fields
     *comparison* fills; the FPHA surface frames are ``None`` when either model
     fitted no planes."""
@@ -549,7 +563,7 @@ def masked_hydro(
             .alias("rel_diff")
         )
         .select(list(MASKED_HYDRO_SCHEMA))
-        .cast(MASKED_HYDRO_SCHEMA)
+        .cast(pl.Schema(MASKED_HYDRO_SCHEMA))
         .sort("novomodelo_id", "stage", "variable")
     )
 
@@ -573,7 +587,7 @@ def tie_share(source: pl.DataFrame, novomodelo: pl.DataFrame) -> pl.DataFrame:
             coalesce=True,
         )
         .select(list(TIE_SHARE_SCHEMA))
-        .cast(TIE_SHARE_SCHEMA)
+        .cast(pl.Schema(TIE_SHARE_SCHEMA))
         .sort("stage")
     )
 

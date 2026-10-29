@@ -6,6 +6,7 @@ Synthetic-fixture only — a fake ``Dadger`` returns pandas DataFrames shaped li
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
 
@@ -139,8 +140,8 @@ def _cm(*rows: tuple) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["codigo_restricao", "codigo_ree", "coeficiente"])
 
 
-def _only(census_records: object, cid: int) -> ConstraintRecord:
-    records = [r for r in census_records if r.constraint_id == cid]  # type: ignore[attr-defined]
+def _only(census_records: Iterable[ConstraintRecord], cid: int) -> ConstraintRecord:
+    records = [r for r in census_records if r.constraint_id == cid]
     assert len(records) == 1, f"expected exactly one record for {cid}"
     return records[0]
 

@@ -136,8 +136,8 @@ def _merge_hydro_bounds(
 
     import polars as pl
 
-    w = pl.from_arrow(withdrawal)
-    s = pl.from_arrow(storage)
+    w = pl.DataFrame(withdrawal)
+    s = pl.DataFrame(storage)
     merged = merge_bound_tables(w, s, on=["hydro_id", "stage_id"], precedence="base")
     merged = merged.sort("hydro_id", "stage_id")
     return merged.to_arrow()
@@ -162,11 +162,11 @@ def _fold_per_stage_capacity_caps(
 
     import polars as pl
 
-    h = pl.from_arrow(capacity_caps)
+    h = pl.DataFrame(capacity_caps)
     if base is None:
         return h.sort("hydro_id", "stage_id").to_arrow()
 
-    b = pl.from_arrow(base)
+    b = pl.DataFrame(base)
     merged = merge_bound_tables(b, h, on=["hydro_id", "stage_id"], precedence="base")
     merged = merged.sort("hydro_id", "stage_id")
     return merged.to_arrow()

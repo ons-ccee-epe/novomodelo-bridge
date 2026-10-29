@@ -15,10 +15,28 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 import pandas as pd
+from inewave.newave.modelos.modif import (
+    CFUGA,
+    CMONT,
+    COTAREA,
+    NUMCNJ,
+    NUMMAQ,
+    POTEFE,
+    TURBMAXT,
+    TURBMINT,
+    VAZMIN,
+    VAZMINT,
+    VMAXT,
+    VMINT,
+    VOLCOTA,
+    VOLMAX,
+    VOLMIN,
+)
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
@@ -27,6 +45,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
 )
 from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, seasonal_step_function
 
@@ -48,6 +67,20 @@ _TEMPORAL_VALUE_ATTR = {
     "TURBMAXT": "turbinamento",
 }
 _TEMPORAL_OVERRIDE_TYPES = frozenset(_TEMPORAL_VALUE_ATTR)
+# Every temporal record but VAZMINT carries a required start date and no PRE/POS marker.
+_DATED_OVERRIDE_TYPES = _TEMPORAL_OVERRIDE_TYPES - {"VAZMINT"}
+
+type _DatedRecord = VMAXT | VMINT | CFUGA | CMONT | TURBMINT | TURBMAXT
+
+
+def _is_record[R: Register](rec: Register, kind: type[R]) -> TypeGuard[R]:
+    """Whether *rec* is a ``kind`` register, matched by class name as the module
+    dispatches records."""
+    return type(rec).__name__ == kind.__name__
+
+
+def _is_dated(rec: Register) -> TypeGuard[_DatedRecord]:
+    return type(rec).__name__ in _DATED_OVERRIDE_TYPES
 
 
 def _raw_unit(rec: object) -> str:
@@ -67,13 +100,13 @@ def _volume_unit(rec: object) -> str | None:
     return None
 
 
-def _polynomial_coefficients(raw: list[float | None]) -> list[float]:
+def _polynomial_coefficients(raw: Sequence[float | None]) -> list[float]:
     """The coefficients of a MODIF.DAT polynomial record, a0 first.
 
     A blank field is a zero coefficient, not a missing one: a low-order
     polynomial leaves its tail blank instead of spelling out ``0.``.
     """
-    return [0.0 if pd.isna(value) else float(value) for value in raw]
+    return [0.0 if value is None or pd.isna(value) else float(value) for value in raw]
 
 
 def percent_of_useful_volume(percent: float, vol_min: float, vol_max: float) -> float:
@@ -191,15 +224,15 @@ def _apply_permanent_overrides(
             if type_name in _TEMPORAL_OVERRIDE_TYPES:
                 continue
 
-            if type_name == "VAZMIN":
-                result.loc[code, "vazao_minima_historica"] = float(rec.vazao)
+            if _is_record(rec, VAZMIN):
+                result.loc[code, "vazao_minima_historica"] = as_float(rec.vazao)
 
-            elif type_name in ("VOLMAX", "VOLMIN"):
+            elif _is_record(rec, VOLMAX) or _is_record(rec, VOLMIN):
                 unit = _volume_unit(rec)
                 if unit is None:
                     unit_unknown.append((code, type_name, _raw_unit(rec)))
                     unit = "h"
-                value = float(rec.volume)
+                value = as_float(rec.volume)
                 if unit == "%":
                     base = cadastro.loc[code]
                     value = percent_of_useful_volume(
@@ -210,27 +243,27 @@ def _apply_permanent_overrides(
                 column = "volume_maximo" if type_name == "VOLMAX" else "volume_minimo"
                 result.loc[code, column] = value
 
-            elif type_name == "NUMCNJ":
+            elif _is_record(rec, NUMCNJ):
                 result.loc[code, "numero_conjuntos_maquinas"] = int(rec.numero)
 
-            elif type_name == "NUMMAQ":
-                set_num = int(rec.conjunto)
-                n_maq = int(rec.numero_maquinas)
+            elif _is_record(rec, NUMMAQ):
+                set_num = as_int(rec.conjunto)
+                n_maq = as_int(rec.numero_maquinas)
                 result.loc[code, f"maquinas_conjunto_{set_num}"] = n_maq
 
-            elif type_name == "POTEFE":
+            elif _is_record(rec, POTEFE):
                 # ``potencia_nominal_conjunto_*`` is the conjunto's POTEF.
-                set_num = int(rec.conjunto)
-                result.loc[code, f"potencia_nominal_conjunto_{set_num}"] = float(
+                set_num = as_int(rec.conjunto)
+                result.loc[code, f"potencia_nominal_conjunto_{set_num}"] = as_float(
                     rec.potencia
                 )
 
-            elif type_name == "VOLCOTA":
+            elif _is_record(rec, VOLCOTA):
                 result.loc[code, [f"a{i}_volume_cota" for i in range(5)]] = (
                     _polynomial_coefficients(rec.polinomio_volume_cota)
                 )
 
-            elif type_name == "COTAREA":
+            elif _is_record(rec, COTAREA):
                 result.loc[code, [f"a{i}_cota_area" for i in range(5)]] = (
                     _polynomial_coefficients(rec.polinomio_cota_area)
                 )
@@ -436,31 +469,30 @@ def _extract_temporal_overrides(
         plant_overrides: list[dict] = []
         for rec in records:
             type_name = type(rec).__name__
-            if type_name not in _TEMPORAL_OVERRIDE_TYPES:
-                continue
-
-            # VMAXT/VMINT carry a unit column ('h' hm³ or '%' of useful volume);
-            # a record with no recognisable unit is taken as '%' and reported.
             unit: str | None = None
-            if type_name in ("VMAXT", "VMINT"):
-                unit = _volume_unit(rec)
-                if unit is None:
-                    unit_unknown.append((code, type_name, _raw_unit(rec)))
-                    unit = "%"
 
             # Only VAZMINT admits the PRE/POS markers, so only it reads them.
-            if type_name == "VAZMINT":
+            if _is_record(rec, VAZMINT):
                 period = rec.periodo
                 start = rec.data_inicio
                 if rec.mes is None or (period is None and start is None):
                     undated.append((code, type_name))
                     continue
                 month = int(rec.mes)
-                year = None if period is not None else int(start.year)
-            else:
+                year = None if period is not None or start is None else int(start.year)
+            elif _is_dated(rec):
                 period = None
                 month = int(rec.data_inicio.month)
                 year = int(rec.data_inicio.year)
+                # VMAXT/VMINT carry a unit column ('h' hm³ or '%' of useful volume);
+                # a record with no recognisable unit is taken as '%' and reported.
+                if type_name in ("VMAXT", "VMINT"):
+                    unit = _volume_unit(rec)
+                    if unit is None:
+                        unit_unknown.append((code, type_name, _raw_unit(rec)))
+                        unit = "%"
+            else:
+                continue
 
             override: dict = {
                 "type": type_name,

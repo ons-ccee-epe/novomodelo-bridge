@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 import polars as pl
 import pytest
@@ -18,6 +19,7 @@ from novomodelo_bridge.comparators.newave.operating_points import (
     compare_operating_points,
 )
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.pandas_utils import as_float
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro import read_cadastro
 from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
@@ -45,6 +47,12 @@ class _Runs:
     storage: pl.DataFrame
     cmo: pl.DataFrame
     novomodelo_planes: pl.DataFrame | None
+
+
+class _BlockOptions(TypedDict, total=False):
+    q: float
+    gh_mw: float
+    exact_mw: dict[tuple[int, int, int], float] | None
 
 
 def _blocks(
@@ -210,10 +218,10 @@ def _novomodelo_blocks(case: NewaveCase, codes: tuple[int, ...]) -> pl.DataFrame
 def _runs(
     case: NewaveCase,
     codes: tuple[int, ...] = (_FURNAS,),
-    **blocks: object,
+    **blocks: Unpack[_BlockOptions],
 ) -> _Runs:
     return _Runs(
-        blocks=_blocks(case, codes, **blocks),  # type: ignore[arg-type]
+        blocks=_blocks(case, codes, **blocks),
         storage=_storage(),
         cmo=_cmo(),
         novomodelo_planes=_novomodelo_planes(codes),
@@ -364,7 +372,9 @@ class TestSourceModelConventions:
     ) -> None:
         unprinted = _compare(monkeypatch, tmp_path, case, _runs(case))
         exact = {
-            stage: _fit_row(unprinted.fit_inputs, _FURNAS, stage)["source_rho_exact"]
+            stage: as_float(
+                _fit_row(unprinted.fit_inputs, _FURNAS, stage)["source_rho_exact"]
+            )
             * 500.0
             for stage in _STAGES
         }

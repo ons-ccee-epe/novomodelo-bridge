@@ -38,13 +38,13 @@ from unittest.mock import MagicMock
 import polars as pl
 import pytest
 from rich.console import Console
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from novomodelo_bridge.comparators.analyze import build_results_dataset
 from novomodelo_bridge.comparators.dataset import ComparisonDataset
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
-from novomodelo_bridge.comparators.verdict import build_compare_verdict
+from novomodelo_bridge.comparators.verdict import CompareVerdict, build_compare_verdict
 from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
 from tests.comparators.conftest import _extract_tab_content
 from tests.dashboard.test_chart_helpers import (
@@ -314,7 +314,7 @@ def _one_row_results_dataset() -> ComparisonDataset:
 
 def _invoke_compare_newave(
     argv_tail: list[str], monkeypatch: pytest.MonkeyPatch, novomodelo_dir: Path
-) -> object:
+) -> Result:
     """Invoke ``compare newave`` through the real Typer app via ``CliRunner``."""
     from novomodelo_bridge.cli import app
 
@@ -354,11 +354,25 @@ def test_compare_newave_no_color_summary_has_no_ansi_escapes(
     captured: list[Console] = []
     original: Callable[..., None] = print_results_summary_from_dataset
 
-    def _spy(*args: object, **kwargs: object) -> None:
-        console = kwargs["console"]
+    def _spy(
+        dataset: ComparisonDataset,
+        newave_dir: Path,
+        novomodelo_output_dir: Path,
+        *,
+        verdict: CompareVerdict,
+        reference_label: str = "NEWAVE",
+        console: Console | None = None,
+    ) -> None:
         assert isinstance(console, Console)
         captured.append(console)
-        original(*args, **kwargs)
+        original(
+            dataset,
+            newave_dir,
+            novomodelo_output_dir,
+            verdict=verdict,
+            reference_label=reference_label,
+            console=console,
+        )
 
     monkeypatch.setattr(
         "novomodelo_bridge.ui.compare_summary.print_results_summary_from_dataset", _spy

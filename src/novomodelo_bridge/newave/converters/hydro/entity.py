@@ -244,9 +244,9 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # plants resolve to the filling plant; it also drives each filling plant's
     # FILLING contract below. Empty (byte-identical to the no-arg call) when the
     # case has no exph or no NE-with-filling plant.
-    filling_codes = filling_hydro_codes(
-        confhd_df, case.exph.expansoes if case.exph is not None else None
-    )
+    exph = case.exph
+    exph_df = exph.expansoes if exph is not None else None
+    filling_codes = filling_hydro_codes(confhd_df, exph_df)
 
     # Resolve the FICT-cascade for every real plant.  Provides the effective
     # next-real-plant downstream and the sum of any FICT-chain ρ_eq that must
@@ -277,7 +277,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # Per-stage (year, month) closure over the study horizon, built once and
     # passed into ``filling_min_rate_m3s`` for each filling plant.
     # The exph DataFrame is only consulted when ``filling_codes`` is non-empty,
-    # which guarantees ``case.exph`` is not None there.
+    # which guarantees it is present there.
     horizon = case.horizon
     stage_dates = build_stage_dates(
         horizon.start_year, horizon.start_month, horizon.total_stages
@@ -331,10 +331,9 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         entry_stage_id: int | None = None
         filling: dict | None = None
         operational_start_date = existing_op_date
-        if newave_code in filling_codes:
-            # filling_codes is non-empty here ⇒ case.exph is not None (the
-            # admission predicate required exph), so .expansoes is safe.
-            exph_df = case.exph.expansoes
+        if newave_code in filling_codes and exph_df is not None:
+            # filling_codes is empty without an exph (the admission predicate
+            # requires one), so the exph_df test only narrows its type.
             filling_row = exph_df.loc[
                 (exph_df["codigo_usina"] == newave_code)
                 & exph_df["data_inicio_enchimento"].notna()

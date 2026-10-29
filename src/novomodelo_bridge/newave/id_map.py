@@ -19,7 +19,7 @@ from novomodelo_bridge.core.diagnostics import (
 from novomodelo_bridge.newave.plants import active_hydro_codes
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet
+    from collections.abc import Set as AbstractSet
 
     from inewave.newave import Confhd, Conft, Exph, Ree, Sistema
 

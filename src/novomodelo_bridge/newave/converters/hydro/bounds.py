@@ -339,10 +339,9 @@ def convert_per_stage_capacity_caps(
                 gaps[key] = _turbine_limit_gap(
                     rated, canal_fuga_override=cfuga, cmont_override=cmont
                 )
-            if gaps[key] is not None:
-                gap_stages.setdefault((newave_code, name, *gaps[key]), []).append(
-                    stage_id
-                )
+            gap = gaps[key]
+            if gap is not None:
+                gap_stages.setdefault((newave_code, name, *gap), []).append(stage_id)
             max_turbined, max_generation = caps[key]
             hydro_ids.append(hydro_id)
             stage_ids.append(stage_id)

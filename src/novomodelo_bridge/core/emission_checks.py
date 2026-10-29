@@ -48,6 +48,7 @@ from typing import NamedTuple
 import pyarrow as pa
 
 from novomodelo_bridge.core.diagnostics import (
+    ColumnJustify,
     Diagnostic,
     DiagnosticTable,
     Severity,
@@ -162,7 +163,7 @@ def check_hydro_bounds_no_raising(
         else []
     )
 
-    if not columns:
+    if hydro_bounds is None or not columns:
         emit(
             Diagnostic(
                 code="hydro-bounds-raising-not-applicable",
@@ -853,7 +854,7 @@ def check_bound_block_id_range(
 
     show_group = any(finding.has_group for finding in raw_findings)
     columns = ["Family", "Entity ID"]
-    justify = ["left", "right"]
+    justify: list[ColumnJustify] = ["left", "right"]
     if show_group:
         columns.append("Group ID")
         justify.append("right")

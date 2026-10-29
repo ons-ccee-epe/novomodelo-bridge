@@ -8,7 +8,7 @@ tie share, and the GH-vs-turbined-flow slice with each model's fit inputs.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TypedDict, cast
 
 import polars as pl
 
@@ -80,6 +80,12 @@ def fpha_metrics_table(metrics: pl.DataFrame, reference_label: str = "NEWAVE") -
     )
 
 
+class _PlantSurfaces(TypedDict):
+    name: str
+    n_v: int
+    by_stage: dict[str, dict]
+
+
 def _fpha_widget_data(
     surface: pl.DataFrame, spill: pl.DataFrame
 ) -> dict[str, dict[str, object]]:
@@ -94,7 +100,7 @@ def _fpha_widget_data(
     def _round(values: list[float], decimals: int) -> list[float]:
         return [round(float(v), decimals) for v in values]
 
-    plants: dict[int, dict[str, object]] = {}
+    plants: dict[int, _PlantSurfaces] = {}
     for (cid, stage, source), sub in surface.partition_by(
         "novomodelo_id", "stage", "source", as_dict=True
     ).items():
@@ -110,9 +116,8 @@ def _fpha_widget_data(
             int(cid),
             {"name": str(sub["plant_name"][0]), "n_v": n_v, "by_stage": {}},
         )
-        plant["n_v"] = max(int(plant["n_v"]), n_v)  # type: ignore[arg-type]
-        by_stage = cast("dict[str, dict]", plant["by_stage"])
-        entry = by_stage.setdefault(str(int(stage)), {})
+        plant["n_v"] = max(plant["n_v"], n_v)
+        entry = plant["by_stage"].setdefault(str(int(stage)), {})
         entry["v"] = v_axis
         entry["q"] = q_axis
         entry["znw" if source == "newave" else "zcb"] = z
@@ -123,8 +128,7 @@ def _fpha_widget_data(
         plant = plants.get(int(cid))
         if plant is None:
             continue
-        by_stage = cast("dict[str, dict]", plant["by_stage"])
-        entry = by_stage.get(str(int(stage)))
+        entry = plant["by_stage"].get(str(int(stage)))
         if entry is None:
             continue
         entry["ss"] = _round(sub["s_m3s"].to_list(), 1)
@@ -134,12 +138,11 @@ def _fpha_widget_data(
 
     out: dict[str, dict[str, object]] = {}
     for cid, plant in plants.items():
-        by_stage = cast("dict[str, dict]", plant["by_stage"])
         out[str(cid)] = {
             "name": plant["name"],
             "n_v": plant["n_v"],
-            "stages": sorted(int(s) for s in by_stage),
-            "byStage": by_stage,
+            "stages": sorted(int(s) for s in plant["by_stage"]),
+            "byStage": plant["by_stage"],
         }
     return out
 

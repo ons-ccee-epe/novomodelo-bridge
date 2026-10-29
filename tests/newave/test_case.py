@@ -128,7 +128,7 @@ def test_vazoes_is_not_cached_on_case(tmp_path: Path) -> None:
     assert case.files.vazoes == tmp_path / "vazoes.dat"
     assert not hasattr(NewaveCase, "vazoes")
     with pytest.raises(AttributeError):
-        _ = case.vazoes  # type: ignore[attr-defined]
+        _ = case.vazoes  # ty: ignore[unresolved-attribute] deliberately absent
 
 
 # --- Derived accessors -------------------------------------------------------

@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from inewave.libs.usinas_hidreletricas import UsinasHidreletricas
 from inewave.newave import (
@@ -57,6 +57,7 @@ from inewave.newave import (
     VolrefSaz,
 )
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.newave.files import NewaveFiles
 from novomodelo_bridge.newave.switches import DgerSwitches
 
@@ -209,7 +210,7 @@ class NewaveCase:
         path = self.files.polinjus
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
 
     @cached_property
     def volumes_referencia(self) -> UsinasHidreletricas | None:
@@ -218,7 +219,7 @@ class NewaveCase:
         path = self.files.volumes_referencia
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
 
     @cached_property
     def estacao_bombeamento(self) -> UsinasHidreletricas | None:
@@ -226,7 +227,7 @@ class NewaveCase:
         path = self.files.estacao_bombeamento
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
 
     @cached_property
     def estacao_bombeamento_submercado(self) -> UsinasHidreletricas | None:
@@ -234,7 +235,7 @@ class NewaveCase:
         path = self.files.estacao_bombeamento_submercado
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
 
     # --- Derived state ---------------------------------------------------------
 
@@ -280,7 +281,7 @@ class NewaveCase:
         reader = self.estacao_bombeamento
         if reader is None:
             return frozenset()
-        df = reader.estacao_bombeamento(df=True)
+        df = as_frame(reader.estacao_bombeamento(df=True))
         if df is None or df.empty:
             return frozenset()
         codes: set[int] = set()

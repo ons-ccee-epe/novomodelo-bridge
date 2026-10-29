@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -639,12 +640,12 @@ class TestCliInProcess:
         # warning and two errors; the real ``novomodelo`` package is not installed.
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = lambda _dst: {  # type: ignore[attr-defined]
-            "valid": False,
-            "warnings": ["w"],
-            "errors": ["e1", "e2"],
-        }
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(
+            novomodelo_io,
+            "validate",
+            lambda _dst: {"valid": False, "warnings": ["w"], "errors": ["e1", "e2"]},
+        )
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
@@ -710,12 +711,12 @@ class TestCliInProcess:
         )
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = lambda _dst: {  # type: ignore[attr-defined]
-            "valid": False,
-            "warnings": [],
-            "errors": ["e1"],
-        }
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(
+            novomodelo_io,
+            "validate",
+            lambda _dst: {"valid": False, "warnings": [], "errors": ["e1"]},
+        )
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
@@ -769,8 +770,8 @@ class TestCliInProcess:
         )
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = _raise  # type: ignore[attr-defined]
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(novomodelo_io, "validate", _raise)
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
@@ -1094,13 +1095,19 @@ class TestCliInProcess:
 
         real_import = builtins.__import__
 
-        def _guard_import(name: str, *args: object, **kwargs: object) -> object:
+        def _guard_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] = (),
+            level: int = 0,
+        ) -> ModuleType:
             # No novomodelo validation import may be attempted under --dry-run.
             if name.startswith("novomodelo.io"):
                 raise AssertionError(
                     "validation must not import novomodelo under --dry-run"
                 )
-            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+            return real_import(name, globals, locals, fromlist, level)
 
         with (
             patch(
@@ -1133,8 +1140,8 @@ class TestCliInProcess:
 
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = validate  # type: ignore[attr-defined]
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(novomodelo_io, "validate", validate)
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
         return validate
@@ -1931,13 +1938,19 @@ class TestCliInProcess:
 
         real_import = builtins.__import__
 
-        def _guard_import(name: str, *args: object, **kwargs: object) -> object:
+        def _guard_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] = (),
+            level: int = 0,
+        ) -> ModuleType:
             # No novomodelo validation import may be attempted under --dry-run.
             if name.startswith("novomodelo.io"):
                 raise AssertionError(
                     "validation must not import novomodelo under --dry-run"
                 )
-            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+            return real_import(name, globals, locals, fromlist, level)
 
         with (
             patch(

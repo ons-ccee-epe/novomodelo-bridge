@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping, Sequence
+from datetime import date
 
 import pandas as pd
 import pyarrow as pa
@@ -477,7 +478,7 @@ def _read_penalid_costs(case: NewaveCase) -> dict[str, float]:
         _LOG.warning("penalid.dat could not be parsed (%s); using defaults.", exc)
         return {}
 
-    pen_df = penalid.penalidades
+    pen_df = penalid.penalidades if penalid is not None else None
     if pen_df is None or pen_df.empty:
         return {}
 
@@ -1068,14 +1069,12 @@ def _in_study_horizon(
 
     Year == ``POST_STUDY_YEAR`` marks a post-study entry (inewave convention).
     """
-    try:
-        yr = int(dt.year)  # type: ignore[union-attr]
-        mo = int(dt.month)  # type: ignore[union-attr]
-    except (AttributeError, TypeError, ValueError):
+    if not isinstance(dt, date) or is_na(dt):
         return False
+    yr = dt.year
     if yr == POST_STUDY_YEAR:
         return True
-    stage_id = (yr - start_year) * 12 + (mo - start_month)
+    stage_id = (yr - start_year) * 12 + (dt.month - start_month)
     return 0 <= stage_id < total_stages
 
 

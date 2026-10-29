@@ -58,7 +58,7 @@ from novomodelo_bridge.comparators.operating_points import (
     with_envelopes,
 )
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
-from novomodelo_bridge.core.pandas_utils import is_na
+from novomodelo_bridge.core.pandas_utils import as_frame_or_empty, as_int, is_na
 from novomodelo_bridge.core.tailrace import (
     TailraceFamily,
     TailraceSegment,
@@ -204,7 +204,7 @@ def _source_points(
     if points.is_empty():
         return pl.DataFrame()
     held = {
-        int(code): volume
+        as_int(code): volume
         for code, hreg in cadastro.iterrows()
         if (volume := held_volume(hreg)) is not None
     }
@@ -290,13 +290,13 @@ def _reservoir_storage(case: NewaveCase, cadastro: pd.DataFrame) -> pl.DataFrame
     floors = pl.DataFrame(
         [
             (
-                int(code),
+                as_int(code),
                 float(hreg["volume_minimo"]),
-                initial_storage_hm3(hreg, initial_percent[int(code)])
+                initial_storage_hm3(hreg, initial_percent[as_int(code)])
                 - float(hreg["volume_minimo"]),
             )
             for code, hreg in cadastro.iterrows()
-            if int(code) in initial_percent
+            if as_int(code) in initial_percent
         ],
         schema={"code": pl.Int64, "v_min": pl.Float64, "initial_useful": pl.Float64},
         orient="row",
@@ -387,7 +387,7 @@ def _fpha_frames(
         for r in grid.iter_rows(named=True)
     }
     cota = {
-        int(code): tuple(float(hreg[f"a{i}_volume_cota"]) for i in range(5))
+        as_int(code): tuple(float(hreg[f"a{i}_volume_cota"]) for i in range(5))
         for code, hreg in cadastro.iterrows()
     }
     model = SourceProductionModel(
@@ -441,8 +441,10 @@ def _plant_hydraulics(
         {}
         if polinjus is None
         else tailrace_families_from_polinjus(
-            polinjus.hidreletrica_curvajusante(df=True),
-            polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True),
+            as_frame_or_empty(polinjus.hidreletrica_curvajusante(df=True)),
+            as_frame_or_empty(
+                polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True)
+            ),
         )
     )
     hydraulics: dict[int, Hydraulics] = {}
