@@ -27,6 +27,7 @@ _DIR_TO_PACKAGE: dict[str, str] = {
     "ui": "ui",
     "newave": "newave",
     "decomp": "decomp",
+    "dessem": "dessem",
     "comparators": "comparators",
     "dashboard": "dashboard",
     "cli": "cli",
@@ -48,6 +49,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "ui.html": frozenset({"core", "ui", "ui.theme", "ui.html"}),
     "newave": frozenset({"core", "novomodelo", "newave"}),
     "decomp": frozenset({"core", "novomodelo", "decomp"}),
+    "dessem": frozenset({"core", "novomodelo", "decomp", "dessem"}),
     "comparators": frozenset(
         {"core", "novomodelo", "ui.theme", "ui.html", "comparators"}
     ),
@@ -83,6 +85,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
             "ui.html",
             "newave",
             "decomp",
+            "dessem",
             "comparators",
             "comparators.newave",
             "comparators.decomp",
