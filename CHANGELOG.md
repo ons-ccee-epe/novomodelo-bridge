@@ -34,6 +34,12 @@ links are cobre-bridge's.
   a `usage-error` diagnostic, and still exits 2.
 - **Text files are read and written as UTF-8 on every platform.** On Windows
   they used the locale's code page, so accented text could be misread.
+- **`export dessem` reads a DECOMP deck that has no `dadgnl`.** It failed with
+  an internal error; it now exports with no GNL thermals, as `convert decomp`
+  already did.
+- **A deck missing a register the conversion needs fails with a message naming
+  it** (for example, a deck with no UH records). Several such cases crashed
+  with an internal `AttributeError` or `TypeError` instead.
 
 ## [0.19.1] - 2026-10-26
 
