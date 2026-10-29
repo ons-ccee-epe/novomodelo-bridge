@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -153,7 +154,7 @@ class TestConvertNewaweCasePipeline:
 
         report = _run_with_all_mocks(src, dst)
 
-        assert report.hydro_count == 2  # type: ignore[union-attr]
+        assert report.hydro_count == 2
         assert report.thermal_count == 1
         assert report.bus_count == 3
         assert report.line_count == 1
@@ -291,12 +292,12 @@ class TestEmissionCheckWiring:
 
         not_applicable = [
             d
-            for d in report.diagnostics  # type: ignore[union-attr]
+            for d in report.diagnostics
             if d.code == "hydro-bounds-raising-not-applicable"
         ]
         assert len(not_applicable) == 1
         assert not_applicable[0].severity is Severity.INFO
-        assert _convert_status(report.diagnostics, success="ok") == "ok"  # type: ignore[union-attr]
+        assert _convert_status(report.diagnostics, success="ok") == "ok"
 
     def test_over_declared_bound_is_clamped_and_warned_not_errored(
         self, tmp_path: Path
@@ -570,12 +571,12 @@ def test_convert_newave_case_threads_on_phase(tmp_path: Path) -> None:
     def fake_impl(
         src: Path,
         dst: Path,
-        on_phase: object = None,
+        on_phase: Callable[[str], None] | None = None,
         *,
         dry_run: bool = False,
     ) -> ConversionReport:
         if on_phase is not None:
-            on_phase("Discovering files")  # type: ignore[operator]
+            on_phase("Discovering files")
         return ConversionReport()
 
     with patch.object(pipeline, "_convert_newave_case_impl", side_effect=fake_impl):
