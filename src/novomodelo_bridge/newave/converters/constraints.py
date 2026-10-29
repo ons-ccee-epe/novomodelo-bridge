@@ -1025,7 +1025,7 @@ def _parse_formula(
             # ``line_direct``/``line_reverse`` so the sign is encoded by the variable
             # choice rather than by negating the coefficient (the latter would dilute
             # the bound when LP solutions route in the non-canonical direction).  See
-            # ``convert_agrint_constraints`` for the same rule applied to AGRINT terms.
+            # ``_agrint_expression`` for the same rule applied to AGRINT terms.
             var = (
                 f"line_direct({line_id})"
                 if from_sys < to_sys
@@ -1731,8 +1731,6 @@ def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> Non
 # AGRINT.DAT — Exchange group constraints
 # ---------------------------------------------------------------------------
 
-_AGRINT_DEFAULT_PENALTY = 1000.0
-
 
 def _parse_agrint(
     path: Path,
@@ -1864,8 +1862,8 @@ def convert_agrint_constraints(
     """Convert AGRINT.DAT exchange group constraints to Novomodelo generic constraints.
 
     Each group in AGRINT.DAT defines a weighted sum of directional interchange
-    flows.  Each group becomes one ``<=`` generic constraint with a high-default
-    slack penalty.  Bounds are stored per (constraint_id, stage_id, block_id).
+    flows.  Each group becomes one hard ``<=`` generic constraint (no slack).
+    Bounds are stored per (constraint_id, stage_id, block_id).
 
     Parameters
     ----------
