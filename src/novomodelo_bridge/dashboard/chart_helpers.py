@@ -11,7 +11,9 @@ by the Overview and Costs tabs.
 
 from __future__ import annotations
 
+import pandas as pd
 import plotly.graph_objects as go
+import polars as pl
 
 from novomodelo_bridge.novomodelo.cost_categories import (
     AGGREGATE_COST_COLUMNS,
@@ -30,16 +32,6 @@ from novomodelo_bridge.ui.html.plotly import (
 from novomodelo_bridge.ui.html.plotly import (
     fig_to_html,
 )
-
-try:
-    import pandas as pd
-except ImportError as _pd_err:  # pragma: no cover
-    raise ImportError("pandas is required for chart_helpers") from _pd_err
-
-try:
-    import polars as pl
-except ImportError:  # pragma: no cover
-    pl = None  # type: ignore[assignment]
 
 #: Mapping from logical cost group name to known Novomodelo cost component columns.
 #: The ``"Other"`` key is intentionally absent — it is computed dynamically in
@@ -131,7 +123,7 @@ def compute_percentiles(
         when *df* is empty.
     """
     # Convert polars to pandas if necessary
-    if pl is not None and isinstance(df, pl.DataFrame):
+    if isinstance(df, pl.DataFrame):
         df = df.to_pandas()
 
     pct_col_names = [f"p{int(p * 100)}" for p in percentiles]
@@ -176,9 +168,6 @@ def stage_hours_weighted_mean(
         Empty (with the expected schema) when *lf* has no rows or the total
         stage hours are zero.
     """
-    if pl is None:  # pragma: no cover
-        raise ImportError("polars is required for stage_hours_weighted_mean")
-
     hours_df = (
         pl.DataFrame(
             {

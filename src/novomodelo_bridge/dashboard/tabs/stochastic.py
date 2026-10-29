@@ -240,8 +240,8 @@ def _aggregate_system(stats_df: pd.DataFrame) -> pd.DataFrame:
     df["std_sq"] = df["std_m3s"].fillna(0.0) ** 2
     grp = df.groupby("stage_id")
     mean_ser = grp["mean_m3s"].sum().rename("mean_m3s")
-    std_ser = grp["std_sq"].apply(np.nansum).apply(np.sqrt).rename("std_m3s")
-    result = mean_ser.to_frame().join(std_ser).reset_index()
+    std_ser = grp["std_sq"].apply(np.nansum).apply(np.sqrt)
+    result = mean_ser.to_frame().assign(std_m3s=std_ser).reset_index()
     return result[["stage_id", "mean_m3s", "std_m3s"]]
 
 
