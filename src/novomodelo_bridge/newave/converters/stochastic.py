@@ -30,6 +30,7 @@ from novomodelo_bridge.core.incremental_inflow import (
     incremental_by_plant,
     is_artificial_gauge,
 )
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.newave import plants
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, study_horizon
@@ -310,7 +311,9 @@ def _vazpast_incremental(
         logger.warning("vazpast.dat could not be parsed; skipping recent lags.")
         return {}
 
-    df_tend: pd.DataFrame | None = vazpast_obj.tendencia
+    df_tend: pd.DataFrame | None = (
+        vazpast_obj.tendencia if vazpast_obj is not None else None
+    )
     if df_tend is None or df_tend.empty:
         return {}
 
@@ -320,8 +323,8 @@ def _vazpast_incremental(
     present: dict[int, set[int]] = {}
     for posto, posto_df in df_tend.groupby("codigo_usina"):
         values = dict(zip(posto_df["mes"].astype(int), posto_df["valor"].astype(float)))
-        natural[int(posto)] = np.array([values.get(m, 0.0) for m in months])
-        present[int(posto)] = set(values)
+        natural[as_int(posto)] = np.array([values.get(m, 0.0) for m in months])
+        present[as_int(posto)] = set(values)
 
     cascade = _case_cascade(case)
     posto_by_hydro = {
@@ -791,7 +794,7 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
     subsystem_codes_processed: set[int] = set()
 
     for subsystem_code, group in df_load.groupby("codigo_submercado", sort=True):
-        sub_int = int(subsystem_code)
+        sub_int = as_int(subsystem_code)
         try:
             bus_id = id_map.bus_id(sub_int)
         except KeyError:

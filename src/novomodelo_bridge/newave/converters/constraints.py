@@ -438,8 +438,10 @@ def _curve_seasonalizes(configuracoes_penalizacao: list[Any] | None) -> bool:
     source model manual table, p.32-33). Returns ``False`` (freeze — the manual default)
     when the field is absent or unparseable.
     """
+    if configuracoes_penalizacao is None:
+        return False
     try:
-        return int(configuracoes_penalizacao[2]) == 1  # type: ignore[index]
+        return int(configuracoes_penalizacao[2]) == 1
     except (TypeError, ValueError, IndexError):
         return False
 
@@ -1074,9 +1076,6 @@ def _parse_re_dat(
     conjuntos: dict[int, list[int]] = {}
     re_dat_bounds: dict[int, dict[tuple[int, int], float]] = {}
 
-    if case.files.re_dat is None:
-        return conjuntos, re_dat_bounds
-
     try:
         re_file = case.re_dat
     except Exception:  # noqa: BLE001
@@ -1090,6 +1089,9 @@ def _parse_re_dat(
             ),
             logger=_LOG,
         )
+        return conjuntos, re_dat_bounds
+
+    if re_file is None:
         return conjuntos, re_dat_bounds
 
     # Plant sets per constraint code.
@@ -1240,7 +1242,7 @@ def convert_electric_constraints(
     if case.files.penalid is not None:
         try:
             penalid = case.penalid
-            df_pen = penalid.penalidades
+            df_pen = penalid.penalidades if penalid is not None else None
             if df_pen is not None and not df_pen.empty:
                 eletri = df_pen[
                     (df_pen["variavel"] == "ELETRI")
