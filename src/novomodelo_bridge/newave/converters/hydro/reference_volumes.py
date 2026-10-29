@@ -24,7 +24,7 @@ import pandas as pd
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.libs_index import HIDRELETRICA_CADASTRO_RESERVATORIO
-from novomodelo_bridge.core.pandas_utils import is_na
+from novomodelo_bridge.core.pandas_utils import as_frame, is_na
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.geometry import (
     held_volume,
@@ -138,7 +138,7 @@ def _periodic_references(
     if reader is None:
         return None
     path = case.files.volumes_referencia
-    tipo_df = reader.volume_referencial_tipo_padrao(df=True)
+    tipo_df = as_frame(reader.volume_referencial_tipo_padrao(df=True))
     tipos = (
         set()
         if tipo_df is None or tipo_df.empty
@@ -155,7 +155,7 @@ def _periodic_references(
     if tipos != {_PERIODIC_ON}:
         return None
 
-    rows = reader.volume_referencial_periodo(df=True)
+    rows = as_frame(reader.volume_referencial_periodo(df=True))
     by_plant: dict[int, dict[tuple[int, int], float]] = {}
     if rows is None or rows.empty:
         return by_plant
