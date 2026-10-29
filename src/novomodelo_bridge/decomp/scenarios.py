@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
@@ -57,8 +57,6 @@ from novomodelo_bridge.decomp.temporal import weekly_stage_count
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from idecomp.decomp import Vazoes
-
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -67,6 +65,33 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 _PROBABILITY_ATOL = 1e-4
+
+
+class ObservationTables(Protocol):
+    """The pre-study observation tables of a ``vazoes`` file."""
+
+    @property
+    def observacoes_mensais(self) -> pd.DataFrame | None: ...
+
+    @property
+    def observacoes_semanais(self) -> pd.DataFrame | None: ...
+
+
+class _TreeTables(Protocol):
+    @property
+    def previsoes(self) -> pd.DataFrame | None: ...
+
+    @property
+    def cenarios_gerados(self) -> pd.DataFrame | None: ...
+
+
+class _ProbabilityTable(Protocol):
+    @property
+    def probabilidades(self) -> pd.DataFrame | None: ...
+
+
+class _CouplingGauges(Protocol):
+    def coupling_gauge(self, code: int) -> int: ...
 
 
 def _incremental_context(
@@ -131,7 +156,7 @@ def _incremental_values(
 
 
 def recent_observation_rows(
-    vazoes: Vazoes, study_start: date
+    vazoes: ObservationTables, study_start: date
 ) -> list[tuple[date, date, pd.Series]]:
     """The deck's pre-study observation windows, oldest first, each with its row.
 
@@ -178,8 +203,8 @@ def recent_observation_rows(
 
 
 def convert_recent_observation_windows(
-    vazoes: Vazoes,
-    effective: EffectiveCadastro,
+    vazoes: ObservationTables,
+    effective: _CouplingGauges,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
 ) -> list[dict]:
@@ -210,7 +235,7 @@ def convert_recent_observation_windows(
 
 
 def _tree_values(
-    vazoes: Vazoes,
+    vazoes: _TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
@@ -350,7 +375,7 @@ def convert_external_inflows(
     case: DecompCase,
     id_map: DecompIdMap,
     *,
-    vazoes: Vazoes,
+    vazoes: _TreeTables,
     effective: EffectiveCadastro,
 ) -> pa.Table:
     """``external_inflow_scenarios.parquet``: the tree of per-plant incremental
@@ -382,7 +407,7 @@ def convert_external_inflows(
 
 
 def expected_incremental_inflows(
-    vazoes: Vazoes,
+    vazoes: _TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
@@ -435,7 +460,7 @@ def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
 
 
 def terminal_fan_probabilities(
-    vazoes: Vazoes,
+    vazoes: _ProbabilityTable,
     calendar: Sequence[OperativeStage],
 ) -> list[float]:
     """Terminal-stage per-scenario probabilities, ordered by scenario id.
@@ -549,7 +574,7 @@ def convert_inflow_stats_identity(
 
 
 def convert_scenario_probabilities(
-    vazoes: Vazoes,
+    vazoes: _ProbabilityTable,
     calendar: Sequence[OperativeStage],
 ) -> pa.Table:
     """Per-(stage, scenario) probability view for validation.
