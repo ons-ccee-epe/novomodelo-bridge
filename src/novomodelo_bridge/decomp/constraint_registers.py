@@ -44,20 +44,19 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from itertools import combinations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.tolerances import relative_tolerance
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
-
-    from idecomp.decomp import Dadger
 
 _LOG = logging.getLogger(__name__)
 
@@ -267,6 +266,36 @@ def sided_bounds(
     return (None if upper is None else -upper, None if lower is None else -lower)
 
 
+class ConstraintRegisters(Protocol):
+    """The deck accessors the special-constraint readers call, as ``df=True`` frames."""
+
+    def re(self, *, df: bool) -> object: ...
+
+    def fu(self, *, df: bool) -> object: ...
+
+    def ft(self, *, df: bool) -> object: ...
+
+    def fi(self, *, df: bool) -> object: ...
+
+    def lu(self, *, df: bool) -> object: ...
+
+    def hq(self, *, df: bool) -> object: ...
+
+    def lq(self, *, df: bool) -> object: ...
+
+    def cq(self, *, df: bool) -> object: ...
+
+    def hv(self, *, df: bool) -> object: ...
+
+    def lv(self, *, df: bool) -> object: ...
+
+    def cv(self, *, df: bool) -> object: ...
+
+    def he(self, *, df: bool) -> object: ...
+
+    def cm(self, *, df: bool) -> object: ...
+
+
 @dataclass(frozen=True)
 class _FamilyConfig:
     """Static description of a declaration/limit/coefficient register triple."""
@@ -284,25 +313,25 @@ class _FamilyConfig:
     #: its declared terms. ``None`` uses the generic single-register
     #: path (:func:`_read_terms` against ``coeff_attr``); RE sets this to
     #: :func:`_read_re_terms` to merge its three coefficient registers.
-    term_reader: Callable[[Dadger], _DeclaredTerms] | None = None
+    term_reader: Callable[[ConstraintRegisters], _DeclaredTerms] | None = None
 
 
-def _df(dadger: Dadger, attr: str) -> pd.DataFrame | None:
+def _df(dadger: ConstraintRegisters, attr: str) -> pd.DataFrame | None:
     """Read one register as a DataFrame, treating an absent register as empty."""
-    frame = getattr(dadger, attr)(df=True)
-    if frame is None or getattr(frame, "empty", True):
+    frame = as_frame(getattr(dadger, attr)(df=True))
+    if frame is None or frame.empty:
         return None
     return frame
 
 
 def _opt_float(value: object) -> float | None:
     """A cell as ``float``, or ``None`` when blank (NaN)."""
-    return None if pd.isna(value) else float(value)  # type: ignore[arg-type]
+    return None if pd.isna(value) else as_float(value)
 
 
 def _opt_int(value: object) -> int | None:
     """A cell as ``int``, or ``None`` when blank (NaN)."""
-    return None if pd.isna(value) else int(value)  # type: ignore[call-overload]
+    return None if pd.isna(value) else as_int(value)
 
 
 def _opt_str(value: object) -> str | None:
@@ -409,7 +438,7 @@ def _read_terms(coeff: pd.DataFrame, config: _FamilyConfig) -> _DeclaredTerms:
     return collector.result()
 
 
-def _read_re_terms(dadger: Dadger) -> _DeclaredTerms:
+def _read_re_terms(dadger: ConstraintRegisters) -> _DeclaredTerms:
     """Group RE's three participation registers into its declared terms.
 
     Unlike HQ/HV, an RE's participation is not confined to one coefficient
@@ -510,7 +539,7 @@ _TRIPLE_FAMILIES: tuple[_FamilyConfig, ...] = (
 
 
 def _read_triple_family(
-    dadger: Dadger,
+    dadger: ConstraintRegisters,
     config: _FamilyConfig,
 ) -> list[ConstraintRecord]:
     """Join one RE/HQ/HV register triple into classified constraint records.
@@ -588,7 +617,7 @@ def _read_triple_family(
     return records
 
 
-def _read_energy_constraints(dadger: Dadger) -> list[ConstraintRecord]:
+def _read_energy_constraints(dadger: ConstraintRegisters) -> list[ConstraintRecord]:
     """Join the ``HE``/``CM`` energy family (VminOP-style, over a REE cascade).
 
     ``HE`` rows carry the per-stage ``limite`` inline — **always** a lower limit
@@ -857,7 +886,7 @@ def bound_conflicts_diagnostic(
     )
 
 
-def read_constraints(dadger: Dadger) -> ConstraintCensus:
+def read_constraints(dadger: ConstraintRegisters) -> ConstraintCensus:
     """Read all four special-constraint families and split them by lowering target.
 
     Returns a :class:`ConstraintCensus`: every record grouped by family, plus the

@@ -33,8 +33,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
+from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.core.season_calendar import (
     block_names,
     monthly_season_definitions,
@@ -222,26 +223,48 @@ def _first_of_next_month(day: date) -> date:
     return date(day.year + (day.month == 12), day.month % 12 + 1, 1)
 
 
-def operative_calendar_from_dadger(dadger: Dadger) -> list[OperativeStage]:
+class _StudyDate(Protocol):
+    @property
+    def ano(self) -> int | None: ...
+
+    @property
+    def mes(self) -> int | None: ...
+
+    @property
+    def dia(self) -> int | None: ...
+
+
+class _CalendarRegisters(Protocol):
+    @property
+    def dt(self) -> _StudyDate | None: ...
+
+    def dp(self, *, df: bool) -> object: ...
+
+
+def operative_calendar_from_dadger(dadger: _CalendarRegisters) -> list[OperativeStage]:
     """Build the operative calendar from a deck's ``DT`` + ``DP`` records.
 
     Block durations must agree across subsystems for each stage (the deck
     defines one temporal grid); a mismatch is a hard error.
     """
     dt = dadger.dt
+    if dt is None or dt.ano is None or dt.mes is None or dt.dia is None:
+        raise ValueError(
+            "the deck has no complete DT record; cannot build the calendar"
+        )
     start = date(int(dt.ano), int(dt.mes), int(dt.dia))
 
-    dp = dadger.dp(df=True)
+    dp = as_frame(dadger.dp(df=True))
     if dp is None or dp.empty:
         raise ValueError("the deck has no DP records; cannot build the calendar")
 
     stage_block_hours: list[list[float]] = []
     expected = 1
     for estagio, group in dp.groupby("estagio", sort=True):
-        if int(estagio) != expected:
+        if as_int(estagio) != expected:
             raise ValueError(
                 f"DP stages must be contiguous from 1; expected {expected}, "
-                f"got {int(estagio)}"
+                f"got {as_int(estagio)}"
             )
         expected += 1
 
@@ -251,14 +274,14 @@ def operative_calendar_from_dadger(dadger: Dadger) -> list[OperativeStage]:
         for _, row in group.iterrows():
             if int(row["numero_patamares"]) != n_blocks:
                 raise ValueError(
-                    f"stage {int(estagio)}: numero_patamares differs across subsystems"
+                    f"stage {as_int(estagio)}: numero_patamares differs across subsystems"
                 )
             values = [float(row[c]) for c in columns]
             if reference is None:
                 reference = values
             elif values != reference:
                 raise ValueError(
-                    f"stage {int(estagio)}: block durations differ across "
+                    f"stage {as_int(estagio)}: block durations differ across "
                     f"subsystems ({values} vs {reference}); the deck defines "
                     "one temporal grid"
                 )

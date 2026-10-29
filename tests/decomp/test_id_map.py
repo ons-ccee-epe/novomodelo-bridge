@@ -19,11 +19,17 @@ class _NoSbDadger:
     def sb(self, df: bool = True) -> None:
         return None
 
+    def uh(self, df: bool = True) -> None:
+        return None
+
+    def ct(self, df: bool = True) -> None:
+        return None
+
 
 class TestFromDadgerSbBoundary:
     def test_no_sb_records_raises_field_parse_error(self) -> None:
         with pytest.raises(FieldParseError) as exc_info:
-            DecompIdMap.from_dadger(_NoSbDadger())  # type: ignore[arg-type]
+            DecompIdMap.from_dadger(_NoSbDadger())
 
         exc = exc_info.value
         assert exc.field == "SB register"
@@ -34,7 +40,7 @@ class TestFromDadgerSbBoundary:
 
     def test_diagnostic_from_the_raised_error_is_source_field_parse(self) -> None:
         with pytest.raises(FieldParseError) as exc_info:
-            DecompIdMap.from_dadger(_NoSbDadger())  # type: ignore[arg-type]
+            DecompIdMap.from_dadger(_NoSbDadger())
 
         diag = diagnostic_from_exception(exc_info.value, context="Conversion")
         assert diag.code == "source-field-parse"
