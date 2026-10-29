@@ -3,8 +3,8 @@
 
 Enforces `.claude/rules/comments.md` N3: a comment or docstring in src/ or
 tests/ must reference only things that cannot rot for a reader — a symbol, a
-named test, or a stable external anchor (the novomodelo book, a schema name, a
-published reference manual `§`). Everything below rots.
+named test, or a stable external anchor (a page of the novomodelo docs site, a
+schema name, a published reference manual `§`). Everything below rots.
 
 HARD (exit 1):
   * source-file line references — this repo's ``file.py:NNN`` and novomodelo's
@@ -16,11 +16,10 @@ HARD (exit 1):
   * machine-local ``~/git/...`` paths and gitignored ``plans/...`` paths,
   * repo-relative paths into the novomodelo source tree (``crates/...``,
     ``novomodelo-io/src/...``): a pip reader has no novomodelo checkout — cite the novomodelo
-    symbol or the novomodelo book instead,
-  * the bridge's own design-doc section refs (``design §5``): those docs live
-    in gitignored ``plans/`` — inline the durable content or name a shipped
-    ``docs/`` path,
-  * a repo-relative ``src/novomodelo_bridge/...`` or ``tests/...`` ``.py`` path that
+    symbol or the docs page instead,
+  * design-doc section refs (``design §5``): those docs live in gitignored
+    ``plans/`` — inline the durable content,
+  * a repo-relative ``src/<package>/...`` or ``tests/...`` ``.py`` path that
     no longer resolves — a sibling-test / module pointer that rotted when the
     file moved. Repoint it to the live path or (better) name the symbol/test.
 
@@ -54,15 +53,16 @@ HARD_PATTERNS = [
             r"\b(?:novomodelo/)?crates/[\w./-]+|\bnovomodelo-(?:io|sddp|core|python)/src/[\w./-]+"
         ),
     ),
-    # The bridge's own design docs live in gitignored plans/; a bare "design §N"
-    # section pointer is dead for a reader without that checkout.
+    # Design docs live in gitignored plans/; a bare "design §N" section pointer
+    # is dead for a reader without that checkout.
     ("internal-design-ref", re.compile(r"\bdesign[ \-]*§")),
 ]
 
 # A repo-relative source/test .py path cited in prose. The match stops at
 # ``.py`` (``:`` and ``::`` are not in the class), so a ``…py::symbol`` or
 # ``…py:NNN`` suffix is dropped before the existence check.
-_REPO_PY_PATH = re.compile(r"\b(?:src/novomodelo_bridge|tests)/[\w./-]+\.py\b")
+_SRC_PREFIX = re.escape(rel(SRC_ROOT))
+_REPO_PY_PATH = re.compile(rf"\b(?:{_SRC_PREFIX}|tests)/[\w./-]+\.py\b")
 
 
 def _stale_path_hits(line: str, where: str) -> list[str]:
