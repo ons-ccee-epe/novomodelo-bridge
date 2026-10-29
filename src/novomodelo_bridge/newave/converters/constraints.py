@@ -1462,7 +1462,7 @@ def _resolve_eletri_penalty(case: NewaveCase) -> float | None:
             if _def_df is not None and not _def_df.empty:
                 eletri_penalty = 10.0 * float(_def_df["custo"].max())
         except (OSError, ValueError, KeyError):
-            pass
+            pass  # no default either: None makes the RE_* constraints hard
 
     return eletri_penalty
 
@@ -2004,9 +2004,9 @@ def _agrint_slots(
         if grp != group_id:
             continue
 
-        # Determine effective end (open-ended => last study stage)
         if mf is None or anof is None:
-            # Open-ended: run to the end of the study horizon
+            # Open-ended: run to the end of the whole horizon; the study-period
+            # filter below drops the post-study stages.
             end_y = start_year + (num_stages - 1 + start_month - 1) // 12
             end_m = (start_month - 1 + num_stages - 1) % 12 + 1
         else:

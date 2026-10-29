@@ -293,12 +293,12 @@ def generate_hydro_geometry(
 ) -> pa.Table:
     """Generate a VHA curve table for all hydro plants in *id_map*.
 
-    For each plant code in ``id_map.all_hydro_codes``, samples 100 uniformly
-    spaced volume points on the plant's :func:`operating_storage_range`,
-    evaluates the volume-to-height polynomial (``a0_volume_cota`` through
-    ``a4_volume_cota``), then evaluates the height-to-area polynomial
-    (``a0_cota_area`` through ``a4_cota_area``), and collects the results
-    into a PyArrow Table.
+    For each plant code in ``id_map.all_hydro_codes``, samples
+    :data:`_GEOMETRY_N_POINTS` uniformly spaced volume points on the plant's
+    :func:`operating_storage_range`, evaluates the volume-to-height polynomial
+    (``a0_volume_cota`` through ``a4_volume_cota``), then evaluates the
+    height-to-area polynomial (``a0_cota_area`` through ``a4_cota_area``), and
+    collects the results into a PyArrow Table.
 
     A plant whose range is a single volume emits one point there, so novomodelo
     reads the forebay level at the volume the reservoir is held at, for the

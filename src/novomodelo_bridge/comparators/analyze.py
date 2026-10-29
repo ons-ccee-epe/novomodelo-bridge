@@ -432,7 +432,7 @@ def aggregate_percentile_band(
     two per-stage envelope lists (p10, p90) the chart draws as a band, but emits
     no traces. Percentiles are summed across (optionally filtered) entities per
     ``stage_id``, then read back aligned to the explicit ``stages`` axis with the
-    legacy default-to-zero semantics (a stage absent from the aggregate yields
+    default-to-zero semantics (a stage absent from the aggregate yields
     ``0.0``, never a ``KeyError``).
 
     Args:
@@ -603,11 +603,10 @@ def _bus_name_lookups(
     it is plant physics only -- ``"bus_ids"`` is merged onto it
     by the results-comparison orchestrator before it reaches here.
 
-    A plant with no recorded bus (``"bus_ids"`` absent or empty) is skipped,
-    matching the legacy ``bus_id is None`` skip. A plant recorded at *more
-    than one* bus (only possible once a case has genuine multi-bus hydros) is
-    **not** collapsed onto an arbitrary one of them and **not**
-    added to every one of them either: either choice would misreport the
+    A plant with no recorded bus (``"bus_ids"`` absent or empty) is skipped.
+    A plant recorded at *more than one* bus (only possible once a case has
+    genuine multi-bus hydros) is **not** collapsed onto an arbitrary one of them
+    and **not** added to every one of them either: either choice would misreport the
     per-bus roll-up (silently dropping one bus's share, or double-counting
     the plant's whole value at each bus it touches). It is instead excluded
     from ``hydro_to_bus`` and a :class:`~novomodelo_bridge.core.diagnostics.Diagnostic`
@@ -890,7 +889,7 @@ def plant_percentile_arrays(
     plant ``plant_novomodelo_id`` it filters ``pct_df`` to that entity **once**, then
     for each ``(var_key, _, stages)`` triple whose ``{var}_p10``/``{var}_p90``
     columns are present, reads the rounded per-stage values aligned to that
-    variable's own ``stages`` axis with the legacy ``round(float(... or 0), 2)``
+    variable's own ``stages`` axis with ``round(float(... or 0), 2)``
     semantics (a stage absent from the plant's frame yields ``0.0``). Each
     variable carries its OWN stage axis, so the single per-plant filter is
     reused across every variable. Variables whose columns are absent — and every

@@ -1014,8 +1014,7 @@ def convert_line_bounds(
     distinct from ``Some(b)``, so this base row is load-bearing: without it, a
     stage whose blocks are all uniform would fall back to ``lines.json``'s
     declared (stage-0) capacity for every later stage. It also reads
-    ``patamar.dat::intercambio_patamares`` — formerly emitted as a standalone
-    per-block-factor JSON document, now deleted — and folds each per-block
+    ``patamar.dat::intercambio_patamares`` and folds each per-block
     multiplicative factor into an absolute-MW override row, ``direct_mw =
     base_direct_mw × direct_factor`` (and the reverse equivalent), per novomodelo
     decision 10. A block row is emitted only where it differs
@@ -1028,9 +1027,9 @@ def convert_line_bounds(
     limits have no seasonalize flag, so post-study base bounds freeze at the
     last study stage's value — but the per-block factors do **not** share
     that freeze: they seasonally repeat the last study year's per-calendar-
-    month pattern instead (unchanged from the deleted factor emitter), so a
-    post-study stage can still carry a non-trivial block override even though
-    its base bounds are frozen at the (possibly zero) freeze-point value.
+    month pattern instead, so a post-study stage can still carry a non-trivial
+    block override even though its base bounds are frozen at the (possibly
+    zero) freeze-point value.
 
     Parameters
     ----------

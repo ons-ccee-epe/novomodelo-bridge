@@ -838,7 +838,7 @@ def _read_entity_metadata(
     # channel report_builder.py already threads into the per-bus hydro chart
     # helpers -- keeps carrying a bus label without those callers changing.
     # A plant absent from the partition (e.g. it has no simulation output at
-    # all) simply gets no "bus_ids" key, matching the legacy "no bus" skip.
+    # all) gets no "bus_ids" key, and the per-bus helpers skip it.
     for hid, bus_ids in read_novomodelo_hydro_bus_labels(novomodelo_output_dir).items():
         if hid in novomodelo_hydro_meta:
             # Sorted list, not the reader's frozenset: this lands in the
@@ -1327,10 +1327,8 @@ def compare_results(
     converter-assigned IDs, so the comparison works even when the Novomodelo
     case was built by a different tool.
 
-    Internally still builds the ``list[ResultComparison]`` and the
-    ``PercentileData`` producer struct, then assembles and returns the canonical
-    :class:`~novomodelo_bridge.comparators.dataset.ComparisonDataset` (the percentile
-    frames and raw rows live in the dataset's render-only metadata).
+    The percentile frames and raw rows live in the returned dataset's
+    render-only metadata.
 
     Returns
     -------
@@ -1340,11 +1338,12 @@ def compare_results(
     Parameters
     ----------
     case:
-        Parsed the source model case (for names, cadastro, and locating pmo.dat).
+        Parsed source model case (for names, cadastro, and locating pmo.dat).
     id_map:
-        Entity ID mapping (used only for productivity fallback).
+        Entity ID mapping (for the generic-constraint left-hand sides).
     alignment:
-        Pre-built entity alignment (used only for productivity).
+        Pre-built entity alignment (for MEDIAS, productivity, operating points
+        and the generic-constraint left-hand sides).
     novomodelo_output_dir:
         Path to Novomodelo output directory.
     tolerance:

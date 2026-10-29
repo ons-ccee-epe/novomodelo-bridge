@@ -595,13 +595,10 @@ def _hydro_entry(
         vazao_min_hist_val if context.min_outflow_on and vazao_min_hist_val > 0 else 0.0
     )
 
-    # VAZMINT temporal overrides are now emitted as per-stage bounds in
-    # hydro_bounds.parquet via convert_storage_bounds().  The static
-    # min_outflow in hydros.json keeps the hidr.dat / VAZMIN base value
-    # so that stages before the first VAZMINT record use the correct default.
-
-    # CFUGA/CMONT temporal overrides are handled by convert_production_models;
-    # no warning needed here as per-stage productivity is now supported.
+    # VAZMINT overrides are per-stage bounds in hydro_bounds.parquet
+    # (convert_storage_bounds).  The static min_outflow in hydros.json keeps the
+    # hidr.dat / VAZMIN base value, which stages before the first VAZMINT record
+    # use.  CFUGA/CMONT overrides belong to convert_production_models.
 
     # Static field is always zero — per-stage GHMIN values are
     # emitted in ``hydro_bounds.parquet:min_generation_mw`` by
