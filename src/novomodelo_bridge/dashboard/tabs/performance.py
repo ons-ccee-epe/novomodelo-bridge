@@ -280,212 +280,183 @@ def can_render(data: DashboardData) -> bool:
     return True
 
 
-def _training_sections(data: DashboardData) -> str:
-    """Sections built from the training timing, solver and cut-selection outputs."""
-    top_level_content = chart_grid(
-        [
-            wrap_chart(chart_iteration_timing_breakdown(data.timing)),
-            wrap_chart(chart_timing_waterfall(data.timing)),
-        ]
-    )
+def _chart_pair(left: str, right: str) -> str:
+    """Two rendered charts side by side in a two-column grid."""
+    return chart_grid([wrap_chart(left), wrap_chart(right)])
 
-    wall_breakdown_content = wrap_chart(
-        chart_forward_wall_breakdown(data.timing)
-    ) + wrap_chart(chart_backward_wall_breakdown(data.timing))
 
-    decomposition_content = wrap_chart(
-        chart_parallel_overhead_share(data.timing)
-    ) + chart_grid(
-        [wrap_chart(chart_parallel_overhead_decomposition(data.timing))],
-        single=True,
-    )
-
-    efficiency_content = wrap_chart(chart_parallel_efficiency(data.timing))
-
-    progression_content = wrap_chart(chart_solver_progression(data.solver_train))
-
-    solver_cpu_content = chart_grid(
-        [
-            wrap_chart(chart_solver_time_breakdown_over_iterations(data.solver_train)),
-            wrap_chart(chart_forward_vs_backward_per_iter(data.solver_train)),
-        ]
-    )
-
-    basis_content = wrap_chart(chart_basis_reuse_over_iterations(data.solver_train))
-
-    per_opening_content = chart_grid(
-        [
-            wrap_chart(chart_backward_per_opening_solve_time(data.solver_train)),
-            wrap_chart(chart_backward_per_opening_simplex(data.solver_train)),
-        ]
-    )
-
-    opening_0_content = wrap_chart(
-        chart_backward_opening_0_share(data.solver_train)
-    ) + chart_grid(
-        [
-            wrap_chart(chart_backward_opening_0_solve_time(data.solver_train)),
-            wrap_chart(chart_backward_opening_0_simplex(data.solver_train)),
-        ]
-    )
-
-    per_worker_content = chart_grid(
-        [
-            wrap_chart(chart_worker_wall_time_distribution(data.timing_raw)),
-            wrap_chart(chart_backward_load_balance_per_worker(data.solver_train)),
-        ]
-    )
-
-    cut_pool_content = chart_grid(
-        [
-            wrap_chart(chart_cut_count_per_stage(data.cut_selection)),
-            wrap_chart(chart_active_cuts_growth_by_stage(data.cut_selection)),
-        ]
-    )
-
-    lp_difficulty_content = chart_grid(
-        [
-            wrap_chart(chart_lp_difficulty_multi_iter(data.solver_train)),
-            wrap_chart(chart_lp_solve_time_multi_iter(data.solver_train)),
-        ]
-    )
-
-    cut_cost_content = chart_grid(
-        [
-            wrap_chart(
-                chart_cuts_vs_solve_time_scatter(data.solver_train, data.cut_selection)
-            ),
-            wrap_chart(
-                chart_forward_basis_set_vs_stage0_cuts(
-                    data.solver_train, data.cut_selection
-                )
-            ),
-        ]
-    )
-
-    convergence_wall_content = wrap_chart(
-        chart_convergence_vs_wall_time(data.conv, data.timing)
-    )
-
-    heatmap_content = chart_grid(
-        [
-            wrap_chart(chart_forward_stage_heatmap(data.solver_train)),
-            wrap_chart(chart_backward_stage_heatmap(data.solver_train)),
-        ]
-    )
-
-    lp_detail_content = chart_grid(
-        [
-            wrap_chart(chart_simplex_by_stage(data.solver_train)),
-            wrap_chart(chart_cost_per_simplex_iter(data.solver_train)),
-        ]
-    )
-
-    per_stage_overhead_content = chart_grid(
-        [
-            wrap_chart(chart_set_bounds_by_stage(data.solver_train)),
-            wrap_chart(chart_basis_reuse(data.solver_train)),
-        ]
-    )
-
-    solver_by_phase_content = chart_grid(
-        [
-            wrap_chart(chart_solver_time_breakdown_by_phase(data.solver_train)),
-            wrap_chart(chart_solver_time_per_stage(data.solver_train)),
-        ]
-    )
-
+def _iteration_timing_sections(data: DashboardData) -> str:
+    """Iteration wall time by phase, its forward/backward split and parallel overhead."""
     return (
         collapsible_section(
             title="Top-Level Iteration Timing (non-overlapping phases)",
-            content=top_level_content,
+            content=_chart_pair(
+                chart_iteration_timing_breakdown(data.timing),
+                chart_timing_waterfall(data.timing),
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Forward / Backward Wall-Time Breakdown",
-            content=wall_breakdown_content,
+            content=wrap_chart(chart_forward_wall_breakdown(data.timing))
+            + wrap_chart(chart_backward_wall_breakdown(data.timing)),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Parallel Overhead Decomposition",
-            content=decomposition_content,
+            content=wrap_chart(chart_parallel_overhead_share(data.timing))
+            + chart_grid(
+                [wrap_chart(chart_parallel_overhead_decomposition(data.timing))],
+                single=True,
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Parallel Efficiency (Setup CPU vs Wall)",
-            content=efficiency_content,
+            content=wrap_chart(chart_parallel_efficiency(data.timing)),
             default_collapsed=True,
         )
-        + collapsible_section(
+    )
+
+
+def _solver_iteration_sections(data: DashboardData) -> str:
+    """Per-iteration LP solver progression, CPU components and basis reuse."""
+    return (
+        collapsible_section(
             title="Solver Progression — LP Solves, Simplex, Failures",
-            content=progression_content,
+            content=wrap_chart(chart_solver_progression(data.solver_train)),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Solver CPU Components per Iteration",
-            content=solver_cpu_content,
+            content=_chart_pair(
+                chart_solver_time_breakdown_over_iterations(data.solver_train),
+                chart_forward_vs_backward_per_iter(data.solver_train),
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Basis Warm-start Reuse",
-            content=basis_content,
+            content=wrap_chart(chart_basis_reuse_over_iterations(data.solver_train)),
             default_collapsed=False,
         )
-        + collapsible_section(
+    )
+
+
+def _backward_pass_sections(data: DashboardData) -> str:
+    """Backward-pass cost per opening, cold vs warm-started openings, worker balance."""
+    return (
+        collapsible_section(
             title="Backward Pass — Per-Opening Distribution",
-            content=per_opening_content,
+            content=_chart_pair(
+                chart_backward_per_opening_solve_time(data.solver_train),
+                chart_backward_per_opening_simplex(data.solver_train),
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Backward Pass — Opening 0 (cold) vs Openings 1+ (warm-start)",
-            content=opening_0_content,
+            content=wrap_chart(chart_backward_opening_0_share(data.solver_train))
+            + _chart_pair(
+                chart_backward_opening_0_solve_time(data.solver_train),
+                chart_backward_opening_0_simplex(data.solver_train),
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Backward Pass — Per-Worker Load Balance",
-            content=per_worker_content,
+            content=_chart_pair(
+                chart_worker_wall_time_distribution(data.timing_raw),
+                chart_backward_load_balance_per_worker(data.solver_train),
+            ),
             default_collapsed=False,
         )
-        + collapsible_section(
+    )
+
+
+def _cut_growth_sections(data: DashboardData) -> str:
+    """How the growing cut pool drives LP difficulty, solve time and convergence."""
+    return (
+        collapsible_section(
             title="Cut Pool per Stage (populated vs active, growth over time)",
-            content=cut_pool_content,
+            content=_chart_pair(
+                chart_cut_count_per_stage(data.cut_selection),
+                chart_active_cuts_growth_by_stage(data.cut_selection),
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="LP Difficulty Evolution per Stage (early vs mid vs late)",
-            content=lp_difficulty_content,
+            content=_chart_pair(
+                chart_lp_difficulty_multi_iter(data.solver_train),
+                chart_lp_solve_time_multi_iter(data.solver_train),
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Cut Cost Correlation & Forward Deceleration",
-            content=cut_cost_content,
+            content=_chart_pair(
+                chart_cuts_vs_solve_time_scatter(data.solver_train, data.cut_selection),
+                chart_forward_basis_set_vs_stage0_cuts(
+                    data.solver_train, data.cut_selection
+                ),
+            ),
             default_collapsed=False,
         )
         + collapsible_section(
             title="Convergence vs Wall Time",
-            content=convergence_wall_content,
+            content=wrap_chart(chart_convergence_vs_wall_time(data.conv, data.timing)),
             default_collapsed=True,
         )
-        + collapsible_section(
+    )
+
+
+def _per_stage_sections(data: DashboardData) -> str:
+    """Per-stage LP solve, overhead and solver-phase detail, collapsed by default."""
+    return (
+        collapsible_section(
             title="Per-Stage LP Solve Heatmaps (Forward & Backward)",
-            content=heatmap_content,
+            content=_chart_pair(
+                chart_forward_stage_heatmap(data.solver_train),
+                chart_backward_stage_heatmap(data.solver_train),
+            ),
             default_collapsed=True,
         )
         + collapsible_section(
             title="Per-Stage LP Detail",
-            content=lp_detail_content,
+            content=_chart_pair(
+                chart_simplex_by_stage(data.solver_train),
+                chart_cost_per_simplex_iter(data.solver_train),
+            ),
             default_collapsed=True,
         )
         + collapsible_section(
             title="Per-Stage Solver Overhead",
-            content=per_stage_overhead_content,
+            content=_chart_pair(
+                chart_set_bounds_by_stage(data.solver_train),
+                chart_basis_reuse(data.solver_train),
+            ),
             default_collapsed=True,
         )
         + collapsible_section(
             title="Solver Time Breakdown by Phase",
-            content=solver_by_phase_content,
+            content=_chart_pair(
+                chart_solver_time_breakdown_by_phase(data.solver_train),
+                chart_solver_time_per_stage(data.solver_train),
+            ),
             default_collapsed=True,
         )
+    )
+
+
+def _training_sections(data: DashboardData) -> str:
+    """Sections built from the training timing, solver and cut-selection outputs."""
+    return (
+        _iteration_timing_sections(data)
+        + _solver_iteration_sections(data)
+        + _backward_pass_sections(data)
+        + _cut_growth_sections(data)
+        + _per_stage_sections(data)
     )
 
 
@@ -499,11 +470,9 @@ def render(data: DashboardData) -> str:
     if data.training_available:
         parts.append(_training_sections(data))
 
-    dimensions_content = chart_grid(
-        [
-            wrap_chart(chart_lp_dimensions(data.scaling_report)),
-            wrap_chart(chart_scaling_quality(data.scaling_report)),
-        ]
+    dimensions_content = _chart_pair(
+        chart_lp_dimensions(data.scaling_report),
+        chart_scaling_quality(data.scaling_report),
     )
     parts.append(
         collapsible_section(
@@ -514,11 +483,9 @@ def render(data: DashboardData) -> str:
     )
 
     if data.training_available:
-        retry_content = chart_grid(
-            [
-                wrap_chart(_chart_retry_histogram(data.retry_histogram)),
-                wrap_chart(chart_retry_level_heatmap(data.retry_histogram)),
-            ]
+        retry_content = _chart_pair(
+            _chart_retry_histogram(data.retry_histogram),
+            chart_retry_level_heatmap(data.retry_histogram),
         )
         parts.append(
             collapsible_section(
