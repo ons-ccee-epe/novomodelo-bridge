@@ -115,6 +115,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | `export dessem` against DECOMP's own `mapcut` and `cortdeco` | DECOMP run on the reduced deck writes its own pair, and `convert decomp`, `novomodelo run` and `export dessem` on the same deck write the bridge's. Record 6's integers through the lag-start array and every travel-time record match byte for byte, and each node's latest cut values the in-transit water within 0.2% of DECOMP's. Two runs on edited copies of `dadger.rvN`, one with a `VI` travel time of 100 h and one with the two `VI` records swapped, fixed the conventions the unit tests pin in `test_travel_time.py`, `test_layout.py` and `test_mapcut_writer.py`: the lag array is stage-major with plants inner, the plants are numbered in `VI` record order, and the in-transit coefficients are lag-major with plants inner. Captured with DECOMP 32.0.1 in October 2026. |
 
+### A full DECOMP deck with water travel time, whose last stages leave transit buckets undated
+
+| Check | Verified |
+| --- | --- |
+| `export dessem` on transit buckets past the study end | On a seven-stage deck whose two plants, each with a 360 h travel time, leave transit buckets undated in its last stages, the export completes, reports three undated buckets in the travel-time note and, in its log, one in the fifth stage's pool and two in the sixth's, raises no dropped-coefficient warning (every cut's coefficient on them is zero), and writes a pair that passes the read-back check. The first four stages' pools carry no undated bucket, so their in-transit coefficients come from the dated path, which this change leaves as it was. Captured with novomodelo 0.19.1 in October 2026. |
+
 ### The reduced DECOMP deck and a monthly-stage deck, run by DECOMP with its turbined-flow report
 
 | Check | Verified |
