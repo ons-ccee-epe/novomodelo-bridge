@@ -6,6 +6,7 @@ that loads plotly.js from a CDN.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -72,6 +73,8 @@ from novomodelo_bridge.core.summary_counts import footer_counts
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
 
 
@@ -369,6 +372,186 @@ _HYDRO_BOUND_OVERLAY: dict[str, dict[str, tuple[str | None, str | None]]] = {
 }
 
 
+_NW_WITHDRAWAL_SLACK_VARS = (
+    "water_withdrawal_violation_pos_m3s",
+    "water_withdrawal_violation_neg_m3s",
+)
+
+# Per-(novomodelo_id, stage_id) Novomodelo LP gen-max for the dashed overlay trace on the
+# generation_mw chart. The source model GHMAX_FPHC trace was found to be unhelpful
+# in practice and is intentionally not surfaced — see report notes.
+_LP_GEN_MAX_COL = "novomodelo_lp_gen_max_mw"
+
+type _PlantKey = tuple[str, int]
+type _PlantComparisons = dict[str, dict[int, tuple[float, float]]]
+type _EntityStageIndex = dict[int, dict[str, dict[int, float]]]
+
+
+@dataclass(frozen=True)
+class _HydroPlantOverlays:
+    """Per-``novomodelo_id`` side data layered onto each hydro plant's charts."""
+
+    # novomodelo_id -> {var: {stage: value}} for novomodelo-only variables and
+    # the ``_LP_GEN_MAX_COL`` overlay.
+    novomodelo_series: _EntityStageIndex
+    # novomodelo_id -> {var: {stage_id: nw_value}} for the two withdrawal slacks. Drives the
+    # source model line on the matching novomodelo-only chart panels.
+    nw_slacks: _EntityStageIndex
+    static_bounds: dict[int, dict]
+    # novomodelo_id -> bound_col -> {stage: value} for the per-stage overrides
+    # supplied by ``hydro_bounds.parquet``.  Falls back to the empty dict
+    # when the parquet is absent.
+    per_stage_bounds: _EntityStageIndex
+
+
+def _index_by_entity_stage(
+    frame: pl.DataFrame | None, columns: Sequence[str] | None = None
+) -> _EntityStageIndex:
+    """Index a per-(entity_id, stage_id) frame as entity -> column -> stage -> value.
+
+    ``columns`` defaults to every column besides the two keys; columns absent
+    from ``frame`` and null cells are skipped.
+    """
+    index: _EntityStageIndex = {}
+    if frame is None or frame.is_empty():
+        return index
+    if columns is None:
+        columns = [c for c in frame.columns if c not in ("entity_id", "stage_id")]
+    present = [c for c in columns if c in frame.columns]
+    for row in frame.iter_rows(named=True):
+        eid = int(row["entity_id"])
+        sid = int(row["stage_id"])
+        by_column = index.setdefault(eid, {})
+        for col in present:
+            val = row[col]
+            if val is None:
+                continue
+            by_column.setdefault(col, {})[sid] = float(val)
+    return index
+
+
+def _group_plant_results(
+    results: list[ResultComparison], entity_type: str
+) -> tuple[dict[_PlantKey, _PlantComparisons], dict[_PlantKey, int]]:
+    plants: dict[_PlantKey, _PlantComparisons] = {}
+    novomodelo_ids: dict[_PlantKey, int] = {}
+    for r in results:
+        if r.entity_type != entity_type:
+            continue
+        key = (r.entity_name, r.newave_code)
+        plants.setdefault(key, {}).setdefault(r.variable, {})[r.stage] = (
+            r.newave_value,
+            r.novomodelo_value,
+        )
+        novomodelo_ids[key] = r.novomodelo_id
+    return plants, novomodelo_ids
+
+
+def _comparison_series(
+    var_data: _PlantComparisons, variables: list[tuple[str, str]]
+) -> dict[str, list]:
+    series: dict[str, list] = {}
+    for var_key, _var_label in variables:
+        stage_data = var_data.get(var_key, {})
+        stages = sorted(stage_data.keys())
+        series[f"{var_key}_stages"] = stages
+        series[f"{var_key}_nw"] = [stage_data[s][0] for s in stages]
+        series[f"{var_key}_cb"] = [stage_data[s][1] for s in stages]
+    return series
+
+
+def _novomodelo_only_series(
+    novomodelo_series: dict[str, dict[int, float]],
+    nw_slacks: dict[str, dict[int, float]],
+) -> dict[str, list]:
+    series: dict[str, list] = {}
+    for var_key, _var_label in _HYDRO_NOVOMODELO_ONLY_VARIABLES:
+        stage_data_co = novomodelo_series.get(var_key, {})
+        stages = sorted(stage_data_co.keys())
+        series[f"{var_key}_stages"] = stages
+        nw_stage_map = nw_slacks.get(var_key)
+        if nw_stage_map:
+            series[f"{var_key}_nw"] = [
+                round(nw_stage_map.get(s, 0.0), 2) for s in stages
+            ]
+        else:
+            series[f"{var_key}_nw"] = []
+        series[f"{var_key}_cb"] = [round(stage_data_co[s], 2) for s in stages]
+    return series
+
+
+def _bound_overlays(
+    entry: dict, meta: dict, per_stage_overrides: dict[str, dict[int, float]]
+) -> dict[str, list[float | None]]:
+    # Bound overlays per variable.  Static values come from
+    # ``hydros.json`` via novomodelo_hydro_meta; per-stage rows in
+    # hydro_bounds.parquet shadow the static value at the matching
+    # stages.  When the bound is structurally absent (e.g.
+    # max_outflow), we skip emitting the array so the JS layer
+    # doesn't draw a constant-zero dashed line.
+    overlays: dict[str, list[float | None]] = {}
+    for var_key, sides in _HYDRO_BOUND_OVERLAY.items():
+        var_stages = entry.get(f"{var_key}_stages", [])
+        if not var_stages:
+            continue
+        for side, (static_key, ps_key) in sides.items():
+            static_val = meta.get(static_key) if static_key is not None else None
+            ps_overrides = per_stage_overrides.get(ps_key, {}) if ps_key else {}
+            if static_val is None and not ps_overrides:
+                continue
+            series: list[float | None] = []
+            any_value = False
+            for s in var_stages:
+                v = ps_overrides.get(s)
+                if v is None and static_val is not None:
+                    v = static_val
+                if v is None:
+                    series.append(None)
+                else:
+                    series.append(round(float(v), 4))
+                    any_value = True
+            if any_value:
+                overlays[f"{var_key}_bound_{side}"] = series
+    return overlays
+
+
+def _hydro_plant_entry(
+    name: str,
+    nw_code: int,
+    novomodelo_id: int,
+    var_data: _PlantComparisons,
+    overlays: _HydroPlantOverlays,
+) -> dict:
+    entry: dict = {
+        "name": name,
+        "code": nw_code,
+        "novomodelo_id": novomodelo_id,
+    }
+    entry.update(_comparison_series(var_data, _HYDRO_VARIABLES))
+    novomodelo_series = overlays.novomodelo_series.get(novomodelo_id, {})
+    entry.update(
+        _novomodelo_only_series(
+            novomodelo_series, overlays.nw_slacks.get(novomodelo_id, {})
+        )
+    )
+    # Novomodelo LP gen_max overlay (dashed trace). Aligned to the
+    # generation_mw stage grid populated above.
+    gen_stages = entry.get("generation_mw_stages", [])
+    cb_max_map = novomodelo_series.get(_LP_GEN_MAX_COL, {})
+    if cb_max_map:
+        entry["generation_mw_max_cb"] = [
+            round(cb_max_map.get(s, 0.0), 2) for s in gen_stages
+        ]
+    entry.update(
+        _bound_overlays(
+            entry,
+            overlays.static_bounds.get(novomodelo_id, {}),
+            overlays.per_stage_bounds.get(novomodelo_id, {}),
+        )
+    )
+    return entry
+
+
 def build_hydro_detail_tab(
     results: list[ResultComparison],
     pct_df: pl.DataFrame | None = None,
@@ -405,158 +588,28 @@ def build_hydro_detail_tab(
     variables it carries from it (averaged over the points that are not ties)
     and says so in its caption; the charts keep every point.
     """
-    hydro_data = [r for r in results if r.entity_type == "hydro"]
-    if not hydro_data:
-        return "<p>No hydro data available.</p>"
-
-    plants: dict[tuple[str, int], dict[str, dict[int, tuple[float, float]]]] = {}
-    novomodelo_ids: dict[tuple[str, int], int] = {}
-    for r in hydro_data:
-        key = (r.entity_name, r.newave_code)
-        plants.setdefault(key, {}).setdefault(r.variable, {})[r.stage] = (
-            r.newave_value,
-            r.novomodelo_value,
-        )
-        novomodelo_ids[key] = r.novomodelo_id
-
+    plants, novomodelo_ids = _group_plant_results(results, "hydro")
     if not plants:
         return "<p>No hydro data available.</p>"
 
-    # Build novomodelo_id -> {var: {stage: value}} for novomodelo-only variables.
-    novomodelo_only_lookup: dict[int, dict[str, dict[int, float]]] = {}
-    # Per-(novomodelo_id, stage_id) Novomodelo LP gen-max for the dashed overlay trace on the
-    # generation_mw chart. The source model GHMAX_FPHC trace was found to be unhelpful
-    # in practice and is intentionally not surfaced — see report notes.
-    gen_max_cb_lookup: dict[int, dict[int, float]] = {}
-    novomodelo_only_vars = [v for v, _ in _HYDRO_NOVOMODELO_ONLY_VARIABLES]
-    if novomodelo_hydro is not None and not novomodelo_hydro.is_empty():
-        avail_vars = [v for v in novomodelo_only_vars if v in novomodelo_hydro.columns]
-        has_cb_lp_max = "novomodelo_lp_gen_max_mw" in novomodelo_hydro.columns
-        for row in novomodelo_hydro.iter_rows(named=True):
-            eid = int(row["entity_id"])
-            sid = int(row["stage_id"])
-            entry = novomodelo_only_lookup.setdefault(eid, {})
-            for v in avail_vars:
-                val = row.get(v)
-                if val is None:
-                    continue
-                entry.setdefault(v, {})[sid] = float(val)
-            if has_cb_lp_max:
-                val_cb = row.get("novomodelo_lp_gen_max_mw")
-                if val_cb is not None:
-                    gen_max_cb_lookup.setdefault(eid, {})[sid] = float(val_cb)
-
-    # novomodelo_id -> bound_col -> {stage: value} for the per-stage overrides
-    # supplied by ``hydro_bounds.parquet``.  Falls back to the empty dict
-    # when the parquet is absent.
-    per_stage_bounds_lookup: dict[int, dict[str, dict[int, float]]] = {}
-    if (
-        novomodelo_hydro_per_stage_bounds is not None
-        and not novomodelo_hydro_per_stage_bounds.is_empty()
-    ):
-        for row in novomodelo_hydro_per_stage_bounds.iter_rows(named=True):
-            eid = int(row["entity_id"])
-            sid = int(row["stage_id"])
-            entry_map = per_stage_bounds_lookup.setdefault(eid, {})
-            for col, val in row.items():
-                if col in ("entity_id", "stage_id") or val is None:
-                    continue
-                entry_map.setdefault(col, {})[sid] = float(val)
-
-    static_meta = novomodelo_hydro_meta or {}
-
-    # novomodelo_id -> {var: {stage_id: nw_value}} for the two withdrawal slacks. Drives the
-    # source model line on the matching novomodelo-only chart panels.
-    nw_slack_lookup: dict[int, dict[str, dict[int, float]]] = {}
-    _NW_SLACK_VARS = (
-        "water_withdrawal_violation_pos_m3s",
-        "water_withdrawal_violation_neg_m3s",
+    overlays = _HydroPlantOverlays(
+        novomodelo_series=_index_by_entity_stage(
+            novomodelo_hydro,
+            [v for v, _ in _HYDRO_NOVOMODELO_ONLY_VARIABLES] + [_LP_GEN_MAX_COL],
+        ),
+        nw_slacks=_index_by_entity_stage(nw_hydro_slacks, _NW_WITHDRAWAL_SLACK_VARS),
+        static_bounds=novomodelo_hydro_meta or {},
+        per_stage_bounds=_index_by_entity_stage(novomodelo_hydro_per_stage_bounds),
     )
-    if nw_hydro_slacks is not None and not nw_hydro_slacks.is_empty():
-        avail_nw_slacks = [v for v in _NW_SLACK_VARS if v in nw_hydro_slacks.columns]
-        for row in nw_hydro_slacks.iter_rows(named=True):
-            eid = int(row["entity_id"])
-            sid = int(row["stage_id"])
-            entry_map = nw_slack_lookup.setdefault(eid, {})
-            for v in avail_nw_slacks:
-                val = row.get(v)
-                if val is None:
-                    continue
-                entry_map.setdefault(v, {})[sid] = float(val)
-
-    all_vars = _HYDRO_VARIABLES + _HYDRO_NOVOMODELO_ONLY_VARIABLES
 
     js_plants: dict[str, dict] = {}
     for (name, nw_code), var_data in sorted(plants.items()):
-        pid = f"{nw_code}_{name}"
         cid = novomodelo_ids.get((name, nw_code), -1)
-        entry: dict = {
-            "name": name,
-            "code": nw_code,
-            "novomodelo_id": cid,
-        }
-        for var_key, _var_label in _HYDRO_VARIABLES:
-            stage_data = var_data.get(var_key, {})
-            stages = sorted(stage_data.keys())
-            entry[f"{var_key}_stages"] = stages
-            entry[f"{var_key}_nw"] = [stage_data[s][0] for s in stages]
-            entry[f"{var_key}_cb"] = [stage_data[s][1] for s in stages]
-        novomodelo_only = novomodelo_only_lookup.get(cid, {})
-        nw_slacks_for_plant = nw_slack_lookup.get(cid, {})
-        for var_key, _var_label in _HYDRO_NOVOMODELO_ONLY_VARIABLES:
-            stage_data_co = novomodelo_only.get(var_key, {})
-            stages = sorted(stage_data_co.keys())
-            entry[f"{var_key}_stages"] = stages
-            nw_stage_map = nw_slacks_for_plant.get(var_key)
-            if nw_stage_map:
-                entry[f"{var_key}_nw"] = [
-                    round(nw_stage_map.get(s, 0.0), 2) for s in stages
-                ]
-            else:
-                entry[f"{var_key}_nw"] = []
-            entry[f"{var_key}_cb"] = [round(stage_data_co[s], 2) for s in stages]
-        # Novomodelo LP gen_max overlay (dashed trace). Aligned to the
-        # generation_mw stage grid populated above.
-        gen_stages = entry.get("generation_mw_stages", [])
-        cb_max_map = gen_max_cb_lookup.get(cid, {})
-        if cb_max_map:
-            entry["generation_mw_max_cb"] = [
-                round(cb_max_map.get(s, 0.0), 2) for s in gen_stages
-            ]
+        js_plants[f"{nw_code}_{name}"] = _hydro_plant_entry(
+            name, nw_code, cid, var_data, overlays
+        )
 
-        # Bound overlays per variable.  Static values come from
-        # ``hydros.json`` via novomodelo_hydro_meta; per-stage rows in
-        # hydro_bounds.parquet shadow the static value at the matching
-        # stages.  When the bound is structurally absent (e.g.
-        # max_outflow), we skip emitting the array so the JS layer
-        # doesn't draw a constant-zero dashed line.
-        meta = static_meta.get(cid, {})
-        per_stage_overrides = per_stage_bounds_lookup.get(cid, {})
-        for var_key, sides in _HYDRO_BOUND_OVERLAY.items():
-            var_stages = entry.get(f"{var_key}_stages", [])
-            if not var_stages:
-                continue
-            for side, (static_key, ps_key) in sides.items():
-                static_val = meta.get(static_key) if static_key is not None else None
-                ps_overrides = per_stage_overrides.get(ps_key, {}) if ps_key else {}
-                if static_val is None and not ps_overrides:
-                    continue
-                series = []
-                any_value = False
-                for s in var_stages:
-                    v = ps_overrides.get(s)
-                    if v is None and static_val is not None:
-                        v = static_val
-                    if v is None:
-                        series.append(None)
-                    else:
-                        series.append(round(float(v), 4))
-                        any_value = True
-                if any_value:
-                    entry[f"{var_key}_bound_{side}"] = series
-
-        js_plants[pid] = entry
-
+    all_vars = _HYDRO_VARIABLES + _HYDRO_NOVOMODELO_ONLY_VARIABLES
     _enrich_with_percentiles(js_plants, all_vars, pct_df)
 
     if masked_hydro is not None and not masked_hydro.is_empty():
@@ -593,20 +646,7 @@ def build_thermal_detail_tab(
     reference_label: str = "NEWAVE",
 ) -> str:
     """Build interactive per-plant thermal detail with JS dropdown."""
-    thermal_data = [r for r in results if r.entity_type == "thermal"]
-    if not thermal_data:
-        return "<p>No thermal data available.</p>"
-
-    plants: dict[tuple[str, int], dict[str, dict[int, tuple[float, float]]]] = {}
-    novomodelo_ids: dict[tuple[str, int], int] = {}
-    for r in thermal_data:
-        key = (r.entity_name, r.newave_code)
-        plants.setdefault(key, {}).setdefault(r.variable, {})[r.stage] = (
-            r.newave_value,
-            r.novomodelo_value,
-        )
-        novomodelo_ids[key] = r.novomodelo_id
-
+    plants, novomodelo_ids = _group_plant_results(results, "thermal")
     if not plants:
         return "<p>No thermal data available.</p>"
 
@@ -620,12 +660,7 @@ def build_thermal_detail_tab(
             "code": nw_code,
             "novomodelo_id": novomodelo_ids.get((name, nw_code), -1),
         }
-        for var_key, _var_label in thermal_vars:
-            stage_data = var_data.get(var_key, {})
-            stages = sorted(stage_data.keys())
-            entry[f"{var_key}_stages"] = stages
-            entry[f"{var_key}_nw"] = [stage_data[s][0] for s in stages]
-            entry[f"{var_key}_cb"] = [stage_data[s][1] for s in stages]
+        entry.update(_comparison_series(var_data, thermal_vars))
         js_plants[pid] = entry
 
     _enrich_with_percentiles(js_plants, thermal_vars, pct_df)
