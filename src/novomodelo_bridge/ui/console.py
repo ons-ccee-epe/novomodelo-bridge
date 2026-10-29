@@ -375,8 +375,7 @@ def _diagnostic_panel(diag: Diagnostic) -> Panel:
             make_table(
                 diag.table.columns,
                 capped,
-                # DiagnosticTable.justify is typed list[str], not Rich's literal
-                justify=diag.table.justify,  # ty: ignore[invalid-argument-type]
+                justify=diag.table.justify,
                 caption=caption,
             )
         )

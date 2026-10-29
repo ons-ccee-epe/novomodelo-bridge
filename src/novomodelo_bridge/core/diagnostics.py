@@ -25,8 +25,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Literal
 
 _MODULE_LOGGER = logging.getLogger(__name__)
+
+ColumnJustify = Literal["left", "right", "center"]
 
 
 class Severity(Enum):
@@ -72,7 +75,7 @@ class DiagnosticTable:
 
     columns: list[str]
     rows: Sequence[Sequence[object]]
-    justify: list[str] | None = None
+    justify: list[ColumnJustify] | None = None
     caption: str | None = None
 
     def to_dict(self) -> dict[str, object]:
