@@ -82,7 +82,7 @@ class TestRunPreflight:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         files = make_nw_files(tmp_path, **_all_optionals_present(tmp_path))
-        files.clast.write_text("    1 A\n\t2 B\n")
+        files.clast.write_text("    1 A\n\t2 B\n", encoding="utf-8")
         monkeypatch.setattr(preflight.NewaveFiles, "from_directory", lambda _src: files)
 
         result = run_preflight(tmp_path)

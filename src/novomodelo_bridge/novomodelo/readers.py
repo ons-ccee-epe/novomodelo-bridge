@@ -63,7 +63,7 @@ def _parsed_stages(novomodelo_output_dir: Path) -> Iterator[list[dict]]:
         p = candidate / "stages.json"
         if p.exists():
             try:
-                with p.open() as f:
+                with p.open(encoding="utf-8") as f:
                     yield json.load(f).get("stages", [])
             except Exception:  # noqa: BLE001
                 continue
@@ -553,7 +553,7 @@ def read_novomodelo_hydro_total_flows(
     if not hydros_path.exists():
         return empty
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             hydros_data = json.load(f)
     except Exception as exc:  # noqa: BLE001
         raise NovomodeloReadError(
@@ -620,7 +620,7 @@ def _load_hydro_reservoir_flag(novomodelo_output_dir: Path) -> dict[int, bool]:
     if not hydros_path.exists():
         return {}
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except Exception:  # noqa: BLE001
         return {}
@@ -796,7 +796,7 @@ def read_novomodelo_training_duration(novomodelo_output_dir: Path) -> float:
     if not meta_path.exists():
         return 0.0
     try:
-        with meta_path.open() as f:
+        with meta_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOG.warning("Failed to parse training/metadata.json")
@@ -1403,7 +1403,7 @@ def _load_entity_bus_map(
     if path is None:
         return {}
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
         return {int(e["id"]): int(e["bus_id"]) for e in data.get(entity, [])}
     except Exception as exc:  # noqa: BLE001
@@ -1823,7 +1823,7 @@ def read_converted_penalties(novomodelo_output_dir: Path) -> dict:
     ):
         if candidate.is_file():
             try:
-                return json.loads(candidate.read_text())
+                return json.loads(candidate.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 _LOG.warning("Failed to parse %s", candidate)
                 return {}
@@ -1951,7 +1951,7 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
         return {}
 
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOG.warning("Failed to parse hydros.json")
@@ -2055,7 +2055,7 @@ def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int
         _LOG.warning("hydros.json not found near %s", novomodelo_output_dir)
         return {}
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOG.warning("Failed to parse hydros.json for productivity detail")
@@ -2119,7 +2119,7 @@ def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
         _LOG.warning("lines.json not found near %s", novomodelo_output_dir)
         return []
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         raise NovomodeloReadError(f"Failed to parse lines.json: {path}") from exc
@@ -2137,7 +2137,7 @@ def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, d
         return {}
 
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
     except Exception:  # noqa: BLE001
         _LOG.warning("Failed to parse thermals.json")
@@ -2160,7 +2160,7 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
         return {}
 
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
     except Exception:  # noqa: BLE001
         _LOG.warning("Failed to parse buses.json")
@@ -2217,7 +2217,7 @@ def read_novomodelo_fpha_fit_config(novomodelo_output_dir: Path) -> pl.DataFrame
     if path is None or block_hours is None:
         return empty
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             models = json.load(f).get("production_models", [])
     except (OSError, json.JSONDecodeError) as exc:
         raise NovomodeloReadError(f"Failed to read {path}") from exc

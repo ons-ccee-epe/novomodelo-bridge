@@ -26,7 +26,7 @@ def _diagnostic(code: str, severity: dx.Severity) -> dx.Diagnostic:
 
 def _write_outputs(dst: Path) -> None:
     (dst / "system").mkdir(parents=True)
-    (dst / "config.json").write_text("{}")
+    (dst / "config.json").write_text("{}", encoding="utf-8")
 
 
 def test_run_conversion_folds_findings_and_legacy_warnings_into_the_report(

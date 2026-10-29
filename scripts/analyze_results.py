@@ -46,7 +46,7 @@ def load_names(case_dir: Path) -> dict:
     ]:
         path = case_dir / "system" / f"{entity}.json"
         if path.exists():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             for item in data.get(key, []):
                 names[(entity, item["id"])] = item.get("name", str(item["id"]))

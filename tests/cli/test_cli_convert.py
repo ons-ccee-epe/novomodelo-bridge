@@ -23,10 +23,10 @@ def _make_fake_decomp_dir(tmp_path: Path) -> Path:
     stats/globs these, never parses them."""
     decomp_dir = tmp_path / "decomp_case"
     decomp_dir.mkdir()
-    (decomp_dir / "caso.dat").write_text("rv0\n")
-    (decomp_dir / "dadger.rv0").write_text("stub")
-    (decomp_dir / "vazoes.rv0").write_text("stub")
-    (decomp_dir / "hidr.dat").write_text("stub")
+    (decomp_dir / "caso.dat").write_text("rv0\n", encoding="utf-8")
+    (decomp_dir / "dadger.rv0").write_text("stub", encoding="utf-8")
+    (decomp_dir / "vazoes.rv0").write_text("stub", encoding="utf-8")
+    (decomp_dir / "hidr.dat").write_text("stub", encoding="utf-8")
     return decomp_dir
 
 
@@ -36,8 +36,8 @@ def _make_fake_decomp_dir_with_cuts(tmp_path: Path) -> Path:
     its glob fallback — the boundary-FCF gating path only globs/stats these,
     never parses their contents."""
     decomp_dir = _make_fake_decomp_dir(tmp_path)
-    (decomp_dir / "cortesh.rv0").write_text("stub")
-    (decomp_dir / "cortes.rv0").write_text("stub")
+    (decomp_dir / "cortesh.rv0").write_text("stub", encoding="utf-8")
+    (decomp_dir / "cortes.rv0").write_text("stub", encoding="utf-8")
     return decomp_dir
 
 
@@ -91,7 +91,7 @@ class TestCliInProcess:
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         dst.mkdir()
-        (dst / "existing.txt").write_text("hello")
+        (dst / "existing.txt").write_text("hello", encoding="utf-8")
 
         fake_report = ConversionReport(
             hydro_count=1,
@@ -1663,7 +1663,7 @@ class TestCliInProcess:
 
         assert code == 0
         assert json_path.exists()
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert set(payload) == {"summary", "diagnostics"}
         assert payload["summary"]["hydros"] == 3
         assert [d["code"] for d in payload["diagnostics"]] == ["decomp-some-warning"]
@@ -1705,7 +1705,10 @@ class TestCliInProcess:
         assert doc["command"] == "convert decomp"
         # … and the sidecar was written all the same.
         assert json_path.exists()
-        assert set(json.loads(json_path.read_text())) == {"summary", "diagnostics"}
+        assert set(json.loads(json_path.read_text(encoding="utf-8"))) == {
+            "summary",
+            "diagnostics",
+        }
 
     def test_convert_decomp_no_diagnostics_json_writes_no_sidecar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2525,7 +2528,7 @@ class TestCliInProcess:
 
         assert code == 0
         assert json_path.exists()
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         codes = {d["code"] for d in payload["diagnostics"]}
         assert "boundary-fcf-gnl-anticipated-deviation" in codes
 
@@ -2577,7 +2580,7 @@ class TestCliInProcess:
             )
 
         assert code == 0
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert set(payload) == {"summary", "diagnostics"}
         assert [d["code"] for d in payload["diagnostics"]] == ["decomp-some-warning"]
 
@@ -2684,7 +2687,7 @@ class TestConversionDiagnosticsRendering:
             )
         assert code == 0
         assert json_path.exists()
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert payload["summary"]["hydros"] == 1
         codes = [d["code"] for d in payload["diagnostics"]]
         assert "thermal-gtmin-above-capacity" in codes

@@ -62,7 +62,7 @@ def _build_case(case_dir: Path) -> None:
             ),
         ]
     }
-    (system / "hydros.json").write_text(json.dumps(hydros))
+    (system / "hydros.json").write_text(json.dumps(hydros), encoding="utf-8")
 
     # Parquet has a row for hydro 0 only (NULL stage_id default).
     table = pa.table(
@@ -80,7 +80,9 @@ def _build_case(case_dir: Path) -> None:
             {"hydro_id": 1, "stage_ranges": [{"productivity_mw_per_m3s": 0.7}]}
         ]
     }
-    (system / "hydro_production_models.json").write_text(json.dumps(pm))
+    (system / "hydro_production_models.json").write_text(
+        json.dumps(pm), encoding="utf-8"
+    )
 
 
 def test_resolve_cascade_is_per_hydro(tmp_path: Path) -> None:
@@ -88,7 +90,7 @@ def test_resolve_cascade_is_per_hydro(tmp_path: Path) -> None:
     embedded 0.9 (proving the fallback is per-hydro, not whole-dict)."""
     case_dir = tmp_path / "case"
     _build_case(case_dir)
-    with (case_dir / "system" / "hydros.json").open() as f:
+    with (case_dir / "system" / "hydros.json").open(encoding="utf-8") as f:
         hydros = json.load(f)["hydros"]
 
     prods = resolve_hydro_productivities(case_dir, hydros)

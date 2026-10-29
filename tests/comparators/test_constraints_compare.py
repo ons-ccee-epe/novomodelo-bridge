@@ -86,7 +86,8 @@ def _write_case(tmp_path: Path) -> tuple[Path, Path]:
                     {"id": 1, "reservoir": {"min_storage_hm3": 50.0}},
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
     (case_dir / "stages.json").write_text(
         json.dumps(
@@ -96,7 +97,8 @@ def _write_case(tmp_path: Path) -> tuple[Path, Path]:
                     {"id": 1, "blocks": [{"id": 0, "hours": 696.0}]},
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
     useful = "hydro_useful_volume_final(id=0, block=all)"
     write_generic_constraint_echo(
@@ -182,7 +184,7 @@ class TestLoadGenericConstraints:
     ) -> None:
         path = tmp_path / "constraints" / "generic_constraints.json"
         path.parent.mkdir(parents=True)
-        path.write_text("{not valid json")
+        path.write_text("{not valid json", encoding="utf-8")
 
         with caplog.at_level(logging.WARNING):
             constraints = load_generic_constraints(tmp_path)

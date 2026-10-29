@@ -51,9 +51,9 @@ class TestReadCaseInputs:
 
     def test_negative_travel_time_raises(self, synthetic_case_dir: Path) -> None:
         hydros_path = synthetic_case_dir / "system" / "hydros.json"
-        hydros = json.loads(hydros_path.read_text())
+        hydros = json.loads(hydros_path.read_text(encoding="utf-8"))
         hydros["hydros"][0]["travel_time_hours"] = -1.0
-        hydros_path.write_text(json.dumps(hydros))
+        hydros_path.write_text(json.dumps(hydros), encoding="utf-8")
 
         with pytest.raises(InputReadError, match="must be non-negative"):
             read_case_inputs(synthetic_case_dir)

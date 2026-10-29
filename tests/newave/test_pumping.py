@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, PropertyMock
 
 import pandas as pd
@@ -17,9 +16,6 @@ from novomodelo_bridge.newave.converters.pumping import (
     pumping_station_id_map,
     read_pumping_inputs,
 )
-
-if TYPE_CHECKING:
-    from datetime import date
 
 
 def _mock_case(

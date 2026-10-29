@@ -419,7 +419,8 @@ class TestGenericConstraintLhsDecomp:
         )
 
         (tmp_path / "stages.json").write_text(
-            '{"stages": [{"id": 3, "blocks": [{"id": 0, "hours": 168.0}]}]}'
+            '{"stages": [{"id": 3, "blocks": [{"id": 0, "hours": 168.0}]}]}',
+            encoding="utf-8",
         )
 
         result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(7, "RHE_115")])

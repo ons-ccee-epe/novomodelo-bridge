@@ -274,7 +274,9 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
             for s in synthetic_inputs.stages
         ],
     }
-    (case_dir / "stages.json").write_text(json.dumps(stages_data, indent=2))
+    (case_dir / "stages.json").write_text(
+        json.dumps(stages_data, indent=2), encoding="utf-8"
+    )
 
     # hydros.json
     hydros_data = {
@@ -291,7 +293,9 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
             for h in synthetic_inputs.hydros
         ]
     }
-    (system_dir / "hydros.json").write_text(json.dumps(hydros_data, indent=2))
+    (system_dir / "hydros.json").write_text(
+        json.dumps(hydros_data, indent=2), encoding="utf-8"
+    )
 
     # thermals.json
     thermals_data = {
@@ -309,13 +313,17 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
             for t in synthetic_inputs.thermals
         ]
     }
-    (system_dir / "thermals.json").write_text(json.dumps(thermals_data, indent=2))
+    (system_dir / "thermals.json").write_text(
+        json.dumps(thermals_data, indent=2), encoding="utf-8"
+    )
 
     # buses.json
     buses_data = {
         "buses": [{"id": b.id, "name": b.name} for b in synthetic_inputs.buses]
     }
-    (system_dir / "buses.json").write_text(json.dumps(buses_data, indent=2))
+    (system_dir / "buses.json").write_text(
+        json.dumps(buses_data, indent=2), encoding="utf-8"
+    )
 
     return case_dir
 
@@ -324,14 +332,14 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
 def travel_time_case_dir(synthetic_case_dir: Path) -> Path:
     """`synthetic_case_dir` on contiguous weekly stages, UHE_B 240 h above UHE_A."""
     stages_path = synthetic_case_dir / "stages.json"
-    stages = json.loads(stages_path.read_text())
+    stages = json.loads(stages_path.read_text(encoding="utf-8"))
     for position, stage in enumerate(stages["stages"]):
         stage["start_date"] = f"2026-01-{1 + 7 * position:02d}"
         stage["end_date"] = f"2026-01-{8 + 7 * position:02d}"
-    stages_path.write_text(json.dumps(stages))
+    stages_path.write_text(json.dumps(stages), encoding="utf-8")
 
     hydros_path = synthetic_case_dir / "system" / "hydros.json"
-    hydros = json.loads(hydros_path.read_text())
+    hydros = json.loads(hydros_path.read_text(encoding="utf-8"))
     hydros["hydros"][1]["travel_time_hours"] = 240.0
-    hydros_path.write_text(json.dumps(hydros))
+    hydros_path.write_text(json.dumps(hydros), encoding="utf-8")
     return synthetic_case_dir

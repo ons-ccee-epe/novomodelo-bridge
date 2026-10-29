@@ -99,7 +99,7 @@ def productivity_from_production_models(case_dir: Path) -> dict[int, float]:
     if not pm_path.exists():
         return {}
     try:
-        with pm_path.open() as f:
+        with pm_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOG.warning("Failed to parse %s", pm_path)

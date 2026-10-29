@@ -301,7 +301,7 @@ def _write_generic_constraints_case(
     constraints_dir = case_dir / "constraints"
     constraints_dir.mkdir(parents=True, exist_ok=True)
     (constraints_dir / "generic_constraints.json").write_text(
-        json.dumps({"constraints": constraints})
+        json.dumps({"constraints": constraints}), encoding="utf-8"
     )
     stages = sorted({int(r["stage_id"]) for r in bound_rows})
     (case_dir / "stages.json").write_text(
@@ -312,7 +312,8 @@ def _write_generic_constraints_case(
                     for s in stages
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
     names = {int(c["id"]): str(c.get("name", "")) for c in constraints}
     output_dir = case_dir / "output"

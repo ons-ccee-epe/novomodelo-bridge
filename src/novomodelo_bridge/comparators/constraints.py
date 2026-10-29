@@ -35,7 +35,7 @@ def load_generic_constraints(novomodelo_input_dir: Path) -> list[dict]:
     if not path.exists():
         return []
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         _LOG.warning("generic_constraints.json could not be parsed: %s", exc)

@@ -436,7 +436,7 @@ class TestReadDecOperCore:
 
     def test_a_file_is_parsed_once_until_it_changes(self, tmp_path: Path) -> None:
         path = tmp_path / "dec_oper_sist.csv"
-        path.write_text("1")
+        path.write_text("1", encoding="utf-8")
         parsed: list[str] = []
         table = pd.DataFrame({"estagio": [1], "cmo": [10.0]})
 
@@ -449,7 +449,7 @@ class TestReadDecOperCore:
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         assert len(parsed) == 1
-        path.write_text("12")
+        path.write_text("12", encoding="utf-8")
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         assert len(parsed) == 2
 

@@ -480,8 +480,8 @@ class TestConversionWarningCapture:
             # Simulate a write phase that got partway: a top-level JSON and a
             # system/ subdir were written before the failure.
             (d / "system").mkdir(parents=True, exist_ok=True)
-            (d / "config.json").write_text("{}")
-            (d / "system" / "hydros.json").write_text("{}")
+            (d / "config.json").write_text("{}", encoding="utf-8")
+            (d / "system" / "hydros.json").write_text("{}", encoding="utf-8")
             raise RuntimeError("disk full mid-write")
 
         with (
@@ -536,9 +536,9 @@ class TestConversionWarningCapture:
 
         dst = tmp_path / "dst"
         dst.mkdir()
-        (dst / "config.json").write_text("{}")
+        (dst / "config.json").write_text("{}", encoding="utf-8")
         (dst / "system").mkdir()
-        (dst / "system" / "hydros.json").write_text("{}")
+        (dst / "system" / "hydros.json").write_text("{}", encoding="utf-8")
 
         def fake_impl(
             src: Path,

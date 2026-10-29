@@ -274,7 +274,7 @@ _ONE_GL_DADGNL = (
 
 def _read_dadgnl_text(tmp_path: Path, text: str) -> Dadgnl:
     path = tmp_path / "dadgnl.rv0"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return Dadgnl.read(str(path))
 
 

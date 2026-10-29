@@ -37,7 +37,7 @@ def test_write_scalar_parameters_round_trip(tmp_path: Path) -> None:
 
     written = tmp_path / "constraints" / "generic_parameters.json"
     assert written.exists()
-    assert json.loads(written.read_text()) == params
+    assert json.loads(written.read_text(encoding="utf-8")) == params
 
 
 def test_build_decomp_scalar_parameters_forwards_per_stage_and_expressions() -> None:
@@ -61,4 +61,4 @@ def test_build_decomp_scalar_parameters_empty_ids_empty_list(
 
     written = tmp_path / "constraints" / "generic_parameters.json"
     assert written.exists()
-    assert json.loads(written.read_text()) == params
+    assert json.loads(written.read_text(encoding="utf-8")) == params

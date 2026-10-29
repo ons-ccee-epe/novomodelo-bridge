@@ -682,7 +682,9 @@ class TestReconstructedCost:
     def test_read_converted_penalties(self, tmp_path: Path) -> None:
         from novomodelo_bridge.novomodelo.readers import read_converted_penalties
 
-        (tmp_path / "penalties.json").write_text('{"hydro": {"spillage_cost": 0.5}}')
+        (tmp_path / "penalties.json").write_text(
+            '{"hydro": {"spillage_cost": 0.5}}', encoding="utf-8"
+        )
         out = tmp_path / "output"
         out.mkdir()
         # Found at the case root (parent of output).
@@ -1441,7 +1443,8 @@ class TestProductivityDetail:
                         },
                     ]
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
     def test_novomodelo_productivity_detail_reader(self, tmp_path: Path) -> None:
@@ -1904,7 +1907,8 @@ class TestGenericConstraintF3Loaders:
                         }
                     ]
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         constraints = load_generic_constraints(tmp_path)

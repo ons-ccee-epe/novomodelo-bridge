@@ -442,7 +442,7 @@ def _read_modif(tmp_path: Path, *lines: str) -> Modif:
     """inewave's reader over a ``modif.dat`` holding *lines* below its header."""
     path = tmp_path / "modif.dat"
     header = [" P.CHAVE  MODIFICACOES E INDICES", " XXXXXXXX XXXXXXXXXXXXXXXXXXXXX"]
-    path.write_text("\n".join([*header, *lines]) + "\n")
+    path.write_text("\n".join([*header, *lines]) + "\n", encoding="utf-8")
     return Modif.read(str(path))
 
 

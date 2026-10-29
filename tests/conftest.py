@@ -537,10 +537,10 @@ def _make_fake_newave_dir(tmp_path: Path) -> Path:
     """Create a directory with caso.dat, arquivos.dat, and all required stub files."""
     newave_dir = tmp_path / "newave_case"
     newave_dir.mkdir()
-    (newave_dir / "caso.dat").write_text("arquivos.dat\n")
-    (newave_dir / "arquivos.dat").write_text(_ARQUIVOS_DAT_CONTENT)
+    (newave_dir / "caso.dat").write_text("arquivos.dat\n", encoding="utf-8")
+    (newave_dir / "arquivos.dat").write_text(_ARQUIVOS_DAT_CONTENT, encoding="utf-8")
     for filename in _REQUIRED_STUB_FILES:
-        (newave_dir / filename).write_text("stub")
+        (newave_dir / filename).write_text("stub", encoding="utf-8")
     return newave_dir
 
 

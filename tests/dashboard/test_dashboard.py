@@ -50,7 +50,7 @@ from tests.conftest import hydro_with_group
 
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

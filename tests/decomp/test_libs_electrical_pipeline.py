@@ -440,7 +440,11 @@ class TestLibsElectricalPipelineWiring:
             to_generic=(_re_record(),),
         )
 
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         names = [c["name"] for c in doc["constraints"]]
         assert names == ["RE_901", "LIBS_ELEC_601", "LIBS_ELEC_602"]
         ids = [c["id"] for c in doc["constraints"]]

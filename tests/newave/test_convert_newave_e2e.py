@@ -30,4 +30,4 @@ def test_newave_mini_deck_converts_and_validates(
 
     # Pins the CaseWriter Option-A byte format (a single trailing newline),
     # the one on-disk change from routing NEWAVE writes through the writer.
-    assert (dst / "config.json").read_text().endswith("\n")
+    assert (dst / "config.json").read_text(encoding="utf-8").endswith("\n")

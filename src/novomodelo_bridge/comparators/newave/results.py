@@ -1155,7 +1155,9 @@ def compare_results(
         try:
             import json as _json
 
-            line_meta = _json.loads(lines_json_path.read_text()).get("lines", [])
+            line_meta = _json.loads(lines_json_path.read_text(encoding="utf-8")).get(
+                "lines", []
+            )
         except Exception:  # noqa: BLE001
             _LOG.warning("Failed to read lines.json")
 

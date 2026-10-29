@@ -347,7 +347,7 @@ class TestPipelineIntegration:
             )
 
         manifest_path = output_dir / "export_manifest.json"
-        manifest: dict[str, Any] = json.loads(manifest_path.read_text())
+        manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         assert manifest["status"] == "ok"
         assert manifest["revision"] == "rv0"
@@ -523,8 +523,14 @@ class TestTravelTimeExport:
     ) -> None:
         output_dir, _ = exported
         content = output_dir / "content"
-        cortdeco_header = (content / "cortdeco_content.csv").read_text().splitlines()[0]
-        mapcut_rows = (content / "mapcut_content.csv").read_text().splitlines()
+        cortdeco_header = (
+            (content / "cortdeco_content.csv")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
+        mapcut_rows = (
+            (content / "mapcut_content.csv").read_text(encoding="utf-8").splitlines()
+        )
 
         assert "pi_qdefp_uhe102_lag0,pi_qdefp_uhe102_lag1,pi_gnl" in cortdeco_header
         assert "20,reg7_travel_time,1,codigo_usina,0,102" in mapcut_rows
@@ -619,7 +625,7 @@ class TestFailureManifest:
         manifest_path = output_dir / "export_manifest.json"
         assert manifest_path.exists()
 
-        manifest: dict[str, Any] = json.loads(manifest_path.read_text())
+        manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert manifest["status"] == "failed"
         assert "failed_step" in manifest
 
@@ -666,5 +672,5 @@ class TestFailureManifest:
         manifest_path = output_dir / "export_manifest.json"
         assert manifest_path.exists()
 
-        manifest: dict[str, Any] = json.loads(manifest_path.read_text())
+        manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert manifest["status"] == "failed"

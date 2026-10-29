@@ -1097,7 +1097,9 @@ class TestGnlWiring:
         call_kwargs = convert_gnl_mock.call_args.kwargs
         assert call_kwargs["first_thermal_id"] == 1
         assert call_kwargs["bus_id_of"] == _CADASTRO_ID_MAP.bus_id
-        written_stages = json.loads((dst / "stages.json").read_text())["stages"]
+        written_stages = json.loads((dst / "stages.json").read_text(encoding="utf-8"))[
+            "stages"
+        ]
         assert [
             (s.start_date.isoformat(), s.end_date.isoformat())
             for s in call_kwargs["calendar"]
@@ -1117,21 +1119,25 @@ class TestGnlWiring:
 
         thermal_ids = [
             t["id"]
-            for t in json.loads((dst / "system" / "thermals.json").read_text())[
-                "thermals"
-            ]
+            for t in json.loads(
+                (dst / "system" / "thermals.json").read_text(encoding="utf-8")
+            )["thermals"]
         ]
         assert thermal_ids == sorted(thermal_ids)
         assert {1, 2}.issubset(set(thermal_ids))
 
-        initial_conditions = json.loads((dst / "initial_conditions.json").read_text())
+        initial_conditions = json.loads(
+            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        )
         assert (
             initial_conditions["past_anticipated_commitments"]
             == _POPULATED_GNL_EMISSION.past_anticipated_commitments
         )
         assert "future_anticipated_deliveries" not in initial_conditions
 
-        post_study = json.loads((dst / "post_study_stages.json").read_text())
+        post_study = json.loads(
+            (dst / "post_study_stages.json").read_text(encoding="utf-8")
+        )
         assert post_study["thermal_bounds"]
 
     def test_empty_thermal_bounds_still_writes_post_study_stages(
@@ -1148,13 +1154,17 @@ class TestGnlWiring:
             gnl_emission=_EMPTY_THERMAL_BOUNDS_GNL_EMISSION,
         )
 
-        post_study = json.loads((dst / "post_study_stages.json").read_text())
+        post_study = json.loads(
+            (dst / "post_study_stages.json").read_text(encoding="utf-8")
+        )
         assert post_study["thermal_bounds"] == []
         expected_post_study = _EMPTY_THERMAL_BOUNDS_GNL_EMISSION.post_study_stages
         assert expected_post_study is not None
         assert post_study["stages"] == expected_post_study["stages"]
 
-        initial_conditions = json.loads((dst / "initial_conditions.json").read_text())
+        initial_conditions = json.loads(
+            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        )
         assert "future_anticipated_deliveries" not in initial_conditions
 
     def test_summary_log_names_only_thermal_count(
@@ -1199,12 +1209,16 @@ class TestCadastroPipelineWiring:
         assert table["min_storage_hm3"].to_pylist() == [None]
         assert table["max_storage_hm3"].to_pylist() == [None]
 
-        hydros = json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+        hydros = json.loads(
+            (dst / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"]
         reservoirs = {h["id"]: h["reservoir"] for h in hydros}
         assert reservoirs[0] == {"min_storage_hm3": 20.0, "max_storage_hm3": 100.0}
         assert reservoirs[1] == {"min_storage_hm3": 10.0, "max_storage_hm3": 50.0}
 
-        storage = json.loads((dst / "initial_conditions.json").read_text())["storage"]
+        storage = json.loads(
+            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        )["storage"]
         values = {row["hydro_id"]: row["value_hm3"] for row in storage}
         # 50% of the base [20, 100] / [10, 50] ranges.
         assert values[0] == pytest.approx(60.0)
@@ -1238,7 +1252,7 @@ class TestCadastroPipelineWiring:
         source model's own key order, pinned to the registry."""
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
 
-        doc = json.loads((dst / "initial_conditions.json").read_text())
+        doc = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))
         assert next(iter(doc)) == "$schema"
         assert doc["$schema"] == novomodelo_schemas.schema_url_for(
             "initial_conditions.json"
@@ -1283,7 +1297,9 @@ class TestCadastroPipelineWiring:
         outflow_only = [row for row in storage_rows if row["min_outflow_m3s"] == 5.0]
         assert len(outflow_only) == 1
 
-        hydros = json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+        hydros = json.loads(
+            (dst / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"]
         reservoirs = {h["id"]: h["reservoir"] for h in hydros}
         assert reservoirs[0]["max_storage_hm3"] == pytest.approx(250.0)
 
@@ -1442,7 +1458,11 @@ class TestGenericConstraintWiring:
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, to_generic=_all_synthetic_generics()
         )
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         ids = [c["id"] for c in doc["constraints"]]
         assert len(ids) == 4
         assert sorted(ids) == list(range(len(ids)))
@@ -1490,12 +1510,18 @@ class TestGenericConstraintWiring:
             tmp_path, ac_volmax_frame=None, to_generic=(varying,)
         )
 
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         assert "@coef_hv903_t1" in doc["constraints"][0]["expression"]
         params = {
             p["name"]: p
             for p in json.loads(
-                (dst / "constraints" / "generic_parameters.json").read_text()
+                (dst / "constraints" / "generic_parameters.json").read_text(
+                    encoding="utf-8"
+                )
             )["scalar_parameters"]
         }
         values = dict(params["coef_hv903_t1"]["values"])
@@ -1521,14 +1547,20 @@ class TestGenericConstraintWiring:
             tmp_path, ac_volmax_frame=None, to_generic=(_synthetic_rhe_record(),)
         )
 
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         rhe = doc["constraints"]
         assert [c["name"] for c in rhe] == ["RHE_904"]
 
         params = {
             p["name"]: p
             for p in json.loads(
-                (dst / "constraints" / "generic_parameters.json").read_text()
+                (dst / "constraints" / "generic_parameters.json").read_text(
+                    encoding="utf-8"
+                )
             )["scalar_parameters"]
         }
         referenced = set(re.findall(r"@(\w+)", rhe[0]["expression"]))
@@ -1636,7 +1668,11 @@ class TestGenericConstraintWiring:
             for column_index in range(row_group.num_columns):
                 assert row_group.column(column_index).compression == "ZSTD"
 
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         assert doc["$schema"] == novomodelo_schemas.schema_url_for(
             "constraints/generic_constraints.json"
         )
