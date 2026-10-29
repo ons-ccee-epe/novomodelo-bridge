@@ -188,36 +188,13 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
         )
 
     if args.dry_run:
-        # Dry run: report the would-write listing only; touch nothing on disk
-        # (no diagnostics-json sidecar, no manifest, no validation).
-        if args.json_output:
-            # The would-write listing moves UNDER ``summary`` (dst-relative,
-            # forward-slash, sorted) so the only top-level keys are the five
-            # envelope keys.
-            summary = _convert_verdict_summary(report)
-            summary["would_write"] = sorted(
-                Path(p).relative_to(dst).as_posix() for p in report.would_write_paths
-            )
-            status = _convert_status(report.diagnostics, success="dry-run")
-            _emit_convert_json(
-                build_verdict("convert newave", status, summary, report.diagnostics)
-            )
-        else:
-            if not args.quiet:
-                _render_dry_run_summary(report, console=out_console)
-            render_diagnostics(
-                report.diagnostics,
-                heading="Conversion notes",
-                console=err_console,
-                quiet=args.quiet,
-            )
-        if args.validate:
-            print_status(
-                "Note: --validate is ignored under --dry-run"
-                " (nothing was written to validate).",
-                console=err_console,
-                style="#F5A623",
-            )
+        _report_dry_run(
+            report,
+            args,
+            command="convert newave",
+            out_console=out_console,
+            err_console=err_console,
+        )
         return
 
     # Build the convert ``summary`` + ``status`` up front; ``--validate`` may
