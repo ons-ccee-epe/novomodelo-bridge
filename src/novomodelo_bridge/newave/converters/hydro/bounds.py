@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
+from typing import NamedTuple
 
 import pandas as pd
 import pyarrow as pa
@@ -52,7 +52,7 @@ from novomodelo_bridge.newave.filling import (
     hreg_with_machines,
     online_machines,
 )
-from novomodelo_bridge.newave.horizon import seasonal_step_function
+from novomodelo_bridge.newave.horizon import StudyHorizon, seasonal_step_function
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import filling_hydro_codes
 from novomodelo_bridge.newave.switches import DgerSwitches, switch_off_diagnostic
@@ -615,6 +615,270 @@ def _drop_switched_off_records(
     return kept
 
 
+class _BoundRow(NamedTuple):
+    """One ``hydro_bounds.parquet`` row. ``is_ramp`` is the per-row origin tag:
+    True for a filling-plant ramp row, False for a MODIF/GHMIN row. It drives
+    the ramp-wins de-dup pass (:func:`_ramp_rows_win`) before the table build."""
+
+    hydro_id: int
+    stage_id: int
+    min_storage_hm3: float | None = None
+    max_storage_hm3: float | None = None
+    min_turbined_m3s: float | None = None
+    max_turbined_m3s: float | None = None
+    min_outflow_m3s: float | None = None
+    min_generation_mw: float | None = None
+    max_generation_mw: float | None = None
+    is_ramp: bool = False
+
+
+def _step_function(
+    recs: list[dict], horizon: StudyHorizon, *, seasonalize: bool
+) -> dict[int, float]:
+    """Thin adapter over :func:`novomodelo_bridge.newave.horizon.seasonal_step_function`:
+    dated records become ``(year, month, value)`` change-points and
+    ``PRE``/``POS`` records ``(month, value)`` steps.
+    """
+
+    def steps(period: str) -> list[tuple[int, float]]:
+        return [(r["month"], r["value"]) for r in recs if r["period"] == period]
+
+    return seasonal_step_function(
+        [(r["year"], r["month"], r["value"]) for r in recs if r["period"] is None],
+        lambda v: v,
+        seasonalize=seasonalize,
+        horizon=horizon,
+        pre_recs=steps("PRE"),
+        pos_recs=steps("POS"),
+    )
+
+
+def _storage_records_hm3(
+    records: list[dict], vol_min: float, vol_max: float
+) -> list[dict]:
+    """*records* with their volume in hm³, dropping a percentage record on a
+    plant without useful volume. A big-M sentinel passes through untouched so
+    the step function still reads it as "restore"."""
+    useful = vol_max - vol_min
+    converted: list[dict] = []
+    for rec in records:
+        value = float(rec["value"])
+        if value >= BIG_M or rec.get("unit", "%") == "h":
+            converted.append(rec)
+            continue
+        if useful <= 0:
+            continue
+        converted.append(
+            {**rec, "value": percent_of_useful_volume(value, vol_min, vol_max)}
+        )
+    return converted
+
+
+def _modif_ghmin_rows(
+    temporal_overrides: dict[int, list[dict]],
+    ghmin_by_plant_stage: dict[int, dict[int, float]],
+    cadastro: pd.DataFrame,
+    id_map: NewaveIdMap,
+    horizon: StudyHorizon,
+    *,
+    seasonalize_vmaxt: bool,
+    seasonalize_vmint: bool,
+) -> list[_BoundRow]:
+    rows: list[_BoundRow] = []
+    plant_codes_with_data = set(temporal_overrides) | set(ghmin_by_plant_stage)
+    for newave_code in sorted(plant_codes_with_data):
+        overrides = temporal_overrides.get(newave_code, [])
+        vmaxt = [o for o in overrides if o["type"] == "VMAXT"]
+        vmint = [o for o in overrides if o["type"] == "VMINT"]
+        turbmaxt = [o for o in overrides if o["type"] == "TURBMAXT"]
+        turbmint = [o for o in overrides if o["type"] == "TURBMINT"]
+        vazmint = [o for o in overrides if o["type"] == "VAZMINT"]
+        ghmin_by_stage = ghmin_by_plant_stage.get(newave_code, {})
+
+        if not any((vmaxt, vmint, turbmaxt, turbmint, vazmint, ghmin_by_stage)):
+            continue
+
+        try:
+            hydro_id = id_map.hydro_id(newave_code)
+        except KeyError:
+            continue
+
+        if newave_code not in cadastro.index:
+            continue
+
+        hreg = cadastro.loc[newave_code]
+        vol_min = float(hreg["volume_minimo"])
+        vol_max = float(hreg["volume_maximo"])
+
+        vmaxt_hm3 = _storage_records_hm3(vmaxt, vol_min, vol_max)
+        vmint_hm3 = _storage_records_hm3(vmint, vol_min, vol_max)
+        # Seasonal post-study iff the corresponding dger flag is set; else freeze.
+        vmaxt_by_stage = _step_function(
+            vmaxt_hm3, horizon, seasonalize=seasonalize_vmaxt
+        )
+        vmint_by_stage = _step_function(
+            vmint_hm3, horizon, seasonalize=seasonalize_vmint
+        )
+
+        # Turbined bounds (absolute m³/s) — no seasonalize flag → freeze.
+        turbmaxt_by_stage = _step_function(turbmaxt, horizon, seasonalize=False)
+        turbmint_by_stage = _step_function(turbmint, horizon, seasonalize=False)
+
+        # Outflow bounds (absolute m³/s) — no seasonalize flag → freeze.
+        vazmint_by_stage = _step_function(vazmint, horizon, seasonalize=False)
+
+        all_stages = sorted(
+            set(vmaxt_by_stage)
+            | set(vmint_by_stage)
+            | set(turbmaxt_by_stage)
+            | set(turbmint_by_stage)
+            | set(vazmint_by_stage)
+            | set(ghmin_by_stage)
+        )
+        rows.extend(
+            _BoundRow(
+                hydro_id,
+                stage_id,
+                min_storage_hm3=vmint_by_stage.get(stage_id),
+                max_storage_hm3=vmaxt_by_stage.get(stage_id),
+                min_turbined_m3s=turbmint_by_stage.get(stage_id),
+                max_turbined_m3s=turbmaxt_by_stage.get(stage_id),
+                min_outflow_m3s=vazmint_by_stage.get(stage_id),
+                min_generation_mw=ghmin_by_stage.get(stage_id),
+            )
+            for stage_id in all_stages
+        )
+    return rows
+
+
+def _filling_ramp_rows(
+    exph_df: pd.DataFrame,
+    filling_codes: set[int],
+    cadastro: pd.DataFrame,
+    id_map: NewaveIdMap,
+    horizon: StudyHorizon,
+) -> list[_BoundRow]:
+    """Filling-plant unit-ramp rows: a ``NE``-with-filling plant operates from
+    ``entry_sid`` but its turbine/generation capacity at each stage is whatever
+    generating units are online.  Export EXPLICIT 0/reduced caps over the FULL
+    pre-operating window ``[0, full_online_sid)`` (clamped to the in-study horizon)
+    so the parquet carries the true 0→full capacity profile.  ``online_machines``
+    clamps every unit's online stage up to ``entry_sid``, so ``[0, entry_sid)``
+    (PreFilling/Filling) gets ``(0, 0)`` caps and ``[entry_sid, full_online_sid)``
+    gets reduced caps; from ``full_online_sid`` the base ``hydros.json`` caps apply.
+    These rows are inert to novomodelo's own PreFilling/Filling forcing: its
+    ``hydro_bounds`` reader is a sparse override table with NO stage-window
+    validation, so a ``max=0`` row there leaves the simulation result UNCHANGED —
+    only the exported data gains the explicit 0-cap stages.  A ramp-window stage may
+    also carry a MODIF/GHMIN row; those append SEPARATE rows tagged ``is_ramp=True``,
+    and the de-dup pass (:func:`_ramp_rows_win`) resolves any ``(hydro_id,
+    stage_id)`` collision in favour of the ramp row (the explicit 0-cap wins over a
+    colliding MODIF/GHMIN minimum), since novomodelo defers duplicate-pair handling.
+    """
+    start_year = horizon.start_year
+    start_month = horizon.start_month
+    total_stages = horizon.total_stages
+    rows: list[_BoundRow] = []
+    for code in sorted(filling_codes):
+        try:
+            hydro_id = id_map.hydro_id(code)
+        except KeyError:
+            continue
+        if code not in cadastro.index:
+            continue
+        hreg = cadastro.loc[code]
+        name = str(hreg.get("nome_usina", "")).strip() or str(code)
+
+        exph_rows = exph_df.loc[exph_df["codigo_usina"] == code]
+        fill_row = exph_rows.loc[exph_rows["data_inicio_enchimento"].notna()].iloc[0]
+        ts = fill_row["data_inicio_enchimento"]
+        duracao = int(fill_row["duracao_enchimento"])
+        _start_sid, entry_sid = filling_schedule(
+            ts.year,
+            ts.month,
+            duracao,
+            start_year,
+            start_month,
+        )
+
+        unit_rows = exph_unit_rows(exph_df, code, start_year, start_month)
+        if not unit_rows:
+            continue
+
+        # All-units-online stage: the exported pre-operating window is
+        # [0, full_online_sid). Clamp the upper bound to total_stages so the
+        # loop never indexes past the horizon. A
+        # plant whose entry is at/after the horizon end still emits explicit
+        # 0-cap rows for every in-study stage [0, total_stages) — it never
+        # operates in-study, so every stage is pre-operating.
+        full_online_sid = max(max(usid, entry_sid) for _c, usid in unit_rows)
+        for s in range(min(full_online_sid, total_stages)):
+            online = online_machines(unit_rows, entry_sid, s)
+            mt, mg = _reduced_caps(hreg, online, name)
+            rows.append(
+                _BoundRow(
+                    hydro_id,
+                    s,
+                    max_turbined_m3s=mt,
+                    min_generation_mw=0.0,
+                    max_generation_mw=mg,
+                    is_ramp=True,
+                )
+            )
+    return rows
+
+
+def _ramp_rows_win(rows: list[_BoundRow]) -> list[_BoundRow]:
+    """Resolve duplicate ``(hydro_id, stage_id)`` pairs: a ramp row wins over a
+    MODIF/GHMIN row at the same key (the explicit 0-cap during filling must not
+    be undercut by a MODIF/GHMIN minimum). A case with no filling plant
+    produces no ramp rows (``is_ramp`` all False), so every key is unique
+    and this is a no-op, keeping the regression-guard output byte-identical.
+    """
+    chosen: dict[tuple[int, int], int] = {}
+    for i, row in enumerate(rows):
+        key = (row.hydro_id, row.stage_id)
+        # ramp overrides an earlier MODIF/GHMIN row
+        if key not in chosen or row.is_ramp:
+            chosen[key] = i
+    return [rows[i] for i in sorted(chosen.values())]
+
+
+def _bounds_table(rows: list[_BoundRow], *, with_max_generation: bool) -> pa.Table:
+    columns = {
+        "hydro_id": pa.array([r.hydro_id for r in rows], type=pa.int32()),
+        "stage_id": pa.array([r.stage_id for r in rows], type=pa.int32()),
+        "min_storage_hm3": pa.array(
+            [r.min_storage_hm3 for r in rows], type=pa.float64()
+        ),
+        "max_storage_hm3": pa.array(
+            [r.max_storage_hm3 for r in rows], type=pa.float64()
+        ),
+        "min_turbined_m3s": pa.array(
+            [r.min_turbined_m3s for r in rows], type=pa.float64()
+        ),
+        "max_turbined_m3s": pa.array(
+            [r.max_turbined_m3s for r in rows], type=pa.float64()
+        ),
+        "min_outflow_m3s": pa.array(
+            [r.min_outflow_m3s for r in rows], type=pa.float64()
+        ),
+        "min_generation_mw": pa.array(
+            [r.min_generation_mw for r in rows], type=pa.float64()
+        ),
+    }
+    # Gate the column on a filling plant: a case without one keeps the 8-column
+    # schema byte-identical (the regression guard depends on this); novomodelo's
+    # parse_hydro_bounds tolerates the absent column.
+    if with_max_generation:
+        columns["max_generation_mw"] = pa.array(
+            [r.max_generation_mw for r in rows], type=pa.float64()
+        )
+    return pa.table(columns).sort_by(
+        [("hydro_id", "ascending"), ("stage_id", "ascending")]
+    )
+
+
 def convert_storage_bounds(
     case: NewaveCase,
     id_map: NewaveIdMap,
@@ -643,10 +907,6 @@ def convert_storage_bounds(
     """
     dger = case.dger
     horizon = case.horizon
-    start_year = horizon.start_year
-    start_month = horizon.start_month
-    study_months = horizon.study_months
-    total_stages = horizon.total_stages
 
     # Post-study seasonalize flags (dger). VMINT/VMAXT repeat the last study
     # year's seasonal pattern only when their flag is set (e.g. flood-control
@@ -675,29 +935,6 @@ def convert_storage_bounds(
             _extract_temporal_overrides(case, confhd_codes), switches
         )
 
-    def _build_step_function(
-        recs: list[dict],
-        transform: Callable[[float], float],
-        *,
-        seasonalize: bool,
-    ) -> dict[int, float]:
-        """Thin adapter over :func:`novomodelo_bridge.newave.horizon.seasonal_step_function`:
-        dated records become ``(year, month, value)`` change-points and
-        ``PRE``/``POS`` records ``(month, value)`` steps.
-        """
-
-        def steps(period: str) -> list[tuple[int, float]]:
-            return [(r["month"], r["value"]) for r in recs if r["period"] == period]
-
-        return seasonal_step_function(
-            [(r["year"], r["month"], r["value"]) for r in recs if r["period"] is None],
-            transform,
-            seasonalize=seasonalize,
-            horizon=horizon,
-            pre_recs=steps("PRE"),
-            pos_recs=steps("POS"),
-        )
-
     # GHMIN.DAT per-stage minimums.  These are not MODIF.DAT overrides
     # but live alongside them at the per-(hydro, stage) granularity, so
     # they merge naturally into this parquet's row set.
@@ -706,205 +943,29 @@ def convert_storage_bounds(
         emit(switch_off_diagnostic(switches.ghmin), logger=_LOG)
     else:
         ghmin_by_plant_stage = _read_ghmin_per_stage(
-            case, start_year, start_month, study_months, total_stages
+            case,
+            horizon.start_year,
+            horizon.start_month,
+            horizon.study_months,
+            horizon.total_stages,
         )
 
-    hydro_ids: list[int] = []
-    stage_ids: list[int] = []
-    min_storage_vals: list[float | None] = []
-    max_storage_vals: list[float | None] = []
-    min_turbined_vals: list[float | None] = []
-    max_turbined_vals: list[float | None] = []
-    min_outflow_vals: list[float | None] = []
-    min_generation_vals: list[float | None] = []
-    max_generation_vals: list[float | None] = []
-    # Per-row origin tag: True for a filling-plant ramp row, False for a
-    # MODIF/GHMIN row. Drives the ramp-wins de-dup pass before the table build.
-    is_ramp_vals: list[bool] = []
-
-    def _identity(val: float) -> float:
-        return val
-
-    plant_codes_with_data = set(temporal_overrides) | set(ghmin_by_plant_stage)
-    for newave_code in sorted(plant_codes_with_data):
-        overrides = temporal_overrides.get(newave_code, [])
-        vmaxt = [o for o in overrides if o["type"] == "VMAXT"]
-        vmint = [o for o in overrides if o["type"] == "VMINT"]
-        turbmaxt = [o for o in overrides if o["type"] == "TURBMAXT"]
-        turbmint = [o for o in overrides if o["type"] == "TURBMINT"]
-        vazmint = [o for o in overrides if o["type"] == "VAZMINT"]
-        ghmin_by_stage = ghmin_by_plant_stage.get(newave_code, {})
-
-        if not any((vmaxt, vmint, turbmaxt, turbmint, vazmint, ghmin_by_stage)):
-            continue
-
-        try:
-            hydro_id = id_map.hydro_id(newave_code)
-        except KeyError:
-            continue
-
-        if newave_code not in cadastro.index:
-            continue
-
-        hreg = cadastro.loc[newave_code]
-        vol_min = float(hreg["volume_minimo"])
-        vol_max = float(hreg["volume_maximo"])
-        useful = vol_max - vol_min
-
-        def _storage_hm3(rec: dict) -> dict | None:
-            """The record with its volume in hm³; ``None`` drops a percentage
-            record on a plant without useful volume. A big-M sentinel passes
-            through untouched so the step function still reads it as "restore"."""
-            value = float(rec["value"])
-            if value >= BIG_M or rec.get("unit", "%") == "h":
-                return rec
-            if useful <= 0:
-                return None
-            return {**rec, "value": percent_of_useful_volume(value, vol_min, vol_max)}
-
-        vmaxt_hm3 = [r for r in map(_storage_hm3, vmaxt) if r is not None]
-        vmint_hm3 = [r for r in map(_storage_hm3, vmint) if r is not None]
-        # Seasonal post-study iff the corresponding dger flag is set; else freeze.
-        vmaxt_by_stage = _build_step_function(
-            vmaxt_hm3, lambda v: v, seasonalize=sazonaliza_vmaxt
-        )
-        vmint_by_stage = _build_step_function(
-            vmint_hm3, lambda v: v, seasonalize=sazonaliza_vmint
-        )
-
-        # Turbined bounds (absolute m³/s) — no seasonalize flag → freeze.
-        turbmaxt_by_stage = _build_step_function(turbmaxt, _identity, seasonalize=False)
-        turbmint_by_stage = _build_step_function(turbmint, _identity, seasonalize=False)
-
-        # Outflow bounds (absolute m³/s) — no seasonalize flag → freeze.
-        vazmint_by_stage = _build_step_function(vazmint, _identity, seasonalize=False)
-
-        all_stages = sorted(
-            set(vmaxt_by_stage)
-            | set(vmint_by_stage)
-            | set(turbmaxt_by_stage)
-            | set(turbmint_by_stage)
-            | set(vazmint_by_stage)
-            | set(ghmin_by_stage)
-        )
-        for stage_id in all_stages:
-            hydro_ids.append(hydro_id)
-            stage_ids.append(stage_id)
-            max_storage_vals.append(vmaxt_by_stage.get(stage_id))
-            min_storage_vals.append(vmint_by_stage.get(stage_id))
-            max_turbined_vals.append(turbmaxt_by_stage.get(stage_id))
-            min_turbined_vals.append(turbmint_by_stage.get(stage_id))
-            min_outflow_vals.append(vazmint_by_stage.get(stage_id))
-            min_generation_vals.append(ghmin_by_stage.get(stage_id))
-            max_generation_vals.append(None)
-            is_ramp_vals.append(False)
-
-    # Filling-plant unit-ramp branch: a ``NE``-with-filling plant operates from
-    # ``entry_sid`` but its turbine/generation capacity at each stage is whatever
-    # generating units are online.  Export EXPLICIT 0/reduced caps over the FULL
-    # pre-operating window ``[0, full_online_sid)`` (clamped to the in-study horizon)
-    # so the parquet carries the true 0→full capacity profile.  ``online_machines``
-    # clamps every unit's online stage up to ``entry_sid``, so ``[0, entry_sid)``
-    # (PreFilling/Filling) gets ``(0, 0)`` caps and ``[entry_sid, full_online_sid)``
-    # gets reduced caps; from ``full_online_sid`` the base ``hydros.json`` caps apply.
-    # These rows are inert to novomodelo's own PreFilling/Filling forcing: its
-    # ``hydro_bounds`` reader is a sparse override table with NO stage-window
-    # validation, so a ``max=0`` row there leaves the simulation result UNCHANGED —
-    # only the exported data gains the explicit 0-cap stages.  A ramp-window stage may
-    # also carry a MODIF/GHMIN row; those append SEPARATE rows tagged ``is_ramp=True``,
-    # and the de-dup pass below resolves any ``(hydro_id, stage_id)`` collision in
-    # favour of the ramp row (the explicit 0-cap wins over a colliding MODIF/GHMIN
-    # minimum), since novomodelo defers duplicate-pair handling.
-    if filling_codes and case.exph is not None:
-        exph_df = case.exph.expansoes
-        for code in sorted(filling_codes):
-            try:
-                hydro_id = id_map.hydro_id(code)
-            except KeyError:
-                continue
-            if code not in cadastro.index:
-                continue
-            hreg = cadastro.loc[code]
-            name = str(hreg.get("nome_usina", "")).strip() or str(code)
-
-            rows = exph_df.loc[exph_df["codigo_usina"] == code]
-            fill_row = rows.loc[rows["data_inicio_enchimento"].notna()].iloc[0]
-            ts = fill_row["data_inicio_enchimento"]
-            duracao = int(fill_row["duracao_enchimento"])
-            _start_sid, entry_sid = filling_schedule(
-                ts.year,
-                ts.month,
-                duracao,
-                start_year,
-                start_month,
-            )
-
-            unit_rows = exph_unit_rows(exph_df, code, start_year, start_month)
-            if not unit_rows:
-                continue
-
-            # All-units-online stage: the exported pre-operating window is
-            # [0, full_online_sid). Clamp the upper bound to total_stages so the
-            # loop never indexes past the horizon. A
-            # plant whose entry is at/after the horizon end still emits explicit
-            # 0-cap rows for every in-study stage [0, total_stages) — it never
-            # operates in-study, so every stage is pre-operating.
-            full_online_sid = max(max(usid, entry_sid) for _c, usid in unit_rows)
-            for s in range(min(full_online_sid, total_stages)):
-                online = online_machines(unit_rows, entry_sid, s)
-                mt, mg = _reduced_caps(hreg, online, name)
-                hydro_ids.append(hydro_id)
-                stage_ids.append(s)
-                min_storage_vals.append(None)
-                max_storage_vals.append(None)
-                min_turbined_vals.append(None)
-                max_turbined_vals.append(mt)
-                min_outflow_vals.append(None)
-                min_generation_vals.append(0.0)
-                max_generation_vals.append(mg)
-                is_ramp_vals.append(True)
-
-    if not hydro_ids:
-        return None
-
-    # Resolve duplicate ``(hydro_id, stage_id)`` pairs: a ramp row wins over a
-    # MODIF/GHMIN row at the same key (the explicit 0-cap during filling must not
-    # be undercut by a MODIF/GHMIN minimum). A case with no filling plant
-    # produces no ramp rows (``is_ramp_vals`` all False), so every key is unique
-    # and this is a no-op, keeping the regression-guard output byte-identical.
-    chosen: dict[tuple[int, int], int] = {}
-    for i, (h, s, ramp) in enumerate(zip(hydro_ids, stage_ids, is_ramp_vals)):
-        key = (h, s)
-        if key not in chosen or ramp:  # ramp overrides an earlier MODIF/GHMIN row
-            chosen[key] = i
-    keep = sorted(chosen.values())
-    if len(keep) != len(hydro_ids):
-        hydro_ids = [hydro_ids[i] for i in keep]
-        stage_ids = [stage_ids[i] for i in keep]
-        min_storage_vals = [min_storage_vals[i] for i in keep]
-        max_storage_vals = [max_storage_vals[i] for i in keep]
-        min_turbined_vals = [min_turbined_vals[i] for i in keep]
-        max_turbined_vals = [max_turbined_vals[i] for i in keep]
-        min_outflow_vals = [min_outflow_vals[i] for i in keep]
-        min_generation_vals = [min_generation_vals[i] for i in keep]
-        max_generation_vals = [max_generation_vals[i] for i in keep]
-        is_ramp_vals = [is_ramp_vals[i] for i in keep]
-
-    columns = {
-        "hydro_id": pa.array(hydro_ids, type=pa.int32()),
-        "stage_id": pa.array(stage_ids, type=pa.int32()),
-        "min_storage_hm3": pa.array(min_storage_vals, type=pa.float64()),
-        "max_storage_hm3": pa.array(max_storage_vals, type=pa.float64()),
-        "min_turbined_m3s": pa.array(min_turbined_vals, type=pa.float64()),
-        "max_turbined_m3s": pa.array(max_turbined_vals, type=pa.float64()),
-        "min_outflow_m3s": pa.array(min_outflow_vals, type=pa.float64()),
-        "min_generation_mw": pa.array(min_generation_vals, type=pa.float64()),
-    }
-    # Gate the column on a filling plant: a case without one keeps the 8-column
-    # schema byte-identical (the regression guard depends on this); novomodelo's
-    # parse_hydro_bounds tolerates the absent column.
-    if filling_codes:
-        columns["max_generation_mw"] = pa.array(max_generation_vals, type=pa.float64())
-    return pa.table(columns).sort_by(
-        [("hydro_id", "ascending"), ("stage_id", "ascending")]
+    rows = _modif_ghmin_rows(
+        temporal_overrides,
+        ghmin_by_plant_stage,
+        cadastro,
+        id_map,
+        horizon,
+        seasonalize_vmaxt=sazonaliza_vmaxt,
+        seasonalize_vmint=sazonaliza_vmint,
     )
+    if filling_codes and case.exph is not None:
+        rows.extend(
+            _filling_ramp_rows(
+                case.exph.expansoes, filling_codes, cadastro, id_map, horizon
+            )
+        )
+
+    if not rows:
+        return None
+    return _bounds_table(_ramp_rows_win(rows), with_max_generation=bool(filling_codes))

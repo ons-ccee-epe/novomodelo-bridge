@@ -188,6 +188,104 @@ _EVAP_MONTHS = [
 ]
 
 
+_GEOMETRY_N_POINTS = 100
+
+_GEOMETRY_SCHEMA = pa.schema(
+    [
+        pa.field("hydro_id", pa.int32()),
+        pa.field("volume_hm3", pa.float64()),
+        pa.field("height_m", pa.float64()),
+        pa.field("area_km2", pa.float64()),
+    ]
+)
+
+
+def _eval_poly(coeffs: list[float], x: np.ndarray) -> np.ndarray:
+    """Evaluate a 4th-degree polynomial: c0 + c1*x + ... + c4*x^4."""
+    return (
+        coeffs[0]
+        + coeffs[1] * x
+        + coeffs[2] * x**2
+        + coeffs[3] * x**3
+        + coeffs[4] * x**4
+    )
+
+
+def _vha_points(
+    vc_coeffs: list[float], ca_coeffs: list[float], vol_min: float, vol_max: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(volume, height, area)`` samples of the VHA curve: one point for a
+    single-volume range, else :data:`_GEOMETRY_N_POINTS` uniformly spaced ones,
+    with negative heights and areas clamped to 0.0."""
+    vol_grid: np.ndarray = (
+        np.array([vol_min])
+        if vol_min == vol_max
+        else np.linspace(vol_min, vol_max, _GEOMETRY_N_POINTS)
+    )
+    height_arr: np.ndarray = np.maximum(_eval_poly(vc_coeffs, vol_grid), 0.0)
+    area_arr: np.ndarray = np.maximum(_eval_poly(ca_coeffs, height_arr), 0.0)
+    return vol_grid, height_arr, area_arr
+
+
+def _report_geometry_skips(skips: list[tuple[str, int, str]]) -> None:
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="hydro-geometry-skipped",
+            severity=Severity.WARNING,
+            category="Hydro geometry",
+            title=f"Hydro geometry skipped ({len(skips)} plant(s))",
+            summary=(
+                f"{len(skips)} plant(s) had no geometry generated: "
+                "not present in the cadastro, or an all-zero "
+                "volume-to-height polynomial."
+            ),
+            table=DiagnosticTable(
+                columns=["Plant", "Code", "Reason"],
+                rows=[[name, code, reason] for name, code, reason in skips],
+                justify=["left", "right", "left"],
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
+def _report_geometry_extensions(rows: list[list[object]]) -> None:
+    if not rows:
+        return
+    emit(
+        Diagnostic(
+            code="hydro-geometry-extended",
+            severity=Severity.INFO,
+            category="Hydro geometry",
+            title=(
+                f"Hydro geometry extended past the storage range ({len(rows)} plant(s))"
+            ),
+            summary=(
+                f"{len(rows)} plant(s) have an FPHA reference volume "
+                "outside [volume_minimo, volume_maximo], where the source "
+                "model reads the downstream level of the plant above. Their "
+                "geometry samples the volume-to-height polynomial out to "
+                "those volumes."
+            ),
+            table=DiagnosticTable(
+                columns=[
+                    "Plant",
+                    "Code",
+                    "volume_minimo (hm³)",
+                    "volume_maximo (hm³)",
+                    "Sampled from (hm³)",
+                    "Sampled to (hm³)",
+                ],
+                rows=rows,
+                justify=["left", "right", "right", "right", "right", "right"],
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
 def generate_hydro_geometry(
     cadastro: pd.DataFrame,
     id_map: NewaveIdMap,
@@ -232,8 +330,6 @@ def generate_hydro_geometry(
         area_km2: DOUBLE)``.  One row per sampled volume point across all
         eligible plants, ordered by plant then by volume.
     """
-    _N_POINTS = 100
-
     hydro_ids: list[int] = []
     volumes: list[float] = []
     heights: list[float] = []
@@ -243,16 +339,6 @@ def generate_hydro_geometry(
     # after the loop so both skip causes survive finalize_diagnostics' de-dup.
     geometry_skips: list[tuple[str, int, str]] = []
     extended: list[list[object]] = []
-
-    def _eval_poly(coeffs: list[float], x: np.ndarray) -> np.ndarray:
-        """Evaluate a 4th-degree polynomial: c0 + c1*x + ... + c4*x^4."""
-        return (
-            coeffs[0]
-            + coeffs[1] * x
-            + coeffs[2] * x**2
-            + coeffs[3] * x**3
-            + coeffs[4] * x**4
-        )
 
     for newave_code in id_map.all_hydro_codes:
         if newave_code not in cadastro.index:
@@ -291,95 +377,16 @@ def generate_hydro_geometry(
                 vol_min, vol_max = sampled
 
         novomodelo_id = id_map.hydro_id(newave_code)
-
-        if vol_min == vol_max:
-            v = np.array([vol_min])
-            h = _eval_poly(vc_coeffs, v)
-            h = np.maximum(h, 0.0)
-            a = _eval_poly(ca_coeffs, h)
-            a = np.maximum(a, 0.0)
-            hydro_ids.append(novomodelo_id)
-            volumes.append(float(v[0]))
-            heights.append(float(h[0]))
-            areas.append(float(a[0]))
-            continue
-
-        vol_grid: np.ndarray = np.linspace(vol_min, vol_max, _N_POINTS)
-        height_arr: np.ndarray = _eval_poly(vc_coeffs, vol_grid)
-        height_arr = np.maximum(height_arr, 0.0)
-
-        area_arr: np.ndarray = _eval_poly(ca_coeffs, height_arr)
-        area_arr = np.maximum(area_arr, 0.0)
-
-        hydro_ids.extend([novomodelo_id] * _N_POINTS)
+        vol_grid, height_arr, area_arr = _vha_points(
+            vc_coeffs, ca_coeffs, vol_min, vol_max
+        )
+        hydro_ids.extend([novomodelo_id] * len(vol_grid))
         volumes.extend(vol_grid.tolist())
         heights.extend(height_arr.tolist())
         areas.extend(area_arr.tolist())
 
-    if geometry_skips:
-        emit(
-            Diagnostic(
-                code="hydro-geometry-skipped",
-                severity=Severity.WARNING,
-                category="Hydro geometry",
-                title=f"Hydro geometry skipped ({len(geometry_skips)} plant(s))",
-                summary=(
-                    f"{len(geometry_skips)} plant(s) had no geometry generated: "
-                    "not present in the cadastro, or an all-zero "
-                    "volume-to-height polynomial."
-                ),
-                table=DiagnosticTable(
-                    columns=["Plant", "Code", "Reason"],
-                    rows=[
-                        [name, code, reason] for name, code, reason in geometry_skips
-                    ],
-                    justify=["left", "right", "left"],
-                ),
-            ),
-            logger=_LOG,
-        )
-
-    if extended:
-        emit(
-            Diagnostic(
-                code="hydro-geometry-extended",
-                severity=Severity.INFO,
-                category="Hydro geometry",
-                title=(
-                    "Hydro geometry extended past the storage range "
-                    f"({len(extended)} plant(s))"
-                ),
-                summary=(
-                    f"{len(extended)} plant(s) have an FPHA reference volume "
-                    "outside [volume_minimo, volume_maximo], where the source "
-                    "model reads the downstream level of the plant above. Their "
-                    "geometry samples the volume-to-height polynomial out to "
-                    "those volumes."
-                ),
-                table=DiagnosticTable(
-                    columns=[
-                        "Plant",
-                        "Code",
-                        "volume_minimo (hm³)",
-                        "volume_maximo (hm³)",
-                        "Sampled from (hm³)",
-                        "Sampled to (hm³)",
-                    ],
-                    rows=extended,
-                    justify=["left", "right", "right", "right", "right", "right"],
-                ),
-            ),
-            logger=_LOG,
-        )
-
-    schema = pa.schema(
-        [
-            pa.field("hydro_id", pa.int32()),
-            pa.field("volume_hm3", pa.float64()),
-            pa.field("height_m", pa.float64()),
-            pa.field("area_km2", pa.float64()),
-        ]
-    )
+    _report_geometry_skips(geometry_skips)
+    _report_geometry_extensions(extended)
 
     return pa.table(
         {
@@ -388,5 +395,5 @@ def generate_hydro_geometry(
             "height_m": pa.array(heights, type=pa.float64()),
             "area_km2": pa.array(areas, type=pa.float64()),
         },
-        schema=schema,
+        schema=_GEOMETRY_SCHEMA,
     )
