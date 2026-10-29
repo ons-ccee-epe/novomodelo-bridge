@@ -1355,47 +1355,25 @@ document.addEventListener('DOMContentLoaded', function() {{
     )
 
 
-def _render_spatial_correlation(data: DashboardData) -> str:
-    """Render the spatial-correlation section: historical vs synthetic.
+def _reorder_matrix(
+    mat: np.ndarray,
+    idx: list[int],
+) -> list[list[float]]:
+    """Reorder a matrix by the given index permutation.
 
-    Side-by-side heatmaps with a season dropdown.  Historical correlation is
-    computed per calendar month from ``inflow_history``.  Synthetic correlation
-    comes from the seasonal profiles in ``correlation.json``.
+    Correlations are rounded to 4 decimals: the heatmap hover shows ``.3f``
+    and the colour scale resolves far less, so full float64 reprs (~18
+    chars each) are pure payload bloat — rounding cuts this block ~3x.
     """
-    if not data.correlation:
-        return collapsible_section(
-            "Spatial Correlation",
-            "<p>No correlation data available.</p>",
-            section_id="v2-stoch-section-d",
-        )
+    return np.round(mat[np.ix_(idx, idx)], 4).tolist()
 
-    # Extract entity IDs from the default profile
-    extracted = _extract_fitted_correlation(data.correlation)
-    if extracted is None:
-        return collapsible_section(
-            "Spatial Correlation",
-            "<p>No correlation matrix in data.</p>",
-            section_id="v2-stoch-section-d",
-        )
 
-    hydro_ids_orig, _ = extracted
-
-    # Sort hydros by bus for block structure visibility
-    bus_map = data.hydro_bus_map
-    sorted_ids = sorted(hydro_ids_orig, key=lambda h: (bus_map.get(h, 999), h))
-    n = len(sorted_ids)
-
-    # Build reorder index: original position -> sorted position
-    orig_index = {h: i for i, h in enumerate(hydro_ids_orig)}
-    reorder = [orig_index[h] for h in sorted_ids]
-
-    # Hover labels (name) — no tick labels on axes
-    hover_labels = [
-        data.hydro_meta[h]["name"] if h in data.hydro_meta else str(h)
-        for h in sorted_ids
-    ]
-
-    # Compute bus separator positions and bus labels for annotation
+def _bus_boundaries(
+    sorted_ids: list[int],
+    bus_map: dict[int, int],
+    bus_names: dict[int, str],
+) -> list[dict]:
+    """Bus separator positions and labels for the bus-sorted heatmap axes."""
     bus_boundaries: list[dict] = []
     prev_bus: int | None = None
     bus_start = 0
@@ -1403,30 +1381,31 @@ def _render_spatial_correlation(data: DashboardData) -> str:
         bid = bus_map.get(hid, -1)
         if bid != prev_bus:
             if prev_bus is not None:
-                bus_name = data.bus_names.get(prev_bus, str(prev_bus))
+                bus_name = bus_names.get(prev_bus, str(prev_bus))
                 bus_boundaries.append({"pos": i, "label": bus_name, "start": bus_start})
             bus_start = i
             prev_bus = bid
     # Last bus
     if prev_bus is not None:
-        bus_name = data.bus_names.get(prev_bus, str(prev_bus))
-        bus_boundaries.append({"pos": n, "label": bus_name, "start": bus_start})
+        bus_name = bus_names.get(prev_bus, str(prev_bus))
+        bus_boundaries.append(
+            {"pos": len(sorted_ids), "label": bus_name, "start": bus_start}
+        )
+    return bus_boundaries
 
-    def _reorder_matrix(
-        mat: np.ndarray,
-        idx: list[int],
-    ) -> list[list[float]]:
-        """Reorder a matrix by the given index permutation.
 
-        Correlations are rounded to 4 decimals: the heatmap hover shows ``.3f``
-        and the colour scale resolves far less, so full float64 reprs (~18
-        chars each) are pure payload bloat — rounding cuts this block ~3x.
-        """
-        return np.round(mat[np.ix_(idx, idx)], 4).tolist()
+def _synthetic_correlation_by_season(
+    correlation: dict,
+    reorder: list[int],
+    default_mat: np.ndarray,
+) -> dict[str, list[list[float]]]:
+    """Fitted matrices per month from the ``season_NN`` profiles of ``correlation.json``.
 
-    # Build per-season synthetic matrices from correlation.json profiles
+    Falls back to the default profile, keyed ``"All"``, when no seasonal
+    profile is usable.
+    """
     synthetic_by_season: dict[str, list[list[float]]] = {}
-    profiles = data.correlation.get("profiles", {})
+    profiles = correlation.get("profiles", {})
     for month_idx in range(12):
         profile_key = f"season_{month_idx:02d}"
         profile = profiles.get(profile_key)
@@ -1439,79 +1418,64 @@ def _render_spatial_correlation(data: DashboardData) -> str:
             continue
 
     if not synthetic_by_season:
-        _, default_mat = extracted
         synthetic_by_season["All"] = _reorder_matrix(default_mat, reorder)
+    return synthetic_by_season
 
-    # Build per-month historical correlation matrices
+
+def _historical_correlation_by_season(
+    inflow_history: pd.DataFrame,
+    sorted_ids: list[int],
+) -> dict[str, list[list[float]]]:
+    """Empirical inflow correlation per calendar month, rows/columns in ``sorted_ids``."""
     historical_by_season: dict[str, list[list[float]]] = {}
-    if not data.inflow_history.empty and len(sorted_ids) >= 2:
-        df = _with_month(
-            data.inflow_history[data.inflow_history["hydro_id"].isin(sorted_ids)]
+    if inflow_history.empty or len(sorted_ids) < 2:
+        return historical_by_season
+
+    df = _with_month(inflow_history[inflow_history["hydro_id"].isin(sorted_ids)])
+    for month_idx in range(12):
+        month_num = month_idx + 1
+        sub = df[df["month"] == month_num]
+        if sub.empty:
+            continue
+        pivot = sub.pivot_table(
+            index="start_date",
+            columns="hydro_id",
+            values="value_m3s",
+            aggfunc="mean",
         )
+        pivot = pivot.reindex(columns=sorted_ids)
+        if pivot.shape[0] < 2:
+            continue
+        corr_m = pivot.corr(min_periods=10)
+        corr_arr = corr_m.reindex(index=sorted_ids, columns=sorted_ids).values.copy()
+        np.fill_diagonal(corr_arr, 1.0)
+        # Round to 4 decimals to match the synthetic matrices (see
+        # ``_reorder_matrix``) — keeps the heatmap's .3f hover exact while
+        # avoiding full float64 reprs in the embedded payload.
+        historical_by_season[_MONTH_NAMES[month_idx]] = np.round(
+            np.nan_to_num(corr_arr, nan=0.0), 4
+        ).tolist()
+    return historical_by_season
 
-        for month_idx in range(12):
-            month_num = month_idx + 1
-            sub = df[df["month"] == month_num]
-            if sub.empty:
-                continue
-            pivot = sub.pivot_table(
-                index="start_date",
-                columns="hydro_id",
-                values="value_m3s",
-                aggfunc="mean",
-            )
-            pivot = pivot.reindex(columns=sorted_ids)
-            if pivot.shape[0] < 2:
-                continue
-            corr_m = pivot.corr(min_periods=10)
-            corr_arr = corr_m.reindex(
-                index=sorted_ids, columns=sorted_ids
-            ).values.copy()
-            np.fill_diagonal(corr_arr, 1.0)
-            # Round to 4 decimals to match the synthetic matrices (see
-            # ``_reorder_matrix``) — keeps the heatmap's .3f hover exact while
-            # avoiding full float64 reprs in the embedded payload.
-            historical_by_season[_MONTH_NAMES[month_idx]] = np.round(
-                np.nan_to_num(corr_arr, nan=0.0), 4
-            ).tolist()
 
-    # Determine available seasons
-    available = [
-        m
-        for m in _MONTH_NAMES
-        if m in synthetic_by_season and m in historical_by_season
-    ]
-    if not available:
-        available = list(synthetic_by_season.keys())
-
-    # Serialize data for JS
-    corr_data = {
-        "labels": hover_labels,
-        "seasons": available,
-        "synthetic": synthetic_by_season,
-        "historical": historical_by_season,
-        "busBoundaries": bus_boundaries,
-        "n": n,
-    }
-
-    # Build HTML
-    options_html = "".join(f'<option value="{s}">{s}</option>' for s in available)
+def _correlation_season_selector(seasons: list[str]) -> str:
+    """Season dropdown (``stoch-corr-season``) that drives both heatmaps."""
+    options_html = "".join(f'<option value="{s}">{s}</option>' for s in seasons)
     dropdown = (
         '<select id="stoch-corr-season" style="'
         "padding:4px 8px;border-radius:4px;border:1px solid #ccc;"
         'font-size:0.875rem;margin-bottom:12px;">' + options_html + "</select>"
     )
-    selector_row = (
+    return (
         '<div style="display:flex;align-items:center;gap:8px;'
         'margin-bottom:8px;">'
         "<span><strong>Season:</strong></span>" + dropdown + "</div>"
     )
 
-    hist_card = wrap_chart('<div id="stoch-corr-hist" style="width:100%;"></div>')
-    synth_card = wrap_chart('<div id="stoch-corr-synth" style="width:100%;"></div>')
-    charts = chart_grid([hist_card, synth_card])
 
-    js = f"""
+def _spatial_correlation_script(corr_data: dict) -> str:
+    """Script drawing both heatmaps from ``corr_data`` and redrawing on season change."""
+    return f"""
 <script>
 (function() {{
     var _cd = {json_for_script(corr_data)};
@@ -1580,7 +1544,83 @@ def _render_spatial_correlation(data: DashboardData) -> str:
 </script>
 """
 
-    content = selector_row + charts + js
+
+def _render_spatial_correlation(data: DashboardData) -> str:
+    """Render the spatial-correlation section: historical vs synthetic.
+
+    Side-by-side heatmaps with a season dropdown.  Historical correlation is
+    computed per calendar month from ``inflow_history``.  Synthetic correlation
+    comes from the seasonal profiles in ``correlation.json``.
+    """
+    if not data.correlation:
+        return collapsible_section(
+            "Spatial Correlation",
+            "<p>No correlation data available.</p>",
+            section_id="v2-stoch-section-d",
+        )
+
+    # Extract entity IDs from the default profile
+    extracted = _extract_fitted_correlation(data.correlation)
+    if extracted is None:
+        return collapsible_section(
+            "Spatial Correlation",
+            "<p>No correlation matrix in data.</p>",
+            section_id="v2-stoch-section-d",
+        )
+
+    hydro_ids_orig, default_mat = extracted
+
+    # Sort hydros by bus for block structure visibility
+    bus_map = data.hydro_bus_map
+    sorted_ids = sorted(hydro_ids_orig, key=lambda h: (bus_map.get(h, 999), h))
+    n = len(sorted_ids)
+
+    # Build reorder index: original position -> sorted position
+    orig_index = {h: i for i, h in enumerate(hydro_ids_orig)}
+    reorder = [orig_index[h] for h in sorted_ids]
+
+    # Hover labels (name) — no tick labels on axes
+    hover_labels = [
+        data.hydro_meta[h]["name"] if h in data.hydro_meta else str(h)
+        for h in sorted_ids
+    ]
+
+    bus_boundaries = _bus_boundaries(sorted_ids, bus_map, data.bus_names)
+    synthetic_by_season = _synthetic_correlation_by_season(
+        data.correlation, reorder, default_mat
+    )
+    historical_by_season = _historical_correlation_by_season(
+        data.inflow_history, sorted_ids
+    )
+
+    # Determine available seasons
+    available = [
+        m
+        for m in _MONTH_NAMES
+        if m in synthetic_by_season and m in historical_by_season
+    ]
+    if not available:
+        available = list(synthetic_by_season.keys())
+
+    # Serialize data for JS
+    corr_data = {
+        "labels": hover_labels,
+        "seasons": available,
+        "synthetic": synthetic_by_season,
+        "historical": historical_by_season,
+        "busBoundaries": bus_boundaries,
+        "n": n,
+    }
+
+    hist_card = wrap_chart('<div id="stoch-corr-hist" style="width:100%;"></div>')
+    synth_card = wrap_chart('<div id="stoch-corr-synth" style="width:100%;"></div>')
+    charts = chart_grid([hist_card, synth_card])
+
+    content = (
+        _correlation_season_selector(available)
+        + charts
+        + _spatial_correlation_script(corr_data)
+    )
     return collapsible_section(
         "Spatial Correlation — Historical vs Synthetic",
         content,
