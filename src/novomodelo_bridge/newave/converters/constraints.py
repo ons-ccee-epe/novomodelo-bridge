@@ -58,7 +58,7 @@ from novomodelo_bridge.newave.switches import switch_off_diagnostic
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet
+    from collections.abc import Set as AbstractSet
 
 _LOG = logging.getLogger(__name__)
 
