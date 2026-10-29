@@ -37,6 +37,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
     GenericConstraintResult,
+    Slot,
     hard_slack,
     soft_slack,
 )
@@ -1901,12 +1902,7 @@ def convert_agrint_constraints(
     if not groups or not limits:
         return None
 
-    _horizon = case.horizon
-    start_month = _horizon.start_month
-    start_year = _horizon.start_year
-    study_months = _horizon.study_months
-    num_stages = _horizon.total_stages
-
+    horizon = case.horizon
     line_id_map = _build_line_id_map(case)
 
     allocator = allocator or ConstraintIdAllocator()
@@ -1919,136 +1915,23 @@ def convert_agrint_constraints(
     agrint_group_skips: list[_AgrintGroupSkip] = []
 
     for group_id in sorted(groups.keys()):
-        terms_raw = groups[group_id]
-
-        # The source model's ``Interc(A→B)`` is the *non-negative directional* flow from
-        # A to B (zero whenever physical flow goes B→A).  Novomodelo's ``line_direct(id)`` /
-        # ``line_reverse(id)`` are the matching non-negative LP variables:
-        # ``line_direct`` is the flow in the canonical (src<tgt) direction,
-        # ``line_reverse`` the flow in the opposite direction.
-        #
-        # The naive substitution ``-line_exchange`` (signed net flow,
-        # negated when reversed) would let the LHS go negative when one
-        # term is flowing in its non-canonical direction — diluting the
-        # bound at fictitious hubs and producing incorrect dispatch.
-        parsed_terms: list[tuple[float, str]] = []
-        for a, b, coeff in terms_raw:
-            src, tgt = (a, b) if a < b else (b, a)
-            line_id = line_id_map.get((src, tgt))
-            if line_id is None:
-                agrint_term_skips.append(
-                    _AgrintTermSkip(group_id=group_id, sys_a=a, sys_b=b)
-                )
-                continue
-            var = f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
-            parsed_terms.append((coeff, var))
-
-        if not parsed_terms:
+        expression = _agrint_expression(
+            group_id, groups[group_id], line_id_map, agrint_term_skips
+        )
+        if expression is None:
             agrint_group_skips.append(_AgrintGroupSkip(group_id=group_id))
             continue
-
-        expression = _render_signed_expression(parsed_terms)
-
-        # Collect study-period limit rows for this group, keyed by (stage, block).
-        # AGRINT has no seasonalize flag: The source model freezes its post-study limits
-        # at the last study stage value and ignores any post-study-dated agrint.dat
-        # entries (planned future expansion). The pmo.dat "LIMITES DOS AGRUPAMENTOS DE
-        # INTERCAMBIO (MWmedio)" block confirms this — its POS row is flat at the last
-        # study (December) value. So clamp to the study period here, then freeze the
-        # tail.
-        group_bounds: dict[tuple[int, int], float] = {}
-        for grp, mi, anoi, mf, anof, lims in limits:
-            if grp != group_id:
-                continue
-
-            # Determine effective end (open-ended => last study stage)
-            if mf is None or anof is None:
-                # Open-ended: run to the end of the study horizon
-                end_y = start_year + (num_stages - 1 + start_month - 1) // 12
-                end_m = (start_month - 1 + num_stages - 1) % 12 + 1
-            else:
-                end_y, end_m = anof, mf
-
-            # Iterate month by month within [mi/anoi .. end_m/end_y], keeping
-            # only the study period (post-study is handled by the freeze below).
-            y, m = anoi, mi
-            while (y, m) <= (end_y, end_m):
-                stage_id = (y - start_year) * 12 + (m - start_month)
-                if 0 <= stage_id < study_months:
-                    for block_idx, lim_val in enumerate(lims):
-                        group_bounds[(stage_id, block_idx)] = lim_val
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
-
-        # Emit study-period slots.
-        slots: list[tuple[int, int | None, float | None, float | None]] = [
-            (stage_id, block_idx, None, lim_val)
-            for (stage_id, block_idx), lim_val in group_bounds.items()
-        ]
-
-        # Freeze the last study stage value through the post-study tail.
-        last_study_stage = study_months - 1
-        if num_stages > study_months:
-            for block_idx in sorted({b for (_, b) in group_bounds}):
-                freeze_val = group_bounds.get((last_study_stage, block_idx))
-                if freeze_val is None:
-                    continue
-                for stage_id in range(study_months, num_stages):
-                    slots.append((stage_id, block_idx, None, freeze_val))
 
         builder.add(
             name=f"AGRINT_{group_id}",
             description=f"Exchange group constraint {group_id}",
             expression=expression,
             slack=hard_slack(),
-            slots=slots,
+            slots=_agrint_slots(group_id, limits, horizon),
         )
 
-    if agrint_term_skips:
-        emit(
-            Diagnostic(
-                code="agrint-interchange-no-line",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=(
-                    "AGRINT interchange has no matching line "
-                    f"({len(agrint_term_skips)})"
-                ),
-                summary=(
-                    f"{len(agrint_term_skips)} AGRINT group term(s) reference "
-                    "a subsystem pair with no matching novomodelo line; the term "
-                    "is dropped."
-                ),
-                table=DiagnosticTable(
-                    columns=["Group", "From", "To"],
-                    rows=[[s.group_id, s.sys_a, s.sys_b] for s in agrint_term_skips],
-                    justify=["right", "right", "right"],
-                ),
-                remediation="Declare the subsystem pair as an interchange line.",
-            ),
-            logger=_LOG,
-        )
-    if agrint_group_skips:
-        emit(
-            Diagnostic(
-                code="agrint-group-empty",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=f"AGRINT group has no valid terms ({len(agrint_group_skips)})",
-                summary=(
-                    f"{len(agrint_group_skips)} AGRINT group(s) had no valid "
-                    "terms after line lookup; skipping."
-                ),
-                table=DiagnosticTable(
-                    columns=["Group"],
-                    rows=[[s.group_id] for s in agrint_group_skips],
-                    justify=["right"],
-                ),
-            ),
-            logger=_LOG,
-        )
+    _emit_agrint_term_skips(agrint_term_skips)
+    _emit_agrint_group_skips(agrint_group_skips)
 
     result = builder.result()
     if result is None:
@@ -2061,3 +1944,149 @@ def convert_agrint_constraints(
     )
 
     return result
+
+
+def _agrint_expression(
+    group_id: int,
+    terms_raw: list[tuple[int, int, float]],
+    line_id_map: dict[tuple[int, int], int],
+    term_skips: list[_AgrintTermSkip],
+) -> str | None:
+    """Group ``group_id``'s weighted sum of directional interchange flows.
+
+    Every term whose subsystem pair has no line is recorded on *term_skips*;
+    ``None`` when none is left.
+    """
+    # The source model's ``Interc(A→B)`` is the *non-negative directional* flow from
+    # A to B (zero whenever physical flow goes B→A).  Novomodelo's ``line_direct(id)`` /
+    # ``line_reverse(id)`` are the matching non-negative LP variables:
+    # ``line_direct`` is the flow in the canonical (src<tgt) direction,
+    # ``line_reverse`` the flow in the opposite direction.
+    #
+    # The naive substitution ``-line_exchange`` (signed net flow,
+    # negated when reversed) would let the LHS go negative when one
+    # term is flowing in its non-canonical direction — diluting the
+    # bound at fictitious hubs and producing incorrect dispatch.
+    parsed_terms: list[tuple[float, str]] = []
+    for a, b, coeff in terms_raw:
+        src, tgt = (a, b) if a < b else (b, a)
+        line_id = line_id_map.get((src, tgt))
+        if line_id is None:
+            term_skips.append(_AgrintTermSkip(group_id=group_id, sys_a=a, sys_b=b))
+            continue
+        var = f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
+        parsed_terms.append((coeff, var))
+
+    if not parsed_terms:
+        return None
+
+    return _render_signed_expression(parsed_terms)
+
+
+def _agrint_slots(
+    group_id: int,
+    limits: list[tuple[int, int, int, int | None, int | None, list[float]]],
+    horizon: StudyHorizon,
+) -> list[Slot]:
+    """Group ``group_id``'s ``<=`` limit per (stage, block), study and post-study."""
+    start_year = horizon.start_year
+    start_month = horizon.start_month
+    study_months = horizon.study_months
+    num_stages = horizon.total_stages
+
+    # Collect study-period limit rows for this group, keyed by (stage, block).
+    # AGRINT has no seasonalize flag: The source model freezes its post-study limits
+    # at the last study stage value and ignores any post-study-dated agrint.dat
+    # entries (planned future expansion). The pmo.dat "LIMITES DOS AGRUPAMENTOS DE
+    # INTERCAMBIO (MWmedio)" block confirms this — its POS row is flat at the last
+    # study (December) value. So clamp to the study period here, then freeze the
+    # tail.
+    group_bounds: dict[tuple[int, int], float] = {}
+    for grp, mi, anoi, mf, anof, lims in limits:
+        if grp != group_id:
+            continue
+
+        # Determine effective end (open-ended => last study stage)
+        if mf is None or anof is None:
+            # Open-ended: run to the end of the study horizon
+            end_y = start_year + (num_stages - 1 + start_month - 1) // 12
+            end_m = (start_month - 1 + num_stages - 1) % 12 + 1
+        else:
+            end_y, end_m = anof, mf
+
+        # Iterate month by month within [mi/anoi .. end_m/end_y], keeping
+        # only the study period (post-study is handled by the freeze below).
+        for stage_id in _stage_ids_between(
+            (anoi, mi), (end_y, end_m), start_year=start_year, start_month=start_month
+        ):
+            if 0 <= stage_id < study_months:
+                for block_idx, lim_val in enumerate(lims):
+                    group_bounds[(stage_id, block_idx)] = lim_val
+
+    # Emit study-period slots.
+    slots: list[Slot] = [
+        (stage_id, block_idx, None, lim_val)
+        for (stage_id, block_idx), lim_val in group_bounds.items()
+    ]
+
+    # Freeze the last study stage value through the post-study tail.
+    last_study_stage = study_months - 1
+    if num_stages > study_months:
+        for block_idx in sorted({b for (_, b) in group_bounds}):
+            freeze_val = group_bounds.get((last_study_stage, block_idx))
+            if freeze_val is None:
+                continue
+            for stage_id in range(study_months, num_stages):
+                slots.append((stage_id, block_idx, None, freeze_val))
+
+    return slots
+
+
+def _emit_agrint_term_skips(skips: list[_AgrintTermSkip]) -> None:
+    """Emit the ``agrint-interchange-no-line`` WARNING, one row per dropped term."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="agrint-interchange-no-line",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"AGRINT interchange has no matching line ({len(skips)})",
+            summary=(
+                f"{len(skips)} AGRINT group term(s) reference "
+                "a subsystem pair with no matching novomodelo line; the term "
+                "is dropped."
+            ),
+            table=DiagnosticTable(
+                columns=["Group", "From", "To"],
+                rows=[[s.group_id, s.sys_a, s.sys_b] for s in skips],
+                justify=["right", "right", "right"],
+            ),
+            remediation="Declare the subsystem pair as an interchange line.",
+        ),
+        logger=_LOG,
+    )
+
+
+def _emit_agrint_group_skips(skips: list[_AgrintGroupSkip]) -> None:
+    """Emit the ``agrint-group-empty`` WARNING, one row per dropped group."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="agrint-group-empty",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"AGRINT group has no valid terms ({len(skips)})",
+            summary=(
+                f"{len(skips)} AGRINT group(s) had no valid "
+                "terms after line lookup; skipping."
+            ),
+            table=DiagnosticTable(
+                columns=["Group"],
+                rows=[[s.group_id] for s in skips],
+                justify=["right"],
+            ),
+        ),
+        logger=_LOG,
+    )
