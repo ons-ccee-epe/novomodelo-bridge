@@ -35,6 +35,7 @@ from novomodelo_bridge.core.diversion import (
     unlimited_channels_diagnostic,
 )
 from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.decomp import (
     bounds_accumulator,
@@ -249,6 +250,14 @@ def _rejoin_thermal_cost(thermal_bounds: pa.Table, cost_table: pa.Table) -> pa.T
     )
 
 
+def _optional_int(value: object) -> int | None:
+    return None if value is None else as_int(value)
+
+
+def _optional_float(value: object) -> float | None:
+    return None if value is None else as_float(value)
+
+
 def _row_group_contributions(
     rows: Sequence[Mapping[str, object]],
     *,
@@ -277,9 +286,10 @@ def _row_group_contributions(
     per-block values it was averaged from could raise a lower or lower an
     upper the source data never asked for.
     """
-    groups: dict[tuple[object, object], list[Mapping[str, object]]] = {}
+    groups: dict[tuple[int, int], list[Mapping[str, object]]] = {}
     for row in rows:
-        groups.setdefault((row[id_column], row["stage_id"]), []).append(row)
+        key = (as_int(row[id_column]), as_int(row["stage_id"]))
+        groups.setdefault(key, []).append(row)
 
     contribs: list[bounds_accumulator.BoundContribution] = []
     for (entity_id, stage_id), group_rows in groups.items():
@@ -297,12 +307,12 @@ def _row_group_contributions(
 
             if base_row is not None:
                 base_lower = (
-                    base_row[spec.lower_column]
+                    _optional_float(base_row[spec.lower_column])
                     if spec.lower_column and not lower_overridden
                     else None
                 )
                 base_upper = (
-                    base_row[spec.upper_column]
+                    _optional_float(base_row[spec.upper_column])
                     if spec.upper_column and not upper_overridden
                     else None
                 )
@@ -326,10 +336,18 @@ def _row_group_contributions(
                         family=family,
                         entity_id=entity_id,
                         stage_id=stage_id,
-                        block_id=row["block_id"],
+                        block_id=_optional_int(row["block_id"]),
                         axis=axis,
-                        lower=row[spec.lower_column] if spec.lower_column else None,
-                        upper=row[spec.upper_column] if spec.upper_column else None,
+                        lower=(
+                            _optional_float(row[spec.lower_column])
+                            if spec.lower_column
+                            else None
+                        ),
+                        upper=(
+                            _optional_float(row[spec.upper_column])
+                            if spec.upper_column
+                            else None
+                        ),
                         contributor=contributor,
                     )
                 )
@@ -585,8 +603,8 @@ def _attach_water_withdrawal(
     )
 
     key = ["hydro_id", "stage_id", "block_id"]
-    hb = _fill_block_sentinel(pl.from_arrow(hydro_bounds))
-    w = _fill_block_sentinel(pl.from_arrow(withdrawal_bounds))
+    hb = _fill_block_sentinel(pl.DataFrame(hydro_bounds))
+    w = _fill_block_sentinel(pl.DataFrame(withdrawal_bounds))
     merged = _restore_block_null(
         merge_bound_tables(hb, w, on=key, precedence="base")
     ).sort(["hydro_id", "stage_id", "block_id"], nulls_last=False)
@@ -930,7 +948,12 @@ def _discover(src: Path) -> DecompCaseArtifacts:
         dx.emit(relink_diagnostic, logger=_LOG)
     fan_probabilities = scenarios_conv.terminal_fan_probabilities(vazoes, calendar)
 
-    tx = float(dadger.tx.taxa) / 100.0
+    tx_register = dadger.tx
+    if tx_register is None or tx_register.taxa is None:
+        raise ValueError(
+            "the deck has no TX record with a discount rate; cannot convert"
+        )
+    tx = float(tx_register.taxa) / 100.0
 
     return DecompCaseArtifacts(
         case=case,
@@ -1424,7 +1447,11 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         hydro["diversion"] = channel
         code = id_map.hydro_codes[hydro["id"]]
         source = _first_diversion_channel(effective, code)
-        if source is not None and is_unlimited_flow(source.limit):
+        if (
+            source is not None
+            and source.limit is not None
+            and is_unlimited_flow(source.limit)
+        ):
             unlimited.append(
                 (
                     code,
@@ -1767,7 +1794,9 @@ def _emit_and_write(
     # needs but none of them reads the deck to build for itself.
     big_m = constraints_conv.big_m_penalty(deficit_cost)
     line_map = constraints_conv.build_fi_line_map(lines_doc["lines"])
-    uh = dadger.uh(df=True)
+    uh = as_frame(dadger.uh(df=True))
+    if uh is None:
+        raise ValueError("the deck has no UH records; cannot map hydros to REEs")
     operated_uh = uh[uh["volume_inicial"].notna()]
     hydro_to_ree = {
         int(row["codigo_usina"]): int(row["codigo_ree"])
