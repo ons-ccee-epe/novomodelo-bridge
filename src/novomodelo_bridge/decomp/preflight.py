@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 from idecomp.decomp.modelos import dadger as _dadger_models
@@ -50,7 +50,6 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import CadastroResolutionReport
-    from novomodelo_bridge.decomp.files import DecompFiles
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -209,7 +208,19 @@ def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
     )
 
 
-def _ac_present(dadger: Dadger, classes: frozenset[type]) -> list[type]:
+class _AcRegisters(Protocol):
+    def ac(self, codigo_usina: int, modificacao: type, df: bool = ...) -> object: ...
+
+
+class _ConstraintFiles(Protocol):
+    @property
+    def dadger(self) -> Path: ...
+
+    @property
+    def libs_restricao_eletrica(self) -> Path | None: ...
+
+
+def _ac_present(dadger: _AcRegisters, classes: frozenset[type]) -> list[type]:
     """The subset of *classes* present in *dadger*'s deck, name-sorted.
 
     A class is present iff its ``AC`` frame is a non-empty
@@ -225,8 +236,10 @@ def _ac_present(dadger: Dadger, classes: frozenset[type]) -> list[type]:
         # documented no-filter sentinel (scan every plant) -- passing a real
         # int here would narrow the scan to one usina.
         if isinstance(
-            frame := dadger.ac(  # type: ignore[arg-type]
-                codigo_usina=None, modificacao=cls, df=True
+            frame := dadger.ac(
+                codigo_usina=None,  # ty: ignore[invalid-argument-type]
+                modificacao=cls,
+                df=True,
             ),
             pd.DataFrame,
         )
@@ -236,7 +249,7 @@ def _ac_present(dadger: Dadger, classes: frozenset[type]) -> list[type]:
 
 
 def _ac_coverage(
-    dadger: Dadger, report: CadastroResolutionReport
+    dadger: _AcRegisters, report: CadastroResolutionReport
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify every idecomp ``AC`` class into applied/uningestable/deferred
     and report which of those buckets the deck actually exercises.
@@ -357,7 +370,7 @@ def _ac_coverage(
 
 
 def _special_constraint_coverage(
-    dadger: Dadger, files: DecompFiles
+    dadger: constraint_registers.ConstraintRegisters, files: _ConstraintFiles
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
     split into bounds-lowered vs generic-emitted) and deferred (``FE``/RHA/
@@ -494,10 +507,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
     diagnostics.extend(libs_diags)
 
     try:
-        # RegisterFile.read() is annotated to return the base RegisterFile,
-        # not the calling subclass; narrow back to Dadger so downstream
-        # helpers (typed Dadger, not the object escape hatch) type-check.
-        dadger = cast(Dadger, Dadger.read(str(files.dadger)))
+        dadger = Dadger.read(str(files.dadger))
     except Exception as exc:  # noqa: BLE001
         checks.append(
             CheckItem(label="Deck registers readable", passed=False, detail=str(exc))
@@ -540,7 +550,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
     if failure is None:
         checks.append(_load_factor_check(case, id_map))
         try:
-            vazoes = cast(Vazoes, Vazoes.read(str(files.vazoes)))
+            vazoes = Vazoes.read(str(files.vazoes))
         except Exception as exc:  # noqa: BLE001
             checks.append(
                 CheckItem(label="Scenario tree readable", passed=False, detail=str(exc))
