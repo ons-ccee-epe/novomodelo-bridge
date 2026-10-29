@@ -37,6 +37,9 @@ from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     UNINGESTABLE_AC_CLASSES as UNINGESTABLE_AC_CLASSES,
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
+    AcRegisters as AcRegisters,
+)
+from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     DiversionChannel as DiversionChannel,
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
@@ -56,6 +59,9 @@ from novomodelo_bridge.decomp.converters.cadastro.overrides import (
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     _read_scalar_overrides as _read_scalar_overrides,
+)
+from novomodelo_bridge.decomp.converters.cadastro.overrides import (
+    ac_frame as ac_frame,
 )
 from novomodelo_bridge.decomp.converters.cadastro.stage_resolution import (
     resolve_effective_stage as resolve_effective_stage,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
 from idecomp.decomp.modelos.dadger import (
@@ -30,14 +30,25 @@ from idecomp.decomp.modelos.dadger import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from idecomp.decomp import Dadger
-
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.converters.cadastro.stage_resolution import (
     _parse_month,
     resolve_effective_stage,
 )
+
+
+class AcRegisters(Protocol):
+    def ac(self, codigo_usina: int, modificacao: type, df: bool = ...) -> object: ...
+
+
+def ac_frame(dadger: AcRegisters, modificacao: type) -> pd.DataFrame | None:
+    """Every ``AC`` row of one modification class, across plants (``None`` if absent)."""
+    # idecomp types codigo_usina as int, but df=True ignores the filter and None means every plant.
+    return as_frame(
+        dadger.ac(codigo_usina=None, modificacao=modificacao, df=True)  # ty: ignore[invalid-argument-type]
+    )
 
 
 @dataclass(frozen=True)
@@ -148,7 +159,7 @@ def _out_of_horizon_record(
 
 
 def _read_scalar_overrides(
-    dadger: Dadger,
+    dadger: AcRegisters,
     calendar: Sequence[OperativeStage],
 ) -> tuple[dict[tuple[int, str], list[tuple[int, float]]], list[OutOfHorizon]]:
     """Ingest the scalar single-value ``AC`` overrides via idecomp's typed accessor.
@@ -169,7 +180,7 @@ def _read_scalar_overrides(
     records: dict[tuple[int, str], list[tuple[int, float]]] = {}
     out_of_horizon: list[OutOfHorizon] = []
     for spec in _SCALAR_AC_SPECS:
-        table = dadger.ac(codigo_usina=None, modificacao=spec.ac_class, df=True)
+        table = ac_frame(dadger, spec.ac_class)
         if not isinstance(table, pd.DataFrame) or table.empty:
             continue
         for _, row in table.iterrows():
@@ -201,7 +212,7 @@ class DiversionChannel:
 
 
 def _read_diversion_overrides(
-    dadger: Dadger,
+    dadger: AcRegisters,
     calendar: Sequence[OperativeStage],
 ) -> tuple[dict[int, list[tuple[int, DiversionChannel]]], list[OutOfHorizon]]:
     """Ingest the ``AC DESVIO`` diversion-channel override via idecomp's typed accessor.
@@ -223,7 +234,7 @@ def _read_diversion_overrides(
     """
     records: dict[int, list[tuple[int, DiversionChannel]]] = {}
     out_of_horizon: list[OutOfHorizon] = []
-    table = dadger.ac(codigo_usina=None, modificacao=ACDESVIO, df=True)
+    table = ac_frame(dadger, ACDESVIO)
     if not isinstance(table, pd.DataFrame) or table.empty:
         return records, out_of_horizon
     for _, row in table.iterrows():
@@ -271,7 +282,7 @@ def _conjunto_key(row: Any) -> tuple[int, int]:
 
 
 def _read_keyed_overrides[K, T](
-    dadger: Dadger,
+    dadger: AcRegisters,
     calendar: Sequence[OperativeStage],
     ac_class: type,
     value_column: str,
@@ -312,7 +323,7 @@ def _read_keyed_overrides[K, T](
     """
     records: dict[K, list[tuple[int, T]]] = {}
     out_of_horizon: list[OutOfHorizon] = []
-    table = dadger.ac(codigo_usina=None, modificacao=ac_class, df=True)
+    table = ac_frame(dadger, ac_class)
     if not isinstance(table, pd.DataFrame) or table.empty:
         return records, out_of_horizon
     for _, row in table.iterrows():
@@ -329,7 +340,7 @@ def _read_keyed_overrides[K, T](
 
 
 def _read_machine_set_overrides(
-    dadger: Dadger,
+    dadger: AcRegisters,
     calendar: Sequence[OperativeStage],
 ) -> tuple[
     dict[int, list[tuple[int, int]]],
@@ -372,7 +383,7 @@ def _read_machine_set_overrides(
     """
     numero_conjuntos: dict[int, list[tuple[int, int]]] = {}
     out_of_horizon: list[OutOfHorizon] = []
-    table = dadger.ac(codigo_usina=None, modificacao=ACNUMCON, df=True)
+    table = ac_frame(dadger, ACNUMCON)
     if isinstance(table, pd.DataFrame) and not table.empty:
         for _, row in table.iterrows():
             code = int(row["codigo_usina"])
@@ -412,7 +423,7 @@ def _read_machine_set_overrides(
 
 
 def _read_polynomial_overrides(
-    dadger: Dadger,
+    dadger: AcRegisters,
     calendar: Sequence[OperativeStage],
     ac_class: type,
     param: str,
@@ -452,7 +463,7 @@ def _read_polynomial_overrides(
         coefficient index is a malformed register, never silently dropped.
     """
     out_of_horizon: list[OutOfHorizon] = []
-    table = dadger.ac(codigo_usina=None, modificacao=ac_class, df=True)
+    table = ac_frame(dadger, ac_class)
     if not isinstance(table, pd.DataFrame) or table.empty:
         return {}, out_of_horizon
 

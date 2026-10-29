@@ -27,8 +27,10 @@ from idecomp.decomp.modelos.dadger import ACALTEFE
 from inewave.newave import Hidr
 
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.productivity import fpha_efficiency
 from novomodelo_bridge.decomp.converters.cadastro import (
+    ac_frame,
     effective_storage_range,
     storage_envelope,
 )
@@ -68,7 +70,7 @@ def _operated_uh(dadger: Dadger) -> pd.DataFrame:
     terminal-value treatment is the boundary importer's concern, not the
     registry's. :func:`convert_hydros` reports the excluded set (by name) once.
     """
-    uh = dadger.uh(df=True)
+    uh = as_frame(dadger.uh(df=True))
     if uh is None or uh.empty:
         raise ValueError("the deck has no UH records; cannot convert hydros")
     return uh[uh["volume_inicial"].notna()]
@@ -84,7 +86,7 @@ def initial_volume_percentages(dadger: Dadger) -> dict[int, float]:
 
 def _coupling_only_codes(dadger: Dadger) -> list[int]:
     """Operated-set-excluded ``UH`` codes — registrations with no initial volume."""
-    uh = dadger.uh(df=True)
+    uh = as_frame(dadger.uh(df=True))
     if uh is None or uh.empty:
         return []
     excluded = uh[uh["volume_inicial"].isna()]
@@ -175,7 +177,7 @@ def _evaporation_flag_codes(dadger: Dadger) -> set[int]:
     flag is set; a plant absent from this set is emitted with no evaporation
     regardless of the coefficients ``hidr.dat`` may carry.
     """
-    uh = dadger.uh(df=True)
+    uh = as_frame(dadger.uh(df=True))
     if uh is None or "evaporacao" not in uh.columns or "codigo_usina" not in uh.columns:
         return set()
     return set(uh.loc[uh["evaporacao"].fillna(0) != 0, "codigo_usina"].astype(int))
@@ -298,8 +300,8 @@ def convert_hydros(
     # a Dadger stub for methods this function otherwise never touches.
     mp = fd = None
     if _ITAIPU_CODE in operated_codes:
-        mp = dadger.mp(df=True)
-        fd = dadger.fd(df=True)
+        mp = as_frame(dadger.mp(df=True))
+        fd = as_frame(dadger.fd(df=True))
 
     op_date = start_date.isoformat()
     hydros: list[dict] = []
@@ -438,7 +440,7 @@ def convert_hydros(
     # queda_nominal_conjunto_* nominal head regardless of an ALTEFE
     # declaration. Remove this warning (and wire the override into
     # turbine_limit._rated_head) once idecomp exposes an ALTEFE value accessor.
-    altefe = dadger.ac(codigo_usina=None, modificacao=ACALTEFE, df=True)
+    altefe = ac_frame(dadger, ACALTEFE)
     if isinstance(altefe, pd.DataFrame) and not altefe.empty:
         n_altefe = altefe["codigo_usina"].nunique()
         _LOG.warning(
