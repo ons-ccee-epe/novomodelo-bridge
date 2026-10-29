@@ -1,0 +1,22 @@
+# Dependabot opens PRs for new versions of the locked dependencies and of the
+# actions the workflows pin. GitHub only reads this file on the default branch.
+version: 2
+updates:
+  # uv.lock. `novomodelo-python` is pinned exactly to the paired novomodelo release
+  # (MIN_NOVOMODELO_VERSION): a PR for it fails tests/test_packaging.py until the
+  # pairing commit described in CONTRIBUTING.md ("Releasing") is made, and that
+  # failure is the notice.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+
+  # The pinned actions in .github/workflows (checkout, setup-uv, artifacts, PyPI publish).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
