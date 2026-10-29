@@ -538,58 +538,94 @@ def _build_thermal_json(
     return thermal_data, xdates
 
 
-def build_thermal_explorer(
-    thermals_lf: pl.LazyFrame,
-    thermal_meta: dict[int, dict],
-    bus_names: dict[int, str],
-    stage_dates: dict[int, str],
-    lp_bounds: pd.DataFrame,
-    bh_df: pl.DataFrame,
+# ---------------------------------------------------------------------------
+# Explorer layout helpers
+# ---------------------------------------------------------------------------
+
+_BAND_TOGGLE_HTML = (
+    '<div class="explorer-band-toggle" style="padding:4px 8px;">'
+    '<label><input type="checkbox" id="pe-band-toggle" checked> Show p10-p90</label>'
+    "</div>"
+)
+
+
+def _percentile_stages(percentiles: pl.DataFrame) -> list[int]:
+    """Sorted stage ids present in a per-plant percentile frame."""
+    if percentiles.is_empty() or "stage_id" not in percentiles.columns:
+        return []
+    return sorted(percentiles["stage_id"].unique().to_list())
+
+
+def _gen_sparkline(gen_p50: list[float], color: str) -> str:
+    """Generation sparkline SVG, or ``""`` for a flat-zero or single-point series."""
+    if len(gen_p50) >= 2 and any(v != 0 for v in gen_p50):
+        return sparkline_svg(gen_p50, color)
+    return ""
+
+
+def _explorer_table_pane(
+    prefix: str, columns: list[tuple[str, str]], rows_html: str
 ) -> str:
-    """Build the HTML for the thermal plant explorer sub-tab (data + JS only).
-
-    Returns an HTML string with the explorer layout and embedded data/JS.
-    Returns a no-data paragraph if ``thermal_meta`` is empty.
-
-    Note: PLANT_EXPLORER_JS must NOT be emitted here; it is emitted once
-    in ``render()`` to avoid duplicate JS function definitions.
-    """
-    if not thermal_meta:
-        return "<p>No thermal plant data available.</p>"
-
-    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df)
-
-    stages: list[int] = []
-    if not percentiles.is_empty() and "stage_id" in percentiles.columns:
-        stages = sorted(percentiles["stage_id"].unique().to_list())
-
-    thermal_data, xdates = _build_thermal_json(
-        thermal_meta=thermal_meta,
-        percentiles=percentiles,
-        stages=stages,
-        stage_dates=stage_dates,
-        bus_names=bus_names,
-        lp_bounds=lp_bounds if lp_bounds is not None else pd.DataFrame(),
-        block_hours=_block_hours_dict(bh_df),
+    """Left pane: the searchable, sortable plant table with ``{prefix}-*`` ids."""
+    return (
+        '<div class="explorer-table-pane" style="width:480px;min-width:320px;flex-shrink:0;">'
+        + plant_explorer_table(
+            f"{prefix}-tbody", f"{prefix}-search", columns, rows_html
+        )
+        + "</div>"
     )
 
-    options = sorted(thermal_data.items(), key=lambda x: x[1]["name"])
-    if not options:
-        return "<p>No thermal plant data available.</p>"
 
-    # --- Table rows -----------------------------------------------------------
+def _chart_div(div_id: str) -> str:
+    """Empty chart placeholder that the detail render functions fill."""
+    return f'<div id="{div_id}" style="width:100%;height:350px;"></div>'
+
+
+def _charts_section(title: str, div_ids: list[str], *, single: bool = False) -> str:
+    """Collapsible section holding one chart placeholder per id."""
+    return collapsible_section(
+        title,
+        chart_grid(
+            [wrap_chart(_chart_div(div_id)) for div_id in div_ids], single=single
+        ),
+    )
+
+
+def _explorer_script(
+    data_var: str,
+    plant_data: dict[str, dict],
+    xdates: list[str],
+    render_js: str,
+) -> str:
+    """``<script>`` binding ``data_var``/``{data_var}_DATES`` ahead of ``render_js``.
+
+    Only the data and the per-explorer render functions go here:
+    ``PLANT_EXPLORER_JS`` is declared in ``REQUIRED_JS`` and emitted once by
+    the document shell.
+    """
+    return (
+        "<script>\n"
+        + f"\nvar {data_var} = {json_for_script(plant_data)};\n"
+        + f"var {data_var}_DATES = {json_for_script(xdates)};\n"
+        + render_js
+        + "\n</script>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Thermal explorer
+# ---------------------------------------------------------------------------
+
+
+def _thermal_table_pane(options: list[tuple[str, dict]]) -> str:
+    """Thermal table: name, bus, capacity, unit cost and a generation sparkline."""
     table_rows: list[str] = []
     for tid, d in options:
         name: str = d.get("name", "")
         bus: str = d.get("bus", "")
         max_mw: float = d.get("max_mw", 0)
         cost_per_mwh: float = d.get("cost_per_mwh", 0)
-        gen_p50: list[float] = d.get("gen_p50", [])
-        gen_spark = (
-            sparkline_svg(gen_p50, "#F5A623")
-            if len(gen_p50) >= 2 and any(v != 0 for v in gen_p50)
-            else ""
-        )
+        gen_spark = _gen_sparkline(d.get("gen_p50", []), "#F5A623")
         table_rows.append(
             f'<tr data-name="{escape_attr(name.lower())}" data-index="{tid}">'
             f'<td><input type="checkbox" class="compare-checkbox" data-id="{tid}"></td>'
@@ -600,8 +636,6 @@ def build_thermal_explorer(
             f"<td>{gen_spark}</td>"
             f"</tr>"
         )
-
-    rows_html = "".join(table_rows)
     columns: list[tuple[str, str]] = [
         ("Cmp", "none"),
         ("Name", "string"),
@@ -610,66 +644,21 @@ def build_thermal_explorer(
         ("Cost (R$/MWh)", "number"),
         ("Gen", "none"),
     ]
-    table_pane = (
-        '<div class="explorer-table-pane" style="width:480px;min-width:320px;flex-shrink:0;">'
-        + plant_explorer_table(
-            "tt-tbody",
-            "tt-search",
-            columns,
-            rows_html,
-        )
-        + "</div>"
-    )
+    return _explorer_table_pane("tt", columns, "".join(table_rows))
 
-    # --- Detail pane ----------------------------------------------------------
-    def _chart_div(div_id: str) -> str:
-        return f'<div id="{div_id}" style="width:100%;height:350px;"></div>'
 
-    generation_section = collapsible_section(
-        "Generation",
-        chart_grid([wrap_chart(_chart_div("tt-gen"))], single=True),
-    )
-    economics_section = collapsible_section(
-        "Economics",
-        chart_grid(
-            [
-                wrap_chart(_chart_div("tt-cost")),
-                wrap_chart(_chart_div("tt-energy")),
-            ]
-        ),
-    )
-
-    band_toggle = (
-        '<div class="explorer-band-toggle" style="padding:4px 8px;">'
-        '<label><input type="checkbox" id="pe-band-toggle" checked> Show p10-p90</label>'
-        "</div>"
-    )
-
-    detail_pane = (
+def _thermal_detail_pane() -> str:
+    """Thermal detail pane: band toggle plus the charts ``renderThermalDetail`` fills."""
+    return (
         '<div id="tt-detail" class="explorer-detail-pane">'
-        + band_toggle
-        + generation_section
-        + economics_section
+        + _BAND_TOGGLE_HTML
+        + _charts_section("Generation", ["tt-gen"], single=True)
+        + _charts_section("Economics", ["tt-cost", "tt-energy"])
         + "</div>"
     )
 
-    explorer_html = (
-        '<div class="explorer-container">' + table_pane + detail_pane + "</div>"
-    )
 
-    # --- Embedded JS (data + render functions only — PLANT_EXPLORER_JS emitted
-    #     once in render()) ---------------------------------------------------
-    data_json = json_for_script(thermal_data)
-    dates_json = json_for_script(xdates)
-
-    inline_js = (
-        "\nvar TT = "
-        + data_json
-        + ";\n"
-        + "var TT_DATES = "
-        + dates_json
-        + ";\n"
-        + """
+_THERMAL_EXPLORER_JS: str = """
 var _TC = {responsive: true};
 
 function renderThermalDetail(containerId, d) {
@@ -754,67 +743,67 @@ initComparisonMode({
 
 syncHover(['tt-gen','tt-cost','tt-energy']);
 """
-    )
-
-    return explorer_html + "<script>\n" + inline_js + "\n</script>"
 
 
-# ---------------------------------------------------------------------------
-# Main builder
-# ---------------------------------------------------------------------------
-
-
-def build_hydro_explorer(
-    hydros_lf: pl.LazyFrame,
-    hydro_meta: dict[int, dict],
+def build_thermal_explorer(
+    thermals_lf: pl.LazyFrame,
+    thermal_meta: dict[int, dict],
     bus_names: dict[int, str],
     stage_dates: dict[int, str],
-    bh_df: pl.DataFrame,
-    hydro_bounds: pd.DataFrame,
     lp_bounds: pd.DataFrame,
+    bh_df: pl.DataFrame,
 ) -> str:
-    """Build the HTML for the hydro plant explorer sub-tab.
+    """Build the HTML for the thermal plant explorer sub-tab (data + JS only).
 
-    Returns the complete HTML string (explorer layout + embedded JS + data).
-    Returns a no-data paragraph if ``hydro_meta`` is empty.
+    Returns an HTML string with the explorer layout and embedded data/JS.
+    Returns a no-data paragraph if ``thermal_meta`` is empty.
+
+    Note: PLANT_EXPLORER_JS must NOT be emitted here; it is emitted once
+    in ``render()`` to avoid duplicate JS function definitions.
     """
-    if not hydro_meta:
-        return "<p>No hydro plant data available.</p>"
+    if not thermal_meta:
+        return "<p>No thermal plant data available.</p>"
 
-    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df)
-
-    stages: list[int] = []
-    if not percentiles.is_empty() and "stage_id" in percentiles.columns:
-        stages = sorted(percentiles["stage_id"].unique().to_list())
-
-    hydro_data, xdates = _build_hydro_json(
-        hydro_meta=hydro_meta,
+    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df)
+    thermal_data, xdates = _build_thermal_json(
+        thermal_meta=thermal_meta,
         percentiles=percentiles,
-        stages=stages,
+        stages=_percentile_stages(percentiles),
         stage_dates=stage_dates,
         bus_names=bus_names,
-        hydro_bounds=hydro_bounds if hydro_bounds is not None else pd.DataFrame(),
         lp_bounds=lp_bounds if lp_bounds is not None else pd.DataFrame(),
         block_hours=_block_hours_dict(bh_df),
     )
 
-    options = sorted(hydro_data.items(), key=lambda x: x[1]["name"])
+    options = sorted(thermal_data.items(), key=lambda x: x[1]["name"])
     if not options:
-        return "<p>No hydro plant data available.</p>"
+        return "<p>No thermal plant data available.</p>"
 
-    # --- Table rows -----------------------------------------------------------
+    explorer_html = (
+        '<div class="explorer-container">'
+        + _thermal_table_pane(options)
+        + _thermal_detail_pane()
+        + "</div>"
+    )
+    return explorer_html + _explorer_script(
+        "TT", thermal_data, xdates, _THERMAL_EXPLORER_JS
+    )
+
+
+# ---------------------------------------------------------------------------
+# Hydro explorer
+# ---------------------------------------------------------------------------
+
+
+def _hydro_table_pane(options: list[tuple[str, dict]]) -> str:
+    """Hydro table: name, bus, capacity, max volume and a generation sparkline."""
     table_rows: list[str] = []
     for hid, d in options:
         name: str = d.get("name", "")
         bus: str = d.get("bus", "")
         max_gen_mw: float = d.get("max_gen_mw", 0)
         vol_max: float = d.get("vol_max", 0)
-        gen_p50: list[float] = d.get("gen_p50", [])
-        gen_spark = (
-            sparkline_svg(gen_p50, "#2196F3")
-            if len(gen_p50) >= 2 and any(v != 0 for v in gen_p50)
-            else ""
-        )
+        gen_spark = _gen_sparkline(d.get("gen_p50", []), "#2196F3")
         table_rows.append(
             f'<tr data-name="{escape_attr(name.lower())}" data-index="{hid}">'
             f'<td><input type="checkbox" class="compare-checkbox" data-id="{hid}"></td>'
@@ -825,8 +814,6 @@ def build_hydro_explorer(
             f"<td>{gen_spark}</td>"
             f"</tr>"
         )
-
-    rows_html = "".join(table_rows)
     columns: list[tuple[str, str]] = [
         ("Cmp", "none"),
         ("Name", "string"),
@@ -835,101 +822,29 @@ def build_hydro_explorer(
         ("Vol Max (hm3)", "number"),
         ("Gen", "none"),
     ]
-    table_pane = (
-        '<div class="explorer-table-pane" style="width:480px;min-width:320px;flex-shrink:0;">'
-        + plant_explorer_table(
-            "hp-tbody",
-            "hp-search",
-            columns,
-            rows_html,
-        )
-        + "</div>"
-    )
+    return _explorer_table_pane("hp", columns, "".join(table_rows))
 
-    # --- Detail pane ----------------------------------------------------------
-    def _chart_div(div_id: str) -> str:
-        return f'<div id="{div_id}" style="width:100%;height:350px;"></div>'
 
-    water_balance_section = collapsible_section(
-        "Water Balance",
-        chart_grid(
-            [
-                wrap_chart(_chart_div("hp-stor")),
-                wrap_chart(_chart_div("hp-inflow")),
-                wrap_chart(_chart_div("hp-spill")),
-                wrap_chart(_chart_div("hp-evap")),
-            ]
-        ),
-    )
-    generation_section = collapsible_section(
-        "Generation",
-        chart_grid(
-            [
-                wrap_chart(_chart_div("hp-gen")),
-                wrap_chart(_chart_div("hp-turb")),
-                wrap_chart(_chart_div("hp-outflow")),
-                wrap_chart(_chart_div("hp-wv")),
-            ]
-        ),
-    )
-    energy_section = collapsible_section(
-        "Energy",
-        chart_grid(
-            [
-                wrap_chart(_chart_div("hp-earm")),
-                wrap_chart(_chart_div("hp-ena")),
-                wrap_chart(_chart_div("hp-rhoeq")),
-            ]
-        ),
-    )
-    # Operational slack columns: water-withdrawal violation in both
-    # directions (positive = over-withdrew, negative = under-withdrew)
-    # plus the inflow non-negativity slack — useful to localize which
-    # LP constraints were relaxed under stochastic noise.
-    slacks_section = collapsible_section(
-        "Operational Slacks",
-        chart_grid(
-            [
-                wrap_chart(_chart_div("hp-wpos")),
-                wrap_chart(_chart_div("hp-wneg")),
-                wrap_chart(_chart_div("hp-innn")),
-            ]
-        ),
-    )
-
-    band_toggle = (
-        '<div class="explorer-band-toggle" style="padding:4px 8px;">'
-        '<label><input type="checkbox" id="pe-band-toggle" checked> Show p10-p90</label>'
-        "</div>"
-    )
-
-    detail_pane = (
+def _hydro_detail_pane() -> str:
+    """Hydro detail pane: band toggle plus the charts ``renderHydroDetail`` fills."""
+    return (
         '<div id="hp-detail" class="explorer-detail-pane">'
-        + band_toggle
-        + water_balance_section
-        + generation_section
-        + energy_section
-        + slacks_section
+        + _BAND_TOGGLE_HTML
+        + _charts_section(
+            "Water Balance", ["hp-stor", "hp-inflow", "hp-spill", "hp-evap"]
+        )
+        + _charts_section("Generation", ["hp-gen", "hp-turb", "hp-outflow", "hp-wv"])
+        + _charts_section("Energy", ["hp-earm", "hp-ena", "hp-rhoeq"])
+        # Operational slack columns: water-withdrawal violation in both
+        # directions (positive = over-withdrew, negative = under-withdrew)
+        # plus the inflow non-negativity slack — useful to localize which
+        # LP constraints were relaxed under stochastic noise.
+        + _charts_section("Operational Slacks", ["hp-wpos", "hp-wneg", "hp-innn"])
         + "</div>"
     )
 
-    explorer_html = (
-        '<div class="explorer-container">' + table_pane + detail_pane + "</div>"
-    )
 
-    # --- Embedded JS (data + render functions only — PLANT_EXPLORER_JS emitted
-    #     once in render()) ---------------------------------------------------
-    data_json = json_for_script(hydro_data)
-    dates_json = json_for_script(xdates)
-
-    inline_js = (
-        "\nvar HP = "
-        + data_json
-        + ";\n"
-        + "var HP_DATES = "
-        + dates_json
-        + ";\n"
-        + """
+_HYDRO_EXPLORER_JS: str = """
 var _HC = {responsive: true};
 var _peBandVisible = true;
 
@@ -1207,9 +1122,50 @@ initComparisonMode({
 
 syncHover(['hp-stor','hp-inflow','hp-spill','hp-evap','hp-gen','hp-turb','hp-outflow','hp-wv','hp-earm','hp-ena','hp-rhoeq','hp-wpos','hp-wneg','hp-innn']);
 """
+
+
+def build_hydro_explorer(
+    hydros_lf: pl.LazyFrame,
+    hydro_meta: dict[int, dict],
+    bus_names: dict[int, str],
+    stage_dates: dict[int, str],
+    bh_df: pl.DataFrame,
+    hydro_bounds: pd.DataFrame,
+    lp_bounds: pd.DataFrame,
+) -> str:
+    """Build the HTML for the hydro plant explorer sub-tab.
+
+    Returns the complete HTML string (explorer layout + embedded JS + data).
+    Returns a no-data paragraph if ``hydro_meta`` is empty.
+    """
+    if not hydro_meta:
+        return "<p>No hydro plant data available.</p>"
+
+    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df)
+    hydro_data, xdates = _build_hydro_json(
+        hydro_meta=hydro_meta,
+        percentiles=percentiles,
+        stages=_percentile_stages(percentiles),
+        stage_dates=stage_dates,
+        bus_names=bus_names,
+        hydro_bounds=hydro_bounds if hydro_bounds is not None else pd.DataFrame(),
+        lp_bounds=lp_bounds if lp_bounds is not None else pd.DataFrame(),
+        block_hours=_block_hours_dict(bh_df),
     )
 
-    return explorer_html + "<script>\n" + inline_js + "\n</script>"
+    options = sorted(hydro_data.items(), key=lambda x: x[1]["name"])
+    if not options:
+        return "<p>No hydro plant data available.</p>"
+
+    explorer_html = (
+        '<div class="explorer-container">'
+        + _hydro_table_pane(options)
+        + _hydro_detail_pane()
+        + "</div>"
+    )
+    return explorer_html + _explorer_script(
+        "HP", hydro_data, xdates, _HYDRO_EXPLORER_JS
+    )
 
 
 # ---------------------------------------------------------------------------
