@@ -829,10 +829,10 @@ def _libs_electrical_census_diagnostic(
     its own per-restriction WARNING/INFO diagnostic).
 
     This supersedes the flat ``decomp-libs-electrical-present`` warning for
-    the converted subset (:func:`_emit_and_write` suppresses that warning
-    once a model converts) -- this is the one place a caller reads
-    how much of the entry actually converted, so no "not converted" claim
-    survives over it.
+    the converted subset (:func:`_emit_constraint_detection_diagnostics`
+    suppresses that warning once a model converts) -- this is the one place a
+    caller reads how much of the entry actually converted, so no "not
+    converted" claim survives over it.
     """
     n_converted = len(result.converted_codes)
     n_dropped = sum(len(codes) for codes in result.deferred.values())
@@ -2063,9 +2063,6 @@ def _emit_constraint_detection_diagnostics(
 ) -> None:
     """Report the electrical-constraint files the conversion cannot read, and
     the LIBs electrical census."""
-    # The FE/RHA/LIBs-electrical detection diagnostics each surface
-    # once, through the structured sink, alongside the flat deferral warning
-    # below (the matching clause is deduped out of that warning).
     for detection in constraint_registers.detect_unreadable_electrical(
         case.files.dadger
     ):
@@ -2093,8 +2090,7 @@ def _emit_and_write(
     written, write the bound parquets, emit the RE -> RHQ/RHV -> RHE ->
     LIBs-electrical generic constraints over one shared
     :class:`ConstraintIdAllocator`, write the generic-constraint artifacts and
-    scalar parameters, emit the detection diagnostics and the travel-time
-    deferral warning, and return the
+    scalar parameters, emit the detection diagnostics, and return the
     :class:`~novomodelo_bridge.core.conversion.ConversionReport` built from
     ``writer.would_write``.
     """
