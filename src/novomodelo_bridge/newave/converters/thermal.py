@@ -26,6 +26,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.pandas_utils import as_timestamp
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
 from novomodelo_bridge.newave.horizon import build_stage_dates, historical_start_date
@@ -184,7 +185,7 @@ def _apply_maint_to_capacity(
     effective = np.full(total_stages, base_capacity, dtype=float)
 
     for _, row in maint_rows.iterrows():
-        start_dt = pd.Timestamp(row["data_inicio"])
+        start_dt = as_timestamp(row["data_inicio"])
         duration_days = int(row["duracao"])
         unit_power = float(row["potencia"])
         end_dt = start_dt + timedelta(days=duration_days)
@@ -264,10 +265,10 @@ def _step4_apply_expt_overrides(
     coming last in file order, wins over any per-month window for the stage.
     """
     for override in overrides:
-        ov_start = pd.Timestamp(override["data_inicio"]).date()
+        ov_start = as_timestamp(override["data_inicio"]).date()
         ov_end_raw = override["data_fim"]
         open_ended = pd.isna(ov_end_raw)
-        ov_end = last_stage_date if open_ended else pd.Timestamp(ov_end_raw).date()
+        ov_end = last_stage_date if open_ended else as_timestamp(ov_end_raw).date()
         if open_ended and is_post_study:
             applies = True
         else:
@@ -483,10 +484,10 @@ class _StageBoundsModel:
                 base_default.setdefault(code, values)
 
         expt_by_code: dict[int, list[dict]] = {}
-        if case.files.expt is not None:
-            try:
-                expt_df = case.expt.expansoes
-                for _, row in expt_df.iterrows():
+        try:
+            expt = case.expt
+            if expt is not None:
+                for _, row in expt.expansoes.iterrows():
                     expt_by_code.setdefault(int(row["codigo_usina"]), []).append(
                         {
                             "tipo": str(row["tipo"]),
@@ -495,16 +496,16 @@ class _StageBoundsModel:
                             "data_fim": row["data_fim"],
                         }
                     )
-            except Exception:  # noqa: BLE001
-                _LOG.warning("expt.dat could not be parsed; EXPT overrides skipped.")
+        except Exception:  # noqa: BLE001
+            _LOG.warning("expt.dat could not be parsed; EXPT overrides skipped.")
 
         potef_windows: dict[int, list[tuple[date, date]]] = {}
         gtmin_windows: dict[int, list[tuple[date, date]]] = {}
 
         def _window(o: dict) -> tuple[date, date]:
-            start = pd.Timestamp(o["data_inicio"]).date()
+            start = as_timestamp(o["data_inicio"]).date()
             end_raw = o["data_fim"]
-            end = stage_dates[-1] if pd.isna(end_raw) else pd.Timestamp(end_raw).date()
+            end = stage_dates[-1] if pd.isna(end_raw) else as_timestamp(end_raw).date()
             return start, end
 
         for code, overrides in expt_by_code.items():
@@ -526,7 +527,8 @@ class _StageBoundsModel:
         manutt_df: pd.DataFrame | None = None
         if case.files.manutt is not None:
             try:
-                manutt_df = case.manutt.manutencoes
+                manutt = case.manutt
+                manutt_df = manutt.manutencoes if manutt is not None else None
             except Exception:  # noqa: BLE001
                 _LOG.warning(
                     "%s could not be parsed; maintenance skipped.",
@@ -840,12 +842,12 @@ def convert_thermal_bounds(
                 # instead of letting a future-dated modification leak into the static
                 # final period.
                 for modif in modif_by_code.get(newave_code, []):
-                    mod_start = pd.Timestamp(modif["data_inicio"]).date()
+                    mod_start = as_timestamp(modif["data_inicio"]).date()
                     mod_end_raw = modif["data_fim"]
                     if pd.isna(mod_end_raw):
                         mod_end = model.stage_dates[-1]
                     else:
-                        mod_end = pd.Timestamp(mod_end_raw).date()
+                        mod_end = as_timestamp(mod_end_raw).date()
                     if mod_start <= ref_date <= mod_end:
                         stage_cost = modif["custo"]
 
