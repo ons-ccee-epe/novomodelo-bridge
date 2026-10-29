@@ -31,16 +31,18 @@ ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 ```bash
 pytest                                        # the test suite
 ruff check . && ruff format --check .         # lint and formatting, whole tree
+ty check                                      # type check, as CI runs it
 python3 scripts/ci/check_no_plan_leaks.py     # no planning vocabulary in shipped artifacts
 python3 scripts/ci/check_comment_refs.py      # no rot-prone references in source prose
 python3 scripts/ci/check_doc_paths.py         # every path cited in the docs resolves
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff and the three gates on one Python,
-the test suite on every Python version the project supports, and a coverage
-floor on the comparator reader layer (`[tool.coverage]` in `pyproject.toml`).
-CI installs the ruff version `uv.lock` pins, so a ruff upgrade changes both
-together; `tests/test_packaging.py` fails if they differ.
+CI (`.github/workflows/ci.yml`) runs ruff, `ty check` and the three gates on
+one Python, the test suite on Linux, Windows and macOS on every Python version
+the project supports, and a coverage floor on the comparator reader layer
+(`[tool.coverage]` in `pyproject.toml`). The workflows install from `uv.lock`
+(`uv sync --locked`), so a ruff or ty upgrade is a lock change;
+`tests/test_packaging.py` fails if a workflow installs another way.
 `scripts/README.md` describes each gate and the advisory reports next to them.
 
 ### Test tiers and local data

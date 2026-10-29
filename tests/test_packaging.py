@@ -6,8 +6,8 @@ not an optional extra. This module locks that down: a fresh
 `pip install novomodelo-bridge` (no extras) must pull a checkpoint-capable novomodelo. It was the
 absence of exactly this guard that let a release ship with `novomodelo-python` as an
 extra, so a plain install failed `convert decomp` on any real deck. It also keeps
-the ruff CI installs on the version `uv.lock` pins. Tier-1: reads `pyproject.toml`,
-`uv.lock` and the CI workflow, never imports novomodelo.
+the workflows installing from `uv.lock`. Tier-1: reads `pyproject.toml`, `uv.lock` and
+the workflows, and never imports novomodelo.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
-from typing import Any
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
@@ -71,15 +70,6 @@ def _lock_novomodelo_python_requirement() -> dict[str, str] | None:
     return None
 
 
-def _lock_package(name: str) -> dict[str, Any] | None:
-    """The `[[package]]` entry for `name` in uv.lock, or None if absent."""
-    data = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
-    for package in data["package"]:
-        if package.get("name") == name:
-            return package
-    return None
-
-
 def test_uv_lock_novomodelo_python_is_a_core_dependency() -> None:
     """uv.lock must record novomodelo-python as a core requirement — not gated
     behind an `extra` — so `uv sync` installs it by default, matching
@@ -109,27 +99,21 @@ def test_uv_lock_novomodelo_python_is_pinned_exactly_to_min_novomodelo_version()
     )
 
 
-_CI_WORKFLOW = (
-    Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
-)
+_WORKFLOWS = Path(__file__).resolve().parent.parent / ".github" / "workflows"
 
 
-def _lock_package_version(name: str) -> str | None:
-    package = _lock_package(name)
-    return None if package is None else package.get("version")
-
-
-def test_ci_installs_the_ruff_version_uv_lock_pins() -> None:
-    """CI's lint job must install exactly the ruff uv.lock resolves, so a new
-    ruff release cannot turn CI red, or green on code the pre-commit hook
-    rejects, without a change in the repository."""
-    locked = _lock_package_version("ruff")
-    assert locked is not None, "ruff missing from uv.lock"
-    installs = re.findall(
-        r"pip install\s+[\"']?(ruff[^\s\"']*)",
-        _CI_WORKFLOW.read_text(encoding="utf-8"),
-    )
-    assert installs == [f"ruff=={locked}"], (
-        f"ci.yml must install ruff=={locked} (the uv.lock version) exactly once; "
-        f"found {installs}"
-    )
+def test_workflows_install_from_the_lock() -> None:
+    """CI and release run the tool versions uv.lock pins, so a new ruff or ty
+    release cannot turn a workflow red, or green on code the pre-commit hook
+    rejects, without a change in the repository: no `pip install`, and every
+    `uv sync` is `--locked`."""
+    workflows = [_WORKFLOWS / "ci.yml"]
+    for workflow in workflows:
+        text = workflow.read_text(encoding="utf-8")
+        assert not re.search(r"(?<!uv )pip install", text), (
+            f"{workflow.name} installs with pip; use `uv sync --locked`"
+        )
+        for command in re.findall(r"uv sync[^\n]*", text):
+            assert "--locked" in command, (
+                f"{workflow.name}: `{command.strip()}` must pass --locked"
+            )
