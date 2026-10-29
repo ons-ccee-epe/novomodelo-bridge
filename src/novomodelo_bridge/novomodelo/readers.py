@@ -30,6 +30,7 @@ import polars as pl
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.novomodelo.case_io import (
     case_dir_for,
     resolve_hydro_productivities,
@@ -226,7 +227,7 @@ def scan_simulation_entity(
 # ``hive_partitioning=True`` derives from the ``scenario_id=NNNN`` partition
 # directory name rather than storing it in the file itself. Shared by the
 # present-but-empty fallback frame and the docstring below.
-_HYDRO_BUS_GENERATION_SCHEMA: dict[str, pl.DataType] = {
+_HYDRO_BUS_GENERATION_SCHEMA: dict[str, type[pl.DataType]] = {
     "stage_id": pl.Int32,
     "block_id": pl.Int32,
     "hydro_id": pl.Int32,
@@ -436,22 +437,24 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
 
 
 #: Per-block hydro columns :func:`read_novomodelo_hydro_block_operation` returns.
-_HYDRO_BLOCK_COLUMNS: dict[str, type[pl.DataType]] = {
-    "scenario_id": pl.Int64,
-    "stage_id": pl.Int64,
-    "block_id": pl.Int64,
-    "hydro_id": pl.Int64,
-    "hours": pl.Float64,
-    "turbined_m3s": pl.Float64,
-    "spillage_m3s": pl.Float64,
-    "outflow_m3s": pl.Float64,
-    "incremental_inflow_m3s": pl.Float64,
-    "storage_initial_hm3": pl.Float64,
-    "storage_final_hm3": pl.Float64,
-    "generation_mw": pl.Float64,
-    "water_value_per_hm3": pl.Float64,
-    "accumulated_productivity_mw_per_m3s": pl.Float64,
-}
+_HYDRO_BLOCK_COLUMNS = pl.Schema(
+    {
+        "scenario_id": pl.Int64,
+        "stage_id": pl.Int64,
+        "block_id": pl.Int64,
+        "hydro_id": pl.Int64,
+        "hours": pl.Float64,
+        "turbined_m3s": pl.Float64,
+        "spillage_m3s": pl.Float64,
+        "outflow_m3s": pl.Float64,
+        "incremental_inflow_m3s": pl.Float64,
+        "storage_initial_hm3": pl.Float64,
+        "storage_final_hm3": pl.Float64,
+        "generation_mw": pl.Float64,
+        "water_value_per_hm3": pl.Float64,
+        "accumulated_productivity_mw_per_m3s": pl.Float64,
+    }
+)
 
 
 def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.DataFrame:
@@ -482,13 +485,15 @@ def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.Dat
 
 def read_novomodelo_bus_block_prices(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Novomodelo's spot price per (scenario, stage, block, bus); empty when absent."""
-    schema: dict[str, type[pl.DataType]] = {
-        "scenario_id": pl.Int64,
-        "stage_id": pl.Int64,
-        "block_id": pl.Int64,
-        "bus_id": pl.Int64,
-        "spot_price": pl.Float64,
-    }
+    schema = pl.Schema(
+        {
+            "scenario_id": pl.Int64,
+            "stage_id": pl.Int64,
+            "block_id": pl.Int64,
+            "bus_id": pl.Int64,
+            "spot_price": pl.Float64,
+        }
+    )
     lf = scan_simulation_entity(novomodelo_output_dir, "buses")
     if lf is None:
         return pl.DataFrame(schema=schema)
@@ -1036,7 +1041,7 @@ def read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir: Path) -> pl.Da
         "min_outflow_m3s",
         "min_generation_mw",
     ]
-    empty_schema: dict[str, pl.DataType] = {
+    empty_schema: dict[str, type[pl.DataType]] = {
         "entity_id": pl.Int64,
         "stage_id": pl.Int64,
     }
@@ -1067,7 +1072,7 @@ def read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir: Path) -> pl.Da
 #: ``_LINE_BOUNDS_SCHEMA``): one stage-level
 #: base row per (line, stage) with ``block_id`` null, plus per-block
 #: absolute-MW override rows.
-_LINE_BOUNDS_SCHEMA: dict[str, pl.DataType] = {
+_LINE_BOUNDS_SCHEMA: dict[str, type[pl.DataType]] = {
     "line_id": pl.Int32,
     "stage_id": pl.Int32,
     "block_id": pl.Int32,
@@ -2221,7 +2226,7 @@ def read_novomodelo_fpha_fit_config(novomodelo_output_dir: Path) -> pl.DataFrame
             models = json.load(f).get("production_models", [])
     except (OSError, json.JSONDecodeError) as exc:
         raise NovomodeloReadError(f"Failed to read {path}") from exc
-    last_stage = int(block_hours["stage_id"].max())  # type: ignore[arg-type]
+    last_stage = as_int(block_hours["stage_id"].max())
     season_stages = _stage_seasons(novomodelo_output_dir)
     rows: list[dict[str, object]] = []
     for model in models:
