@@ -52,14 +52,23 @@ def _spy_render_checklist(monkeypatch: pytest.MonkeyPatch) -> dict[str, Console]
 
     captured: dict[str, Console] = {}
 
-    def _spy(*args: object, **kwargs: object) -> None:
-        console = kwargs["console"]
-        diagnostics_console = kwargs["diagnostics_console"]
+    def _spy(
+        result: PreflightResult,
+        *,
+        console: Console | None = None,
+        diagnostics_console: Console | None = None,
+        quiet: bool = False,
+    ) -> None:
         assert isinstance(console, Console)
         assert isinstance(diagnostics_console, Console)
         captured["console"] = console
         captured["diagnostics_console"] = diagnostics_console
-        original(*args, **kwargs)
+        original(
+            result,
+            console=console,
+            diagnostics_console=diagnostics_console,
+            quiet=quiet,
+        )
 
     # `render_checklist` is patched on its DEFINING module (mock discipline):
     # the handler resolves the name off `cli.check`'s own module globals, so a
@@ -295,7 +304,7 @@ class TestCheckCommand:
         return exit_code, stdout_buf.getvalue(), stderr_buf.getvalue()
 
     @staticmethod
-    def _result(verdict: object) -> object:
+    def _result(verdict: PreflightVerdict) -> PreflightResult:
         """Build a small ``PreflightResult`` with the given verdict.
 
         Warnings carry one ``WARNING`` diagnostic so the JSON/headline paths see a
@@ -386,14 +395,18 @@ class TestCheckCommand:
         assert doc["status"] == "will-not-convert"
         # The checklist moves UNDER summary.
         assert "checks" not in doc
-        assert doc["summary"]["checks"] == [  # type: ignore[index]
+        summary_doc = doc["summary"]
+        assert isinstance(summary_doc, dict)
+        assert summary_doc["checks"] == [
             {
                 "label": "File discovery (caso.dat → arquivos.dat)",
                 "passed": False,
                 "detail": "caso.dat not found",
             }
         ]
-        assert doc["diagnostics"][0]["severity"] == "error"  # type: ignore[index]
+        diagnostics = doc["diagnostics"]
+        assert isinstance(diagnostics, list)
+        assert diagnostics[0]["severity"] == "error"
 
     def test_verdict_to_exit_code_mapping(self) -> None:
         """The 0/1/2 mapping is exactly OK/WARNINGS/WILL_NOT_CONVERT (2 = severe)."""

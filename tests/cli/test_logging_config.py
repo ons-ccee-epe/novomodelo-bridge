@@ -42,7 +42,7 @@ class TestVerbosityAndLogFile:
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
         if tty:
-            stderr_buf.isatty = lambda: True  # type: ignore[method-assign]
+            monkeypatch.setattr(stderr_buf, "isatty", lambda: True)
         exit_code = 0
 
         with patch("sys.stdout", stdout_buf), patch("sys.stderr", stderr_buf):
@@ -196,15 +196,15 @@ class TestVerbosityAndLogFile:
         Spies on ``ui.console._progress_enabled`` to assert it is consulted with
         ``verbose=False`` (progress NOT suppressed) and returns ``True``.
         """
-        from novomodelo_bridge import ui
         from novomodelo_bridge.core.conversion import ConversionReport
+        from novomodelo_bridge.ui import console as ui_console
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         log_path = tmp_path / "run.log"
         report = ConversionReport(hydro_count=1, stage_count=12)
 
-        real_progress_enabled = ui.console._progress_enabled
+        real_progress_enabled = ui_console._progress_enabled
         # Record (verbose-flag, gate-result) pairs as they happen during the run,
         # so the TTY-dependent result is captured inside the patched context.
         calls: list[tuple[bool, bool]] = []
@@ -219,7 +219,7 @@ class TestVerbosityAndLogFile:
                 "novomodelo_bridge.newave.pipeline.convert_newave_case",
                 return_value=report,
             ),
-            patch.object(ui.console, "_progress_enabled", _spy),
+            patch.object(ui_console, "_progress_enabled", _spy),
         ):
             code, _stdout, _stderr = self._invoke_main(
                 ["convert", "newave", str(src), str(dst), "--log-file", str(log_path)],
@@ -244,7 +244,7 @@ class TestVerbosityAndLogFile:
         """
         import importlib
 
-        from novomodelo_bridge import ui
+        from novomodelo_bridge.ui import console as ui_console
 
         cli = importlib.import_module("novomodelo_bridge.cli.app")
 
@@ -271,7 +271,7 @@ class TestVerbosityAndLogFile:
 
         with (
             patch.object(cli, "_configure_logging", _configure_spy),
-            patch.object(ui.console, "_progress_enabled", _progress_spy),
+            patch.object(ui_console, "_progress_enabled", _progress_spy),
         ):
             code, _stdout, _stderr = self._invoke_main(
                 ["dashboard", str(case_dir), "-vv"],

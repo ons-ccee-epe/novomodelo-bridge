@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from novomodelo_bridge.comparators.model import ResultComparison
 
 
 class TestCompareDatasetWiring:
@@ -42,7 +46,7 @@ class TestCompareDatasetWiring:
         return exit_code, stdout_buf.getvalue(), stderr_buf.getvalue()
 
     @staticmethod
-    def _results() -> object:
+    def _results() -> list[ResultComparison]:
         from novomodelo_bridge.comparators.model import ResultComparison
 
         return [
@@ -362,7 +366,7 @@ class TestCompareJson:
         return exit_code, stdout_buf.getvalue(), stderr_buf.getvalue()
 
     @staticmethod
-    def _results(*, within_tol: bool) -> object:
+    def _results(*, within_tol: bool) -> list[ResultComparison]:
         """Build result rows that are fully within tol (matched) or divergent.
 
         With ``within_tol`` the novomodelo value equals the newave value, so the

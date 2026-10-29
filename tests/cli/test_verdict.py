@@ -219,11 +219,11 @@ class TestDecompDatasetSummary:
 
         summary = decomp_dataset_summary(dataset, tolerance=1e-2)
 
-        assert summary["unmapped"] == {"hydro": [], "thermal": [86, 224], "bus": []}
+        unmapped = summary["unmapped"]
+        assert unmapped == {"hydro": [], "thermal": [86, 224], "bus": []}
+        assert isinstance(unmapped, dict)
         assert all(
-            isinstance(code, int)
-            for codes in summary["unmapped"].values()
-            for code in codes
+            isinstance(code, int) for codes in unmapped.values() for code in codes
         )
 
     def test_all_within_tol_dataset_reports_no_worst_clause(self) -> None:
