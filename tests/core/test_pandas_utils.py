@@ -6,7 +6,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int, is_na
+from novomodelo_bridge.core.pandas_utils import (
+    as_float,
+    as_frame,
+    as_frame_or_empty,
+    as_int,
+    is_na,
+)
 
 
 @pytest.mark.parametrize(
@@ -38,6 +44,12 @@ def test_as_frame_passes_a_frame_through() -> None:
 @pytest.mark.parametrize("value", [None, [1], "records"])
 def test_as_frame_is_none_for_anything_else(value: object) -> None:
     assert as_frame(value) is None
+
+
+def test_as_frame_or_empty_passes_a_frame_through_and_defaults_to_empty() -> None:
+    frame = pd.DataFrame({"a": [1]})
+    assert as_frame_or_empty(frame) is frame
+    assert as_frame_or_empty(None).empty
 
 
 def test_as_int_and_as_float_convert_cells() -> None:

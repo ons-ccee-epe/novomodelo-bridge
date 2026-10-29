@@ -37,6 +37,13 @@ def as_frame(accessor_result: object) -> pd.DataFrame | None:
     return accessor_result if isinstance(accessor_result, pd.DataFrame) else None
 
 
+def as_frame_or_empty(accessor_result: object) -> pd.DataFrame:
+    """:func:`as_frame` for a ``libs`` reader, whose ``df=True`` accessors yield an
+    empty frame (never ``None``) when the register is absent."""
+    frame = as_frame(accessor_result)
+    return pd.DataFrame() if frame is None else frame
+
+
 def as_int(value: object) -> int:
     """Convert a pandas/polars cell to ``int``.
 
