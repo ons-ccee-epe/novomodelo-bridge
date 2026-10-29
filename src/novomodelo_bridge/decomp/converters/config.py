@@ -86,8 +86,13 @@ def convert_config(case: DecompCase) -> dict:
     actually imported (see the module docstring).
     """
     dadger = case.dadger
-    ni = int(dadger.ni.iteracoes or 500)
-    gp = float(dadger.gp.data[0])
+    ni_register, gp_register = dadger.ni, dadger.gp
+    if ni_register is None or gp_register is None:
+        raise ValueError(
+            "the deck has no NI/GP records; cannot build the stopping rules"
+        )
+    ni = int(ni_register.iteracoes or 500)
+    gp = float(gp_register.data[0])
     _LOG.info(
         "emitting the deck's GP=%g as a relative Gap stopping rule "
         "(relative_tolerance, DECOMP's Zsup/Zinf-1 <= GP convergence); novomodelo "

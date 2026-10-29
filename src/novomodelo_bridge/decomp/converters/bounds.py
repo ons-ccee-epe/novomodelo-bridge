@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import floats_differ
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -98,11 +99,13 @@ def convert_hydro_bounds(
     unregulated_codes = unregulated_codes or set()
     calendar = case.calendar
     dadger = case.dadger
-    rq = dadger.rq(df=True)
+    rq = as_frame(dadger.rq(df=True))
     if rq is None or rq.empty:
         return []
 
-    uh = dadger.uh(df=True)
+    uh = as_frame(dadger.uh(df=True))
+    if uh is None:
+        return []
     operated = uh[uh["volume_inicial"].notna()]
     ree_by_code: dict[int, int] = {}
     uh_declared: dict[int, float] = {}
@@ -248,7 +251,7 @@ def convert_volume_espera_bounds(
     without a useful-volume reservoir.
     """
     calendar = case.calendar
-    ve = case.dadger.ve(df=True)
+    ve = as_frame(case.dadger.ve(df=True))
     if ve is None or ve.empty:
         return []
 
@@ -306,7 +309,7 @@ def convert_spillage_upper_bounds(
 
     One contribution per operated plant and stage, constant across the horizon.
     """
-    uh = case.dadger.uh(df=True)
+    uh = as_frame(case.dadger.uh(df=True))
     if uh is None or uh.empty or "limite_superior_vertimento" not in uh.columns:
         return []
 
@@ -375,7 +378,7 @@ def convert_irrigation_withdrawal(
     withdraws (so the pipeline leaves ``hydro_bounds`` unchanged).
     """
     calendar = case.calendar
-    ti = case.dadger.ti(df=True)
+    ti = as_frame(case.dadger.ti(df=True))
     if ti is None or ti.empty:
         return None
 

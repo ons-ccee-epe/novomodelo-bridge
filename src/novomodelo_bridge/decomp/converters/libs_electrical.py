@@ -69,6 +69,7 @@ import pandas as pd
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
 from novomodelo_bridge.decomp.converters.hydro import _ITAIPU_CODE, _rated_envelope
 from novomodelo_bridge.decomp.converters.ncs import pq_block_generation
@@ -223,12 +224,12 @@ def _df(source: Restricoes, attr: str) -> pd.DataFrame | None:
 
 def _opt_int(value: object) -> int | None:
     """A cell as ``int``, or ``None`` when blank (``NA``)."""
-    return None if pd.isna(value) else int(value)  # type: ignore[call-overload]
+    return None if pd.isna(value) else as_int(value)
 
 
 def _opt_float(value: object) -> float | None:
     """A cell as ``float``, or ``None`` when blank (``NA``)."""
-    return None if pd.isna(value) else float(value)  # type: ignore[arg-type]
+    return None if pd.isna(value) else as_float(value)
 
 
 def _opt_bound(value: object) -> float | None:
@@ -236,7 +237,7 @@ def _opt_bound(value: object) -> float | None:
     DECOMP's ``±1E+31`` unbounded sentinel."""
     if pd.isna(value):
         return None
-    parsed = float(value)  # type: ignore[arg-type]
+    parsed = as_float(value)
     return None if abs(parsed) >= _UNBOUNDED_SENTINEL else parsed
 
 
@@ -624,7 +625,7 @@ def read_carga_ande(
         index and both counts), or when the deck carries an ``RI`` row but
         none at estágio 1 (no inheritance base).
     """
-    ri = dadger.ri(df=True)
+    ri = as_frame(dadger.ri(df=True))
     if ri is None or ri.empty:
         return {}
 
@@ -2335,7 +2336,7 @@ def build_available_power(
             continue
         key = (code, stage_id)
         overlay_sums[key] = overlay_sums.get(key, 0.0) + float(
-            entry.max_generation_mw  # type: ignore[arg-type]
+            entry.max_generation_mw  # ty: ignore[invalid-argument-type] overlay entries are scalar
         )
 
     rated_envelope = {

@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ def read_travel_times(dadger: Dadger) -> dict[int, TravelTime]:
 
     Returns an empty map when the deck declares no ``VI`` register.
     """
-    vi = dadger.vi(df=True)
+    vi = as_frame(dadger.vi(df=True))
     if vi is None or vi.empty:
         return {}
     flow_columns = sorted(

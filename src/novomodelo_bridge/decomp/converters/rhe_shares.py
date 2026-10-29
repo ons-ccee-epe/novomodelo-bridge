@@ -32,6 +32,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.stored_energy import (
     StoredEnergyShare,
     cascade_share,
@@ -66,7 +67,7 @@ def read_ez_fractions(dadger: Dadger) -> dict[int, float]:
     Raises:
         ValueError: a record's percentage lies outside ``[0, 100]``.
     """
-    frame = dadger.ez(df=True)
+    frame = as_frame(dadger.ez(df=True))
     if frame is None or frame.empty:
         return {}
     fractions: dict[int, float] = {}

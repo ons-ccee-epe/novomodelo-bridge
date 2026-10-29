@@ -37,6 +37,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -98,7 +99,7 @@ def pq_block_generation(
     last declared one); stage 1 must be declared. Missing generation
     fields read as 0.0.
     """
-    pq = dadger.pq(df=True)
+    pq = as_frame(dadger.pq(df=True))
     if pq is None or pq.empty:
         return {}
 
@@ -387,7 +388,7 @@ def _sorted_pee_codes(
     ValueError
         When a row's ``estagio`` falls outside *calendar*.
     """
-    cad = renovaveis.pee_cad(df=True)
+    cad = as_frame(renovaveis.pee_cad(df=True))
     ger = _pee_generation_rows(renovaveis)
     if cad is None or cad.empty or ger is None:
         return []
@@ -442,8 +443,8 @@ def _pee_series(
     fills it uniformly, so its scenarios collapse to one value per (park,
     stage, block); ``PEE-GER-PER-PAT`` carries that value directly.
     """
-    cad = renovaveis.pee_cad(df=True)
-    subm = renovaveis.pee_subm(df=True)
+    cad = as_frame(renovaveis.pee_cad(df=True))
+    subm = as_frame(renovaveis.pee_subm(df=True))
     ger = _pee_generation_rows(renovaveis)
     if cad is None or cad.empty or ger is None:
         return []
@@ -456,9 +457,14 @@ def _pee_series(
     names = {
         int(r["codigo_pee"]): str(r["nome_pee"]).strip() for _, r in cad.iterrows()
     }
-    buses = {
-        int(r["codigo_pee"]): int(r["codigo_submercado"]) for _, r in subm.iterrows()
-    }
+    buses = (
+        {}
+        if subm is None
+        else {
+            int(r["codigo_pee"]): int(r["codigo_submercado"])
+            for _, r in subm.iterrows()
+        }
+    )
     curtailable = _pee_curtailment_by_code(renovaveis)
 
     values: dict[tuple[int, int, int], dict[int, float]] = {}

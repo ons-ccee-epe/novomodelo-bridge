@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
     curve per subsystem, 100 % depth, one cost uniform across blocks and
     across every declared stage.
     """
-    cd = dadger.cd(df=True)
+    cd = as_frame(dadger.cd(df=True))
     if cd is None or cd.empty:
         return {}
 
@@ -53,7 +54,7 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
 
     costs: dict[int, float] = {}
     for code, group in cd.groupby("codigo_submercado"):
-        code = int(code)
+        code = as_int(code)
         if group["codigo_curva"].nunique() != 1:
             raise ValueError(
                 f"subsystem {code}: multi-segment deficit curves are not "
@@ -132,7 +133,7 @@ def _ia_dense(
     Returns ``{(name_de, name_para): [{"de_para": [...], "para_de": [...]}
     per stage]}`` with declared stages forward-filled (stage 1 mandatory).
     """
-    ia = dadger.ia(df=True)
+    ia = as_frame(dadger.ia(df=True))
     if ia is None or ia.empty:
         return {}
 
@@ -324,7 +325,7 @@ def _itaipu_60hz_capacity_mw(dadger: Dadger) -> float:
     An absent register means "no limit", not zero -- the line must never
     bind the 60 Hz output.
     """
-    ri = dadger.ri(df=True)
+    ri = as_frame(dadger.ri(df=True))
     if ri is None or ri.empty:
         return _UNBOUNDED_LINE_CAPACITY_MW
     columns = [c for c in ri.columns if _GERACAO_MAXIMA_60HZ_COLUMN.match(c)]
@@ -422,7 +423,7 @@ def pumping_station_id_map(dadger: Dadger) -> dict[int, int]:
     ``pumping_station_ids`` argument), since the QBOM term's ``code`` is a
     pumping-station ``codigo_usina``, not a hydro one.
     """
-    ue = dadger.ue(df=True)
+    ue = as_frame(dadger.ue(df=True))
     if ue is None or ue.empty:
         return {}
     codes = sorted(int(c) for c in ue["codigo_usina"])
@@ -441,7 +442,7 @@ def convert_pumping_stations(
     assignment.
     """
     dadger = case.dadger
-    ue = dadger.ue(df=True)
+    ue = as_frame(dadger.ue(df=True))
     if ue is None or ue.empty:
         return {
             "$schema": novomodelo_schemas.schema_url_for(
