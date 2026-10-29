@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import pandas as pd
 import polars as pl
@@ -805,6 +806,514 @@ def _compare_system_spillage(
     return results
 
 
+@dataclass(frozen=True)
+class _EntityMetadata:
+    """Both sides' entity names plus Novomodelo's per-entity metadata."""
+
+    nw_hydro_names: dict[int, str]
+    nw_thermal_names: dict[int, str]
+    nw_bus_names: dict[int, str]
+    novomodelo_hydro_meta: dict[int, dict]
+    novomodelo_thermal_meta: dict[int, dict]
+    novomodelo_bus_meta: dict[int, dict]
+
+
+def _read_entity_metadata(
+    case: NewaveCase, novomodelo_output_dir: Path
+) -> _EntityMetadata:
+    """Read the source model's entity names and Novomodelo's entity metadata."""
+    from novomodelo_bridge.comparators.newave.alignment import read_reference_names
+    from novomodelo_bridge.novomodelo.readers import (
+        read_novomodelo_bus_metadata,
+        read_novomodelo_hydro_bus_labels,
+        read_novomodelo_hydro_metadata,
+        read_novomodelo_thermal_metadata,
+    )
+
+    nw_hydro_names, nw_thermal_names, nw_bus_names = read_reference_names(case)
+    novomodelo_hydro_meta = read_novomodelo_hydro_metadata(novomodelo_output_dir)
+    # ``read_novomodelo_hydro_metadata`` carries plant physics only;
+    # merge in the plant->bus *label* from the 0.13 hydro_bus_generation
+    # partition so ``dataset.metadata["novomodelo_hydro_meta"]`` -- the single
+    # channel report_builder.py already threads into the per-bus hydro chart
+    # helpers -- keeps carrying a bus label without those callers changing.
+    # A plant absent from the partition (e.g. it has no simulation output at
+    # all) simply gets no "bus_ids" key, matching the legacy "no bus" skip.
+    for hid, bus_ids in read_novomodelo_hydro_bus_labels(novomodelo_output_dir).items():
+        if hid in novomodelo_hydro_meta:
+            # Sorted list, not the reader's frozenset: this lands in the
+            # JSON-serialized metadata side-table, which rejects a frozenset.
+            novomodelo_hydro_meta[hid]["bus_ids"] = sorted(bus_ids)
+    return _EntityMetadata(
+        nw_hydro_names=nw_hydro_names,
+        nw_thermal_names=nw_thermal_names,
+        nw_bus_names=nw_bus_names,
+        novomodelo_hydro_meta=novomodelo_hydro_meta,
+        novomodelo_thermal_meta=read_novomodelo_thermal_metadata(novomodelo_output_dir),
+        novomodelo_bus_meta=read_novomodelo_bus_metadata(novomodelo_output_dir),
+    )
+
+
+def _with_realized_slack_flows(novomodelo_hydro: pl.DataFrame) -> pl.DataFrame:
+    """Fold the evaporation and withdrawal LP slacks into their realized flows."""
+    # Reconstruct *realized* evaporation and withdrawal flows from
+    # the LP slacks (Novomodelo's matrix.rs water-balance row uses
+    #    +ζ × pos_slack − ζ × neg_slack = ζ × (base − scheduled)
+    # so realized = scheduled + pos − neg).
+    # ``evaporation_m3s`` from the simulation parquet is already
+    # the LP-output (realized) flow — adding pos/neg slacks
+    # represents the same correction applied symmetrically on
+    # both sides so the comparison is apples-to-apples.
+    recon_cols = {
+        "evaporation_m3s": (
+            "evaporation_violation_pos_m3s",
+            "evaporation_violation_neg_m3s",
+        ),
+        "withdrawal_m3s": (
+            "water_withdrawal_violation_pos_m3s",
+            "water_withdrawal_violation_neg_m3s",
+        ),
+    }
+    adjustments: list[pl.Expr] = []
+    for base, (pos, neg) in recon_cols.items():
+        if (
+            base in novomodelo_hydro.columns
+            and pos in novomodelo_hydro.columns
+            and neg in novomodelo_hydro.columns
+        ):
+            adjustments.append(
+                (
+                    pl.col(base).fill_null(0.0)
+                    + pl.col(pos).fill_null(0.0)
+                    - pl.col(neg).fill_null(0.0)
+                ).alias(base)
+            )
+    if adjustments:
+        novomodelo_hydro = novomodelo_hydro.with_columns(adjustments)
+    return novomodelo_hydro
+
+
+def _novomodelo_hydro(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Novomodelo hydro means joined with the derived flows MEDIAS-USIH reports."""
+    from novomodelo_bridge.novomodelo.readers import (
+        read_novomodelo_hydro_means,
+        read_novomodelo_hydro_total_flows,
+        read_novomodelo_hydro_withdrawal,
+    )
+
+    novomodelo_hydro = read_novomodelo_hydro_means(novomodelo_output_dir)
+    if novomodelo_hydro.is_empty():
+        return novomodelo_hydro
+    # Merge derived per-(hydro, stage) quantities:
+    # - total_inflow_m3s (≡ QAFLUH): incremental + Σ upstream outflow
+    # - withdrawal_m3s (≡ VRETIRUH): input target from hydro_bounds
+    total_flows = read_novomodelo_hydro_total_flows(
+        novomodelo_output_dir, novomodelo_hydro
+    )
+    if not total_flows.is_empty():
+        novomodelo_hydro = novomodelo_hydro.join(
+            total_flows, on=["entity_id", "stage_id"], how="left"
+        )
+    withdrawal = read_novomodelo_hydro_withdrawal(novomodelo_output_dir)
+    if not withdrawal.is_empty():
+        novomodelo_hydro = novomodelo_hydro.join(
+            withdrawal, on=["entity_id", "stage_id"], how="left"
+        )
+    return _with_realized_slack_flows(novomodelo_hydro)
+
+
+def _nw_stage_range(nw_hydro: pl.DataFrame) -> tuple[int, int | None]:
+    """Return MEDIAS-USIH's study-start offset and its largest stage label.
+
+    ``(0, None)`` when MEDIAS-USIH is empty.
+    """
+    if nw_hydro.is_empty():
+        return 0, None
+    nw_offset = _nw_stage_offset(nw_hydro)
+    nw_max_stage_1based: int | None = None
+    stages_col = nw_hydro["stage"].drop_nulls()
+    if not stages_col.is_empty():
+        max_val = stages_col.max()
+        if max_val is not None:
+            nw_max_stage_1based = as_int(max_val)
+    return nw_offset, nw_max_stage_1based
+
+
+@dataclass(frozen=True)
+class _MediasComparison:
+    """The MEDIAS/nwlistop side of a run: its result rows, frames and stage range.
+
+    The defaults are the state without source-model result files: no rows,
+    empty frames, ``nw_offset = 0`` and no known last stage.
+    """
+
+    results: list[ResultComparison] = field(default_factory=list)
+    nw_hydro: pl.DataFrame = field(default_factory=pl.DataFrame)
+    novomodelo_hydro: pl.DataFrame = field(default_factory=pl.DataFrame)
+    nw_hydro_slacks: pl.DataFrame = field(default_factory=pl.DataFrame)
+    nw_intercambio: pl.DataFrame = field(default_factory=pl.DataFrame)
+    novomodelo_line: pl.DataFrame = field(default_factory=pl.DataFrame)
+    nw_offset: int = 0
+    nw_max_stage_1based: int | None = None
+
+    @property
+    def nw_max_stage_0based(self) -> int | None:
+        """The source model's last stage as a Novomodelo 0-based ``stage_id``."""
+        # ``nw_max_stage_1based`` is the largest stage label appearing in MEDIAS
+        # files; convert to Novomodelo's 0-based stage_id by subtracting the
+        # source model start-month offset.
+        if self.nw_max_stage_1based is None:
+            return None
+        return self.nw_max_stage_1based - self.nw_offset
+
+
+def _compare_medias(
+    source_dir: Path,
+    novomodelo_output_dir: Path,
+    entities: _EntityMetadata,
+    alignment: EntityAlignment,
+) -> _MediasComparison:
+    """Compare the MEDIAS hydro/thermal/bus means and the nwlistop interchange."""
+    from novomodelo_bridge.comparators.newave.readers import (
+        read_medias_hydro,
+        read_medias_system,
+        read_medias_thermal,
+        read_nwlistop_intercambio,
+    )
+    from novomodelo_bridge.novomodelo.readers import (
+        read_novomodelo_bus_means,
+        read_novomodelo_line_means,
+        read_novomodelo_lp_max_generation,
+        read_novomodelo_thermal_means,
+    )
+
+    results: list[ResultComparison] = []
+
+    nw_hydro = read_medias_hydro(source_dir)
+    novomodelo_hydro = _novomodelo_hydro(novomodelo_output_dir)
+    nw_offset, nw_max_stage_1based = _nw_stage_range(nw_hydro)
+    if not novomodelo_hydro.is_empty():
+        # Generation upper-bound overlay (the source model GHMAX_FPHC vs Novomodelo LP).
+        gen_max_overlay = _build_gen_max_overlay(
+            nw_hydro,
+            read_novomodelo_lp_max_generation(novomodelo_output_dir),
+            entities.nw_hydro_names,
+            entities.novomodelo_hydro_meta,
+            nw_offset,
+        )
+        if not gen_max_overlay.is_empty():
+            novomodelo_hydro = novomodelo_hydro.join(
+                gen_max_overlay, on=["entity_id", "stage_id"], how="left"
+            )
+    if not nw_hydro.is_empty() and not novomodelo_hydro.is_empty():
+        _LOG.info("Comparing hydro results...")
+        results.extend(
+            _compare_hydros(
+                nw_hydro,
+                novomodelo_hydro,
+                entities.nw_hydro_names,
+                entities.novomodelo_hydro_meta,
+            )
+        )
+    nw_hydro_slacks = _compute_nw_hydro_slacks(
+        nw_hydro, entities.nw_hydro_names, entities.novomodelo_hydro_meta
+    )
+
+    nw_thermal = read_medias_thermal(source_dir)
+    novomodelo_thermal = read_novomodelo_thermal_means(novomodelo_output_dir)
+    if not nw_thermal.is_empty() and not novomodelo_thermal.is_empty():
+        _LOG.info("Comparing thermal results...")
+        results.extend(
+            _compare_thermals(
+                nw_thermal,
+                novomodelo_thermal,
+                entities.nw_thermal_names,
+                entities.novomodelo_thermal_meta,
+            )
+        )
+
+    nw_system = read_medias_system(source_dir)
+    novomodelo_bus = read_novomodelo_bus_means(novomodelo_output_dir)
+    if not nw_system.is_empty() and not novomodelo_bus.is_empty():
+        _LOG.info("Comparing bus results...")
+        results.extend(
+            _compare_buses(
+                nw_system,
+                novomodelo_bus,
+                entities.nw_bus_names,
+                entities.novomodelo_bus_meta,
+            )
+        )
+
+    # nw_offset is the MEDIAS-derived study-start offset (e.g., 9 for a
+    # September-start study). int*.out files emit absolute the source model stages
+    # including pre-study calendar months with all-zero values, so we reuse this
+    # offset to filter them out and align the remainder with Novomodelo's 0-based
+    # stage_id.
+    nw_intercambio = read_nwlistop_intercambio(source_dir)
+    novomodelo_line = read_novomodelo_line_means(novomodelo_output_dir)
+    if not nw_intercambio.is_empty() and not novomodelo_line.is_empty():
+        _LOG.info("Comparing line interchange...")
+        results.extend(
+            _compare_lines(nw_intercambio, novomodelo_line, alignment, nw_offset)
+        )
+
+    return _MediasComparison(
+        results=results,
+        nw_hydro=nw_hydro,
+        novomodelo_hydro=novomodelo_hydro,
+        nw_hydro_slacks=nw_hydro_slacks,
+        nw_intercambio=nw_intercambio,
+        novomodelo_line=novomodelo_line,
+        nw_offset=nw_offset,
+        nw_max_stage_1based=nw_max_stage_1based,
+    )
+
+
+def _productivity_detail(
+    case: NewaveCase, alignment: EntityAlignment, novomodelo_output_dir: Path
+) -> pl.DataFrame:
+    """Build the Productivity tab's static conversion-fidelity table.
+
+    Per plant, the source model's pmo productivities vs the *static*
+    productivities novomodelo-bridge computes from the same HIDR cadastro +
+    cascade, plus the converted building blocks.
+    """
+    from novomodelo_bridge.comparators.analyze import build_productivity_detail
+    from novomodelo_bridge.comparators.newave.readers import (
+        read_pmo_productivity_detail,
+    )
+    from novomodelo_bridge.newave.converters.hydro import read_cadastro
+    from novomodelo_bridge.novomodelo.readers import (
+        read_novomodelo_productivity_detail,
+    )
+
+    _LOG.info("Building productivity detail...")
+    nw_prod_detail = read_pmo_productivity_detail(case.files.directory)
+    novomodelo_prod_detail = read_novomodelo_productivity_detail(novomodelo_output_dir)
+    cb_accumulated: dict[int, float] = {}
+    try:
+        nw_cadastro = read_cadastro(case)
+    except Exception:
+        _LOG.warning("Failed to read HIDR cadastro for productivity building blocks")
+        nw_cadastro = pd.DataFrame()
+    if not nw_cadastro.empty:
+        try:
+            from novomodelo_bridge.newave.converters.constraints import (
+                compute_accumulated_integrated_productivities,
+            )
+
+            confhd_df = case.confhd.usinas
+            cb_accumulated = compute_accumulated_integrated_productivities(
+                nw_cadastro, confhd_df, fictitious=case.fictitious_codes
+            )
+        except Exception:
+            _LOG.warning("Failed to compute accumulated productivities for the tab")
+    return build_productivity_detail(
+        alignment, nw_prod_detail, nw_cadastro, novomodelo_prod_detail, cb_accumulated
+    )
+
+
+def _clamp_to_stage(frame: pl.DataFrame, max_stage_0based: int | None) -> pl.DataFrame:
+    """Keep ``frame``'s rows up to the source model's last stage, when known.
+
+    The source model typically reports a shorter horizon than Novomodelo, so the
+    Novomodelo-side per-stage frames are cut to it to compare like-for-like.
+    """
+    if max_stage_0based is None or frame.is_empty():
+        return frame
+    return frame.filter(pl.col("stage_id") <= max_stage_0based)
+
+
+def _truncate_to_stage(
+    frame: pl.DataFrame, max_stage_0based: int | None
+) -> pl.DataFrame:
+    """:func:`_clamp_to_stage`, passing a frame without ``stage_id`` through."""
+    if "stage_id" not in frame.columns:
+        return frame
+    return _clamp_to_stage(frame, max_stage_0based)
+
+
+class _OverviewCostFields(TypedDict):
+    """The Overview tab's cost fields of
+    :class:`~novomodelo_bridge.comparators.model.PercentileData`."""
+
+    nw_costs: dict[str, float]
+    novomodelo_costs: dict[str, float]
+    novomodelo_stage_costs: pl.DataFrame
+
+
+def _overview_cost_fields(
+    newave_dir: Path, novomodelo_output_dir: Path, nw_max_stage_0based: int | None
+) -> _OverviewCostFields:
+    """Both models' cost breakdowns and Novomodelo's per-stage costs.
+
+    Novomodelo's cost sum and per-stage costs are restricted to the source
+    model's stage range so the totals compare like-for-like.
+    """
+    from novomodelo_bridge.comparators.newave.readers import read_pmo_cost_breakdown
+    from novomodelo_bridge.novomodelo.readers import (
+        read_novomodelo_cost_breakdown,
+        read_novomodelo_stage_costs,
+    )
+
+    _LOG.info(
+        "Reading cost breakdowns (NEWAVE max stage_0based=%s)...", nw_max_stage_0based
+    )
+    return {
+        "nw_costs": read_pmo_cost_breakdown(newave_dir),
+        "novomodelo_costs": read_novomodelo_cost_breakdown(
+            novomodelo_output_dir, max_stage_id=nw_max_stage_0based
+        ),
+        "novomodelo_stage_costs": _clamp_to_stage(
+            read_novomodelo_stage_costs(novomodelo_output_dir), nw_max_stage_0based
+        ),
+    }
+
+
+def _energy_balance_frames(
+    case: NewaveCase,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Return the Energy Balance tab's ``(nw_market, nw_net_load, nw_sin)`` frames.
+
+    ``nw_net_load`` is the source model's deterministic net load (load - NCS
+    from sistema.dat); the MEDIAS frames stay empty without result files.
+    """
+    from novomodelo_bridge.comparators.newave.readers import (
+        read_medias_market,
+        read_medias_sin,
+        read_newave_net_load,
+    )
+
+    source_dir = case.files.directory
+    nw_market = pl.DataFrame()
+    nw_sin = pl.DataFrame()
+    if source_dir.is_dir():
+        nw_market = read_medias_market(source_dir)
+        nw_sin = read_medias_sin(source_dir)
+    nw_net_load = read_newave_net_load(case.files)
+    return nw_market, nw_net_load, nw_sin
+
+
+def _line_bounds_and_meta(
+    novomodelo_output_dir: Path,
+) -> tuple[pl.DataFrame, list[dict]]:
+    """Novomodelo's per-stage line bounds and ``lines.json`` metadata.
+
+    A missing or unparseable ``lines.json`` degrades to an empty ``line_meta``.
+    """
+    from novomodelo_bridge.novomodelo.readers import read_novomodelo_line_bounds
+
+    line_bounds = read_novomodelo_line_bounds(novomodelo_output_dir)
+    lines_json_path = case_dir_for(novomodelo_output_dir) / "system" / "lines.json"
+    line_meta: list[dict] = []
+    if lines_json_path.exists():
+        try:
+            import json as _json
+
+            line_meta = _json.loads(lines_json_path.read_text(encoding="utf-8")).get(
+                "lines", []
+            )
+        except Exception:
+            _LOG.warning("Failed to read lines.json")
+    return line_bounds, line_meta
+
+
+class _PerformanceFields(TypedDict):
+    """The Performance tab's timing fields of
+    :class:`~novomodelo_bridge.comparators.model.PercentileData`."""
+
+    nw_tim_iterations: pl.DataFrame
+    nw_tim_stages: dict[str, float]
+    novomodelo_training_seconds: float
+    novomodelo_iteration_timing: pl.DataFrame
+
+
+def _performance_fields(
+    newave_dir: Path, novomodelo_output_dir: Path
+) -> _PerformanceFields:
+    """Both models' wall-clock timings, per iteration and per phase."""
+    from novomodelo_bridge.comparators.newave.readers import (
+        read_newave_tim_iterations,
+        read_newave_tim_stages,
+    )
+    from novomodelo_bridge.novomodelo.readers import (
+        read_novomodelo_iteration_timing,
+        read_novomodelo_training_duration,
+    )
+
+    return {
+        "nw_tim_iterations": read_newave_tim_iterations(newave_dir),
+        "nw_tim_stages": read_newave_tim_stages(newave_dir),
+        "novomodelo_training_seconds": read_novomodelo_training_duration(
+            novomodelo_output_dir
+        ),
+        "novomodelo_iteration_timing": read_novomodelo_iteration_timing(
+            novomodelo_output_dir
+        ),
+    }
+
+
+class _GenericConstraintFields(TypedDict):
+    """The Constraints tab's ``gc_*`` fields of
+    :class:`~novomodelo_bridge.comparators.model.PercentileData`."""
+
+    gc_constraints: list[dict]
+    gc_bounds: pl.DataFrame
+    gc_lhs_newave: pl.DataFrame
+    gc_lhs_novomodelo: pl.DataFrame
+
+
+def _generic_constraint_fields(
+    source_dir: Path,
+    novomodelo_output_dir: Path,
+    medias: _MediasComparison,
+    alignment: EntityAlignment,
+    id_map: NewaveIdMap,
+) -> _GenericConstraintFields:
+    """Both models' generic-constraint LHS (RE/AGRINT/VminOP) and their bounds.
+
+    The Novomodelo case directory is one level above the simulation output dir
+    (novomodelo_output_dir ends in ``output/``); the constraint definitions
+    live in the case's ``constraints/``, their resolved coefficients and bounds
+    in the run's ``generic_constraints/`` echo.
+    """
+    from novomodelo_bridge.comparators.constraints import (
+        evaluate_lhs_novomodelo,
+        load_resolved_generic_constraints,
+    )
+    from novomodelo_bridge.comparators.newave.constraints import evaluate_lhs_newave
+
+    novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
+    gc_resolved = load_resolved_generic_constraints(
+        novomodelo_case_dir, novomodelo_output_dir
+    )
+    gc_constraints = gc_resolved.constraints
+    if gc_constraints and source_dir.is_dir():
+        _LOG.info(
+            "Comparing %d generic constraints (RE/AGRINT/VminOP)...",
+            len(gc_constraints),
+        )
+        gc_lhs_nw = evaluate_lhs_newave(
+            gc_resolved,
+            medias.nw_hydro,
+            medias.nw_intercambio,
+            alignment,
+            id_map,
+            medias.nw_offset,
+        )
+        gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
+    else:
+        gc_lhs_nw = pl.DataFrame()
+        gc_lhs_cb = pl.DataFrame()
+    return {
+        "gc_constraints": gc_constraints,
+        "gc_bounds": gc_resolved.bounds,
+        "gc_lhs_newave": gc_lhs_nw,
+        "gc_lhs_novomodelo": gc_lhs_cb,
+    }
+
+
 def compare_results(
     case: NewaveCase,
     id_map: NewaveIdMap,
@@ -842,439 +1351,111 @@ def compare_results(
         Relative tolerance for results comparison (informational).
 
     """
-    from novomodelo_bridge.comparators.newave.alignment import read_reference_names
-    from novomodelo_bridge.comparators.newave.readers import (
-        read_medias_hydro,
-        read_medias_market,
-        read_medias_sin,
-        read_medias_system,
-        read_medias_thermal,
-        read_newave_net_load,
-        read_newave_tim_iterations,
-        read_newave_tim_stages,
-        read_nwlistop_intercambio,
-        read_pmo_convergence,
-        read_pmo_cost_breakdown,
-        read_pmo_productivity_detail,
+    from novomodelo_bridge.comparators.analyze import build_results_dataset
+    from novomodelo_bridge.comparators.newave.operating_points import (
+        compare_operating_points,
     )
-    from novomodelo_bridge.newave.converters.hydro import read_cadastro
+    from novomodelo_bridge.comparators.newave.readers import read_pmo_convergence
+    from novomodelo_bridge.comparators.operating_points import operating_point_fields
     from novomodelo_bridge.novomodelo.readers import (
         read_novomodelo_bus_aggregates,
-        read_novomodelo_bus_means,
-        read_novomodelo_bus_metadata,
         read_novomodelo_bus_percentiles,
         read_novomodelo_convergence,
-        read_novomodelo_cost_breakdown,
-        read_novomodelo_hydro_bus_labels,
-        read_novomodelo_hydro_means,
-        read_novomodelo_hydro_metadata,
         read_novomodelo_hydro_per_stage_bounds,
         read_novomodelo_hydro_percentiles,
-        read_novomodelo_hydro_total_flows,
-        read_novomodelo_hydro_withdrawal,
-        read_novomodelo_iteration_timing,
-        read_novomodelo_line_bounds,
-        read_novomodelo_line_means,
         read_novomodelo_line_percentiles,
-        read_novomodelo_lp_max_generation,
-        read_novomodelo_productivity_detail,
         read_novomodelo_spillage_energy,
-        read_novomodelo_stage_costs,
-        read_novomodelo_thermal_means,
-        read_novomodelo_thermal_metadata,
         read_novomodelo_thermal_percentiles,
-        read_novomodelo_training_duration,
     )
 
-    results: list[ResultComparison] = []
-
-    # Read entity names from both sides.
-    nw_hydro_names, nw_thermal_names, nw_bus_names = read_reference_names(case)
-    novomodelo_hydro_meta = read_novomodelo_hydro_metadata(novomodelo_output_dir)
-    # ``read_novomodelo_hydro_metadata`` carries plant physics only;
-    # merge in the plant->bus *label* from the 0.13 hydro_bus_generation
-    # partition so ``dataset.metadata["novomodelo_hydro_meta"]`` -- the single
-    # channel report_builder.py already threads into the per-bus hydro chart
-    # helpers -- keeps carrying a bus label without those callers changing.
-    # A plant absent from the partition (e.g. it has no simulation output at
-    # all) simply gets no "bus_ids" key, matching the legacy "no bus" skip.
-    for hid, bus_ids in read_novomodelo_hydro_bus_labels(novomodelo_output_dir).items():
-        if hid in novomodelo_hydro_meta:
-            # Sorted list, not the reader's frozenset: this lands in the
-            # JSON-serialized metadata side-table, which rejects a frozenset.
-            novomodelo_hydro_meta[hid]["bus_ids"] = sorted(bus_ids)
-    novomodelo_thermal_meta = read_novomodelo_thermal_metadata(novomodelo_output_dir)
-    novomodelo_bus_meta = read_novomodelo_bus_metadata(novomodelo_output_dir)
+    entities = _read_entity_metadata(case, novomodelo_output_dir)
 
     # The source-model result files (MEDIAS-*.CSV, nwlistop-*.out) live directly
     # in the case directory (no saidas/ subfolder).
     source_dir = case.files.directory
-
-    nw_offset = 0
-    nw_max_stage_1based: int | None = None
-    novomodelo_hydro = pl.DataFrame()
-    nw_hydro = pl.DataFrame()
-    nw_hydro_slacks = pl.DataFrame()
-
-    # --- Hydro comparison ---
     if source_dir.is_dir():
-        nw_hydro = read_medias_hydro(source_dir)
-        novomodelo_hydro = read_novomodelo_hydro_means(novomodelo_output_dir)
-        if not novomodelo_hydro.is_empty():
-            # Merge derived per-(hydro, stage) quantities:
-            # - total_inflow_m3s (≡ QAFLUH): incremental + Σ upstream outflow
-            # - withdrawal_m3s (≡ VRETIRUH): input target from hydro_bounds
-            total_flows = read_novomodelo_hydro_total_flows(
-                novomodelo_output_dir, novomodelo_hydro
-            )
-            if not total_flows.is_empty():
-                novomodelo_hydro = novomodelo_hydro.join(
-                    total_flows, on=["entity_id", "stage_id"], how="left"
-                )
-            withdrawal = read_novomodelo_hydro_withdrawal(novomodelo_output_dir)
-            if not withdrawal.is_empty():
-                novomodelo_hydro = novomodelo_hydro.join(
-                    withdrawal, on=["entity_id", "stage_id"], how="left"
-                )
-            # Reconstruct *realized* evaporation and withdrawal flows from
-            # the LP slacks (Novomodelo's matrix.rs water-balance row uses
-            #    +ζ × pos_slack − ζ × neg_slack = ζ × (base − scheduled)
-            # so realized = scheduled + pos − neg).
-            # ``evaporation_m3s`` from the simulation parquet is already
-            # the LP-output (realized) flow — adding pos/neg slacks
-            # represents the same correction applied symmetrically on
-            # both sides so the comparison is apples-to-apples.
-            recon_cols = {
-                "evaporation_m3s": (
-                    "evaporation_violation_pos_m3s",
-                    "evaporation_violation_neg_m3s",
-                ),
-                "withdrawal_m3s": (
-                    "water_withdrawal_violation_pos_m3s",
-                    "water_withdrawal_violation_neg_m3s",
-                ),
-            }
-            adjustments: list[pl.Expr] = []
-            for base, (pos, neg) in recon_cols.items():
-                if (
-                    base in novomodelo_hydro.columns
-                    and pos in novomodelo_hydro.columns
-                    and neg in novomodelo_hydro.columns
-                ):
-                    adjustments.append(
-                        (
-                            pl.col(base).fill_null(0.0)
-                            + pl.col(pos).fill_null(0.0)
-                            - pl.col(neg).fill_null(0.0)
-                        ).alias(base)
-                    )
-            if adjustments:
-                novomodelo_hydro = novomodelo_hydro.with_columns(adjustments)
-        if not nw_hydro.is_empty():
-            nw_offset = _nw_stage_offset(nw_hydro)
-            stages_col = nw_hydro["stage"].drop_nulls()
-            if not stages_col.is_empty():
-                max_val = stages_col.max()
-                if max_val is not None:
-                    nw_max_stage_1based = as_int(max_val)
-        if not novomodelo_hydro.is_empty():
-            # Generation upper-bound overlay (the source model GHMAX_FPHC vs Novomodelo LP).
-            gen_max_overlay = _build_gen_max_overlay(
-                nw_hydro,
-                read_novomodelo_lp_max_generation(novomodelo_output_dir),
-                nw_hydro_names,
-                novomodelo_hydro_meta,
-                nw_offset,
-            )
-            if not gen_max_overlay.is_empty():
-                novomodelo_hydro = novomodelo_hydro.join(
-                    gen_max_overlay, on=["entity_id", "stage_id"], how="left"
-                )
-        if not nw_hydro.is_empty() and not novomodelo_hydro.is_empty():
-            _LOG.info("Comparing hydro results...")
-            results.extend(
-                _compare_hydros(
-                    nw_hydro, novomodelo_hydro, nw_hydro_names, novomodelo_hydro_meta
-                )
-            )
-        nw_hydro_slacks = _compute_nw_hydro_slacks(
-            nw_hydro, nw_hydro_names, novomodelo_hydro_meta
-        )
-
-        # --- Thermal comparison ---
-        nw_thermal = read_medias_thermal(source_dir)
-        novomodelo_thermal = read_novomodelo_thermal_means(novomodelo_output_dir)
-        if not nw_thermal.is_empty() and not novomodelo_thermal.is_empty():
-            _LOG.info("Comparing thermal results...")
-            results.extend(
-                _compare_thermals(
-                    nw_thermal,
-                    novomodelo_thermal,
-                    nw_thermal_names,
-                    novomodelo_thermal_meta,
-                )
-            )
-
-        # --- Bus/system comparison ---
-        nw_system = read_medias_system(source_dir)
-        novomodelo_bus = read_novomodelo_bus_means(novomodelo_output_dir)
-        if not nw_system.is_empty() and not novomodelo_bus.is_empty():
-            _LOG.info("Comparing bus results...")
-            results.extend(
-                _compare_buses(
-                    nw_system, novomodelo_bus, nw_bus_names, novomodelo_bus_meta
-                )
-            )
-
-        # --- Line interchange comparison (NWLISTOP int*.out) --- nw_offset is the
-        # MEDIAS-derived study-start offset (e.g., 9 for a September-start study).
-        # int*.out files emit absolute the source model stages including pre-study
-        # calendar months with all-zero values, so we reuse this offset to filter them
-        # out and align the remainder with Novomodelo's 0-based stage_id.
-        nw_intercambio = read_nwlistop_intercambio(source_dir)
-        novomodelo_line = read_novomodelo_line_means(novomodelo_output_dir)
-        if not nw_intercambio.is_empty() and not novomodelo_line.is_empty():
-            _LOG.info("Comparing line interchange...")
-            results.extend(
-                _compare_lines(nw_intercambio, novomodelo_line, alignment, nw_offset)
-            )
+        medias = _compare_medias(source_dir, novomodelo_output_dir, entities, alignment)
     else:
         _LOG.warning(
             "NEWAVE source result files not found in the case directory; "
             "skipping MEDIAS comparison."
         )
-        nw_intercambio = pl.DataFrame()
-        novomodelo_line = pl.DataFrame()
+        medias = _MediasComparison()
+    results = list(medias.results)
 
-    # --- Convergence comparison ---
     nw_conv = read_pmo_convergence(case.files.directory)
     novomodelo_conv = read_novomodelo_convergence(novomodelo_output_dir)
     if not nw_conv.is_empty() and not novomodelo_conv.is_empty():
         _LOG.info("Comparing convergence data...")
         results.extend(_compare_convergence(nw_conv, novomodelo_conv))
 
-    # --- Productivity detail (static conversion-fidelity check) --- Per-plant the
-    # source model pmo productivities vs the *static* productivities novomodelo-bridge
-    # computes from the same HIDR cadastro + cascade, plus the converted building blocks
-    # — assembled for the Productivity tab.
-    _LOG.info("Building productivity detail...")
-    nw_prod_detail = read_pmo_productivity_detail(case.files.directory)
-    novomodelo_prod_detail = read_novomodelo_productivity_detail(novomodelo_output_dir)
-    cb_accumulated: dict[int, float] = {}
-    try:
-        nw_cadastro = read_cadastro(case)
-    except Exception:
-        _LOG.warning("Failed to read HIDR cadastro for productivity building blocks")
-        nw_cadastro = pd.DataFrame()
-    if not nw_cadastro.empty:
-        try:
-            from novomodelo_bridge.newave.converters.constraints import (
-                compute_accumulated_integrated_productivities,
-            )
-
-            confhd_df = case.confhd.usinas
-            cb_accumulated = compute_accumulated_integrated_productivities(
-                nw_cadastro, confhd_df, fictitious=case.fictitious_codes
-            )
-        except Exception:
-            _LOG.warning("Failed to compute accumulated productivities for the tab")
-    from novomodelo_bridge.comparators.analyze import build_productivity_detail
-
-    productivity_detail = build_productivity_detail(
-        alignment, nw_prod_detail, nw_cadastro, novomodelo_prod_detail, cb_accumulated
-    )
-
-    # --- Productivity tab: both models' FPHA and their operating points.
-    from novomodelo_bridge.comparators.newave.operating_points import (
-        compare_operating_points,
-    )
-    from novomodelo_bridge.comparators.operating_points import operating_point_fields
-
+    productivity_detail = _productivity_detail(case, alignment, novomodelo_output_dir)
     operating_points = compare_operating_points(case, alignment, novomodelo_output_dir)
 
-    # --- Cost breakdown --- The source model typically runs a shorter horizon than
-    # Novomodelo.  Restrict Novomodelo's cost sum to the source model's stage range so the totals
-    # compare like- for-like.  ``nw_max_stage_1based`` is the largest stage label
-    # appearing in MEDIAS files; convert to Novomodelo's 0-based stage_id by subtracting the
-    # source model start-month offset.
-    nw_max_stage_0based: int | None = None
-    if nw_max_stage_1based is not None:
-        nw_max_stage_0based = nw_max_stage_1based - nw_offset
-
-    _LOG.info(
-        "Reading cost breakdowns (NEWAVE max stage_0based=%s)...", nw_max_stage_0based
+    max_stage = medias.nw_max_stage_0based
+    cost_fields = _overview_cost_fields(
+        case.files.directory, novomodelo_output_dir, max_stage
     )
-    nw_costs = read_pmo_cost_breakdown(case.files.directory)
-    novomodelo_costs = read_novomodelo_cost_breakdown(
-        novomodelo_output_dir, max_stage_id=nw_max_stage_0based
+    novomodelo_hydro_per_stage_bounds = _clamp_to_stage(
+        read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir), max_stage
     )
-    novomodelo_stage_costs = read_novomodelo_stage_costs(novomodelo_output_dir)
-    if nw_max_stage_0based is not None and not novomodelo_stage_costs.is_empty():
-        novomodelo_stage_costs = novomodelo_stage_costs.filter(
-            pl.col("stage_id") <= nw_max_stage_0based
-        )
+    nw_hydro_slacks = _clamp_to_stage(medias.nw_hydro_slacks, max_stage)
 
-    novomodelo_hydro_per_stage_bounds = read_novomodelo_hydro_per_stage_bounds(
-        novomodelo_output_dir
-    )
-    if (
-        nw_max_stage_0based is not None
-        and not novomodelo_hydro_per_stage_bounds.is_empty()
-    ):
-        novomodelo_hydro_per_stage_bounds = novomodelo_hydro_per_stage_bounds.filter(
-            pl.col("stage_id") <= nw_max_stage_0based
-        )
-    if nw_max_stage_0based is not None and not nw_hydro_slacks.is_empty():
-        nw_hydro_slacks = nw_hydro_slacks.filter(
-            pl.col("stage_id") <= nw_max_stage_0based
-        )
-
-    # --- Bus-level energy balance ---
     _LOG.info("Computing bus-level aggregates...")
     bus_aggregates = read_novomodelo_bus_aggregates(novomodelo_output_dir)
-    nw_market = pl.DataFrame()
-    nw_sin = pl.DataFrame()
-    if source_dir.is_dir():
-        nw_market = read_medias_market(source_dir)
-        nw_sin = read_medias_sin(source_dir)
+    nw_market, nw_net_load, nw_sin = _energy_balance_frames(case)
 
-    # --- the source model deterministic net load (load - NCS from sistema.dat) ---
-    nw_net_load = read_newave_net_load(case.files)
-
-    # --- Percentile statistics ---
     _LOG.info("Computing Novomodelo percentile statistics...")
     hydro_pct = read_novomodelo_hydro_percentiles(novomodelo_output_dir)
     thermal_pct = read_novomodelo_thermal_percentiles(novomodelo_output_dir)
     bus_pct = read_novomodelo_bus_percentiles(novomodelo_output_dir)
     line_pct = read_novomodelo_line_percentiles(novomodelo_output_dir)
+    line_bounds, line_meta = _line_bounds_and_meta(novomodelo_output_dir)
 
-    # --- Line bounds (per stage) and line metadata for the Network tab ---
-    line_bounds = read_novomodelo_line_bounds(novomodelo_output_dir)
-    lines_json_path = case_dir_for(novomodelo_output_dir) / "system" / "lines.json"
-    line_meta: list[dict] = []
-    if lines_json_path.exists():
-        try:
-            import json as _json
-
-            line_meta = _json.loads(lines_json_path.read_text(encoding="utf-8")).get(
-                "lines", []
-            )
-        except Exception:
-            _LOG.warning("Failed to read lines.json")
-
-    # The source model typically reports a shorter horizon than Novomodelo.  Truncate all
-    # Novomodelo-side per-stage DataFrames to the source model's max stage so the report's
-    # charts compare like-for-like across tabs (energy balance, hydro operation, plant
-    # details, etc.).  Truncation is a no-op when the source model stage data was
-    # unavailable.
-    if nw_max_stage_0based is not None:
-
-        def _truncate(df: pl.DataFrame) -> pl.DataFrame:
-            if df.is_empty() or "stage_id" not in df.columns:
-                return df
-            return df.filter(pl.col("stage_id") <= nw_max_stage_0based)
-
-        novomodelo_hydro = _truncate(novomodelo_hydro)
-        hydro_pct = _truncate(hydro_pct)
-        thermal_pct = _truncate(thermal_pct)
-        bus_pct = _truncate(bus_pct)
-        bus_aggregates = _truncate(bus_aggregates)
-        line_pct = _truncate(line_pct)
-        novomodelo_line = _truncate(novomodelo_line)
-
-    # --- Performance timings ---
-    nw_tim_iters = read_newave_tim_iterations(case.files.directory)
-    nw_tim_stages = read_newave_tim_stages(case.files.directory)
-    novomodelo_training_seconds = read_novomodelo_training_duration(
-        novomodelo_output_dir
+    performance_fields = _performance_fields(
+        case.files.directory, novomodelo_output_dir
     )
-    novomodelo_iter_timing = read_novomodelo_iteration_timing(novomodelo_output_dir)
-
-    # --- Generic constraints LHS comparison (RE / AGRINT / VminOP) ---
-    # The Novomodelo case directory is one level above the simulation output dir
-    # (novomodelo_output_dir ends in ``output/``); the constraint definitions live in
-    # the case's ``constraints/``, their resolved coefficients and bounds in
-    # the run's ``generic_constraints/`` echo.
-    from novomodelo_bridge.comparators.constraints import (
-        evaluate_lhs_novomodelo,
-        load_resolved_generic_constraints,
+    constraint_fields = _generic_constraint_fields(
+        source_dir, novomodelo_output_dir, medias, alignment, id_map
     )
-    from novomodelo_bridge.comparators.newave.constraints import evaluate_lhs_newave
 
-    novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
-    gc_resolved = load_resolved_generic_constraints(
-        novomodelo_case_dir, novomodelo_output_dir
+    novomodelo_spill_energy = _clamp_to_stage(
+        read_novomodelo_spillage_energy(novomodelo_output_dir), max_stage
     )
-    gc_constraints = gc_resolved.constraints
-    gc_bounds_df = gc_resolved.bounds
-    if gc_constraints and source_dir.is_dir():
-        _LOG.info(
-            "Comparing %d generic constraints (RE/AGRINT/VminOP)...",
-            len(gc_constraints),
-        )
-        gc_lhs_nw = evaluate_lhs_newave(
-            gc_resolved,
-            nw_hydro,
-            nw_intercambio,
-            alignment,
-            id_map,
-            nw_offset,
-        )
-        gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
-    else:
-        gc_lhs_nw = pl.DataFrame()
-        gc_lhs_cb = pl.DataFrame()
-
-    # --- System spillage in MWmes ---
-    novomodelo_spill_energy = read_novomodelo_spillage_energy(novomodelo_output_dir)
-    if nw_max_stage_0based is not None and not novomodelo_spill_energy.is_empty():
-        novomodelo_spill_energy = novomodelo_spill_energy.filter(
-            pl.col("stage_id") <= nw_max_stage_0based
-        )
     if not nw_sin.is_empty() and not novomodelo_spill_energy.is_empty():
         _LOG.info("Comparing system spillage energy...")
         results.extend(_compare_system_spillage(nw_sin, novomodelo_spill_energy))
 
     pctiles = PercentileData(
-        hydro=hydro_pct,
-        thermal=thermal_pct,
-        bus=bus_pct,
-        bus_aggregates=bus_aggregates,
+        hydro=_truncate_to_stage(hydro_pct, max_stage),
+        thermal=_truncate_to_stage(thermal_pct, max_stage),
+        bus=_truncate_to_stage(bus_pct, max_stage),
+        bus_aggregates=_truncate_to_stage(bus_aggregates, max_stage),
         nw_convergence=nw_conv,
         novomodelo_convergence=novomodelo_conv,
         nw_market=nw_market,
         nw_net_load=nw_net_load,
         nw_sin=nw_sin,
-        novomodelo_hydro_means=novomodelo_hydro,
-        novomodelo_bus_meta=novomodelo_bus_meta,
-        novomodelo_hydro_meta=novomodelo_hydro_meta,
-        nw_bus_names=nw_bus_names,
-        nw_hydro_names=nw_hydro_names,
-        nw_costs=nw_costs,
-        novomodelo_costs=novomodelo_costs,
-        novomodelo_stage_costs=novomodelo_stage_costs,
+        novomodelo_hydro_means=_truncate_to_stage(medias.novomodelo_hydro, max_stage),
+        novomodelo_bus_meta=entities.novomodelo_bus_meta,
+        novomodelo_hydro_meta=entities.novomodelo_hydro_meta,
+        nw_bus_names=entities.nw_bus_names,
+        nw_hydro_names=entities.nw_hydro_names,
+        **cost_fields,
         novomodelo_hydro_per_stage_bounds=novomodelo_hydro_per_stage_bounds,
         nw_hydro_slacks=nw_hydro_slacks,
-        nw_offset=nw_offset,
-        nw_max_stage=nw_max_stage_0based,
+        nw_offset=medias.nw_offset,
+        nw_max_stage=max_stage,
         novomodelo_spillage_energy=novomodelo_spill_energy,
-        line=line_pct,
+        line=_truncate_to_stage(line_pct, max_stage),
         line_bounds=line_bounds,
         line_meta=line_meta,
-        nw_line_means=nw_intercambio,
-        nw_tim_iterations=nw_tim_iters,
-        nw_tim_stages=nw_tim_stages,
-        novomodelo_training_seconds=novomodelo_training_seconds,
-        novomodelo_iteration_timing=novomodelo_iter_timing,
-        gc_constraints=gc_constraints,
-        gc_bounds=gc_bounds_df,
-        gc_lhs_newave=gc_lhs_nw,
-        gc_lhs_novomodelo=gc_lhs_cb,
+        nw_line_means=medias.nw_intercambio,
+        **performance_fields,
+        **constraint_fields,
         productivity_detail=productivity_detail,
         **operating_point_fields(operating_points),
     )
 
     _LOG.info("Results comparison: %d total comparisons", len(results))
-    from novomodelo_bridge.comparators.analyze import build_results_dataset
-
     return build_results_dataset(results, pctiles, tolerance)
