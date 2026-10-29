@@ -9,15 +9,16 @@ Three HARD scopes (any non-empty ⇒ exit 1):
 
 * shipped docs — whole-file scan of README.md, CONTRIBUTING.md, CHANGELOG.md,
   docs/**/*.md.
-* src/ prose — comments + docstrings under src/. The pre-existing debt was
-  burned down to zero, so this scope is now enforced rather than advisory; a
-  new ``ticket-NNN``/``epic-NN`` in shipped source fails the build. On failure
-  the src hits are grouped by file so the offender is obvious.
-* tests/ prose — comments + docstrings under tests/, same rule and burndown.
+* src/ prose — comments + docstrings under src/. On failure the hits are
+  grouped by file so the offender is obvious.
+* tests/ prose — comments + docstrings under tests/ and e2e/, same rule.
   Test *file names* and *test-function names* are never scanned (only comments
   and docstrings are), and identifiers join plan ids with ``_`` (a word
   character), so ``test_ticket_016_regression`` never matches while the prose
   "ticket 016" in a comment or docstring does.
+
+Prose in these repositories is English or Portuguese, so the Portuguese plan
+word (``épico``) is matched next to the English ones.
 
 ``--all`` prints every src hit (for triage); otherwise the top offender files.
 
@@ -30,10 +31,10 @@ import re
 import sys
 from collections import Counter
 
-from _scan import REPO_ROOT, SRC_ROOT, TESTS_ROOT, iter_prose, iter_py_files, rel
+from _scan import REPO_ROOT, SRC_ROOT, TEST_ROOTS, iter_prose, iter_py_files, rel
 
 PATTERN = re.compile(
-    r"\b[Ee]pics?\b|\b[Tt]ickets?\b|\b[Ss]prints?\b|\bT0[0-9][0-9]\b"
+    r"\b[Ee]pics?\b|\b[ÉéEe]picos?\b|\b[Tt]ickets?\b|\b[Ss]prints?\b|\bT0[0-9][0-9]\b"
     r"|\bAC: |\bAC-[0-9]\b|\b[Dd]ecision [A-Z][0-9]+\b"
     # Roadmap finding-ids (audit registry lives under the gitignored plans/):
     # CONV-08, CMP-06, CLI-12, TST-04, GHA-2, ... a pip reader cannot resolve them.
@@ -90,7 +91,7 @@ def main() -> int:
 
     docs = doc_scope_hits()
     src = prose_scope_hits(SRC_ROOT)
-    tests = prose_scope_hits(TESTS_ROOT)
+    tests = [hit for root in TEST_ROOTS for hit in prose_scope_hits(root)]
 
     if docs or src or tests:
         print("FAIL: plan-structure leaks in shipped artifacts.")
@@ -101,12 +102,12 @@ def main() -> int:
         if src:
             _print_prose_scope("src/ prose", src, show_all=show_all)
         if tests:
-            _print_prose_scope("tests/ prose", tests, show_all=show_all)
+            _print_prose_scope("tests/ and e2e/ prose", tests, show_all=show_all)
         print()
         print("See .claude/rules/comments.md N4 / .claude/rules/doc-integrity.md §5.")
         return 1
 
-    print("OK: no plan-structure leaks in shipped docs, src/, or tests/.")
+    print("OK: no plan-structure leaks in shipped docs, src/, tests/, or e2e/.")
     return 0
 
 
