@@ -24,3 +24,28 @@ def is_na(value: object) -> bool:
         return bool(pd.isna(value))
     except (TypeError, ValueError):
         return False
+
+
+def as_frame(accessor_result: object) -> pd.DataFrame | None:
+    """Narrow a ``df=True`` accessor result to the frame it actually is.
+
+    ``inewave``/``idecomp`` annotate those accessors as ``Record | list[Record] |
+    DataFrame | None`` for every ``df`` value, so a bare result fails type
+    narrowing; with ``df=True`` they return a frame, or ``None`` when the
+    register is absent.
+    """
+    return accessor_result if isinstance(accessor_result, pd.DataFrame) else None
+
+
+def as_int(value: object) -> int:
+    """Convert a pandas/polars cell to ``int``.
+
+    Cells and group keys are typed as a scalar union (or ``Hashable``) that
+    ``int()`` rejects statically; an unconvertible value still raises as ``int()`` does.
+    """
+    return int(value)  # ty: ignore[invalid-argument-type] cell typed as a scalar union
+
+
+def as_float(value: object) -> float:
+    """Convert a pandas/polars cell to ``float`` (see :func:`as_int`)."""
+    return float(value)  # ty: ignore[invalid-argument-type] cell typed as a scalar union
