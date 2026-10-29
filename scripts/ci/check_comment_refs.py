@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """check_comment_refs.py — un-rottable-reference gate for shipped prose.
 
-Enforces `.claude/rules/comments.md` N3: a comment or docstring in src/ or
-tests/ must reference only things that cannot rot for a reader — a symbol, a
+Enforces `.claude/rules/comments.md` N3: a comment or docstring in src/,
+tests/ or e2e/ must reference only things that cannot rot for a reader — a symbol, a
 named test, or a stable external anchor (a page of the novomodelo docs site, a
 schema name, a published reference manual `§`). Everything below rots.
 
@@ -19,11 +19,11 @@ HARD (exit 1):
     symbol or the docs page instead,
   * design-doc section refs (``design §5``): those docs live in gitignored
     ``plans/`` — inline the durable content,
-  * a repo-relative ``src/<package>/...`` or ``tests/...`` ``.py`` path that
+  * a repo-relative ``src/<package>/...``, ``tests/...`` or ``e2e/...`` ``.py`` path that
     no longer resolves — a sibling-test / module pointer that rotted when the
     file moved. Repoint it to the live path or (better) name the symbol/test.
 
-Scanned scopes: src/ and tests/ prose (comments + docstrings). Test *file
+Scanned scopes: src/, tests/ and e2e/ prose (comments + docstrings). Test *file
 names* and *function names* are never scanned — only comments and docstrings.
 
 Exit codes: 0 = no violations; 1 = violations (details printed).
@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 import sys
 
-from _scan import REPO_ROOT, SRC_ROOT, TESTS_ROOT, iter_prose, iter_py_files, rel
+from _scan import REPO_ROOT, SRC_ROOT, TEST_ROOTS, iter_prose, iter_py_files, rel
 
 HARD_PATTERNS = [
     # Source-file line references drift on every edit above the line — this
@@ -62,11 +62,11 @@ HARD_PATTERNS = [
 # ``.py`` (``:`` and ``::`` are not in the class), so a ``…py::symbol`` or
 # ``…py:NNN`` suffix is dropped before the existence check.
 _SRC_PREFIX = re.escape(rel(SRC_ROOT))
-_REPO_PY_PATH = re.compile(rf"\b(?:{_SRC_PREFIX}|tests)/[\w./-]+\.py\b")
+_REPO_PY_PATH = re.compile(rf"\b(?:{_SRC_PREFIX}|tests|e2e)/[\w./-]+\.py\b")
 
 
 def _stale_path_hits(line: str, where: str) -> list[str]:
-    """Flag cited src/tests .py paths that no longer resolve against the tree."""
+    """Flag cited src/, tests/ or e2e/ .py paths that no longer resolve against the tree."""
     hits: list[str] = []
     for path in _REPO_PY_PATH.findall(line):
         if not (REPO_ROOT / path).exists():
@@ -76,7 +76,7 @@ def _stale_path_hits(line: str, where: str) -> list[str]:
 
 def main() -> int:
     hard: list[str] = []
-    for root in (SRC_ROOT, TESTS_ROOT):
+    for root in (SRC_ROOT, *TEST_ROOTS):
         for path in iter_py_files(root):
             for lineno, text in iter_prose(path):
                 for offset, line in enumerate(text.splitlines()):
@@ -87,7 +87,7 @@ def main() -> int:
                     hard.extend(_stale_path_hits(line, where))
 
     if hard:
-        print("FAIL: un-rottable-reference violations in src/ or tests/ prose.")
+        print("FAIL: un-rottable-reference violations in src/, tests/ or e2e/ prose.")
         print()
         print("\n".join(hard))
         print()
@@ -98,7 +98,7 @@ def main() -> int:
         )
         return 1
 
-    print("OK: no hard rot-ref violations in src/ or tests/ prose.")
+    print("OK: no hard rot-ref violations in src/, tests/ or e2e/ prose.")
     return 0
 
 

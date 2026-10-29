@@ -18,7 +18,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TESTS_ROOT = REPO_ROOT / "tests"
+# Test code: tests/, and the e2e/ workspace member where a repository has one.
+TEST_ROOTS = (REPO_ROOT / "tests", REPO_ROOT / "e2e")
 
 _Documented = ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
 
