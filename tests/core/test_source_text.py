@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from novomodelo_bridge.core.diagnostics import Severity
@@ -16,7 +17,9 @@ def _write(path: Path, text: str) -> Path:
     return path
 
 
-def _rows(paths: list[Path], *, comment_prefix: str | None = None) -> list[list[str]]:
+def _rows(
+    paths: list[Path], *, comment_prefix: str | None = None
+) -> Sequence[Sequence[object]]:
     diagnostic = tab_character_diagnostic(paths, comment_prefix=comment_prefix)
     assert diagnostic is not None and diagnostic.table is not None
     return diagnostic.table.rows

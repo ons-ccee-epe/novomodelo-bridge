@@ -162,7 +162,7 @@ def check_hydro_bounds_no_raising(
         else []
     )
 
-    if not columns:
+    if hydro_bounds is None or not columns:
         emit(
             Diagnostic(
                 code="hydro-bounds-raising-not-applicable",

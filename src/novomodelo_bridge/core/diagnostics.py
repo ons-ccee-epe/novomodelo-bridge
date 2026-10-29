@@ -20,7 +20,7 @@ standalone use and existing log-based tests keep working unchanged.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -71,7 +71,7 @@ class DiagnosticTable:
     """
 
     columns: list[str]
-    rows: list[list[object]]
+    rows: Sequence[Sequence[object]]
     justify: list[str] | None = None
     caption: str | None = None
 
@@ -145,7 +145,7 @@ _ACTIVE: ContextVar[list[Diagnostic] | None] = ContextVar(
 
 
 @contextmanager
-def collect() -> Iterator[list[Diagnostic]]:
+def collect() -> Generator[list[Diagnostic]]:
     """Install a fresh diagnostic sink for the duration of the ``with`` block.
 
     Yields the list that :func:`emit` appends to; the caller keeps the reference, so

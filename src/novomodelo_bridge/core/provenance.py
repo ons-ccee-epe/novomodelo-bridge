@@ -16,9 +16,9 @@ import hashlib
 import json
 import os
 from collections import Counter
-from dataclasses import asdict, fields
+from dataclasses import Field, asdict, fields
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 if TYPE_CHECKING:
     from novomodelo_bridge.core.diagnostics import Diagnostic
@@ -37,6 +37,7 @@ class ProvenanceManifest:
     """
 
     _NOT_FOUND_LABEL: ClassVar[str]
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
 
     def to_json(self, path: Path) -> None:
         """Write the manifest to ``path`` as indented JSON.
@@ -81,7 +82,7 @@ def hash_input_files(files: NewaveFiles | DecompFiles) -> list[dict[str, object]
     The returned list is sorted by ``"field"`` for deterministic ordering.
     """
     entries: list[dict[str, object]] = []
-    for spec in fields(files):
+    for spec in sorted(fields(files), key=lambda spec: spec.name):
         if spec.name == "directory":
             continue
         value = getattr(files, spec.name)
@@ -97,7 +98,6 @@ def hash_input_files(files: NewaveFiles | DecompFiles) -> list[dict[str, object]
                 "size_bytes": size_bytes,
             }
         )
-    entries.sort(key=lambda entry: entry["field"])
     return entries
 
 
