@@ -533,7 +533,7 @@ def test_libs_electrical_result_is_frozen_with_expected_fields() -> None:
     assert result.converted_codes == (1, 2)
     assert result.deferred == {"inactive": (3,)}
     with pytest.raises(AttributeError):
-        result.converted_codes = (4,)  # type: ignore[misc]
+        result.converted_codes = (4,)  # ty: ignore[invalid-assignment] frozen dataclass: the assignment is the test
 
 
 def test_emit_reserve_a1_end_to_end_generation_cap() -> None:

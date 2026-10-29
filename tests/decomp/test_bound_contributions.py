@@ -80,6 +80,10 @@ class _StubDadger:
             return lambda df=False, **kwargs: frame  # noqa: ARG005
         raise AttributeError(name)
 
+    # Explicit because __getattr__ is invisible to the _UeRegisters Protocol.
+    def ue(self, df: bool = False, **kwargs: object) -> pd.DataFrame:
+        return self.__getattr__("ue")(df=df, **kwargs)
+
 
 def _stage(index: int, block_hours: tuple[float, ...]) -> OperativeStage:
     return OperativeStage(
