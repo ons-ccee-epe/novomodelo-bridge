@@ -20,9 +20,12 @@ from tests.conftest import make_nw_files
 
 
 def _in_git_checkout() -> bool:
+    """Whether the imported package sits in a git work tree (an editable install),
+    which is where ``git_sha`` looks; a wheel in site-packages has no SHA."""
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=Path(novomodelo_bridge.__file__).resolve().parent,
             capture_output=True,
             text=True,
             check=False,
