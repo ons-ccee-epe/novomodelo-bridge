@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
@@ -38,6 +39,7 @@ from novomodelo_bridge.comparators.model import (
     ResultComparison,
 )
 from novomodelo_bridge.comparators.verdict import build_compare_verdict
+from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.ui.compare_summary import (
     _fmt_metric,
     print_results_summary_from_dataset,
@@ -143,11 +145,11 @@ def _one_hydro_pct() -> PercentileData:
     )
 
 
-def _capture(func: object, *args: object, **kwargs: object) -> str:
+def _capture(func: Callable[..., object], *args: object, **kwargs: object) -> str:
     """Run a stdout-writing printer and return the captured text."""
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        func(*args, **kwargs)  # type: ignore[operator]
+        func(*args, **kwargs)
     return buffer.getvalue()
 
 
@@ -225,13 +227,13 @@ def _expected_results_cells(row: dict[str, object]) -> list[str]:
     the dataset row — nothing is recomputed from raw comparison rows.
     """
     correlation = row["correlation"]
-    corr = f"{float(correlation):.4f}" if correlation is not None else "N/A"
+    corr = f"{as_float(correlation):.4f}" if correlation is not None else "N/A"
     return [
-        str(int(row["count"])),  # type: ignore[arg-type]
-        _fmt_metric(float(row["mean_abs_diff"])),  # type: ignore[arg-type]
-        _fmt_metric(float(row["max_abs_diff"])),  # type: ignore[arg-type]
-        f"{float(row['within_tol_rate']) * 100:.1f}%",  # type: ignore[arg-type]
-        f"{float(row['mean_smape']) * 100:.1f}%",  # type: ignore[arg-type]
+        str(as_int(row["count"])),
+        _fmt_metric(as_float(row["mean_abs_diff"])),
+        _fmt_metric(as_float(row["max_abs_diff"])),
+        f"{as_float(row['within_tol_rate']) * 100:.1f}%",
+        f"{as_float(row['mean_smape']) * 100:.1f}%",
         corr,
     ]
 

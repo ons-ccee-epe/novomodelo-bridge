@@ -12,8 +12,9 @@ import dataclasses
 import json
 import logging
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -867,12 +868,18 @@ class TestLoadPolicyMetadataAbsent:
 
         real_import = builtins.__import__
 
-        def _guarded_import(name: str, *args: object, **kwargs: object) -> object:
+        def _guarded_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] = (),
+            level: int = 0,
+        ) -> ModuleType:
             if name == "novomodelo":
                 raise AssertionError(
                     "novomodelo must not be imported when output/policy is absent"
                 )
-            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+            return real_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", _guarded_import)
 

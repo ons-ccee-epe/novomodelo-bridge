@@ -493,14 +493,14 @@ _SECTION_PATCHES = {
 }
 
 
-def _render_lightweight(data: object) -> str:
+def _render_lightweight(data: MagicMock) -> str:
     """Call render() with heavy chart sections patched out."""
     from contextlib import ExitStack
 
     with ExitStack() as stack:
         for target, replacement in _SECTION_PATCHES.items():
             stack.enter_context(patch(target, side_effect=replacement))
-        return render(data)  # type: ignore[arg-type]
+        return render(data)
 
 
 def test_render_returns_string() -> None:
