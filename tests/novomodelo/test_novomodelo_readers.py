@@ -24,6 +24,7 @@ from novomodelo_bridge.cli.args import CompareArgs
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.novomodelo.readers import (
     NovomodeloReadError,
     _load_entity_bus_map,
@@ -1303,7 +1304,7 @@ class TestEnergyNotReweightedHandComputedProof:
         # the raw sum of generation_mwh across blocks divided by that
         # total -- one division, no second multiplication by hours.
         total_hours = sum(hours for _, hours in stage_blocks[0])  # 300.0
-        total_energy_mwh = sum(float(r["generation_mwh"]) for r in rows)  # 5000.0
+        total_energy_mwh = sum(as_float(r["generation_mwh"]) for r in rows)  # 5000.0
         correct = total_energy_mwh / total_hours  # 16.666...
 
         # Hand computation #2 (WRONG): the mistake the standing project
@@ -1313,7 +1314,7 @@ class TestEnergyNotReweightedHandComputedProof:
         hours_by_block = dict(stage_blocks[0])
         wrong_double_weighted = (
             sum(
-                float(r["generation_mwh"]) * hours_by_block[int(r["block_id"])]
+                as_float(r["generation_mwh"]) * hours_by_block[as_int(r["block_id"])]
                 for r in rows
             )
             / total_hours
