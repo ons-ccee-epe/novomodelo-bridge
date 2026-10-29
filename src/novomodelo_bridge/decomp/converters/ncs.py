@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
@@ -323,7 +323,19 @@ def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
     )
 
 
-def _pee_generation_rows(renovaveis: Renovaveis) -> pd.DataFrame | None:
+class _PeeRegisters(Protocol):
+    def pee_cad(self, *, df: bool) -> object: ...
+
+    def pee_subm(self, *, df: bool) -> object: ...
+
+    def pee_ger_per_pat_cen(self, *, df: bool) -> object: ...
+
+    def pee_ger_per_pat(self, *, df: bool) -> object: ...
+
+    def pee_config_per(self, *, df: bool) -> object: ...
+
+
+def _pee_generation_rows(renovaveis: _PeeRegisters) -> pd.DataFrame | None:
     """Rows of both renewable generation cards, as
     ``codigo_pee, estagio, patamar, cenario, geracao``.
 
@@ -369,7 +381,7 @@ def _pee_generation_rows(renovaveis: Renovaveis) -> pd.DataFrame | None:
 
 
 def _sorted_pee_codes(
-    renovaveis: Renovaveis, calendar: Sequence[OperativeStage]
+    renovaveis: _PeeRegisters, calendar: Sequence[OperativeStage]
 ) -> list[int]:
     """Every declared renewable park's ``codigo_pee``, sorted — the ncs_id
     assignment order :func:`_pee_series` (the NCS series writer) and
@@ -432,7 +444,7 @@ def build_pee_ncs_id_map(
 
 
 def _pee_series(
-    renovaveis: Renovaveis,
+    renovaveis: _PeeRegisters,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
     first_ncs_id: int,
@@ -542,7 +554,7 @@ def _pee_series(
 _CURTAILABLE_OPERATING_STATE = "centralizado"
 
 
-def _pee_curtailment_by_code(renovaveis: Renovaveis) -> dict[int, bool]:
+def _pee_curtailment_by_code(renovaveis: _PeeRegisters) -> dict[int, bool]:
     """``codigo_pee -> allow_curtailment`` from the ``PEE-CONFIG-PER`` card.
 
     Only ``centralizado`` may be curtailed. A park's declared state applies

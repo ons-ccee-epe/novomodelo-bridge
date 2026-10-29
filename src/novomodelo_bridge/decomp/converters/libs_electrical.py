@@ -63,7 +63,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 
@@ -77,9 +77,6 @@ from novomodelo_bridge.decomp.load import _per_stage_block_loads
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-
-    from idecomp.decomp import Dadger
-    from idecomp.libs.restricoes import Restricoes
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
@@ -214,7 +211,33 @@ class LibsElectricalModel:
     gnl_thermal_codes: frozenset[int] = frozenset()
 
 
-def _df(source: Restricoes, attr: str) -> pd.DataFrame | None:
+class _ElectricalCards(Protocol):
+    def expressao_eletrica(self, *, df: bool) -> object: ...
+
+    def alias_eletrico_valor_periodo_patamar(self, *, df: bool) -> object: ...
+
+    def alias_eletrico(self, *, df: bool) -> object: ...
+
+    def restricao_eletrica_horizonte_periodo(self, *, df: bool) -> object: ...
+
+    def restricao_eletrica_limite_formula_periodo_patamar(
+        self, *, df: bool
+    ) -> object: ...
+
+    def restricao_eletrica_inequacao_periodo_patamar(self, *, df: bool) -> object: ...
+
+    def restricao_eletrica_habilita(self, *, df: bool) -> object: ...
+
+    def restricao_eletrica_regra_ativacao(self, *, df: bool) -> object: ...
+
+    def restricao_eletrica_tratamento_violacao(self, *, df: bool) -> object: ...
+
+    def restricao_eletrica_formula(self, *, df: bool) -> object: ...
+
+    def restricao_eletrica_inequacao(self, *, df: bool) -> object: ...
+
+
+def _df(source: _ElectricalCards, attr: str) -> pd.DataFrame | None:
     """Read one accessor as a DataFrame, treating an absent card as empty."""
     frame = getattr(source, attr)(df=True)
     if frame is None or getattr(frame, "empty", True):
@@ -253,7 +276,7 @@ def _stage_index(estagio: int, n_stages: int, context: str) -> int:
     return estagio - 1
 
 
-def _read_expressions(restricoes: Restricoes) -> dict[str, ElectricalExpression]:
+def _read_expressions(restricoes: _ElectricalCards) -> dict[str, ElectricalExpression]:
     """Read ``EXPRESSAO-ELETRICA`` into ``{name: ElectricalExpression}``."""
     frame = _df(restricoes, "expressao_eletrica")
     if frame is None:
@@ -270,7 +293,7 @@ def _read_expressions(restricoes: Restricoes) -> dict[str, ElectricalExpression]
 
 
 def _read_alias_values(
-    restricoes: Restricoes,
+    restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
 ) -> dict[int, dict[tuple[int, int | None], float]]:
     """Read ``ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR`` into ``{codigo_alias:
@@ -294,7 +317,7 @@ def _read_alias_values(
 
 
 def _read_aliases(
-    restricoes: Restricoes,
+    restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
 ) -> dict[str, ElectricalAlias]:
     """Read ``ALIAS-ELETRICO`` joined to its per-(stage,patamar) values."""
@@ -315,7 +338,7 @@ def _read_aliases(
 
 
 def _read_horizonte(
-    restricoes: Restricoes,
+    restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
 ) -> dict[int, tuple[int, int]]:
     """Read ``RESTRICAO-ELETRICA-HORIZONTE-PERIODO`` into ``{codigo_restricao:
@@ -335,7 +358,7 @@ def _read_horizonte(
 
 
 def _read_formula_limits(
-    restricoes: Restricoes,
+    restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
 ) -> dict[int, dict[tuple[int, int | None], tuple[float | None, float | None]]]:
     """Read ``RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR`` into
@@ -366,7 +389,7 @@ def _read_formula_limits(
 
 
 def _read_inequacao_overrides(
-    restricoes: Restricoes,
+    restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
 ) -> dict[int, tuple[PeriodPatamarOverride, ...]]:
     """Read ``RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`` into
@@ -394,7 +417,7 @@ def _read_inequacao_overrides(
     return {code: tuple(rows) for code, rows in overrides.items()}
 
 
-def _read_habilita(restricoes: Restricoes) -> dict[int, int]:
+def _read_habilita(restricoes: _ElectricalCards) -> dict[int, int]:
     """Read ``RESTRICAO-ELETRICA-HABILITA`` into ``{codigo_restricao:
     codigo_regra_ativacao}``."""
     frame = _df(restricoes, "restricao_eletrica_habilita")
@@ -406,7 +429,7 @@ def _read_habilita(restricoes: Restricoes) -> dict[int, int]:
     }
 
 
-def _read_rules(restricoes: Restricoes) -> dict[int, str]:
+def _read_rules(restricoes: _ElectricalCards) -> dict[int, str]:
     """Read ``RESTRICAO-ELETRICA-REGRA-ATIVACAO`` into
     ``{codigo_regra_ativacao: regra_ativacao}`` (the raw boolean-rule text)."""
     frame = _df(restricoes, "restricao_eletrica_regra_ativacao")
@@ -418,7 +441,7 @@ def _read_rules(restricoes: Restricoes) -> dict[int, str]:
     }
 
 
-def _read_violations(restricoes: Restricoes) -> dict[int, ViolationTreatment]:
+def _read_violations(restricoes: _ElectricalCards) -> dict[int, ViolationTreatment]:
     """Read ``RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO`` into
     ``{codigo_restricao: ViolationTreatment}``. Absent entirely, or absent for
     a given restriction, is not an error — it simply yields no entry."""
@@ -435,7 +458,7 @@ def _read_violations(restricoes: Restricoes) -> dict[int, ViolationTreatment]:
 
 
 def _read_restrictions(
-    restricoes: Restricoes,
+    restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
 ) -> dict[int, ElectricalRestriction]:
     """Join the FORMULA and INEQUACAO restriction cards to their per-(period,
@@ -553,7 +576,7 @@ def _emit_unused_period_rows(card: str, codes: Sequence[int]) -> None:
 
 
 def read_libs_electrical(
-    restricoes: Restricoes,
+    restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
     *,
     gnl_thermal_codes: frozenset[int] = frozenset(),
@@ -596,8 +619,12 @@ def read_libs_electrical(
 _CARGA_ANDE_COLUMN = re.compile(r"^carga_ande_(\d+)$")
 
 
+class _RiRegisters(Protocol):
+    def ri(self, *, df: bool) -> object: ...
+
+
 def read_carga_ande(
-    dadger: Dadger,
+    dadger: _RiRegisters,
     calendar: Sequence[OperativeStage],
 ) -> dict[int, list[float]]:
     """Read the ``RI`` (restrição de Itaipu) register's ``carga_ande``

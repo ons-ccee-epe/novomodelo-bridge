@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
@@ -60,8 +60,6 @@ from novomodelo_bridge.decomp.temporal import weekly_stage_count
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
-
-    from idecomp.decomp import Dadger, Mlt
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
@@ -322,8 +320,14 @@ def _window_delta(
     return _WindowDelta(as_float(value), in_hm3)
 
 
+class _FpRegisters(Protocol):
+    def fp(self, *, df: bool) -> object: ...
+
+    def uh(self, *, df: bool) -> object: ...
+
+
 def volume_window_rule(
-    dadger: Dadger, calendar: Sequence[OperativeStage]
+    dadger: _FpRegisters, calendar: Sequence[OperativeStage]
 ) -> VolumeWindowRule:
     """The deck's :class:`VolumeWindowRule`, from its ``FP`` and ``UH`` records;
     emits :func:`unconverted_fp_fields_diagnostic` when it applies."""
@@ -366,9 +370,14 @@ def unconverted_fp_fields_diagnostic(fp: pd.DataFrame | None) -> Diagnostic | No
     )
 
 
+class _MonthlyMeans(Protocol):
+    @property
+    def valores(self) -> pd.DataFrame | None: ...
+
+
 def fpha_config(
     effective: EffectiveCadastro,
-    mlt: Mlt | None,
+    mlt: _MonthlyMeans | None,
     code: int,
     stage_index: int,
     windows: VolumeWindowRule,
@@ -391,7 +400,10 @@ def fpha_config(
 
 
 def spillage_fit_max(
-    effective: EffectiveCadastro, mlt: Mlt | None, code: int, stage_index: int
+    effective: EffectiveCadastro,
+    mlt: _MonthlyMeans | None,
+    code: int,
+    stage_index: int,
 ) -> float | None:
     """The FPHA spillage fit range (m³/s) of plant *code* at *stage_index*, from
     the ``mlt.dat`` means of the inflow gauge in force (``AC NUMPOS``, else the

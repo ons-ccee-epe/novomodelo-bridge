@@ -16,7 +16,7 @@ have no Novomodelo encoding today).
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
@@ -316,7 +316,11 @@ _GERACAO_MAXIMA_60HZ_COLUMN = re.compile(r"^geracao_maxima_60_hz_(\d+)$")
 _UNBOUNDED_LINE_CAPACITY_MW = 99999.0
 
 
-def _itaipu_60hz_capacity_mw(dadger: Dadger) -> float:
+class _RiRegisters(Protocol):
+    def ri(self, *, df: bool) -> object: ...
+
+
+def _itaipu_60hz_capacity_mw(dadger: _RiRegisters) -> float:
     """The SE<->IV line's capacity: the largest declared ``RI``
     ``geracao_maxima_60_hz`` value across every stage and patamar, or
     :data:`_UNBOUNDED_LINE_CAPACITY_MW` when the deck carries no ``RI``
@@ -412,7 +416,11 @@ def append_iv_se_line(
     return extended_lines_doc, pa.concat_tables([line_bounds, new_bounds])
 
 
-def pumping_station_id_map(dadger: Dadger) -> dict[int, int]:
+class _UeRegisters(Protocol):
+    def ue(self, *, df: bool) -> object: ...
+
+
+def pumping_station_id_map(dadger: _UeRegisters) -> dict[int, int]:
     """``{codigo_usina: 0-based pumping-station id}`` — the single authority
     for ``UE`` id assignment.
 

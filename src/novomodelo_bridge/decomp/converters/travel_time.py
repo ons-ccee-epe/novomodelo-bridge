@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 
@@ -35,9 +35,7 @@ from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 if TYPE_CHECKING:
     from datetime import date
 
-    from idecomp.decomp import Dadger
-
-    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.converters.hydro.entity import CascadeLinks
     from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
@@ -56,7 +54,11 @@ class TravelTime:
     prior_flows_m3s: tuple[float, ...]
 
 
-def read_travel_times(dadger: Dadger) -> dict[int, TravelTime]:
+class _ViRegisters(Protocol):
+    def vi(self, *, df: bool) -> object: ...
+
+
+def read_travel_times(dadger: _ViRegisters) -> dict[int, TravelTime]:
     """Read the ``VI`` registers into ``{plant code: TravelTime}``.
 
     Returns an empty map when the deck declares no ``VI`` register.
@@ -123,9 +125,9 @@ def _defluence_windows(
 
 
 def convert_travel_time(
-    dadger: Dadger,
+    dadger: _ViRegisters,
     id_map: DecompIdMap,
-    effective: EffectiveCadastro,
+    effective: CascadeLinks,
     start_date: date,
     week_hours: float,
 ) -> tuple[dict[int, float], list[dict]]:

@@ -20,7 +20,7 @@ gauge) is read only by the boundary FCF import, never by the operation.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 from idecomp.decomp.modelos.dadger import ACALTEFE
@@ -45,8 +45,6 @@ from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from idecomp.decomp import Dadger
-
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.converters.hydro.turbine_limit import TurbineLimits
@@ -63,7 +61,11 @@ def read_hidr(path: Path) -> pd.DataFrame:
     return df
 
 
-def _operated_uh(dadger: Dadger) -> pd.DataFrame:
+class UhRegisters(Protocol):
+    def uh(self, *, df: bool) -> object: ...
+
+
+def _operated_uh(dadger: UhRegisters) -> pd.DataFrame:
     """The ``UH`` rows carrying an initial volume (the operated plants).
 
     Rows without one (coupling-only registrations) are excluded — their
@@ -76,7 +78,7 @@ def _operated_uh(dadger: Dadger) -> pd.DataFrame:
     return uh[uh["volume_inicial"].notna()]
 
 
-def initial_volume_percentages(dadger: Dadger) -> dict[int, float]:
+def initial_volume_percentages(dadger: UhRegisters) -> dict[int, float]:
     """``{code: UH volume_inicial}`` for every operated plant, in % of useful volume."""
     return {
         int(row["codigo_usina"]): float(row["volume_inicial"])
@@ -84,7 +86,7 @@ def initial_volume_percentages(dadger: Dadger) -> dict[int, float]:
     }
 
 
-def _coupling_only_codes(dadger: Dadger) -> list[int]:
+def _coupling_only_codes(dadger: UhRegisters) -> list[int]:
     """Operated-set-excluded ``UH`` codes — registrations with no initial volume."""
     uh = as_frame(dadger.uh(df=True))
     if uh is None or uh.empty:
@@ -102,8 +104,17 @@ def _hydro_display_name(hidr: pd.DataFrame, code: int) -> str:
     return f"{name} ({code})"
 
 
+class CascadeLinks(Protocol):
+    @property
+    def base(self) -> pd.DataFrame: ...
+
+    def downstream_plant_varies(self, code: int) -> bool: ...
+
+    def downstream_plant(self, code: int, stage_index: int) -> int: ...
+
+
 def _downstream_operated(
-    effective: EffectiveCadastro,
+    effective: CascadeLinks,
     code: int,
     operated: set[int],
     *,
@@ -170,7 +181,7 @@ _EVAPORATION_MONTH_COLUMNS = (
 )
 
 
-def _evaporation_flag_codes(dadger: Dadger) -> set[int]:
+def _evaporation_flag_codes(dadger: UhRegisters) -> set[int]:
     """Plant codes whose ``UH`` register sets the reservoir-evaporation flag.
 
     DECOMP models a plant's evaporation only when its ``UH`` ``evaporacao``
