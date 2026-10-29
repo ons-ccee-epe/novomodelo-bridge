@@ -530,7 +530,7 @@ class TestLibsElectricalPipelineWiring:
         [diagnostic] = census
         assert diagnostic.severity is dx.Severity.INFO
         assert diagnostic.table is not None
-        counts = dict(diagnostic.table.rows)
+        counts = {str(label): count for label, count in diagnostic.table.rows}
         assert counts["Converted"] == 2
         assert counts["inactive"] == 0
         assert counts["unresolved-bucket-a"] == 0

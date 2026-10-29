@@ -375,7 +375,7 @@ def test_converged_limits_emit_no_diagnostic() -> None:
     assert sink == []
 
 
-def _gap_rows(row: dict) -> list[list[object]]:
+def _gap_rows(row: dict) -> Sequence[Sequence[object]]:
     with collect() as sink:
         _limits({1: row})
     (diagnostic,) = [d for d in sink if d.code == "turbine-limit-data-missing"]

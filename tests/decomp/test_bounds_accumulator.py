@@ -162,7 +162,7 @@ def test_bound_contribution_is_frozen_plain_record() -> None:
     assert contribution.family == "hydro"
     assert contribution.block_id is None
     with pytest.raises(AttributeError):
-        contribution.upper = 130.0  # type: ignore[misc]
+        contribution.upper = 130.0  # ty: ignore[invalid-assignment] mutating a frozen dataclass is the behaviour under test
 
 
 def test_axis_spec_is_frozen() -> None:
@@ -173,7 +173,7 @@ def test_axis_spec_is_frozen() -> None:
         block_eligible=True,
     )
     with pytest.raises(AttributeError):
-        spec.block_eligible = False  # type: ignore[misc]
+        spec.block_eligible = False  # ty: ignore[invalid-assignment] mutating a frozen dataclass is the behaviour under test
 
 
 def _outflow_contribution(
