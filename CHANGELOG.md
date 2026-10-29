@@ -14,6 +14,13 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`export dessem` exports a case whose water in transit outlives the study**
+  instead of failing with `year -214749 is out of range`; the transit buckets
+  Novomodelo leaves undated past the last stage take no weight, and a cut
+  coefficient found on one is dropped with a warning.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins

@@ -40,8 +40,11 @@ P3 = (
     "the share of the release that is still in transit at the stage's end and "
     "arrives within the bucket's window. The export is refused when a pool's "
     "buckets do not cover that water or belong to no travel-time plant's "
-    "downstream plant. Regs 6-8 match the reference DECOMP's own mapcut byte "
-    "for byte, and pi_qdefp its cortdeco to 0.2%"
+    "downstream plant. A bucket with no arrival window, which Novomodelo keeps "
+    "for water that would arrive after the study ends, takes no weight; such "
+    "buckets are counted in the log, and a non-zero coefficient a cut carries "
+    "on one is left out of pi_qdefp with a counted warning. Regs 6-8 match the "
+    "reference DECOMP's own mapcut byte for byte, and pi_qdefp its cortdeco to 0.2%"
 )
 
 P4 = (
