@@ -639,7 +639,7 @@ _FAKE_HYDRO_ENERGY_PRODUCTIVITY_TABLE = pa.table(
 )
 
 
-def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type-arg]
+def _all_converter_patches(fake_id_map: MagicMock) -> list:
     """Return patch context managers for all converter functions.
 
     The parsed case is mocked at ``NewaveCase.from_directory``; its ``id_map``

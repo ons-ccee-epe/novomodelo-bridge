@@ -70,14 +70,14 @@ class TestRequiredReaders:
         canned_calendar = [object()]
         calendar_spy = MagicMock(return_value=canned_calendar)
         original_calendar_fn = temporal_module.operative_calendar_from_dadger
-        temporal_module.operative_calendar_from_dadger = calendar_spy  # type: ignore[assignment]
+        temporal_module.operative_calendar_from_dadger = calendar_spy
         try:
             case = make_decomp_case(tmp_path, dadger=fake_dadger)
 
             id_map = case.id_map
             calendar = case.calendar
         finally:
-            temporal_module.operative_calendar_from_dadger = original_calendar_fn  # type: ignore[assignment]
+            temporal_module.operative_calendar_from_dadger = original_calendar_fn
 
         assert isinstance(id_map, DecompIdMap)
         assert id_map.hydro_codes == (10,)

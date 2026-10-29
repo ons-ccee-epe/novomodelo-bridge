@@ -108,7 +108,7 @@ def _run_novomodelo_validation(
         return False
 
     try:
-        import novomodelo.io  # type: ignore[import-untyped]
+        import novomodelo.io
     except ImportError:
         print_status(
             "Warning: novomodelo package not installed, skipping validation",

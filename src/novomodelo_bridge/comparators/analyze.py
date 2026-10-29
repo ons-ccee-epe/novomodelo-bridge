@@ -1700,7 +1700,7 @@ def build_productivity_detail(
             point = float(compute_productivity(hreg))
             equiv = float(stored_energy_productivity(hreg))
         except (KeyError, ValueError, TypeError):
-            point = equiv = None  # type: ignore[assignment]
+            point = equiv = None
         acc = cb_accumulated.get(code)
         return point, equiv, (float(acc) if acc is not None else None)
 

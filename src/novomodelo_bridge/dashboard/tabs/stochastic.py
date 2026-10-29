@@ -596,7 +596,7 @@ def _chart_hydro_explorer(
 
     # Default: first hydro visible, rest hidden
     for trace_idx, trace in enumerate(fig.data):
-        trace.visible = trace_idx < traces_per_hydro[0] if traces_per_hydro else False  # type: ignore[assignment]
+        trace.visible = trace_idx < traces_per_hydro[0] if traces_per_hydro else False
 
     first_name = (
         hydro_meta[hydro_ids[0]].get("name", str(hydro_ids[0]))

@@ -13,7 +13,7 @@ import struct
 from pathlib import Path
 from unittest.mock import patch
 
-import pandas as pd  # type: ignore[import-untyped]  # pandas-stubs not installed
+import pandas as pd
 import pytest
 from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 
@@ -46,7 +46,7 @@ def test_build_header_rejects_boundary_stage_outside_individualized_band() -> No
         estagio_individualizado_final = 14
 
     with pytest.raises(ValueError, match=r"\[3, 14\]"):
-        _build_header(_FakeCortesh(), boundary_stage=2)  # type: ignore[arg-type]
+        _build_header(_FakeCortesh(), boundary_stage=2)
 
 
 def _hybrid_fake_cortesh_169_plants_10_ficticia() -> object:
@@ -93,7 +93,7 @@ def _hybrid_fake_cortesh_169_plants_10_ficticia() -> object:
 
 def test_build_header_hybrid_excludes_fictitious_plants() -> None:
     header = _build_header(
-        _hybrid_fake_cortesh_169_plants_10_ficticia(),  # type: ignore[arg-type]
+        _hybrid_fake_cortesh_169_plants_10_ficticia(),
         boundary_stage=4,
     )
 
@@ -107,7 +107,7 @@ def test_build_header_hybrid_tolerates_indice_usina_holes() -> None:
     # non-fictitious subset skips them without raising the old
     # "indice_usina is not a contiguous 1..N range" error.
     header = _build_header(
-        _hybrid_fake_cortesh_169_plants_10_ficticia(),  # type: ignore[arg-type]
+        _hybrid_fake_cortesh_169_plants_10_ficticia(),
         boundary_stage=4,
     )
 
@@ -412,15 +412,15 @@ class _FakeCalendarCortesh:
 def test_cut_month_counts_months_from_the_study_start_january() -> None:
     cortesh = _FakeCalendarCortesh([])
 
-    assert cut_month(cortesh, 1) == (2025, 1)  # type: ignore[arg-type]
-    assert cut_month(cortesh, 16) == (2026, 4)  # type: ignore[arg-type]
-    assert cut_month(cortesh, 24) == (2026, 12)  # type: ignore[arg-type]
+    assert cut_month(cortesh, 1) == (2025, 1)
+    assert cut_month(cortesh, 16) == (2026, 4)
+    assert cut_month(cortesh, 24) == (2026, 12)
 
 
 def test_read_patamar_fractions_is_month_major_from_the_study_start() -> None:
     shares = [0.5, 0.5] * 12 + [0.25, 0.75, 0.4, 0.6]
 
-    fractions = read_patamar_fractions(_FakeCalendarCortesh(shares))  # type: ignore[arg-type]
+    fractions = read_patamar_fractions(_FakeCalendarCortesh(shares))
 
     assert len(fractions) == 14
     assert fractions[(2025, 12)] == (0.5, 0.5)

@@ -777,7 +777,7 @@ def _render_spot_price(data: DashboardData) -> str:
     )
     for ax in fig.layout:
         if str(ax).startswith("yaxis"):
-            fig.layout[ax].title = "R$/MWh"  # type: ignore[index]
+            fig.layout[ax].title = "R$/MWh"
     all_stages = sorted(data.stage_dates)
     apply_stage_date_axis(
         fig,

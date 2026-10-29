@@ -398,7 +398,7 @@ def compute_cost_summary(
             lambda q: q.quantile(0.95),
         ]
     )
-    agg.index = ["mean", "std", "p5", "p10", "p90", "p95"]  # type: ignore[assignment]
+    agg.index = ["mean", "std", "p5", "p10", "p90", "p95"]
     agg = agg.T.reset_index().rename(columns={"index": "group"})
 
     total_mean = agg["mean"].sum()

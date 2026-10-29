@@ -38,7 +38,7 @@ from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pandas as pd  # type: ignore[import-untyped]  # pandas-stubs not installed
+    import pandas as pd
 
 _NONZERO_TOLERANCE = 1e-9
 
