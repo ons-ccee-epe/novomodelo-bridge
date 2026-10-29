@@ -15,7 +15,7 @@ from idecomp.decomp.modelos.dadger import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence, Sized
 
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -375,6 +375,220 @@ def _require_cadastro_row(hidr: pd.DataFrame, code: int) -> None:
         )
 
 
+@dataclass(frozen=True)
+class _AcOverrideRecords:
+    """Every in-horizon ``AC`` override of a deck, grouped per family as its
+    reader returns it, plus every out-of-horizon one."""
+
+    scalar: dict[tuple[int, str], list[tuple[int, float]]]
+    diversion: dict[int, list[tuple[int, DiversionChannel]]]
+    numero_conjuntos: dict[int, list[tuple[int, int]]]
+    numero_maquinas: dict[tuple[int, int], list[tuple[int, int]]]
+    potencia: dict[tuple[int, int], list[tuple[int, float]]]
+    vazao: dict[tuple[int, int], list[tuple[int, float]]]
+    cota: dict[int, list[tuple[int, tuple[float, ...]]]]
+    topology: dict[int, list[tuple[int, int]]]
+    gauge: dict[int, list[tuple[int, int]]]
+    coupling: dict[int, list[tuple[int, int]]]
+    energy: dict[int, list[tuple[int, int]]]
+    out_of_horizon: list[OutOfHorizon]
+
+
+def _read_ac_overrides(
+    dadger: AcRegisters, calendar: Sequence[OperativeStage]
+) -> _AcOverrideRecords:
+    """Read every ``AC`` override family of *dadger* against *calendar*."""
+    records, out_of_horizon = _read_scalar_overrides(dadger, calendar)
+    diversion_records, diversion_out_of_horizon = _read_diversion_overrides(
+        dadger, calendar
+    )
+    (
+        numero_conjuntos_records,
+        numero_maquinas_records,
+        potencia_records,
+        vazao_records,
+        machine_out_of_horizon,
+    ) = _read_machine_set_overrides(dadger, calendar)
+    cota_records, cota_out_of_horizon = _read_polynomial_overrides(
+        dadger, calendar, ACCOTVOL, "cota_volume"
+    )
+    topology_records, topology_out_of_horizon = _read_keyed_overrides(
+        dadger,
+        calendar,
+        ACNUMJUS,
+        "codigo_usina_jusante",
+        "codigo_usina_jusante",
+        int,
+        _plant_code_key,
+    )
+    gauge_records, gauge_out_of_horizon = _read_keyed_overrides(
+        dadger, calendar, ACNUMPOS, "codigo_posto", "posto", int, _plant_code_key
+    )
+    coupling_records, coupling_out_of_horizon = _read_keyed_overrides(
+        dadger,
+        calendar,
+        ACNPOSNW,
+        "codigo_posto",
+        "posto_acoplamento",
+        int,
+        _plant_code_key,
+    )
+    energy_records, energy_out_of_horizon = _read_keyed_overrides(
+        dadger,
+        calendar,
+        ACJUSENA,
+        "codigo_usina_jusante",
+        "jusante_energia",
+        int,
+        _plant_code_key,
+    )
+    return _AcOverrideRecords(
+        scalar=records,
+        diversion=diversion_records,
+        numero_conjuntos=numero_conjuntos_records,
+        numero_maquinas=numero_maquinas_records,
+        potencia=potencia_records,
+        vazao=vazao_records,
+        cota=cota_records,
+        topology=topology_records,
+        gauge=gauge_records,
+        coupling=coupling_records,
+        energy=energy_records,
+        out_of_horizon=(
+            out_of_horizon
+            + diversion_out_of_horizon
+            + machine_out_of_horizon
+            + cota_out_of_horizon
+            + topology_out_of_horizon
+            + gauge_out_of_horizon
+            + coupling_out_of_horizon
+            + energy_out_of_horizon
+        ),
+    )
+
+
+def _applied_counts(overrides: _AcOverrideRecords) -> dict[str, int]:
+    """Per cadastro parameter, the count of distinct plants (or conjuntos)
+    carrying at least one in-horizon override."""
+    applied: dict[str, int] = {}
+    for _code, param in overrides.scalar:
+        applied[param] = applied.get(param, 0) + 1
+    family_records: tuple[tuple[str, Sized], ...] = (
+        ("diversion", overrides.diversion),
+        ("numero_conjuntos", overrides.numero_conjuntos),
+        ("numero_maquinas", overrides.numero_maquinas),
+        ("potencia", overrides.potencia),
+        ("vazao", overrides.vazao),
+        ("cota_volume", overrides.cota),
+        ("codigo_usina_jusante", overrides.topology),
+        ("posto", overrides.gauge),
+        ("posto_acoplamento", overrides.coupling),
+        ("jusante_energia", overrides.energy),
+    )
+    for param, records in family_records:
+        if records:
+            applied[param] = len(records)
+    return applied
+
+
+def _scalar_series(
+    hidr: pd.DataFrame,
+    records: Mapping[tuple[int, str], Sequence[tuple[int, float]]],
+    n_stages: int,
+) -> dict[tuple[int, str], tuple[float, ...]]:
+    """Each overridden ``(code, param)`` pair's per-stage series, seeded from
+    its ``hidr`` value."""
+    stage_varying: dict[tuple[int, str], tuple[float, ...]] = {}
+    for (code, param), overrides in records.items():
+        _require_cadastro_row(hidr, code)
+        base_value = float(hidr.loc[code, param])
+        stage_varying[(code, param)] = tuple(
+            _forward_fill_series(base_value, overrides, n_stages)
+        )
+    return stage_varying
+
+
+def _diversion_series(
+    hidr: pd.DataFrame,
+    records: Mapping[int, Sequence[tuple[int, DiversionChannel]]],
+    n_stages: int,
+) -> dict[int, tuple[DiversionChannel | None, ...]]:
+    """The per-stage diversion channel of every plant with a non-zero base
+    ``desvio`` or an ``AC DESVIO`` override."""
+    base_diversion_codes = {
+        int(code)
+        for code, desvio in zip(
+            hidr.index.tolist(), hidr["desvio"].tolist(), strict=True
+        )
+        if float(desvio) != 0
+    }
+    diversions: dict[int, tuple[DiversionChannel | None, ...]] = {}
+    for code in base_diversion_codes | set(records):
+        _require_cadastro_row(hidr, code)
+        base_desvio = float(hidr.loc[code, "desvio"])
+        base_channel = (
+            DiversionChannel(int(base_desvio), None) if base_desvio != 0 else None
+        )
+        diversion_overrides = records.get(code, [])
+        diversions[code] = tuple(
+            _forward_fill_series(base_channel, diversion_overrides, n_stages)
+        )
+    return diversions
+
+
+def _machine_set_series(
+    hidr: pd.DataFrame, overrides: _AcOverrideRecords, n_stages: int
+) -> dict[tuple[int, int], tuple[MachineSet, ...]]:
+    """The per-stage :class:`MachineSet` of every ``(code, conjunto)`` with a
+    ``NUMMAQ``/``POTEFE``/``VAZEFE`` override, each field seeded from its own
+    ``hidr`` per-conjunto column."""
+    numero_maquinas_records = overrides.numero_maquinas
+    potencia_records = overrides.potencia
+    vazao_records = overrides.vazao
+    machine_sets: dict[tuple[int, int], tuple[MachineSet, ...]] = {}
+    compound_keys = (
+        set(numero_maquinas_records) | set(potencia_records) | set(vazao_records)
+    )
+    for code, conjunto in compound_keys:
+        _require_cadastro_row(hidr, code)
+        base_numero_maquinas = int(hidr.loc[code, f"maquinas_conjunto_{conjunto}"])
+        base_potencia = float(hidr.loc[code, f"potencia_nominal_conjunto_{conjunto}"])
+        base_vazao = float(hidr.loc[code, f"vazao_nominal_conjunto_{conjunto}"])
+        numero_maquinas_series = _forward_fill_series(
+            base_numero_maquinas,
+            numero_maquinas_records.get((code, conjunto), []),
+            n_stages,
+        )
+        potencia_series = _forward_fill_series(
+            base_potencia, potencia_records.get((code, conjunto), []), n_stages
+        )
+        vazao_series = _forward_fill_series(
+            base_vazao, vazao_records.get((code, conjunto), []), n_stages
+        )
+        machine_sets[(code, conjunto)] = tuple(
+            MachineSet(numero_maquinas_series[s], potencia_series[s], vazao_series[s])
+            for s in range(n_stages)
+        )
+    return machine_sets
+
+
+def _plant_series[T](
+    hidr: pd.DataFrame,
+    records: Mapping[int, Sequence[tuple[int, T]]],
+    base_value: Callable[[int], T],
+    n_stages: int,
+) -> dict[int, tuple[T, ...]]:
+    """Each overridden plant's per-stage series, seeded from
+    ``base_value(code)``."""
+    series: dict[int, tuple[T, ...]] = {}
+    for code, overrides in records.items():
+        _require_cadastro_row(hidr, code)
+        series[code] = tuple(
+            _forward_fill_series(base_value(code), overrides, n_stages)
+        )
+    return series
+
+
 def build_effective_cadastro(
     dadger: AcRegisters,
     hidr: pd.DataFrame,
@@ -444,200 +658,52 @@ def build_effective_cadastro(
         downstream plant it names is not validated here), and every
         machine-set override.
     """
-    records, out_of_horizon = _read_scalar_overrides(dadger, calendar)
-    diversion_records, diversion_out_of_horizon = _read_diversion_overrides(
-        dadger, calendar
-    )
-    (
-        numero_conjuntos_records,
-        numero_maquinas_records,
-        potencia_records,
-        vazao_records,
-        machine_out_of_horizon,
-    ) = _read_machine_set_overrides(dadger, calendar)
-    cota_records, cota_out_of_horizon = _read_polynomial_overrides(
-        dadger, calendar, ACCOTVOL, "cota_volume"
-    )
-    topology_records, topology_out_of_horizon = _read_keyed_overrides(
-        dadger,
-        calendar,
-        ACNUMJUS,
-        "codigo_usina_jusante",
-        "codigo_usina_jusante",
-        int,
-        _plant_code_key,
-    )
-    gauge_records, gauge_out_of_horizon = _read_keyed_overrides(
-        dadger, calendar, ACNUMPOS, "codigo_posto", "posto", int, _plant_code_key
-    )
-    coupling_records, coupling_out_of_horizon = _read_keyed_overrides(
-        dadger,
-        calendar,
-        ACNPOSNW,
-        "codigo_posto",
-        "posto_acoplamento",
-        int,
-        _plant_code_key,
-    )
-    energy_records, energy_out_of_horizon = _read_keyed_overrides(
-        dadger,
-        calendar,
-        ACJUSENA,
-        "codigo_usina_jusante",
-        "jusante_energia",
-        int,
-        _plant_code_key,
-    )
-    out_of_horizon = (
-        out_of_horizon
-        + diversion_out_of_horizon
-        + machine_out_of_horizon
-        + cota_out_of_horizon
-        + topology_out_of_horizon
-        + gauge_out_of_horizon
-        + coupling_out_of_horizon
-        + energy_out_of_horizon
-    )
-
+    overrides = _read_ac_overrides(dadger, calendar)
     n_stages = len(calendar)
-    stage_varying: dict[tuple[int, str], tuple[float, ...]] = {}
-    applied: dict[str, int] = {}
-    for (code, param), overrides in records.items():
-        _require_cadastro_row(hidr, code)
-        base_value = float(hidr.loc[code, param])
-        stage_varying[(code, param)] = tuple(
-            _forward_fill_series(base_value, overrides, n_stages)
-        )
-        applied[param] = applied.get(param, 0) + 1
-
-    base_diversion_codes = {
-        int(code)
-        for code, desvio in zip(
-            hidr.index.tolist(), hidr["desvio"].tolist(), strict=True
-        )
-        if float(desvio) != 0
-    }
-    diversions: dict[int, tuple[DiversionChannel | None, ...]] = {}
-    for code in base_diversion_codes | set(diversion_records):
-        _require_cadastro_row(hidr, code)
-        base_desvio = float(hidr.loc[code, "desvio"])
-        base_channel = (
-            DiversionChannel(int(base_desvio), None) if base_desvio != 0 else None
-        )
-        diversion_overrides = diversion_records.get(code, [])
-        diversions[code] = tuple(
-            _forward_fill_series(base_channel, diversion_overrides, n_stages)
-        )
-    if diversion_records:
-        applied["diversion"] = len(diversion_records)
-
-    machine_conjunto_counts: dict[int, tuple[int, ...]] = {}
-    for code, count_overrides in numero_conjuntos_records.items():
-        _require_cadastro_row(hidr, code)
-        base_count = int(hidr.loc[code, "numero_conjuntos_maquinas"])
-        machine_conjunto_counts[code] = tuple(
-            _forward_fill_series(base_count, count_overrides, n_stages)
-        )
-    if numero_conjuntos_records:
-        applied["numero_conjuntos"] = len(numero_conjuntos_records)
-
-    machine_sets: dict[tuple[int, int], tuple[MachineSet, ...]] = {}
-    compound_keys = (
-        set(numero_maquinas_records) | set(potencia_records) | set(vazao_records)
-    )
-    for code, conjunto in compound_keys:
-        _require_cadastro_row(hidr, code)
-        base_numero_maquinas = int(hidr.loc[code, f"maquinas_conjunto_{conjunto}"])
-        base_potencia = float(hidr.loc[code, f"potencia_nominal_conjunto_{conjunto}"])
-        base_vazao = float(hidr.loc[code, f"vazao_nominal_conjunto_{conjunto}"])
-        numero_maquinas_series = _forward_fill_series(
-            base_numero_maquinas,
-            numero_maquinas_records.get((code, conjunto), []),
-            n_stages,
-        )
-        potencia_series = _forward_fill_series(
-            base_potencia, potencia_records.get((code, conjunto), []), n_stages
-        )
-        vazao_series = _forward_fill_series(
-            base_vazao, vazao_records.get((code, conjunto), []), n_stages
-        )
-        machine_sets[(code, conjunto)] = tuple(
-            MachineSet(numero_maquinas_series[s], potencia_series[s], vazao_series[s])
-            for s in range(n_stages)
-        )
-    if numero_maquinas_records:
-        applied["numero_maquinas"] = len(numero_maquinas_records)
-    if potencia_records:
-        applied["potencia"] = len(potencia_records)
-    if vazao_records:
-        applied["vazao"] = len(vazao_records)
-
-    cota_polynomials: dict[int, tuple[tuple[float, ...], ...]] = {}
-    for code, cota_overrides in cota_records.items():
-        _require_cadastro_row(hidr, code)
-        base_coefficients = tuple(
-            float(hidr.loc[code, f"a{i}_volume_cota"]) for i in range(5)
-        )
-        cota_polynomials[code] = tuple(
-            _forward_fill_series(base_coefficients, cota_overrides, n_stages)
-        )
-    if cota_records:
-        applied["cota_volume"] = len(cota_records)
-
-    downstream_links: dict[int, tuple[int, ...]] = {}
-    for code, topology_overrides in topology_records.items():
-        _require_cadastro_row(hidr, code)
-        base_downstream = int(hidr.loc[code, "codigo_usina_jusante"])
-        downstream_links[code] = tuple(
-            _forward_fill_series(base_downstream, topology_overrides, n_stages)
-        )
-    if topology_records:
-        applied["codigo_usina_jusante"] = len(topology_records)
-
-    inflow_gauges: dict[int, tuple[int, ...]] = {}
-    for code, gauge_overrides in gauge_records.items():
-        _require_cadastro_row(hidr, code)
-        base_gauge = int(hidr.loc[code, "posto"])
-        inflow_gauges[code] = tuple(
-            _forward_fill_series(base_gauge, gauge_overrides, n_stages)
-        )
-    if gauge_records:
-        applied["posto"] = len(gauge_records)
-
-    coupling_gauges: dict[int, tuple[int, ...]] = {}
-    for code, coupling_overrides in coupling_records.items():
-        _require_cadastro_row(hidr, code)
-        coupling_gauges[code] = tuple(
-            _forward_fill_series(
-                int(hidr.loc[code, "posto"]), coupling_overrides, n_stages
-            )
-        )
-    if coupling_records:
-        applied["posto_acoplamento"] = len(coupling_records)
-
-    energy_links: dict[int, tuple[int | None, ...]] = {}
-    for code, energy_overrides in energy_records.items():
-        _require_cadastro_row(hidr, code)
-        energy_links[code] = tuple(
-            _forward_fill_series(None, energy_overrides, n_stages)
-        )
-    if energy_records:
-        applied["jusante_energia"] = len(energy_records)
-
     effective = EffectiveCadastro(
         base=hidr,
         n_stages=n_stages,
-        stage_varying=stage_varying,
-        diversions=diversions,
-        machine_conjunto_counts=machine_conjunto_counts,
-        machine_sets=machine_sets,
-        cota_polynomials=cota_polynomials,
-        downstream_links=downstream_links,
-        inflow_gauges=inflow_gauges,
-        coupling_gauges=coupling_gauges,
-        energy_links=energy_links,
+        stage_varying=_scalar_series(hidr, overrides.scalar, n_stages),
+        diversions=_diversion_series(hidr, overrides.diversion, n_stages),
+        machine_conjunto_counts=_plant_series(
+            hidr,
+            overrides.numero_conjuntos,
+            lambda code: int(hidr.loc[code, "numero_conjuntos_maquinas"]),
+            n_stages,
+        ),
+        machine_sets=_machine_set_series(hidr, overrides, n_stages),
+        cota_polynomials=_plant_series(
+            hidr,
+            overrides.cota,
+            lambda code: tuple(
+                float(hidr.loc[code, f"a{i}_volume_cota"]) for i in range(5)
+            ),
+            n_stages,
+        ),
+        downstream_links=_plant_series(
+            hidr,
+            overrides.topology,
+            lambda code: int(hidr.loc[code, "codigo_usina_jusante"]),
+            n_stages,
+        ),
+        inflow_gauges=_plant_series(
+            hidr,
+            overrides.gauge,
+            lambda code: int(hidr.loc[code, "posto"]),
+            n_stages,
+        ),
+        coupling_gauges=_plant_series(
+            hidr,
+            overrides.coupling,
+            lambda code: int(hidr.loc[code, "posto"]),
+            n_stages,
+        ),
+        energy_links=_plant_series(
+            hidr, overrides.energy, lambda _code: None, n_stages
+        ),
     )
     report = CadastroResolutionReport(
-        applied=applied, out_of_horizon=tuple(out_of_horizon)
+        applied=_applied_counts(overrides),
+        out_of_horizon=tuple(overrides.out_of_horizon),
     )
     return effective, report

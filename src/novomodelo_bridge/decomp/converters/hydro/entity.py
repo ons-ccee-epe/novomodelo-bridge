@@ -20,7 +20,8 @@ gauge) is read only by the boundary FCF import, never by the operation.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 import pandas as pd
 from idecomp.decomp.modelos.dadger import ACALTEFE
@@ -46,7 +47,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from novomodelo_bridge.decomp.case import DecompCase
-    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.converters.cadastro import (
+        AcRegisters,
+        EffectiveCadastro,
+    )
     from novomodelo_bridge.decomp.converters.hydro.turbine_limit import TurbineLimits
     from novomodelo_bridge.decomp.id_map import DecompIdMap
 
@@ -216,6 +220,271 @@ def _evaporation_coefficients_mm(hidr: pd.DataFrame, code: int) -> list[float] |
     return coefficients
 
 
+@dataclass(frozen=True)
+class _HydroContext:
+    """The case-wide inputs every plant's ``hydros.json`` entry reads."""
+
+    hidr: pd.DataFrame
+    effective: EffectiveCadastro
+    turbine_limits: TurbineLimits
+    operated_codes: set[int]
+    min_outflow_by_code: dict[int, float]
+    mp: pd.DataFrame | None
+    fd: pd.DataFrame | None
+    op_date: str
+    evaporation_codes: set[int]
+    travel_time_hours: dict[int, float] | None
+    fpha_codes: set[int] | None
+
+
+def _hydro_context(
+    case: DecompCase,
+    id_map: DecompIdMap,
+    *,
+    effective: EffectiveCadastro,
+    turbine_limits: TurbineLimits,
+    travel_time_hours: dict[int, float] | None,
+    fpha_codes: set[int] | None,
+) -> _HydroContext:
+    """Read the operated plants' ``UH`` minimum outflows and evaporation flags
+    (and, for Itaipu, the ``MP``/``FD`` registers), warning about every
+    coupling-only ``UH`` registration."""
+    dadger = case.dadger
+    hidr = case.hidr
+    start_date = case.start_date
+    operated = _operated_uh(dadger)
+    coupling_only = _coupling_only_codes(dadger)
+    if coupling_only:
+        _LOG.warning(
+            "%d UH registration(s) without an initial volume excluded from "
+            "the operated set (coupling-only): %s",
+            len(coupling_only),
+            ", ".join(_hydro_display_name(hidr, c) for c in coupling_only),
+        )
+    operated_codes = set(id_map.hydro_codes)
+    min_outflow_by_code: dict[int, float] = {}
+    for _, row in operated.iterrows():
+        value = row.get("vazao_defluente_minima")
+        if not pd.isna(value):
+            min_outflow_by_code[int(row["codigo_usina"])] = float(value)
+
+    # Read the MP/FD registers only if the split plant is actually present —
+    # keeps every other (hand-built or real, non-Itaipu) caller from needing
+    # a Dadger stub for methods this function otherwise never touches.
+    mp = fd = None
+    if _ITAIPU_CODE in operated_codes:
+        mp = as_frame(dadger.mp(df=True))
+        fd = as_frame(dadger.fd(df=True))
+
+    return _HydroContext(
+        hidr=hidr,
+        effective=effective,
+        turbine_limits=turbine_limits,
+        operated_codes=operated_codes,
+        min_outflow_by_code=min_outflow_by_code,
+        mp=mp,
+        fd=fd,
+        op_date=start_date.isoformat(),
+        evaporation_codes=_evaporation_flag_codes(dadger),
+        travel_time_hours=travel_time_hours,
+        fpha_codes=fpha_codes,
+    )
+
+
+def _unit_groups(
+    code: int,
+    hreg: pd.Series,
+    name: str,
+    context: _HydroContext,
+    id_map: DecompIdMap,
+) -> tuple[list[dict], float, float]:
+    """The plant's unit groups, with its entity ``max_turbined_m3s`` and
+    ``max_generation_mw``: Itaipu's two per-frequency groups, or one mirror
+    group for every other plant."""
+    bus_id = id_map.bus_id(int(hreg["submercado"]))
+    if code == _ITAIPU_CODE:
+        frequencies = _split_plant_frequencies(
+            hreg, code, context.effective, context.mp, context.fd
+        )
+        # Unconditional 60 Hz -> IV relocation: Itaipu's 60 Hz
+        # unit group (group id 1, the higher of the two ascending
+        # frequencies) is moved to the transshipment bus -- the AC
+        # corridor into Ivaiporã -- so novomodelo's HydroGeneration{bus}
+        # selector can separate the two groups; the 50 Hz group (group
+        # id 0) stays on the plant's own SE bus (already computed above
+        # as `bus_id`), where its HVDC Elo delivers directly and the
+        # `carga_ande` load nets in.
+        se_bus = bus_id
+        iv_bus = id_map.transhipment_bus_id
+        return _build_split_unit_groups(
+            hreg,
+            code,
+            name,
+            [se_bus, iv_bus],
+            frequencies,
+            context.effective,
+            context.turbine_limits,
+        )
+    _, max_generation = _rated_envelope(hreg, code, context.effective)
+    max_turbined = context.turbine_limits.envelope(code, 0)
+    unit_groups = [
+        build_mirror_unit_group(
+            name=name,
+            bus_id=bus_id,
+            min_generation_mw=0.0,
+            max_generation_mw=max_generation,
+            min_turbined_m3s=0.0,
+            max_turbined_m3s=max_turbined,
+        )
+    ]
+    return unit_groups, max_turbined, max_generation
+
+
+def _hydraulic_losses(effective: EffectiveCadastro, code: int) -> dict:
+    """The plant's penstock hydraulic losses, explicitly lossless when it
+    declares none."""
+    # Penstock hydraulic losses — a computed FPHA requires the field
+    # (novomodelo rejects an FPHA plant without it). tipo_perda 1 = a % of
+    # gross head (factor); 2 = constant metres; anything else / no loss
+    # emits an explicit lossless factor so the required field is present.
+    perdas = effective.value(code, "perdas", 0)
+    tipo_perda = int(effective.base.loc[code, "tipo_perda"])
+    if tipo_perda == 1 and perdas > 0.0:
+        return {"type": "factor", "value": perdas / 100.0}
+    if tipo_perda == 2 and perdas > 0.0:
+        return {"type": "constant", "value_m": perdas}
+    return {"type": "factor", "value": 0.0}
+
+
+def _fpha_fields(code: int, name: str, effective: EffectiveCadastro) -> dict:
+    """The computed-FPHA entry fields: specific productivity, turbine
+    efficiency, the inline constant tailrace, and hydraulic losses."""
+    rho_esp = effective.value(code, "produtibilidade_especifica", 0)
+    fields: dict = {
+        "specific_productivity_mw_per_m3s_per_m": rho_esp,
+        "efficiency": {"type": "constant", "value": fpha_efficiency(rho_esp, name)},
+    }
+    # Inline constant tailrace = mean canal de fuga: novomodelo's FPHA
+    # fallback for a plant whose tailrace_curves.parquet family is
+    # absent (all this deck's FPHA plants do carry a family, so it is
+    # only a safety net).
+    cf = effective.value(code, "canal_fuga_medio", 0)
+    if cf > 0.0:
+        fields["tailrace"] = {"type": "polynomial", "coefficients": [cf]}
+    fields["hydraulic_losses"] = _hydraulic_losses(effective, code)
+    return fields
+
+
+class _PlantEntry(NamedTuple):
+    """A plant's ``hydros.json`` entry, and whether ``storage_envelope``
+    collapsed its run-of-river registry band to the reference volume."""
+
+    entry: dict
+    runofriver_collapsed: bool
+
+
+def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _PlantEntry:
+    """Plant *code*'s ``hydros.json`` entry."""
+    hidr = context.hidr
+    effective = context.effective
+    if code not in hidr.index:
+        raise ValueError(f"UH plant {code} is not in the hydro registry")
+    hreg = hidr.loc[code]
+    name = str(hreg["nome_usina"]).strip()
+    is_fpha = context.fpha_codes is not None and code in context.fpha_codes
+    downstream = _downstream_operated(effective, code, context.operated_codes)
+    min_storage_hm3, max_storage_hm3 = storage_envelope(effective, code)
+    runofriver_collapsed = str(hreg.get("tipo_regulacao", "")).strip() == "D" and float(
+        hreg["volume_minimo"]
+    ) != float(hreg["volume_maximo"])
+    unit_groups, max_turbined, max_generation = _unit_groups(
+        code, hreg, name, context, id_map
+    )
+    entry: dict = {
+        "id": id_map.hydro_id(code),
+        "name": name,
+        "operational_start_date": context.op_date,
+        "downstream_id": (None if downstream is None else id_map.hydro_id(downstream)),
+        "reservoir": {
+            "min_storage_hm3": min_storage_hm3,
+            "max_storage_hm3": max_storage_hm3,
+        },
+        "outflow": {
+            "min_outflow_m3s": context.min_outflow_by_code.get(code, 0.0),
+            "max_outflow_m3s": None,
+        },
+        "generation": {
+            "model": "fpha" if is_fpha else "constant_productivity",
+            "min_turbined_m3s": 0.0,
+            "max_turbined_m3s": max_turbined,
+            "min_generation_mw": 0.0,
+            "max_generation_mw": max_generation,
+        },
+        "unit_groups": unit_groups,
+    }
+    if is_fpha:
+        entry.update(_fpha_fields(code, name, effective))
+    travel_time_hours = context.travel_time_hours
+    if travel_time_hours and code in travel_time_hours and downstream is not None:
+        entry["travel_time_hours"] = travel_time_hours[code]
+    if code in context.evaporation_codes:
+        evaporation_mm = _evaporation_coefficients_mm(hidr, code)
+        if evaporation_mm is not None:
+            entry["evaporation"] = {"coefficients_mm": evaporation_mm}
+    return _PlantEntry(entry, runofriver_collapsed)
+
+
+def _report_machine_set_overrides(
+    effective: EffectiveCadastro, operated_codes: set[int]
+) -> None:
+    """Log how many operated plants carry an ``AC`` machine-configuration
+    override."""
+    affected_codes = set(effective.machine_conjunto_counts) | {
+        code for code, _ in effective.machine_sets
+    }
+    n_ac_affected = len(affected_codes & operated_codes)
+    if n_ac_affected:
+        _LOG.info(
+            "applied AC NUMCON/NUMMAQ/POTEFE/VAZEFE machine-configuration "
+            "overrides for %d plant(s)",
+            n_ac_affected,
+        )
+
+
+def _report_runofriver_collapse(n_runofriver_collapsed: int) -> None:
+    """Log how many run-of-river storage ranges collapsed to a single volume."""
+    if n_runofriver_collapsed:
+        _LOG.info(
+            "collapsed %d run-of-river ('D') plant(s) storage range to their "
+            "reference volume (volume_referencia): the hidr registry's "
+            "(volume_minimo, volume_maximo) band would otherwise emit a "
+            "phantom weekly storage buffer the plant does not have",
+            n_runofriver_collapsed,
+        )
+
+
+def _report_unconsumed_altefe(dadger: AcRegisters) -> None:
+    """Warn about the plants declaring an ``AC ALTEFE`` head override."""
+    # TRACKED NOVOMODELO-GAP WORKAROUND (idecomp limitation, not novomodelo's): the
+    # source model's AC ALTEFE register overrides a conjunto's effective
+    # head, but idecomp's typed accessor exposes only the identifying/timing
+    # columns for it, no value column — so it cannot be folded into the
+    # turbined-flow limit's rated head. Every plant keeps its base hidr
+    # queda_nominal_conjunto_* nominal head regardless of an ALTEFE
+    # declaration. Remove this warning (and wire the override into
+    # turbine_limit._rated_head) once idecomp exposes an ALTEFE value accessor.
+    altefe = ac_frame(dadger, ACALTEFE)
+    if isinstance(altefe, pd.DataFrame) and not altefe.empty:
+        n_altefe = altefe["codigo_usina"].nunique()
+        _LOG.warning(
+            "%d plant(s) declare an AC ALTEFE effective-head override that "
+            "cannot be consumed (idecomp exposes no value accessor for "
+            "ALTEFE); the turbined-flow limit uses the base hidr "
+            "nominal head for these plants",
+            n_altefe,
+        )
+
+
 def convert_hydros(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -287,180 +556,25 @@ def convert_hydros(
     always sit inside it. Per-family ``AC`` coverage is reported by
     ``check decomp`` (:mod:`novomodelo_bridge.decomp.preflight`), not logged here.
     """
-    dadger = case.dadger
-    hidr = case.hidr
-    start_date = case.start_date
-    operated = _operated_uh(dadger)
-    coupling_only = _coupling_only_codes(dadger)
-    if coupling_only:
-        _LOG.warning(
-            "%d UH registration(s) without an initial volume excluded from "
-            "the operated set (coupling-only): %s",
-            len(coupling_only),
-            ", ".join(_hydro_display_name(hidr, c) for c in coupling_only),
-        )
-    operated_codes = set(id_map.hydro_codes)
-    min_outflow_by_code: dict[int, float] = {}
-    for _, row in operated.iterrows():
-        value = row.get("vazao_defluente_minima")
-        if not pd.isna(value):
-            min_outflow_by_code[int(row["codigo_usina"])] = float(value)
-
-    # Read the MP/FD registers only if the split plant is actually present —
-    # keeps every other (hand-built or real, non-Itaipu) caller from needing
-    # a Dadger stub for methods this function otherwise never touches.
-    mp = fd = None
-    if _ITAIPU_CODE in operated_codes:
-        mp = as_frame(dadger.mp(df=True))
-        fd = as_frame(dadger.fd(df=True))
-
-    op_date = start_date.isoformat()
+    context = _hydro_context(
+        case,
+        id_map,
+        effective=effective,
+        turbine_limits=turbine_limits,
+        travel_time_hours=travel_time_hours,
+        fpha_codes=fpha_codes,
+    )
     hydros: list[dict] = []
-    evaporation_codes = _evaporation_flag_codes(dadger)
     n_runofriver_collapsed = 0
     for code in id_map.hydro_codes:
-        if code not in hidr.index:
-            raise ValueError(f"UH plant {code} is not in the hydro registry")
-        hreg = hidr.loc[code]
-        name = str(hreg["nome_usina"]).strip()
-        is_fpha = fpha_codes is not None and code in fpha_codes
-        downstream = _downstream_operated(effective, code, operated_codes)
-        min_storage_hm3, max_storage_hm3 = storage_envelope(effective, code)
-        if str(hreg.get("tipo_regulacao", "")).strip() == "D" and float(
-            hreg["volume_minimo"]
-        ) != float(hreg["volume_maximo"]):
+        plant = _hydro_entry(code, context, id_map)
+        hydros.append(plant.entry)
+        if plant.runofriver_collapsed:
             n_runofriver_collapsed += 1
-        bus_id = id_map.bus_id(int(hreg["submercado"]))
-        if code == _ITAIPU_CODE:
-            frequencies = _split_plant_frequencies(hreg, code, effective, mp, fd)
-            # Unconditional 60 Hz -> IV relocation: Itaipu's 60 Hz
-            # unit group (group id 1, the higher of the two ascending
-            # frequencies) is moved to the transshipment bus -- the AC
-            # corridor into Ivaiporã -- so novomodelo's HydroGeneration{bus}
-            # selector can separate the two groups; the 50 Hz group (group
-            # id 0) stays on the plant's own SE bus (already computed above
-            # as `bus_id`), where its HVDC Elo delivers directly and the
-            # `carga_ande` load nets in.
-            se_bus = bus_id
-            iv_bus = id_map.transhipment_bus_id
-            unit_groups, max_turbined, max_generation = _build_split_unit_groups(
-                hreg,
-                code,
-                name,
-                [se_bus, iv_bus],
-                frequencies,
-                effective,
-                turbine_limits,
-            )
-        else:
-            _, max_generation = _rated_envelope(hreg, code, effective)
-            max_turbined = turbine_limits.envelope(code, 0)
-            unit_groups = [
-                build_mirror_unit_group(
-                    name=name,
-                    bus_id=bus_id,
-                    min_generation_mw=0.0,
-                    max_generation_mw=max_generation,
-                    min_turbined_m3s=0.0,
-                    max_turbined_m3s=max_turbined,
-                )
-            ]
-        entry: dict = {
-            "id": id_map.hydro_id(code),
-            "name": name,
-            "operational_start_date": op_date,
-            "downstream_id": (
-                None if downstream is None else id_map.hydro_id(downstream)
-            ),
-            "reservoir": {
-                "min_storage_hm3": min_storage_hm3,
-                "max_storage_hm3": max_storage_hm3,
-            },
-            "outflow": {
-                "min_outflow_m3s": min_outflow_by_code.get(code, 0.0),
-                "max_outflow_m3s": None,
-            },
-            "generation": {
-                "model": "fpha" if is_fpha else "constant_productivity",
-                "min_turbined_m3s": 0.0,
-                "max_turbined_m3s": max_turbined,
-                "min_generation_mw": 0.0,
-                "max_generation_mw": max_generation,
-            },
-            "unit_groups": unit_groups,
-        }
-        if is_fpha:
-            rho_esp = effective.value(code, "produtibilidade_especifica", 0)
-            entry["specific_productivity_mw_per_m3s_per_m"] = rho_esp
-            entry["efficiency"] = {
-                "type": "constant",
-                "value": fpha_efficiency(rho_esp, name),
-            }
-            # Inline constant tailrace = mean canal de fuga: novomodelo's FPHA
-            # fallback for a plant whose tailrace_curves.parquet family is
-            # absent (all this deck's FPHA plants do carry a family, so it is
-            # only a safety net).
-            cf = effective.value(code, "canal_fuga_medio", 0)
-            if cf > 0.0:
-                entry["tailrace"] = {"type": "polynomial", "coefficients": [cf]}
-            # Penstock hydraulic losses — a computed FPHA requires the field
-            # (novomodelo rejects an FPHA plant without it). tipo_perda 1 = a % of
-            # gross head (factor); 2 = constant metres; anything else / no loss
-            # emits an explicit lossless factor so the required field is present.
-            perdas = effective.value(code, "perdas", 0)
-            tipo_perda = int(effective.base.loc[code, "tipo_perda"])
-            if tipo_perda == 1 and perdas > 0.0:
-                entry["hydraulic_losses"] = {"type": "factor", "value": perdas / 100.0}
-            elif tipo_perda == 2 and perdas > 0.0:
-                entry["hydraulic_losses"] = {"type": "constant", "value_m": perdas}
-            else:
-                entry["hydraulic_losses"] = {"type": "factor", "value": 0.0}
-        if travel_time_hours and code in travel_time_hours and downstream is not None:
-            entry["travel_time_hours"] = travel_time_hours[code]
-        if code in evaporation_codes:
-            evaporation_mm = _evaporation_coefficients_mm(hidr, code)
-            if evaporation_mm is not None:
-                entry["evaporation"] = {"coefficients_mm": evaporation_mm}
-        hydros.append(entry)
 
-    affected_codes = set(effective.machine_conjunto_counts) | {
-        code for code, _ in effective.machine_sets
-    }
-    n_ac_affected = len(affected_codes & operated_codes)
-    if n_ac_affected:
-        _LOG.info(
-            "applied AC NUMCON/NUMMAQ/POTEFE/VAZEFE machine-configuration "
-            "overrides for %d plant(s)",
-            n_ac_affected,
-        )
-
-    if n_runofriver_collapsed:
-        _LOG.info(
-            "collapsed %d run-of-river ('D') plant(s) storage range to their "
-            "reference volume (volume_referencia): the hidr registry's "
-            "(volume_minimo, volume_maximo) band would otherwise emit a "
-            "phantom weekly storage buffer the plant does not have",
-            n_runofriver_collapsed,
-        )
-
-    # TRACKED NOVOMODELO-GAP WORKAROUND (idecomp limitation, not novomodelo's): the
-    # source model's AC ALTEFE register overrides a conjunto's effective
-    # head, but idecomp's typed accessor exposes only the identifying/timing
-    # columns for it, no value column — so it cannot be folded into the
-    # turbined-flow limit's rated head. Every plant keeps its base hidr
-    # queda_nominal_conjunto_* nominal head regardless of an ALTEFE
-    # declaration. Remove this warning (and wire the override into
-    # turbine_limit._rated_head) once idecomp exposes an ALTEFE value accessor.
-    altefe = ac_frame(dadger, ACALTEFE)
-    if isinstance(altefe, pd.DataFrame) and not altefe.empty:
-        n_altefe = altefe["codigo_usina"].nunique()
-        _LOG.warning(
-            "%d plant(s) declare an AC ALTEFE effective-head override that "
-            "cannot be consumed (idecomp exposes no value accessor for "
-            "ALTEFE); the turbined-flow limit uses the base hidr "
-            "nominal head for these plants",
-            n_altefe,
-        )
+    _report_machine_set_overrides(effective, context.operated_codes)
+    _report_runofriver_collapse(n_runofriver_collapsed)
+    _report_unconsumed_altefe(case.dadger)
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),
