@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 import polars as pl
@@ -60,6 +60,15 @@ _PCT_SUFFIX_TO_SOURCE: dict[str, str] = {
 #: Identifier columns expected on every percentile frame.
 _PCT_ENTITY_COL: str = "entity_id"
 _PCT_STAGE_COL: str = "stage_id"
+
+
+class _FilterableFrame(Protocol):
+    """The ``pl.DataFrame`` members :func:`plant_percentile_arrays` calls on the
+    percentile frame."""
+
+    def is_empty(self) -> bool: ...
+
+    def filter(self, *predicates: pl.Expr) -> pl.DataFrame: ...
 
 
 def tidy_from_results(results: Sequence[ResultComparison]) -> pl.DataFrame:
@@ -869,7 +878,7 @@ def per_bus_band_from_pct(
 
 
 def plant_percentile_arrays(
-    pct_df: pl.DataFrame | None,
+    pct_df: _FilterableFrame | None,
     var_stages: Sequence[tuple[str, str, list[int]]],
     plant_novomodelo_id: int,
 ) -> dict[str, list[float]]:

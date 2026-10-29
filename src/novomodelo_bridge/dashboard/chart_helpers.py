@@ -97,7 +97,7 @@ COST_GROUP_COLORS: dict[str, str] = {
 
 
 def compute_percentiles(
-    df: pd.DataFrame,
+    df: pd.DataFrame | pl.DataFrame,
     group_cols: list[str],
     value_col: str,
     percentiles: tuple[float, ...] = (0.1, 0.5, 0.9),
