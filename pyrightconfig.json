@@ -2,8 +2,8 @@
   // Mirror of [tool.pyright] in pyproject.toml, for editors/tools that read
   // pyrightconfig.json but not pyproject's [tool.pyright] table. Keep the two in
   // sync; pyproject remains the documented home (see its comments for the full
-  // rationale). Pyright is an editor aid only — CI gates are ruff + the project's
-  // declared checker `ty`.
+  // rationale). Pyright is an editor aid only and does not run in CI: the CI
+  // lint job gates ruff and `ty check`, the type gate.
   //
   // venvPath/venv let Pyright resolve the typed first-party deps (idecomp/inewave
   // ship py.typed); without it every `import idecomp...` raises a phantom

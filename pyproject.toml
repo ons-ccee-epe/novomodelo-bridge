@@ -67,10 +67,9 @@ fail_under = 83
 # Ratchet: raise as coverage improves, never lower to dodge a regression — this is the combined aggregate over the 5 `source` modules above, not a per-module threshold.
 
 [tool.pyright]
-# Editor aid only — CI gates ruff (ruff.toml, whole tree) and the drift
-# checks that follow it in the lint job.
-# `ty` and pyright are local/editor aids only; neither is a CI step. Point
-# at the venv so the typed first-party deps (idecomp/inewave ship
+# Editor aid only: pyright does not run in CI. The CI lint job gates ruff
+# (ruff.toml, whole tree), `ty check` (the type gate) and the drift checks.
+# Point at the venv so the typed first-party deps (idecomp/inewave ship
 # py.typed) resolve instead of raising phantom missing-import errors.
 include = ["src", "tests"]
 venvPath = "."
