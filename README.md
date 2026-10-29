@@ -56,7 +56,7 @@ novomodelo-bridge convert newave /path/to/newave_case ./my_case
 # 3. Solve with novomodelo. By default the solver writes its results to ./my_case/output/.
 novomodelo run ./my_case
 
-# 4. Compare NEWAVE's published results with Novomodelo's simulation. Always exits 0.
+# 4. Compare NEWAVE's published results with Novomodelo's simulation. Differences do not change the exit code.
 novomodelo-bridge compare newave /path/to/newave_case ./my_case/output --format html
 
 # 5. Browse the Novomodelo run.
@@ -115,8 +115,8 @@ written.
 the set: `parquet` and `json` (the tidy comparison dataset) by default, `csv`,
 `html` for a multi-tab `report.html` covering costs, system and energy
 balance, network, convergence, performance, and per-plant detail, or `all`.
-`compare` is informational and always exits 0; the report is where you judge
-the differences.
+`compare` is informational: differences between the two models never change the
+exit code, and the report is where you judge them.
 
 ### Machine-readable output
 
@@ -124,14 +124,18 @@ With `--json`, a command prints exactly one JSON document to stdout,
 `{schema_version, command, status, summary, diagnostics}`, and nothing else on
 stdout, including when it fails. Human-readable rendering is suppressed.
 
-| Command     | Exit codes                                                                |
-| ----------- | ------------------------------------------------------------------------- |
-| `check`     | 0 ready, 1 ready with warnings, 2 will not convert                        |
-| `convert`   | 0 converted, 1 conversion error, 2 `--validate` reported a load failure   |
-| `compare`   | always 0                                                                  |
-| `dashboard` | 0 written, 1 error                                                        |
+| Command     | Exit codes                                                              |
+| ----------- | ----------------------------------------------------------------------- |
+| `check`     | 0 ready, 1 ready with warnings, 2 will not convert                      |
+| `convert`   | 0 converted, 1 conversion error, 2 `--validate` reported a load failure |
+| `compare`   | 0 compared, 1 source case not found, 2 Novomodelo output unreadable     |
+| `dashboard` | 0 written, 1 error                                                      |
+| `export`    | 0 exported, 1 export failed                                             |
 
-An error status and a non-zero exit code always travel together.
+A command line the parser rejects (unknown option or command, missing argument,
+invalid value) exits 2 on every command. Under `--json` it prints the same
+envelope, with status `error` and a `usage-error` diagnostic, and nothing on
+stderr. An error status and a non-zero exit code always travel together.
 
 ## Configuration
 

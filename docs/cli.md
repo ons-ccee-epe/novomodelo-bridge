@@ -152,7 +152,8 @@ $ novomodelo-bridge compare [OPTIONS] COMMAND [ARGS]...
 
 Compare a DECOMP run&#x27;s published operation against Novomodelo&#x27;s simulation.
 
-Informational: always exits 0, reporting divergences without failing.
+Informational: divergences never change the exit code. Exits 1 if the source
+case is not found, and 2 if the Novomodelo output cannot be read.
 
 The Overview tab&#x27;s cost breakdown is at present value on both sides:
 each stage&#x27;s DECOMP parcels are discounted by that stage&#x27;s ratio of
@@ -188,7 +189,8 @@ $ novomodelo-bridge compare decomp [OPTIONS] {decomp_dir} {novomodelo_output_dir
 
 Compare NEWAVE published results against Novomodelo simulation output.
 
-Informational: always exits 0, reporting divergences without failing.
+Informational: divergences never change the exit code. Exits 1 if the source
+case is not found, and 2 if the Novomodelo output cannot be read.
 
 **Usage**:
 

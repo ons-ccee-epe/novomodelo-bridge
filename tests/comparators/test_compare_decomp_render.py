@@ -267,7 +267,10 @@ class TestCompareDecompCommand:
         assert payload["summary"]["all_within_tol"] is False
 
     def test_unreadable_output_exits_two(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
     ) -> None:
         def _boom(*_args: object, **_kwargs: object) -> ComparisonDataset:
             raise FileNotFoundError("dec_oper_sist.csv not found")
@@ -280,12 +283,15 @@ class TestCompareDecompCommand:
             "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset", _boom
         )
         result = CliRunner().invoke(
-            app, ["compare", "decomp", str(tmp_path), str(tmp_path)]
+            app, ["compare", "decomp", str(decomp_mini_deck), str(tmp_path)]
         )
         assert result.exit_code == 2
 
     def test_field_parse_error_from_dataset_build_exits_two(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
     ) -> None:
         """The mandatory id-map step inside ``build_decomp_dataset`` can now
         raise the typed ``FieldParseError`` (a malformed deck with no ``SB``
@@ -306,7 +312,7 @@ class TestCompareDecompCommand:
             "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset", _boom
         )
         result = CliRunner().invoke(
-            app, ["compare", "decomp", str(tmp_path), str(tmp_path)]
+            app, ["compare", "decomp", str(decomp_mini_deck), str(tmp_path)]
         )
         assert result.exit_code == 2
 
@@ -403,7 +409,10 @@ class TestCompareDecompCommand:
         assert "HTML report written to" not in result.stdout
 
     def test_partition_missing_output_exits_two(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
     ) -> None:
         """Regression: NovomodeloPartitionMissingError extends
         BridgeError, a hierarchy disjoint from NovomodeloReadError (RuntimeError)
@@ -432,7 +441,7 @@ class TestCompareDecompCommand:
             "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset", _boom
         )
         result = CliRunner().invoke(
-            app, ["compare", "decomp", str(tmp_path), str(tmp_path)]
+            app, ["compare", "decomp", str(decomp_mini_deck), str(tmp_path)]
         )
         # exit_code == 2 (not 1) proves this is the clean typer.Exit(code=2)
         # path, not an unhandled exception caught by CliRunner's default

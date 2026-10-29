@@ -202,9 +202,10 @@ def _resolve_compare_settings(args: CompareArgs) -> CompareArgs:
 def _run_newave_comparison(args: CompareArgs) -> None:
     """Execute the compare newave subcommand.
 
-    Intentionally always exits 0: ``compare newave`` is informational (a
-    descriptive NEWAVE-vs-Novomodelo divergence report), so it never signals a
-    failure on divergence.
+    ``compare newave`` is informational (a descriptive NEWAVE-vs-Novomodelo
+    divergence report), so a divergence never changes the exit code (0). Only a
+    failure to compare does: a missing source case (1) or an unreadable
+    Novomodelo output (2), both routed through :func:`_fail`.
     """
     args = _resolve_compare_settings(args)
 
@@ -304,10 +305,11 @@ def _run_newave_comparison(args: CompareArgs) -> None:
 def _run_decomp_comparison(args: CompareArgs) -> None:
     """Execute the compare decomp subcommand.
 
-    Informational like ``compare newave``: it always exits 0 and describes the
-    divergence rather than judging it. An unreadable *existing* output file is
-    the one failure (exit 2) — reporting a zero-vs-zero match on data we could
-    not read would be worse than stopping.
+    Informational like ``compare newave``: divergences never change the exit
+    code (0) -- the command describes them rather than judging them. Two
+    failures stop it, the same as on the NEWAVE track: a missing source deck
+    (exit 1) and an unreadable *existing* output file (exit 2) -- reporting a
+    zero-vs-zero match on data we could not read would be worse than stopping.
     """
     from novomodelo_bridge.comparators.decomp.results import build_decomp_dataset
     from novomodelo_bridge.comparators.verdict import (
@@ -327,6 +329,11 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
     # ``build_decomp_dataset`` below gets a concrete tolerance rather than the
     # raw, possibly-``None`` CLI value — mirrors ``_run_newave_comparison``.
     args = _resolve_compare_settings(args)
+
+    try:
+        decomp_case = DecompCase.from_directory(args.source_dir)
+    except FileNotFoundError as exc:
+        _fail("compare decomp", args, exc, 1)
 
     with dx.collect() as compare_diagnostics:
         try:
@@ -368,8 +375,6 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             console=args.err_console(),
             quiet=args.quiet,
         )
-
-    decomp_case = DecompCase.from_directory(args.source_dir)
 
     formats, out_dir = _export_compare_artifacts(
         dataset,
