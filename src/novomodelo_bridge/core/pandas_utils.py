@@ -27,12 +27,12 @@ def is_na(value: object) -> bool:
 
 
 def as_frame(accessor_result: object) -> pd.DataFrame | None:
-    """Narrow a ``df=True`` accessor result to the frame it actually is.
-
-    ``inewave``/``idecomp`` annotate those accessors as ``Record | list[Record] |
-    DataFrame | None`` for every ``df`` value, so a bare result fails type
-    narrowing; with ``df=True`` they return a frame, or ``None`` when the
+    """Narrow a ``df=True`` accessor result to a frame, or ``None`` when the
     register is absent.
+
+    The converters call the deck readers through protocols whose accessors
+    return ``object``, so test doubles can stand in for the readers; the
+    result is only known to be a frame after this check.
     """
     return accessor_result if isinstance(accessor_result, pd.DataFrame) else None
 
