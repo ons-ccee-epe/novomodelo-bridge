@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, TypeGuard
@@ -143,33 +144,81 @@ def _emit_unknown_volume_units(
     )
 
 
-def _modif_blocks(modif: Modif) -> list[tuple[int | None, list[Register]]]:
-    """The records of ``modif.dat`` under each ``USINA`` record, in file order.
+def _plant_blocks(modif: Modif) -> list[tuple[int, list[Register]]]:
+    """Each plant's ``modif.dat`` records, in the order the plants first appear.
 
-    A plant may have several blocks, each its own entry; records before the
-    first ``USINA`` record come first, under ``None``. The registers are walked
-    directly because ``Modif.modificacoes_usina`` reads only a plant's first
-    block.
+    Only a plant's first ``USINA`` block counts, as in ``Modif.modificacoes_usina``;
+    ``modif-records-ignored`` reports the records left out.
     """
-    blocks: list[tuple[int | None, list[Register]]] = [(None, [])]
+    usinas = modif.usina(df=True)
+    if usinas is None or usinas.empty:
+        return []
+    if usinas["codigo"].isna().any():
+        raise FieldParseError(
+            "modif.dat: a USINA record has no plant code",
+            path="modif.dat",
+            field="USINA",
+        )
+    names: dict[int, str] = {}
+    for code, name in zip(usinas["codigo"], usinas["nome"], strict=True):
+        names.setdefault(as_int(code), str(name).strip())
+    _emit_ignored_records(modif, names)
+    return [(code, modif.modificacoes_usina(code) or []) for code in names]
+
+
+def _emit_ignored_records(modif: Modif, names: dict[int, str]) -> None:
+    """Warn about the records outside every plant's first ``USINA`` block.
+
+    The NEWAVE manual allows one block per plant, so a repeated plant's later
+    blocks are ignored, and a record before the first ``USINA`` record belongs
+    to no plant. Header and comment lines read as ``DefaultRegister``, not as
+    records.
+    """
+    ignored: dict[int | None, Counter[str]] = {}
+    plant: int | None = None
+    in_first_block = False
+    seen: set[int | None] = set()
     for register in modif.data:
         if _is_record(register, USINA):
-            if register.codigo is None:
-                raise FieldParseError(
-                    "modif.dat: a USINA record has no plant code",
-                    path="modif.dat",
-                    field="USINA",
-                )
-            blocks.append((register.codigo, []))
-        else:
-            blocks[-1][1].append(register)
-    return blocks if blocks[0][1] else blocks[1:]
-
-
-def _plant_blocks(modif: Modif) -> list[tuple[int, list[Register]]]:
-    return [
-        (code, records) for code, records in _modif_blocks(modif) if code is not None
-    ]
+            plant = register.codigo
+            in_first_block = plant not in seen
+            seen.add(plant)
+        elif not in_first_block and type(register).__name__ != "DefaultRegister":
+            ignored.setdefault(plant, Counter())[type(register).__name__] += 1
+    if not ignored:
+        return
+    total = sum(counts.total() for counts in ignored.values())
+    emit(
+        Diagnostic(
+            code="modif-records-ignored",
+            severity=Severity.WARNING,
+            category="Cadastro overrides",
+            title=f"MODIF.DAT records ignored ({total})",
+            summary=(
+                f"{total} MODIF.DAT record(s) lie outside a plant's first USINA "
+                "block and are ignored: the NEWAVE manual allows one block per "
+                "plant, and a record before the first USINA record belongs to "
+                "no plant."
+            ),
+            table=DiagnosticTable(
+                columns=["Code", "Name", "Records ignored"],
+                rows=[
+                    [
+                        "" if code is None else code,
+                        "before the first USINA" if code is None else names[code],
+                        ", ".join(f"{count} {kind}" for kind, count in counts.items()),
+                    ]
+                    for code, counts in ignored.items()
+                ],
+                justify=["right", "left", "left"],
+            ),
+            remediation=(
+                "Move the listed records into the plant's first USINA block in "
+                "MODIF.DAT."
+            ),
+        ),
+        logger=_LOG,
+    )
 
 
 def _apply_permanent_overrides(
@@ -347,26 +396,21 @@ class DiversionRecord:
 def read_diversion_records(case: NewaveCase) -> dict[int, DiversionRecord]:
     """``{plant code: its CDESVIO record}`` from ``modif.dat``.
 
-    A record belongs to the ``USINA`` record above it; a plant with more than
-    one keeps the last, as with the other permanent records. A flow inewave
-    cannot parse reads as no flow given.
+    A plant whose block has more than one keeps the last, as with the other
+    permanent records. A flow inewave cannot parse reads as no flow given.
 
     Raises:
-        FieldParseError: a record before any ``USINA`` record, without an
-            integer target code, diverting to its own plant, or with a
-            negative or infinite flow.
+        FieldParseError: a record without an integer target code, diverting to
+            its own plant, or with a negative or infinite flow.
     """
     modif = case.modif
     if modif is None:
         return {}
     records: dict[int, DiversionRecord] = {}
-    for plant, registers in _modif_blocks(modif):
+    for plant, registers in _plant_blocks(modif):
         for register in registers:
-            if not _is_record(register, CDESVIO):
-                continue
-            if plant is None:
-                raise _cdesvio_error("a CDESVIO record comes before any USINA record")
-            records[plant] = _diversion_record(plant, register)
+            if _is_record(register, CDESVIO):
+                records[plant] = _diversion_record(plant, register)
     return records
 
 

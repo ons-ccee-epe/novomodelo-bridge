@@ -29,6 +29,10 @@ links are cobre-bridge's.
 - **`convert newave` reads `CDESVIO` only in upper case, like the other
   `modif.dat` records.** A maximum flow that is not a number drops the channel
   with `diversion-channel-dropped`; it used to stop the conversion.
+- **`convert newave` reads only each plant's first `USINA` block of `modif.dat`,
+  as the NEWAVE manual allows.** The records of a repeated block, or before the
+  first `USINA`, are listed by a `modif-records-ignored` warning; merge each
+  plant into one block to keep them.
 - **`compare decomp` exits 1 when the DECOMP deck is not found**, as
   `compare newave` does; it used to exit 2. An unreadable Novomodelo output
   still exits 2 on both tracks.

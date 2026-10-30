@@ -219,15 +219,21 @@ def make_nw_files(tmp_path: Path, **overrides: Path | None) -> NewaveFiles:
 
 def modif_mock(*blocks: tuple[int, list]) -> MagicMock:
     """A ``Modif`` stand-in holding one ``USINA`` block per ``(code, records)``,
-    in order, as the register sequence the converter walks."""
+    in order; ``modificacoes_usina`` returns a plant's first block, as inewave's."""
     modif = MagicMock()
     data: list = []
+    first_blocks: dict[int, list] = {}
     for code, records in blocks:
         usina = MagicMock()
         type(usina).__name__ = "USINA"
         usina.codigo = code
         data.extend([usina, *records])
+        first_blocks.setdefault(code, list(records))
     modif.data = data
+    modif.usina.return_value = pd.DataFrame(
+        {"codigo": [code for code, _ in blocks], "nome": [""] * len(blocks)}
+    )
+    modif.modificacoes_usina.side_effect = lambda code: first_blocks.get(code, [])
     return modif
 
 

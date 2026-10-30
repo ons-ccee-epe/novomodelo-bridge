@@ -46,6 +46,12 @@ minimum outflow, `REST. TURBINAMENTO` for the dated turbining records of
 ignores it, and both `check newave` and `convert newave` say so with an
 informational diagnostic. A switch line absent from `dger.dat` counts as on.
 
+`modif.dat` is read one `USINA` block per plant, as the NEWAVE manual allows.
+The records of a later block for the same plant, and any record before the
+first `USINA` record, are ignored, and `convert newave` lists them in a
+`modif-records-ignored` warning; merge each plant's records into one block to
+keep them.
+
 NEWAVE's text files are read by fixed columns, so a tab where the layout
 expects spaces shifts every field after it on its line, and a data line can
 read with wrong or missing values. `check newave` and `convert newave` warn

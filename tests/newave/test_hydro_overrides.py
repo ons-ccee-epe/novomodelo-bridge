@@ -1042,10 +1042,23 @@ class TestReadDiversionRecords:
             == {}
         )
 
+    def test_a_record_before_any_usina_is_ignored_with_a_warning(
+        self, tmp_path
+    ) -> None:
+        with dx.collect() as collected:
+            records = self._records(
+                tmp_path,
+                " CDESVIO 119 100.",
+                " USINA    118                               BILLINGS",
+            )
+        assert records == {}
+        (warning,) = [d for d in collected if d.code == "modif-records-ignored"]
+        assert warning.table is not None
+        assert list(warning.table.rows) == [["", "before the first USINA", "1 CDESVIO"]]
+
     @pytest.mark.parametrize(
         ("lines", "reason"),
         [
-            ((" CDESVIO 119 100.",), "before any USINA"),
             ((" USINA    118    BILLINGS", " CDESVIO"), "no integer target"),
             ((" USINA    118    BILLINGS", " CDESVIO X 100."), "no integer target"),
             ((" USINA    118    BILLINGS", " CDESVIO 118 100."), "diverts to itself"),
@@ -1064,8 +1077,8 @@ class TestReadDiversionRecords:
 
 
 class TestModifFileOrder:
-    """Records come from every ``USINA`` block of a real ``modif.dat``, in file
-    order, including the file's last record."""
+    """Records come from each plant's first ``USINA`` block of a real
+    ``modif.dat``, in file order, including the file's last record."""
 
     _USINA_A = " USINA      1                               USINA_A"
     _USINA_B = " USINA      2                               USINA_B"
@@ -1109,7 +1122,7 @@ class TestModifFileOrder:
             (12, pytest.approx(96.78)),
         ]
 
-    def test_every_block_of_a_plant_is_read_in_file_order(self, tmp_path) -> None:
+    def test_only_a_plants_first_block_counts(self, tmp_path) -> None:
         from novomodelo_bridge.newave.converters.hydro import (
             _apply_permanent_overrides,
             _extract_temporal_overrides,
@@ -1125,10 +1138,13 @@ class TestModifFileOrder:
             " VAZMINT   1 2026 1100.00",
             " VAZMIN       80",
         )
-        cadastro = _apply_permanent_overrides(_make_hidr_cadastro(), case)
-        assert float(cadastro.loc[1, "vazao_minima_historica"]) == 80.0
+        with dx.collect() as collected:
+            cadastro = _apply_permanent_overrides(_make_hidr_cadastro(), case)
+            temporal = _extract_temporal_overrides(case, [1, 2])
+        assert float(cadastro.loc[1, "vazao_minima_historica"]) == 71.0
         assert float(cadastro.loc[2, "vazao_minima_historica"]) == 5.0
-        temporal = _extract_temporal_overrides(case, [1, 2])
-        assert [(o["type"], o["month"], o["value"]) for o in temporal[1]] == [
-            ("VAZMINT", 1, 1100.0)
-        ]
+        assert temporal.get(1, []) == []
+        (warning,) = {d.code: d for d in collected}.values()
+        assert warning.code == "modif-records-ignored"
+        assert warning.table is not None
+        assert list(warning.table.rows) == [[1, "USINA_A", "1 VAZMINT, 1 VAZMIN"]]

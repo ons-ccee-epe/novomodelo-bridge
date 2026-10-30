@@ -1320,7 +1320,7 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 
 **Estado:** convertido em parte. **Lido por:** 11 arquivos gerados; ver a visão geral.
 
-Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio, `CFUGA`/`CMONT` alteram a produtibilidade por estágio e `CDESVIO` declara o canal de desvio da usina (`hydros[].diversion`).
+Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio, `CFUGA`/`CMONT` alteram a produtibilidade por estágio e `CDESVIO` declara o canal de desvio da usina (`hydros[].diversion`). Só o primeiro bloco `USINA` de cada usina é lido, como admite o manual do NEWAVE; os registros de um bloco repetido e os anteriores ao primeiro `USINA` são ignorados e listados no diagnóstico `modif-records-ignored`.
 
 - `VOLMIN · volume` → `initial_conditions.json` › `storage[].value_hm3`
 - `VOLMAX · volume` → `initial_conditions.json` › `storage[].value_hm3`
