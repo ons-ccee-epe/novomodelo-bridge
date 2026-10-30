@@ -6,10 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from novomodelo_bridge.core.diagnostics import Severity
-from novomodelo_bridge.core.source_text import (
-    read_source_text,
-    tab_character_diagnostic,
-)
+from novomodelo_bridge.core.source_text import tab_character_diagnostic
 
 
 def _write(path: Path, text: str) -> Path:
@@ -68,26 +65,3 @@ def test_tab_character_remediation_has_no_repo_internal_references(
     text = f"{diagnostic.summary} {diagnostic.remediation}"
     for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", ".py"):
         assert leak not in text
-
-
-def test_read_source_text_decodes_utf8_accents(tmp_path: Path) -> None:
-    path = tmp_path / "restricao-eletrica.csv"
-    path.write_bytes("& Restrição de geração UHE Jacuí\n".encode())
-
-    assert read_source_text(path) == "& Restrição de geração UHE Jacuí\n"
-
-
-def test_read_source_text_drops_a_utf8_bom(tmp_path: Path) -> None:
-    path = tmp_path / "indices.csv"
-    path.write_bytes(b"\xef\xbb\xbfRESTRICAO-ELETRICA-ESPECIAL; ; re.csv\n")
-
-    assert read_source_text(path).startswith("RESTRICAO-ELETRICA-ESPECIAL")
-
-
-def test_read_source_text_falls_back_to_latin1_for_a_non_utf8_file(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "renovaveis.csv"
-    path.write_bytes("& Descrição colunas: parque eólico\n".encode("latin-1"))
-
-    assert read_source_text(path) == "& Descrição colunas: parque eólico\n"

@@ -4,20 +4,27 @@ A LIBS record is part of a deck only when the deck's index lists it; the source
 model ignores a file the index does not name, whatever the file is called. The
 index sits in the deck folder and names files in that same folder. Each line is
 ``RECORD-KEY ; description ; file``, and ``&`` opens a comment line.
+
+Each track reads the index with its own library's ``Indices`` reader
+(``inewave.libs`` or ``idecomp.libs``, which share the API); this module holds
+the checks both tracks apply on top.
 """
 
 from __future__ import annotations
 
 import fnmatch
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal, Protocol
+
+import pandas as pd
+from cfinterface.components.defaultregister import DefaultRegister
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.paths import find_case_insensitive
-from novomodelo_bridge.core.source_text import read_source_text
 
 #: The name the source model reads its index by when nothing in the deck names
 #: the index file.
@@ -34,8 +41,15 @@ ESTACAO_BOMBEAMENTO = "ESTACAO-BOMBEAMENTO"
 ESTACAO_BOMBEAMENTO_SUBMERCADO = "ESTACAO-BOMBEAMENTO-SUBMERCADO"
 
 UNINDEXED_FILES_CODE = "libs-unindexed-file"
+UNREAD_LINES_CODE = "libs-unread-lines"
 
 _COMMENT_PREFIX = "&"
+
+
+class IndexFile(Protocol):
+    """The ``Indices`` reader of ``inewave.libs`` and ``idecomp.libs``."""
+
+    def indices(self, *, df: Literal[True]) -> pd.DataFrame: ...
 
 
 @dataclass(frozen=True)
@@ -98,12 +112,15 @@ class LibsIndex:
         return path
 
 
-def read_libs_index(deck_dir: Path, index_file: Path | None) -> LibsIndex:
+def read_libs_index(
+    deck_dir: Path, index_file: Path | None, read: Callable[[str], IndexFile]
+) -> LibsIndex:
     """Parse *index_file*, the index of the deck in *deck_dir*.
 
     Args:
         index_file: located by the caller, since each source model has its own
             rule for it; ``None`` gives an empty index.
+        read: the track's ``Indices.read``.
 
     Raises:
         SourceFileError: a key is listed with no file, or twice with different
@@ -112,14 +129,10 @@ def read_libs_index(deck_dir: Path, index_file: Path | None) -> LibsIndex:
     if index_file is None:
         return LibsIndex(deck_dir, None, MappingProxyType({}))
     entries: dict[str, str] = {}
-    for line in read_source_text(index_file).splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith(_COMMENT_PREFIX):
+    for raw_key, raw_name in _index_rows(read(str(index_file))):
+        if not raw_key:
             continue
-        fields = [field.strip() for field in stripped.split(";")]
-        if len(fields) < 3 or not fields[0]:
-            continue
-        key, name = fields[0].upper(), fields[2]
+        key, name = raw_key.upper(), raw_name or ""
         if not name:
             raise SourceFileError(
                 f"{index_file.name} lists {key} without a file name",
@@ -134,6 +147,23 @@ def read_libs_index(deck_dir: Path, index_file: Path | None) -> LibsIndex:
                 field=key,
             )
     return LibsIndex(deck_dir, index_file, MappingProxyType(entries))
+
+
+def _index_rows(index: IndexFile) -> Iterable[tuple[str | None, str | None]]:
+    """``(key, file)`` per index line; a field missing at the line's end is
+    ``None``."""
+    frame = index.indices(df=True)
+    if frame.empty:
+        return []
+    # The readers decode plain UTF-8, which leaves a byte-order mark on the
+    # first key.
+    return [
+        (
+            None if pd.isna(key) else str(key).removeprefix("\ufeff"),
+            None if pd.isna(name) else str(name),
+        )
+        for key, name in zip(frame["identificador"], frame["arquivo"], strict=True)
+    ]
 
 
 @dataclass(frozen=True)
@@ -188,4 +218,38 @@ def unindexed_files_diagnostic(
             columns=["file", "record"], rows=[list(row) for row in ignored]
         ),
         remediation=remediation,
+    )
+
+
+def unread_lines_diagnostic(
+    file: Path, registers: Iterable[object]
+) -> Diagnostic | None:
+    """WARNING naming the lines of LIBS *file* that its reader kept as plain
+    text, other than blank and ``&`` comment lines; ``None`` when there are none."""
+    lines = [
+        line
+        for line in (
+            str(register.data).strip()
+            for register in registers
+            if isinstance(register, DefaultRegister)
+        )
+        if line and not line.startswith(_COMMENT_PREFIX)
+    ]
+    if not lines:
+        return None
+    return Diagnostic(
+        code=UNREAD_LINES_CODE,
+        severity=Severity.WARNING,
+        category="Source files",
+        title=f"Lines of {file.name} that are not read",
+        summary=(
+            f"{len(lines)} line(s) of {file.name} are not records the conversion "
+            "knows, so it ignores them. Record names are read only as the manual "
+            "writes them, in upper case."
+        ),
+        table=DiagnosticTable(columns=["line"], rows=[[line] for line in lines]),
+        remediation=(
+            "Write each record name in upper case, as the manual does, or delete "
+            "the line if it is not a record."
+        ),
     )

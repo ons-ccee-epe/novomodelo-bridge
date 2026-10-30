@@ -12,12 +12,13 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
     ConstraintIdAllocator,
 )
 from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
+from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.constraints import (
     _cascade_sum,
@@ -781,19 +782,23 @@ class TestParseFormula:
 # ---------------------------------------------------------------------------
 
 
-def _make_electric_re_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
-    """Return a ``(case, id_map)`` pair for a single-code electric constraint:
-    ``restricao-eletrica.csv`` declaring a two-sided
-    ``[50, 200]`` limit on ``ger_usih(10)`` over 2020, with ``dger``/``sistema``
-    mocked to a 1-year 2020 study carrying no exchange/deficit data.
+_TWO_SIDED_RE = (
+    "RE;1;1.0ger_usih(10)\n"
+    "RE-HORIZ-PER;1;2020/01;2020/12\n"
+    "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n"
+)
+
+
+def _make_electric_re_case(
+    tmp_path: Path, re_text: str = _TWO_SIDED_RE
+) -> tuple[NewaveCase, NewaveIdMap]:
+    """Return a ``(case, id_map)`` pair whose ``restricao-eletrica.csv`` is
+    *re_text*, by default a two-sided ``[50, 200]`` limit on ``ger_usih(10)``
+    over 2020, with ``dger``/``sistema`` mocked to a 1-year 2020 study carrying
+    no exchange/deficit data.
     """
     re_path = tmp_path / "restricao-eletrica.csv"
-    re_path.write_text(
-        "RE;1;1.0ger_usih(10)\n"
-        "RE-HORIZ-PER;1;2020/01;2020/12\n"
-        "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
-        encoding="latin-1",
-    )
+    re_path.write_text(re_text, encoding="latin-1")
 
     dger = MagicMock()
     dger.mes_inicio_estudo = 1
@@ -908,6 +913,75 @@ class TestConvertElectricConstraints:
 
         assert result is not None
         assert result.bounds.schema.equals(GENERIC_BOUNDS_SCHEMA)
+
+    @pytest.mark.parametrize(
+        ("limits", "lower", "upper"),
+        [
+            ("1;;200.", set(), {200.0}),
+            ("1;50.;", {50.0}, set()),
+            ("1;50.", {50.0}, set()),
+            ("1;-1.1e30;200.", set(), {200.0}),
+        ],
+        ids=["blank-lower", "blank-upper", "missing-upper", "lower-sentinel"],
+    )
+    def test_a_blank_or_sentinel_limit_is_unbounded(
+        self, tmp_path: Path, limits: str, lower: set[float], upper: set[float]
+    ) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            f"RE;1;1.0ger_usih(10)\nRE-LIM-FORM-PER-PAT;1;2020/01;2020/12;{limits}\n",
+        )
+
+        result = convert_electric_constraints(case, id_map)
+
+        assert result is not None
+        assert len(result.constraints) == 1
+        rows = result.bounds.to_pylist()
+        assert {r["bound_lower"] for r in rows if r["bound_lower"] is not None} == lower
+        assert {r["bound_upper"] for r in rows if r["bound_upper"] is not None} == upper
+
+    def test_a_conditional_limit_is_rejected(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            "RE;1;1.0ger_usih(10)\n"
+            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;"
+            "se(demanda(1) < 1000, 10000, 8500);200.\n",
+        )
+
+        with pytest.raises(SourceFileError, match="which is not a number") as err:
+            convert_electric_constraints(case, id_map)
+        assert "se(demanda(1) < 1000, 10000, 8500)" in str(err.value)
+        assert err.value.field == "RE-LIM-FORM-PER-PAT"
+
+    def test_a_period_that_is_not_a_date_is_rejected(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            _TWO_SIDED_RE.replace("RE-HORIZ-PER;1;2020/01", "RE-HORIZ-PER;1;1"),
+        )
+
+        with pytest.raises(
+            SourceFileError, match=r"RE-HORIZ-PER line without a readable start period"
+        ):
+            convert_electric_constraints(case, id_map)
+
+    def test_lines_the_reader_keeps_as_text_are_warned(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            _TWO_SIDED_RE
+            + "re;2;1.0ger_usih(10)\nRESTRICAO-ELETRICA-FORMULA;3;ger_usih(10)\n",
+        )
+
+        with dx.collect() as collected:
+            result = convert_electric_constraints(case, id_map)
+
+        assert result is not None
+        assert {c["name"] for c in result.constraints} == {"RE_1"}
+        [unread] = [d for d in collected if d.code == UNREAD_LINES_CODE]
+        assert unread.table is not None
+        assert unread.table.rows == [
+            ["re;2;1.0ger_usih(10)"],
+            ["RESTRICAO-ELETRICA-FORMULA;3;ger_usih(10)"],
+        ]
 
 
 def _valid_ree_reader():

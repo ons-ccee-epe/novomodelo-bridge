@@ -32,7 +32,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
-from novomodelo_bridge.core.errors import BridgeError, FieldParseError
+from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -41,12 +41,12 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     hard_slack,
     soft_slack,
 )
+from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_int, as_timestamp, is_na
 from novomodelo_bridge.core.productivity import (
     compute_productivity,
     stored_energy_productivity,
 )
-from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.core.stored_energy import (
     StoredEnergyShare,
     cascade_share,
@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from collections.abc import Set as AbstractSet
 
+    from inewave.libs.restricoes import Restricoes
     from inewave.newave import Agrint
 
     from novomodelo_bridge.newave.horizon import StudyHorizon
@@ -831,55 +832,132 @@ def _emit_vminop_penalty_clamps(clamps: list[_VminopPenaltyClamp]) -> None:
 
 _UNBOUNDED_THRESHOLD = -1.0e29  # values below this are treated as -inf
 
+_YearMonth = tuple[int, int]
 
-def _parse_restricao_eletrica(
-    path: Path,
+_ELECTRIC_FIELD_LABELS = {
+    "codigo_restricao": "constraint code",
+    "formula": "formula",
+    "data_inicio": "start period (YYYY/MM)",
+    "data_fim": "end period (YYYY/MM)",
+    "patamar": "load block",
+}
+
+
+class _ElectricLimit(NamedTuple):
+    """One ``RE-LIM-FORM-PER-PAT`` row; a ``None`` limit is unbounded."""
+
+    first: _YearMonth
+    last: _YearMonth
+    block: int  # 1-based patamar
+    lower: float | None
+    upper: float | None
+
+
+def _read_restricao_eletrica(
+    restricoes: Restricoes, path: Path
 ) -> tuple[
     dict[int, str],
-    dict[int, tuple[str, str]],
-    list[tuple[int, str, str, int, float, float]],
+    dict[int, tuple[_YearMonth, _YearMonth]],
+    dict[int, list[_ElectricLimit]],
 ]:
-    """Parse ``restricao-eletrica.csv`` into its three sections.
+    """restricao-eletrica.csv's formulas (``RE``), horizons (``RE-HORIZ-PER``)
+    and limits (``RE-LIM-FORM-PER-PAT``), by constraint code.
 
-    Returns
-    -------
-    expressions : dict[int, str]
-        Mapping from constraint code to raw formula string.
-    horizons : dict[int, tuple[str, str]]
-        Mapping from constraint code to (PerIni, PerFin) as "YYYY/MM" strings.
-    bounds : list[tuple[int, str, str, int, float, float]]
-        Each element is (cod_rest, PerIni, PerFin, pat, lim_inf, lim_sup).
+    Raises:
+        SourceFileError: a record lacks a field the conversion needs, or a
+            limit is not a number, such as the manual's conditional ``se(...)``
+            limits.
     """
-    expressions: dict[int, str] = {}
-    horizons: dict[int, tuple[str, str]] = {}
-    bounds: list[tuple[int, str, str, int, float, float]] = []
+    expressions = {
+        as_int(row["codigo_restricao"]): str(row["formula"])
+        for row in _electric_rows(
+            restricoes.re(df=True), "RE", ("codigo_restricao", "formula"), path
+        )
+    }
+    horizons = {
+        as_int(row["codigo_restricao"]): (
+            _year_month(row["data_inicio"]),
+            _year_month(row["data_fim"]),
+        )
+        for row in _electric_rows(
+            restricoes.re_horiz_per(df=True),
+            "RE-HORIZ-PER",
+            ("codigo_restricao", "data_inicio", "data_fim"),
+            path,
+        )
+    }
+    limits: dict[int, list[_ElectricLimit]] = defaultdict(list)
+    for row in _electric_rows(
+        restricoes.re_lim_form_per(df=True),
+        "RE-LIM-FORM-PER-PAT",
+        ("codigo_restricao", "data_inicio", "data_fim", "patamar"),
+        path,
+    ):
+        cod = as_int(row["codigo_restricao"])
+        limits[cod].append(
+            _ElectricLimit(
+                first=_year_month(row["data_inicio"]),
+                last=_year_month(row["data_fim"]),
+                block=as_int(row["patamar"]),
+                lower=_electric_limit(row["limite_inferior"], cod, path),
+                upper=_electric_limit(row["limite_superior"], cod, path),
+            )
+        )
+    return expressions, horizons, dict(limits)
 
-    for raw_line in read_source_text(path).splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("&"):
-            continue
 
-        parts = [p.strip() for p in line.split(";")]
+def _electric_rows(
+    frame: pd.DataFrame,
+    record: str,
+    required: tuple[str, ...],
+    path: Path,
+) -> list[dict[str, object]]:
+    """*frame*'s rows, as read by inewave's ``df=True`` accessor of *record*.
 
-        if parts[0].upper() == "RE" and len(parts) >= 3:
-            cod = int(parts[1])
-            formula = parts[2]
-            expressions[cod] = formula
+    Raises:
+        SourceFileError: a row lacks one of the *required* columns; the reader
+            reads a missing or unreadable field as ``None``.
+    """
+    if frame.empty:
+        return []
+    rows: list[dict[str, object]] = frame.to_dict("records")
+    for row in rows:
+        missing = [_ELECTRIC_FIELD_LABELS[col] for col in required if is_na(row[col])]
+        if missing:
+            raise SourceFileError(
+                f"{path.name} has a {record} line without a readable "
+                f"{', '.join(missing)}",
+                path=str(path),
+                field=record,
+            )
+    return rows
 
-        elif parts[0].upper() == "RE-HORIZ-PER" and len(parts) >= 4:
-            cod = int(parts[1])
-            horizons[cod] = (parts[2], parts[3])
 
-        elif parts[0].upper() == "RE-LIM-FORM-PER-PAT" and len(parts) >= 7:
-            cod = int(parts[1])
-            per_ini = parts[2]
-            per_fin = parts[3]
-            pat = int(parts[4])
-            lim_inf = float(parts[5])
-            lim_sup = float(parts[6])
-            bounds.append((cod, per_ini, per_fin, pat, lim_inf, lim_sup))
+def _year_month(value: object) -> _YearMonth:
+    stamp = as_timestamp(value)
+    return stamp.year, stamp.month
 
-    return expressions, horizons, bounds
+
+def _electric_limit(value: object, cod: int, path: Path) -> float | None:
+    """A ``RE-LIM-FORM-PER-PAT`` limit, ``None`` when unbounded: a blank field
+    (manual §3.45.2) or a value at or below ``_UNBOUNDED_THRESHOLD``.
+
+    Raises:
+        SourceFileError: the limit is not a number.
+    """
+    if is_na(value) or not str(value).strip():
+        return None
+    try:
+        limit = float(str(value))
+    except ValueError as err:
+        raise SourceFileError(
+            f"{path.name}: constraint {cod} has the RE-LIM-FORM-PER-PAT limit "
+            f"{str(value).strip()!r}, which is not a number; conditional limits "
+            "are not converted",
+            path=str(path),
+            field="RE-LIM-FORM-PER-PAT",
+        ) from err
+    return None if limit <= _UNBOUNDED_THRESHOLD else limit
 
 
 def _build_line_id_map(case: NewaveCase) -> dict[tuple[int, int], int]:
@@ -1038,12 +1116,6 @@ def _parse_formula(
         return None
 
     return _render_signed_expression(parsed_terms)
-
-
-def _parse_yyyymm(period_str: str) -> tuple[int, int]:
-    """Parse "YYYY/MM" into (year, month)."""
-    parts = period_str.strip().split("/")
-    return int(parts[0]), int(parts[1])
 
 
 def _stage_ids_between(
@@ -1334,8 +1406,8 @@ class _ElectricSources:
     """restricao-eletrica.csv's and RE.DAT's electric constraints, by constraint code."""
 
     expressions: dict[int, str]
-    horizons: dict[int, tuple[str, str]]
-    csv_bounds: dict[int, list[tuple[str, str, int, float, float]]]
+    horizons: dict[int, tuple[_YearMonth, _YearMonth]]
+    csv_bounds: dict[int, list[_ElectricLimit]]
     re_conjuntos: dict[int, list[int]]
     re_dat_bounds: dict[int, dict[tuple[int, int], float]]
 
@@ -1382,13 +1454,17 @@ def _enabled_electric_sources(case: NewaveCase) -> tuple[Path | None, bool]:
 def _read_electric_sources(
     case: NewaveCase, re_path: Path | None, *, has_re_dat: bool
 ) -> tuple[_ElectricSources, _ElectricGrid]:
-    """Parse restricao-eletrica.csv and RE.DAT, and the grid they are laid on."""
+    """Read restricao-eletrica.csv and RE.DAT, and the grid they are laid on."""
     expressions: dict[int, str] = {}
-    horizons: dict[int, tuple[str, str]] = {}
-    bounds_rows: list[tuple[int, str, str, int, float, float]] = []
-
-    if re_path is not None:
-        expressions, horizons, bounds_rows = _parse_restricao_eletrica(re_path)
+    horizons: dict[int, tuple[_YearMonth, _YearMonth]] = {}
+    csv_bounds: dict[int, list[_ElectricLimit]] = {}
+    if re_path is not None and (restricoes := case.restricao_eletrica) is not None:
+        unread = unread_lines_diagnostic(re_path, restricoes.data)
+        if unread is not None:
+            emit(unread, logger=_LOG)
+        expressions, horizons, csv_bounds = _read_restricao_eletrica(
+            restricoes, re_path
+        )
 
     horizon = case.horizon
     patamar = case.patamar
@@ -1405,10 +1481,6 @@ def _read_electric_sources(
             horizon.total_stages,
             num_patamares,
         )
-
-    csv_bounds: dict[int, list[tuple[str, str, int, float, float]]] = defaultdict(list)
-    for cod, per_ini, per_fin, pat, lim_inf, lim_sup in bounds_rows:
-        csv_bounds[cod].append((per_ini, per_fin, pat, lim_inf, lim_sup))
 
     sources = _ElectricSources(
         expressions, horizons, csv_bounds, re_conjuntos, re_dat_bounds
@@ -1520,36 +1592,23 @@ def _electric_bounds(
     start_year = horizon.start_year
     start_month = horizon.start_month
 
-    window = sources.horizons.get(cod)
-    horiz_ini = _parse_yyyymm(window[0]) if window else (start_year, start_month)
-    horiz_fin = (
-        _parse_yyyymm(window[1]) if window else (start_year + horizon.num_anos - 1, 12)
+    horiz_ini, horiz_fin = sources.horizons.get(
+        cod, ((start_year, start_month), (start_year + horizon.num_anos - 1, 12))
     )
 
-    for per_ini, per_fin, pat, lim_inf, lim_sup in sources.csv_bounds.get(cod, []):
-        ini_year, ini_month = _parse_yyyymm(per_ini)
-        fin_year, fin_month = _parse_yyyymm(per_fin)
-
-        ini_year, ini_month = max(
-            (ini_year, ini_month), horiz_ini, key=lambda t: t[0] * 12 + t[1]
-        )
-        fin_year, fin_month = min(
-            (fin_year, fin_month), horiz_fin, key=lambda t: t[0] * 12 + t[1]
-        )
-
-        block_id = pat - 1  # 1-based -> 0-based
-
+    for limit in sources.csv_bounds.get(cod, []):
+        block_id = limit.block - 1  # 1-based -> 0-based
         for sid in _stage_ids_between(
-            (ini_year, ini_month),
-            (fin_year, fin_month),
+            max(limit.first, horiz_ini),
+            min(limit.last, horiz_fin),
             start_year=start_year,
             start_month=start_month,
         ):
             if 0 <= sid < horizon.total_stages:
-                if lim_sup > _UNBOUNDED_THRESHOLD:
-                    csv_sup[(sid, block_id)] = lim_sup
-                if lim_inf > _UNBOUNDED_THRESHOLD:
-                    csv_inf[(sid, block_id)] = lim_inf
+                if limit.upper is not None:
+                    csv_sup[(sid, block_id)] = limit.upper
+                if limit.lower is not None:
+                    csv_inf[(sid, block_id)] = limit.lower
 
     return _ElectricBounds(csv_sup, csv_inf, sources.re_dat_bounds.get(cod, {}))
 

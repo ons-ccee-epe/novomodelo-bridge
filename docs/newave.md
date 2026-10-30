@@ -23,12 +23,18 @@ reduction method) and `RESTRICAO-ELETRICA-ESPECIAL` (the electrical
 constraints). Lines starting with `&` are comments. Without `indices.csv`, or
 with a key left out or commented out, that record is not part of the case: no
 tailrace curves, no electrical constraints from the CSV, and no plane
-reduction, which Novomodelo then leaves off. A key whose file is not in the
-directory makes the case fail to convert. A file with a usual LIBS name, such
-as `polinjus.csv`, that the index does not list is ignored, and `check newave`
-and `convert newave` warn about it. `indices.csv`, the plane-reduction file and
-the electrical-constraint file are each read as UTF-8 when they are valid UTF-8
-and as Latin-1 otherwise.
+reduction, which Novomodelo then leaves off. A key listed without a file name,
+or whose file is not in the directory, makes the case fail to convert. A file
+with a usual LIBS name, such as `polinjus.csv`, that the index does not list is
+ignored, and `check newave` and `convert newave` warn about it. `indices.csv`,
+the plane-reduction file and the electrical-constraint file are each read as
+UTF-8 when they are valid UTF-8 and as Latin-1 otherwise.
+
+The electrical-constraint file is read record by record, and a record name is
+recognized only in upper case, as the manual writes it. `convert newave` warns
+about every line that is not a record it reads (`libs-unread-lines`). A blank
+limit is unbounded, as the manual states. A conditional limit (`se(...)`) is
+not converted, and makes the case fail to convert.
 
 Many inputs are optional (`modif.dat`, `cvar.dat`, `curva.dat`, `agrint.dat`,
 and others). `check newave` prints one line per optional input that is absent

@@ -3449,7 +3449,7 @@ note = "Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro
 # ---------------------------------------------------------------------------
 [[source]]
 file = "libs_restricao_eletrica"
-note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de forma longa indexados por período; as variantes abaixo ficam de fora. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período que não se aplicam ao formato da restrição geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo."
+note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de forma longa indexados por período; as variantes abaixo ficam de fora. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período que não se aplicam ao formato da restrição geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo. Os nomes dos cards só são reconhecidos em maiúsculas, como o manual os escreve, e cada linha que não é um card conhecido é ignorada e listada no aviso `libs-unread-lines`."
 
   [[source.item]]
   item = "cards de forma curta (RE, RE-*, ALIAS-ELET*)"
@@ -3477,7 +3477,7 @@ note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os ca
 [[source]]
 file = "libs_index"
 status = "index"
-note = "Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso."
+note = "Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada sem nome de arquivo, ou cujo arquivo não existe na pasta, é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso."
 
   [[source.item]]
   item = "demais entradas (inclusive as irmãs -ATIVACAO e -VIOLACAO)"

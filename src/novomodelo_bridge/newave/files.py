@@ -160,6 +160,7 @@ class NewaveFiles:
             If ``caso.dat`` is missing, the Arquivos file it references is
             missing, or any required file is absent.
         """
+        from inewave.libs import Indices
         from inewave.newave import Arquivos, Caso
 
         # --- Step 1: read caso.dat (case-insensitive) --------------------------
@@ -214,7 +215,7 @@ class NewaveFiles:
 
         # --- Step 4b: LIBS files, only those indices.csv declares ---------------
         libs_index = find_case_insensitive(directory, INDEX_FILENAME)
-        libs = read_libs_index(directory, libs_index)
+        libs = read_libs_index(directory, libs_index, Indices.read)
         polinjus = libs.path(HIDRELETRICA_CURVAJUSANTE)
         volumes_referencia = libs.path(HIDRELETRICA_CADASTRO_RESERVATORIO)
         tratamento_fpha = libs.path(HIDRELETRICA_FPHA_REDUCAO_CORTES)

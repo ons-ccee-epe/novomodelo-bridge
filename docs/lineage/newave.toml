@@ -2944,7 +2944,7 @@ summary = "Limites por restrição, estágio e patamar das três famílias, conc
     { file = "curva", item = "curva_seguranca · valor" },
     { file = "restricao_eletrica", item = "RE-LIM-FORM-PER-PAT · lim_inf" },
   ]
-  how = "Curva de segurança: 0.0 em cada estágio com curva; o limite está na própria expressão (o Novomodelo soma o valor do parquet ao lado direito simbólico). Elétricas: `lim_inf` de `restricao-eletrica.csv` quando maior que −1e29 (valores abaixo são ilimitados). Nulo para tetos elétricos, `re.dat` e agrupamentos."
+  how = "Curva de segurança: 0.0 em cada estágio com curva; o limite está na própria expressão (o Novomodelo soma o valor do parquet ao lado direito simbólico). Elétricas: `lim_inf` de `restricao-eletrica.csv`; um campo em branco (manual, seção 3.45.2) ou um valor até −1e29 é ilimitado e não gera piso, e um limite condicional (`se(...)`) interrompe a conversão com erro. Nulo para tetos elétricos, `re.dat` e agrupamentos."
 
   [[output.field]]
   path = "bound_upper"
@@ -2953,7 +2953,7 @@ summary = "Limites por restrição, estágio e patamar das três famílias, conc
     { file = "re_dat", item = "restricoes · restricao" },
     { file = "agrint", item = "limites_agrupamentos · valor" },
   ]
-  how = "Elétricas: `lim_sup` de `restricao-eletrica.csv` (quando maior que −1e29) nos estágios individualizados; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos."
+  how = "Elétricas: `lim_sup` de `restricao-eletrica.csv` nos estágios individualizados, com as mesmas regras de `lim_inf` para campo em branco, valor até −1e29 e limite condicional; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos."
 
 # =============================================================================
 # system/pumping_stations.json
@@ -3492,7 +3492,7 @@ note = "Localizado pela chave `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` de `indi
 
 [[source]]
 file = "restricao_eletrica"
-note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por um parser próprio; um arquivo com esse nome que o índice não lista é ignorado, com aviso."
+note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido pelo leitor `Restricoes` do inewave; um arquivo com esse nome que o índice não lista é ignorado, com aviso. Os nomes de registro só são reconhecidos em maiúsculas, como o manual os escreve, e cada linha que não é um registro conhecido é ignorada e listada no aviso `libs-unread-lines`."
 
   [[source.item]]
   item = "funções de fórmula além de ger_usih e ener_interc"
@@ -3502,7 +3502,7 @@ note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e l
   [[source.item]]
   item = "registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*"
   status = "unread"
-  note = "Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O parser ignora toda linha cujo primeiro campo não seja `RE`, `RE-HORIZ-PER` ou `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`."
+  note = "Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O conversor só usa os registros `RE`, `RE-HORIZ-PER` e `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`."
 
 [[source]]
 file = "caso"
@@ -3517,4 +3517,4 @@ note = "Índice que nomeia cada arquivo de dados do caso. Lido apenas para local
 [[source]]
 file = "libs_index"
 status = "index"
-note = "Índice dos arquivos LIBs, procurado pelo nome fixo `indices.csv` na pasta do deck. Cada registro LIBs convertido é lido do arquivo que o índice aponta para a sua chave: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE`, `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem índice, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro."
+note = "Índice dos arquivos LIBs, procurado pelo nome fixo `indices.csv` na pasta do deck. Cada registro LIBs convertido é lido do arquivo que o índice aponta para a sua chave: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE`, `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem índice, nenhum arquivo LIBs é lido; uma chave listada sem nome de arquivo, ou cujo arquivo não existe na pasta, é erro."

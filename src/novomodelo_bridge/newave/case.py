@@ -29,6 +29,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from inewave.libs.restricoes import Restricoes
 from inewave.libs.usinas_hidreletricas import UsinasHidreletricas
 from inewave.newave import (
     Adterm,
@@ -214,6 +215,11 @@ class NewaveCase:
     def adterm(self) -> Adterm | None:
         path = self.files.adterm
         return Adterm.read(str(path)) if path is not None else None
+
+    @cached_property
+    def restricao_eletrica(self) -> Restricoes | None:
+        path = self.files.restricao_eletrica
+        return Restricoes.read(str(path)) if path is not None else None
 
     @cached_property
     def polinjus(self) -> UsinasHidreletricas | None:

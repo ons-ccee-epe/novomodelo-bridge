@@ -184,6 +184,8 @@ def _polinjus(fj: Path | None, indexed: Path | None) -> Path | None:
 
 def discover_decomp_files(src: Path) -> DecompFiles:
     """Resolve the deck files via ``caso.dat`` → the revision index file."""
+    from idecomp.libs import Indices
+
     caso = src / "caso.dat"
     if not caso.is_file():
         raise SourceFileError(
@@ -234,7 +236,7 @@ def discover_decomp_files(src: Path) -> DecompFiles:
     assert dadger is not None and vazoes is not None and hidr is not None
     fa_names, fj_names = _libs_registers(dadger)
     libs_index = _register_file(fa_names, "FA", src)
-    libs = read_libs_index(src, libs_index)
+    libs = read_libs_index(src, libs_index, Indices.read)
     # Prefer the deck's own FC record over the glob: its caminho may point
     # outside `src` (e.g. `../../cortesh.dat`), which the glob can never find.
     # The `cortes-` prefix is tried before the broader `cortes` so a

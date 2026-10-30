@@ -39,6 +39,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintResult,
 )
+from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.decomp import (
@@ -2153,9 +2154,14 @@ def _emit_and_write(
     # (RE/RE-* or date-indexed) file -- that fallback stays on
     # detect_libs_electrical's flat warning.
     libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None = None
-    if case.libs_restricao_eletrica is not None:
+    libs_file = case.files.libs_restricao_eletrica
+    restricoes = case.libs_restricao_eletrica
+    if libs_file is not None and restricoes is not None:
+        unread = unread_lines_diagnostic(libs_file, restricoes.data)
+        if unread is not None:
+            dx.emit(unread, logger=_LOG)
         libs_electrical_model = libs_electrical_conv.read_libs_electrical(
-            case.libs_restricao_eletrica,
+            restricoes,
             calendar,
             gnl_thermal_codes=_gnl_thermal_codes(artifacts.gnl_model, id_map),
         )

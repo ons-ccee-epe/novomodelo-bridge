@@ -25,7 +25,13 @@ links are cobre-bridge's.
 
 - **`AC ALTEFE` overrides set the head of DECOMP's turbined-flow limit.** They
   were reported and ignored.
-- **The bridge requires idecomp 1.18.0 and inewave 1.17.0 or newer.**
+- **The bridge requires idecomp 1.18.1, inewave 1.17.1 and cfinterface 1.10.3
+  or newer.**
+- **`convert newave` and `convert decomp` warn about the lines of the
+  electrical-constraint file they do not read** (`libs-unread-lines`). Record
+  names are read only in upper case; `convert newave` used to accept any case.
+- **A LIBS index line without a file name stops `convert newave` and
+  `convert decomp`**, as a blank file name already did; it used to be skipped.
 - **`convert newave` reads `CDESVIO` only in upper case, like the other
   `modif.dat` records.** A maximum flow that is not a number drops the channel
   with `diversion-channel-dropped`; it used to stop the conversion.
@@ -45,6 +51,10 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`convert newave` reads a blank `RE-LIM-FORM-PER-PAT` limit as unbounded**,
+  as the NEWAVE manual states; it used to stop the conversion, or drop the line
+  when the upper limit was left off. A conditional limit (`se(...)`) stops the
+  conversion with a message naming it.
 - **`convert newave` no longer reads a mandatory minimum interchange
   (`flag` 1 in `sistema.dat`) as an interchange limit**; it is left out.
 - **`convert newave` fails naming the group when an `agrint.dat` limit record

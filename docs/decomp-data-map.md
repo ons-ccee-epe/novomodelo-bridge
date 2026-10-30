@@ -2134,7 +2134,7 @@ Famílias de curvas de jusante das LIBs. O conversor lê o cadastro das família
 
 **Estado:** convertido em parte. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`.
 
-Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de forma longa indexados por período; as variantes abaixo ficam de fora. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período que não se aplicam ao formato da restrição geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo.
+Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de forma longa indexados por período; as variantes abaixo ficam de fora. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período que não se aplicam ao formato da restrição geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo. Os nomes dos cards só são reconhecidos em maiúsculas, como o manual os escreve, e cada linha que não é um card conhecido é ignorada e listada no aviso `libs-unread-lines`.
 
 - `RESTRICAO-ELETRICA-FORMULA · codigo_restricao` → `constraints/generic_constraints.json` › `constraints[].id`
 - `RESTRICAO-ELETRICA-INEQUACAO · codigo_restricao` → `constraints/generic_constraints.json` › `constraints[].id`
@@ -2188,7 +2188,7 @@ Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de f
 
 **Estado:** arquivo de índice, lido para localizar os demais.
 
-Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso.
+Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada sem nome de arquivo, ou cujo arquivo não existe na pasta, é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso.
 
 - `demais entradas (inclusive as irmãs -ATIVACAO e -VIOLACAO)` — *não lido.* Os demais arquivos listados no índice não são abertos.
 

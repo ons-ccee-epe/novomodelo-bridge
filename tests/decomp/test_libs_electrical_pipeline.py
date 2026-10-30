@@ -13,6 +13,7 @@ import json
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -21,6 +22,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -267,6 +269,7 @@ def _run_libs_pipeline(
     tmp_path: Path,
     *,
     libs_restricao_eletrica: Path | None = None,
+    libs_restricoes: object | None = None,
     libs_electrical_model: object | None = None,
     detect_libs_electrical_return: dx.Diagnostic | None = None,
     to_generic: tuple[ConstraintRecord, ...] = (),
@@ -282,7 +285,8 @@ def _run_libs_pipeline(
 
     *libs_restricao_eletrica*/*libs_electrical_model* control
     ``files.libs_restricao_eletrica`` and the (patched)
-    ``read_libs_electrical`` return value; *detect_libs_electrical_return*
+    ``read_libs_electrical`` return value; *libs_restricoes* is the parsed
+    file, a reader with no lines by default; *detect_libs_electrical_return*
     controls the (patched) flat presence-detection diagnostic, independent
     of whether the model itself converted -- so a test can prove the
     pipeline suppresses it even when it WOULD have fired.
@@ -312,7 +316,11 @@ def _run_libs_pipeline(
         dadgnl=None,
         polinjus=None,
         libs_restricao_eletrica=(
-            object() if libs_restricao_eletrica is not None else None
+            SimpleNamespace(data=[])
+            if libs_restricoes is None
+            else libs_restricoes
+            if libs_restricao_eletrica is not None
+            else None
         ),
     )
 
@@ -542,10 +550,30 @@ class TestLibsElectricalPipelineWiring:
 
         assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics_out}
 
+    # ---------------------------------------------------------------------------
+    # _gnl_thermal_codes -- which LIBs ger_usit codes are commanded GNL data
+    # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# _gnl_thermal_codes -- which LIBs ger_usit codes are commanded GNL data
-# ---------------------------------------------------------------------------
+    def test_lines_the_reader_keeps_as_text_are_warned(self, tmp_path: Path) -> None:
+        from idecomp.libs.restricoes import Restricoes
+
+        libs_file = tmp_path / "lib_restricao-eletrica-especial.csv"
+        libs_file.write_text(
+            "& comentario\n\nrestricao-eletrica-formula; 1; ger_usih(1)\n",
+            encoding="utf-8",
+        )
+        diagnostics_out: list[dx.Diagnostic] = []
+        _run_libs_pipeline(
+            tmp_path,
+            libs_restricao_eletrica=libs_file,
+            libs_restricoes=Restricoes.read(str(libs_file)),
+            diagnostics_out=diagnostics_out,
+        )
+
+        [unread] = [d for d in diagnostics_out if d.code == UNREAD_LINES_CODE]
+        assert unread.severity is dx.Severity.WARNING
+        assert unread.table is not None
+        assert unread.table.rows == [["restricao-eletrica-formula; 1; ger_usih(1)"]]
 
 
 def _gnl_registry(*codes: int) -> GnlCommitmentModel:
