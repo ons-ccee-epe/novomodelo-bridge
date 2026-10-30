@@ -143,7 +143,9 @@ def _dropping_machine_set_effective(
     mid-horizon ``NUMMAQ`` shrink no rv3 deck exercises (every machine-set
     override there resolves to stage 0, per the rv3 probe)."""
     machine_sets = tuple(
-        MachineSet(4, 25.0, 50.0) if stage < n_stages - 1 else MachineSet(2, 25.0, 50.0)
+        MachineSet(4, 25.0, 50.0, 80.0)
+        if stage < n_stages - 1
+        else MachineSet(2, 25.0, 50.0, 80.0)
         for stage in range(n_stages)
     )
     return EffectiveCadastro(

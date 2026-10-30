@@ -809,7 +809,7 @@ def _run_cadastro_pipeline(
     ac_volmax_frame: pd.DataFrame | None,
     *,
     to_generic: tuple[ConstraintRecord, ...] = (),
-    unreadable_electrical: tuple[object, ...] = (),
+    rha_detection: object | None = None,
     libs_electrical: object | None = None,
     diagnostics_out: list[Diagnostic] | None = None,
     dry_run: bool = False,
@@ -827,7 +827,7 @@ def _run_cadastro_pipeline(
     generic-constraint emitters consume, none of which the mock deck's
     ``Dadger`` can produce for real (it exposes no
     ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors).
-    *unreadable_electrical*/*libs_electrical* feed the
+    *rha_detection*/*libs_electrical* feed the
     detection helpers the same way — both otherwise patched to their
     empty/absent default so this shared fixture keeps regressing the
     bound-combine logic it was built for, undisturbed.
@@ -990,15 +990,12 @@ def _run_cadastro_pipeline(
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
         ),
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
-        # The mock deck exposes no real files (DecompCase.from_directory
-        # is patched wholesale above, so no real file I/O happens anywhere in this
-        # fixture) — the detection helpers read the raw deck files directly, so
-        # they must be patched here too, the same way the special-constraint
-        # reader above is.
+        # The mock deck has no RHA accessors and no real files
+        # (DecompCase.from_directory is patched wholesale above), so the
+        # detection helpers are patched too, the same way the
+        # special-constraint reader above is.
         "novomodelo_bridge.decomp.pipeline"
-        ".constraint_registers.detect_unreadable_electrical": list(
-            unreadable_electrical
-        ),
+        ".constraint_registers.detect_unconverted_rha": rha_detection,
         "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
             libs_electrical
         ),
@@ -1608,7 +1605,7 @@ class TestGenericConstraintWiring:
     def test_detection_diagnostics_flow_through_the_dx_sink(
         self, tmp_path: Path
     ) -> None:
-        """The FE/RHA/LIBs-electrical detection diagnostics are
+        """The RHA/LIBs-electrical detection diagnostics are
         captured on the returned ``ConversionReport``, not only logged.
 
         ``convert_decomp_case`` now owns its own top-level
@@ -1617,13 +1614,6 @@ class TestGenericConstraintWiring:
         ``dx.collect()`` (which would be shadowed and see nothing)."""
         from novomodelo_bridge.core import diagnostics as dx
 
-        fe_diagnostic = dx.Diagnostic(
-            code="decomp-fe-participation-unreadable",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="FE electrical participation present but unreadable",
-            summary="synthetic FE finding",
-        )
         rha_diagnostic = dx.Diagnostic(
             code="decomp-rha-family-unconverted",
             severity=dx.Severity.WARNING,
@@ -1643,14 +1633,13 @@ class TestGenericConstraintWiring:
         _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
-            unreadable_electrical=(fe_diagnostic, rha_diagnostic),
+            rha_detection=rha_diagnostic,
             libs_electrical=libs_diagnostic,
             diagnostics_out=collected,
         )
 
         codes = {d.code for d in collected}
         assert {
-            "decomp-fe-participation-unreadable",
             "decomp-rha-family-unconverted",
             "decomp-libs-electrical-present",
         } <= codes
@@ -1936,8 +1925,8 @@ class TestSpecialConstraintSurfaces:
             r for r in caplog.records if "deferred at this milestone" in r.message
         ]
 
-    def test_fe_rha_libs_are_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
-        """A deck with FE/RHA/LIBs surfaces reports each exactly once through
+    def test_rha_libs_are_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
+        """A deck with RHA/LIBs surfaces reports each exactly once through
         the structured ``Diagnostic``s.
 
         ``convert_decomp_case`` owns its own top-level ``dx.collect()``, so the
@@ -1946,13 +1935,6 @@ class TestSpecialConstraintSurfaces:
         nothing)."""
         from novomodelo_bridge.core import diagnostics as dx
 
-        fe_diagnostic = dx.Diagnostic(
-            code="decomp-fe-participation-unreadable",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="FE electrical participation present but unreadable",
-            summary="synthetic FE finding",
-        )
         rha_diagnostic = dx.Diagnostic(
             code="decomp-rha-family-unconverted",
             severity=dx.Severity.WARNING,
@@ -1972,14 +1954,13 @@ class TestSpecialConstraintSurfaces:
         _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
-            unreadable_electrical=(fe_diagnostic, rha_diagnostic),
+            rha_detection=rha_diagnostic,
             libs_electrical=libs_diagnostic,
             diagnostics_out=collected,
         )
 
         codes = {d.code for d in collected}
         assert {
-            "decomp-fe-participation-unreadable",
             "decomp-rha-family-unconverted",
             "decomp-libs-electrical-present",
         } <= codes

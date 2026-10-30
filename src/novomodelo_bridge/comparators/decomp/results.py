@@ -2484,10 +2484,11 @@ class _DecompConstraintLookups:
 #: Register term variables `_generic_constraint_lhs_decomp` cannot re-derive from
 #: ``dec_oper_*`` output: ``interchange`` (RE ``FI``) needs the bus/line direction
 #: resolution `decomp.converters.constraints.resolve_fi_term` does at conversion time;
-#: ``QBOM`` (HQ pumping) names a pumping-station code (not a hydro code), and no
-#: ``dec_oper_*`` table reports a pumping station's flow. A constraint carrying either
-#: is skipped whole (skip-not-partial), never a partial sum.
-_UNSUPPORTED_TERM_VARIABLES = frozenset({"interchange", "QBOM"})
+#: ``contract`` (RE ``FE``) has no contract lookup here; ``QBOM`` (HQ pumping) names
+#: a pumping-station code (not a hydro code), and no ``dec_oper_*`` table reports a
+#: pumping station's flow. A constraint carrying any of them is skipped whole
+#: (skip-not-partial), never a partial sum.
+_UNSUPPORTED_TERM_VARIABLES = frozenset({"interchange", "contract", "QBOM"})
 
 #: Matches a novomodelo generic constraint's ``name`` field as authored by the
 #: conversion-time emitters (``decomp.converters.constraints.emit_re_generics`` ->

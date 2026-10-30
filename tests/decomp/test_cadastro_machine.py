@@ -1,8 +1,8 @@
 """Tests for the third cadastro-override shape: compound-key machine-set ingestion.
 
 Pins ``_read_machine_set_overrides`` (the ``NUMCON``/``NUMMAQ``/``POTEFE``/
-``VAZEFE`` machine-configuration overrides — plant-keyed for ``NUMCON``,
-compound-keyed by ``(codigo_usina, indice_conjunto)`` for the other three)
+``VAZEFE``/``ALTEFE`` machine-configuration overrides — plant-keyed for
+``NUMCON``, compound-keyed by ``(codigo_usina, indice_conjunto)`` for the others)
 and the ``machine_conjunto_count``/``machine_set`` query methods on
 ``EffectiveCadastro`` — against a synthetic ``Dadger`` double, mirroring the
 doubles established in ``tests/decomp/test_cadastro.py``/
@@ -16,7 +16,13 @@ from datetime import date
 
 import pandas as pd
 import pytest
-from idecomp.decomp.modelos.dadger import ACNUMCON, ACNUMMAQ, ACPOTEFE, ACVAZEFE
+from idecomp.decomp.modelos.dadger import (
+    ACALTEFE,
+    ACNUMCON,
+    ACNUMMAQ,
+    ACPOTEFE,
+    ACVAZEFE,
+)
 
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
@@ -81,13 +87,14 @@ def test_read_machine_set_overrides_numcon_blank_triple_is_plant_keyed_permanent
             ),
         }
     )
-    numero_conjuntos, numero_maquinas, potencia, vazao, out_of_horizon = (
+    numero_conjuntos, numero_maquinas, potencia, vazao, altura, out_of_horizon = (
         _read_machine_set_overrides(dadger, calendar)
     )
     assert numero_conjuntos == {9: [(0, 3)]}
     assert numero_maquinas == {}
     assert potencia == {}
     assert vazao == {}
+    assert altura == {}
     assert out_of_horizon == []
 
 
@@ -119,10 +126,32 @@ def test_read_machine_set_overrides_compound_key_rows_grouped_by_code_and_conjun
             ),
         }
     )
-    _, numero_maquinas, _, _, out_of_horizon = _read_machine_set_overrides(
+    _, numero_maquinas, _, _, _, out_of_horizon = _read_machine_set_overrides(
         dadger, calendar
     )
     assert numero_maquinas == {(275, 1): [(2, 4)], (275, 2): [(0, 2)]}
+    assert out_of_horizon == []
+
+
+def test_read_machine_set_overrides_altefe_rows_carry_the_effective_head(
+    calendar: list[OperativeStage],
+) -> None:
+    dadger = _FakeDadger(
+        {
+            ACALTEFE: _ac_frame(
+                {
+                    "codigo_usina": 46,
+                    "indice_conjunto": 2,
+                    "altura": 112.5,
+                    "mes": "AGO",
+                    "semana": 1.0,
+                    "ano": 2026.0,
+                }
+            ),
+        }
+    )
+    *_, altura, out_of_horizon = _read_machine_set_overrides(dadger, calendar)
+    assert altura == {(46, 2): [(2, 112.5)]}
     assert out_of_horizon == []
 
 
@@ -143,7 +172,7 @@ def test_read_machine_set_overrides_past_horizon_row_reported_with_param_label(
             ),
         }
     )
-    _, _, _, vazao, out_of_horizon = _read_machine_set_overrides(dadger, calendar)
+    _, _, _, vazao, _, out_of_horizon = _read_machine_set_overrides(dadger, calendar)
     assert vazao == {}
     assert out_of_horizon == [OutOfHorizon(11, "vazao", 10, 2026)]
 
@@ -164,7 +193,7 @@ def test_read_machine_set_overrides_numcon_past_horizon_reported_as_numero_conju
             ),
         }
     )
-    numero_conjuntos, _, _, _, out_of_horizon = _read_machine_set_overrides(
+    numero_conjuntos, _, _, _, _, out_of_horizon = _read_machine_set_overrides(
         dadger, calendar
     )
     assert numero_conjuntos == {}
@@ -193,9 +222,10 @@ def test_read_machine_set_overrides_empty_frames_returns_empty(
             ACNUMMAQ: empty_compound,
             ACPOTEFE: None,
             ACVAZEFE: None,
+            ACALTEFE: None,
         }
     )
-    assert _read_machine_set_overrides(dadger, calendar) == ({}, {}, {}, {}, [])
+    assert _read_machine_set_overrides(dadger, calendar) == ({}, {}, {}, {}, {}, [])
 
 
 # --- build_effective_cadastro -----------------------------------------------
@@ -241,14 +271,15 @@ def test_build_effective_cadastro_independent_per_field_densification_mixes_base
                 "maquinas_conjunto_1": 4.0,
                 "potencia_nominal_conjunto_1": 150.0,
                 "vazao_nominal_conjunto_1": 90.0,
+                "queda_nominal_conjunto_1": 80.0,
             }
         }
     )
     effective, _ = build_effective_cadastro(dadger, hidr, calendar)
     assert [effective.machine_set(174, 1, s) for s in range(3)] == [
-        MachineSet(5, 150.0, 90.0),
-        MachineSet(5, 150.0, 90.0),
-        MachineSet(5, 200.0, 90.0),
+        MachineSet(5, 150.0, 90.0, 80.0),
+        MachineSet(5, 150.0, 90.0, 80.0),
+        MachineSet(5, 200.0, 90.0, 80.0),
     ]
 
 
@@ -278,7 +309,7 @@ def test_build_effective_cadastro_numcon_permanent_override_and_none_fallthrough
     assert [effective.machine_conjunto_count(9, s) for s in range(3)] == [3, 3, 3]
     assert effective.machine_conjunto_count(76, 0) is None
     assert effective.machine_set(76, 1, 0) is None
-    # plant 9 has a NUMCON override but no NUMMAQ/POTEFE/VAZEFE override for
+    # plant 9 has a NUMCON override but no NUMMAQ/POTEFE/VAZEFE/ALTEFE override for
     # any of its conjuntos, so machine_set still falls through to None.
     assert effective.machine_set(9, 1, 0) is None
 
@@ -340,6 +371,7 @@ def test_build_effective_cadastro_applied_counts_only_in_horizon_overrides(
                 "maquinas_conjunto_1": 4.0,
                 "potencia_nominal_conjunto_1": 600.0,
                 "vazao_nominal_conjunto_1": 60.0,
+                "queda_nominal_conjunto_1": 80.0,
             },
             288: {"desvio": 0.0},
         }
@@ -403,6 +435,8 @@ def test_build_effective_cadastro_applied_counts_distinct_pairs_and_plants(
                 "potencia_nominal_conjunto_2": 100.0,
                 "vazao_nominal_conjunto_1": 60.0,
                 "vazao_nominal_conjunto_2": 60.0,
+                "queda_nominal_conjunto_1": 80.0,
+                "queda_nominal_conjunto_2": 80.0,
             },
             33: {"desvio": 0.0, "numero_conjuntos_maquinas": 1.0},
         }

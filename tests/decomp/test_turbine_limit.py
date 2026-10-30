@@ -10,7 +10,6 @@ synthetic inputs only.
 
 from __future__ import annotations
 
-import logging
 import math
 from collections.abc import Mapping, Sequence
 from datetime import date
@@ -23,12 +22,14 @@ from idecomp.decomp.modelos.dadger import ACALTEFE
 from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.core.tailrace import TailraceFamily, TailraceSegment
 from novomodelo_bridge.decomp.case import DecompCase
-from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.cadastro import (
+    EffectiveCadastro,
+    build_effective_cadastro,
+)
 from novomodelo_bridge.decomp.converters.hydro import (
     TurbineLimits,
     compute_turbine_limits,
     convert_hydro_group_availability,
-    convert_hydros,
     plant_turbine_limit_contributions,
     stage_availability_factors,
 )
@@ -114,17 +115,22 @@ def _limits(
     inflows: Mapping[int, float] | None = None,
     initial_volumes: Mapping[int, float] | None = None,
     factors: Mapping[tuple[int, int], float] | None = None,
+    altefe: pd.DataFrame | None = None,
 ) -> TurbineLimits:
     """The limits for the plants in *rows*, the same inputs on every stage.
 
     Every plant defaults to the flat tailrace, zero inflow, its minimum
     volume and an ``MP × FD`` of 1 on group 0 (``(code, group)`` keys in
-    *factors* override it).
+    *factors* override it). *altefe* is an ``AC ALTEFE`` frame resolved
+    through the effective cadastro.
     """
     hidr = _hidr_frame(rows)
     codes = tuple(rows)
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=codes)
     calendar = _calendar()
+    effective, _ = build_effective_cadastro(
+        _FakeDadger(uh=_uh_frame(codes), altefe=altefe), hidr, calendar
+    )
     stages = range(len(calendar))
     all_factors = {(code, 0, s): 1.0 for code in codes for s in stages} | {
         (code, group, s): value
@@ -132,7 +138,7 @@ def _limits(
         for s in stages
     }
     return compute_turbine_limits(
-        EffectiveCadastro(base=hidr, n_stages=len(calendar), stage_varying={}),
+        effective,
         id_map,
         calendar,
         initial_volumes={
@@ -175,6 +181,37 @@ def test_missing_rated_head_turbines_the_rated_flow() -> None:
     row = _plant_row(conjuntos=((2, 50.0, 1000.0, math.nan),))
     limits = _limits({1: row})
     assert limits.cap(1, 0, 0) == pytest.approx(100.0)
+
+
+def _altefe(altura: float, *, mes: str = "AGO") -> pd.DataFrame:
+    """Plant 1, set 1's ``AC ALTEFE`` from the August monthly stage (stage 2)."""
+    return pd.DataFrame(
+        [
+            {
+                "codigo_usina": 1,
+                "indice_conjunto": 1,
+                "altura": altura,
+                "mes": mes,
+                "semana": 1.0,
+                "ano": 2026.0,
+            }
+        ]
+    )
+
+
+def test_altefe_override_is_the_head_the_limit_is_corrected_against() -> None:
+    limits = _limits({1: _plant_row()}, altefe=_altefe(320.0))
+    assert [limits.cap(1, 0, s) for s in range(3)] == pytest.approx(
+        [100.0, 100.0, 100.0 * (80.0 / 320.0) ** 0.5]
+    )
+
+
+def test_altefe_override_rates_a_set_hidr_leaves_unrated() -> None:
+    row = _plant_row(conjuntos=((2, 50.0, 1000.0, math.nan),))
+    limits = _limits({1: row}, altefe=_altefe(320.0))
+    assert [limits.cap(1, 0, s) for s in range(3)] == pytest.approx(
+        [100.0, 100.0, 100.0 * (80.0 / 320.0) ** 0.5]
+    )
 
 
 def test_rising_tailrace_settles_within_a_cubic_metre_of_the_fixed_point() -> None:
@@ -465,26 +502,6 @@ def _three_stage_case(dadger: _FakeDadger, hidr: pd.DataFrame) -> DecompCase:
     return make_decomp_case(
         Path("unused"), dadger=dadger, hidr=hidr, calendar=_calendar()
     )
-
-
-def test_acaltefe_present_warns_and_proceeds(caplog: pytest.LogCaptureFixture) -> None:
-    """An ``AC ALTEFE`` override is logged as a tracked gap (idecomp exposes no
-    value accessor for it): the rated heads stay the ``hidr.dat`` ones."""
-    hidr = _hidr_frame({1: _plant_row()})
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
-    dadger = _FakeDadger(uh=_uh_frame([1]), altefe=pd.DataFrame([{"codigo_usina": 1}]))
-
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
-    ):
-        convert_hydros(
-            _three_stage_case(dadger, hidr),
-            id_map,
-            effective=EffectiveCadastro(base=hidr, n_stages=3, stage_varying={}),
-            turbine_limits=flat_turbine_limits(id_map, 3),
-        )
-
-    assert any("ALTEFE" in r.message for r in caplog.records)
 
 
 def _itaipu_split_case(fd: pd.DataFrame) -> tuple[DecompCase, EffectiveCadastro]:

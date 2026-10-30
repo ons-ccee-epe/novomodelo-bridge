@@ -6,7 +6,6 @@ import inspect
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -28,13 +27,12 @@ from novomodelo_bridge.core.preflight import (
 )
 from novomodelo_bridge.decomp.constraint_registers import (
     detect_libs_electrical,
-    detect_unreadable_electrical,
+    detect_unconverted_rha,
     read_constraints,
 )
 from novomodelo_bridge.decomp.converters.cadastro import (
     _SCALAR_AC_SPECS,
     APPLIED_AC_CLASSES,
-    UNINGESTABLE_AC_CLASSES,
     CadastroResolutionReport,
     OutOfHorizon,
 )
@@ -240,22 +238,18 @@ class TestOptionalInputAdvisory:
 
 
 class TestAcCoverageRegistry:
-    """The resolver's ``APPLIED_AC_CLASSES``/
-    ``UNINGESTABLE_AC_CLASSES`` registries and the reflected idecomp ``AC``
-    universe (``_ALL_AC_CLASSES``) stay consistent with each other, and the
+    """The resolver's ``APPLIED_AC_CLASSES`` registry and the reflected idecomp
+    ``AC`` universe (``_ALL_AC_CLASSES``) stay consistent with each other, and the
     derived deferred bucket is populated by enumerate-and-diff rather than a
     hand-maintained list — proven by three families
     (``NCHAVE``/``TIPERH``/``VERTJU``) the old blanket warning never named.
     """
 
-    def test_coverage_registry_applied_classes_count_is_17(self) -> None:
-        assert len(APPLIED_AC_CLASSES) == 17
+    def test_coverage_registry_applied_classes_count_is_18(self) -> None:
+        assert len(APPLIED_AC_CLASSES) == 18
 
-    def test_coverage_registry_uningestable_is_altefe_only(self) -> None:
-        assert UNINGESTABLE_AC_CLASSES == frozenset({ACALTEFE})
-
-    def test_coverage_registry_applied_and_uningestable_disjoint(self) -> None:
-        assert not (APPLIED_AC_CLASSES & UNINGESTABLE_AC_CLASSES)
+    def test_coverage_registry_applies_altefe(self) -> None:
+        assert ACALTEFE in APPLIED_AC_CLASSES
 
     def test_coverage_registry_scalar_specs_subset_of_applied(self) -> None:
         scalar_classes = {spec.ac_class for spec in _SCALAR_AC_SPECS}
@@ -264,9 +258,6 @@ class TestAcCoverageRegistry:
     def test_coverage_registry_applied_subset_of_all_ac_classes(self) -> None:
         assert APPLIED_AC_CLASSES <= _ALL_AC_CLASSES
 
-    def test_coverage_registry_uningestable_subset_of_all_ac_classes(self) -> None:
-        assert UNINGESTABLE_AC_CLASSES <= _ALL_AC_CLASSES
-
     def test_coverage_registry_all_ac_classes_has_at_least_25_members(self) -> None:
         # idecomp 1.13.0 exposes exactly 25; ``>=`` stays robust to a future add.
         assert len(_ALL_AC_CLASSES) >= 25
@@ -274,16 +265,16 @@ class TestAcCoverageRegistry:
     def test_coverage_registry_deferred_bucket_contains_uncovered_families(
         self,
     ) -> None:
-        deferred = _ALL_AC_CLASSES - APPLIED_AC_CLASSES - UNINGESTABLE_AC_CLASSES
+        deferred = _ALL_AC_CLASSES - APPLIED_AC_CLASSES
         assert {ACNCHAVE, ACTIPERH, ACVERTJU} <= deferred
 
 
 class TestAcCoverage:
-    """``_ac_coverage``'s three-bucket classification and its
+    """``_ac_coverage``'s two-bucket classification and its
     always-passing summary ``CheckItem`` plus per-bucket diagnostics.
     """
 
-    def test_ac_coverage_mixed_presence_emits_all_four_diagnostics(self) -> None:
+    def test_ac_coverage_mixed_presence_emits_all_three_diagnostics(self) -> None:
         present = pd.DataFrame({"codigo_usina": [1]})
         dadger = _FakeDadger({ACVOLMIN: present, ACCOTVAZ: present, ACALTEFE: present})
         report = CadastroResolutionReport(
@@ -303,17 +294,16 @@ class TestAcCoverage:
         assert set(by_code) == {
             "decomp-ac-overrides-applied",
             "decomp-ac-overrides-deferred",
-            "decomp-ac-altefe-uningestable",
             "decomp-ac-out-of-horizon",
         }
         assert by_code["decomp-ac-overrides-applied"].severity is Severity.INFO
         assert by_code["decomp-ac-overrides-deferred"].severity is Severity.WARNING
-        assert by_code["decomp-ac-altefe-uningestable"].severity is Severity.WARNING
         assert by_code["decomp-ac-out-of-horizon"].severity is Severity.WARNING
 
         deferred_summary = by_code["decomp-ac-overrides-deferred"].summary
         assert "COTVAZ" in deferred_summary
         assert "ALTEFE" not in deferred_summary
+        assert "ALTEFE" in by_code["decomp-ac-overrides-applied"].summary
 
         table = by_code["decomp-ac-out-of-horizon"].table
         assert table is not None
@@ -348,12 +338,12 @@ class TestAcCoverage:
 
 class TestSpecialConstraintCoverage:
     """``_special_constraint_coverage``'s converted (RE/HQ/HV/HE,
-    bounds-lowered vs generic-emitted) vs deferred (FE/RHA/LIBs-electrical)
+    bounds-lowered vs generic-emitted) vs deferred (RHA/LIBs-electrical)
     classification, and its always-passing summary ``CheckItem``.
     """
 
     @staticmethod
-    def _synthetic_dadger() -> _ConstraintFakeDadger:
+    def _synthetic_dadger(**extra: pd.DataFrame) -> _ConstraintFakeDadger:
         """One record per family: RE (FU), HV (VARM), and HQ (QDES, a
         diversion bound) lower to bounds; HE
         (always generic) is the only one that emits as a generic
@@ -369,28 +359,26 @@ class TestSpecialConstraintCoverage:
             lv=_lv((7, 1, 100.0, 900.0)),
             he=_he((8, 1, 20.0, 2, 0, 1, "PRODRHE.DAT", 3370.0, 1)),
             cm=_cm((8, 3, 1.0)),
+            **extra,
         )
 
     @staticmethod
-    def _files(
-        tmp_path: Path, dadger_text: str, *, libs_file: Path | None = None
-    ) -> SimpleNamespace:
-        """A minimal ``files``-shaped stub — only ``.dadger`` and
-        ``.libs_restricao_eletrica`` are read by the coverage function, so a
-        duck-typed object avoids coupling this test to ``DecompFiles``'s full
-        field list."""
-        dadger_path = tmp_path / "dadger.rv0"
-        dadger_path.write_text(dadger_text, encoding="latin-1")
-        return SimpleNamespace(dadger=dadger_path, libs_restricao_eletrica=libs_file)
+    def _rha_dadger() -> _ConstraintFakeDadger:
+        """The synthetic deck plus one ``HA`` inflow constraint."""
+        return TestSpecialConstraintCoverage._synthetic_dadger(
+            ha=pd.DataFrame(
+                [(1, 1, 2)],
+                columns=["codigo_restricao", "estagio_inicial", "estagio_final"],
+            )
+        )
 
     def test_mixed_deck_emits_summary_plus_converted_and_deferred_diagnostics(
-        self, tmp_path: Path
+        self,
     ) -> None:
-        dadger = self._synthetic_dadger()
+        dadger = self._rha_dadger()
         census = read_constraints(dadger)
-        files = self._files(tmp_path, "RE    10    1    2\nFE    10   21  1.0\n")
 
-        checks, diagnostics = _special_constraint_coverage(dadger, files)
+        checks, diagnostics = _special_constraint_coverage(dadger, None)
 
         assert len(checks) == 1
         assert checks[0].label == "Special-constraint coverage"
@@ -399,14 +387,12 @@ class TestSpecialConstraintCoverage:
         by_code = {d.code: d for d in diagnostics}
         assert set(by_code) == {
             "decomp-special-constraints-converted",
-            "decomp-fe-participation-unreadable",
+            "decomp-rha-family-unconverted",
         }
         assert by_code["decomp-special-constraints-converted"].severity is (
             Severity.INFO
         )
-        assert by_code["decomp-fe-participation-unreadable"].severity is (
-            Severity.WARNING
-        )
+        assert by_code["decomp-rha-family-unconverted"].severity is (Severity.WARNING)
         present_families = [fam for fam, records in census.by_family.items() if records]
         assert checks[0].detail == (
             f"{len(census.to_bounds)} record(s) lowered to bounds, "
@@ -414,12 +400,11 @@ class TestSpecialConstraintCoverage:
             f"{len(present_families)} family(ies) present in the deck"
         )
 
-    def test_converted_counts_match_the_census_probe(self, tmp_path: Path) -> None:
+    def test_converted_counts_match_the_census_probe(self) -> None:
         dadger = self._synthetic_dadger()
         census = read_constraints(dadger)
-        files = self._files(tmp_path, "RE    10    1    2\n")
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, files)
+        _checks, diagnostics = _special_constraint_coverage(dadger, None)
 
         converted = next(
             d for d in diagnostics if d.code == "decomp-special-constraints-converted"
@@ -431,45 +416,38 @@ class TestSpecialConstraintCoverage:
         assert len(census.to_bounds) == 3  # RE FU + HV VARM + HQ QDES
         assert len(census.to_generic) == 1  # HE (always generic)
 
-    def test_deferred_fe_diagnostic_is_sourced_from_the_e1_helper_verbatim(
-        self, tmp_path: Path
+    def test_deferred_rha_diagnostic_is_sourced_from_the_helper_verbatim(
+        self,
     ) -> None:
-        dadger = self._synthetic_dadger()
-        dadger_text = "RE    10    1    2\nFE    10   21  1.0\n"
-        files = self._files(tmp_path, dadger_text)
-        expected = detect_unreadable_electrical(files.dadger)
-        assert len(expected) == 1  # sanity: the fixture trips FE, not RHA
+        dadger = self._rha_dadger()
+        expected = detect_unconverted_rha(dadger)
+        assert expected is not None
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, files)
+        _checks, diagnostics = _special_constraint_coverage(dadger, None)
 
-        fe_diagnostic = next(
-            d for d in diagnostics if d.code == "decomp-fe-participation-unreadable"
+        rha_diagnostic = next(
+            d for d in diagnostics if d.code == "decomp-rha-family-unconverted"
         )
-        assert fe_diagnostic == expected[0]
+        assert rha_diagnostic == expected
 
     def test_deferred_libs_electrical_diagnostic_is_sourced_from_the_e1_helper(
         self, tmp_path: Path
     ) -> None:
         dadger = _ConstraintFakeDadger()
-        files = self._files(
-            tmp_path,
-            "VAZOES record only\n",
-            libs_file=tmp_path / "lib_restricao-eletrica-especial.csv",
-        )
-        expected = detect_libs_electrical(files.libs_restricao_eletrica)
+        libs_file = tmp_path / "lib_restricao-eletrica-especial.csv"
+        expected = detect_libs_electrical(libs_file)
         assert expected is not None  # sanity: the fixture trips the LIBs token
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, files)
+        _checks, diagnostics = _special_constraint_coverage(dadger, libs_file)
 
         assert diagnostics == [expected]
 
     def test_no_special_constraints_deck_emits_only_the_passing_summary(
-        self, tmp_path: Path
+        self,
     ) -> None:
         dadger = _ConstraintFakeDadger()
-        files = self._files(tmp_path, "VAZOES record only\n")
 
-        checks, diagnostics = _special_constraint_coverage(dadger, files)
+        checks, diagnostics = _special_constraint_coverage(dadger, None)
 
         assert len(checks) == 1
         assert checks[0].passed is True

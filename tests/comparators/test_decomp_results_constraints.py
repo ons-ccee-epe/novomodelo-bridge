@@ -165,8 +165,10 @@ class TestTermLookupValue:
 
 
 class TestUnsupportedTermVariables:
-    def test_contains_interchange_and_qbom(self) -> None:
-        assert _UNSUPPORTED_TERM_VARIABLES == frozenset({"interchange", "QBOM"})
+    def test_contains_interchange_contract_and_qbom(self) -> None:
+        assert _UNSUPPORTED_TERM_VARIABLES == frozenset(
+            {"interchange", "contract", "QBOM"}
+        )
 
 
 class TestConstraintNameRe:

@@ -34,9 +34,6 @@ from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     APPLIED_AC_CLASSES as APPLIED_AC_CLASSES,
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
-    UNINGESTABLE_AC_CLASSES as UNINGESTABLE_AC_CLASSES,
-)
-from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     AcRegisters as AcRegisters,
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (

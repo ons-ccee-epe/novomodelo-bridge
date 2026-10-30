@@ -24,14 +24,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 import pandas as pd
-from idecomp.decomp.modelos.dadger import ACALTEFE
 from inewave.newave import Hidr
 
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.productivity import fpha_efficiency
 from novomodelo_bridge.decomp.converters.cadastro import (
-    ac_frame,
     effective_storage_range,
     storage_envelope,
 )
@@ -48,7 +46,6 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import (
-        AcRegisters,
         EffectiveCadastro,
     )
     from novomodelo_bridge.decomp.converters.hydro.turbine_limit import TurbineLimits
@@ -445,7 +442,7 @@ def _report_machine_set_overrides(
     n_ac_affected = len(affected_codes & operated_codes)
     if n_ac_affected:
         _LOG.info(
-            "applied AC NUMCON/NUMMAQ/POTEFE/VAZEFE machine-configuration "
+            "applied AC NUMCON/NUMMAQ/POTEFE/VAZEFE/ALTEFE machine-configuration "
             "overrides for %d plant(s)",
             n_ac_affected,
         )
@@ -460,28 +457,6 @@ def _report_runofriver_collapse(n_runofriver_collapsed: int) -> None:
             "(volume_minimo, volume_maximo) band would otherwise emit a "
             "phantom weekly storage buffer the plant does not have",
             n_runofriver_collapsed,
-        )
-
-
-def _report_unconsumed_altefe(dadger: AcRegisters) -> None:
-    """Warn about the plants declaring an ``AC ALTEFE`` head override."""
-    # TRACKED NOVOMODELO-GAP WORKAROUND (idecomp limitation, not novomodelo's): the
-    # source model's AC ALTEFE register overrides a conjunto's effective
-    # head, but idecomp's typed accessor exposes only the identifying/timing
-    # columns for it, no value column — so it cannot be folded into the
-    # turbined-flow limit's rated head. Every plant keeps its base hidr
-    # queda_nominal_conjunto_* nominal head regardless of an ALTEFE
-    # declaration. Remove this warning (and wire the override into
-    # turbine_limit._rated_head) once idecomp exposes an ALTEFE value accessor.
-    altefe = ac_frame(dadger, ACALTEFE)
-    if isinstance(altefe, pd.DataFrame) and not altefe.empty:
-        n_altefe = altefe["codigo_usina"].nunique()
-        _LOG.warning(
-            "%d plant(s) declare an AC ALTEFE effective-head override that "
-            "cannot be consumed (idecomp exposes no value accessor for "
-            "ALTEFE); the turbined-flow limit uses the base hidr "
-            "nominal head for these plants",
-            n_altefe,
         )
 
 
@@ -530,11 +505,6 @@ def convert_hydros(
     productivity, with the value emitted separately
     (:func:`convert_hydro_energy_productivity`).
 
-    **``ACALTEFE`` tracked gap:** a plant declaring an ``AC ALTEFE``
-    effective-head override is logged (not consumed — see the
-    ``TRACKED NOVOMODELO-GAP WORKAROUND`` below) and conversion proceeds with the
-    base ``hidr`` nominal head.
-
     Every plant declares one mirror unit group, except the per-frequency
     split plant (Itaipu, code 66), which declares two conjunto-backed groups
     instead (:func:`_build_split_unit_groups`), whose summed
@@ -574,7 +544,6 @@ def convert_hydros(
 
     _report_machine_set_overrides(effective, context.operated_codes)
     _report_runofriver_collapse(n_runofriver_collapsed)
-    _report_unconsumed_altefe(case.dadger)
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),

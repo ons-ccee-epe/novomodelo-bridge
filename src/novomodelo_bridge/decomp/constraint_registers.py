@@ -4,17 +4,17 @@ The source model expresses special constraints as four register *triples* — a
 declaration register (which stages the constraint spans), a per-stage limit
 register, and a coefficient/participation register naming the entities:
 
-    family  decl  limit        coeff     variable(s)                    limit axis
-    ----    ----  -----        -----     -----------                    ----------
-    RE      RE    LU (1..5)    FU/FT/FI  hydro/thermal gen, interchange per-block
-    HQ      HQ    LQ (1..5)    CQ        flow, per-term CQ.tipo         per-block
-    HV      HV    LV           CV        hydro storage (hm3)            per-stage
-    HE      HE    (inline)     CM        energy over a REE cascade      per-stage
+    family  decl  limit        coeff        variable(s)                       limit axis
+    ----    ----  -----        -----        -----------                       ----------
+    RE      RE    LU (1..5)    FU/FT/FI/FE  gen, interchange, contract        per-block
+    HQ      HQ    LQ (1..5)    CQ           flow, per-term CQ.tipo            per-block
+    HV      HV    LV           CV           hydro storage (hm3)               per-stage
+    HE      HE    (inline)     CM           energy over a REE cascade         per-stage
 
-RE spreads its participation over up to three coefficient registers — ``FU``
+RE spreads its participation over up to four coefficient registers — ``FU``
 (hydro generation), ``FT`` (thermal generation), ``FI`` (interchange between two
-submarkets) — any combination of which may be present; a fourth, ``FE``, is not
-readable via idecomp. Each participation row (FU/FT/FI, CQ, CV) declares a
+submarkets), ``FE`` (an import/export contract) — any combination of which may
+be present. Each participation row (FU/FT/FI/FE, CQ, CV) declares a
 term's coefficient from its stage onward, across the constraint's
 ``[estagio_inicial, estagio_final]`` range, so a coefficient may change from
 stage to stage; a term first declared after the constraint's first stage is
@@ -88,16 +88,20 @@ _BOUNDS_AXIS: dict[str, str] = {
 class ConstraintTerm:
     """One ``(entity, variable)`` participation in a constraint.
 
-    ``code`` is the plant code (``codigo_usina``) for RE/HQ/HV or the REE code
-    (``codigo_ree``) for HE. ``variable`` is what the term bounds — ``generation``
+    ``code`` is the plant code (``codigo_usina``) for RE/HQ/HV, the REE code
+    (``codigo_ree``) for HE, or the contract number (``numero_contrato``) for
+    an RE ``FE`` term. ``variable`` is what the term bounds — ``generation``
     (RE hydro, ``FU``), ``thermal_generation`` (RE thermal, ``FT``),
-    ``interchange`` (RE submarket pair, ``FI``), the ``CQ.tipo`` flow
+    ``interchange`` (RE submarket pair, ``FI``), ``contract`` (RE ``CI``/``CE``
+    contract, ``FE``), the ``CQ.tipo`` flow
     (``QDEF``/``QTUR``/``QDES``/``QBOM``) for HQ, ``VARM`` for HV, or ``energy``
     for HE. ``frequency`` is the 50/60 Hz tag carried only by RE ``FU`` terms
     (``None`` elsewhere); a plant split across both frequencies contributes two
-    distinct terms. ``submarket`` is the ``FT`` thermal's submarket code
-    (``codigo_submercado``). ``submarket_de``/``submarket_para`` are the ``FI``
-    interchange pair's submarket mnemonics — an interchange term has no plant
+    distinct terms. ``submarket`` is the ``FT`` thermal's or the ``FE``
+    contract's submarket code (``codigo_submercado``); a contract number is
+    unique only within its submarket, so ``(code, submarket)`` names an ``FE``
+    contract. ``submarket_de``/``submarket_para`` are the ``FI`` interchange
+    pair's submarket mnemonics — an interchange term has no plant
     code, so ``code`` carries the documented sentinel ``0`` for it; resolving
     the pair to a novomodelo ``line_id`` is a later stage's job, not this reader's.
 
@@ -277,6 +281,8 @@ class ConstraintRegisters(Protocol):
 
     def fi(self, *, df: bool) -> object: ...
 
+    def fe(self, *, df: bool) -> object: ...
+
     def lu(self, *, df: bool) -> object: ...
 
     def hq(self, *, df: bool) -> object: ...
@@ -439,13 +445,13 @@ def _read_terms(coeff: pd.DataFrame, config: _FamilyConfig) -> _DeclaredTerms:
 
 
 def _read_re_terms(dadger: ConstraintRegisters) -> _DeclaredTerms:
-    """Group RE's three participation registers into its declared terms.
+    """Group RE's four participation registers into its declared terms.
 
     Unlike HQ/HV, an RE's participation is not confined to one coefficient
     register: it may carry ``FU`` (hydro generation), ``FT`` (thermal
-    generation), ``FI`` (submarket interchange), or any combination of the
-    three, so all three are read and merged by ``codigo_restricao``. A
-    missing/empty register contributes no terms.
+    generation), ``FI`` (submarket interchange), ``FE`` (an import/export
+    contract), or any combination, so all four are read and merged by
+    ``codigo_restricao``. A missing/empty register contributes no terms.
     """
     collector = _TermCollector()
 
@@ -492,6 +498,20 @@ def _read_re_terms(dadger: ConstraintRegisters) -> _DeclaredTerms:
                     variable="interchange",
                     submarket_de=str(row["codigo_submercado_de"]),
                     submarket_para=str(row["codigo_submercado_para"]),
+                ),
+            )
+
+    fe = _df(dadger, "fe")
+    if fe is not None:
+        for _, row in fe.iterrows():
+            collector.add(
+                int(row["codigo_restricao"]),
+                _row_stage(row),
+                ConstraintTerm(
+                    code=int(row["numero_contrato"]),
+                    coefficient=float(row["coeficiente"]),
+                    variable="contract",
+                    submarket=int(row["codigo_submercado"]),
                 ),
             )
 
@@ -921,89 +941,42 @@ def read_constraints(dadger: ConstraintRegisters) -> ConstraintCensus:
     )
 
 
-#: The ``FE`` register (electrical participation) has no idecomp accessor —
-#: presence-only detection, never parsed into a term or a constraint id.
-_MNEMONIC_FE = "FE"
+class RhaRegisters(Protocol):
+    """The deck accessors for the ``RHA`` inflow-constraint family."""
 
-#: The whole ``RHA`` family (``HA``/``LA``/``CA``) has no idecomp accessor.
-_RHA_MNEMONICS = frozenset({"HA", "LA", "CA"})
+    def ha(self, *, df: bool) -> object: ...
+
+    def la(self, *, df: bool) -> object: ...
+
+    def ca(self, *, df: bool) -> object: ...
 
 
-def detect_unreadable_electrical(dadger_path: Path) -> list[Diagnostic]:
-    """Detect ``FE``/``RHA`` register lines the reader cannot ingest and warn
-    loudly instead of silently under-reading them.
+def detect_unconverted_rha(dadger: RhaRegisters) -> Diagnostic | None:
+    """Warn when the deck declares ``RHA`` inflow constraints (``HA``/``LA``/``CA``).
 
-    idecomp 1.13.0 exposes no accessor for ``FE`` electrical-participation
-    terms or for the whole ``RHA`` family (``HA``/``LA``/``CA``). An ``FE``
-    term on a constraint, if left unaccounted for, makes that constraint's
-    electrical model *wrong*, not merely incomplete — so a deck carrying one
-    must be flagged rather than silently treated as fully read. This scans the
-    deck's raw lines for the **leading** register mnemonic only (a mnemonic
-    appearing mid-line, inside another field, never counts) and returns at
-    most two ``WARNING`` diagnostics: one for ``FE`` presence, one for ``RHA``
-    presence. It does not parse a constraint id out of either family and does
-    not drop any ``RE`` record — the per-id ``FE`` skip this would require is
-    not implemented.
-
-    Parameters
-    ----------
-    dadger_path:
-        Path to the deck's ``dadger`` register file.
-
-    Returns
-    -------
-    Zero, one, or two diagnostics; empty when the deck carries neither
-    ``FE`` nor ``RHA`` lines.
+    The family is read but not converted, so a deck carrying it is flagged
+    rather than treated as fully modelled. ``None`` when no register of the
+    family is present.
     """
-    has_fe = False
-    has_rha = False
-    for line in dadger_path.read_text(encoding="latin-1").splitlines():
-        tokens = line.strip().split(maxsplit=1)
-        if not tokens:
-            continue
-        mnemonic = tokens[0]
-        if mnemonic == _MNEMONIC_FE:
-            has_fe = True
-        elif mnemonic in _RHA_MNEMONICS:
-            has_rha = True
-
-    diagnostics: list[Diagnostic] = []
-    if has_fe:
-        diagnostics.append(
-            Diagnostic(
-                code="decomp-fe-participation-unreadable",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title="FE electrical participation present but unreadable",
-                summary=(
-                    "The deck declares FE electrical-participation terms, "
-                    "which have no reader accessor; the electrical "
-                    "constraints (RE) on this deck may be under-read, so the "
-                    "electrical model is not authoritative for this deck."
-                ),
-                remediation=(
-                    "FE term reading and the per-constraint skip it requires "
-                    "are deferred; no action needed to convert."
-                ),
-            )
-        )
-    if has_rha:
-        diagnostics.append(
-            Diagnostic(
-                code="decomp-rha-family-unconverted",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title="RHA family (HA/LA/CA) not converted",
-                summary=(
-                    "The deck declares HA/LA/CA (RHA family) register lines; "
-                    "this conversion does not read or convert them."
-                ),
-                remediation=(
-                    "RHA conversion is deferred; no action needed to convert."
-                ),
-            )
-        )
-    return diagnostics
+    ids: set[int] = set()
+    for register in (dadger.ha(df=True), dadger.la(df=True), dadger.ca(df=True)):
+        frame = as_frame(register)
+        if frame is not None and not frame.empty:
+            ids.update(int(code) for code in frame["codigo_restricao"])
+    if not ids:
+        return None
+    listed = ", ".join(str(code) for code in sorted(ids))
+    return Diagnostic(
+        code="decomp-rha-family-unconverted",
+        severity=Severity.WARNING,
+        category=_CATEGORY,
+        title="RHA inflow constraints (HA/LA/CA) not converted",
+        summary=(
+            f"The deck declares {len(ids)} RHA inflow constraint(s) "
+            f"(HA/LA/CA ids {listed}); this conversion does not convert them."
+        ),
+        remediation="RHA conversion is deferred; no action needed to convert.",
+    )
 
 
 def detect_libs_electrical(libs_file: Path | None) -> Diagnostic | None:

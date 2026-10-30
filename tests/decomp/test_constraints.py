@@ -5,11 +5,13 @@ Synthetic ``ConstraintTerm``/``ConstraintRecord``/``StageBounds``/
 ``example/`` read, no ``import novomodelo``. Covers every ``_variable_token``
 branch (including the ``bus=`` selector and the fail-loud raises), the
 ``FI``-interchange line resolver (``build_fi_line_map``/``resolve_fi_term``,
-direct/reverse/no-line/unknown-name), the ``_format_expression``
+direct/reverse/no-line/unknown-name), the ``FE``-contract resolver
+(``build_contract_token_map``/``resolve_fe_term``, import/export/unknown/
+ambiguous), the ``_format_expression``
 coefficient-formatting rules, ``big_m_penalty``, the ``slots_from_record``
 slot-enumeration helper, ``emit_re_generics``'s per-record
 resolve-or-skip-whole-constraint behaviour (mixed hydro+interchange,
-GNL/unknown-thermal, frequency-split, no-line ``FI``, and an all-skipped
+hydro+contract, GNL/unknown-thermal, frequency-split, no-line ``FI``, and an all-skipped
 census), and ``emit_rhq_rhv_generics``'s RHQ flow-mix/``QBOM``-station and
 RHV multi-``VARM`` additive-floor/volume-tipo-deferral behaviour. The
 ``GenericConstraintBuilder`` itself is covered by
@@ -40,12 +42,15 @@ from novomodelo_bridge.decomp.converters.constraints import (
     _hydro_generation_token,
     _variable_token,
     big_m_penalty,
+    build_contract_token_map,
     build_fi_line_map,
     emit_re_generics,
     emit_rhq_rhv_generics,
+    resolve_fe_term,
     resolve_fi_term,
     slots_from_record,
 )
+from novomodelo_bridge.decomp.converters.contracts import Contract
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
@@ -235,6 +240,72 @@ def test_resolve_fi_term_unknown_name_warns_and_skips(fi_id_map: DecompIdMap) ->
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-fi-no-line"
+
+
+# ---------------------------------------------------------------------------
+# build_contract_token_map / resolve_fe_term
+# ---------------------------------------------------------------------------
+
+
+def _contract(contract_id: int, kind: str, numero: int, bus_code: int) -> Contract:
+    return Contract(
+        id=contract_id,
+        kind=kind,
+        numero=numero,
+        name=f"{kind} {numero}",
+        bus_code=bus_code,
+        stages=[],
+    )
+
+
+def _fe_term(numero: int, submarket: int) -> ConstraintTerm:
+    return ConstraintTerm(
+        code=numero, coefficient=1.0, variable="contract", submarket=submarket
+    )
+
+
+def test_resolve_fe_term_picks_the_contract_kind_by_number_and_submarket() -> None:
+    tokens = build_contract_token_map(
+        [_contract(0, "import", 1, 1), _contract(1, "export", 1, 2)]
+    )
+
+    assert resolve_fe_term(_fe_term(1, 1), tokens) == "contract_import(0)"
+    assert resolve_fe_term(_fe_term(1, 2), tokens) == "contract_export(1)"
+
+
+def test_resolve_fe_term_unknown_contract_warns_and_skips() -> None:
+    tokens = build_contract_token_map([_contract(0, "import", 1, 1)])
+
+    with dx.collect() as collected:
+        result = resolve_fe_term(_fe_term(2, 1), tokens)
+
+    assert result is None
+    assert [d.code for d in collected] == ["decomp-fe-no-contract"]
+    assert "no such contract" in collected[0].summary
+
+
+def test_resolve_fe_term_number_shared_by_ci_and_ce_warns_and_skips() -> None:
+    tokens = build_contract_token_map(
+        [_contract(0, "import", 1, 1), _contract(1, "export", 1, 1)]
+    )
+
+    with dx.collect() as collected:
+        result = resolve_fe_term(_fe_term(1, 1), tokens)
+
+    assert result is None
+    assert [d.code for d in collected] == ["decomp-fe-no-contract"]
+    assert "both a CI and a CE" in collected[0].summary
+
+
+def test_resolve_fe_term_without_submarket_raises() -> None:
+    term = ConstraintTerm(code=1, coefficient=1.0, variable="contract")
+    with pytest.raises(ValueError, match="must carry a submarket"):
+        resolve_fe_term(term, {})
+
+
+def test_variable_token_refuses_a_contract_term(id_map: DecompIdMap) -> None:
+    with pytest.raises(ValueError, match="FE contract resolution path"):
+        _variable_token(_fe_term(1, 1), id_map, {})
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +505,7 @@ def test_emit_re_generics_mixed_hydro_interchange_round_trip(
         id_map,
         census=census,
         line_map=line_map,
+        contract_tokens={},
         big_m=45000.0,
     )
 
@@ -471,6 +543,7 @@ def test_emit_re_generics_gnl_thermal_skips_and_warns(id_map: DecompIdMap) -> No
             id_map,
             census=census,
             line_map={},
+            contract_tokens={},
             big_m=45000.0,
         )
 
@@ -505,6 +578,7 @@ def test_emit_re_generics_frequency_split_skips_and_warns(
             id_map,
             census=census,
             line_map={},
+            contract_tokens={},
             big_m=45000.0,
         )
 
@@ -541,6 +615,7 @@ def test_emit_re_generics_fi_no_line_skips(id_map: DecompIdMap) -> None:
             id_map,
             census=census,
             line_map={},
+            contract_tokens={},
             big_m=45000.0,
         )
 
@@ -603,12 +678,73 @@ def test_emit_re_generics_all_records_skipped_returns_none(
             id_map,
             census=census,
             line_map={},
+            contract_tokens={},
             big_m=45000.0,
         )
 
     assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 3
+
+
+def test_emit_re_generics_hydro_and_contract_terms(id_map: DecompIdMap) -> None:
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=40,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="generation"),
+            ConstraintTerm(code=7, coefficient=-0.5, variable="contract", submarket=1),
+        ),
+        bounds={0: StageBounds(lower=(None,), upper=(800.0,))},
+        per_block=True,
+    )
+    tokens = build_contract_token_map([_contract(2, "export", 7, 1)])
+
+    result = emit_re_generics(
+        _case([_stage(0, 1)]),
+        id_map,
+        census=_census(record),
+        line_map={},
+        contract_tokens=tokens,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "hydro_generation(0) - 0.5 * contract_export(2)"
+    )
+
+
+def test_emit_re_generics_unresolved_contract_skips_the_constraint(
+    id_map: DecompIdMap,
+) -> None:
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=41,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="generation"),
+            _fe_term(7, 1),
+        ),
+        bounds={0: StageBounds(lower=(None,), upper=(800.0,))},
+        per_block=True,
+    )
+
+    with dx.collect() as collected:
+        result = emit_re_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            line_map={},
+            contract_tokens={},
+            big_m=45000.0,
+        )
+
+    assert result is None
+    assert [d.code for d in collected] == ["decomp-fe-no-contract"]
 
 
 # ---------------------------------------------------------------------------

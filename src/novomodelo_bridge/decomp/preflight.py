@@ -37,7 +37,6 @@ from novomodelo_bridge.core.preflight import (
 from novomodelo_bridge.decomp import constraint_registers
 from novomodelo_bridge.decomp.converters.cadastro import (
     APPLIED_AC_CLASSES,
-    UNINGESTABLE_AC_CLASSES,
     AcRegisters,
 )
 from novomodelo_bridge.decomp.files import (
@@ -209,12 +208,12 @@ def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
     )
 
 
-class _ConstraintFiles(Protocol):
-    @property
-    def dadger(self) -> Path: ...
-
-    @property
-    def libs_restricao_eletrica(self) -> Path | None: ...
+class _SpecialConstraintRegisters(
+    constraint_registers.ConstraintRegisters,
+    constraint_registers.RhaRegisters,
+    Protocol,
+):
+    """The deck accessors the special-constraint coverage check reads."""
 
 
 def _ac_present(dadger: AcRegisters, classes: frozenset[type]) -> list[type]:
@@ -241,16 +240,15 @@ def _ac_present(dadger: AcRegisters, classes: frozenset[type]) -> list[type]:
 def _ac_coverage(
     dadger: AcRegisters, report: CadastroResolutionReport
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
-    """Classify every idecomp ``AC`` class into applied/uningestable/deferred
-    and report which of those buckets the deck actually exercises.
+    """Classify every idecomp ``AC`` class into applied/deferred and report
+    which of those buckets the deck actually exercises.
 
     A pure function of *dadger* (for the per-class deck-presence scan) and
     *report* (for ``out_of_horizon``) — no file I/O, no calendar, no
-    ``hidr``. The three buckets are computed once by set arithmetic against
+    ``hidr``. The two buckets are computed once by set arithmetic against
     the module-level :data:`_ALL_AC_CLASSES` reflection and the resolver's
     own :data:`~novomodelo_bridge.decomp.converters.cadastro.overrides.
-    APPLIED_AC_CLASSES` / :data:`~novomodelo_bridge.decomp.converters.cadastro.
-    overrides.UNINGESTABLE_AC_CLASSES` registries
+    APPLIED_AC_CLASSES` registry
     — enumerate-and-diff, never a hand-maintained list, so a newly-applied
     family automatically drops off the deferred bucket and a new idecomp
     class automatically lands in it.
@@ -259,17 +257,13 @@ def _ac_coverage(
     never blocks conversion) plus a diagnostic per bucket that has at least
     one class present in the deck: an ``INFO`` for the applied mnemonics
     (visibility only), a ``WARNING`` for the deferred mnemonics (has a
-    value but no converter consumer), a distinct ``WARNING`` for ``ALTEFE``
-    specifically (an idecomp accessor gap, not lumped with "deferred"), and
-    a ``WARNING`` with a per-row detail table when *report* carries an
-    out-of-horizon override.
+    value but no converter consumer), and a ``WARNING`` with a per-row
+    detail table when *report* carries an out-of-horizon override.
     """
     applied = _ALL_AC_CLASSES & APPLIED_AC_CLASSES
-    uningestable = _ALL_AC_CLASSES & UNINGESTABLE_AC_CLASSES
-    deferred = _ALL_AC_CLASSES - APPLIED_AC_CLASSES - UNINGESTABLE_AC_CLASSES
+    deferred = _ALL_AC_CLASSES - APPLIED_AC_CLASSES
 
     applied_present = _ac_present(dadger, applied)
-    uningestable_present = _ac_present(dadger, uningestable)
     deferred_present = _ac_present(dadger, deferred)
 
     checks = [
@@ -278,8 +272,7 @@ def _ac_coverage(
             passed=True,
             detail=(
                 f"applied {len(applied_present)}/{len(applied)}, "
-                f"deferred {len(deferred_present)}/{len(deferred)}, "
-                f"uningestable {len(uningestable_present)}/{len(uningestable)} "
+                f"deferred {len(deferred_present)}/{len(deferred)} "
                 "family(ies) present in the deck"
             ),
         )
@@ -317,20 +310,6 @@ def _ac_coverage(
             )
         )
 
-    if uningestable_present:
-        diagnostics.append(
-            _deferred(
-                "decomp-ac-altefe-uningestable",
-                "AC ALTEFE cannot be ingested",
-                "The deck declares an AC ALTEFE effective-head override; "
-                "the source-model reader cannot expose a value for it, so the "
-                "conversion cannot read it at all (distinct from a deferred "
-                "override, which does expose a value).",
-                "This override cannot be read from the deck and is not applied; "
-                "no action needed to convert.",
-            )
-        )
-
     if report.out_of_horizon:
         diagnostics.append(
             Diagnostic(
@@ -360,18 +339,17 @@ def _ac_coverage(
 
 
 def _special_constraint_coverage(
-    dadger: constraint_registers.ConstraintRegisters, files: _ConstraintFiles
+    dadger: _SpecialConstraintRegisters, libs_file: Path | None
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
-    split into bounds-lowered vs generic-emitted) and deferred (``FE``/RHA/
+    split into bounds-lowered vs generic-emitted) and deferred (RHA/
     LIBs-electrical), so an operator sees at a glance what the conversion
     will and will not carry — without running a conversion.
 
     A pure read of *dadger* (through the same census
     :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints` the
-    pipeline consumes) and *files* (whose ``dadger`` path feeds the
-    unreadable-electrical scan, and whose LIBs electrical-constraint file
-    feeds the LIBs-electrical scan) — no conversion, no emitter.
+    pipeline consumes) and of the deck's LIBs electrical-constraint file
+    *libs_file* — no conversion, no emitter.
 
     Always returns exactly one passing summary :class:`CheckItem` (coverage
     never blocks conversion, mirroring :func:`_ac_coverage`) plus a
@@ -381,7 +359,7 @@ def _special_constraint_coverage(
     probes (never a hard-coded oracle), plus a ``WARNING`` per
     present deferred surface. The deferred diagnostics are produced verbatim
     by the detection helpers
-    (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unreadable_electrical`
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
     / :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`)
     — never re-derived here.
     """
@@ -434,11 +412,10 @@ def _special_constraint_coverage(
             )
         )
 
-    dadger_path = files.dadger
-    diagnostics.extend(constraint_registers.detect_unreadable_electrical(dadger_path))
-    libs_diagnostic = constraint_registers.detect_libs_electrical(
-        files.libs_restricao_eletrica
-    )
+    rha_diagnostic = constraint_registers.detect_unconverted_rha(dadger)
+    if rha_diagnostic is not None:
+        diagnostics.append(rha_diagnostic)
+    libs_diagnostic = constraint_registers.detect_libs_electrical(libs_file)
     if libs_diagnostic is not None:
         diagnostics.append(libs_diagnostic)
 
@@ -571,7 +548,9 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             checks.extend(cov_checks)
             diagnostics.extend(cov_diags)
 
-        sc_checks, sc_diags = _special_constraint_coverage(dadger, files)
+        sc_checks, sc_diags = _special_constraint_coverage(
+            dadger, files.libs_restricao_eletrica
+        )
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)
 

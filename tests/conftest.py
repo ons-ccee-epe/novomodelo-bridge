@@ -379,7 +379,7 @@ class _FakeDadger:
     Shared across the decomp constraint-register and results-compare test
     modules; import with ``from tests.conftest import _FakeDadger``. The
     special-constraint accessors are explicit so the double satisfies
-    ``ConstraintRegisters``; every other register resolves through
+    ``ConstraintRegisters`` and ``RhaRegisters``; every other register resolves through
     ``__getattr__``.
     """
 
@@ -407,6 +407,9 @@ class _FakeDadger:
     def fi(self, df: bool = True) -> pd.DataFrame | None:
         return self._frames.get("fi")
 
+    def fe(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("fe")
+
     def lu(self, df: bool = True) -> pd.DataFrame | None:
         return self._frames.get("lu")
 
@@ -433,6 +436,15 @@ class _FakeDadger:
 
     def cm(self, df: bool = True) -> pd.DataFrame | None:
         return self._frames.get("cm")
+
+    def ha(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("ha")
+
+    def la(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("la")
+
+    def ca(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("ca")
 
 
 def _fake_dataset(*, all_within_tol: bool = False) -> ComparisonDataset:

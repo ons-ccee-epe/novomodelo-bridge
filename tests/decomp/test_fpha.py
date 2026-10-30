@@ -473,19 +473,19 @@ def _effective_with_machine_set(
 
 
 def test_is_fpha_eligible_false_for_ac_potefe_zero() -> None:
-    eff = _effective_with_machine_set((MachineSet(2, 0.0, 100.0),))
+    eff = _effective_with_machine_set((MachineSet(2, 0.0, 100.0, 80.0),))
     assert is_fpha_eligible(eff, 1) is False
 
 
 def test_is_fpha_eligible_false_for_ac_vazefe_zero() -> None:
-    eff = _effective_with_machine_set((MachineSet(2, 50.0, 0.0),))
+    eff = _effective_with_machine_set((MachineSet(2, 50.0, 0.0, 80.0),))
     assert is_fpha_eligible(eff, 1) is False
 
 
 def test_is_fpha_eligible_true_when_capacity_positive_at_any_stage() -> None:
     # novomodelo fits against the max-over-stages envelope hydros.json declares.
     eff = _effective_with_machine_set(
-        (MachineSet(0, 50.0, 100.0), MachineSet(2, 50.0, 100.0))
+        (MachineSet(0, 50.0, 100.0, 80.0), MachineSet(2, 50.0, 100.0, 80.0))
     )
     assert is_fpha_eligible(eff, 1) is True
 

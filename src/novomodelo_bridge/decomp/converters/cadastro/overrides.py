@@ -105,19 +105,13 @@ APPLIED_AC_CLASSES: frozenset[type] = frozenset(
         ACNUMMAQ,
         ACPOTEFE,
         ACVAZEFE,
+        ACALTEFE,
         ACCOTVOL,
         ACNUMJUS,
         ACNUMPOS,
         ACJUSENA,
     }
 )
-
-#: AC registers idecomp models but exposes NO value accessor for, so the
-#: resolver cannot ingest them at all — reported distinctly from "deferred
-#: (has a value but no consumer)". `ALTEFE` is the sole member (idecomp
-#: 1.13.0); see the `TRACKED NOVOMODELO-GAP WORKAROUND` in
-#: `novomodelo_bridge.decomp.converters.hydro.entity.convert_hydros`.
-UNINGESTABLE_AC_CLASSES: frozenset[type] = frozenset({ACALTEFE})
 
 
 @dataclass(frozen=True)
@@ -256,16 +250,17 @@ def _read_diversion_overrides(
 class MachineSet:
     """One conjunto's effective machine configuration at a stage.
 
-    ``numero_maquinas`` is the conjunto's machine-unit count; ``potencia``
-    and ``vazao`` are its per-unit rated power (MW) and rated flow (m³/s) —
-    the same three quantities the source model's ``NUMMAQ``/``POTEFE``/
-    ``VAZEFE`` registers carry, densified per stage by
-    :func:`build_effective_cadastro`.
+    ``numero_maquinas`` is the conjunto's machine-unit count; ``potencia``,
+    ``vazao`` and ``altura`` are its per-unit rated power (MW), rated flow
+    (m³/s) and effective head (m) — the quantities the source model's
+    ``NUMMAQ``/``POTEFE``/``VAZEFE``/``ALTEFE`` registers carry, densified per
+    stage by :func:`build_effective_cadastro`.
     """
 
     numero_maquinas: int
     potencia: float
     vazao: float
+    altura: float
 
 
 def _plant_code_key(row: Any) -> int:
@@ -276,7 +271,8 @@ def _plant_code_key(row: Any) -> int:
 
 def _conjunto_key(row: Any) -> tuple[int, int]:
     """Group-key for the compound-keyed machine-set mnemonics —
-    ``(codigo_usina, indice_conjunto)`` (``NUMMAQ``/``POTEFE``/``VAZEFE``)."""
+    ``(codigo_usina, indice_conjunto)`` (``NUMMAQ``/``POTEFE``/``VAZEFE``/
+    ``ALTEFE``)."""
     return int(row["codigo_usina"]), int(row["indice_conjunto"])
 
 
@@ -293,7 +289,7 @@ def _read_keyed_overrides[K, T](
 
     The shared body for both single-value override shapes that differ only in
     their grouping key: the compound-key machine-set mnemonics
-    (``NUMMAQ``/``POTEFE``/``VAZEFE``, grouped by ``(codigo_usina,
+    (``NUMMAQ``/``POTEFE``/``VAZEFE``/``ALTEFE``, grouped by ``(codigo_usina,
     indice_conjunto)`` via :func:`_conjunto_key`) and the plant-keyed
     topology/gauge mnemonics (``NUMJUS``/``NUMPOS``, grouped by
     ``codigo_usina`` via :func:`_plant_code_key`). Sharing one loop keeps
@@ -305,7 +301,7 @@ def _read_keyed_overrides[K, T](
     folded in here. Does not reuse :func:`_read_scalar_overrides`'s
     ``_SCALAR_AC_SPECS`` tuple: that tuple is uniformly ``float``-typed, while
     these mnemonics span ``int`` (machine counts, plant/gauge codes) and
-    ``float`` (rated power/flow) via *value_caster*.
+    ``float`` (rated power/flow, effective head) via *value_caster*.
 
     Reads ``dadger.ac(codigo_usina=None, modificacao=ac_class, df=True)`` and
     resolves every row's ``(mes, semana, ano)`` triple to an effective stage
@@ -346,6 +342,7 @@ def _read_machine_set_overrides(
     dict[tuple[int, int], list[tuple[int, int]]],
     dict[tuple[int, int], list[tuple[int, float]]],
     dict[tuple[int, int], list[tuple[int, float]]],
+    dict[tuple[int, int], list[tuple[int, float]]],
     list[OutOfHorizon],
 ]:
     """Ingest the machine-set ``AC`` overrides via idecomp's typed accessor.
@@ -353,26 +350,20 @@ def _read_machine_set_overrides(
     Covers the third distinct override shape (after the scalar single-value
     mnemonics and the non-scalar diversion channel): ``NUMCON`` is
     **plant-keyed** (one conjunto count per ``codigo_usina``), while
-    ``NUMMAQ``/``POTEFE``/``VAZEFE`` are **compound-keyed** by
+    ``NUMMAQ``/``POTEFE``/``VAZEFE``/``ALTEFE`` are **compound-keyed** by
     ``(codigo_usina, indice_conjunto)`` — a conjunto's machine count, rated
-    power, and rated flow. ``NUMCON`` is read by its own plant-keyed loop
-    (its frame carries no ``indice_conjunto`` column); the other three are
-    read through :func:`_read_keyed_overrides` with :func:`_conjunto_key`, one
-    call per mnemonic.
+    power, rated flow, and effective head. ``NUMCON`` is read by its own
+    plant-keyed loop (its frame carries no ``indice_conjunto`` column); the
+    other four are read through :func:`_read_keyed_overrides` with
+    :func:`_conjunto_key`, one call per mnemonic.
     Every row's ``(mes, semana, ano)`` triple is resolved to an effective
     stage via :func:`resolve_effective_stage`; in-horizon rows are grouped by
     key, past-horizon rows are reported (param labels ``"numero_conjuntos"``,
-    ``"numero_maquinas"``, ``"potencia"``, ``"vazao"``) in the returned
-    out-of-horizon list instead of being dropped. Reads a frame only when
-    ``isinstance(table, pd.DataFrame) and not table.empty``, mirroring
+    ``"numero_maquinas"``, ``"potencia"``, ``"vazao"``, ``"altura"``) in the
+    returned out-of-horizon list instead of being dropped. Reads a frame only
+    when ``isinstance(table, pd.DataFrame) and not table.empty``, mirroring
     :func:`_read_scalar_overrides`/:func:`_read_diversion_overrides`, so a
     ``None``/empty frame contributes nothing.
-
-    A fifth machine-configuration mnemonic, ``ALTEFE`` (effective head), is
-    deliberately **not** ingested here: the installed idecomp accessor
-    exposes no value property on it, only the identifying/timing columns, so
-    its ``df=True`` frame carries nothing to consume. Do not import or read
-    it without a value accessor to back it.
 
     Raises
     ------
@@ -414,11 +405,15 @@ def _read_machine_set_overrides(
     vazao, vazao_out_of_horizon = _read_keyed_overrides(
         dadger, calendar, ACVAZEFE, "vazao", "vazao", float, _conjunto_key
     )
+    altura, altura_out_of_horizon = _read_keyed_overrides(
+        dadger, calendar, ACALTEFE, "altura", "altura", float, _conjunto_key
+    )
     out_of_horizon.extend(maquinas_out_of_horizon)
     out_of_horizon.extend(potencia_out_of_horizon)
     out_of_horizon.extend(vazao_out_of_horizon)
+    out_of_horizon.extend(altura_out_of_horizon)
 
-    return numero_conjuntos, numero_maquinas, potencia, vazao, out_of_horizon
+    return numero_conjuntos, numero_maquinas, potencia, vazao, altura, out_of_horizon
 
 
 def _read_polynomial_overrides(

@@ -1929,11 +1929,14 @@ def _emit_special_constraint_generics(
     leaving out an emitter with nothing to emit."""
     case = artifacts.case
     id_map = artifacts.id_map
+    contracts = artifacts.contracts
+    assert contracts is not None
     re_generics = constraints_conv.emit_re_generics(
         case,
         id_map,
         census=census,
         line_map=shared.line_map,
+        contract_tokens=constraints_conv.build_contract_token_map(contracts),
         big_m=shared.big_m,
         allocator=shared.allocator,
     )
@@ -2063,10 +2066,9 @@ def _emit_constraint_detection_diagnostics(
 ) -> None:
     """Report the electrical-constraint files the conversion cannot read, and
     the LIBs electrical census."""
-    for detection in constraint_registers.detect_unreadable_electrical(
-        case.files.dadger
-    ):
-        dx.emit(detection, logger=_LOG)
+    rha_detection = constraint_registers.detect_unconverted_rha(case.dadger)
+    if rha_detection is not None:
+        dx.emit(rha_detection, logger=_LOG)
     # The flat presence warning is narrowed to the subset
     # `libs_electrical_model` (read once by `_emit_and_write`) did NOT
     # convert -- a short-form-only (RE/RE-*, date-indexed) file, or no long-form card at

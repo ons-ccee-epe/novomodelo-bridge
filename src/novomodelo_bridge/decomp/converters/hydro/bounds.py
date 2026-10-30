@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
-from novomodelo_bridge.core.pandas_utils import as_frame
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.core.turbine import MachineSet
 from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 
 if TYPE_CHECKING:
@@ -77,13 +78,13 @@ def _conjunto_machines(
     conjunto_index: int,
     effective: EffectiveCadastro,
     stage_index: int,
-) -> tuple[int, float, float]:
-    """``(units, rated flow m³/s, rated power MW)`` per unit of one 1-based
-    *conjunto_index* at *stage_index*, after ``AC NUMMAQ``/``VAZEFE``/
-    ``POTEFE``.
+) -> MachineSet:
+    """One 1-based *conjunto_index*'s machines at *stage_index*, after ``AC
+    NUMMAQ``/``VAZEFE``/``POTEFE``/``ALTEFE``; ``head_m`` is ``0.0`` when the
+    set declares no positive effective head.
 
     Reads ``effective.machine_set(code, conjunto_index, stage_index)``: when
-    present, its three fields already reflect
+    present, its fields already reflect
     :func:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     build_effective_cadastro`'s independent per-field densification (a field
     with no override of its own is the ``hidr`` base, forward-filled flat);
@@ -92,12 +93,26 @@ def _conjunto_machines(
     """
     machine_set = effective.machine_set(code, conjunto_index, stage_index)
     if machine_set is None:
-        return (
-            int(hreg[f"maquinas_conjunto_{conjunto_index}"]),
-            float(hreg[f"vazao_nominal_conjunto_{conjunto_index}"]),
-            float(hreg[f"potencia_nominal_conjunto_{conjunto_index}"]),
+        return MachineSet(
+            units=int(hreg[f"maquinas_conjunto_{conjunto_index}"]),
+            flow_m3s=float(hreg[f"vazao_nominal_conjunto_{conjunto_index}"]),
+            head_m=_positive_head(hreg.get(f"queda_nominal_conjunto_{conjunto_index}")),
+            power_mw=float(hreg[f"potencia_nominal_conjunto_{conjunto_index}"]),
         )
-    return machine_set.numero_maquinas, machine_set.vazao, machine_set.potencia
+    return MachineSet(
+        units=machine_set.numero_maquinas,
+        flow_m3s=machine_set.vazao,
+        head_m=_positive_head(machine_set.altura),
+        power_mw=machine_set.potencia,
+    )
+
+
+def _positive_head(value: object) -> float:
+    """A declared effective head (m), or ``0.0`` when blank or non-positive."""
+    if value is None or pd.isna(value):
+        return 0.0
+    head = as_float(value)
+    return head if head > 0.0 else 0.0
 
 
 def _conjunto_count(
@@ -122,10 +137,8 @@ def _conjunto_rated_ac_adjusted(
     :func:`convert_hydro_group_availability` call directly for a single
     conjunto to get one per-frequency group's own bounds.
     """
-    n_machines, q_nom, p_nom = _conjunto_machines(
-        hreg, code, conjunto_index, effective, stage_index
-    )
-    return q_nom * n_machines, p_nom * n_machines
+    machines = _conjunto_machines(hreg, code, conjunto_index, effective, stage_index)
+    return machines.flow_m3s * machines.units, machines.power_mw * machines.units
 
 
 def _compute_max_turbined_rated_ac_adjusted(

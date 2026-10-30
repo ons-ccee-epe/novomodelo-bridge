@@ -21,7 +21,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintTerm,
     bound_conflicts_diagnostic,
     detect_libs_electrical,
-    detect_unreadable_electrical,
+    detect_unconverted_rha,
     lowers_to_bound,
     read_constraints,
 )
@@ -86,6 +86,20 @@ def _fi(*rows: tuple) -> pd.DataFrame:
             "codigo_submercado_para",
             "coeficiente",
             "estagio",
+        ],
+    )
+
+
+def _fe(*rows: tuple) -> pd.DataFrame:
+    """FE rows: (cid, estagio, numero_contrato, codigo_submercado, coeficiente)."""
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "codigo_restricao",
+            "estagio",
+            "numero_contrato",
+            "codigo_submercado",
+            "coeficiente",
         ],
     )
 
@@ -240,7 +254,9 @@ def test_re_thermal_only_no_double_emission() -> None:
     calendar = [_stage(0, 1), _stage(1, 1)]
 
     case = make_decomp_case(Path("unused"), calendar=calendar)
-    result = emit_re_generics(case, id_map, census=census, line_map={}, big_m=0.0)
+    result = emit_re_generics(
+        case, id_map, census=census, line_map={}, contract_tokens={}, big_m=0.0
+    )
 
     assert result is None
 
@@ -261,22 +277,39 @@ def test_re_interchange_only_is_generic() -> None:
     assert rec in census.to_generic
 
 
-def test_re_all_three_registers() -> None:
-    """FU + FT + FI on the same RE merge into three distinct terms."""
+def test_re_all_four_registers() -> None:
+    """FU + FT + FI + FE on the same RE merge into four distinct terms."""
     dadger = _FakeDadger(
         re=_decl((12, 1, 1)),
         fu=_coeff((12, 21, 1.0, 1, float("nan")), freq=True),
         ft=_ft((12, 1, 5, 1.0, 1)),
         fi=_fi((12, "SE", "S", 1.0, 1)),
+        fe=_fe((12, 1, 3, 2, 1.0)),
     )
     census = read_constraints(dadger)
     rec = _only(census.by_family["RE"], 12)
-    assert len(rec.terms) == 3
+    assert len(rec.terms) == 4
     assert {t.variable for t in rec.terms} == {
         "generation",
         "thermal_generation",
         "interchange",
+        "contract",
     }
+
+
+def test_re_fe_reads_a_contract_term_with_its_stage_schedule() -> None:
+    """An ``FE`` line names the contract by number and submarket, and a later
+    ``FE`` line for the same contract changes its coefficient from that stage."""
+    dadger = _FakeDadger(
+        re=_decl((13, 1, 3)),
+        fe=_fe((13, 1, 3, 2, 1.0), (13, 2, 3, 2, -1.0)),
+    )
+    census = read_constraints(dadger)
+    rec = _only(census.by_family["RE"], 13)
+    (term,) = rec.terms
+    assert (term.variable, term.code, term.submarket) == ("contract", 3, 2)
+    assert [term.coefficient_at(stage) for stage in range(3)] == [1.0, -1.0, -1.0]
+    assert rec in census.to_generic
 
 
 def test_hq_qdef_single_lowers_to_outflow_bound() -> None:
@@ -546,58 +579,38 @@ def test_frequency_split_plant_contributes_two_terms() -> None:
     assert not lowers_to_bound(rec)
 
 
-def test_fe_line_warns_under_read(tmp_path: Path) -> None:
-    """An ``FE`` participation line warns the electrical model may be
-    under-read, and names no specific constraint id."""
-    dadger_path = tmp_path / "dadger.rv0"
-    dadger_path.write_text(
-        "RE    10    1    2\nFE    10   21  1.0\n", encoding="latin-1"
+def test_rha_registers_warn_naming_their_constraint_ids() -> None:
+    """``HA``/``LA``/``CA`` rows warn that the RHA family is not converted,
+    naming every constraint id the three registers declare."""
+    dadger = _FakeDadger(
+        ha=pd.DataFrame(
+            [(1, 1, 2)],
+            columns=["codigo_restricao", "estagio_inicial", "estagio_final"],
+        ),
+        la=pd.DataFrame(
+            [(1, 1, 0.0, 500.0), (4, 1, 0.0, 100.0)],
+            columns=[
+                "codigo_restricao",
+                "estagio",
+                "limite_inferior",
+                "limite_superior",
+            ],
+        ),
+        ca=pd.DataFrame(
+            [(1, 1, 6)], columns=["codigo_restricao", "estagio", "codigo_usina"]
+        ),
     )
 
-    diagnostics = detect_unreadable_electrical(dadger_path)
+    diagnostic = detect_unconverted_rha(dadger)
 
-    assert len(diagnostics) == 1
-    diag = diagnostics[0]
-    assert diag.severity is Severity.WARNING
-    assert "FE" in diag.summary
-    assert "under-read" in diag.summary
-    assert "10" not in diag.summary  # no specific constraint id named
+    assert diagnostic is not None
+    assert diagnostic.code == "decomp-rha-family-unconverted"
+    assert diagnostic.severity is Severity.WARNING
+    assert "ids 1, 4" in diagnostic.summary
 
 
-def test_rha_lines_warn(tmp_path: Path) -> None:
-    """``HA``/``LA``/``CA`` lines warn the RHA family is unconverted, and a
-    mnemonic buried mid-line (not the leading token) never triggers it."""
-    dadger_path = tmp_path / "dadger.rv0"
-    dadger_path.write_text(
-        "HA    1    2\n"
-        "LA    1    2\n"
-        "CA    1    2\n"
-        "RE  10   1   2   XCA field\n",  # "XCA" leading token must not match
-        encoding="latin-1",
-    )
-
-    diagnostics = detect_unreadable_electrical(dadger_path)
-
-    assert len(diagnostics) == 1
-    diag = diagnostics[0]
-    assert diag.severity is Severity.WARNING
-    assert "RHA" in diag.summary or "HA/LA/CA" in diag.summary
-    assert "not" in diag.summary
-
-
-def test_clean_deck_no_findings(tmp_path: Path) -> None:
-    """No ``FE``/``HA``/``LA``/``CA`` leading tokens yields an empty list; a
-    ``CA``-like substring inside another field must not trigger a false
-    positive."""
-    dadger_path = tmp_path / "dadger.rv0"
-    dadger_path.write_text(
-        "RE    10    1    2\n"
-        "FU    10   21  1.0\n"
-        "some field carrying a CA substring mid-line\n",
-        encoding="latin-1",
-    )
-
-    assert detect_unreadable_electrical(dadger_path) == []
+def test_deck_without_rha_registers_has_no_rha_finding() -> None:
+    assert detect_unconverted_rha(_FakeDadger(re=_decl((10, 1, 2)))) is None
 
 
 def test_libs_electrical_warns_only_when_the_deck_declares_the_file(

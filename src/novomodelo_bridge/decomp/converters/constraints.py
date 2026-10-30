@@ -14,7 +14,8 @@ sense-free interval endpoints (``bound_lower``/``bound_upper`` — see
 
 This module stands up that shared scaffolding: the per-term expression-token
 dispatch (``_variable_token``), the ``FI``-interchange line resolver
-(``build_fi_line_map``/``resolve_fi_term``), the coefficient-string formatter
+(``build_fi_line_map``/``resolve_fi_term``), the ``FE``-contract resolver
+(``build_contract_token_map``/``resolve_fe_term``), the coefficient-string formatter
 (``_format_expression``), the ``BIG_M`` slack-penalty helper, and
 ``slots_from_record`` (the per-record (stage, block) slot enumeration feeding
 the shared :class:`~novomodelo_bridge.core.generic_constraint_builder.
@@ -94,6 +95,7 @@ if TYPE_CHECKING:
         ConstraintTerm,
     )
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.converters.contracts import Contract
     from novomodelo_bridge.decomp.converters.rhe_shares import RheCoupling
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -151,6 +153,7 @@ _HYDRO_TOKEN_FN: dict[str, str] = {
 #: mechanism that resolves them instead.
 _DEFERRED_VARIABLES: dict[str, str] = {
     "interchange": "the interchange (FI line) resolution path",
+    "contract": "the FE contract resolution path",
     "VDEF": "the RHV volume-tipo skip",
     "VDES": "the RHV volume-tipo skip",
     "VBOM": "the RHV volume-tipo skip",
@@ -173,7 +176,8 @@ def _variable_token(
     ------
     ValueError
         For ``interchange`` (resolved by ``resolve_fi_term``, which needs
-        the line map), the volume tipos ``VDEF``/``VDES``/``VBOM``
+        the line map), ``contract`` (resolved by ``resolve_fe_term``, which
+        needs the contract list), the volume tipos ``VDEF``/``VDES``/``VBOM``
         (skipped by ``emit_rhq_rhv_generics``), or any other
         unrecognised variable — fail-loud, never a silent skip
         that would build a malformed expression.
@@ -312,6 +316,80 @@ def resolve_fi_term(
         reason=f"no IA line joins {term.submarket_de!r} and {term.submarket_para!r}",
     )
     return None
+
+
+def build_contract_token_map(
+    contracts: Sequence[Contract],
+) -> dict[tuple[int, int], str | None]:
+    """Map each ``CI``/``CE`` contract's ``(numero, submarket code)`` to its token.
+
+    The source model identifies a contract by its number within its
+    submarket, whether it imports or exports, so an ``FE`` term names it by
+    that pair alone; the token's ``contract_import``/``contract_export``
+    variant comes from the contract's register. A pair declared by more than
+    one contract (which the source model forbids) maps to ``None`` so the
+    resolver can report the ambiguity instead of guessing.
+    """
+    tokens: dict[tuple[int, int], str | None] = {}
+    for contract in contracts:
+        key = (contract.numero, contract.bus_code)
+        token = f"contract_{contract.kind}({contract.id})"
+        tokens[key] = None if key in tokens else token
+    return tokens
+
+
+def _emit_fe_no_contract(term: ConstraintTerm, *, reason: str) -> None:
+    """Emit the shared ``decomp-fe-no-contract`` WARNING for an unresolved FE term."""
+    emit(
+        Diagnostic(
+            code="decomp-fe-no-contract",
+            severity=Severity.WARNING,
+            category="Special constraints",
+            title="FE contract term has no matching contract",
+            summary=(
+                f"RE constraint FE term (contract {term.code}, submarket "
+                f"{term.submarket}) could not be resolved to a CI/CE "
+                f"contract: {reason}; the constraint is skipped."
+            ),
+            remediation=(
+                "Check that the FE line names a contract declared in a CI or "
+                "CE register of that submarket."
+            ),
+        )
+    )
+
+
+def resolve_fe_term(
+    term: ConstraintTerm,
+    contract_tokens: Mapping[tuple[int, int], str | None],
+) -> str | None:
+    """Resolve one ``FE`` contract term to its novomodelo contract token.
+
+    The coefficient is used as declared for both contract kinds: the source
+    model adds an import and an export to the constraint the same way, and a
+    deck flips a contract's sign through the coefficient.
+
+    Returns ``None`` — after emitting one ``Severity.WARNING``
+    ``"decomp-fe-no-contract"`` diagnostic — when no converted contract, or
+    more than one, carries the term's ``(numero, submarket)`` pair; the
+    caller then drops the whole constraint. Raises ``ValueError`` if *term*
+    carries no submarket (a caller contract violation: the reader always
+    sets it on an ``FE`` term).
+    """
+    if term.submarket is None:
+        raise ValueError(
+            f"Cannot resolve a contract term: it must carry a submarket, got {term!r}."
+        )
+    key = (term.code, term.submarket)
+    if key not in contract_tokens:
+        _emit_fe_no_contract(term, reason="no such contract is declared")
+        return None
+    token = contract_tokens[key]
+    if token is None:
+        _emit_fe_no_contract(
+            term, reason="both a CI and a CE contract carry this number"
+        )
+    return token
 
 
 def _format_expression(terms: Sequence[tuple[Weight, str]]) -> str | None:
@@ -485,6 +563,7 @@ def _resolve_re_terms(
     record: ConstraintRecord,
     id_map: DecompIdMap,
     line_map: Mapping[tuple[int, int], int],
+    contract_tokens: Mapping[tuple[int, int], str | None],
 ) -> list[str] | None:
     """Resolve every term of one generic RE record to its expression token.
 
@@ -504,6 +583,8 @@ def _resolve_re_terms(
       ``_variable_token``.
     - ``interchange`` — resolved via ``resolve_fi_term``; a ``None`` result
       (the resolver already warned) drops the whole record.
+    - ``contract`` — resolved via ``resolve_fe_term``, with the same
+      ``None`` handling.
 
     Any single unresolved term drops the **whole** constraint
     (skip-not-partial) — never a partial expression. Returns the tokens in
@@ -526,6 +607,11 @@ def _resolve_re_terms(
             if token is None:
                 return None
             resolved.append(token)
+        elif term.variable == "contract":
+            token = resolve_fe_term(term, contract_tokens)
+            if token is None:
+                return None
+            resolved.append(token)
         else:
             raise ValueError(
                 f"_resolve_re_terms: unexpected RE term variable {term.variable!r}"
@@ -539,10 +625,11 @@ def emit_re_generics(
     *,
     census: ConstraintCensus,
     line_map: Mapping[tuple[int, int], int],
+    contract_tokens: Mapping[tuple[int, int], str | None],
     big_m: float,
     allocator: ConstraintIdAllocator | None = None,
 ) -> DecompGenericResult | None:
-    """Emit every generic ``RE`` constraint (multi-term hydro/thermal/interchange).
+    """Emit every generic ``RE`` constraint (hydro/thermal/interchange/contract terms).
 
     Iterates ``census.to_generic`` filtered to ``record.family == "RE"``,
     resolves each record's terms via :func:`_resolve_re_terms`, and feeds a
@@ -555,7 +642,8 @@ def emit_re_generics(
     ``census.to_generic`` are :func:`emit_rhq_rhv_generics`'s, not this
     function's; ``HE`` records are unhandled (deferred).
 
-    Reads no ``dadger``; *big_m* and *line_map* arrive from the caller.
+    Reads no ``dadger``; *big_m*, *line_map* and *contract_tokens*
+    (:func:`build_contract_token_map`) arrive from the caller.
     *allocator* defaults to a fresh :class:`ConstraintIdAllocator` (ids from
     0) when omitted; the pipeline threads one shared instance across every
     emitter. Returns ``None`` when no RE generic constraint survives.
@@ -567,7 +655,7 @@ def emit_re_generics(
     for record in census.to_generic:
         if record.family != "RE":
             continue
-        tokens = _resolve_re_terms(record, id_map, line_map)
+        tokens = _resolve_re_terms(record, id_map, line_map, contract_tokens)
         if tokens is None:
             continue
         terms, parameters = _weighted_terms(record, tokens, len(calendar))

@@ -14,8 +14,17 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` converts the `FE` contract terms of `RE` constraints**
+  into `contract_import`/`contract_export` terms. A term whose number matches
+  no single `CI`/`CE` contract in its submarket drops its constraint, with a
+  `decomp-fe-no-contract` warning.
+
 ### Changed
 
+- **`AC ALTEFE` overrides set the head of DECOMP's turbined-flow limit.** They
+  were reported and ignored.
 - **The bridge requires idecomp 1.18.0 or newer.**
 - **`compare decomp` exits 1 when the DECOMP deck is not found**, as
   `compare newave` does; it used to exit 2. An unreadable Novomodelo output

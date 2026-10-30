@@ -119,7 +119,7 @@ class EffectiveCadastro:
         """The overridden per-stage machine configuration for one conjunto.
 
         ``None`` when ``(code, indice_conjunto)`` carries no ``NUMMAQ``/
-        ``POTEFE``/``VAZEFE`` override at all (absent from
+        ``POTEFE``/``VAZEFE``/``ALTEFE`` override at all (absent from
         :attr:`machine_sets`) — the caller then falls through to the
         ``hidr`` base per-conjunto columns.
         """
@@ -386,6 +386,7 @@ class _AcOverrideRecords:
     numero_maquinas: dict[tuple[int, int], list[tuple[int, int]]]
     potencia: dict[tuple[int, int], list[tuple[int, float]]]
     vazao: dict[tuple[int, int], list[tuple[int, float]]]
+    altura: dict[tuple[int, int], list[tuple[int, float]]]
     cota: dict[int, list[tuple[int, tuple[float, ...]]]]
     topology: dict[int, list[tuple[int, int]]]
     gauge: dict[int, list[tuple[int, int]]]
@@ -407,6 +408,7 @@ def _read_ac_overrides(
         numero_maquinas_records,
         potencia_records,
         vazao_records,
+        altura_records,
         machine_out_of_horizon,
     ) = _read_machine_set_overrides(dadger, calendar)
     cota_records, cota_out_of_horizon = _read_polynomial_overrides(
@@ -449,6 +451,7 @@ def _read_ac_overrides(
         numero_maquinas=numero_maquinas_records,
         potencia=potencia_records,
         vazao=vazao_records,
+        altura=altura_records,
         cota=cota_records,
         topology=topology_records,
         gauge=gauge_records,
@@ -479,6 +482,7 @@ def _applied_counts(overrides: _AcOverrideRecords) -> dict[str, int]:
         ("numero_maquinas", overrides.numero_maquinas),
         ("potencia", overrides.potencia),
         ("vazao", overrides.vazao),
+        ("altura", overrides.altura),
         ("cota_volume", overrides.cota),
         ("codigo_usina_jusante", overrides.topology),
         ("posto", overrides.gauge),
@@ -540,20 +544,25 @@ def _machine_set_series(
     hidr: pd.DataFrame, overrides: _AcOverrideRecords, n_stages: int
 ) -> dict[tuple[int, int], tuple[MachineSet, ...]]:
     """The per-stage :class:`MachineSet` of every ``(code, conjunto)`` with a
-    ``NUMMAQ``/``POTEFE``/``VAZEFE`` override, each field seeded from its own
-    ``hidr`` per-conjunto column."""
+    ``NUMMAQ``/``POTEFE``/``VAZEFE``/``ALTEFE`` override, each field seeded from
+    its own ``hidr`` per-conjunto column."""
     numero_maquinas_records = overrides.numero_maquinas
     potencia_records = overrides.potencia
     vazao_records = overrides.vazao
+    altura_records = overrides.altura
     machine_sets: dict[tuple[int, int], tuple[MachineSet, ...]] = {}
     compound_keys = (
-        set(numero_maquinas_records) | set(potencia_records) | set(vazao_records)
+        set(numero_maquinas_records)
+        | set(potencia_records)
+        | set(vazao_records)
+        | set(altura_records)
     )
     for code, conjunto in compound_keys:
         _require_cadastro_row(hidr, code)
         base_numero_maquinas = int(hidr.loc[code, f"maquinas_conjunto_{conjunto}"])
         base_potencia = float(hidr.loc[code, f"potencia_nominal_conjunto_{conjunto}"])
         base_vazao = float(hidr.loc[code, f"vazao_nominal_conjunto_{conjunto}"])
+        base_altura = float(hidr.loc[code, f"queda_nominal_conjunto_{conjunto}"])
         numero_maquinas_series = _forward_fill_series(
             base_numero_maquinas,
             numero_maquinas_records.get((code, conjunto), []),
@@ -565,8 +574,16 @@ def _machine_set_series(
         vazao_series = _forward_fill_series(
             base_vazao, vazao_records.get((code, conjunto), []), n_stages
         )
+        altura_series = _forward_fill_series(
+            base_altura, altura_records.get((code, conjunto), []), n_stages
+        )
         machine_sets[(code, conjunto)] = tuple(
-            MachineSet(numero_maquinas_series[s], potencia_series[s], vazao_series[s])
+            MachineSet(
+                numero_maquinas_series[s],
+                potencia_series[s],
+                vazao_series[s],
+                altura_series[s],
+            )
             for s in range(n_stages)
         )
     return machine_sets
@@ -619,12 +636,13 @@ def build_effective_cadastro(
     ``machine_conjunto_counts`` (sparse by plant code, seeded from
     ``numero_conjuntos_maquinas``) and ``machine_sets`` (sparse by
     ``(code, indice_conjunto)``, seeded from ``maquinas_conjunto_{k}``/
-    ``potencia_nominal_conjunto_{k}``/``vazao_nominal_conjunto_{k}`` and
-    zipped into a :class:`MachineSet` tuple). *hidr*'s per-conjunto columns
-    are read only for the ``(code, k)`` pairs that actually carry an
-    override — never scanned unconditionally — so a conjunto with, say, a
-    ``NUMMAQ`` override but no ``POTEFE``/``VAZEFE`` override still gets its
-    ``potencia``/``vazao`` from the ``hidr`` base at every stage.
+    ``potencia_nominal_conjunto_{k}``/``vazao_nominal_conjunto_{k}``/
+    ``queda_nominal_conjunto_{k}`` and zipped into a :class:`MachineSet`
+    tuple). *hidr*'s per-conjunto columns are read only for the ``(code, k)``
+    pairs that actually carry an override — never scanned unconditionally — so
+    a conjunto with, say, a ``NUMMAQ`` override but no ``POTEFE``/``VAZEFE``/
+    ``ALTEFE`` override still gets its ``potencia``/``vazao``/``altura`` from
+    the ``hidr`` base at every stage.
 
     Also builds the ``cota_polynomials`` map from :func:`_read_polynomial_overrides`
     (the fifth, multi-row-per-plant shape): sparse by plant code, seeded from

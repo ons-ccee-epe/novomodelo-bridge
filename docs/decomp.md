@@ -82,8 +82,9 @@ A plant's turbined flow is capped stage by stage at the limit DECOMP computes
 before the optimization. The rule:
 
 - The units' rated flow is corrected for the head at the stage's initial
-  storage. The tailrace level rises with the flow, so the flow is iterated
-  until head and flow agree.
+  storage, relative to the machine sets' effective heads (`hidr.dat`, with
+  `AC ALTEFE` overrides from their stage on). The tailrace level rises with
+  the flow, so the flow is iterated until head and flow agree.
 - The result is scaled by the `MP` maintenance and `FD` availability factors.
   It never exceeds the flow that produces the plant's available power.
 - A plant that cannot hold back its stage inflow turbines up to that inflow
@@ -100,8 +101,6 @@ before the optimization. The rule:
   registers; the conversion leaves them out. A plant with such a register,
   such as Itaipu or Belo Monte, may therefore turbine slightly more than
   DECOMP allows.
-- `AC ALTEFE` overrides of the rated head are not applied; the conversion
-  warns about them.
 
 Novomodelo fits the planes of the hydro production function (FPHA) itself. These
 inputs follow DECOMP:
@@ -137,8 +136,8 @@ Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and
 the same diagnostics land in `--diagnostics-json` and the `--json` verdict.
-Examples at the time of writing are the unreadable special-constraint
-families (`FE`, `RHA`) and a few restriction-register term types; the
+Examples at the time of writing are the `RHA` inflow constraints
+(`HA`/`LA`/`CA`) and a few restriction-register term types; the
 [DECOMP data map](decomp-data-map.md)
 lists every register and field the converter leaves out. Each warning's
 remediation line states whether any action is needed; usually none, and the
