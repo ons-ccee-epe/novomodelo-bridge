@@ -966,6 +966,10 @@ def detect_unconverted_rha(dadger: RhaRegisters) -> Diagnostic | None:
     if not ids:
         return None
     listed = ", ".join(str(code) for code in sorted(ids))
+    # TRACKED NOVOMODELO-GAP (C34): an RHA bounds the plant's inflow averaged
+    # over the stage by block hours, not each block's inflow; novomodelo's generic
+    # constraints have no stage-level inflow variable, and per-block
+    # hydro_inflow rows would be stricter than the source model.
     return Diagnostic(
         code="decomp-rha-family-unconverted",
         severity=Severity.WARNING,
@@ -973,9 +977,15 @@ def detect_unconverted_rha(dadger: RhaRegisters) -> Diagnostic | None:
         title="RHA inflow constraints (HA/LA/CA) not converted",
         summary=(
             f"The deck declares {len(ids)} RHA inflow constraint(s) "
-            f"(HA/LA/CA ids {listed}); this conversion does not convert them."
+            f"(HA/LA/CA ids {listed}). Each bounds a plant's mean inflow over "
+            "the stage; novomodelo generic constraints have no stage-level "
+            "inflow variable yet, so they are not converted."
         ),
-        remediation="RHA conversion is deferred; no action needed to convert.",
+        remediation=(
+            "These inflow limits are not converted until novomodelo supports "
+            "stage-level inflow in generic constraints; no action needed to "
+            "convert."
+        ),
     )
 
 

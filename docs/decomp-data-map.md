@@ -1327,7 +1327,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 **Estado:** lido, não convertido.
 
-- todo o registro — *adiado.* Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Converter exige um emissor equivalente ao das famílias `RE`/`HQ`/`HV`.
+- todo o registro — *adiado.* Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Cada RHA limita a afluência total da usina (incremental mais a defluência de montante e a água em trânsito) na média do estágio, ponderada pelas horas dos patamares, e não em cada patamar; as restrições genéricas do Novomodelo ainda não têm uma variável de afluência no nível do estágio.
 
 ### `dadger.rvN` › `HE`
 
@@ -2235,7 +2235,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 
 ### Registros e campos do deck não convertidos
 
-- `dadger.rvN` › `HA` — *adiado.* Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Converter exige um emissor equivalente ao das famílias `RE`/`HQ`/`HV`.
+- `dadger.rvN` › `HA` — *adiado.* Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Cada RHA limita a afluência total da usina (incremental mais a defluência de montante e a água em trânsito) na média do estágio, ponderada pelas horas dos patamares, e não em cada patamar; as restrições genéricas do Novomodelo ainda não têm uma variável de afluência no nível do estágio.
 - `dadger.rvN` › `LA` — *adiado.* Limites por estágio da família `HA`/`LA`/`CA`; ver `HA`.
 - `dadger.rvN` › `CA` — *adiado.* Coeficientes da família `HA`/`LA`/`CA`; ver `HA`.
 - `dadger.rvN` › `AC` › `COFEVA` — *adiado.* Alteração do coeficiente de evaporação mensal. Lido pelo `check decomp` (diagnóstico `decomp-ac-overrides-deferred`), sem consumidor no conversor: a evaporação usa os coeficientes mensais de `hidr.dat`. Converter exige sobrepor o coeficiente do mês na tabela efetiva antes de emitir os coeficientes de evaporação.

@@ -3070,7 +3070,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "HA"
   status = "deferred"
-  note = "Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Converter exige um emissor equivalente ao das famílias `RE`/`HQ`/`HV`."
+  note = "Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Cada RHA limita a afluência total da usina (incremental mais a defluência de montante e a água em trânsito) na média do estágio, ponderada pelas horas dos patamares, e não em cada patamar; as restrições genéricas do Novomodelo ainda não têm uma variável de afluência no nível do estágio."
 
   [[source.item]]
   register = "LA"
