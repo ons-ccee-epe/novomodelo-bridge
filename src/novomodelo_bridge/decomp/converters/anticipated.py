@@ -67,6 +67,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, NamedTuple
 
+from novomodelo_bridge.core.policy_dates import hours_between
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
 from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
 
@@ -725,7 +726,7 @@ def _month_end_duration_hours(start: date) -> float:
     (600 h) and miss novomodelo's own post-study e2e fixture by one day.
     """
     _, last_day = _calendar.monthrange(start.year, start.month)
-    return float(last_day - start.day) * 24.0
+    return hours_between(start, start.replace(day=last_day))
 
 
 def _build_post_study_calendar(
@@ -776,7 +777,7 @@ def _build_post_study_calendar(
         cursor += _ONE_OPERATIVE_WEEK
 
     for s_start, s_end in stage_spans:
-        span_hours = (s_end - s_start).days * 24.0
+        span_hours = hours_between(s_start, s_end)
         duration = (
             float(_HOURS_PER_OPERATIVE_WEEK)
             if span_hours == _HOURS_PER_OPERATIVE_WEEK
@@ -935,8 +936,14 @@ def _post_study_months(horizon_end: date, count: int) -> list[dict]:
     start = horizon_end
     for _ in range(count):
         _, days = _calendar.monthrange(start.year, start.month)
-        stages.append({"start_date": start.isoformat(), "duration_hours": days * 24.0})
-        start += timedelta(days=days)
+        end = start + timedelta(days=days)
+        stages.append(
+            {
+                "start_date": start.isoformat(),
+                "duration_hours": hours_between(start, end),
+            }
+        )
+        start = end
     return stages
 
 
@@ -1164,7 +1171,7 @@ def convert_gnl(
         # cutoff, so every class-4 window stays inside the study's reach and
         # only class-3 (signaled) stages need thermal_bounds pricing.
         emitted_lead_hours = (
-            (plant_classification.class4_end - horizon_start).days * 24.0
+            hours_between(horizon_start, plant_classification.class4_end)
             if post_calendar
             else lead_hours
         )

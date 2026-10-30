@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
+from novomodelo_bridge.core.policy_dates import date_from_yyyymmdd, hours_between
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import MappingError, index_slots
 
 if TYPE_CHECKING:
@@ -36,7 +37,6 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
-_HOURS_PER_DAY = 24
 _COVERAGE_TOLERANCE_HOURS = 1e-9
 
 Window = tuple[float, float]
@@ -68,14 +68,6 @@ def max_lag(plants: Sequence[TravelTimePlant]) -> int:
     return max((lag for plant in plants for lag in plant.stage_lags), default=0)
 
 
-def _hours_since(origin: date, day: date) -> float:
-    return float((day - origin).days * _HOURS_PER_DAY)
-
-
-def _yyyymmdd(value: int) -> date:
-    return date(value // 10000, value // 100 % 100, value % 100)
-
-
 def stage_windows(stages: Sequence[StageInfo]) -> tuple[Window, ...]:
     """Each stage's `[start, end)` in hours from the study start.
 
@@ -85,8 +77,8 @@ def stage_windows(stages: Sequence[StageInfo]) -> tuple[Window, ...]:
     origin = date.fromisoformat(stages[0].start_date)
     windows = tuple(
         (
-            _hours_since(origin, date.fromisoformat(stage.start_date)),
-            _hours_since(origin, date.fromisoformat(stage.end_date)),
+            hours_between(origin, date.fromisoformat(stage.start_date)),
+            hours_between(origin, date.fromisoformat(stage.end_date)),
         )
         for stage in stages
     )
@@ -208,8 +200,8 @@ def _bucket_windows(
     for position in index_slots(slots).transit_bucket:
         slot = slots[position]
         window = (
-            _hours_since(origin, _yyyymmdd(slot.interval_start)),
-            _hours_since(origin, _yyyymmdd(slot.interval_end)),
+            hours_between(origin, date_from_yyyymmdd(slot.interval_start)),
+            hours_between(origin, date_from_yyyymmdd(slot.interval_end)),
         )
         by_plant.setdefault(slot.entity_id, []).append((position, window))
     for plant_id, buckets in by_plant.items():

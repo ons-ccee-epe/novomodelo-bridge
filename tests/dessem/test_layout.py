@@ -8,13 +8,16 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     PHYSICAL_RECORD_LAST,
     RECORD_SIZE,
     TAMANHO_CORTE,
+    CutBlockOffsets,
     LayoutError,
     assert_uniform_blocks,
     chain_pointer,
     cortdeco_block_offsets,
+    cortdeco_gnl_offset,
     cortdeco_ncoef,
     cortdeco_record_count,
     cut_head_indices,
+    gnl_positions,
     mapcut_record_count,
     travel_time_lag_starts,
 )
@@ -101,11 +104,98 @@ class TestCortdecoBlockOffsets:
         assert offsets.pi_varm == 1
         assert offsets.pi_gnl == 4  # 1 + 3
         assert offsets.ncoef == 22
+        assert (offsets.n_sbm_gnl, offsets.n_estagios, offsets.n_patamares) == (2, 3, 3)
 
     def test_offsets_no_gnl(self) -> None:
         offsets = cortdeco_block_offsets(5, 0, 0, 0, 3, 3)
         assert offsets.pi_gnl == 6  # 1 + 5
         assert offsets.ncoef == 6
+
+
+class TestCutBlockOffsets:
+    """Test the pi_gnl width invariant of CutBlockOffsets."""
+
+    def test_post_init_width_mismatch_raises(self) -> None:
+        with pytest.raises(LayoutError, match="17 wide"):
+            CutBlockOffsets(
+                rhs=0,
+                pi_varm=1,
+                pi_qdefp=4,
+                pi_gnl=4,
+                ncoef=21,
+                n_sbm_gnl=2,
+                n_estagios=3,
+                n_patamares=3,
+            )
+
+    def test_post_init_negative_length_raises(self) -> None:
+        # (-1) * (-1) * 1 equals the width of 1, so only the sign check can reject it
+        with pytest.raises(LayoutError, match="non-negative"):
+            CutBlockOffsets(
+                rhs=0,
+                pi_varm=1,
+                pi_qdefp=4,
+                pi_gnl=4,
+                ncoef=5,
+                n_sbm_gnl=-1,
+                n_estagios=-1,
+                n_patamares=1,
+            )
+
+    def test_post_init_accepts_no_gnl(self) -> None:
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=4,
+            pi_gnl=4,
+            ncoef=4,
+            n_sbm_gnl=0,
+            n_estagios=3,
+            n_patamares=3,
+        )
+        assert offsets.ncoef - offsets.pi_gnl == 0
+
+
+class TestCortdecoGnlOffset:
+    """Test pi_gnl addressing through the layout."""
+
+    def test_gnl_offset_entry_one_patamar_two(self) -> None:
+        offsets = cortdeco_block_offsets(3, 0, 0, 2, 3, 3)
+        assert cortdeco_gnl_offset(offsets, 1, 0, 2) == 15  # 4 + (1*3 + 0)*3 + 2
+
+    def test_gnl_offset_first_position_is_pi_gnl(self) -> None:
+        offsets = cortdeco_block_offsets(3, 0, 0, 2, 3, 3)
+        assert cortdeco_gnl_offset(offsets, 0, 0, 0) == offsets.pi_gnl
+
+    def test_gnl_offset_last_position_is_last_slot(self) -> None:
+        offsets = cortdeco_block_offsets(3, 0, 0, 2, 3, 3)
+        assert cortdeco_gnl_offset(offsets, 1, 2, 2) == offsets.ncoef - 1
+
+    @pytest.mark.parametrize(
+        ("axis", "position"),
+        [("entry", (2, 0, 0)), ("middle", (0, 3, 0)), ("patamar", (0, 0, 3))],
+    )
+    def test_gnl_offset_out_of_range_raises(
+        self, axis: str, position: tuple[int, int, int]
+    ) -> None:
+        offsets = cortdeco_block_offsets(3, 0, 0, 2, 3, 3)
+        with pytest.raises(LayoutError, match=axis):
+            cortdeco_gnl_offset(offsets, *position)
+
+
+class TestGnlPositions:
+    """Test on-disk iteration of pi_gnl positions."""
+
+    def test_gnl_positions_cover_pi_gnl_in_disk_order(self) -> None:
+        offsets = cortdeco_block_offsets(3, 0, 0, 2, 3, 3)
+        addresses = [
+            cortdeco_gnl_offset(offsets, *position)
+            for position in gnl_positions(2, 3, 3)
+        ]
+        assert addresses == list(range(4, 22))
+
+    def test_gnl_positions_without_entries_yield_nothing(self) -> None:
+        assert list(gnl_positions(0, 3, 3)) == []
 
 
 class TestCutHeadIndices:

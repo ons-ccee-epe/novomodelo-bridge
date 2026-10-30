@@ -22,6 +22,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     PHYSICAL_RECORD_FIRST,
     PHYSICAL_RECORD_LAST,
+    gnl_positions,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -207,10 +208,10 @@ def cortdeco_columns(
         for code in travel_time_codes
     )
     gnl = tuple(
-        f"pi_gnl_sbm{code}_pat{block + 1}_lag{stage + 1}"
-        for code in submarket_codes
-        for stage in range(n_estagios)
-        for block in range(n_patamares)
+        f"pi_gnl_sbm{submarket_codes[entry]}_pat{patamar + 1}_lag{middle + 1}"
+        for entry, middle, patamar in gnl_positions(
+            len(submarket_codes), n_estagios, n_patamares
+        )
     )
     return ("record_index", "next_index", "is_extra_record", "rhs", *varm, *qdefp, *gnl)
 

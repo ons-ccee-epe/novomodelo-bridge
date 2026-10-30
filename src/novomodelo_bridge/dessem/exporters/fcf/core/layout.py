@@ -13,8 +13,9 @@ Record map for mapcut.rv0:
 
 from __future__ import annotations
 
+import itertools
 import os
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -162,13 +163,29 @@ def cortdeco_ncoef(
 
 @dataclass(frozen=True)
 class CutBlockOffsets:
-    """Block start positions inside one cortdeco cut's NCOEF-length vector."""
+    """Block starts in one cortdeco cut's NCOEF-length vector, and the pi_gnl axis lengths."""
 
     rhs: int
     pi_varm: int
     pi_qdefp: int
     pi_gnl: int
     ncoef: int
+    n_sbm_gnl: int
+    n_estagios: int
+    n_patamares: int
+
+    def __post_init__(self) -> None:
+        lengths = (self.n_sbm_gnl, self.n_estagios, self.n_patamares)
+        width = self.ncoef - self.pi_gnl
+        if (
+            min(lengths) < 0
+            or width != self.n_sbm_gnl * self.n_estagios * self.n_patamares
+        ):
+            raise LayoutError(
+                f"pi_gnl block is {width} wide but n_sbm_gnl={self.n_sbm_gnl}, "
+                f"n_estagios={self.n_estagios} and n_patamares={self.n_patamares} "
+                f"must be non-negative and multiply to that width"
+            )
 
 
 def cortdeco_block_offsets(
@@ -187,29 +204,43 @@ def cortdeco_block_offsets(
         pi_qdefp=1 + n_uhes,
         pi_gnl=1 + n_uhes + n_utv * max_lag,
         ncoef=ncoef,
+        n_sbm_gnl=n_sbm_gnl,
+        n_estagios=n_estagios,
+        n_patamares=n_patamares,
     )
 
 
 def cortdeco_gnl_offset(
-    offsets: CutBlockOffsets,
-    sbm: int,
-    stage: int,
-    block: int,
-    n_sbm_gnl: int,
-    n_estagios: int,
-    n_patamares: int,
+    offsets: CutBlockOffsets, entry: int, middle: int, patamar: int
 ) -> int:
-    """Calculate submarket-major pi_gnl address for (sbm, stage, block)."""
+    """Return the cut-vector position of pi_gnl (entry, middle, patamar).
+
+    Entry-major, then middle, then patamar; the middle axis has
+    `offsets.n_estagios` positions.
+    """
     for name, value, bound in (
-        ("sbm", sbm, n_sbm_gnl),
-        ("stage", stage, n_estagios),
-        ("block", block, n_patamares),
+        ("entry", entry, offsets.n_sbm_gnl),
+        ("middle", middle, offsets.n_estagios),
+        ("patamar", patamar, offsets.n_patamares),
     ):
         if not 0 <= value < bound:
             raise LayoutError(f"{name} must be in 0..{bound - 1}, got {value}")
     return (
-        offsets.pi_gnl + sbm * (n_estagios * n_patamares) + stage * n_patamares + block
+        offsets.pi_gnl
+        + (entry * offsets.n_estagios + middle) * offsets.n_patamares
+        + patamar
     )
+
+
+#: Middle-axis offset that holds the exported coefficient; idecomp labels it `lag1`.
+GNL_EXPORT_MIDDLE_OFFSET = 0
+
+
+def gnl_positions(
+    n_sbm_gnl: int, n_estagios: int, n_patamares: int
+) -> Iterator[tuple[int, int, int]]:
+    """Yield (entry, middle, patamar) in on-disk order."""
+    return itertools.product(range(n_sbm_gnl), range(n_estagios), range(n_patamares))
 
 
 def cut_head_indices(

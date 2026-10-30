@@ -229,6 +229,9 @@ def synthetic_offsets() -> CutBlockOffsets:
         pi_qdefp=4,
         pi_gnl=4,  # 1 + 3 hydros
         ncoef=4 + 2 * 3 * 3,  # pi_varm + n_sbm_gnl * n_estagios * n_patamares
+        n_sbm_gnl=2,
+        n_estagios=3,
+        n_patamares=3,
     )
 
 

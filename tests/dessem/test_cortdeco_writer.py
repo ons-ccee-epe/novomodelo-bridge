@@ -21,13 +21,31 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
 @pytest.fixture
 def simple_offsets() -> CutBlockOffsets:
     """Simple offsets for 3 hydros, no GNL."""
-    return CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=4, pi_gnl=4, ncoef=4)
+    return CutBlockOffsets(
+        rhs=0,
+        pi_varm=1,
+        pi_qdefp=4,
+        pi_gnl=4,
+        ncoef=4,
+        n_sbm_gnl=0,
+        n_estagios=3,
+        n_patamares=3,
+    )
 
 
 @pytest.fixture
 def offsets_with_gnl() -> CutBlockOffsets:
     """Offsets with GNL block: 3 hydros, 2*3*3=18 GNL slots."""
-    return CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=4, pi_gnl=4, ncoef=22)
+    return CutBlockOffsets(
+        rhs=0,
+        pi_varm=1,
+        pi_qdefp=4,
+        pi_gnl=4,
+        ncoef=22,
+        n_sbm_gnl=2,
+        n_estagios=3,
+        n_patamares=3,
+    )
 
 
 class TestZeroedGnlBlock:
@@ -109,7 +127,16 @@ class TestSerializeCut:
             serialize_cut(cut, pointer=0, offsets=simple_offsets)
 
     def test_pi_qdefp_sits_between_storage_and_gnl_unnegated(self) -> None:
-        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=7)
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=3,
+            pi_gnl=5,
+            ncoef=7,
+            n_sbm_gnl=1,
+            n_estagios=2,
+            n_patamares=1,
+        )
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1000.0, 2000.0]),
@@ -123,7 +150,16 @@ class TestSerializeCut:
         assert values.tolist() == [1.0, 1.0, 2.0, -3.0, -4.0, 0.0, 0.0]
 
     def test_mismatched_pi_qdefp_raises(self) -> None:
-        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=5)
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=3,
+            pi_gnl=5,
+            ncoef=5,
+            n_sbm_gnl=0,
+            n_estagios=1,
+            n_patamares=1,
+        )
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0]),
@@ -134,7 +170,16 @@ class TestSerializeCut:
             serialize_cut(cut, pointer=0, offsets=offsets)
 
     def test_non_finite_pi_qdefp_names_its_block(self) -> None:
-        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=5)
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=3,
+            pi_gnl=5,
+            ncoef=5,
+            n_sbm_gnl=0,
+            n_estagios=1,
+            n_patamares=1,
+        )
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0]),

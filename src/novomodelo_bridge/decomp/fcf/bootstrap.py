@@ -33,6 +33,8 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.core.policy_dates import UNDATED
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -71,12 +73,6 @@ def ensure_writer_binding() -> None:
             "novomodelo-bridge. To convert without the boundary cost-to-go function, "
             "re-run with --no-fcf."
         )
-
-
-#: novomodelo's ``STAGE_CUTS_PRICED_STATE_DATE_SENTINEL`` (``i32::MIN``) — a pool
-#: whose ``priced_state_date`` reads this was written before priced dates were
-#: recorded; the date-driven boundary loader rejects such a checkpoint.
-_PRICED_STATE_DATE_SENTINEL = -(2**31)
 
 
 @dataclass(frozen=True)
@@ -262,7 +258,7 @@ def bootstrap_terminal_manifest(case_dir: Path, *, work_dir: Path) -> TerminalMa
             f"checkpoint at {output_dir} terminal pool has no priced_state_date"
         )
     priced_state_date = int(terminal["priced_state_date"])
-    if priced_state_date == _PRICED_STATE_DATE_SENTINEL:
+    if priced_state_date == UNDATED:
         raise RuntimeError(
             f"checkpoint at {output_dir} terminal pool priced_state_date is the "
             "undated sentinel (no priced instant); the boundary loader selects a "
