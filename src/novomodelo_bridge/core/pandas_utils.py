@@ -37,6 +37,13 @@ def as_frame(accessor_result: object) -> pd.DataFrame | None:
     return accessor_result if isinstance(accessor_result, pd.DataFrame) else None
 
 
+def require_frame(frame: pd.DataFrame | None, source: str) -> pd.DataFrame:
+    """*frame*, or a ``ValueError`` naming *source* when the deck has none."""
+    if frame is None:
+        raise ValueError(f"the deck has no {source}")
+    return frame
+
+
 def as_frame_or_empty(accessor_result: object) -> pd.DataFrame:
     """:func:`as_frame` for a ``libs`` reader, whose ``df=True`` accessors yield an
     empty frame (never ``None``) when the register is absent."""

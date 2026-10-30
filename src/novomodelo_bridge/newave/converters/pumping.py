@@ -81,7 +81,7 @@ def read_pumping_inputs(case: NewaveCase) -> PumpingInputs | None:
             )
 
     # Validate hydro codes exist in confhd
-    confhd_codes = set(case.confhd.usinas["codigo_usina"])
+    confhd_codes = set(case.hydro_plants["codigo_usina"])
     for col in ("codigo_usina_origem", "codigo_usina_destino"):
         for code in stations_df[col]:
             if int(code) not in confhd_codes:

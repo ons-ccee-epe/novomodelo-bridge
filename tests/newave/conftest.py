@@ -198,6 +198,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 1,
             "submercado_para": 2,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 3000.0,
@@ -206,6 +207,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 2,
             "submercado_para": 1,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 2500.0,
@@ -214,6 +216,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 1,
             "submercado_para": 99,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 4000.0,
@@ -222,6 +225,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 99,
             "submercado_para": 1,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 2000.0,
@@ -230,6 +234,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 2,
             "submercado_para": 99,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 1500.0,
@@ -238,6 +243,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 99,
             "submercado_para": 2,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 1200.0,

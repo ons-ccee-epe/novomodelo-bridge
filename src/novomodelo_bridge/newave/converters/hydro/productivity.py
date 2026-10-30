@@ -16,6 +16,10 @@ from collections.abc import Set as AbstractSet
 
 import pandas as pd
 import pyarrow as pa
+from inewave.libs.modelos.usinas_hidreletricas import (
+    HidreletricaFphaMetodoReducaoCortesAnguloPadrao,
+    HidreletricaFphaMetodoReducaoCortesDistanciaPadrao,
+)
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
@@ -36,7 +40,6 @@ from novomodelo_bridge.core.productivity import (
     mean_cota,
     stored_energy_productivity,
 )
-from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.core.tailrace import (
     TailraceFamily,
     spill_outside_tailrace_diagnostic,
@@ -60,7 +63,7 @@ from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
     seasonal_useful_volumes,
 )
 from novomodelo_bridge.newave.converters.stochastic import natural_monthly_means
-from novomodelo_bridge.newave.horizon import stage_dates_for
+from novomodelo_bridge.newave.horizon import stage_dates_for, study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -94,45 +97,36 @@ _FIT_FLOW_MAX_ITERATIONS = 100
 
 
 def _parse_fpha_plane_reduction(case: NewaveCase) -> dict | None:
-    """Parse ``tratamento-fpha`` into a novomodelo ``fpha_plane_reduction`` block.
+    """Read ``tratamento-fpha`` into a novomodelo ``fpha_plane_reduction`` block.
 
-    The source model's treatment file carries one active line (``&``-prefixed lines are
-    comments) selecting either the angle or the distance plane-reduction method::
-
-        HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-ANGULO-PADRAO; 1.0
-        HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES-DISTANCIA-PADRAO; 0.002
+    The source model's treatment file carries one active record (``&`` comments
+    one out) selecting either the angle or the distance plane-reduction method.
 
     Returns ``{"method": "angle", "tolerance_deg": v}`` or
     ``{"method": "distance", "tolerance_pct": v, "n_samples": N}``, or ``None``
-    when no treatment file is present or no method line is active.
+    when no treatment file is present or no method record is active.
     """
     path = case.files.tratamento_fpha
-    if path is None:
+    reader = case.tratamento_fpha
+    if path is None or reader is None:
         return None
 
     methods: list[dict] = []
-    for raw in read_source_text(path).splitlines():
-        line = raw.strip()
-        if not line or line.startswith("&"):
-            continue
-        parts = [part.strip() for part in line.split(";")]
-        if len(parts) < 2:
-            continue
-        token = parts[0].upper()
-        try:
-            value = float(parts[1])
-        except ValueError:
-            continue
-        if token.endswith("ANGULO-PADRAO"):
-            methods.append({"method": "angle", "tolerance_deg": value})
-        elif token.endswith("DISTANCIA-PADRAO"):
-            methods.append(
-                {
-                    "method": "distance",
-                    "tolerance_pct": value,
-                    "n_samples": _FPHA_DISTANCE_N_SAMPLES,
-                }
-            )
+    for register in reader.data:
+        if isinstance(register, HidreletricaFphaMetodoReducaoCortesAnguloPadrao):
+            if register.angulo_tolerancia is not None:
+                methods.append(
+                    {"method": "angle", "tolerance_deg": register.angulo_tolerancia}
+                )
+        elif isinstance(register, HidreletricaFphaMetodoReducaoCortesDistanciaPadrao):
+            if register.distancia_tolerancia is not None:
+                methods.append(
+                    {
+                        "method": "distance",
+                        "tolerance_pct": register.distancia_tolerancia,
+                        "n_samples": _FPHA_DISTANCE_N_SAMPLES,
+                    }
+                )
 
     if not methods:
         return None
@@ -365,7 +359,7 @@ def _turbined_fit_maxima(
             ),
         )
     )
-    confhd_codes = {int(code) for code in case.confhd.usinas["codigo_usina"]}
+    confhd_codes = {int(code) for code in case.hydro_plants["codigo_usina"]}
     expansion = _expansion_configs(case, cadastro)
     maxima: dict[int, list[float | None]] = {}
     unconverged: list[list[object]] = []
@@ -697,7 +691,7 @@ def _per_stage_productivities(
     if not drop_overrides and not has_seasonal:
         return [base_productivity] * total_stages
 
-    start_month = int(case.dger.mes_inicio_estudo)
+    _, start_month = study_start(case.dger)
     drops = _per_stage_drop_overrides(drop_overrides, case, total_stages)
     seasonal = seasonal_volref_by_month or {}
 
@@ -760,7 +754,7 @@ def convert_hydro_energy_productivity(
     """
     cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
 
-    confhd_df = case.confhd.usinas
+    confhd_df = case.hydro_plants
     existing = case.active_hydros
     confhd_codes = [int(r["codigo_usina"]) for _, r in existing.iterrows()]
 
@@ -875,7 +869,7 @@ def compute_per_stage_own_productivities(
 
     cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
 
-    confhd_df = case.confhd.usinas
+    confhd_df = case.hydro_plants
     existing = case.active_hydros
     confhd_codes = [int(r["codigo_usina"]) for _, r in existing.iterrows()]
 
@@ -932,7 +926,7 @@ def compute_base_productivities(
     """
     cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
 
-    confhd_df = case.confhd.usinas
+    confhd_df = case.hydro_plants
     existing = case.active_hydros
 
     # FICT-cascade fold-in — keep this in lockstep with the other productivity

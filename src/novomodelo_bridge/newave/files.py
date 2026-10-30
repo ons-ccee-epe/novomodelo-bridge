@@ -172,7 +172,13 @@ class NewaveFiles:
             )
 
         caso = Caso.read(str(caso_path))
-        arq_filename: str = caso.arquivos
+        arq_filename = caso.arquivos
+        if arq_filename is None:
+            raise SourceFileError(
+                f"caso.dat in {directory} names no Arquivos file",
+                path=str(caso_path),
+                field="caso.dat",
+            )
         _LOG.debug("caso.dat -> Arquivos file: %s", arq_filename)
 
         # --- Step 2: read the Arquivos file ------------------------------------

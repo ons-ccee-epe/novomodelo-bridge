@@ -176,16 +176,16 @@ wheels = [
 
 [[package]]
 name = "inewave"
-version = "1.16.2"
+version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfinterface" },
     { name = "numpy" },
     { name = "pandas" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/29/2f10562224245973ac0168dcb5388c360e902ff30926638de8484434b9fa/inewave-1.16.2.tar.gz", hash = "sha256:3f279519ced9e3199fe788b13d60dbe6e277bed9d857566e6464120f571cb6fb", size = 14299463, upload-time = "2026-10-19T22:53:42.024Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/dc/a74dace15d6eccf434dcc25945474bce9c1d9fc1328c86d7dc5bd57321ba/inewave-1.17.0.tar.gz", hash = "sha256:aa35cf33e00ec380f5f811ae07cb400c3d3c6d8469e60de2333f5583b3e1c0ac", size = 14332731, upload-time = "2026-10-30T02:30:22.518Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/91/739a489d4f563b7347e722900731579ea87c3bf03f7d29e65ec671776a3c/inewave-1.16.2-py3-none-any.whl", hash = "sha256:53ef5ddfb849a3e7a540fc032d49068ee4ce31062f71c40fe37e58b7c1847cba", size = 455650, upload-time = "2026-10-19T22:53:39.577Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/1d/2786a653edb2108d2eafaefcdf34610dff5aca9a51c40f61e0a09743f2d5/inewave-1.17.0-py3-none-any.whl", hash = "sha256:ea50307f1d19e98cffd1892d8cd22f8d6b604bf928048a5891142d39a6346971", size = 468560, upload-time = "2026-10-30T02:30:20.465Z" },
 ]
 
 [[package]]
@@ -282,7 +282,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "idecomp", specifier = ">=1.18.0" },
-    { name = "inewave", specifier = ">=1.16.2" },
+    { name = "inewave", specifier = ">=1.17.0" },
     { name = "novomodelo-python", specifier = "==0.19.1" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "plotly", specifier = ">=7.1.0" },

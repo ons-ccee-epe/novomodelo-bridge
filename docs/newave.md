@@ -93,12 +93,12 @@ the same output.
   `modif.dat` becomes that plant's Novomodelo diversion channel, to the record's
   target plant and capped at its maximum flow; a maximum flow of 9 999 999
   m³/s or more, NEWAVE's "no limit" value, gives a channel without a limit
-  and is reported. Only `CDESVIO`
-  declares a channel; the `desvio` code of `hidr.dat` alone does not. A record
-  with no maximum flow, or whose target plant is not in the case, converts to
-  no channel and is reported, and so the plant releases only to its
-  downstream plant. The minimum storage for operating the channel
-  (`volume_desvio` in `hidr.dat`) is not converted.
+  and is reported. Only `CDESVIO` declares a channel; the `desvio` code of
+  `hidr.dat` alone does not. A record with no maximum flow (or one that is not
+  a number), or whose target plant is not in the case, converts to no channel
+  and is reported, and so the plant releases only to its downstream plant. The
+  minimum storage for operating the channel (`volume_desvio` in `hidr.dat`) is
+  not converted.
 - **Constraints.** The minimum-storage security curve (`curva.dat`), electric
   constraints (`restricao-eletrica.csv`), and interchange group limits
   (`agrint.dat`) all become Novomodelo generic constraints: linear expressions over

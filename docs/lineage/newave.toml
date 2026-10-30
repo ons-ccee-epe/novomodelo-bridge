@@ -713,12 +713,12 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   [[output.field]]
   path = "recent_observations[].hydro_id"
   from = [
-    { file = "vazpast", item = "tendencia · codigo_usina" },
+    { file = "vazpast", item = "tendencia · codigo_posto" },
     { file = "confhd", item = "usinas · posto" },
   ]
   status = "derived"
   when = "somente quando `vazpast.dat` está presente com dados de tendência"
-  how = "`codigo_usina` de `vazpast.dat` é o posto; cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id."
+  how = "Cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id."
 
   [[output.field]]
   path = "recent_observations[].start_date"
@@ -856,16 +856,18 @@ summary = "Uma linha por par não ordenado de submercados presente em `limites_i
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "dger", item = "mes_inicio_estudo" },
     { file = "dger", item = "ano_inicio_estudo" },
   ]
-  how = "Limite (MW) no sentido menor→maior código no mês de início do estudo (`sentido` 0 é de→para, 1 é para→de). Sem linha nessa data usa a primeira data com valor; par sem linha recebe 0."
+  how = "Limite (MW) no sentido menor→maior código no mês de início do estudo (`sentido` 0 é de→para, 1 é para→de), só dos registros com `flag` 0. Sem linha nessa data usa a primeira data com valor; par sem linha recebe 0."
 
   [[output.field]]
   path = "lines[].capacity.reverse_mw"
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "dger", item = "mes_inicio_estudo" },
     { file = "dger", item = "ano_inicio_estudo" },
   ]
@@ -1143,15 +1145,17 @@ summary = "Uma linha base por (linha, estágio) com os limites de intercâmbio d
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "patamar", item = "intercambio_patamares · valor" },
   ]
-  how = "Linha base: limite menor→maior código no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano."
+  how = "Linha base: limite menor→maior código (registros com `flag` 0) no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano."
 
   [[output.field]]
   path = "reverse_mw"
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "patamar", item = "intercambio_patamares · valor" },
   ]
   how = "Mesma regra no sentido maior→menor código (fator de `intercambio_patamares` com de > para)."
@@ -1700,10 +1704,10 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
   path = "hydros[].diversion"
   from = [
     { file = "dger", item = "canal_desvio" },
-    { file = "modif", item = "CDESVIO · usina de jusante" },
-    { file = "modif", item = "CDESVIO · vazão máxima" },
+    { file = "modif", item = "CDESVIO · codigo_usina_jusante" },
+    { file = "modif", item = "CDESVIO · limite_vazao" },
   ]
-  how = "Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, ou nulo (sem limite) quando ela vale 9 999 999 m³/s ou mais, o valor do NEWAVE para canal sem limite (diagnóstico `diversion-channel-unlimited`). Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`)."
+  how = "Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, ou nulo (sem limite) quando ela vale 9 999 999 m³/s ou mais, o valor do NEWAVE para canal sem limite (diagnóstico `diversion-channel-unlimited`). Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima (ou a traz ilegível) ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`)."
 
   [[output.field]]
   path = "hydros[].filling"
@@ -3249,9 +3253,9 @@ file = "sistema"
   note = "Os segmentos de déficit são derivados das linhas de `custo_deficit` (`patamar_deficit`, `custo`, `corte`); a contagem declarada não é lida."
 
   [[source.item]]
-  item = "limites_intercambio · flag"
+  item = "limites_intercambio · registros com flag 1"
   status = "unread"
-  note = "Coluna de flag do bloco de limites de intercâmbio; o bridge usa apenas `submercado_de`, `submercado_para`, `sentido`, `data` e `valor`."
+  note = "Intercâmbio mínimo obrigatório. Não é convertido nem reportado: os limites de `system/lines.json` e de `constraints/line_bounds.parquet` usam só os registros com `flag` 0."
 
 [[source]]
 file = "clast"

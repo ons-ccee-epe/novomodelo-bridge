@@ -15,7 +15,11 @@ import pyarrow as pa
 from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.penalties import PCORTEOL, PEXC, PINT, hydro_penalty_costs
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, historical_start_date
+from novomodelo_bridge.newave.horizon import (
+    POST_STUDY_YEAR,
+    historical_start_date,
+    study_start,
+)
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -134,8 +138,7 @@ def _build_canonical_pair_to_line_id(
     used by ``convert_lines`` and ``convert_line_bounds`` to guarantee
     consistent line IDs.
     """
-    sistema = case.sistema
-    limites_df = sistema.limites_intercambio
+    limites_df = case.interchange_limits
     if limites_df is None or limites_df.empty:
         return {}
 
@@ -368,7 +371,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         Pre-built ID mapping for bus IDs.
     """
     sistema = case.sistema
-    limites_df = sistema.limites_intercambio
+    limites_df = case.interchange_limits
 
     if limites_df is None or limites_df.empty:
         return {
@@ -396,8 +399,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # pre-study months (before mes_inicio_estudo) may have NaN values.
     from datetime import datetime as _dt
 
-    dger = case.dger
-    study_start_dt = _dt(dger.ano_inicio_estudo, dger.mes_inicio_estudo, 1)
+    study_start_dt = _dt(*study_start(case.dger), 1)
     first_month = limites_df[limites_df["data"] == study_start_dt]
     if first_month.empty:
         first_month = limites_df.dropna(subset=["valor"])
@@ -433,7 +435,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # Interconnections have no commissioning date; treat every line as in service
     # since the historical record (Novomodelo uses the date only as a canonical-ordering
     # key, tiebroken by id).
-    op_date = historical_start_date(dger)
+    op_date = historical_start_date(case.dger)
 
     lines: list[dict] = []
     for (src, tgt), line_id in sorted(canonical_map.items(), key=lambda x: x[1]):
@@ -1047,8 +1049,7 @@ def convert_line_bounds(
         ``direct_mw`` (DOUBLE), ``reverse_mw`` (DOUBLE), ``block_id``
         (INT32, nullable — ``None`` for the stage-level base row).
     """
-    sistema = case.sistema
-    limites_df: pd.DataFrame | None = sistema.limites_intercambio
+    limites_df = case.interchange_limits
 
     if limites_df is None or limites_df.empty:
         return pa.table(

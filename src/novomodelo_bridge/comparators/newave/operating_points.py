@@ -58,7 +58,12 @@ from novomodelo_bridge.comparators.operating_points import (
     with_envelopes,
 )
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
-from novomodelo_bridge.core.pandas_utils import as_frame_or_empty, as_int, is_na
+from novomodelo_bridge.core.pandas_utils import (
+    as_frame_or_empty,
+    as_int,
+    is_na,
+    require_frame,
+)
 from novomodelo_bridge.core.tailrace import (
     TailraceFamily,
     TailraceSegment,
@@ -260,12 +265,12 @@ def _source_points(
 
 def _plant_submarkets(case: NewaveCase) -> dict[int, int]:
     """``{plant code: submarket code}`` through each plant's ``confhd`` REE."""
-    rees = case.ree.rees
+    rees = require_frame(case.ree.rees, "REE table in ree.dat")
     ree_submarket = {
         int(code): int(submarket)
         for code, submarket in zip(rees["codigo"], rees["submercado"], strict=True)
     }
-    plants = case.confhd.usinas
+    plants = case.hydro_plants
     return {
         int(code): ree_submarket[int(ree)]
         for code, ree in zip(plants["codigo_usina"], plants["ree"], strict=True)
@@ -280,7 +285,7 @@ def _reservoir_storage(case: NewaveCase, cadastro: pd.DataFrame) -> pl.DataFrame
     final = read_nwlistop_hydro_storage(
         case.files.directory, horizon.start_year, horizon.start_month
     )
-    plants = case.confhd.usinas
+    plants = case.hydro_plants
     initial_percent = {
         int(code): float(percent)
         for code, percent in zip(

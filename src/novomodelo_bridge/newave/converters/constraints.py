@@ -41,6 +41,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     hard_slack,
     soft_slack,
 )
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.productivity import (
     compute_productivity,
     stored_energy_productivity,
@@ -53,6 +54,7 @@ from novomodelo_bridge.core.stored_energy import (
 )
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
+from novomodelo_bridge.newave.horizon import study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import active_hydros
 from novomodelo_bridge.newave.switches import switch_off_diagnostic
@@ -361,7 +363,7 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
 
     try:
         cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
-        confhd_df = case.confhd.usinas
+        confhd_df = case.hydro_plants
         fictitious = case.fictitious_codes
     except (OSError, ValueError, AttributeError, TypeError, KeyError):
         return None
@@ -605,12 +607,11 @@ def _read_vminop_rees(
     case: NewaveCase, id_map: NewaveIdMap, penalty_df: pd.DataFrame | None
 ) -> _VminopRees:
     """Each REE's plants, VminOP shares, curva.dat penalty and ree.dat name."""
-    confhd = case.confhd
     hidr = case.hidr
     ree_file = case.ree
 
     cadastro = _apply_permanent_overrides(hidr.cadastro, case)
-    confhd_df = confhd.usinas
+    confhd_df = case.hydro_plants
 
     # Plants with no positive integrated cascade productivity store no energy.
     fictitious = case.fictitious_codes
@@ -891,14 +892,12 @@ def _build_line_id_map(case: NewaveCase) -> dict[tuple[int, int], int]:
         Maps canonical (smaller_subsystem, larger_subsystem) to 0-based
         line ID.  Only pairs from ``sistema.dat`` are included.
     """
-    sistema = case.sistema
-    limites_df = sistema.limites_intercambio
+    limites_df = case.interchange_limits
 
     if limites_df is None or limites_df.empty:
         return {}
 
-    dger = case.dger
-    study_start_dt = datetime(dger.ano_inicio_estudo, dger.mes_inicio_estudo, 1)
+    study_start_dt = datetime(*study_start(case.dger), 1)
     first_month = limites_df[limites_df["data"] == study_start_dt]
     if first_month.empty:
         non_nan_df = limites_df.dropna(subset=["valor"])
@@ -1186,8 +1185,8 @@ def _parse_re_dat(
     if rest_df is None or rest_df.empty:
         return conjuntos, re_dat_bounds
 
-    for code, grp in rest_df.groupby("conjunto"):
-        code = int(code)
+    for group_key, grp in rest_df.groupby("conjunto"):
+        code = as_int(group_key)
         # Collect changepoints: [(stage_id, patamar, value)]
         changepoints: list[tuple[int, int, float]] = []
         for _, row in grp.iterrows():

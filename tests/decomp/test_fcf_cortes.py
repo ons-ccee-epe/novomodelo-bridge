@@ -2,20 +2,18 @@
 
 Per H5 (deck-independent unit coverage), every *unit* test in this module
 reads no real deck: the header-parse (``read_cortesh``), record-assembly
-(``read_cortes``), and trailer-detection (``_read_trailer``) paths are
-exercised against synthetic ``_FakeCortesh``/``_FakeCortes`` stand-ins and
-tiny in-code ``struct.pack`` blobs.
+(``read_cortes``) paths are exercised against synthetic
+``_FakeCortesh``/``_FakeCortes`` stand-ins.
 """
 
 from __future__ import annotations
 
-import struct
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
-from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 
 from novomodelo_bridge.decomp.fcf.cortes import (
     BoundaryCuts,
@@ -23,7 +21,6 @@ from novomodelo_bridge.decomp.fcf.cortes import (
     CutFamilySummary,
     StageCutRecord,
     _build_header,
-    _read_trailer,
     cut_month,
     read_cortes,
     read_cortesh,
@@ -31,6 +28,9 @@ from novomodelo_bridge.decomp.fcf.cortes import (
     required_inflow_lag_depth,
     summarize_cut_families,
 )
+
+if TYPE_CHECKING:
+    from inewave.newave import Cortesh
 
 
 def test_build_header_rejects_boundary_stage_outside_individualized_band() -> None:
@@ -46,10 +46,10 @@ def test_build_header_rejects_boundary_stage_outside_individualized_band() -> No
         estagio_individualizado_final = 14
 
     with pytest.raises(ValueError, match=r"\[3, 14\]"):
-        _build_header(_FakeCortesh(), boundary_stage=2)
+        _build_header(cast("Cortesh", _FakeCortesh()), boundary_stage=2)
 
 
-def _hybrid_fake_cortesh_169_plants_10_ficticia() -> object:
+def _hybrid_fake_cortesh_169_plants_10_ficticia() -> Cortesh:
     """A synthetic hybrid ``Cortesh`` (mirrors production ``mar-26-rv2`` shape).
 
     169 plants total, 10 of them fictitious (indices 5, 12, 20, 33, 47, 58,
@@ -88,7 +88,7 @@ def _hybrid_fake_cortesh_169_plants_10_ficticia() -> object:
             }
         )
 
-    return _FakeCortesh()
+    return cast("Cortesh", _FakeCortesh())
 
 
 def test_build_header_hybrid_excludes_fictitious_plants() -> None:
@@ -184,14 +184,7 @@ def test_read_cortes_rejects_nonzero_sar(tmp_path: Path) -> None:
             }
         )
 
-    record_size = _FakeCortesh.tamanho_registro_individualizado
-    record = bytearray(record_size)
-    # Nonzero rhs (bytes 16:24) on the last physical record marks this as
-    # the consolidated (no-sentinel) shape, so `boundary_stage` is required
-    # and no trailer is derived.
-    record[16:24] = struct.pack("<d", 1.0)
     cortes_path = tmp_path / "cortes.dat"
-    cortes_path.write_bytes(bytes(record) * 2)
 
     bad_frame = pd.DataFrame(
         {
@@ -204,6 +197,7 @@ def test_read_cortes_rejects_nonzero_sar(tmp_path: Path) -> None:
 
     class _FakeCortes:
         cortes = bad_frame
+        datas_particao = None
 
     with (
         patch(
@@ -212,7 +206,7 @@ def test_read_cortes_rejects_nonzero_sar(tmp_path: Path) -> None:
         ),
         pytest.raises(ValueError, match="SAR"),
     ):
-        read_cortes(cortes_path, _FakeCortesh(), boundary_stage=5)
+        read_cortes(cortes_path, cast("Cortesh", _FakeCortesh()), boundary_stage=5)
 
 
 def test_read_cortes_synthetic_records_and_trailer_stage(tmp_path: Path) -> None:
@@ -238,15 +232,7 @@ def test_read_cortes_synthetic_records_and_trailer_stage(tmp_path: Path) -> None
         )
         ano_inicio_estudo = 2024
 
-    record_size = _FakeCortesh.tamanho_registro_individualizado
-    # The single physical record is the sentinel: leading int32[4] trailer
-    # (study_start_month, study_start_year, cut_stage_month, cut_stage_year),
-    # then rhs left at 0.0 (bytes [16:24] default-zeroed) so `_read_trailer`
-    # recognizes it as the sentinel, not a real cut.
-    sentinel = bytearray(record_size)
-    sentinel[0:16] = struct.pack("<4i", 9, 2024, 10, 2024)
     cortes_path = tmp_path / "cortes-010.dat"
-    cortes_path.write_bytes(bytes(sentinel))
 
     qafl_lags = tuple(float(lag) for lag in range(1, 13))
     frame = pd.DataFrame(
@@ -267,14 +253,18 @@ def test_read_cortes_synthetic_records_and_trailer_stage(tmp_path: Path) -> None
 
     class _FakeCortes:
         cortes = frame
+        # (study_start_month, study_start_year, cut_stage_month, cut_stage_year)
+        datas_particao = (9, 2024, 10, 2024)
 
     with patch(
         "novomodelo_bridge.decomp.fcf.cortes.Cortes.from_cortesh",
         return_value=_FakeCortes(),
     ):
-        boundary = read_cortes(cortes_path, _FakeCortesh(), boundary_stage=None)
+        boundary = read_cortes(
+            cortes_path, cast("Cortesh", _FakeCortesh()), boundary_stage=None
+        )
 
-    # Trailer-derived: (cut_stage_year=2024 - ano_inicio_estudo=2024) * 12
+    # From the partition dates: (cut_stage_year=2024 - ano_inicio_estudo=2024) * 12
     # + cut_stage_month=10 == 10.
     assert boundary.boundary_stage == 10
     assert len(boundary.records) == 1
@@ -285,20 +275,6 @@ def test_read_cortes_synthetic_records_and_trailer_stage(tmp_path: Path) -> None
     assert record.iteration == 3
     assert record.forward_pass_index == 2
     assert record.is_active is True
-
-
-def test_read_trailer_sentinel_vs_nonzero_rhs(tmp_path: Path) -> None:
-    # A tiny record: int32[4] (16 bytes) + rhs float64 (8 bytes), no padding.
-    record_size = 24
-
-    sentinel_path = tmp_path / "sentinel.dat"
-    sentinel_path.write_bytes(struct.pack("<4i", 1, 2, 3, 4) + struct.pack("<d", 0.0))
-
-    nonzero_path = tmp_path / "nonzero.dat"
-    nonzero_path.write_bytes(struct.pack("<4i", 1, 2, 3, 4) + struct.pack("<d", 5.0))
-
-    assert _read_trailer(sentinel_path, record_size) == (1, 2, 3, 4)
-    assert _read_trailer(nonzero_path, record_size) is None
 
 
 def test_summarize_families_empty_records_raises() -> None:
@@ -396,21 +372,19 @@ def test_required_inflow_lag_depth_zero_when_no_lag_terms() -> None:
     assert required_inflow_lag_depth(summary) == 0
 
 
-class _FakeCalendarCortesh:
+def _calendar_cortesh(shares: list[float]) -> Cortesh:
     """The general-data fields ``cut_month``/``read_patamar_fractions`` read."""
 
-    ano_inicio_estudo = 2025
-    numero_patamares = 2
+    class _FakeCalendarCortesh:
+        ano_inicio_estudo = 2025
+        numero_patamares = 2
+        duracoes_patamares = shares
 
-    def __init__(self, shares: list[float]) -> None:
-        class _Section(SecaoDadosCortesh):
-            duracoes_patamares = shares
-
-        self.data = [object(), _Section()]
+    return cast("Cortesh", _FakeCalendarCortesh())
 
 
 def test_cut_month_counts_months_from_the_study_start_january() -> None:
-    cortesh = _FakeCalendarCortesh([])
+    cortesh = _calendar_cortesh([])
 
     assert cut_month(cortesh, 1) == (2025, 1)
     assert cut_month(cortesh, 16) == (2026, 4)
@@ -420,7 +394,7 @@ def test_cut_month_counts_months_from_the_study_start_january() -> None:
 def test_read_patamar_fractions_is_month_major_from_the_study_start() -> None:
     shares = [0.5, 0.5] * 12 + [0.25, 0.75, 0.4, 0.6]
 
-    fractions = read_patamar_fractions(_FakeCalendarCortesh(shares))
+    fractions = read_patamar_fractions(_calendar_cortesh(shares))
 
     assert len(fractions) == 14
     assert fractions[(2025, 12)] == (0.5, 0.5)

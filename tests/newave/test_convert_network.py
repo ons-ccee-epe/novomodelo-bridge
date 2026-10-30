@@ -158,6 +158,57 @@ class TestConvertLines:
             else:
                 assert "exchange_cost" not in ln
 
+    def _case_with_rows(self, tmp_path, rows: list[dict]) -> NewaveCase:
+        import datetime
+
+        sistema = _make_sistema_mock()
+        sistema.limites_intercambio = pd.DataFrame(
+            [{"data": datetime.datetime(2023, 1, 1), **row} for row in rows]
+        )
+        dger = MagicMock()
+        dger.mes_inicio_estudo = 1
+        dger.ano_inicio_estudo = 2023
+        return make_case(tmp_path, sistema=sistema, dger=dger)
+
+    def test_sentido_1_is_the_reverse_of_the_record_pair(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.network import convert_lines
+
+        pair = {"submercado_de": 2, "submercado_para": 1, "flag": 0}
+        case = self._case_with_rows(
+            tmp_path,
+            [
+                {**pair, "sentido": 0, "valor": 2500.0},
+                {**pair, "sentido": 1, "valor": 3000.0},
+            ],
+        )
+
+        (line,) = convert_lines(case, self._make_id_map())["lines"]
+        assert line["capacity"] == {"direct_mw": 3000.0, "reverse_mw": 2500.0}
+
+    def test_minimum_interchange_record_is_not_read_as_a_limit(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.network import (
+            convert_line_bounds,
+            convert_lines,
+        )
+
+        pair = {"submercado_de": 1, "submercado_para": 2}
+        case = self._case_with_rows(
+            tmp_path,
+            [
+                {**pair, "flag": 0, "sentido": 0, "valor": 3000.0},
+                {**pair, "flag": 0, "sentido": 1, "valor": 2500.0},
+                {**pair, "flag": 1, "sentido": 0, "valor": 400.0},
+            ],
+        )
+        case.__dict__["patamar"] = MagicMock(intercambio_patamares=None)
+
+        (line,) = convert_lines(case, self._make_id_map())["lines"]
+        bounds = convert_line_bounds(case, self._make_id_map()).to_pandas()
+
+        assert line["capacity"] == {"direct_mw": 3000.0, "reverse_mw": 2500.0}
+        first_stage = bounds[(bounds["stage_id"] == 0) & bounds["block_id"].isna()]
+        assert list(first_stage["direct_mw"]) == [3000.0]
+
 
 # ---------------------------------------------------------------------------
 # Line bounds conversion (folds patamar.dat exchange factors into per-block

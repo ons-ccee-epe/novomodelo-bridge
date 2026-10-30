@@ -223,7 +223,7 @@ Armazenamento inicial por usina ativa; opcionalmente o volume morto já enchido 
 | `past_anticipated_commitments[].start_date` | `adterm.dat` › `despachos · lag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Primeiro dia do mês de entrega: `lag` = 1 é o primeiro mês do estudo, `lag` = 2 o segundo, e assim por diante; uma janela por `lag` de 1 ao máximo da usina. |
 | `past_anticipated_commitments[].end_date` | `adterm.dat` › `despachos · lag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Primeiro dia do mês seguinte à entrega (fim exclusivo). |
 | `past_anticipated_commitments[].value_mw` | `adterm.dat` › `despachos · valor`, `adterm.dat` › `despachos · patamar`, `patamar.dat` › `duracao_mensal_patamares · valor`, `term.dat` › `usinas · potencia_instalada`, `term.dat` › `usinas · fator_capacidade_maximo`, `term.dat` › `usinas · geracao_minima` *(condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Média dos MW por patamar ponderada pela fração de duração do patamar no mês de entrega (preserva o MWh comprometido). Limitado ao par estático [`min_mw`, `max_mw`] da térmica — o envelope dos limites por estágio —, com aviso. |
-| `recent_observations[].hydro_id` | `vazpast.dat` › `tendencia · codigo_usina`, `confhd.dat` › `usinas · posto` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | `codigo_usina` de `vazpast.dat` é o posto; cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id. |
+| `recent_observations[].hydro_id` | `vazpast.dat` › `tendencia · codigo_posto`, `confhd.dat` › `usinas · posto` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id. |
 | `recent_observations[].start_date` | `vazpast.dat` › `tendencia · mes`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Primeiro dia de cada um dos 12 meses calendário anteriores ao início do estudo, do mais antigo ao mais recente; mês sem valor na tendência é omitido. |
 | `recent_observations[].end_date` | `vazpast.dat` › `tendencia · mes`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Primeiro dia do mês seguinte (fim exclusivo). |
 | `recent_observations[].value_m3s` | `vazpast.dat` › `tendencia · valor`, `confhd.dat` › `usinas · posto`, `confhd.dat` › `usinas · codigo_usina_jusante` *(condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Vazão natural do posto convertida em incremental subtraindo, mês a mês, a vazão natural dos postos das usinas imediatamente a montante da usina na cascata de `codigo_usina_jusante`, cada posto uma vez. Usina no posto artificial (300) recebe 0 nos 12 meses, e um posto artificial a montante não é subtraído. |
@@ -259,8 +259,8 @@ Uma linha por par não ordenado de submercados presente em `limites_intercambio`
 | `lines[].operational_start_date` | `dger.dat` › `ano_inicial_historico` *(derivado)* | 1º de janeiro de `ano_inicial_historico`, como nas barras. |
 | `lines[].source_bus_id` | `sistema.dat` › `limites_intercambio · submercado_de` *(derivado)* | Id Novomodelo do menor código do par. |
 | `lines[].target_bus_id` | `sistema.dat` › `limites_intercambio · submercado_para` *(derivado)* | Id Novomodelo do maior código do par. |
-| `lines[].capacity.direct_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` | Limite (MW) no sentido menor→maior código no mês de início do estudo (`sentido` 0 é de→para, 1 é para→de). Sem linha nessa data usa a primeira data com valor; par sem linha recebe 0. |
-| `lines[].capacity.reverse_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` | Limite (MW) no sentido maior→menor código, mesma regra de data. |
+| `lines[].capacity.direct_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `sistema.dat` › `limites_intercambio · flag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` | Limite (MW) no sentido menor→maior código no mês de início do estudo (`sentido` 0 é de→para, 1 é para→de), só dos registros com `flag` 0. Sem linha nessa data usa a primeira data com valor; par sem linha recebe 0. |
+| `lines[].capacity.reverse_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `sistema.dat` › `limites_intercambio · flag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` | Limite (MW) no sentido maior→menor código, mesma regra de data. |
 | `lines[].exchange_cost` | `sistema.dat` › `custo_deficit · ficticio` | Presente só em linhas que tocam um submercado fictício: 0.000273 × 0.5, meia pINT, para que uma rota real→fictício→real custe o mesmo que o intercâmbio direto. Demais linhas usam o valor global de `penalties.json`. |
 
 ### `system/thermals.json`
@@ -321,7 +321,7 @@ Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operação — `EX
 | `hydros[].evaporation.reference_volumes_hm3[]` | `volref_saz.dat` › `mes`, `volref_saz.dat` › `valor`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo` *(condicional: somente quando a usina tem evaporação e uma linha não nula em `volref_saz.dat`)* | Doze volumes absolutos (hm³), um por mês civil: `volume_minimo + valor` (volume útil sazonal de `volref_saz.dat`; 0 para mês ausente, isto é, operar em `volume_minimo`), limitado ao intervalo [`min_storage_hm3`, `max_storage_hm3`]. |
 | `hydros[].tailrace.type` | — *(constante)* | Sempre `polynomial`. O bloco `tailrace` só existe quando `canal_fuga_medio` é positivo; caso contrário é nulo. |
 | `hydros[].tailrace.coefficients[]` | `hidr.dat` › `canal_fuga_medio` | Polinômio de grau zero: o único coeficiente é `canal_fuga_medio` (m), o nível médio do canal de fuga que o Novomodelo subtrai da cota de montante ao derivar ρ_eq. |
-| `hydros[].diversion` | `dger.dat` › `canal_desvio`, `modif.dat` › `CDESVIO · usina de jusante`, `modif.dat` › `CDESVIO · vazão máxima` | Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, ou nulo (sem limite) quando ela vale 9 999 999 m³/s ou mais, o valor do NEWAVE para canal sem limite (diagnóstico `diversion-channel-unlimited`). Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`). |
+| `hydros[].diversion` | `dger.dat` › `canal_desvio`, `modif.dat` › `CDESVIO · codigo_usina_jusante`, `modif.dat` › `CDESVIO · limite_vazao` | Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, ou nulo (sem limite) quando ela vale 9 999 999 m³/s ou mais, o valor do NEWAVE para canal sem limite (diagnóstico `diversion-channel-unlimited`). Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima (ou a traz ilegível) ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`). |
 | `hydros[].filling` | `exph.dat` › `data_inicio_enchimento`, `exph.dat` › `duracao_enchimento` | Nulo para usinas existentes e para usina NE cujo `duracao_enchimento` é zero; usina NE admitida com enchimento de volume morto recebe o bloco com `start_stage_id` e `filling_min_rate_m3s`. |
 | `hydros[].filling.start_stage_id` | `exph.dat` › `data_inicio_enchimento`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `mes_inicio_estudo` *(derivado; condicional: somente para usina NE com registro de enchimento em `exph.dat` e `duracao_enchimento` maior que zero)* | Estágio 0-based do mês de `data_inicio_enchimento`, limitado a 0 quando anterior ao início do estudo. |
 | `hydros[].filling.filling_min_rate_m3s` | `exph.dat` › `volume_morto`, `exph.dat` › `data_inicio_enchimento`, `exph.dat` › `duracao_enchimento`, `hidr.dat` › `volume_minimo`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `mes_inicio_estudo` *(condicional: somente para usina NE com registro de enchimento em `exph.dat` e `duracao_enchimento` maior que zero)* | Taxa constante (m³/s) que leva o armazenamento de `volume_morto` % de `min_storage_hm3` até `min_storage_hm3` ao longo da janela de enchimento: volume restante dividido pela soma, nos estágios da janela dentro do horizonte, do fator hm³ por (m³/s) de cada mês civil. |
@@ -603,8 +603,8 @@ Uma linha base por (linha, estágio) com os limites de intercâmbio do mês, mai
 | `line_id` | `sistema.dat` › `limites_intercambio · submercado_de`, `sistema.dat` › `limites_intercambio · submercado_para` *(derivado)* | Mesmo mapa de pares canônicos de `system/lines.json`. |
 | `stage_id` | `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `num_anos_estudo`, `dger.dat` › `num_anos_pos_estudo` *(derivado)* | Todo estágio do estudo e do pós-estudo, para toda linha. |
 | `block_id` | `patamar.dat` › `intercambio_patamares · patamar` | Nulo na linha base do estágio; `patamar` − 1 nas linhas de sobrescrita por patamar, emitidas só quando o fator direto ou reverso é diferente de 1.0. |
-| `direct_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `patamar.dat` › `intercambio_patamares · valor` | Linha base: limite menor→maior código no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano. |
-| `reverse_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `patamar.dat` › `intercambio_patamares · valor` | Mesma regra no sentido maior→menor código (fator de `intercambio_patamares` com de > para). |
+| `direct_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `sistema.dat` › `limites_intercambio · flag`, `patamar.dat` › `intercambio_patamares · valor` | Linha base: limite menor→maior código (registros com `flag` 0) no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano. |
+| `reverse_mw` | `sistema.dat` › `limites_intercambio · valor`, `sistema.dat` › `limites_intercambio · sentido`, `sistema.dat` › `limites_intercambio · flag`, `patamar.dat` › `intercambio_patamares · valor` | Mesma regra no sentido maior→menor código (fator de `intercambio_patamares` com de > para). |
 
 ### `constraints/pumping_bounds.parquet`
 
@@ -1001,8 +1001,10 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `limites_intercambio · submercado_para` → `system/lines.json` › `lines[].target_bus_id`
 - `limites_intercambio · valor` → `system/lines.json` › `lines[].capacity.direct_mw`
 - `limites_intercambio · sentido` → `system/lines.json` › `lines[].capacity.direct_mw`
+- `limites_intercambio · flag` → `system/lines.json` › `lines[].capacity.direct_mw`
 - `limites_intercambio · valor` → `system/lines.json` › `lines[].capacity.reverse_mw`
 - `limites_intercambio · sentido` → `system/lines.json` › `lines[].capacity.reverse_mw`
+- `limites_intercambio · flag` → `system/lines.json` › `lines[].capacity.reverse_mw`
 - `custo_deficit · ficticio` → `system/lines.json` › `lines[].exchange_cost`
 - `geracao_usinas_nao_simuladas · codigo_submercado` → `system/non_controllable_sources.json` › `non_controllable_sources[].id`
 - `geracao_usinas_nao_simuladas · indice_bloco` → `system/non_controllable_sources.json` › `non_controllable_sources[].id`
@@ -1014,8 +1016,10 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `limites_intercambio · submercado_para` → `constraints/line_bounds.parquet` › `line_id`
 - `limites_intercambio · valor` → `constraints/line_bounds.parquet` › `direct_mw`
 - `limites_intercambio · sentido` → `constraints/line_bounds.parquet` › `direct_mw`
+- `limites_intercambio · flag` → `constraints/line_bounds.parquet` › `direct_mw`
 - `limites_intercambio · valor` → `constraints/line_bounds.parquet` › `reverse_mw`
 - `limites_intercambio · sentido` → `constraints/line_bounds.parquet` › `reverse_mw`
+- `limites_intercambio · flag` → `constraints/line_bounds.parquet` › `reverse_mw`
 - `custo_deficit · ficticio` → `constraints/penalty_overrides_bus.parquet` › `bus_id`
 - `custo_deficit · codigo_submercado` → `constraints/penalty_overrides_bus.parquet` › `bus_id`
 - `custo_deficit · custo` → `constraints/penalty_overrides_bus.parquet` › `excess_cost`
@@ -1041,7 +1045,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `custo_deficit · custo` → `constraints/generic_constraints.json` › `constraints[].slack.enabled`
 - `custo_deficit · custo` → `constraints/generic_constraints.json` › `constraints[].slack.penalty`
 - `numero_patamares_deficit` — *não lido.* Os segmentos de déficit são derivados das linhas de `custo_deficit` (`patamar_deficit`, `custo`, `corte`); a contagem declarada não é lida.
-- `limites_intercambio · flag` — *não lido.* Coluna de flag do bloco de limites de intercâmbio; o bridge usa apenas `submercado_de`, `submercado_para`, `sentido`, `data` e `valor`.
+- `limites_intercambio · registros com flag 1` — *não lido.* Intercâmbio mínimo obrigatório. Não é convertido nem reportado: os limites de `system/lines.json` e de `constraints/line_bounds.parquet` usam só os registros com `flag` 0.
 
 ### `clast.dat`
 
@@ -1355,8 +1359,8 @@ Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`
 - `VOLCOTA · coeficientes a0 a a4` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `CFUGA · nivel` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `CMONT · nivel` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
-- `CDESVIO · usina de jusante` → `system/hydros.json` › `hydros[].diversion`
-- `CDESVIO · vazão máxima` → `system/hydros.json` › `hydros[].diversion`
+- `CDESVIO · codigo_usina_jusante` → `system/hydros.json` › `hydros[].diversion`
+- `CDESVIO · limite_vazao` → `system/hydros.json` › `hydros[].diversion`
 - `VOLCOTA · coeficientes a0 a a4` → `system/hydros.json` › `hydros[].efficiency`
 - `VOLCOTA · coeficientes a0 a a4` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].model`
 - `VOLMIN · volume` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
@@ -1457,7 +1461,7 @@ O bridge toma, por variável, o primeiro valor `R$/MWh` não nulo do primeiro pa
 
 Lido integralmente: as vazões naturais por posto são convertidas em incrementais e recortadas aos 12 meses anteriores ao início do estudo para `initial_conditions.recent_observations`.
 
-- `tendencia · codigo_usina` → `initial_conditions.json` › `recent_observations[].hydro_id`
+- `tendencia · codigo_posto` → `initial_conditions.json` › `recent_observations[].hydro_id`
 - `tendencia · mes` → `initial_conditions.json` › `recent_observations[].start_date`
 - `tendencia · mes` → `initial_conditions.json` › `recent_observations[].end_date`
 - `tendencia · valor` → `initial_conditions.json` › `recent_observations[].value_m3s`
@@ -1904,7 +1908,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `confhd.dat` › `ano_inicio_historico · ano_fim_historico` — *não lido.* Janela do histórico de vazões por usina. O bridge usa o histórico completo de `vazoes.dat` desde `ano_inicial_historico` até o mês anterior ao início do estudo para todas as usinas.
 - `conft.dat` › `usina_existente · classe` — *não lido.* Toda usina listada vira uma térmica do Novomodelo; o estado `EX`/`NE`/`EE` e a classe térmica não são consultados. A disponibilidade efetiva vem das janelas POTEF de `expt.dat`.
 - `sistema.dat` › `numero_patamares_deficit` — *não lido.* Os segmentos de déficit são derivados das linhas de `custo_deficit` (`patamar_deficit`, `custo`, `corte`); a contagem declarada não é lida.
-- `sistema.dat` › `limites_intercambio · flag` — *não lido.* Coluna de flag do bloco de limites de intercâmbio; o bridge usa apenas `submercado_de`, `submercado_para`, `sentido`, `data` e `valor`.
+- `sistema.dat` › `limites_intercambio · registros com flag 1` — *não lido.* Intercâmbio mínimo obrigatório. Não é convertido nem reportado: os limites de `system/lines.json` e de `constraints/line_bounds.parquet` usam só os registros com `flag` 0.
 - `clast.dat` › `tipo_combustivel` — *não lido.* Combustível da classe térmica. O Novomodelo não distingue combustível; só o custo por ano de estudo e as modificações por data são convertidos.
 - `ree.dat` › `remocao_ficticias` — *não lido.* Flag de remoção de usinas fictícias do REE; o bridge identifica as fictícias estruturalmente (posto compartilhado e ρ_esp = 0), sem consultar o flag.
 - `hidr.dat` › `posto · submercado (do cadastro)` — *não lido.* Posto e submercado são tomados de `confhd.dat` e de `ree.dat` via o REE de `confhd.dat` (barra); as colunas homônimas do cadastro são ignoradas. A topologia da cascata vem do `codigo_usina_jusante` do `confhd.dat`; o do cadastro só localiza o nível de jusante da faixa de turbinamento da FPHA.

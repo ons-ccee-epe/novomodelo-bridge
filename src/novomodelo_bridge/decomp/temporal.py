@@ -321,20 +321,18 @@ def _first_active(values: Sequence[float] | None) -> float | None:
 def _cortesh_cvar(cortesh_path: Path | None) -> tuple[float | None, float | None]:
     """The FCF header's active ``(alpha, lambda)`` CVaR fractions.
 
-    Reads ``cortesh.dat`` (``SecaoDadosCortesh.alfa_cvar``/``lambda_cvar``,
-    already fractions), returning the first active (nonzero) pair, or
+    Reads ``cortesh.dat`` (``Cortesh.alfa_cvar``/``lambda_cvar``, already
+    fractions), returning the first active (nonzero) pair, or
     ``(None, None)`` when the header is absent or CVaR is disabled there.
     """
     if cortesh_path is None:
         return None, None
     from inewave.newave import Cortesh
-    from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 
-    ch = Cortesh.read(str(cortesh_path))
-    sec = next((s for s in ch.data.of_type(SecaoDadosCortesh)), None)
-    if sec is None or getattr(sec, "usa_cvar", 0) != 1:
+    cortesh = Cortesh.read(str(cortesh_path))
+    if cortesh.usa_cvar != 1:
         return None, None
-    return _first_active(sec.alfa_cvar), _first_active(sec.lambda_cvar)
+    return _first_active(cortesh.alfa_cvar), _first_active(cortesh.lambda_cvar)
 
 
 def resolve_cvar(dadger: Dadger, cortesh_path: Path | None) -> CVaRConfig | None:

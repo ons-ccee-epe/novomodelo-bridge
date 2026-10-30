@@ -25,7 +25,10 @@ links are cobre-bridge's.
 
 - **`AC ALTEFE` overrides set the head of DECOMP's turbined-flow limit.** They
   were reported and ignored.
-- **The bridge requires idecomp 1.18.0 or newer.**
+- **The bridge requires idecomp 1.18.0 and inewave 1.17.0 or newer.**
+- **`convert newave` reads `CDESVIO` only in upper case, like the other
+  `modif.dat` records.** A maximum flow that is not a number drops the channel
+  with `diversion-channel-dropped`; it used to stop the conversion.
 - **`compare decomp` exits 1 when the DECOMP deck is not found**, as
   `compare newave` does; it used to exit 2. An unreadable Novomodelo output
   still exits 2 on both tracks.
@@ -38,6 +41,8 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`convert newave` no longer reads a mandatory minimum interchange
+  (`flag` 1 in `sistema.dat`) as an interchange limit**; it is left out.
 - **`--json` prints the verdict envelope for a command line the parser
   rejects.** An unknown option or command, a missing argument or an invalid
   value left stdout empty; it now prints the envelope, with status `error` and
@@ -48,8 +53,9 @@ links are cobre-bridge's.
   an internal error; it now exports with no GNL thermals, as `convert decomp`
   already did.
 - **A deck missing a register the conversion needs fails with a message naming
-  it** (for example, a deck with no UH records). Several such cases crashed
-  with an internal `AttributeError` or `TypeError` instead.
+  it** (for example, a DECOMP deck with no UH records, or a `dger.dat` with no
+  study start). Several such cases crashed with an internal `AttributeError`
+  or `TypeError` instead.
 
 ## [0.19.1] - 2026-10-26
 

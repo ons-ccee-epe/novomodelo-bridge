@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -17,14 +18,17 @@ from novomodelo_bridge.newave.horizon import (
     study_horizon,
 )
 
+if TYPE_CHECKING:
+    from inewave.newave import Dger
+
 
 def test_historical_start_date_is_jan_1_of_ano_inicial_historico() -> None:
-    dger = SimpleNamespace(ano_inicial_historico=1931)
+    dger = cast("Dger", SimpleNamespace(ano_inicial_historico=1931))
     assert historical_start_date(dger) == "1931-01-01"
 
 
 def test_historical_start_date_falls_back_when_absent() -> None:
-    dger = SimpleNamespace(ano_inicial_historico=None)
+    dger = cast("Dger", SimpleNamespace(ano_inicial_historico=None))
     assert historical_start_date(dger) == "1931-01-01"
 
 

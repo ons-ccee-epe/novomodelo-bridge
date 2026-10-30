@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, TypeGuard
 
 import pandas as pd
 from inewave.newave.modelos.modif import (
+    CDESVIO,
     CFUGA,
     CMONT,
     COTAREA,
@@ -29,6 +30,7 @@ from inewave.newave.modelos.modif import (
     POTEFE,
     TURBMAXT,
     TURBMINT,
+    USINA,
     VAZMIN,
     VAZMINT,
     VMAXT,
@@ -90,9 +92,8 @@ def _raw_unit(rec: object) -> str:
 
 def _volume_unit(rec: object) -> str | None:
     """``"h"`` (hm³) or ``"%"`` (percent of the useful volume) of a MODIF.DAT
-    volume record; ``None`` when its ``unidade`` column is absent or unknown.
-    The file quotes the unit (``'%'``), so quotes are stripped first."""
-    unit = _raw_unit(rec).strip().strip("'\"").strip().lower()
+    volume record; ``None`` when its ``unidade`` column is absent or unknown."""
+    unit = _raw_unit(rec).strip().lower()
     if unit in ("h", "hm3", "hm³"):
         return "h"
     if unit == "%":
@@ -152,8 +153,14 @@ def _modif_blocks(modif: Modif) -> list[tuple[int | None, list[Register]]]:
     """
     blocks: list[tuple[int | None, list[Register]]] = [(None, [])]
     for register in modif.data:
-        if type(register).__name__ == "USINA":
-            blocks.append((int(register.codigo), []))
+        if _is_record(register, USINA):
+            if register.codigo is None:
+                raise FieldParseError(
+                    "modif.dat: a USINA record has no plant code",
+                    path="modif.dat",
+                    field="USINA",
+                )
+            blocks.append((register.codigo, []))
         else:
             blocks[-1][1].append(register)
     return blocks if blocks[0][1] else blocks[1:]
@@ -220,8 +227,8 @@ def _apply_permanent_overrides(
         for rec in records:
             type_name = type(rec).__name__
 
-            # Skip temporal override types — handled separately.
-            if type_name in _TEMPORAL_OVERRIDE_TYPES:
+            # Temporal records and CDESVIO are converted elsewhere, not into the cadastro.
+            if type_name in _TEMPORAL_OVERRIDE_TYPES or _is_record(rec, CDESVIO):
                 continue
 
             if _is_record(rec, VAZMIN):
@@ -340,15 +347,14 @@ class DiversionRecord:
 def read_diversion_records(case: NewaveCase) -> dict[int, DiversionRecord]:
     """``{plant code: its CDESVIO record}`` from ``modif.dat``.
 
-    inewave keeps ``CDESVIO`` as an unparsed line, so its free-format fields
-    are split here and the record belongs to the ``USINA`` record above it.
-    A plant with more than one keeps the last, as with the other permanent
-    records.
+    A record belongs to the ``USINA`` record above it; a plant with more than
+    one keeps the last, as with the other permanent records. A flow inewave
+    cannot parse reads as no flow given.
 
     Raises:
         FieldParseError: a record before any ``USINA`` record, without an
-            integer target code, diverting to its own plant, or with a flow
-            that is not a non-negative number.
+            integer target code, diverting to its own plant, or with a
+            negative or infinite flow.
     """
     modif = case.modif
     if modif is None:
@@ -356,37 +362,27 @@ def read_diversion_records(case: NewaveCase) -> dict[int, DiversionRecord]:
     records: dict[int, DiversionRecord] = {}
     for plant, registers in _modif_blocks(modif):
         for register in registers:
-            line = getattr(register, "data", None)
-            if not isinstance(line, str):
-                continue
-            fields = line.split()
-            if not fields or fields[0].upper() != "CDESVIO":
+            if not _is_record(register, CDESVIO):
                 continue
             if plant is None:
                 raise _cdesvio_error("a CDESVIO record comes before any USINA record")
-            records[plant] = _parse_cdesvio(plant, fields[1:])
+            records[plant] = _diversion_record(plant, register)
     return records
 
 
-def _parse_cdesvio(plant: int, values: list[str]) -> DiversionRecord:
-    try:
-        target = int(values[0])
-    except (IndexError, ValueError):
+def _diversion_record(plant: int, register: CDESVIO) -> DiversionRecord:
+    target = register.codigo_usina_jusante
+    if target is None:
         raise _cdesvio_error(
             f"the CDESVIO record of plant {plant} has no integer target plant code"
-        ) from None
+        )
     if target == plant:
         raise _cdesvio_error(f"the CDESVIO record of plant {plant} diverts to itself")
-    if len(values) < 2:
-        return DiversionRecord(target, None)
-    try:
-        max_flow = float(values[1])
-    except ValueError:
-        max_flow = math.nan
-    if not math.isfinite(max_flow) or max_flow < 0.0:
+    max_flow = register.limite_vazao
+    if max_flow is not None and (not math.isfinite(max_flow) or max_flow < 0.0):
         raise _cdesvio_error(
             f"the CDESVIO record of plant {plant} gives the maximum flow "
-            f"{values[1]!r}; expected a non-negative number in m³/s"
+            f"{max_flow:g}; expected a non-negative number in m³/s"
         )
     return DiversionRecord(target, max_flow)
 

@@ -49,11 +49,7 @@ def _mock_case(
     else:
         case.estacao_bombeamento_submercado = None
 
-    # confhd
-    if confhd_codes is not None:
-        case.confhd.usinas = {"codigo_usina": list(confhd_codes)}
-    else:
-        case.confhd.usinas = {"codigo_usina": []}
+    case.hydro_plants = pd.DataFrame({"codigo_usina": sorted(confhd_codes or ())})
 
     return case
 

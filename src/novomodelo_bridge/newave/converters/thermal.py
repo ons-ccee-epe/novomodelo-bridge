@@ -26,7 +26,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
-from novomodelo_bridge.core.pandas_utils import as_timestamp
+from novomodelo_bridge.core.pandas_utils import as_int, as_timestamp
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
 from novomodelo_bridge.newave.horizon import build_stage_dates, historical_start_date
@@ -89,7 +89,7 @@ def convert_thermals(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     id_map:
         Pre-built ID mapping for bus cross-references.
     """
-    conft_df = case.conft.usinas
+    conft_df = case.thermal_plants
     clast_df = case.clast.usinas
 
     # Anticipated dispatch (the source model GNL) — gated by
@@ -486,8 +486,9 @@ class _StageBoundsModel:
         expt_by_code: dict[int, list[dict]] = {}
         try:
             expt = case.expt
-            if expt is not None:
-                for _, row in expt.expansoes.iterrows():
+            expansions = expt.expansoes if expt is not None else None
+            if expansions is not None:
+                for _, row in expansions.iterrows():
                     expt_by_code.setdefault(int(row["codigo_usina"]), []).append(
                         {
                             "tipo": str(row["tipo"]),
@@ -519,7 +520,7 @@ class _StageBoundsModel:
         # ``EX``, or a status the deck leaves blank, keeps them operative.
         nullified_codes = {
             int(row["codigo_usina"])
-            for _, row in case.conft.usinas.iterrows()
+            for _, row in case.thermal_plants.iterrows()
             if str(row["usina_existente"]).strip() in ("EE", "NE")
         }
 
@@ -537,7 +538,7 @@ class _StageBoundsModel:
         # A file with no maintenance record reads as None: no maintenance.
         if manutt_df is not None:
             for code, grp in manutt_df.groupby("codigo_usina"):
-                manutt_by_code[int(code)] = grp.reset_index(drop=True)
+                manutt_by_code[as_int(code)] = grp.reset_index(drop=True)
 
         return cls(
             stage_dates=stage_dates,
@@ -658,7 +659,7 @@ def _thermal_names(case: NewaveCase) -> dict[int, str]:
     """Map thermal codes to plant names from conft.dat."""
     return {
         int(row["codigo_usina"]): str(row["nome_usina"]).strip()
-        for _, row in case.conft.usinas.iterrows()
+        for _, row in case.thermal_plants.iterrows()
     }
 
 

@@ -30,10 +30,15 @@ from novomodelo_bridge.core.incremental_inflow import (
     incremental_by_plant,
     is_artificial_gauge,
 )
-from novomodelo_bridge.core.pandas_utils import as_int
+from novomodelo_bridge.core.pandas_utils import as_int, require_frame
 from novomodelo_bridge.newave import plants
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, study_horizon
+from novomodelo_bridge.newave.horizon import (
+    POST_STUDY_YEAR,
+    history_start_year,
+    study_horizon,
+    study_start,
+)
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.switches import switch_off_diagnostic
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
@@ -145,8 +150,8 @@ def _read_vazoes(path: Path, dger: Dger) -> Vazoes:
     """Read ``vazoes.dat`` at the width its size and the deck's years imply."""
     count = _posto_count(
         path,
-        hist_start_year=int(dger.ano_inicial_historico),
-        study_start_year=int(dger.ano_inicio_estudo),
+        hist_start_year=history_start_year(dger),
+        study_start_year=study_start(dger)[0],
     )
     return Vazoes.read(path, postos=count)
 
@@ -210,10 +215,10 @@ def _inflow_cascade(
 def _case_cascade(case: NewaveCase) -> _InflowCascade:
     """The inflow cascade of *case*, with its admitted filling plants."""
     filling = plants.filling_hydro_codes(
-        case.confhd.usinas,
+        case.hydro_plants,
         case.exph.expansoes if case.exph is not None else None,
     )
-    return _inflow_cascade(case.confhd.usinas, filling_codes=filling)
+    return _inflow_cascade(case.hydro_plants, filling_codes=filling)
 
 
 def _incremental_by_hydro(
@@ -243,7 +248,7 @@ def _report_artificial_gauge(
         return
     name_of = {
         int(row["codigo_usina"]): str(row["nome_usina"]).strip()
-        for _, row in case.confhd.usinas.iterrows()
+        for _, row in case.hydro_plants.iterrows()
     }
     emit(
         artificial_gauge_plants_diagnostic(
@@ -317,11 +322,10 @@ def _vazpast_incremental(
     if df_tend is None or df_tend.empty:
         return {}
 
-    # The tendency's "codigo_usina" column holds the posto, as in vazoes.dat.
     months = list(range(1, 13))
     natural: dict[int, np.ndarray] = {}
     present: dict[int, set[int]] = {}
-    for posto, posto_df in df_tend.groupby("codigo_usina"):
+    for posto, posto_df in df_tend.groupby("codigo_posto"):
         values = dict(zip(posto_df["mes"].astype(int), posto_df["valor"].astype(float)))
         natural[as_int(posto)] = np.array([values.get(m, 0.0) for m in months])
         present[as_int(posto)] = set(values)
@@ -395,9 +399,8 @@ def _natural_history(case: NewaveCase) -> tuple[int, int, dict[int, np.ndarray]]
     if df_vazoes is None or df_vazoes.empty:
         raise FileNotFoundError("vazoes.dat not found or empty")
 
-    hist_start_year: int = dger.ano_inicial_historico
-    study_start_year: int = dger.ano_inicio_estudo
-    study_start_month: int = dger.mes_inicio_estudo
+    hist_start_year = history_start_year(dger)
+    study_start_year, study_start_month = study_start(dger)
 
     # History is truncated at the month BEFORE the study start.
     # e.g., study starts March 2026 → history ends February 2026.
@@ -460,9 +463,8 @@ def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
         raise FileNotFoundError("vazoes.dat not found or empty")
 
     # Truncate to months before the study start (same window as inflow_history).
-    hist_start_year: int = dger.ano_inicial_historico
-    study_start_year: int = dger.ano_inicio_estudo
-    study_start_month: int = dger.mes_inicio_estudo
+    hist_start_year = history_start_year(dger)
+    study_start_year, study_start_month = study_start(dger)
     n_total_rows = len(df_vazoes)
     cutoff_months = (study_start_year - hist_start_year) * 12 + (study_start_month - 1)
     n_rows = min(cutoff_months, n_total_rows)
@@ -759,7 +761,9 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
         (bus, stage) pair.
     """
     sistema_obj = case.sistema
-    df_load: pd.DataFrame = sistema_obj.mercado_energia
+    df_load = require_frame(
+        sistema_obj.mercado_energia, "energy market table in sistema.dat"
+    )
 
     horizon = case.horizon
     start_month = horizon.start_month

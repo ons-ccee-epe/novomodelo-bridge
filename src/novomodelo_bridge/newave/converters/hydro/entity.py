@@ -235,11 +235,10 @@ class _HydroContext:
 
 def _hydro_context(case: NewaveCase, id_map: NewaveIdMap) -> _HydroContext:
     hidr = case.hidr
-    confhd = case.confhd
     ree_file = case.ree
 
     cadastro = hidr.cadastro  # DataFrame indexed by codigo_usina (1-based)
-    confhd_df = confhd.usinas
+    confhd_df = case.hydro_plants
     ree_df = ree_file.rees  # columns: codigo, nome, submercado, ...
 
     cadastro = _apply_permanent_overrides(cadastro, case)

@@ -468,7 +468,7 @@ def convert_water_withdrawal(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table 
     # to the immediately downstream EX plant — the source model applies NC withdrawals
     # to the next real plant in the cascade, while FICT entries are not propagated and
     # are silently dropped.
-    confhd_df = case.confhd.usinas
+    confhd_df = case.hydro_plants
     fict_set = case.fictitious_codes
     plant_downstream: dict[int, int] = {}
     for _, r in confhd_df.iterrows():
@@ -922,7 +922,7 @@ def convert_storage_bounds(
     confhd_codes = case.active_hydro_codes
 
     exph_df = case.exph.expansoes if case.exph is not None else None
-    filling_codes = filling_hydro_codes(case.confhd.usinas, exph_df)
+    filling_codes = filling_hydro_codes(case.hydro_plants, exph_df)
 
     # Extract temporal overrides — empty dict when MODIF.DAT is absent,
     # which is fine because GHMIN.DAT alone can still produce per-stage
@@ -959,11 +959,9 @@ def convert_storage_bounds(
         seasonalize_vmaxt=sazonaliza_vmaxt,
         seasonalize_vmint=sazonaliza_vmint,
     )
-    if filling_codes and case.exph is not None:
+    if filling_codes and exph_df is not None:
         rows.extend(
-            _filling_ramp_rows(
-                case.exph.expansoes, filling_codes, cadastro, id_map, horizon
-            )
+            _filling_ramp_rows(exph_df, filling_codes, cadastro, id_map, horizon)
         )
 
     if not rows:

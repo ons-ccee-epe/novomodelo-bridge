@@ -23,7 +23,7 @@ from novomodelo_bridge.core.season_calendar import (
     monthly_season_definitions,
 )
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.horizon import stage_dates_for, study_horizon
+from novomodelo_bridge.newave.horizon import stage_dates_for, study_horizon, study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -325,8 +325,7 @@ def convert_stages(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     if not num_anos:
         raise ValueError("NEWAVE case has zero study years")
 
-    start_month: int = dger.mes_inicio_estudo
-    start_year: int = dger.ano_inicio_estudo
+    start_year, start_month = study_start(dger)
     num_scenarios: int = dger.num_aberturas or 1
     taxa = dger.taxa_de_desconto or 0.0
     annual_discount_rate = float(taxa) / 100.0

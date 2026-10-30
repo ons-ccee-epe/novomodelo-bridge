@@ -9,7 +9,7 @@ export; the canonical name is set by the deck's ``FC`` record) carrying the
 cut coefficients. ``inewave.newave.Cortesh`` parses the header into
 :class:`CortesHeader`, the manifest both :func:`read_cortes` and the mapper
 key off. :func:`read_cortes` reads the boundary-stage records into
-:class:`StageCutRecord`/:class:`BoundaryCuts` via ``inewave`` 1.15.0's
+:class:`StageCutRecord`/:class:`BoundaryCuts` via ``inewave``'s
 ``Cortes.from_cortesh``, which returns a ``.cortes`` frame of named columns
 (``rhs``, ``pi_gnl_sbm{s}_pat{p}_lag{l}``, ``pi_varm_uhe{code}``,
 ``pi_qafl_uhe{code}_lag{l}``, ``pi_mx_sar_uhe{code}``, plus the per-cut
@@ -27,13 +27,11 @@ for ``Hidr.read``, not a decoded-text buffer.
 
 from __future__ import annotations
 
-import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 from inewave.newave import Cortes, Cortesh
-from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -225,8 +223,7 @@ def read_patamar_fractions(
     ``cortesh.dat``'s general-data record lays them out month-major, patamar
     inner, from January of ``ano_inicio_estudo``; each month's shares sum to 1.
     """
-    section = next(s for s in cortesh.data if isinstance(s, SecaoDadosCortesh))
-    values = [float(v) for v in section.duracoes_patamares]
+    values = [float(v) for v in cortesh.duracoes_patamares]
     n_patamares = int(cortesh.numero_patamares)
     first_year = int(cortesh.ano_inicio_estudo)
     fractions: dict[tuple[int, int], tuple[float, ...]] = {}
@@ -285,8 +282,8 @@ def _build_header(cortesh: Cortesh, *, boundary_stage: int) -> CortesHeader:
 
     Shared by :func:`read_cortesh` (which loads the file itself and
     resolves the deck's own individualized boundary stage) and
-    :func:`read_cortes` (which passes its resolved boundary stage — trailer-
-    derived or caller-supplied — and also resolves the consolidated
+    :func:`read_cortes` (which passes its resolved boundary stage — derived
+    from the partition dates or caller-supplied — and also resolves the consolidated
     archive's global chain-head index).
     """
     band_start = cortesh.estagio_individualizado_inicial
@@ -331,36 +328,6 @@ def _build_header(cortesh: Cortesh, *, boundary_stage: int) -> CortesHeader:
         record_size=cortesh.tamanho_registro_individualizado,
         last_cut_record_by_stage=last_cut_record_by_stage,
     )
-
-
-def _read_trailer(
-    cortes_path: Path, record_size: int
-) -> tuple[int, int, int, int] | None:
-    """Recover the single-stage partition export's trailer, if present.
-
-    ``inewave`` 1.15.0's ``Cortes.from_cortesh``/``SecaoDadosCortes`` has no
-    accessor for it — it silently discards the sentinel record (the record
-    whose ``rhs == 0.0``) when building ``.cortes``. This reads the file's
-    last physical ``record_size`` bytes directly and returns the leading
-    ``int32[4]`` — ``(study_start_month, study_start_year, cut_stage_month,
-    cut_stage_year)`` — when that record is the sentinel (confirmed
-    ``(9, 2024, 10, 2024)`` on the GNL deck's ``cortes-010.dat``). Returns
-    ``None`` for the consolidated archive, whose last physical record is a
-    real cut (nonzero ``rhs``) and carries no trailer.
-    """
-    file_size = cortes_path.stat().st_size
-    if file_size == 0 or file_size % record_size != 0:
-        raise ValueError(
-            f"{cortes_path} size {file_size} is not a positive multiple of "
-            f"record_size {record_size}"
-        )
-    with cortes_path.open("rb") as handle:
-        handle.seek(file_size - record_size)
-        leading_ints = struct.unpack("<4i", handle.read(16))
-        rhs = struct.unpack("<d", handle.read(8))[0]
-    if rhs != 0.0:
-        return None
-    return leading_ints
 
 
 def _resolve_global_chain_head(cortesh: Cortesh, boundary_stage: int) -> int:
@@ -496,22 +463,20 @@ def read_cortes(
     build its own header (:func:`_build_header`, the same logic
     :func:`read_cortesh` uses) and resolve the consolidated archive's
     global chain-head index from ``cortesh.ultimo_registro_cortes_estagio``.
-    The header is built from the *resolved* boundary stage below (trailer-
-    derived or caller-supplied), which also drives :func:`_build_header`'s
-    individualized-band gate and its fictitious-plant exclusion.
+    The header is built from the *resolved* boundary stage below (derived
+    from the partition dates or caller-supplied), which also drives
+    :func:`_build_header`'s individualized-band gate and its fictitious-plant
+    exclusion.
 
-    Detects the file shape automatically:
-
-    - **Single-stage partition export** (e.g. ``cortes-010.dat``): carries a
-      sentinel/trailer record. Read via ``por_estagio=True``; when
-      ``boundary_stage`` is ``None`` it is derived, calendar-anchored, from
-      the trailer's ``(cut_stage_month, cut_stage_year)`` as
-      ``(cut_stage_year - cortesh.ano_inicio_estudo) * 12 + cut_stage_month``.
-    - **Consolidated archive** (``cortes.dat``): no trailer.
-      ``boundary_stage`` is *required* — the caller supplies the DECOMP
-      coupling stage — and its global chain-head index is resolved from
-      ``cortesh.ultimo_registro_cortes_estagio`` before reading with
-      ``por_estagio=False``.
+    The file is first read as a single-stage partition export (e.g.
+    ``cortes-010.dat``), whose final record carries
+    ``Cortes.datas_particao``; when ``boundary_stage`` is ``None`` it is
+    derived, calendar-anchored, from those dates as
+    ``(cut_stage_year - cortesh.ano_inicio_estudo) * 12 + cut_stage_month``.
+    A file without those dates is the consolidated archive (``cortes.dat``):
+    ``boundary_stage`` is then *required* — the caller supplies the DECOMP
+    coupling stage — and the file is read again from that stage's global
+    chain head in ``cortesh.ultimo_registro_cortes_estagio``.
 
     Raises ``ValueError`` if the resolved boundary stage falls outside the
     deck's individualized band, if a ``pi_mx_sar_uhe*`` coefficient is
@@ -520,34 +485,31 @@ def read_cortes(
     missing or has no unique ``estudo`` row in
     ``cortesh.ultimo_registro_cortes_estagio``.
     """
-    record_size = cortesh.tamanho_registro_individualizado
-    trailer = _read_trailer(cortes_path, record_size)
+    cortes = Cortes.from_cortesh(str(cortes_path), cortesh, por_estagio=True)
+    partition_dates = cortes.datas_particao
 
-    resolved_boundary_stage: int
-    if trailer is not None:
-        _study_month, _study_year, cut_stage_month, cut_stage_year = trailer
-        if boundary_stage is None:
-            resolved_boundary_stage = (
-                cut_stage_year - cortesh.ano_inicio_estudo
-            ) * 12 + cut_stage_month
-        else:
-            resolved_boundary_stage = boundary_stage
-        header = _build_header(cortesh, boundary_stage=resolved_boundary_stage)
-        cortes = Cortes.from_cortesh(str(cortes_path), cortesh, por_estagio=True)
-    else:
-        if boundary_stage is None:
-            raise ValueError(
-                "boundary_stage is required for the consolidated archive "
-                f"{cortes_path} (no file-derivable trailer); supply the "
-                "DECOMP coupling stage"
-            )
+    if boundary_stage is not None:
         resolved_boundary_stage = boundary_stage
-        header = _build_header(cortesh, boundary_stage=resolved_boundary_stage)
-        indice_ultimo_corte = _resolve_global_chain_head(cortesh, boundary_stage)
+    elif partition_dates is not None:
+        _study_month, _study_year, cut_stage_month, cut_stage_year = partition_dates
+        resolved_boundary_stage = (
+            cut_stage_year - cortesh.ano_inicio_estudo
+        ) * 12 + cut_stage_month
+    else:
+        raise ValueError(
+            "boundary_stage is required for the consolidated archive "
+            f"{cortes_path} (no partition dates in its final record); "
+            "supply the DECOMP coupling stage"
+        )
+    header = _build_header(cortesh, boundary_stage=resolved_boundary_stage)
+
+    if partition_dates is None:
         cortes = Cortes.from_cortesh(
             str(cortes_path),
             cortesh,
-            indice_ultimo_corte=indice_ultimo_corte,
+            indice_ultimo_corte=_resolve_global_chain_head(
+                cortesh, resolved_boundary_stage
+            ),
             por_estagio=False,
         )
 

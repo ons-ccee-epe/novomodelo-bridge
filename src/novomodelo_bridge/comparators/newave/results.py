@@ -1103,7 +1103,7 @@ def _productivity_detail(
                 compute_accumulated_integrated_productivities,
             )
 
-            confhd_df = case.confhd.usinas
+            confhd_df = case.hydro_plants
             cb_accumulated = compute_accumulated_integrated_productivities(
                 nw_cadastro, confhd_df, fictitious=case.fictitious_codes
             )

@@ -3,9 +3,9 @@
 Reads MEDIAS CSV files (hydro, thermal, system) directly from the case
 directory and pmo.dat convergence/productivity data.
 
-MEDIAS files are parsed directly with Polars since inewave v1.13 does
-not provide dedicated reader classes for them.  pmo.dat is read via
-``inewave.newave.Pmo``.
+MEDIAS files are parsed with Polars, not inewave's MEDIAS readers: those drop
+the rows whose entity code is 0 or less and the last column of a line that
+does not end in a comma. pmo.dat is read via ``inewave.newave.Pmo``.
 
 Reader-failure contract: every file this module reads (MEDIAS CSVs,
 pmo.dat, sistema.dat, newave.tim, the FPHA reports, the nwlistop
@@ -27,14 +27,19 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import polars as pl
 
+from novomodelo_bridge.core.pandas_utils import as_float, as_timestamp, is_na
 from novomodelo_bridge.core.paths import find_case_insensitive
 from novomodelo_bridge.newave.files import NewaveFiles
+
+if TYPE_CHECKING:
+    from inewave.nwlistop import ArquivoComValores
 
 _LOG = logging.getLogger(__name__)
 
@@ -329,10 +334,9 @@ def read_pmo_convergence(newave_dir: Path) -> pl.DataFrame:
     cost, Novomodelo's ``upper_bound_mean``) and ``upper_bound_best`` (``ZSUP``, the
     lowest ``ZSUP ITER`` so far).
 
-    The table is parsed with a regex: inewave's tabular parser misaligns the
-    high-precision columns on real-world pmo.dat layouts (truncates ``LIM.INF``
-    to 3 decimals, drops the leading digit of ``LIM.SUP``, and frequently
-    returns ``NaN`` for ``ZINF``), so we cannot use ``Pmo.convergencia`` here.
+    The table is parsed with a regex, not ``Pmo.convergencia``: a run with
+    several forward series prints three rows per iteration, which inewave reads
+    by fixed columns that the unaligned high-precision numbers overrun.
 
     Returns empty DataFrame if pmo.dat is not found or the iteration
     table cannot be located.
@@ -601,33 +605,27 @@ def read_medias_ree(case_dir: Path) -> pl.DataFrame:
 
 
 _MERCL_FILE_RE = re.compile(r"mercl(\d+)\.out$", re.IGNORECASE)
-_MERCL_YEAR_RE = re.compile(r"ANO:\s*(\d{4})")
-_MERCL_VALUE_RE = re.compile(r"-?\d+\.\d*")
 
 
-def _parse_mercl_file(path: Path) -> dict[tuple[int, int], float]:
-    """Parse an nwlistop ``mercl<NNN>.out`` file.
+def _read_mercl(path: Path) -> dict[tuple[int, int], float]:
+    """``{(year, month): net load in MWmes}`` of one nwlistop ``mercl<NNN>.out``;
+    calendar months outside the horizon are written ``0.``. Empty when the file
+    does not parse."""
+    from inewave.nwlistop import Mercl
 
-    Returns ``{(year, month): net_load_mwmed}``.  Each ``ANO: YYYY`` block is
-    followed by a header row (bare column indices 1..12) and a value row of 12
-    trailing-dot floats; calendar months outside the horizon are written ``0.``.
-    """
-    out: dict[tuple[int, int], float] = {}
-    lines = path.read_text(encoding="latin-1", errors="replace").splitlines()
-    for i, line in enumerate(lines):
-        m = _MERCL_YEAR_RE.search(line)
-        if m is None:
-            continue
-        year = int(m.group(1))
-        # The value row is the first following line with >= 12 *dotted* floats
-        # (the header row carries bare indices 1..12, which have no dot).
-        for j in range(i + 1, min(i + 4, len(lines))):
-            nums = _MERCL_VALUE_RE.findall(lines[j])
-            if len(nums) >= 12:
-                for month, raw in enumerate(nums[:12], start=1):
-                    out[(year, month)] = float(raw)
-                break
-    return out
+    try:
+        table = Mercl.read(str(path)).valores
+    except Exception:
+        _LOG.warning("Failed to parse %s", path, exc_info=True)
+        return {}
+    if table is None:
+        return {}
+    months: dict[tuple[int, int], float] = {}
+    for stamp, value in zip(table["data"], table["valor"], strict=True):
+        if not is_na(value):
+            day = as_timestamp(stamp)
+            months[(day.year, day.month)] = as_float(value)
+    return months
 
 
 def read_newave_net_load_nwlistop(newave_dir: Path) -> pl.DataFrame:
@@ -664,7 +662,7 @@ def read_newave_net_load_nwlistop(newave_dir: Path) -> pl.DataFrame:
         if m is None:
             continue
         code = int(m.group(1))  # mercl001 -> submarket 1 (sequential codes)
-        parsed[code] = _parse_mercl_file(p)
+        parsed[code] = _read_mercl(p)
     parsed = {code: months for code, months in parsed.items() if months}
     if not parsed:
         return empty
@@ -849,78 +847,49 @@ def read_pmo_cost_breakdown(newave_dir: Path) -> dict[str, float]:
     return result
 
 
-# Per-iteration block in newave.tim:
-#   Iteracao   N - Backward: HHHhMMminSSs
-#                  Forward:  HHHhMMminSSs
-#                  Total:    HHHhMMminSSs
-# Whitespace between H/min/s is irregular; the regex tolerates 0+ spaces.
-_TIM_ITER_RE = re.compile(
-    r"^\s*Iteracao\s+(\d+)\s*-\s*Backward:\s*"
-    r"(\d+)h\s*(\d+)min\s*(\d+)s\s*\n"
-    r"\s*Forward:\s*(\d+)h\s*(\d+)min\s*(\d+)s\s*\n"
-    r"\s*Total:\s*(\d+)h\s*(\d+)min\s*(\d+)s",
-    re.MULTILINE,
-)
+_TIM_ITERATION_SCHEMA: dict[str, type[pl.DataType]] = {
+    "iteration": pl.Int64,
+    "backward_seconds": pl.Float64,
+    "forward_seconds": pl.Float64,
+    "total_seconds": pl.Float64,
+}
 
 
 def read_newave_tim_iterations(newave_dir: Path) -> pl.DataFrame:
-    """Parse per-iteration timings from ``newave.tim``.
+    """Read per-iteration timings from ``newave.tim``.
 
     Returns DataFrame with columns ``iteration`` (Int64),
     ``backward_seconds``, ``forward_seconds``, ``total_seconds``
-    (Float64). Empty when the file is missing.
+    (Float64). Empty when the file is missing or unparseable.
 
     Note: The source model's first iteration row carries clock-initialisation
     garbage on the Backward / Forward fields (sometimes hundreds of
     hours). Values are returned as-is so the caller can decide how to
     surface them (e.g. annotate the chart but keep the data).
     """
-    empty = pl.DataFrame(
-        schema={
-            "iteration": pl.Int64,
-            "backward_seconds": pl.Float64,
-            "forward_seconds": pl.Float64,
-            "total_seconds": pl.Float64,
-        }
-    )
+    empty = pl.DataFrame(schema=_TIM_ITERATION_SCHEMA)
     tim_path = find_case_insensitive(newave_dir, "newave.tim")
     if tim_path is None:
         _LOG.warning("newave.tim not found in %s", newave_dir)
         return empty
     try:
-        text = tim_path.read_text(encoding="latin-1")
-    except OSError:
-        _LOG.exception("Failed to read newave.tim at %s", tim_path)
-        return empty
+        from inewave.newave import Newavetim
 
-    rows: list[dict[str, float | int]] = []
-    for m in _TIM_ITER_RE.finditer(text):
-        it = int(m.group(1))
-        bw = int(m.group(2)) * 3600 + int(m.group(3)) * 60 + int(m.group(4))
-        fw = int(m.group(5)) * 3600 + int(m.group(6)) * 60 + int(m.group(7))
-        tt = int(m.group(8)) * 3600 + int(m.group(9)) * 60 + int(m.group(10))
-        rows.append(
-            {
-                "iteration": it,
-                "backward_seconds": float(bw),
-                "forward_seconds": float(fw),
-                "total_seconds": float(tt),
-            }
-        )
-    if not rows:
+        table = Newavetim.read(str(tim_path)).tempos_iteracoes
+    except Exception:
+        _LOG.warning("Failed to parse newave.tim at %s", tim_path, exc_info=True)
         return empty
-    return (
-        pl.from_dicts(rows)
-        .sort("iteration")
-        .cast(
-            {
-                "iteration": pl.Int64,
-                "backward_seconds": pl.Float64,
-                "forward_seconds": pl.Float64,
-                "total_seconds": pl.Float64,
-            }
-        )
-    )
+    if table is None or table.empty:
+        return empty
+    return pl.DataFrame(
+        {
+            "iteration": table["iteracao"].to_list(),
+            "backward_seconds": table["backward"].dt.total_seconds().to_list(),
+            "forward_seconds": table["forward"].dt.total_seconds().to_list(),
+            "total_seconds": table["total"].dt.total_seconds().to_list(),
+        },
+        schema=_TIM_ITERATION_SCHEMA,
+    ).sort("iteration")
 
 
 def read_newave_tim_stages(newave_dir: Path) -> dict[str, float]:
@@ -1115,33 +1084,24 @@ _NWLISTOP_BLOCK_TABLES: dict[str, str] = {
 _NWLISTOP_KEYS = ["stage", "scenario", "block"]
 
 
-class _ValuesFile(Protocol):
-    """The inewave ``nwlistop`` reader surface :func:`_read_nwlistop_table` relies on."""
-
-    @property
-    def valores(self) -> pd.DataFrame | None: ...
+type _NwlistopReader = Callable[[str], ArquivoComValores]
 
 
-class _ValuesReader(Protocol):
-    def read(self, path: str, /) -> _ValuesFile: ...
-
-
-def _nwlistop_classes() -> dict[str, _ValuesReader]:
-    from inewave.nwlistop import Cmarg, Ghiduh, Qturuh, Qvertuh, Varmuh
-    from inewave.nwlistop.gh_fphexat import GhFphexat
+def _nwlistop_readers() -> dict[str, _NwlistopReader]:
+    from inewave.nwlistop import Cmarg, GhFphexat, Ghiduh, Qturuh, Qvertuh, Varmuh
 
     return {
-        "ghiduh": Ghiduh,
-        "qturuh": Qturuh,
-        "qvertuh": Qvertuh,
-        "gh_fphexat": GhFphexat,
-        "varmuh": Varmuh,
-        "cmarg": Cmarg,
+        "ghiduh": Ghiduh.read,
+        "qturuh": Qturuh.read,
+        "qvertuh": Qvertuh.read,
+        "gh_fphexat": GhFphexat.read,
+        "varmuh": Varmuh.read,
+        "cmarg": Cmarg.read,
     }
 
 
 def _read_nwlistop_table(
-    path: Path, cls: _ValuesReader, start_year: int, start_month: int
+    path: Path, read: _NwlistopReader, start_year: int, start_month: int
 ) -> pl.DataFrame | None:
     """One nwlistop table keyed by study stage, series and block.
 
@@ -1152,7 +1112,7 @@ def _read_nwlistop_table(
     dropped. ``None`` when the file does not parse.
     """
     try:
-        table = cls.read(str(path)).valores
+        table = read(str(path)).valores
     except Exception:
         _LOG.warning("Failed to parse %s", path, exc_info=True)
         return None
@@ -1212,7 +1172,7 @@ def read_nwlistop_hydro_blocks(
         for p in newave_dir.iterdir()
         if (m := _NWLISTOP_PLANT_RE.match(p.name)) is not None
     )
-    classes = _nwlistop_classes()
+    readers = _nwlistop_readers()
     plants: list[pl.DataFrame] = []
     for code in codes:
         plant: pl.DataFrame | None = None
@@ -1222,7 +1182,7 @@ def read_nwlistop_hydro_blocks(
                 None
                 if path is None
                 else _read_nwlistop_table(
-                    path, classes[prefix], start_year, start_month
+                    path, readers[prefix], start_year, start_month
                 )
             )
             if table is None:
@@ -1316,13 +1276,13 @@ def _read_numbered_tables(
     if not newave_dir.is_dir():
         return pl.DataFrame(schema=schema)
     pattern = re.compile(rf"^{prefix}(\d{{3}})\.out$", re.IGNORECASE)
-    cls = _nwlistop_classes()[prefix]
+    read = _nwlistop_readers()[prefix]
     tables: list[pl.DataFrame] = []
     for path in sorted(newave_dir.iterdir()):
         m = pattern.match(path.name)
         if m is None:
             continue
-        table = _read_nwlistop_table(path, cls, start_year, start_month)
+        table = _read_nwlistop_table(path, read, start_year, start_month)
         if table is not None:
             tables.append(
                 table.rename({"valor": value_column}).with_columns(
