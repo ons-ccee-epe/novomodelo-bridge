@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from idecomp.decomp import Dadger
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.case import DecompCase
@@ -30,13 +31,13 @@ from novomodelo_bridge.decomp.fcf.coupling import (
     TerminalShare,
 )
 from novomodelo_bridge.decomp.fcf.importer import (
+    _complexo_map,
     _DeckCoupling,
     _emit_coupling_diagnostics,
     _emit_import_diagnostics,
     _emit_transit_pricing,
     _gnl_targets_from,
     _plan_gnl_ring,
-    _read_complexo_map,
     import_boundary_fcf,
 )
 from novomodelo_bridge.decomp.fcf.mapper import (
@@ -294,7 +295,7 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
 # ---------------------------------------------------------------------------
 
 
-def test_read_complexo_map_groups_components_by_complex(tmp_path: Path) -> None:
+def test_complexo_map_groups_components_by_complex(tmp_path: Path) -> None:
     dadger = tmp_path / "dadger.rv2"
     dadger.write_text(
         "& CX  complexo componente\n"
@@ -305,11 +306,14 @@ def test_read_complexo_map_groups_components_by_complex(tmp_path: Path) -> None:
         encoding="latin-1",
     )
 
-    assert _read_complexo_map(dadger) == {132: [147, 146], 176: [175]}
+    assert _complexo_map(Dadger.read(str(dadger))) == {132: [147, 146], 176: [175]}
 
 
-def test_read_complexo_map_is_empty_without_a_dadger(tmp_path: Path) -> None:
-    assert _read_complexo_map(tmp_path / "absent.rv2") == {}
+def test_complexo_map_is_empty_without_cx_lines(tmp_path: Path) -> None:
+    dadger = tmp_path / "dadger.rv2"
+    dadger.write_text("UH  147  10\n", encoding="latin-1")
+
+    assert _complexo_map(Dadger.read(str(dadger))) == {}
 
 
 # ---------------------------------------------------------------------------

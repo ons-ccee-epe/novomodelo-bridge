@@ -40,15 +40,14 @@ from novomodelo_bridge.decomp.converters.cadastro.stage_resolution import (
 
 
 class AcRegisters(Protocol):
-    def ac(self, codigo_usina: int, modificacao: type, df: bool = ...) -> object: ...
+    def ac[T](
+        self, codigo_usina: int | None, modificacao: type[T], df: bool = ...
+    ) -> object: ...
 
 
 def ac_frame(dadger: AcRegisters, modificacao: type) -> pd.DataFrame | None:
     """Every ``AC`` row of one modification class, across plants (``None`` if absent)."""
-    # idecomp types codigo_usina as int, but df=True ignores the filter and None means every plant.
-    return as_frame(
-        dadger.ac(codigo_usina=None, modificacao=modificacao, df=True)  # ty: ignore[invalid-argument-type]
-    )
+    return as_frame(dadger.ac(codigo_usina=None, modificacao=modificacao, df=True))
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
@@ -30,6 +29,7 @@ from idecomp.decomp import Dadgnl, Vazoes
 from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.anticipated import (
     classify_gnl_windows,
@@ -75,6 +75,8 @@ from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+    from idecomp.decomp import Dadger
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
@@ -237,28 +239,21 @@ def _plan_gnl_ring(
     )
 
 
-#: A ``CX`` register line: ``CX <complexo_code> <component_code>``. idecomp
-#: exposes no typed accessor for ``CX``, so it is parsed directly.
-_CX_LINE = re.compile(r"^CX\s+(\d+)\s+(\d+)")
-
-
-def _read_complexo_map(dadger_path: Path) -> dict[int, list[int]]:
-    """Parse the deck's ``CX`` register into ``{complexo_code: [component_codes]}``.
+def _complexo_map(dadger: Dadger) -> dict[int, list[int]]:
+    """The deck's ``CX`` register as ``{complexo_code: [component_codes]}``.
 
     ``CX`` couples a complex of the boundary cut (absent from the DECOMP
     model) to the individual DECOMP plants inside it. Empty when the deck has
-    no ``CX`` line or the file is absent.
+    no ``CX`` line.
     """
     complexo_map: dict[int, list[int]] = {}
-    if not dadger_path.is_file():
+    cx = dadger.cx(df=True)
+    if cx.empty:
         return complexo_map
-    with dadger_path.open(encoding="latin-1") as handle:
-        for line in handle:
-            match = _CX_LINE.match(line)
-            if match is not None:
-                complexo_map.setdefault(int(match.group(1)), []).append(
-                    int(match.group(2))
-                )
+    for complexo, component in zip(
+        cx["codigo_newave"], cx["codigo_decomp"], strict=True
+    ):
+        complexo_map.setdefault(as_int(complexo), []).append(as_int(component))
     return complexo_map
 
 
@@ -290,7 +285,7 @@ def _read_deck_coupling(
     vazoes = Vazoes.read(str(case.files.vazoes))
     plant_codes = cuts.header.plant_codes
     resolution = resolve_couplings(
-        plant_codes, case.id_map, effective, _read_complexo_map(case.files.dadger)
+        plant_codes, case.id_map, effective, _complexo_map(case.dadger)
     )
     coupled = {coupling.plant_index for coupling in resolution.couplings}
     source_only = source_only_lag_inflows(

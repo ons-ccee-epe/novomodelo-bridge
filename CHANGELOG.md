@@ -16,6 +16,7 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **The bridge requires idecomp 1.18.0 or newer.**
 - **`compare decomp` exits 1 when the DECOMP deck is not found**, as
   `compare newave` does; it used to exit 2. An unreadable Novomodelo output
   still exits 2 on both tracks.

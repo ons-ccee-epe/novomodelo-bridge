@@ -38,6 +38,7 @@ from novomodelo_bridge.decomp import constraint_registers
 from novomodelo_bridge.decomp.converters.cadastro import (
     APPLIED_AC_CLASSES,
     UNINGESTABLE_AC_CLASSES,
+    AcRegisters,
 )
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
@@ -208,10 +209,6 @@ def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
     )
 
 
-class _AcRegisters(Protocol):
-    def ac(self, codigo_usina: int, modificacao: type, df: bool = ...) -> object: ...
-
-
 class _ConstraintFiles(Protocol):
     @property
     def dadger(self) -> Path: ...
@@ -220,7 +217,7 @@ class _ConstraintFiles(Protocol):
     def libs_restricao_eletrica(self) -> Path | None: ...
 
 
-def _ac_present(dadger: _AcRegisters, classes: frozenset[type]) -> list[type]:
+def _ac_present(dadger: AcRegisters, classes: frozenset[type]) -> list[type]:
     """The subset of *classes* present in *dadger*'s deck, name-sorted.
 
     A class is present iff its ``AC`` frame is a non-empty
@@ -232,15 +229,8 @@ def _ac_present(dadger: _AcRegisters, classes: frozenset[type]) -> list[type]:
     present = [
         cls
         for cls in classes
-        # idecomp's stub declares codigo_usina: int, but None is its own
-        # documented no-filter sentinel (scan every plant) -- passing a real
-        # int here would narrow the scan to one usina.
         if isinstance(
-            frame := dadger.ac(
-                codigo_usina=None,  # ty: ignore[invalid-argument-type]
-                modificacao=cls,
-                df=True,
-            ),
+            frame := dadger.ac(codigo_usina=None, modificacao=cls, df=True),
             pd.DataFrame,
         )
         and not frame.empty
@@ -249,7 +239,7 @@ def _ac_present(dadger: _AcRegisters, classes: frozenset[type]) -> list[type]:
 
 
 def _ac_coverage(
-    dadger: _AcRegisters, report: CadastroResolutionReport
+    dadger: AcRegisters, report: CadastroResolutionReport
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify every idecomp ``AC`` class into applied/uningestable/deferred
     and report which of those buckets the deck actually exercises.
