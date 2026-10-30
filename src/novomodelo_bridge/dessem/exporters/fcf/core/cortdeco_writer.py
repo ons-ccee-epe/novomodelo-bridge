@@ -4,8 +4,8 @@ One record is: an int32 chain pointer at offset 0, then `NCOEF` float64 in
 block order `rhs | pi_varm | pi_qdefp | pi_gnl`, then zero padding to
 `TAMANHO_CORTE`.
 
-`pi_gnl` carries zeros under premise P14. Reducing Novomodelo's anticipated-thermal
-ring positions to `pi_gnl`'s `(submarket, stage, block)` address is unresolved.
+`pi_gnl` is in R$/MWh with Novomodelo's sign (the writer negates it) and is
+non-zero only in the first cut-building node's cuts.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     CutBlockOffsets,
     LayoutError,
     assert_cortdeco_layout,
-    assert_gnl_span_is_zero,
+    assert_gnl_support,
     assert_pointer_in_range,
     chain_pointer,
     cortdeco_record_count,
@@ -56,19 +56,15 @@ class CutInput:
 
     `pi_varm[i]` is hydro position `i`'s storage coefficient, ordered like
     `codigos_uhes`. `pi_qdefp` prices each travel-time plant's lagged release
-    in R$/hm³ (premise P3). Under premise P14 `pi_gnl` is
-    `zeroed_gnl_block(offsets)`.
+    in R$/hm³ (premise P3). `pi_gnl` is already in R$/MWh with Novomodelo's sign
+    (the writer negates it) and is non-zero only in the first cut-building node's
+    cuts.
     """
 
     intercept: float
     pi_varm: NDArray[np.float64]
     pi_qdefp: NDArray[np.float64]
     pi_gnl: NDArray[np.float64]
-
-
-def zeroed_gnl_block(offsets: CutBlockOffsets) -> NDArray[np.float64]:
-    """The `pi_gnl` block every cut carries under premise P14: zeros."""
-    return np.zeros(offsets.ncoef - offsets.pi_gnl, dtype=np.float64)
 
 
 def storage_coefficients(
@@ -119,14 +115,12 @@ def _validate_lengths(cut: CutInput, offsets: CutBlockOffsets) -> None:
 
 
 def _convert(cut: CutInput) -> tuple[float, NDArray[np.float64]]:
-    """Apply premise P2 (÷1000) and P4 (GNL sign) exactly once."""
+    """Apply P2 (÷1000) to `rhs`, `pi_varm` and `pi_qdefp`, and P4 (sign) to `pi_gnl`."""
     rhs = to_decomp_cost(cut.intercept)
-    coefficients = to_decomp_costs(
-        np.concatenate((cut.pi_varm, cut.pi_qdefp, cut.pi_gnl))
-    )
-    gnl_start = len(cut.pi_varm) + len(cut.pi_qdefp)
-    coefficients[gnl_start:] = negate_gnl_array(coefficients[gnl_start:])
-    return rhs, coefficients
+    head = to_decomp_costs(np.concatenate((cut.pi_varm, cut.pi_qdefp)))
+    # pi_gnl arrives in R$/MWh and stays there: ÷1000 would write ~0.146 where DECOMP holds ~145.6.
+    gnl = negate_gnl_array(cut.pi_gnl)
+    return rhs, np.concatenate((head, gnl))
 
 
 def _normalize_signed_zero(
@@ -134,20 +128,6 @@ def _normalize_signed_zero(
 ) -> tuple[float, NDArray[np.float64]]:
     """Turn `-0.0` into `+0.0`, and change nothing else."""
     return rhs + 0.0, coefficients + 0.0
-
-
-def _assert_gnl_input_is_zero(cuts: Sequence[Sequence[CutInput]]) -> None:
-    """Refuse a non-zero `pi_gnl` while premise P14 holds."""
-    for node, node_cuts in enumerate(cuts):
-        for iteration, cut in enumerate(node_cuts):
-            nonzero = np.flatnonzero(np.asarray(cut.pi_gnl, dtype=np.float64) != 0.0)
-            if nonzero.size:
-                slot = int(nonzero[0])
-                raise LayoutError(
-                    f"node {node} iteration {iteration} has non-zero pi_gnl "
-                    f"at slot {slot} ({cut.pi_gnl[slot]!r}), but P14 requires "
-                    f"zeros"
-                )
 
 
 def _assert_finite(
@@ -231,7 +211,6 @@ def write_cortdeco(
             raise LayoutError(
                 f"node {node} carries {len(node_cuts)} cuts but expected {per_node}"
             )
-    _assert_gnl_input_is_zero(cuts)
 
     expected = cortdeco_record_count(numero_cortes)
     records: list[bytes] = []
@@ -258,18 +237,13 @@ def write_cortdeco(
     try:
         write_durably(temporary, b"".join(records))
         assert_cortdeco_layout(temporary, numero_cortes, n_nodes)
-        assert_gnl_span_is_zero(temporary, expected, offsets)
+        assert_gnl_support(temporary, expected, offsets, n_nodes)
         os.replace(temporary, path)
         sync_directory(path.parent)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
 
-    _LOG.warning(
-        "P14: GNL (anticipated thermal) coefficients emitted as zeros — "
-        "mapping Novomodelo ring positions to DECOMP (submarket, stage, block) "
-        "address is unresolved"
-    )
     _LOG.info(
         "wrote cortdeco %s: records=%d bytes=%d numero_cortes=%d nodes=%d "
         "ncoef=%d heads=%s",

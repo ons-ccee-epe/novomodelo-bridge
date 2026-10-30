@@ -16,16 +16,25 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from novomodelo_bridge.dessem.exporters.fcf.core.reader import UNDATED
+from novomodelo_bridge.core.policy_dates import (
+    UNDATED,
+    date_from_yyyymmdd,
+    hours_between,
+)
+from novomodelo_bridge.core.tolerances import floats_differ
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    GNL_EXPORT_MIDDLE_OFFSET,
+    cortdeco_gnl_offset,
+)
 
 if TYPE_CHECKING:
     from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
-        BlockInfo,
         BusInfo,
         HydroInfo,
         StageInfo,
         ThermalInfo,
     )
+    from novomodelo_bridge.dessem.exporters.fcf.core.layout import CutBlockOffsets
     from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
         EntitySlotRecord,
         PolicyManifest,
@@ -67,16 +76,16 @@ class SlotIndex:
 
 
 @dataclass(frozen=True)
-class DeliveryGroup:
-    """A GNL delivery month and its rank within one pool's own set of months."""
+class InflowLagAudit:
+    """Counted record of inflow-lag coefficients premise P8 drops."""
 
-    delivery_start: int
-    pool_rank: int
+    per_pool: tuple[tuple[int, int], ...]
+    total: int
 
 
 @dataclass(frozen=True)
-class InflowLagAudit:
-    """Counted record of inflow-lag coefficients premise P8 drops."""
+class GnlDropAudit:
+    """Counted record of anticipated-thermal coefficients premise P14 drops."""
 
     per_pool: tuple[tuple[int, int], ...]
     total: int
@@ -107,11 +116,6 @@ def index_slots(slots: Sequence[EntitySlotRecord]) -> SlotIndex:
     )
 
 
-def has_delivery_date(slot: EntitySlotRecord) -> bool:
-    """Whether the slot carries a real delivery interval."""
-    return slot.interval_start != UNDATED
-
-
 # ---------------------------------------------------------------------------
 # Premise P2: Cost unit conversion
 # ---------------------------------------------------------------------------
@@ -132,35 +136,9 @@ def to_decomp_costs(values: NDArray[np.float64]) -> NDArray[np.float64]:
 # ---------------------------------------------------------------------------
 
 
-def negate_gnl(value: float) -> float:
-    """Flip a GNL coefficient's sign (premise P4)."""
-    return -value
-
-
 def negate_gnl_array(values: NDArray[np.float64]) -> NDArray[np.float64]:
     """Flip a GNL coefficient vector's sign (premise P4)."""
     return -np.asarray(values, dtype=np.float64)
-
-
-# ---------------------------------------------------------------------------
-# Premise P5: GNL block weights
-# ---------------------------------------------------------------------------
-
-
-def gnl_block_weights(blocks: Sequence[BlockInfo]) -> tuple[float, ...]:
-    """Hours-weighted partition of a stage across its load blocks (premise P5)."""
-    if not blocks:
-        raise MappingError("cannot weight an empty block list")
-    for block in blocks:
-        if not math.isfinite(block.hours) or block.hours < 0.0:
-            raise MappingError(
-                f"block {block.id} ({block.name}) has hours {block.hours!r}; "
-                f"block hours must be finite and non-negative"
-            )
-    total = sum(block.hours for block in blocks)
-    if total <= 0.0:
-        raise MappingError(f"block hours must sum to a positive value, got {total}")
-    return tuple(block.hours / total for block in blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +237,42 @@ def inflow_lag_drop_audit(pools: Mapping[int, StageCutPool]) -> InflowLagAudit:
 
 
 # ---------------------------------------------------------------------------
+# Premise P14: GNL drop audit
+# ---------------------------------------------------------------------------
+
+
+def gnl_drop_audit(
+    pools: Mapping[int, StageCutPool],
+    trunk_pool_ids: Sequence[int],
+    deliveries: GnlDeliveries,
+) -> GnlDropAudit:
+    """Count the GNL coefficients the written cuts leave out, per cut-building pool."""
+    delivered = sum(position is not None for position in deliveries.positions)
+    per_pool = []
+    for node, pool_id in enumerate(trunk_pool_ids):
+        pool = pools[pool_id]
+        written_cuts = sum(
+            piece.slot_index >= pool.warm_start_count for piece in pool.pieces
+        )
+        gnl_slots = len(index_slots(pool.slots).anticipated_thermal)
+        written_slots = delivered if node == 0 else 0
+        per_pool.append((pool_id, (gnl_slots - written_slots) * written_cuts))
+
+    total = sum(count for _, count in per_pool)
+    if total:
+        _LOG.warning(
+            "premise P14 drops %d anticipated-thermal coefficients: %s",
+            total,
+            ", ".join(
+                f"pool {pool_id}={count}" for pool_id, count in per_pool if count
+            ),
+        )
+    else:
+        _LOG.info("premise P14 drops no anticipated-thermal coefficients on this case")
+    return GnlDropAudit(per_pool=tuple(per_pool), total=total)
+
+
+# ---------------------------------------------------------------------------
 # Premise P9: Discount factors
 # ---------------------------------------------------------------------------
 
@@ -346,34 +360,164 @@ def gnl_lag_months(
 
 
 # ---------------------------------------------------------------------------
-# Delivery date grouping
+# Premise P14: GNL delivery selection
 # ---------------------------------------------------------------------------
 
 
-def delivery_slot_map(
-    slots: Sequence[EntitySlotRecord],
-) -> dict[int, DeliveryGroup]:
-    """Group anticipated-thermal positions by delivery month, per pool."""
-    positions = index_slots(slots).anticipated_thermal
-    if not positions:
-        return {}
+@dataclass(frozen=True)
+class GnlDeliveries:
+    """The stage whose delivery is priced and each GNL thermal's slot for it.
 
-    for position in positions:
-        if not has_delivery_date(slots[position]):
-            raise MappingError(
-                f"anticipated-thermal slot at position {position} "
-                f"carries no delivery date"
-            )
+    `positions` holds one slot position per GNL thermal, in the thermals' order,
+    `None` where the pool has no slot for that delivery. `stage` is `None` only
+    when the case has no GNL thermal.
+    """
 
-    dates = sorted({slots[position].interval_start for position in positions})
-    ranked = {start: rank for rank, start in enumerate(dates, start=1)}
-    return {
-        position: DeliveryGroup(
-            delivery_start=slots[position].interval_start,
-            pool_rank=ranked[slots[position].interval_start],
+    stage: StageInfo | None
+    positions: tuple[int | None, ...]
+
+    @property
+    def block_hours(self) -> tuple[float, ...]:
+        """The stage's block hours, `()` when there is no stage."""
+        if self.stage is None:
+            return ()
+        return tuple(block.hours for block in self.stage.blocks)
+
+    @property
+    def hours(self) -> float:
+        """The stage's total hours, the divisor of a GNL coefficient."""
+        return math.fsum(self.block_hours)
+
+
+def select_gnl_deliveries(
+    pool: StageCutPool,
+    gnl_thermals: Sequence[ThermalInfo],
+    stages: Sequence[StageInfo],
+) -> GnlDeliveries:
+    """Each GNL thermal's slot for the delivery of the stage after the first.
+
+    *pool* is the first cut-building pool. A slot is found by its
+    `interval_start`, never by its rotating ring index, which names a different
+    delivery in every pool.
+
+    Raises:
+        MappingError: the pool is not at stage 0, the case has no stage after the
+            first, a thermal has two slots for the delivery, a slot's interval
+            hours differ from the stage's block hours, or a candidate's dates are
+            not valid.
+    """
+    if not gnl_thermals:
+        return GnlDeliveries(stage=None, positions=())
+    if pool.graph_stage_id != 0:
+        raise MappingError(
+            f"the first cut-building pool is at stage {pool.graph_stage_id}, but "
+            "GNL coefficients are exported only from a pool at stage 0, whose "
+            "next stage holds the delivery they price"
         )
-        for position in positions
-    }
+    target = pool.graph_stage_id + 1
+    if target >= len(stages):
+        raise MappingError(
+            f"the case has {len(stages)} stage(s) but holds {len(gnl_thermals)} GNL "
+            "thermals, whose coefficients price the delivery of the stage after "
+            "the first"
+        )
+
+    stage = stages[target]
+    start = parse_start_date(stage)
+    stage_hours = math.fsum(block.hours for block in stage.blocks)
+    positions: list[int | None] = []
+    for thermal in gnl_thermals:
+        matches: list[int] = []
+        for position, slot in enumerate(pool.slots):
+            if (
+                slot.entity_type != ENTITY_TYPE_ANTICIPATED_THERMAL
+                or slot.entity_id != thermal.id
+                or slot.interval_start == UNDATED
+            ):
+                continue
+            try:
+                slot_start = date_from_yyyymmdd(slot.interval_start)
+            except ValueError as exc:
+                raise MappingError(
+                    f"GNL thermal {thermal.id} ({thermal.name}) has a delivery slot "
+                    f"starting {slot.interval_start}, which is not a YYYYMMDD date"
+                ) from exc
+            if slot_start == start:
+                matches.append(position)
+
+        if len(matches) > 1:
+            raise MappingError(
+                f"GNL thermal {thermal.id} ({thermal.name}) has {len(matches)} "
+                f"slots delivering from {start}; exactly one is expected, so the "
+                "coefficient to export is ambiguous"
+            )
+        if not matches:
+            positions.append(None)
+            continue
+
+        slot = pool.slots[matches[0]]
+        try:
+            end = date_from_yyyymmdd(slot.interval_end)
+        except ValueError as exc:
+            raise MappingError(
+                f"GNL thermal {thermal.id} ({thermal.name}) has a slot delivering "
+                f"from {start} whose end {slot.interval_end} is not a YYYYMMDD date"
+            ) from exc
+        slot_hours = hours_between(start, end)
+        if floats_differ(slot_hours, stage_hours):
+            raise MappingError(
+                f"GNL thermal {thermal.id} ({thermal.name}) delivers from {start} "
+                f"to {end} ({slot_hours:g} h) but the blocks of stage {stage.id} "
+                f"sum to {stage_hours:g} h; the coefficient is divided by the "
+                "stage's hours, so both must agree"
+            )
+        positions.append(matches[0])
+
+    return GnlDeliveries(stage=stage, positions=tuple(positions))
+
+
+def gnl_block(
+    deliveries: GnlDeliveries,
+    coefficients: NDArray[np.float64],
+    offsets: CutBlockOffsets,
+) -> NDArray[np.float64]:
+    """One cut's `pi_gnl` block, each GNL coefficient in R$/MWh on every load block.
+
+    Divides the R$/MW coefficient by the delivery stage's hours; a multiply by the
+    reciprocal is 1 ulp off. The sign is kept: the writer negates it (premise P4).
+
+    Raises:
+        MappingError: the positions do not match `offsets.n_sbm_gnl`, a position is
+            outside *coefficients*, or the delivery stage has no hours.
+    """
+    if len(deliveries.positions) != offsets.n_sbm_gnl:
+        raise MappingError(
+            f"{len(deliveries.positions)} GNL delivery positions but the cut layout "
+            f"holds {offsets.n_sbm_gnl} GNL entries"
+        )
+    block = np.zeros(offsets.ncoef - offsets.pi_gnl)
+    hours = deliveries.hours
+    for entry, position in enumerate(deliveries.positions):
+        if position is None:
+            continue
+        if not 0 <= position < len(coefficients):
+            raise MappingError(
+                f"GNL entry {entry} points at coefficient {position} but the "
+                f"coefficient vector has {len(coefficients)} elements"
+            )
+        if hours <= 0.0:
+            raise MappingError(
+                f"GNL entry {entry} is priced on a delivery stage with {hours:g} "
+                "hours, which cannot convert R$/MW to R$/MWh"
+            )
+        value = coefficients[position] / hours
+        # TRACKED NOVOMODELO-GAP (C24): novomodelo prices one value per delivery, not per load block.
+        for patamar in range(offsets.n_patamares):
+            index = cortdeco_gnl_offset(
+                offsets, entry, GNL_EXPORT_MIDDLE_OFFSET, patamar
+            )
+            block[index - offsets.pi_gnl] = value
+    return block
 
 
 # ---------------------------------------------------------------------------

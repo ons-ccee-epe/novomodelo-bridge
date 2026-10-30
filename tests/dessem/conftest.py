@@ -7,7 +7,9 @@ All fixtures are generated programmatically - no external data dependencies.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -323,15 +325,60 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
     return case_dir
 
 
-@pytest.fixture
-def travel_time_case_dir(synthetic_case_dir: Path) -> Path:
-    """`synthetic_case_dir` on contiguous weekly stages, UHE_B 240 h above UHE_A."""
-    stages_path = synthetic_case_dir / "stages.json"
+def _weekly_stage_dates(case_dir: Path) -> dict[str, Any]:
+    """Rewrite `case_dir`'s stages onto contiguous weeks from 2026-01-01.
+
+    Returns the rewritten `stages.json` content for a caller that edits it further.
+    """
+    stages_path = case_dir / "stages.json"
     stages = json.loads(stages_path.read_text())
     for position, stage in enumerate(stages["stages"]):
         stage["start_date"] = f"2026-01-{1 + 7 * position:02d}"
         stage["end_date"] = f"2026-01-{8 + 7 * position:02d}"
     stages_path.write_text(json.dumps(stages))
+    return stages
+
+
+@pytest.fixture
+def gnl_case_dir(synthetic_case_dir: Path) -> Path:
+    """`synthetic_case_dir` on weekly stages with a second GNL thermal, GNL_B."""
+    stages = _weekly_stage_dates(synthetic_case_dir)
+    for block, hours in zip(
+        stages["stages"][1]["blocks"], (27.0, 68.0, 73.0), strict=True
+    ):
+        block["hours"] = hours
+    (synthetic_case_dir / "stages.json").write_text(json.dumps(stages))
+
+    thermals_path = synthetic_case_dir / "system" / "thermals.json"
+    thermals = json.loads(thermals_path.read_text())
+    thermals["thermals"].append(
+        {
+            "id": 102,
+            "name": "GNL_B",
+            "bus_id": 2,
+            "anticipated_config": {"lead_time_hours": 1512.0},
+        }
+    )
+    thermals_path.write_text(json.dumps(thermals))
+    return synthetic_case_dir
+
+
+@pytest.fixture
+def gnl_source(synthetic_source: SourceDeck) -> SourceDeck:
+    """`synthetic_source` declaring GNL plants 86 GNL_A and 87 GNL_B, both lag 2."""
+    return replace(
+        synthetic_source,
+        gnl_thermals=(
+            SourceGnlThermal(code=86, name="GNL_A", lag_months=2),
+            SourceGnlThermal(code=87, name="GNL_B", lag_months=2),
+        ),
+    )
+
+
+@pytest.fixture
+def travel_time_case_dir(synthetic_case_dir: Path) -> Path:
+    """`synthetic_case_dir` on contiguous weekly stages, UHE_B 240 h above UHE_A."""
+    _weekly_stage_dates(synthetic_case_dir)
 
     hydros_path = synthetic_case_dir / "system" / "hydros.json"
     hydros = json.loads(hydros_path.read_text())

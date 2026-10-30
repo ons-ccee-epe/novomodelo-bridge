@@ -372,19 +372,99 @@ def sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def assert_gnl_span_is_zero(path: Path, records: int, offsets: CutBlockOffsets) -> None:
-    """Verify every record's pi_gnl span is zero (premise P14)."""
-    width = offsets.ncoef - offsets.pi_gnl
-    span = 8 * width
+def assert_gnl_support(
+    path: Path, records: int, offsets: CutBlockOffsets, n_nodes: int
+) -> None:
+    """Verify pi_gnl is nonzero only at middle offset 0 of the first node's cuts.
+
+    The first cut-building node's chain, plus the extra record when it is the
+    only node, carries finite, bit-identical values across patamares at middle
+    offset 0. Every other pi_gnl byte is zero, so `-0.0` and NaN are refused.
+    """
+    if offsets.n_sbm_gnl == 0:
+        return
+    numero_cortes = records - 1
+    pointers = _read_pointers(path, records)
+    fed: set[int] = set()
+    index = cut_head_indices(numero_cortes, n_nodes, n_nodes)[0] - 1
+    while True:
+        if not 0 <= index < numero_cortes:
+            raise LayoutError(
+                f"node 0's chain reached record {index}, outside 0..{numero_cortes - 1}"
+            )
+        if index in fed:
+            raise LayoutError(f"record {index} reached twice by node 0's chain")
+        fed.add(index)
+        if pointers[index] == 0:
+            break
+        index = pointers[index] - 1
+    if n_nodes == 1:
+        fed.add(numero_cortes)
+
+    slots = {
+        position: cortdeco_gnl_offset(offsets, *position) - offsets.pi_gnl
+        for position in gnl_positions(
+            offsets.n_sbm_gnl, offsets.n_estagios, offsets.n_patamares
+        )
+    }
+    position_at = {slot: position for position, slot in slots.items()}
+    support = np.array(
+        [s for (_, m, _), s in slots.items() if m == GNL_EXPORT_MIDDLE_OFFSET],
+        dtype=np.intp,
+    ).reshape(offsets.n_sbm_gnl, -1)
+    off_support = np.array(
+        [s for (_, m, _), s in slots.items() if m != GNL_EXPORT_MIDDLE_OFFSET],
+        dtype=np.intp,
+    )
+
+    span = 8 * (offsets.ncoef - offsets.pi_gnl)
     with path.open("rb") as handle:
         for index in range(records):
             handle.seek(index * TAMANHO_CORTE + 4 + 8 * offsets.pi_gnl)
-            block = handle.read(span)
-            if block.strip(b"\x00"):
-                position = next(offset for offset, byte in enumerate(block) if byte)
-                slot = position // 8
+            bits = np.frombuffer(handle.read(span), dtype="<u8")
+            values = bits.view("<f8")
+            where = f"record {index}'s pi_gnl entry"
+
+            if index not in fed:
+                nonzero = np.flatnonzero(bits)
+                if nonzero.size:
+                    slot = int(nonzero[0])
+                    entry, middle, patamar = position_at[slot]
+                    raise LayoutError(
+                        f"{where} {entry}, middle {middle}, patamar {patamar} is "
+                        f"{float(values[slot])!r}: only the first cut-building "
+                        f"node's cuts carry GNL coefficients"
+                    )
+                continue
+
+            stray = off_support[bits[off_support] != 0]
+            if stray.size:
+                slot = int(stray[0])
+                entry, middle, patamar = position_at[slot]
                 raise LayoutError(
-                    f"record {index}'s pi_gnl slot {slot} is not zero (premise P14)"
+                    f"{where} {entry}, middle {middle}, patamar {patamar} is "
+                    f"{float(values[slot])!r}: only middle offset "
+                    f"{GNL_EXPORT_MIDDLE_OFFSET} carries a GNL coefficient"
+                )
+            exported = values[support]
+            not_finite = np.argwhere(~np.isfinite(exported))
+            if not_finite.size:
+                entry, patamar = (int(i) for i in not_finite[0])
+                raise LayoutError(
+                    f"{where} {entry}, middle {GNL_EXPORT_MIDDLE_OFFSET}, "
+                    f"patamar {patamar} is {float(exported[entry, patamar])!r}: "
+                    f"a GNL coefficient must be finite"
+                )
+            exported_bits = bits[support]
+            # TRACKED NOVOMODELO-GAP (C24): novomodelo holds one value per delivery, not per load block.
+            unequal = np.argwhere(exported_bits != exported_bits[:, :1])
+            if unequal.size:
+                entry, patamar = (int(i) for i in unequal[0])
+                raise LayoutError(
+                    f"{where} {entry}, middle {GNL_EXPORT_MIDDLE_OFFSET}: patamar 0 "
+                    f"is {float(exported[entry, 0])!r} but patamar {patamar} is "
+                    f"{float(exported[entry, patamar])!r}; a GNL coefficient is "
+                    f"one value per entry, repeated on every patamar"
                 )
 
 

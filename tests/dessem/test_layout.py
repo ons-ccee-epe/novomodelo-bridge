@@ -1,5 +1,8 @@
 """Tests for dessem/exporters/fcf/layout.py."""
 
+from pathlib import Path
+
+import numpy as np
 import pytest
 
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
@@ -10,6 +13,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     TAMANHO_CORTE,
     CutBlockOffsets,
     LayoutError,
+    assert_gnl_support,
     assert_uniform_blocks,
     chain_pointer,
     cortdeco_block_offsets,
@@ -266,3 +270,147 @@ class TestAssertUniformBlocks:
     def test_non_uniform_raises(self) -> None:
         with pytest.raises(LayoutError, match="not uniform"):
             assert_uniform_blocks((3, 3, 4))
+
+
+GNL_OFFSETS = cortdeco_block_offsets(3, 0, 0, 2, 3, 3)
+
+
+def _write_cortdeco(
+    path: Path,
+    records: int,
+    n_nodes: int,
+    gnl: dict[tuple[int, int, int, int], float],
+    pointers: dict[int, int] | None = None,
+) -> None:
+    """Write raw cuts; `gnl` maps (record, entry, middle, patamar) to its value."""
+    payload = bytearray()
+    for index in range(records):
+        pointer = (pointers or {}).get(index, chain_pointer(index, n_nodes))
+        cut = np.zeros(GNL_OFFSETS.ncoef, dtype="<f8")
+        for (record, *position), value in gnl.items():
+            if record == index:
+                cut[cortdeco_gnl_offset(GNL_OFFSETS, *position)] = value
+        body = np.int32(pointer).astype("<i4").tobytes() + cut.tobytes()
+        payload += body.ljust(TAMANHO_CORTE, b"\x00")
+    path.write_bytes(payload)
+
+
+def _node_zero_values(
+    records: tuple[int, ...],
+) -> dict[tuple[int, int, int, int], float]:
+    return {
+        (record, entry, 0, patamar): record + 0.5 * (entry + 1)
+        for record in records
+        for entry in range(2)
+        for patamar in range(3)
+    }
+
+
+class TestAssertGnlSupport:
+    """Test the byte-level guard on where pi_gnl may be nonzero."""
+
+    def test_two_node_file_with_node_zero_values_passes(self, tmp_path: Path) -> None:
+        path = tmp_path / "cortdeco"
+        _write_cortdeco(path, 5, 2, _node_zero_values((1, 3)))
+
+        assert assert_gnl_support(path, 5, GNL_OFFSETS, 2) is None
+
+    def test_file_without_gnl_values_passes(self, tmp_path: Path) -> None:
+        path = tmp_path / "cortdeco"
+        _write_cortdeco(path, 5, 2, {})
+
+        assert assert_gnl_support(path, 5, GNL_OFFSETS, 2) is None
+
+    @pytest.mark.parametrize("value", [1.5, -0.0], ids=["nonzero", "negative-zero"])
+    def test_value_outside_node_zero_raises(self, tmp_path: Path, value: float) -> None:
+        path = tmp_path / "cortdeco"
+        gnl = _node_zero_values((1, 3)) | {(2, 0, 0, 0): value}
+        _write_cortdeco(path, 5, 2, gnl)
+
+        with pytest.raises(LayoutError, match="first cut-building node") as caught:
+            assert_gnl_support(path, 5, GNL_OFFSETS, 2)
+        assert f"record 2's pi_gnl entry 0, middle 0, patamar 0 is {value!r}" in str(
+            caught.value
+        )
+
+    @pytest.mark.parametrize(
+        ("change", "message"),
+        [
+            (
+                {(3, 1, 1, 2): 4.0},
+                "record 3's pi_gnl entry 1, middle 1, patamar 2 is 4.0: only middle "
+                "offset 0 carries a GNL coefficient",
+            ),
+            (
+                {(3, 1, 0, 2): float("nan")},
+                "record 3's pi_gnl entry 1, middle 0, patamar 2 is nan: "
+                "a GNL coefficient must be finite",
+            ),
+            (
+                {(1, 0, 0, 2): 9.0},
+                "record 1's pi_gnl entry 0, middle 0: patamar 0 is 1.5 but "
+                "patamar 2 is 9.0",
+            ),
+        ],
+        ids=["middle-offset-1", "not-finite", "unequal-patamares"],
+    )
+    def test_node_zero_violation_raises(
+        self,
+        tmp_path: Path,
+        change: dict[tuple[int, int, int, int], float],
+        message: str,
+    ) -> None:
+        path = tmp_path / "cortdeco"
+        _write_cortdeco(path, 5, 2, _node_zero_values((1, 3)) | change)
+
+        with pytest.raises(LayoutError) as caught:
+            assert_gnl_support(path, 5, GNL_OFFSETS, 2)
+        assert message in str(caught.value)
+
+    def test_equal_patamares_are_compared_by_bits(self, tmp_path: Path) -> None:
+        path = tmp_path / "cortdeco"
+        gnl = _node_zero_values((1, 3)) | {
+            (1, 0, 0, 0): 0.0,
+            (1, 0, 0, 1): -0.0,
+            (1, 0, 0, 2): 0.0,
+        }
+        _write_cortdeco(path, 5, 2, gnl)
+
+        with pytest.raises(LayoutError, match="patamar 1 is -0.0"):
+            assert_gnl_support(path, 5, GNL_OFFSETS, 2)
+
+    def test_one_node_file_feeds_the_extra_record(self, tmp_path: Path) -> None:
+        path = tmp_path / "cortdeco"
+        values = _node_zero_values((1,))
+        gnl = values | {(2, *position[1:]): value for position, value in values.items()}
+        _write_cortdeco(path, 3, 1, gnl)
+
+        assert assert_gnl_support(path, 3, GNL_OFFSETS, 1) is None
+
+    def test_two_node_file_refuses_the_extra_record(self, tmp_path: Path) -> None:
+        path = tmp_path / "cortdeco"
+        _write_cortdeco(path, 5, 2, _node_zero_values((1, 3)) | {(4, 0, 0, 0): 1.5})
+
+        with pytest.raises(LayoutError, match="record 4's pi_gnl"):
+            assert_gnl_support(path, 5, GNL_OFFSETS, 2)
+
+    def test_without_gnl_entries_returns_before_opening_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        offsets = cortdeco_block_offsets(3, 0, 0, 0, 3, 3)
+
+        assert assert_gnl_support(tmp_path / "missing", 5, offsets, 2) is None
+
+    @pytest.mark.parametrize(
+        ("pointers", "message"),
+        [({3: 99}, "reached record 98"), ({1: 4}, "record 3 reached twice")],
+        ids=["out-of-range", "repeated"],
+    )
+    def test_broken_chain_pointer_raises(
+        self, tmp_path: Path, pointers: dict[int, int], message: str
+    ) -> None:
+        path = tmp_path / "cortdeco"
+        _write_cortdeco(path, 5, 2, {}, pointers)
+
+        with pytest.raises(LayoutError, match=message):
+            assert_gnl_support(path, 5, GNL_OFFSETS, 2)

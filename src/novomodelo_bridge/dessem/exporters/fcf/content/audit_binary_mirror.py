@@ -4,8 +4,9 @@ These are the post-transformation audit artifacts, and their defining property
 is that they are produced by reading the written binary back, never by
 re-serializing the records in memory.
 
-The values are post-division (P2). The ÷1000 stays visible by comparing against
-the ECO CSVs, which hold Novomodelo's raw values.
+The values are post-division (P2) except `pi_gnl`, which is in R$/MWh. The ÷1000
+stays visible by comparing against the ECO CSVs, which hold Novomodelo's raw
+values.
 """
 
 from __future__ import annotations

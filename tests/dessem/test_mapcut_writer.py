@@ -40,6 +40,7 @@ def minimal_header() -> MapcutHeader:
         codigos_submercados_gnl=(1, 2),
         lag_meses_gnl=(2, 2),
         patamares_gnl=(3, 3),
+        gnl_patamar_hours=(27.0, 68.0, 73.0),
         taxa_desconto=(1.0, 0.998),
     )
 
@@ -115,10 +116,44 @@ class TestMapcutValidation:
             codigos_submercados_gnl=(1, 2),
             lag_meses_gnl=(2, 2),
             patamares_gnl=(3, 3),
+            gnl_patamar_hours=(27.0, 68.0, 73.0),
             taxa_desconto=(1.0, 0.998),
         )
 
         with pytest.raises(LayoutError, match="inconsistent"):
+            write_mapcut(header, tmp_path / "mapcut.rv0")
+
+    def test_hours_count_differing_from_patamares_gnl_raises(
+        self, tmp_path: Path, minimal_header: MapcutHeader
+    ) -> None:
+        header = replace(minimal_header, gnl_patamar_hours=(27.0, 68.0))
+
+        with pytest.raises(
+            LayoutError, match=r"patamares_gnl holds 3 .* has 2 entries"
+        ):
+            write_mapcut(header, tmp_path / "mapcut.rv0")
+
+    def test_hours_without_gnl_plants_raises(
+        self, tmp_path: Path, minimal_header: MapcutHeader
+    ) -> None:
+        header = replace(
+            minimal_header,
+            codigos_submercados_gnl=(),
+            lag_meses_gnl=(),
+            patamares_gnl=(),
+            gnl_patamar_hours=(27.0,),
+        )
+
+        with pytest.raises(LayoutError, match="codigos_submercados_gnl is empty"):
+            write_mapcut(header, tmp_path / "mapcut.rv0")
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_hours_raise(
+        self, tmp_path: Path, minimal_header: MapcutHeader, bad: float
+    ) -> None:
+        header = replace(minimal_header, gnl_patamar_hours=(27.0, bad, 73.0))
+
+        with pytest.raises(LayoutError, match="non-finite"):
             write_mapcut(header, tmp_path / "mapcut.rv0")
 
     def test_travel_time_plant_without_shares_for_every_stage_raises(
@@ -191,3 +226,59 @@ class TestTravelTimeRecords:
         self, written: MapcutContents
     ) -> None:
         assert written.gnl_record_indices[0] == 20 + 12
+
+
+class TestGnlTrailingBlock:
+    """Reg 9's trailing float64 block, read back from disk."""
+
+    def test_block_runs_patamar_major_with_entries_inner_then_pads_with_zeros(
+        self, tmp_path: Path, minimal_header: MapcutHeader
+    ) -> None:
+        path = tmp_path / "mapcut.rv0"
+        write_mapcut(minimal_header, path)
+
+        written = read_mapcut(path)
+
+        assert written.gnl_trailing_block == (27.0, 27.0, 68.0, 68.0, 73.0, 73.0)
+        data = path.read_bytes()
+        for index in written.gnl_record_indices:
+            record = data[index * RECORD_SIZE : (index + 1) * RECORD_SIZE]
+            assert not record[4 + 12 * 2 + 8 * 6 :].strip(b"\x00")
+
+    def test_every_reg9_record_carries_the_same_block(
+        self, tmp_path: Path, minimal_header: MapcutHeader
+    ) -> None:
+        path = tmp_path / "mapcut.rv0"
+        header = replace(
+            minimal_header,
+            numero_cenarios=4,
+            indice_no_arvore=(1, 1, 1, 1),
+            registro_ultimo_corte_no=(6, 5, 4, 3),
+        )
+        write_mapcut(header, path)
+
+        data = path.read_bytes()
+        records = {
+            data[index * RECORD_SIZE : (index + 1) * RECORD_SIZE]
+            for index in read_mapcut(path).gnl_record_indices
+        }
+
+        assert len(records) == 1
+
+    def test_without_gnl_plants_the_block_is_empty(
+        self, tmp_path: Path, minimal_header: MapcutHeader
+    ) -> None:
+        header = replace(
+            minimal_header,
+            codigos_submercados_gnl=(),
+            lag_meses_gnl=(),
+            patamares_gnl=(),
+            gnl_patamar_hours=(),
+        )
+        path = tmp_path / "mapcut.rv0"
+        write_mapcut(header, path)
+
+        written = read_mapcut(path)
+
+        assert written.codigos_submercados_gnl == ()
+        assert written.gnl_trailing_block == ()

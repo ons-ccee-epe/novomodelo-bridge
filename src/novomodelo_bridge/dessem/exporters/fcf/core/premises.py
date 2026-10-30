@@ -8,8 +8,6 @@ in its own text rather than deleted. A manifest that asserts a rule with no
 effect on the output pair is an auditability defect, and so is one that drops
 a rule the code still carries: naming the dormancy is what distinguishes
 the two.
-
-Premises P4 and P5 are DORMANT while P14 holds (pi_gnl block emitted as zeros).
 """
 
 from __future__ import annotations
@@ -20,8 +18,9 @@ P1 = (
 )
 
 P2 = (
-    "P2: intercept and every coefficient divided by 1000 (DECOMP is in "
-    "10^3 R$); verified to 1 ulp on a matched pair; not configurable"
+    "P2: the intercept, pi_varm and pi_qdefp are divided by 1000 (DECOMP is in "
+    "10^3 R$); verified to 1 ulp on a matched pair; not configurable. pi_gnl is "
+    "not divided: it prices energy and is written in R$/MWh"
 )
 
 P3 = (
@@ -45,23 +44,15 @@ P3 = (
 )
 
 P4 = (
-    "P4: GNL coefficients negated (Novomodelo negative, DECOMP positive), isolated "
-    "in one named, tested, documented function. DORMANT while P14 holds: "
-    "cortdeco emits its whole pi_gnl block as zeros, so no real coefficient "
-    "reaches this rule and it changes no byte of either output file. "
-    "negate_gnl and negate_gnl_array are retained, tested and reachable "
-    "for when the GNL mapping is resolved"
+    "P4: GNL coefficients are negated once, when the cut is serialized "
+    "(Novomodelo negative, DECOMP positive), in one named, tested, documented "
+    "function, negate_gnl_array"
 )
 
 P5 = (
-    "P5: GNL disaggregated across the 3 load blocks weighted by each stage's "
-    "own hours. The weights are per-stage, not one triple for the study: "
-    "stage 0 is 24/65/79, stages 1-4 are 15/64/89, stage 5 is 12/61/95 and "
-    "stage 6 is 51/226/323 over 600 hours rather than 168. DORMANT while "
-    "P14 holds: with the pi_gnl block emitted as zeros there is no coefficient "
-    "to spread across load blocks, so this rule changes no byte of either "
-    "output file. gnl_block_weights is retained and tested for when the "
-    "GNL mapping is resolved"
+    "P5: the converted GNL value is written unchanged on every load block of "
+    "the delivery, because Novomodelo prices one value per delivery; it is "
+    "never split by block hours"
 )
 
 P6 = "P6: submarket = bus_id + 1; bus 5 (IV) excluded; n_submercados = 5"
@@ -99,17 +90,10 @@ P11 = (
 )
 
 P12 = (
-    "P12: mapcut reg 9's trailing float64 block emitted as zeros. "
-    "The reference populates it with the GNL lag month's hours split across "
-    "load blocks, three values per submarket summing to 730.5 = 365.25*24/12, "
-    "one average month on the same day-count basis as P9. Two independent "
-    "reasons, the first decisive: the values are not derivable from a Novomodelo "
-    "case, because that split is a monthly load-block structure belonging to "
-    "the DECOMP deck while Novomodelo supplies weekly stage blocks, and no "
-    "aggregation of this case's own blocks reproduces the reference triple. "
-    "Second, the block's axis is itself unsettled: the populated width is "
-    "ngnl*npat while idecomp's reader consumes ngnl*n_estagios. Populating "
-    "this block needs a DECOMP-side input, not better Novomodelo parsing."
+    "P12: mapcut reg 9's trailing float64 block holds the delivery stage's "
+    "block hours from stages.json, patamar-major with GNL entries inner: "
+    "ngnl*npat values, each patamar's hours once per GNL plant, then record "
+    "padding. The delivery stage is the one whose delivery P14 prices."
 )
 
 P13 = (
@@ -124,21 +108,20 @@ P13 = (
 )
 
 P14 = (
-    "P14: cortdeco's pi_gnl coefficients emitted as zeros. Only the values "
-    "are zero: the block stays dimensioned by the NCOEF formula and occupies "
-    "its full n_sbm_gnl*n_estagios*n_patamares span, and n_sbm_gnl, "
-    "codigos_submercados_gnl (int32 on disk despite idecomp surfacing floats), "
-    "NCOEF, the record size and the file size are all unchanged. Reducing "
-    "Novomodelo's anticipated-thermal ring positions to DECOMP's (submarket, stage, "
-    "block) address is unresolved: ring positions sharing a delivery month "
-    "carry different coefficients, so they are distinct state variables rather "
-    "than copies, and the reference deck comes from an independent run whose "
-    "GNL magnitudes span seven orders of magnitude against the oracle's 15% "
-    "band and therefore cannot arbitrate between candidate reductions. Every "
-    "candidate writes a structurally valid file that DESSEM reads without "
-    "complaint, so a wrong one would corrupt the cut's GNL slope invisibly - "
-    "unlike P1, P11 and P12, whose divergence is a declared zero. P4 and P5 "
-    "are DORMANT while this premise holds."
+    "P14: for each GNL plant in mapcut reg 9 order, the first cut-building "
+    "node's cuts carry the coefficient the first cut-building pool prices on "
+    "the delivery that starts with the case's second stage, found by its "
+    "delivery interval, divided by that stage's block-hours sum, at the first "
+    "position of the pi_gnl block's middle axis; every other position and "
+    "every later node's cut is 0.0. The first cut-building pool's other priced "
+    "deliveries and every GNL coefficient of the later cut-building pools are "
+    "dropped without being folded into the cut intercept, with a counted audit "
+    "report per pool, never a silent truncation, so the exported coefficient "
+    "is not the whole of the policy's GNL value. A plant with no such delivery "
+    "is written as 0.0 with a warning, and an exact zero is written unchanged "
+    "with a warning. The export is refused when a plant has two slots on that "
+    "delivery, when a single-stage case has GNL plants, or when a slot's hours "
+    "disagree with the stage's"
 )
 
 P15 = (
