@@ -17,8 +17,11 @@ links are cobre-bridge's.
 ### Fixed
 
 - **`convert decomp` converts the GNL plants of later revisions**: a `TG` for a
-  month after the study no longer fails, each post-study stage takes its own
-  month's GNL cost and limits, and `novomodelo validate` accepts the case. GNL
+  month after the study no longer fails, each post-study stage takes the GNL
+  cost and limits of the months it covers, weighted by its hours in each, the
+  post-study monthly stage runs to the end of its civil month, the post-study
+  weeks of a first revision (RV0) follow the deck's operative weeks, with any
+  days before the first one held at 0 MW, and `novomodelo validate` accepts the case. GNL
   plants whose `GL` commits 0 MW are converted at 0 MW instead of left out. The
   committed `GL` week that starts just before the study ends now counts in the
   month after it from the end of the study, and in the last study stage for

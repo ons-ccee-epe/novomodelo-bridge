@@ -657,7 +657,9 @@ class GnlPlantClassification:
     coverage 1.0: a ``0 MW`` stub ``[horizon_end, first_start)`` when the first
     já-comandada week starts after ``horizon_end``, then one window per
     já-comandada week. ``class4_end`` — where the freshly-signaled span
-    starts — is ``horizon_end`` itself when the plant declares none.
+    starts — is, when the plant declares none, the first Saturday from
+    ``horizon_end`` with a ``gs`` calendar (behind a ``0 MW`` stub) and
+    ``horizon_end`` itself without one.
     ``study_weeks`` are the plant's ``gl`` weeks ``gs`` books to the study.
     """
 
@@ -711,6 +713,7 @@ def classify_gnl_windows(
                     code, commitment.stages, study_week_count, horizon_end
                 ),
                 horizon_end,
+                grid_aligned=study_week_count is not None,
             )
             for code, commitment in model.commitments.items()
         }
@@ -722,12 +725,33 @@ def _classify_plant(
     study_weeks: tuple[GnlStageCommitment, ...],
     post_study: Sequence[GnlStageCommitment],
     horizon_end: date,
+    *,
+    grid_aligned: bool,
 ) -> GnlPlantClassification:
-    """One plant's já-comandada run — see :func:`classify_gnl_windows`."""
+    """One plant's já-comandada run — see :func:`classify_gnl_windows`.
+
+    With a ``gs`` calendar and no já-comandada week, the month after the study
+    starts with the week after the plant's last ``gl`` week. When that week
+    starts past *horizon_end* (the last ``gl`` week was cut at the month end),
+    the days before it are a ``0 MW`` stub the source model commits nothing
+    to; when it starts at or before *horizon_end*, the study decides it from
+    *horizon_end* on and there is no stub.
+    """
     post_horizon = sorted(post_study, key=lambda s: s.start_date)
     if not post_horizon:
+        next_week = (
+            max(s.start_date for s in study_weeks) + _ONE_OPERATIVE_WEEK
+            if grid_aligned and study_weeks
+            else horizon_end
+        )
+        if next_week <= horizon_end:
+            return GnlPlantClassification(
+                class4_windows=(), class4_end=horizon_end, study_weeks=study_weeks
+            )
         return GnlPlantClassification(
-            class4_windows=(), class4_end=horizon_end, study_weeks=study_weeks
+            class4_windows=(GnlClass4Window(horizon_end, next_week, 0.0, None),),
+            class4_end=next_week,
+            study_weeks=study_weeks,
         )
 
     windows: list[GnlClass4Window] = []
@@ -933,15 +957,16 @@ def _record_bound(
 
 
 def _month_end_duration_hours(start: date) -> float:
-    """Hours from ``start`` to the last day of its own calendar month.
-
-    Uses the month's own last day-of-month number as the exclusive boundary
-    directly (``2026-06-06`` -> ``2026-06-30``, 24 d/576 h) — not the
-    following month's first day, which would add a spurious extra day
-    (600 h) and miss novomodelo's own post-study e2e fixture by one day.
-    """
+    """Hours from ``start`` to the end of its civil month, the next month's
+    first day exclusive (``2026-06-06`` -> ``2026-07-01``, 600 h)."""
     _, last_day = _calendar.monthrange(start.year, start.month)
-    return float(last_day - start.day) * 24.0
+    return float(last_day - start.day + 1) * 24.0
+
+
+def _days_to_saturday(day: date) -> int:
+    """Days from *day* to the next Saturday after it (``7`` from a Saturday)."""
+    # Saturday is weekday() 5.
+    return (5 - day.weekday()) % 7 or 7
 
 
 def _build_post_study_calendar(
@@ -956,11 +981,14 @@ def _build_post_study_calendar(
     * **class-4 fill** over ``[horizon_end, class4_end)`` — a grid-alignment
       stub ``[horizon_end, next_saturday)`` (``0`` h when ``horizon_end`` is
       already a Saturday), then ``168`` h operative weeks tiling up to
-      ``class4_end``. Empty when ``class4_end == horizon_end`` (no
-      já-comandada run to fill).
+      ``class4_end``. Empty when ``class4_end == horizon_end``
+      (:func:`classify_gnl_windows` found nothing commanded past the study).
     * **class-3 study-mirror** starting at ``class4_end`` — one stage per
-      study stage, same type: a ``168`` h study week mirrors to a ``168`` h
-      operative week, and the study's own trailing monthly stage mirrors to
+      study stage, same type: a study week mirrors to an operative week
+      ending on the next Saturday (shorter than ``168`` h only when
+      ``class4_end`` is off the grid, the source model's first post-study week
+      having started before ``horizon_end``), and the study's own trailing
+      monthly stage mirrors to
       a stage spanning to the end of *its own* (mirrored) calendar month
       (:func:`_month_end_duration_hours`), never the study stage's own
       recorded duration. Anchoring this mirror at ``horizon_end`` instead of
@@ -977,8 +1005,7 @@ def _build_post_study_calendar(
 
     stages: list[dict] = []
     cursor = horizon_end
-    # Saturday = weekday() 5; 0 when horizon_end is already on the grid.
-    stub_hours = ((5 - horizon_end.weekday()) % 7) * 24.0
+    stub_hours = (_days_to_saturday(horizon_end) % 7) * 24.0
     if stub_hours > 0.0 and cursor < class4_end:
         stages.append({"start_date": cursor.isoformat(), "duration_hours": stub_hours})
         cursor += timedelta(hours=stub_hours)
@@ -994,7 +1021,7 @@ def _build_post_study_calendar(
     for s_start, s_end in stage_spans:
         span_hours = (s_end - s_start).days * 24.0
         duration = (
-            float(_HOURS_PER_OPERATIVE_WEEK)
+            _days_to_saturday(cursor) * 24.0
             if span_hours == _HOURS_PER_OPERATIVE_WEEK
             else _month_end_duration_hours(cursor)
         )
@@ -1177,18 +1204,46 @@ def _pricing_axis(
     ]
 
 
-def _post_study_month_offsets(
-    horizon_end: date, post_calendar: Sequence[Mapping[str, str]]
-) -> list[int]:
-    """Each post-study stage's 0-based calendar month after the horizon end's,
-    by the month its ``start_date`` falls in."""
-    offsets = []
+def _post_study_month_hours(
+    horizon_end: date, post_calendar: Sequence[dict]
+) -> list[dict[int, float]]:
+    """Each post-study stage's hours per calendar month it overlaps, keyed by
+    the 0-based month after the horizon end's (``{0: 144.0, 1: 24.0}`` for a
+    week crossing into the second post-study month)."""
+    shares: list[dict[int, float]] = []
     for stage in post_calendar:
         start = date.fromisoformat(stage["start_date"])
-        offsets.append(
-            (start.year - horizon_end.year) * 12 + start.month - horizon_end.month
+        end = start + timedelta(hours=stage["duration_hours"])
+        hours: dict[int, float] = {}
+        cursor = start
+        while cursor < end:
+            _, days = _calendar.monthrange(cursor.year, cursor.month)
+            month_end = min(
+                end, date(cursor.year, cursor.month, days) + timedelta(days=1)
+            )
+            offset = (
+                (cursor.year - horizon_end.year) * 12 + cursor.month - horizon_end.month
+            )
+            hours[offset] = hours.get(offset, 0.0) + (month_end - cursor).days * 24.0
+            cursor = month_end
+        shares.append(hours)
+    return shares
+
+
+def _blend_capability(
+    capability: Sequence[_StageCapability], hours: Mapping[int, float]
+) -> _StageCapability:
+    """The hours-weighted mean of the capabilities at each month in *hours*."""
+    distinct = {capability[k] for k in hours}
+    if len(distinct) == 1:
+        return distinct.pop()
+    total = sum(hours.values())
+    return _StageCapability(
+        *(
+            sum(getattr(capability[k], field) * h for k, h in hours.items()) / total
+            for field in _StageCapability._fields
         )
-    return offsets
+    )
 
 
 def _convert_monthly_gnl(
@@ -1321,10 +1376,10 @@ def convert_gnl(
     (signaled)** post-study calendar stage — one whose ``start_date >=
     class4_end`` — carrying its ``cvu`` (fuel-inclusive) as ``cost_per_mwh``
     and its ``[min_mw, max_mw]`` capability, the carrier a signaled stage
-    needs to be priced at all. Both are read from the ``tg`` record of the
-    calendar month the stage starts in: the ``tg`` stage axis runs on past
-    the study, one stage per month (:func:`_post_study_month_offsets`,
-    :func:`_pricing_axis`). A class-4
+    needs to be priced at all. Both are the ``tg`` records of the calendar
+    months the stage overlaps, weighted by its hours in each: the ``tg`` stage
+    axis runs on past the study, one stage per month
+    (:func:`_post_study_month_hours`, :func:`_pricing_axis`). A class-4
     (já-comandada) stage gets none: its delivery is already fixed by the
     ``past_anticipated_commitments`` window above, and a ``thermal_bounds`` row
     there would let novomodelo re-optimize a cell the source model has already
@@ -1381,16 +1436,20 @@ def convert_gnl(
     seen_bounds: set[tuple[int, int]] = set()
 
     n_stages = len(calendar)
-    month_offsets = _post_study_month_offsets(horizon_end, post_calendar)
+    month_hours = _post_study_month_hours(horizon_end, post_calendar)
     capabilities = _stage_capabilities(
-        model.tg, _pricing_axis(calendar, max(month_offsets, default=-1) + 1)
+        model.tg,
+        _pricing_axis(calendar, max((max(h) for h in month_hours), default=-1) + 1),
     )
     for thermal in model.thermals:
         tid = gnl_id[thermal.code]
         stage_capability = capabilities[thermal.code]
         study_capability = stage_capability[:n_stages]
         last_capability = study_capability[-1]
-        post_capability = [stage_capability[n_stages + k] for k in month_offsets]
+        post_capability = [
+            _blend_capability(stage_capability[n_stages:], hours)
+            for hours in month_hours
+        ]
         plant_classification = classification.plants[thermal.code]
         folded = _fold_onto_stages(plant_classification.study_weeks, stage_spans)
         thermals.append(
