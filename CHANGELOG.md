@@ -14,6 +14,19 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`convert decomp` converts the GNL plants of later revisions**: a `TG` for a
+  month after the study no longer fails, each post-study stage takes its own
+  month's GNL cost and limits, and `novomodelo validate` accepts the case. GNL
+  plants whose `GL` commits 0 MW are converted at 0 MW instead of left out. The
+  committed `GL` week that starts just before the study ends now counts in the
+  month after it from the end of the study, and in the last study stage for
+  its days before that (no longer dropped, nor a crash for LIBs using
+  `ger_usit`), and weeks without patamar durations are weighted by
+  `cortesh.dat`, with the `decomp-gnl-block-hours-fallback` warning when it is
+  missing.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins

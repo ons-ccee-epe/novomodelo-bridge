@@ -1005,9 +1005,13 @@ def _run_cadastro_pipeline(
         # *return value* into the written case files is under test here.
         # ``case.dadgnl`` is already the non-None sentinel set above, so only
         # its downstream decode (read_gnl_model) needs patching here.
+        gnl_model = object()
         patches["novomodelo_bridge.decomp.pipeline.anticipated_conv.read_gnl_model"] = (
-            object()
+            gnl_model
         )
+        patches[
+            "novomodelo_bridge.decomp.pipeline.anticipated_conv.fill_undeclared_block_hours"
+        ] = gnl_model
         patches["novomodelo_bridge.decomp.pipeline.anticipated_conv.convert_gnl"] = (
             gnl_emission
         )

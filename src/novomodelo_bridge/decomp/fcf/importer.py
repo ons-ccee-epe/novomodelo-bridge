@@ -147,33 +147,33 @@ def _date_int(day: date) -> int:
 def _commanded_deliveries(
     model: GnlCommitmentModel,
     week_months: Mapping[date, tuple[int, int]],
-    horizon_end: date,
+    calendar: Sequence[OperativeStage],
 ) -> tuple[GnlCommandedDelivery, ...]:
     """The já-comandada (class-4) weeks with a nonzero ``gl`` dispatch.
 
     Read off :func:`classify_gnl_windows`, the same windows the conversion
     hands novomodelo as past commitments; the zero-MW grid stub carries nothing.
+    Patamar MW and month come from the window's own ``gl`` week, never from the
+    window start, which a week straddling the horizon end is clipped to; its
+    hours are the window's, the span novomodelo holds the commitment over.
     """
     submercado_of = {thermal.code: thermal.submarket_code for thermal in model.thermals}
-    block_mw_of = {
-        (code, stage.start_date): stage.block_mw
-        for code, commitment in model.commitments.items()
-        for stage in commitment.stages
-    }
     deliveries: list[GnlCommandedDelivery] = []
-    classification = classify_gnl_windows(model, horizon_end=horizon_end)
+    classification = classify_gnl_windows(model, calendar)
     for code, plant in sorted(classification.plants.items()):
-        for start, end, _mw in plant.class4_windows:
-            block_mw = block_mw_of.get((code, start), ())
-            if not any(block_mw):
+        for window in plant.class4_windows:
+            week = window.week
+            if week is None or not any(week.block_mw):
                 continue
-            year, month = week_months.get(start, (start.year, start.month))
+            year, month = week_months.get(
+                week.start_date, (week.start_date.year, week.start_date.month)
+            )
             deliveries.append(
                 GnlCommandedDelivery(
                     submercado=submercado_of[code],
                     month=month_key(year, month),
-                    block_mw=block_mw,
-                    hours=(end - start).days * 24.0,
+                    block_mw=week.block_mw,
+                    hours=(window.end_date - window.start_date).days * 24.0,
                 )
             )
     return tuple(deliveries)
@@ -233,7 +233,7 @@ def _plan_gnl_ring(
         targets=targets,
         months=months,
         week_months={_date_int(day): month_key(*ym) for day, ym in weeks.items()},
-        commanded=_commanded_deliveries(model, weeks, calendar[-1].end_date),
+        commanded=_commanded_deliveries(model, weeks, calendar),
     )
 
 

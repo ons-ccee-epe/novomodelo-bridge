@@ -19,6 +19,7 @@ from pathlib import Path
 import polars as pl
 import pyarrow as pa
 from idecomp.decomp import Dadger, Vazoes
+from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core import emission_checks
@@ -67,6 +68,7 @@ from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
+from novomodelo_bridge.decomp.fcf.cortes import read_patamar_fractions
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
     unindexed_libs_diagnostic,
@@ -1134,6 +1136,13 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         else None
     )
     if gnl_model is not None:
+        gnl_model = anticipated_conv.fill_undeclared_block_hours(
+            gnl_model,
+            case.calendar,
+            read_patamar_fractions(Cortesh.read(str(case.files.cortesh)))
+            if case.files.cortesh is not None
+            else None,
+        )
         gnl = anticipated_conv.convert_gnl(
             gnl_model,
             first_thermal_id=max(t["id"] for t in thermals_dict["thermals"]) + 1,

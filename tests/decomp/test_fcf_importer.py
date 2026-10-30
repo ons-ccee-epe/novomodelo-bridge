@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -458,6 +458,52 @@ def test_plan_gnl_ring_folds_only_nonzero_commanded_weeks() -> None:
 
     assert plan.commanded == (
         GnlCommandedDelivery(1, _MAY, (500.0, 500.0, 0.0), 168.0),
+    )
+
+
+#: A later revision's calendar: four October weeks, then November to 2026-12-01.
+_REVISION_CALENDAR = (
+    *(
+        _stage(
+            i,
+            date(2026, 10, 10) + timedelta(weeks=i),
+            date(2026, 10, 17) + timedelta(weeks=i),
+        )
+        for i in range(4)
+    ),
+    _stage(4, date(2026, 11, 7), date(2026, 12, 1)),
+)
+
+
+def test_plan_gnl_ring_folds_the_week_straddling_the_horizon_over_its_clipped_span() -> (
+    None
+):
+    """`gs` books week 8 (2026-11-28) to December; it is held from the horizon."""
+    commitment = GnlCommitment(
+        code=86,
+        stages=(
+            _gl_week(7, date(2026, 11, 21), (0.0, 0.0, 0.0)),
+            _gl_week(8, date(2026, 11, 28), (300.0, 100.0, 0.0)),
+            _gl_week(9, date(2026, 12, 5), (0.0, 0.0, 0.0)),
+        ),
+    )
+    model = _make_gnl_model(
+        (_make_gnl_thermal(86, 1),),
+        commitments={86: commitment},
+        weeks_per_month={1: 4, 2: 3, 3: 6},
+    )
+
+    plan = _plan_gnl_ring(
+        model,
+        (GnlThermalTarget(94, 1),),
+        {(2026, 12): (0.2, 0.3, 0.5)},
+        (2026, 11),
+        2,
+        _REVISION_CALENDAR,
+    )
+
+    assert plan.commanded == (
+        GnlCommandedDelivery(1, month_key(2026, 12), (300.0, 100.0, 0.0), 96.0),
     )
 
 
