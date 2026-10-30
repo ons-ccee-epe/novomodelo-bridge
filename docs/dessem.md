@@ -47,10 +47,24 @@ Each cut then also values the water those plants released that has not yet
 reached the plant downstream, per stage of release, from the cut's
 transit-bucket coefficients (premise P3).
 
+Each GNL plant's cuts price its commitment for the delivery of the case's
+second stage (premise P14). The export finds that delivery in the policy
+checkpoint by its start date, divides the plant's coefficient by the sum of
+that stage's load-block hours in `stages.json`, changes its sign, and writes
+the result in R$/MWh, the same on every load block. Only the cuts of the
+first cut-building node carry it, and `mapcut` record 9 carries the same
+load-block hours for every GNL plant. A plant for which the policy holds no
+coefficient for that delivery, or a coefficient of exactly zero, is written
+as 0.0 with a warning. The export is refused when a plant has two delivery
+slots for that stage, when a slot's dates disagree with the stage's
+load-block hours, when a case with GNL plants has a single stage, or when
+the first cut-building node is not at the case's first stage.
+
 Novomodelo stores cut values in the run's scaled cost units and records the scale
 in each pool's `cost_scale_factor`. The export multiplies every intercept and
-coefficient by that factor to get R$, then divides by 1000 for DECOMP's
-10³ R$.
+coefficient by that factor to get R$. It then divides the intercepts and the
+storage and in-transit water coefficients by 1000 for DECOMP's 10³ R$; the GNL
+coefficients are written in R$/MWh and are not divided.
 
 ## Options
 
@@ -69,10 +83,10 @@ coefficient by that factor to get R$, then divides by 1000 for DECOMP's
 
 | Artifact | Description |
 |----------|-------------|
-| `mapcut.<rev>` | DECOMP cut-header binary: iteration and cut counts, hydro plant codes in Novomodelo's plant order, each plant's downstream plant (as its 1-based position in that list, as DECOMP writes it), the node tree, discount factors, the per-node cut-chain heads, and, per travel-time plant, the share of each stage's release that arrives in each later stage. |
+| `mapcut.<rev>` | DECOMP cut-header binary: iteration and cut counts, hydro plant codes in Novomodelo's plant order, each plant's downstream plant (as its 1-based position in that list, as DECOMP writes it), the node tree, discount factors, the per-node cut-chain heads, and, per travel-time plant, the share of each stage's release that arrives in each later stage. Per GNL plant it also holds the submarket, the lag in months and the load-block hours of the delivery the GNL coefficients price. |
 | `cortdeco.<rev>` | DECOMP cut binary: one record per cut with its right-hand side, storage coefficients, coefficients of the water released and still in transit, and GNL coefficients. |
 | `eco/*.csv` | With `--audit-csv`: one CSV per pool with every cut as read from the checkpoint, already converted to R$. |
-| `content/*.csv` | With `--audit-csv`: the values actually written to `mapcut` and `cortdeco`, read back from the binaries. |
+| `content/*.csv` | With `--audit-csv`: the values actually written to `mapcut` and `cortdeco`, read back from the binaries. `mapcut` record 9's GNL hours take one row per GNL plant and load block. |
 | `export_manifest.json` | Provenance: tool and library versions, the case and deck paths, settings, the full text of every premise applied, output paths, and status. |
 
 A successful export writes `export_manifest.json` with `"status": "ok"`. A
@@ -93,19 +107,19 @@ and every export copies it into `export_manifest.json`. In brief:
 | Premise | Effect |
 |---------|--------|
 | P1 | `mapcut` physical records (indices 4–17) are written as zeros. |
-| P2 | Intercepts and coefficients are divided by 1000 (R$ to 10³ R$). |
+| P2 | Intercepts and the storage and in-transit water coefficients are divided by 1000 (R$ to 10³ R$); GNL coefficients stay in R$/MWh. |
 | P3 | Travel-time plants follow the deck's `VI` records; each release's in-transit water is valued from the transit buckets it arrives in. |
-| P4 | GNL coefficient sign flip; dormant while P14 holds. |
-| P5 | GNL split across load blocks by stage hours; dormant while P14 holds. |
+| P4 | GNL coefficients change sign (Novomodelo negative, DECOMP positive). |
+| P5 | A delivery's GNL value is written unchanged on every load block, never split by block hours. |
 | P6 | Submarket is `bus_id + 1`; the `IV` transhipment bus is excluded. |
 | P7 | Only trunk pools are converted; the terminal pool is excluded. |
 | P8 | Inflow-lag coefficients are dropped, with a counted audit log. |
 | P9 | Discount factors are `(1+r)^(-days/365.25)` from the stage dates. |
 | P10 | Every populated cut past the warm-start slots is written; `is_active` is recorded, not used as a filter. |
 | P11 | `mapcut` record 10's operational cost parcels are written as zeros. |
-| P12 | `mapcut` record 9's trailing GNL hours block is written as zeros. |
+| P12 | `mapcut` record 9's trailing GNL hours block holds the delivery stage's load-block hours from `stages.json`. |
 | P13 | `cortdeco` holds one extra record duplicating the last cut. |
-| P14 | GNL coefficients are written as zeros. |
+| P14 | The first cut-building node's cuts carry each GNL plant's coefficient for the delivery of the case's second stage, divided by that stage's hours; the other GNL coefficients are dropped, with a counted audit log. |
 | P15 | GNL lag months are read from the deck's `NL` records; a GNL plant with no `NL` record is refused. |
 
 ## Exit codes
@@ -118,9 +132,23 @@ and every export copies it into `export_manifest.json`. In brief:
 
 ## Known limitations
 
-1. **GNL coefficients are zeros (P14).** The exported cuts carry the value of
-   stored water but not of GNL commitments.
-2. **Terminal pool excluded (P7).** DESSEM supplies its own terminal value.
+1. **GNL coefficients for one delivery only (P14).** Only the first
+   cut-building node's cuts carry GNL coefficients, and only for the
+   delivery of the case's second stage. The policy's other GNL coefficients
+   are not folded into the cut intercept, so the cuts price those
+   commitments as zero. Each run logs their count per pool, which `-v`
+   shows and `--log-file` records.
+2. **One GNL value per delivery (P5).** Novomodelo prices one value per GNL
+   delivery, so the file holds the same value on every load block, where
+   DECOMP prices each load block separately.
+3. **`mapcut` record 10's cost parcels are zeros (P11)**, the GNL
+   minimum-generation parcels among them: they are DECOMP quantities that a
+   Novomodelo policy does not hold.
+4. **The GNL hours basis is not confirmed (P12).** `mapcut` record 9
+   carries the load-block hours of the delivery stage, where a `mapcut`
+   written by DECOMP carries those of an average month. How DESSEM combines
+   these hours with the GNL coefficients is not documented.
+5. **Terminal pool excluded (P7).** DESSEM supplies its own terminal value.
 
 ## See also
 

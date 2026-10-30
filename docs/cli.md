@@ -312,9 +312,12 @@ etc.), its hidr.dat codes label the hydro plants in the cut files, its
 dadgnl NL records give each GNL plant&#x27;s lag in months, and the order of
 its VI records numbers the plants with a water travel time.
 
-
-Warnings logged during export:
-- P14: GNL (anticipated thermal) coefficients emitted as zeros
+The cuts of the first cut-building node carry each GNL plant&#x27;s coefficient
+for the delivery of the case&#x27;s second stage, in R$/MWh and the same on
+every load block, and mapcut record 9 carries that stage&#x27;s load-block
+hours. The policy&#x27;s other GNL coefficients are left out and counted in the
+log. A plant with no coefficient for that delivery, or a coefficient of
+exactly zero, gets 0.0 and a warning.
 
 **Usage**:
 

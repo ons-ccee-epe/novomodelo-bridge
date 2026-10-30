@@ -14,6 +14,16 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`export dessem` writes the GNL coefficients in `cortdeco`** for the
+  delivery of the case's second stage, and that stage's load-block hours in
+  `mapcut` record 9, instead of zeros; export existing cases again to get
+  them. `dessem-fcf-gnl-coefficients-exported`,
+  `dessem-fcf-gnl-delivery-missing`, `dessem-fcf-gnl-coefficient-zero` and
+  `dessem-fcf-gnl-submarket-repeated` replace
+  `dessem-fcf-gnl-coefficients-zeroed`.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins

@@ -141,9 +141,12 @@ def _export_dessem(
     dadgnl NL records give each GNL plant's lag in months, and the order of
     its VI records numbers the plants with a water travel time.
 
-    \b
-    Warnings logged during export:
-    - P14: GNL (anticipated thermal) coefficients emitted as zeros
+    The cuts of the first cut-building node carry each GNL plant's coefficient
+    for the delivery of the case's second stage, in R$/MWh and the same on
+    every load block, and mapcut record 9 carries that stage's load-block
+    hours. The policy's other GNL coefficients are left out and counted in the
+    log. A plant with no coefficient for that delivery, or a coefficient of
+    exactly zero, gets 0.0 and a warning.
     """
     _configure_logging(verbose, log_file)
 
