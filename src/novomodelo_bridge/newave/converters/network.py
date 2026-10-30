@@ -10,10 +10,22 @@ from collections.abc import Mapping, Sequence
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.penalties import PCORTEOL, PEXC, PINT, hydro_penalty_costs
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, historical_start_date
+from novomodelo_bridge.newave.filling import month_hours
+from novomodelo_bridge.newave.horizon import (
+    POST_STUDY_YEAR,
+    StudyHorizon,
+    historical_start_date,
+    stage_dates_for,
+)
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -147,7 +159,31 @@ def _build_canonical_pair_to_line_id(
     return {pair: lid for lid, pair in enumerate(sorted(all_pairs))}
 
 
-def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
+def mean_bus_load_mw(load_table: pa.Table, horizon: StudyHorizon) -> dict[int, float]:
+    """Hours-weighted mean of each bus's ``mean_mw`` over the study stages."""
+    stage_hours = [month_hours(d.year, d.month) for d in stage_dates_for(horizon)]
+    totals: dict[int, float] = {}
+    hours: dict[int, float] = {}
+    for bus_id, stage_id, mean_mw in zip(
+        load_table["bus_id"].to_pylist(),
+        load_table["stage_id"].to_pylist(),
+        load_table["mean_mw"].to_pylist(),
+        strict=True,
+    ):
+        if stage_id >= horizon.study_months:
+            continue
+        weight = stage_hours[stage_id]
+        totals[bus_id] = totals.get(bus_id, 0.0) + mean_mw * weight
+        hours[bus_id] = hours.get(bus_id, 0.0) + weight
+    return {bus_id: totals[bus_id] / hours[bus_id] for bus_id in totals}
+
+
+def convert_buses(
+    case: NewaveCase,
+    id_map: NewaveIdMap,
+    *,
+    reference_load_mw: Mapping[int, float],
+) -> dict:
     """Convert the source model subsystem data to a Novomodelo ``buses.json`` dict.
 
     Reads ``sistema.dat`` from *case*.  Each subsystem (including
@@ -160,6 +196,9 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         Parsed the source model case.
     id_map:
         Pre-built ID mapping for bus IDs.
+    reference_load_mw:
+        Load per bus id (MW) that turns each segment's depth, a fraction of
+        load in the source model, into MW.
     """
     sistema = case.sistema
     deficit_df = sistema.custo_deficit
@@ -185,7 +224,7 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             }
 
         corte = row.get("corte")
-        depth_mw: float | None = (
+        depth_pu: float | None = (
             float(corte) if corte is not None and not is_na(corte) else None
         )
         cost_raw = row["custo"]
@@ -193,7 +232,7 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         buses_by_code[code]["segments"].append(
             {
                 "patamar": int(row["patamar_deficit"]),
-                "depth_mw": depth_mw,
+                "depth_pu": depth_pu,
                 "cost": cost,
             }
         )
@@ -215,24 +254,30 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     op_date = historical_start_date(case.dger)
 
     buses: list[dict] = []
+    scaled_rows: list[list[object]] = []
     for code, info in buses_by_code.items():
+        bus_id = id_map.bus_id(code)
         segs = sorted(info["segments"], key=lambda s: s["patamar"])
         active_segs = [s for s in segs if s["cost"] is not None and s["cost"] > 0]
         if not active_segs:
-            active_segs = [{"cost": fallback_cost, "depth_mw": None}]
+            active_segs = [{"cost": fallback_cost, "depth_pu": None}]
 
         deficit_segments: list[dict] = []
         for i, seg in enumerate(active_segs):
-            is_last = i == len(active_segs) - 1
-            deficit_segments.append(
-                {
-                    "depth_mw": None if is_last else seg["depth_mw"],
-                    "cost": seg["cost"],
-                }
-            )
+            depth_mw = None
+            if i < len(active_segs) - 1:
+                # TRACKED NOVOMODELO-GAP (C-deficit-depth): the source model gives
+                # depth as a fraction of load per stage, novomodelo takes one fixed
+                # MW depth per bus. Remove when novomodelo accepts a load-relative depth.
+                load = reference_load_mw[bus_id]
+                depth_mw = seg["depth_pu"] * load
+                scaled_rows.append(
+                    [info["name"], seg["patamar"], seg["depth_pu"], load, depth_mw]
+                )
+            deficit_segments.append({"depth_mw": depth_mw, "cost": seg["cost"]})
 
         bus_entry: dict = {
-            "id": id_map.bus_id(code),
+            "id": bus_id,
             "name": info["name"],
             "operational_start_date": op_date,
             "deficit_segments": deficit_segments,
@@ -240,6 +285,34 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         buses.append(bus_entry)
 
     buses.sort(key=lambda b: b["id"])
+
+    if scaled_rows:
+        emit(
+            Diagnostic(
+                code="deficit-depth-from-mean-load",
+                severity=Severity.WARNING,
+                category="Deficit",
+                title="Deficit segment depths fixed at the mean load",
+                summary=(
+                    "Deficit segment depths are a fraction of each stage's load in "
+                    "the source model but a fixed MW per bus in novomodelo; each "
+                    "depth is taken at the bus's hours-weighted mean load over the "
+                    "study period."
+                ),
+                table=DiagnosticTable(
+                    columns=[
+                        "Bus",
+                        "Segment",
+                        "Depth p.u.",
+                        "Mean load MW",
+                        "Depth MW",
+                    ],
+                    rows=scaled_rows,
+                    justify=["left", "right", "right", "right", "right"],
+                ),
+            ),
+            logger=_LOG,
+        )
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/buses.json"),

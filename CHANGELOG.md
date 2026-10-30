@@ -14,6 +14,10 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`convert newave` reads deficit depths in `sistema.dat` as a share of load.** A 5 % segment was written as 0.05 MW, so nearly all deficit was priced at the last segment's cost. Each depth is now that share of the bus's mean load over the study period, which novomodelo takes as a fixed MW per bus; a `deficit-depth-from-mean-load` warning lists the depths applied. Reconvert NEWAVE cases.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins

@@ -275,8 +275,15 @@ def _convert_newave_case_impl(
     logger.debug("Converting thermals")
     thermals_dict = thermal_conv.convert_thermals(case, id_map)
 
+    logger.debug("Converting load stats")
+    load_table = stochastic_conv.convert_load_stats(case, id_map)
+
     logger.debug("Converting buses")
-    buses_dict = network_conv.convert_buses(case, id_map)
+    buses_dict = network_conv.convert_buses(
+        case,
+        id_map,
+        reference_load_mw=network_conv.mean_bus_load_mw(load_table, case.horizon),
+    )
 
     logger.debug("Converting lines")
     lines_dict = network_conv.convert_lines(case, id_map)
@@ -330,9 +337,6 @@ def _convert_newave_case_impl(
 
     logger.debug("Converting inflow stats")
     inflow_table = stochastic_conv.convert_inflow_stats(case, id_map)
-
-    logger.debug("Converting load stats")
-    load_table = stochastic_conv.convert_load_stats(case, id_map)
 
     logger.debug("Converting inflow history from vazoes.dat")
     inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)

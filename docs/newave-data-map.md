@@ -50,6 +50,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `expt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
 | `exph.dat` (opcional) |  |  |  | ● | ● | ● | ● | ● |  |  |
 | `manutt.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
+| `c_adic.dat` (opcional) | ● |  |  |  |  |  |  |  |  |  |
 | `volref_saz.dat` (opcional) |  |  |  | ● |  |  | ● |  |  |  |
 | `adterm.dat` (opcional) |  |  | ● |  |  |  |  |  |  |  |
 | `polinjus.csv` (opcional) |  |  |  |  | ● |  |  | ● |  |  |
@@ -230,7 +231,7 @@ Armazenamento inicial por usina ativa; opcionalmente o volume morto já enchido 
 
 ### `system/buses.json`
 
-**Lê:** `sistema.dat`, `dger.dat`, `ree.dat`  
+**Lê:** `sistema.dat`, `dger.dat`, `ree.dat`, `c_adic.dat` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [buses.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/buses.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/network.py`
 
@@ -242,7 +243,7 @@ Uma barra por submercado de `sistema.dat` (fictícios incluídos), com os patama
 | `buses[].name` | `sistema.dat` › `custo_deficit · nome_submercado` | Nome do submercado, sem espaços nas pontas. |
 | `buses[].operational_start_date` | `dger.dat` › `ano_inicial_historico` *(derivado)* | 1º de janeiro de `ano_inicial_historico` (1931 quando ausente): submercados não têm data de entrada; o Novomodelo usa a data só como chave de ordenação. |
 | `buses[].deficit_segments[].cost` | `sistema.dat` › `custo_deficit · custo`, `sistema.dat` › `custo_deficit · patamar_deficit` | Um segmento por `patamar_deficit` com custo positivo, em ordem de patamar, R$/MWh direto. Submercado sem custo positivo (fictício) recebe um único segmento com o primeiro custo positivo do arquivo. |
-| `buses[].deficit_segments[].depth_mw` | `sistema.dat` › `custo_deficit · corte` | Profundidade `corte` do patamar; o último segmento de cada barra é sempre nulo (ilimitado). |
+| `buses[].deficit_segments[].depth_mw` | `sistema.dat` › `custo_deficit · corte`, `sistema.dat` › `mercado_energia` | Profundidade `corte` do patamar, que o `sistema.dat` dá em p.u. da carga, multiplicada pela carga média da barra nos estágios de estudo (ponderada pelas horas de cada estágio, sem o pós-estudo), porque o Novomodelo aceita uma profundidade fixa em MW por barra. O último segmento de cada barra é sempre nulo (ilimitado). Gera o aviso `deficit-depth-from-mean-load`. |
 
 ### `system/lines.json`
 
@@ -993,6 +994,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `custo_deficit · custo` → `system/buses.json` › `buses[].deficit_segments[].cost`
 - `custo_deficit · patamar_deficit` → `system/buses.json` › `buses[].deficit_segments[].cost`
 - `custo_deficit · corte` → `system/buses.json` › `buses[].deficit_segments[].depth_mw`
+- `mercado_energia` → `system/buses.json` › `buses[].deficit_segments[].depth_mw`
 - `limites_intercambio · submercado_de` → `system/lines.json` › `lines[].id`
 - `limites_intercambio · submercado_para` → `system/lines.json` › `lines[].id`
 - `limites_intercambio · submercado_de` → `system/lines.json` › `lines[].name`
@@ -1571,7 +1573,7 @@ Cada linha reduz a potência da usina proporcionalmente aos dias de sobreposiç�
 
 ### `c_adic.dat`
 
-**Estado:** convertido em parte. **Lido por:** `scenarios/load_seasonal_stats.parquet`.
+**Estado:** convertido em parte. **Lido por:** `scenarios/load_seasonal_stats.parquet`, `system/buses.json`.
 
 - `valor` → `scenarios/load_seasonal_stats.parquet` › `mean_mw`
 - `data` → `scenarios/load_seasonal_stats.parquet` › `mean_mw`

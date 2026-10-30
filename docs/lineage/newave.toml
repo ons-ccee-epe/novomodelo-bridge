@@ -764,6 +764,7 @@ reads = [
   { file = "sistema" },
   { file = "dger" },
   { file = "ree" },
+  { file = "c_adic" },
 ]
 summary = "Uma barra por submercado de `sistema.dat` (fictícios incluídos), com os patamares de déficit."
 
@@ -797,8 +798,11 @@ summary = "Uma barra por submercado de `sistema.dat` (fictícios incluídos), co
 
   [[output.field]]
   path = "buses[].deficit_segments[].depth_mw"
-  from = [ { file = "sistema", item = "custo_deficit · corte" } ]
-  how = "Profundidade `corte` do patamar; o último segmento de cada barra é sempre nulo (ilimitado)."
+  from = [
+    { file = "sistema", item = "custo_deficit · corte" },
+    { file = "sistema", item = "mercado_energia" },
+  ]
+  how = "Profundidade `corte` do patamar, que o `sistema.dat` dá em p.u. da carga, multiplicada pela carga média da barra nos estágios de estudo (ponderada pelas horas de cada estágio, sem o pós-estudo), porque o Novomodelo aceita uma profundidade fixa em MW por barra. O último segmento de cada barra é sempre nulo (ilimitado). Gera o aviso `deficit-depth-from-mean-load`."
 
 # =============================================================================
 # system/lines.json

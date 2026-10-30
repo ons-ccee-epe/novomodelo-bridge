@@ -622,6 +622,10 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
             return_value=_FAKE_BUSES,
         ),
         patch(
+            "novomodelo_bridge.newave.pipeline.network_conv.mean_bus_load_mw",
+            return_value={},
+        ),
+        patch(
             "novomodelo_bridge.newave.pipeline.network_conv.convert_lines",
             return_value=_FAKE_LINES,
         ),
