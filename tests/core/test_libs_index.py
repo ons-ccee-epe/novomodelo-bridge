@@ -266,6 +266,7 @@ RE;1;ger_usih(1)
 
 re;2;ger_usih(2)
 RESTRICAO-ELETRICA-FORMULA;3;ger_usih(3)
+RE-LIM-FOR-PER-PAT;1;1;6;1;;4100
 """
 
 
@@ -274,10 +275,18 @@ RESTRICAO-ELETRICA-FORMULA;3;ger_usih(3)
     [
         pytest.param(
             NewaveRestricoes.read,
-            ["re;2;ger_usih(2)", "RESTRICAO-ELETRICA-FORMULA;3;ger_usih(3)"],
+            [
+                "re;2;ger_usih(2)",
+                "RESTRICAO-ELETRICA-FORMULA;3;ger_usih(3)",
+                "RE-LIM-FOR-PER-PAT;1;1;6;1;;4100",
+            ],
             id="inewave",
         ),
-        pytest.param(DecompRestricoes.read, ["re;2;ger_usih(2)"], id="idecomp"),
+        pytest.param(
+            DecompRestricoes.read,
+            ["re;2;ger_usih(2)", "RE-LIM-FOR-PER-PAT;1;1;6;1;;4100"],
+            id="idecomp",
+        ),
     ],
 )
 def test_unread_lines_diagnostic_lists_the_lines_kept_as_text(

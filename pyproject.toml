@@ -15,7 +15,9 @@ dependencies = [
     # the previous line's value. Imported directly for its DefaultRegister.
     "cfinterface>=1.10.3",
     # 1.18.1: the LIBS index and files read with cfinterface 1.10.3.
-    "idecomp>=1.18.1",
+    # 1.18.2: Restricoes reads a record only when the line's first field is its
+    # identifier.
+    "idecomp>=1.18.2",
     # 1.17.0: sistema.dat's separate `flag` column, and the typed readers the
     # bridge relies on (CDESVIO, cut partition dates, newave.tim, Agrint).
     # 1.17.1: Restricoes reads a record only when the line's first field is its

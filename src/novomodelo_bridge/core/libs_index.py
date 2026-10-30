@@ -245,11 +245,11 @@ def unread_lines_diagnostic(
         summary=(
             f"{len(lines)} line(s) of {file.name} are not records the conversion "
             "knows, so it ignores them. Record names are read only as the manual "
-            "writes them, in upper case."
+            "writes them, in full and in upper case."
         ),
         table=DiagnosticTable(columns=["line"], rows=[[line] for line in lines]),
         remediation=(
-            "Write each record name in upper case, as the manual does, or delete "
-            "the line if it is not a record."
+            "Write each record name exactly as the manual does, in upper case, or "
+            "delete the line if it is not a record."
         ),
     )

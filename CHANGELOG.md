@@ -25,11 +25,13 @@ links are cobre-bridge's.
 
 - **`AC ALTEFE` overrides set the head of DECOMP's turbined-flow limit.** They
   were reported and ignored.
-- **The bridge requires idecomp 1.18.1, inewave 1.17.1 and cfinterface 1.10.3
+- **The bridge requires idecomp 1.18.2, inewave 1.17.1 and cfinterface 1.10.3
   or newer.**
 - **`convert newave` and `convert decomp` warn about the lines of the
   electrical-constraint file they do not read** (`libs-unread-lines`). Record
-  names are read only in upper case; `convert newave` used to accept any case.
+  names are read only in full and in upper case; a misspelled name starting
+  with `RE` used to be read as an `RE` constraint, and `convert newave` accepted
+  any case.
 - **A LIBS index line without a file name stops `convert newave` and
   `convert decomp`**, as a blank file name already did; it used to be skipped.
 - **`convert newave` reads `CDESVIO` only in upper case, like the other
