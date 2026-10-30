@@ -97,6 +97,10 @@ _SYSTEM_VAR_MAP: dict[str, str] = {
     "DEFT": "deficit_mw",
 }
 
+# MEDIAS-USIT prints GTMIN, GTERM (generation above GTMIN) and their sum
+# GTERMTOT; Novomodelo's generation_mw is the sum.
+_THERMAL_GENERATION_VAR = "GTERMTOT"
+
 
 def _nw_stage_offset(nw_df: pl.DataFrame) -> int:
     """Return the minimum stage number in a source-model MEDIAS DataFrame.
@@ -503,6 +507,8 @@ def _compare_thermals(
     nw_lookup: dict[tuple[int, int], float] = {}
     for row in nw_thermal.iter_rows(named=True):
         if row["value"] is None:
+            continue
+        if str(row["variable"]).strip().upper() != _THERMAL_GENERATION_VAR:
             continue
         code = int(row["newave_code"])
         if code not in matched:
@@ -976,7 +982,7 @@ def _compare_medias(
     """Compare the MEDIAS hydro/thermal/bus means and the nwlistop interchange."""
     from novomodelo_bridge.comparators.newave.readers import (
         read_medias_hydro,
-        read_medias_system,
+        read_medias_market,
         read_medias_thermal,
         read_nwlistop_intercambio,
     )
@@ -1032,7 +1038,7 @@ def _compare_medias(
             )
         )
 
-    nw_system = read_medias_system(source_dir)
+    nw_system = read_medias_market(source_dir)
     novomodelo_bus = read_novomodelo_bus_means(novomodelo_output_dir)
     if not nw_system.is_empty() and not novomodelo_bus.is_empty():
         _LOG.info("Comparing bus results...")

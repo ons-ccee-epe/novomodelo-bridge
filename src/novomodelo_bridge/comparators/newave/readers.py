@@ -3,10 +3,6 @@
 Reads MEDIAS CSV files (hydro, thermal, system) directly from the case
 directory and pmo.dat convergence/productivity data.
 
-MEDIAS files are parsed with Polars, not inewave's MEDIAS readers: those drop
-the rows whose entity code is 0 or less and the last column of a line that
-does not end in a comma. pmo.dat is read via ``inewave.newave.Pmo``.
-
 Reader-failure contract: every file this module reads (MEDIAS CSVs,
 pmo.dat, sistema.dat, newave.tim, the FPHA reports, the nwlistop
 tables) is an OPTIONAL
@@ -30,7 +26,7 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import polars as pl
@@ -55,210 +51,114 @@ def _find_pmo(newave_dir: Path) -> Path | None:
 # MEDIAS CSV readers
 # -------------------------------------------------------------------
 
-# MEDIAS CSV structure (semicolon-separated):
-#   SÉRIE/CENÁRIO ; USINA ; PATAMAR ; EST001 ; EST002 ; ...
-# We filter for PATAMAR=0 (full-stage average) and pivot from wide
-# to long format: (newave_code, stage, value).
+
+class _MediasFile(Protocol):
+    """The inewave MEDIAS reader surface ``_read_medias`` relies on."""
+
+    @property
+    def valores(self) -> pd.DataFrame | None: ...
 
 
-def _read_medias_csv(
-    case_dir: Path,
-    filename: str,
-    variable_filter: str | None = None,
+type _MediasReader = Callable[[str], _MediasFile]
+
+_MEDIAS_SCHEMA: dict[str, type[pl.DataType]] = {
+    "newave_code": pl.Int64,
+    "stage": pl.Int64,
+    "variable": pl.Utf8,
+    "value": pl.Float64,
+}
+
+
+def _read_medias(
+    case_dir: Path, filename: str, read: _MediasReader, code_column: str | None
 ) -> pl.DataFrame:
-    """Read a MEDIAS CSV and return long-format DataFrame.
+    """One ``MEDIAS-*.CSV`` file in long format, one row per number it prints.
 
-    Returns DataFrame with columns:
-    - ``newave_code`` (Int64): entity code (usina or submercado)
-    - ``stage`` (Int64): 1-indexed stage number
-    - ``variable`` (Utf8): variable name from CSV (if multi-variable)
-    - ``value`` (Float64): stage mean value
-
-    Returns an empty DataFrame with the correct schema if the file
-    is not found.
+    Returns ``newave_code`` (the file's entity code, 0 without one), ``stage``,
+    ``variable`` and ``value``. ``stage`` is the file's own stage number, which
+    counts months from January of the study's first year, not from the study
+    start. A value printed as ``-`` has no row.
     """
-    empty = pl.DataFrame(
-        schema={
-            "newave_code": pl.Int64,
-            "stage": pl.Int64,
-            "variable": pl.Utf8,
-            "value": pl.Float64,
-        }
-    )
+    empty = pl.DataFrame(schema=_MEDIAS_SCHEMA)
 
     path = find_case_insensitive(case_dir, filename)
     if path is None:
         _LOG.warning("%s not found in %s", filename, case_dir)
         return empty
 
-    # Try comma first (the source model v29+ format), fall back to semicolon.
-    for sep in (",", ";"):
-        try:
-            df = pl.read_csv(
-                path,
-                separator=sep,
-                truncate_ragged_lines=True,
-                infer_schema_length=100,
-            )
-            if len(df.columns) > 2:
-                break
-        except Exception:
-            continue
-    else:
-        _LOG.warning("Failed to parse %s", path)
-        return empty
-
-    df = df.rename({c: c.strip() for c in df.columns})
-
-    # Identify entity column, variable column, patamar column, and stage
-    # value columns.
-    #
-    # The source model MEDIAS files come in two layouts:
-    #   v29+:  USIH_ext, VAR, 3, 4, 5, ...   (comma-sep, no PATAMAR/SERIE)
-    #   older: SERIE; USINA; PATAMAR; EST001; EST002; ...  (semicolon-sep)
-    entity_col: str | None = None
-    patamar_col: str | None = None
-    variable_col: str | None = None
-    stage_cols: list[str] = []
-
-    for col in df.columns:
-        upper = col.upper()
-        # v29+ entity columns: USIH_ext, USIT_ext, SBM_ext, etc.
-        if upper.endswith("_EXT") or upper in (
-            "USINA",
-            "CODIGO_USINA",
-            "SUBMERCADO",
-            "CODIGO_SUBMERCADO",
-        ):
-            entity_col = col
-        elif upper in ("PATAMAR", "PAT"):
-            patamar_col = col
-        elif upper in ("SERIE", "CENARIO", "SÉRIE/CENÁRIO", "SERIE/CENARIO"):
-            pass  # skip scenario column
-        elif upper in ("VAR", "VARIAVEL"):
-            variable_col = col
-        elif upper.startswith("EST") or upper.startswith("ESTAGIO"):
-            stage_cols.append(col)
-
-    if entity_col is None:
-        # Fallback: first column is usually the entity code.
-        entity_col = df.columns[0]
-
-    # If no EST* columns found, look for bare-integer column names (v29+).
-    if not stage_cols:
-        exclude = {entity_col, patamar_col, variable_col}
-        for col in df.columns:
-            if col in exclude:
-                continue
-            # Bare integer column names like "3", "4", ..., "60".
-            stripped = col.strip()
-            if stripped.isdigit():
-                stage_cols.append(col)
-                continue
-            # Also accept numeric-typed columns as fallback.
-            if df[col].dtype in (pl.Float64, pl.Int64, pl.Float32):
-                stage_cols.append(col)
-
-    if not stage_cols:
-        _LOG.warning("No stage columns found in %s", filename)
-        return empty
-
-    # Filter patamar=0 (stage-level average) — only present in older format.
-    if patamar_col is not None:
-        df = df.filter(pl.col(patamar_col).cast(pl.Int64, strict=False) == 0)
-
-    # Filter to mean scenario — only present in older format.
-    serie_col: str | None = None
-    for col in df.columns:
-        upper = col.upper()
-        if upper in ("SERIE", "CENARIO", "SÉRIE/CENÁRIO", "SERIE/CENARIO"):
-            serie_col = col
-            break
-
-    if serie_col is not None:
-        df = df.filter(pl.col(serie_col).cast(pl.Int64, strict=False) == 1)
-
-    if variable_filter is not None and variable_col is not None:
-        df = df.filter(
-            pl.col(variable_col).str.strip_chars().str.to_uppercase() == variable_filter
-        )
-
-    id_cols = [entity_col]
-    if variable_col is not None:
-        id_cols.append(variable_col)
-
     try:
-        long_df = df.unpivot(
-            on=stage_cols,
-            index=id_cols,
-            variable_name="stage_col",
-            value_name="value",
-        )
+        table = read(str(path)).valores
     except Exception:
-        _LOG.warning("Failed to unpivot %s", filename)
+        _LOG.warning("Failed to parse %s", path, exc_info=True)
+        return empty
+    if table is None or table.empty:
         return empty
 
-    # Extract stage number from column name.
-    # For bare-integer names ("3", "4") this extracts the number directly.
-    # For EST001-style names it strips the prefix.
-    long_df = long_df.with_columns(
-        pl.col("stage_col")
-        .str.replace_all(r"[^0-9]", "")
-        .cast(pl.Int64, strict=False)
-        .alias("stage")
+    ids = ["indice_mes"] if code_column is None else ["indice_mes", code_column]
+    long = table.drop(columns="estagio").melt(
+        id_vars=ids, var_name="variable", value_name="value"
     )
-
-    # Build output.  Strip whitespace before casting — MEDIAS values
-    # are whitespace-padded (e.g. "   1", "   525.55").
-    result = long_df.select(
-        pl.col(entity_col)
-        .str.strip_chars()
-        .cast(pl.Int64, strict=False)
-        .alias("newave_code"),
-        pl.col("stage"),
-        (
-            pl.col(variable_col).str.strip_chars().alias("variable")
-            if variable_col is not None
-            else pl.lit("value").alias("variable")
-        ),
-        pl.col("value").str.strip_chars().cast(pl.Float64, strict=False),
-    ).drop_nulls(subset=["newave_code", "stage"])
-
-    return result
+    code = pl.lit(0) if code_column is None else pl.col(code_column)
+    return (
+        pl.from_pandas(long)
+        .select(
+            code.cast(pl.Int64).alias("newave_code"),
+            pl.col("indice_mes").cast(pl.Int64).alias("stage"),
+            pl.col("variable").cast(pl.Utf8),
+            pl.col("value").cast(pl.Float64),
+        )
+        .drop_nulls("value")
+    )
 
 
 def read_medias_hydro(case_dir: Path) -> pl.DataFrame:
-    """Read MEDIAS-USIH.CSV and return hydro results.
+    """Read MEDIAS-USIH.CSV, keyed by hydro plant code."""
+    from inewave.nwlistop import Mediasusih
 
-    Returns DataFrame with columns: ``newave_code``, ``stage``,
-    ``variable``, ``value``.  Variables include VARMUH, GHIDUH,
-    QTURUH, QVERTUH, QAFLUH, etc.
-
-    Returns empty DataFrame if file not found.
-    """
-    return _read_medias_csv(case_dir, "MEDIAS-USIH.CSV")
+    return _read_medias(case_dir, "MEDIAS-USIH.CSV", Mediasusih.read, "codigo_usina")
 
 
 def read_medias_thermal(case_dir: Path) -> pl.DataFrame:
-    """Read MEDIAS-USIT.CSV and return thermal results.
+    """Read MEDIAS-USIT.CSV, keyed by thermal plant code."""
+    from inewave.nwlistop import Mediasusit
 
-    Returns DataFrame with columns: ``newave_code``, ``stage``,
-    ``variable``, ``value``.
+    return _read_medias(case_dir, "MEDIAS-USIT.CSV", Mediasusit.read, "codigo_usina")
 
-    Returns empty DataFrame if file not found.
+
+def read_medias_market(case_dir: Path) -> pl.DataFrame:
+    """Read MEDIAS-MERC.CSV, keyed by submarket code.
+
+    The file's code-0 rows are not read: they repeat the system costs
+    ``read_medias_sin`` reads.
     """
-    return _read_medias_csv(case_dir, "MEDIAS-USIT.CSV")
+    from inewave.nwlistop import Mediasmerc
+
+    return _read_medias(
+        case_dir, "MEDIAS-MERC.CSV", Mediasmerc.read, "codigo_submercado"
+    )
 
 
-def read_medias_system(case_dir: Path) -> pl.DataFrame:
-    """Read MEDIAS-MERC.CSV and return system/market results.
+def read_medias_sin(case_dir: Path) -> pl.DataFrame:
+    """Read MEDIAS-SIN.CSV (system interconnected aggregate), ``newave_code`` 0.
 
-    Returns DataFrame with columns: ``newave_code`` (submercado code),
-    ``stage``, ``variable``, ``value``.
-
-    Returns empty DataFrame if file not found.
+    Useful variables include ``EARMF`` (stored energy final, MWmes), ``ENA``
+    (natural energy inflow, MWmes) and ``EARMFP`` (percentage of max storage).
     """
-    return _read_medias_csv(case_dir, "MEDIAS-MERC.CSV")
+    from inewave.nwlistop import Mediassin
+
+    return _read_medias(case_dir, "MEDIAS-SIN.CSV", Mediassin.read, None)
+
+
+def read_medias_ree(case_dir: Path) -> pl.DataFrame:
+    """Read MEDIAS-REE.CSV, keyed by REE code.
+
+    The key variable for VminOP validation is ``EARMF``, the REE's final
+    stored energy in MWmes measured *relative to the minimum operative volume*
+    (useful energy): the quantity the VminOP generic constraints bound.
+    """
+    from inewave.nwlistop import Mediasree
+
+    return _read_medias(case_dir, "MEDIAS-REE.CSV", Mediasree.read, "codigo_ree")
 
 
 # -------------------------------------------------------------------
@@ -519,41 +419,6 @@ def read_nwlistop_intercambio(case_dir: Path) -> pl.DataFrame:
             "value": pl.Float64,
         }
     )
-
-
-def read_medias_market(case_dir: Path) -> pl.DataFrame:
-    """Read MEDIAS-MERC.CSV with all variables in long format.
-
-    Returns DataFrame with columns: ``newave_code``, ``stage``,
-    ``variable``, ``value``.  Unlike ``read_medias_system`` which only
-    returns CMO/DEFT, this returns all market variables for energy
-    balance analysis.
-    """
-    return _read_medias_csv(case_dir, "MEDIAS-MERC.CSV")
-
-
-def read_medias_sin(case_dir: Path) -> pl.DataFrame:
-    """Read MEDIAS-SIN.CSV (system interconnected aggregate).
-
-    Returns DataFrame with columns ``newave_code`` (always 0 for SIN),
-    ``stage``, ``variable``, ``value``.  Useful variables include
-    ``EARMF`` (stored energy final, MWmes), ``ENA`` (natural energy
-    inflow, MWmes), ``EARMFP`` (percentage of max storage).
-    """
-    return _read_medias_csv(case_dir, "MEDIAS-SIN.CSV")
-
-
-def read_medias_ree(case_dir: Path) -> pl.DataFrame:
-    """Read MEDIAS-REE.CSV (per equivalent-energy-reservoir aggregate).
-
-    Returns DataFrame with columns ``newave_code`` (the REE code), ``stage`` (1-based
-    MEDIAS stage), ``variable``, ``value``.  The key variable for VminOP validation is
-    ``EARMF`` — the REE's final stored energy in MWmes, measured *relative to the
-    minimum operative volume* (i.e. useful energy).  This is the physical quantity the
-    VminOP generic constraints bound, so it is the natural the source-model-side LHS for
-    those constraints.
-    """
-    return _read_medias_csv(case_dir, "MEDIAS-REE.CSV")
 
 
 _MERCL_FILE_RE = re.compile(r"mercl(\d+)\.out$", re.IGNORECASE)

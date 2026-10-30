@@ -27,7 +27,6 @@ from novomodelo_bridge.comparators.newave.readers import (
     read_medias_market,
     read_medias_ree,
     read_medias_sin,
-    read_medias_system,
     read_medias_thermal,
     read_newave_net_load,
     read_newave_net_load_nwlistop,
@@ -65,6 +64,34 @@ class TestMediasHydro:
         )
         assert row["value"].item() == 120.5
 
+    @pytest.mark.parametrize("end", [",", ""], ids=["trailing-comma", "no-comma"])
+    def test_reads_the_last_stage_whether_or_not_a_line_ends_in_a_comma(
+        self, tmp_path: Path, end: str
+    ) -> None:
+        (tmp_path / "MEDIAS-USIH.CSV").write_text(
+            f"USIH_ext,     VAR,       9,      10{end}\n"
+            f"       1,  GHIDUH,   120.5,   121.0{end}\n",
+            encoding="utf-8",
+        )
+
+        df = read_medias_hydro(tmp_path)
+
+        assert df.sort("stage")["value"].to_list() == [120.5, 121.0]
+
+    def test_a_value_printed_as_a_dash_has_no_row(self, tmp_path: Path) -> None:
+        (tmp_path / "MEDIAS-USIH.CSV").write_text(
+            "USIH_ext,     VAR,       9,      10,\n"
+            "       1,  GHIDUH,   120.5,   121.0,\n"
+            "       1, VIOL_NEG_EVAP,       -      ,     2.5,\n",
+            encoding="utf-8",
+        )
+
+        df = read_medias_hydro(tmp_path)
+
+        assert df.filter(pl.col("variable") == "VIOL_NEG_EVAP").select(
+            "stage", "value"
+        ).rows() == [(10, 2.5)]
+
     def test_degrades_to_empty_frame_on_missing_file(
         self, tmp_path: Path, caplog
     ) -> None:
@@ -75,11 +102,10 @@ class TestMediasHydro:
 
 
 class TestMediasThermal:
-    def test_parses_gter_per_plant_stage(self) -> None:
+    def test_parses_the_generation_variables_per_plant_stage(self) -> None:
         df = read_medias_thermal(_FIXTURE_DIR)
-        assert not df.is_empty()
         assert df["newave_code"].unique().to_list() == [1]
-        assert df["variable"].unique().to_list() == ["GTER"]
+        assert set(df["variable"].unique().to_list()) == {"GTMIN", "GTERM", "GTERMTOT"}
 
     def test_degrades_to_empty_frame_on_missing_file(
         self, tmp_path: Path, caplog
@@ -90,29 +116,31 @@ class TestMediasThermal:
         assert "MEDIAS-USIT.CSV" in caplog.text
 
 
-class TestMediasSystem:
+class TestMediasMarket:
     def test_parses_cmo_and_deft_per_submarket_stage(self) -> None:
-        df = read_medias_system(_FIXTURE_DIR)
+        df = read_medias_market(_FIXTURE_DIR)
         assert not df.is_empty()
         assert set(df["variable"].unique().to_list()) == {"CMO", "DEFT"}
+
+    def test_the_code_0_system_rows_are_not_read(self, tmp_path: Path) -> None:
+        (tmp_path / "MEDIAS-MERC.CSV").write_text(
+            "SBM_ext,VAR,       9,      10,\n"
+            "       0,COPER,  1000.0,  1100.0,\n"
+            "       1,CMO,   150.3,   152.1,\n",
+            encoding="utf-8",
+        )
+
+        df = read_medias_market(tmp_path)
+
+        assert df["newave_code"].unique().to_list() == [1]
 
     def test_degrades_to_empty_frame_on_missing_file(
         self, tmp_path: Path, caplog
     ) -> None:
         with caplog.at_level(logging.WARNING):
-            df = read_medias_system(tmp_path)
+            df = read_medias_market(tmp_path)
         assert df.is_empty()
         assert "MEDIAS-MERC.CSV" in caplog.text
-
-
-class TestMediasMarket:
-    def test_parses_all_market_variables(self) -> None:
-        df = read_medias_market(_FIXTURE_DIR)
-        assert not df.is_empty()
-        assert set(df["variable"].unique().to_list()) == {"CMO", "DEFT"}
-
-    def test_degrades_to_empty_frame_on_missing_file(self, tmp_path: Path) -> None:
-        assert read_medias_market(tmp_path).is_empty()
 
 
 class TestMediasSin:

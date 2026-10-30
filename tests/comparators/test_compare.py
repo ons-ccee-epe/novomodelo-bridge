@@ -1003,7 +1003,7 @@ class TestEdgeCases:
         """The source model readers return empty DataFrames when dir missing."""
         from novomodelo_bridge.comparators.newave.readers import (
             read_medias_hydro,
-            read_medias_system,
+            read_medias_market,
             read_medias_thermal,
             read_pmo_convergence,
             read_pmo_productivity_detail,
@@ -1012,7 +1012,7 @@ class TestEdgeCases:
         fake_dir = tmp_path / "nonexistent"
         assert read_medias_hydro(fake_dir).is_empty()
         assert read_medias_thermal(fake_dir).is_empty()
-        assert read_medias_system(fake_dir).is_empty()
+        assert read_medias_market(fake_dir).is_empty()
         assert read_pmo_convergence(fake_dir).is_empty()
         assert read_pmo_productivity_detail(fake_dir).is_empty()
 
@@ -1268,7 +1268,6 @@ class TestCompareResultsReturnsDataset:
         for name in (
             "read_medias_hydro",
             "read_medias_thermal",
-            "read_medias_system",
             "read_medias_market",
             "read_medias_sin",
             "read_nwlistop_intercambio",
