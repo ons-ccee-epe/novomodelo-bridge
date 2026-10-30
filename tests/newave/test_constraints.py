@@ -12,6 +12,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
     ConstraintIdAllocator,
@@ -1572,6 +1573,68 @@ class TestConvertAgrintConstraints:
         assert c2["expression"].startswith("line_reverse(0)")
         assert "line_exchange" not in c2["expression"]
         assert not c2["expression"].startswith("-")
+
+
+def _three_block_agrint_case(tmp_path: Path, limit_line: str) -> NewaveCase:
+    """A 3-block, one-year case whose single AGRINT group 1 (1 -> 3) has one
+    limit record, *limit_line*; sistema.dat lists the pair so the group has a line."""
+    agrint_path = tmp_path / "agrint.dat"
+    agrint_path.write_text(
+        "AGRUPAMENTOS DE INTERCAMBIO\n"
+        " #AG A   B   COEF\n"
+        " XXX XXX XXX XX.XXXX\n"
+        "   1   1   3  1.0000\n"
+        " 999\n"
+        "LIMITES POR GRUPO\n"
+        "  #AG MI ANOI MF ANOF LIM_P1  LIM_P2  LIM_P3\n"
+        " XXX  XX XXXX XX XXXX XXXXXX. XXXXXX. XXXXXX.\n"
+        f"{limit_line}\n"
+        " 999\n",
+        encoding="latin-1",
+    )
+    sistema = MagicMock()
+    sistema.limites_intercambio = pd.DataFrame(
+        [
+            {
+                "submercado_de": 1,
+                "submercado_para": 3,
+                "flag": 0,
+                "sentido": 0,
+                "data": datetime(2020, 1, 1),
+                "valor": 1000.0,
+            }
+        ]
+    )
+    return make_case(
+        make_nw_files(tmp_path, agrint=agrint_path),
+        dger=_make_dger_mock_for_agrint(),
+        patamar=MagicMock(numero_patamares=3),
+        sistema=sistema,
+    )
+
+
+class TestAgrintBlankLimitColumns:
+    def test_blank_block_repeats_the_previous_block_limit(self, tmp_path: Path) -> None:
+        case = _three_block_agrint_case(
+            tmp_path, "   1   1 2020 12 2020  10000.   9000."
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
+
+        result = convert_agrint_constraints(case, id_map)
+
+        assert result is not None
+        bounds = result.bounds.to_pandas()
+        first_stage = bounds[bounds["stage_id"] == 0].sort_values("block_id")
+        assert list(first_stage["bound_upper"]) == [10000.0, 9000.0, 9000.0]
+
+    def test_blank_first_block_is_a_parse_error(self, tmp_path: Path) -> None:
+        case = _three_block_agrint_case(
+            tmp_path, "   1   1 2020 12 2020           9000.   8000."
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
+
+        with pytest.raises(FieldParseError, match="group 1 has no first block limit"):
+            convert_agrint_constraints(case, id_map)
 
 
 class TestConvertAgrintConstraintsEmission:

@@ -32,7 +32,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
-from novomodelo_bridge.core.errors import BridgeError
+from novomodelo_bridge.core.errors import BridgeError, FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -41,7 +41,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     hard_slack,
     soft_slack,
 )
-from novomodelo_bridge.core.pandas_utils import as_int
+from novomodelo_bridge.core.pandas_utils import as_float, as_int, as_timestamp, is_na
 from novomodelo_bridge.core.productivity import (
     compute_productivity,
     stored_energy_productivity,
@@ -63,6 +63,8 @@ from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from collections.abc import Set as AbstractSet
+
+    from inewave.newave import Agrint
 
     from novomodelo_bridge.newave.horizon import StudyHorizon
 
@@ -1731,125 +1733,65 @@ def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> Non
 # ---------------------------------------------------------------------------
 
 
-def _parse_agrint(
-    path: Path,
-    num_patamares: int = 3,
+def _agrint_tables(
+    agrint: Agrint, num_patamares: int
 ) -> tuple[
     dict[int, list[tuple[int, int, float]]],  # group_id -> [(A, B, coeff)]
     list[tuple[int, int, int, int | None, int | None, list[float]]],
-    # (group_id, mi, anoi, mf|None, anof|None, [lim per patamar])
+    # (group_id, mi, anoi, mf|None, anof|None, [lim per patamar]), in file order
 ]:
-    """Parse AGRINT.DAT into group definitions and limit rows.
+    """``agrint.dat``'s groups and limit records, one limit per deck block.
 
-    Returns
-    -------
-    groups : dict[int, list[tuple[int, int, float]]]
-        Mapping from group ID to a list of (A, B, coefficient) tuples.
-    limits : list of 6-tuples
-        Each element is
-        (group_id, start_month, start_year, end_month|None, end_year|None,
-         [lim_p1, lim_p2, lim_p3]).
+    A blank block column repeats the previous block's limit.
+
+    Raises:
+        FieldParseError: a limit record whose first block column is blank.
     """
+    groups_df = agrint.agrupamentos
+    limits_df = agrint.limites_agrupamentos
+    if groups_df is None or limits_df is None:
+        return {}, []
+
     groups: dict[int, list[tuple[int, int, float]]] = {}
+    for group_id, de, para, coefficient in zip(
+        groups_df["agrupamento"],
+        groups_df["submercado_de"],
+        groups_df["submercado_para"],
+        groups_df["coeficiente"],
+        strict=True,
+    ):
+        groups.setdefault(as_int(group_id), []).append(
+            (as_int(de), as_int(para), as_float(coefficient))
+        )
+
     limits: list[tuple[int, int, int, int | None, int | None, list[float]]] = []
-
-    in_groups_section = False
-    in_limits_section = False
-
-    with path.open(encoding="latin-1") as fh:
-        for raw_line in fh:
-            line = raw_line.rstrip("\r\n")
-
-            stripped = line.strip()
-            if not stripped or stripped.startswith("&"):
-                continue
-
-            upper = stripped.upper()
-
-            # Section headers
-            if "AGRUPAMENTOS" in upper:
-                if "LIMITES" not in upper:
-                    in_groups_section = True
-                    in_limits_section = False
-                    continue
-
-            if "LIMITES POR GRUPO" in upper:
-                in_groups_section = False
-                in_limits_section = True
-                continue
-
-            # Skip format/header comment lines
-            if stripped.startswith("#") or stripped.startswith("X"):
-                continue
-
-            if in_groups_section:
-                # Terminator
-                if stripped.startswith("999"):
-                    in_groups_section = False
-                    continue
-                # Data line: right-aligned fixed-width columns
-                # Format: XXX XXX XXX XX.XXXX
-                # columns: group(1-3), A(5-7), B(9-11), coeff(13-20)
-                try:
-                    parts = stripped.split()
-                    if len(parts) < 4:
-                        continue
-                    group_id = int(parts[0])
-                    a = int(parts[1])
-                    b = int(parts[2])
-                    coeff = float(parts[3])
-                    groups.setdefault(group_id, []).append((a, b, coeff))
-                except (ValueError, IndexError):
-                    continue
-
-            elif in_limits_section:
-                if stripped.startswith("999"):
-                    break
-                # Format: #AG MI ANOI MF ANOF LIM_P1 LIM_P2 LIM_P3 [description]
-                # MF/ANOF are optional (open-ended if blank)
-                try:
-                    parts = stripped.split()
-                    if len(parts) < 4:
-                        continue
-                    group_id = int(parts[0])
-                    mi = int(parts[1])
-                    anoi = int(parts[2])
-
-                    # Detect whether MF/ANOF are present by trying to parse
-                    # parts[3] and parts[4] as int before float limits.
-                    # Limits always end with '.' in the file, so they parse as float.
-                    # MF/ANOF are small integers (1-12 / 4-digit year).
-                    mf: int | None = None
-                    anof: int | None = None
-                    lim_start = 3
-
-                    # parts[3]: could be MF (int 1-12) or first limit (float w/ '.')
-                    if "." not in parts[3] and len(parts) > 5:
-                        # Could still be a year — check parts[4] too
-                        try:
-                            candidate_mf = int(parts[3])
-                            candidate_anof = int(parts[4])
-                            # Sanity: MF in [1,12], ANOF is a 4-digit year
-                            if (
-                                1 <= candidate_mf <= 12
-                                and 1900 <= candidate_anof <= 9999
-                            ):
-                                mf = candidate_mf
-                                anof = candidate_anof
-                                lim_start = 5
-                        except (ValueError, IndexError):
-                            pass
-
-                    lim_parts = parts[lim_start : lim_start + num_patamares]
-                    if len(lim_parts) < 1:
-                        continue
-                    lims = [float(lp.rstrip(".")) for lp in lim_parts]
-                    while len(lims) < num_patamares:
-                        lims.append(lims[-1])
-                    limits.append((group_id, mi, anoi, mf, anof, lims))
-                except (ValueError, IndexError):
-                    continue
-
+    record_number = (limits_df["patamar"] == 1).cumsum()
+    for _, record in limits_df.groupby(record_number, sort=False):
+        first = record.iloc[0]
+        group_id = as_int(first["agrupamento"])
+        values = (
+            record.set_index("patamar")["valor"]
+            .reindex(range(1, num_patamares + 1))
+            .ffill()
+        )
+        if values.isna().any():
+            raise FieldParseError(
+                f"agrint.dat: a limit record of group {group_id} has no first block limit",
+                path="agrint.dat",
+                field="LIMITES POR GRUPO",
+            )
+        start = as_timestamp(first["data_inicio"])
+        end = None if is_na(first["data_fim"]) else as_timestamp(first["data_fim"])
+        limits.append(
+            (
+                group_id,
+                start.month,
+                start.year,
+                None if end is None else end.month,
+                None if end is None else end.year,
+                [float(v) for v in values],
+            )
+        )
     return groups, limits
 
 
@@ -1895,7 +1837,10 @@ def convert_agrint_constraints(
     patamar_ag = case.patamar
     num_patamares_ag: int = patamar_ag.numero_patamares or 1
 
-    groups, limits = _parse_agrint(case.files.agrint, num_patamares_ag)
+    agrint = case.agrint
+    if agrint is None:
+        return None
+    groups, limits = _agrint_tables(agrint, num_patamares_ag)
     if not groups or not limits:
         return None
 

@@ -43,6 +43,9 @@ links are cobre-bridge's.
 
 - **`convert newave` no longer reads a mandatory minimum interchange
   (`flag` 1 in `sistema.dat`) as an interchange limit**; it is left out.
+- **`convert newave` fails naming the group when an `agrint.dat` limit record
+  has no first-block limit**; it used to shift the other blocks' limits. A blank
+  later block still repeats the previous block's limit.
 - **`--json` prints the verdict envelope for a command line the parser
   rejects.** An unknown option or command, a missing argument or an invalid
   value left stdout empty; it now prints the envelope, with status `error` and

@@ -2936,7 +2936,7 @@ summary = "Limites por restrição, estágio e patamar das três famílias, conc
     { file = "patamar", item = "numero_patamares" },
   ]
   status = "derived"
-  how = "Nulo para a curva de segurança (limite por estágio, todos os patamares). Elétricas: `pat` menos 1; `patamar` 0 de `re.dat` expande para todos os `numero_patamares` patamares. Agrupamentos: posição da coluna de limite na linha de `agrint.dat` (uma por patamar; colunas faltantes repetem a última)."
+  how = "Nulo para a curva de segurança (limite por estágio, todos os patamares). Elétricas: `pat` menos 1; `patamar` 0 de `re.dat` expande para todos os `numero_patamares` patamares. Agrupamentos: posição da coluna de limite na linha de `agrint.dat`, uma por patamar do deck; coluna em branco repete o limite do patamar anterior, e registro sem o limite do primeiro patamar interrompe a conversão."
 
   [[output.field]]
   path = "bound_lower"
@@ -3430,7 +3430,7 @@ note = "Lido integralmente: `valores_constantes` para `cvar = 1` e `alfa_variave
 
 [[source]]
 file = "agrint"
-note = "Lido por um parser próprio de texto, não pelo `inewave`. Limites pós-estudo do arquivo são ignorados: o bridge congela o último estágio de estudo, como o NEWAVE."
+note = "Limites pós-estudo do arquivo são ignorados: o bridge congela o último estágio de estudo, como o NEWAVE."
 
   [[source.item]]
   item = "limites_agrupamentos · comentario"

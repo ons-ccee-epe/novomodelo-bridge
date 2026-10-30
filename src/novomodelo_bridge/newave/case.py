@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from inewave.libs.usinas_hidreletricas import UsinasHidreletricas
 from inewave.newave import (
     Adterm,
+    Agrint,
     Cadic,
     Clast,
     Confhd,
@@ -188,6 +189,11 @@ class NewaveCase:
     def cvar(self) -> Cvar | None:
         path = self.files.cvar
         return Cvar.read(str(path)) if path is not None else None
+
+    @cached_property
+    def agrint(self) -> Agrint | None:
+        path = self.files.agrint
+        return Agrint.read(str(path)) if path is not None else None
 
     @cached_property
     def re_dat(self) -> Re | None:
