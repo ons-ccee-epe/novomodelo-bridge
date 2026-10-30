@@ -583,14 +583,9 @@ def _patch_discoverable_deck_with_no_sb(
 
 
 class TestBuildDecompDatasetSharedCaseBuild:
-    """The deck is now parsed exactly once, via the shared
-    ``DecompCase`` built at the top of ``build_decomp_dataset`` --
-    retargeted replacement for the old per-helper ``_build_line_id_map(...)
-    is None``/``_decomp_constraint_context(...) is None`` graceful-degrade
-    unit tests. A bad/deckless deck now raises at that shared build (the
-    same typed error ``_read_aligned_frames`` already raised first)
-    rather than silently degrading each of the three sites
-    independently."""
+    """A deck that cannot be read raises a typed error at the one
+    ``DecompCase`` built at the top of ``build_decomp_dataset``; no
+    section of the dataset degrades to an empty result on its own."""
 
     def test_deckless_directory_raises_the_typed_discovery_error(
         self, tmp_path: Path
