@@ -54,7 +54,7 @@ from novomodelo_bridge.core.stored_energy import (
 )
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
-from novomodelo_bridge.newave.horizon import study_start
+from novomodelo_bridge.newave.converters.network import line_ids
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import active_hydros
 from novomodelo_bridge.newave.switches import switch_off_diagnostic
@@ -960,40 +960,6 @@ def _electric_limit(value: object, cod: int, path: Path) -> float | None:
     return None if limit <= _UNBOUNDED_THRESHOLD else limit
 
 
-def _build_line_id_map(case: NewaveCase) -> dict[tuple[int, int], int]:
-    """Build the canonical (src, tgt) -> line_id mapping.
-
-    Replicates the exact logic from ``convert_lines`` in network.py so that
-    line IDs are consistent across both converters.
-
-    Returns
-    -------
-    dict[tuple[int, int], int]
-        Maps canonical (smaller_subsystem, larger_subsystem) to 0-based
-        line ID.  Only pairs from ``sistema.dat`` are included.
-    """
-    limites_df = case.interchange_limits
-
-    if limites_df is None or limites_df.empty:
-        return {}
-
-    study_start_dt = datetime(*study_start(case.dger), 1)
-    first_month = limites_df[limites_df["data"] == study_start_dt]
-    if first_month.empty:
-        non_nan_df = limites_df.dropna(subset=["valor"])
-        if not non_nan_df.empty:
-            first_month = limites_df[limites_df["data"] == non_nan_df["data"].min()]
-
-    canonical_pairs: set[tuple[int, int]] = set()
-    for _, row in first_month.iterrows():
-        de = int(row["submercado_de"])
-        para = int(row["submercado_para"])
-        src, tgt = (de, para) if de < para else (para, de)
-        canonical_pairs.add((src, tgt))
-
-    return {pair: idx for idx, pair in enumerate(sorted(canonical_pairs))}
-
-
 # Term regex: optional sign and float coefficient, then function name and args.
 # The sign group captures a leading '+' or '-' (possibly preceded by whitespace).
 _TERM_RE = re.compile(
@@ -1342,7 +1308,7 @@ def convert_electric_constraints(
         _LOG.debug("No electric constraints found; skipping.")
         return None
 
-    line_id_map = _build_line_id_map(case)
+    line_id_map = line_ids(case)
 
     eletri_penalty = _resolve_eletri_penalty(case)
     slack_config = (
@@ -1870,7 +1836,7 @@ def convert_agrint_constraints(
     case:
         Parsed the source model case.
     id_map:
-        Entity ID mapping (used indirectly via ``_build_line_id_map``).
+        Entity ID mapping (used indirectly via ``line_ids``).
     allocator:
         Shared id source; defaults to a fresh :class:`ConstraintIdAllocator`
         (ids from 0) when omitted. The pipeline threads one instance across
@@ -1904,7 +1870,7 @@ def convert_agrint_constraints(
         return None
 
     horizon = case.horizon
-    line_id_map = _build_line_id_map(case)
+    line_id_map = line_ids(case)
 
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)

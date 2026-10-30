@@ -1428,7 +1428,7 @@ class TestConvertAgrintConstraints:
         fake_line_map = {(1, 3): 0}
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value=fake_line_map,
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1449,7 +1449,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1471,7 +1471,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result_0 = convert_agrint_constraints(case, id_map)
@@ -1496,7 +1496,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1538,7 +1538,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1594,7 +1594,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3, 11], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 11): 3, (3, 11): 4},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1630,7 +1630,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1685,6 +1685,71 @@ def _three_block_agrint_case(tmp_path: Path, limit_line: str) -> NewaveCase:
         patamar=MagicMock(numero_patamares=3),
         sistema=sistema,
     )
+
+
+def test_an_agrint_term_lands_on_its_line_when_another_pair_appears_later(
+    tmp_path: Path,
+) -> None:
+    """Pair 1-2 first appears in February; it sorts before pair 1-99, so the
+    first month's pairs alone would number 1-99 as line 0, which is 1-2's."""
+    from novomodelo_bridge.newave.converters.network import convert_lines
+    from tests.newave.conftest import _make_sistema_mock
+
+    jan, feb = datetime(2023, 1, 1), datetime(2023, 2, 1)
+    limits = [
+        (1, 99, jan),
+        (99, 1, jan),
+        (1, 99, feb),
+        (99, 1, feb),
+        (1, 2, feb),
+        (2, 1, feb),
+    ]
+    sistema = _make_sistema_mock()
+    sistema.limites_intercambio = pd.DataFrame(
+        [
+            {
+                "submercado_de": de,
+                "submercado_para": para,
+                "flag": 0,
+                "sentido": 0,
+                "data": data,
+                "valor": 1000.0,
+            }
+            for de, para, data in limits
+        ]
+    )
+    dger = _make_dger_mock_for_agrint()
+    dger.ano_inicio_estudo = 2023
+    agrint_path = tmp_path / "agrint.dat"
+    agrint_path.write_text(
+        "AGRUPAMENTOS DE INTERCAMBIO\n"
+        " # AG A   B   COEF\n"
+        " XXX XXX XXX XX.XXXX\n"
+        "   1   1  99  1.0000\n"
+        " 999\n"
+        "LIMITES POR GRUPO\n"
+        "  # AG MI ANOI MF ANOF LIM_P1  LIM_P2  LIM_P3\n"
+        " XXX  XX XXXX XX XXXX XXXXXX. XXXXXX. XXXXXX.\n"
+        "   1   1 2023 12 2023   5000.   5000.   5000.\n"
+        " 999\n",
+        encoding="latin-1",
+    )
+    case = make_case(
+        make_nw_files(tmp_path, agrint=agrint_path), dger=dger, sistema=sistema
+    )
+    id_map = NewaveIdMap(subsystem_ids=[1, 2, 99], hydro_codes=[], thermal_codes=[])
+
+    lines = convert_lines(case, id_map)["lines"]
+    line_1_99 = next(
+        line["id"]
+        for line in lines
+        if (line["source_bus_id"], line["target_bus_id"])
+        == (id_map.bus_id(1), id_map.bus_id(99))
+    )
+    result = convert_agrint_constraints(case, id_map)
+
+    assert result is not None
+    assert [c["expression"] for c in result[0]] == [f"line_direct({line_1_99})"]
 
 
 class TestAgrintBlankLimitColumns:
@@ -1743,7 +1808,7 @@ class TestConvertAgrintConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             with dx.collect() as collected:
@@ -1791,7 +1856,7 @@ class TestNewaveCrossEmitterAllocatorContiguity:
 
         allocator = ConstraintIdAllocator()
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             electric_result = convert_electric_constraints(

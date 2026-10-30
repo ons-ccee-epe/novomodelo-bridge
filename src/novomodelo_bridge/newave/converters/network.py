@@ -128,15 +128,13 @@ _PINT_FICTITIOUS_DISCOUNT = 0.5
 _ELETRI_HIGH_MULT = 10.0
 
 
-def _build_canonical_pair_to_line_id(
-    case: NewaveCase,
-) -> dict[tuple[int, int], int]:
-    """Build the canonical (src, tgt) -> line_id mapping from sistema.dat.
+def line_ids(case: NewaveCase) -> dict[tuple[int, int], int]:
+    """``(smaller, larger)`` submarket code pair -> 0-based line id.
 
-    Scans ALL rows of ``sistema.limites_intercambio`` (all dates) to discover
-    the full set of interchange pairs.  This is the single authoritative source
-    used by ``convert_lines`` and ``convert_line_bounds`` to guarantee
-    consistent line IDs.
+    The one numbering of the lines: ``lines.json``, the line bounds and every
+    constraint term that names a pair use it. It numbers the pairs of every
+    date of ``sistema.dat``'s interchange limits, not only the first month's,
+    so a pair that first appears later does not shift the others.
     """
     limites_df = case.interchange_limits
     if limites_df is None or limites_df.empty:
@@ -430,7 +428,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         _assign_flow_direction(pair_map[key], de, para, sentido, valor)
 
     # Use the shared canonical mapping for consistent line IDs.
-    canonical_map = _build_canonical_pair_to_line_id(case)
+    canonical_map = line_ids(case)
 
     # Interconnections have no commissioning date; treat every line as in service
     # since the historical record (Novomodelo uses the date only as a canonical-ordering
@@ -1073,7 +1071,7 @@ def convert_line_bounds(
     study_end_year = start_year + (start_month - 1 + study_months) // 12
     study_end_month = ((start_month - 1 + study_months) % 12) + 1
 
-    pair_to_line_id = _build_canonical_pair_to_line_id(case)
+    pair_to_line_id = line_ids(case)
     caps = _InterchangeCaps.from_limites(limites_df)
     factors = _ExchangeBlockFactors.from_patamar(case.patamar.intercambio_patamares)
 

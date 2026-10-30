@@ -57,6 +57,9 @@ links are cobre-bridge's.
   as the NEWAVE manual states; it used to stop the conversion, or drop the line
   when the upper limit was left off. A conditional limit (`se(...)`) stops the
   conversion with a message naming it.
+- **`convert newave` points `agrint.dat` and electrical-constraint terms at
+  the right line when an interchange pair first appears after the study's
+  first month**; they could point at another pair's line.
 - **`convert newave` no longer reads a mandatory minimum interchange
   (`flag` 1 in `sistema.dat`) as an interchange limit**; it is left out.
 - **`convert newave` fails naming the group when an `agrint.dat` limit record
