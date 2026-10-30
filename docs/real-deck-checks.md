@@ -157,6 +157,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | GNL `ger_usit` abated with its `GL` commanded generation | On the copy of `DEC_ONS_062026_RV0_VE_LPPs_COMPLETAS`, the restrictions whose `GPC`/`GPC2` expressions include the `ger_usit` of the `dadgnl` GNL plant convert, and their bound is the deck's limit less the formula coefficient times the plant's commanded generation. A further copy with that plant's `GL` generation made different per block, and in one week of the monthly stage, moves each such bound in every active cell by its formula coefficient times the change in the block's commanded value, the monthly stage taking the `duracao`-weighted mean of its `GL` weeks; no other restriction moves. Captured in October 2026. |
 
+### A DECOMP deck with GNL plants, exported back to DECOMP's cut files
+
+| Check | Verified |
+| --- | --- |
+| `export dessem` GNL coefficients against DECOMP's own `mapcut` and `cortdeco` | `convert decomp` on `DEC_ONS_082026_RV2`, `novomodelo run` on the case, and `export dessem` with `--output` set to a new directory (the default writes inside the solved case) give the bridge's pair; DECOMP's own pair of the same revision is the reference. In the latest cut of the first cut-building node of each file, each GNL plant's exported coefficient is compared with the mean of DECOMP's load-block values for the same plant, weighted by the load-block hours of the case's second stage. PSERGIPE I agrees within 0.2%, inside the check's 2% tolerance, and within 0.5% when DECOMP's values are weighted by the hours of its own `mapcut` record 9 instead, so the check does not show which hours basis DESSEM uses. SANTA CRUZ is written as 0.0 in every cut of that node: its commitment for the delivery equals its capacity and the policy's coefficient is exactly zero, which the export reports with the `dessem-fcf-gnl-coefficient-zero` warning, while DECOMP prices it close to PSERGIPE I. That plant is an expected divergence left out of the tolerance, so the agreement rests on one plant. Captured with novomodelo 0.19.1 after 7 training iterations, against a DECOMP pair of 6 iterations whose DECOMP version is not recorded, in October 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the
