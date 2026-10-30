@@ -39,6 +39,8 @@ links are cobre-bridge's.
   as the NEWAVE manual allows.** The records of a repeated block, or before the
   first `USINA`, are listed by a `modif-records-ignored` warning; merge each
   plant into one block to keep them.
+- **`compare newave` reads `pmo.dat` once, not twice**, which takes a few
+  seconds off the comparison of a large case. The results are unchanged.
 - **`compare decomp` exits 1 when the DECOMP deck is not found**, as
   `compare newave` does; it used to exit 2. An unreadable Novomodelo output
   still exits 2 on both tracks.
