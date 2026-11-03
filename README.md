@@ -81,8 +81,9 @@ adds one rule for running the case; see the
 | `dashboard CASE_DIR`                           | Build an interactive HTML dashboard from a solved Novomodelo case (reads `CASE_DIR/output/`).                            |
 
 Every command accepts `--json`, `-v`/`-vv`, `--log-file PATH`, `--no-color`,
-and `--quiet`. `convert` adds `--validate`, `--force`, `--dry-run`, and
-`--diagnostics-json PATH`; `convert decomp` also has `--no-fcf`. `compare`
+and `--quiet`. `convert` adds `--validate`, `--force`, `--dry-run`,
+`--diagnostics-json PATH`, and `--json-float-digits N`; `convert decomp` also
+has `--no-fcf`. `compare`
 adds `--tolerance`, `--format`, and `--out-dir`. `export dessem` adds
 `--output`, `--force`, `--audit-csv`, and `--include-terminal`. `dashboard`
 adds `--output` and `--open`. The generated reference with every option's help

@@ -29,6 +29,10 @@ from novomodelo_bridge.cli.logging_config import restore_log_file_handler
 from novomodelo_bridge.cli.validate import (
     _partition_validation_warnings as _partition_validation_warnings,
 )
+from novomodelo_bridge.novomodelo.case_writer import (
+    DEFAULT_FLOAT_DIGITS,
+    MAX_FLOAT_DIGITS,
+)
 from novomodelo_bridge.novomodelo.compat import (
     MIN_NOVOMODELO_VERSION as MIN_NOVOMODELO_VERSION,
 )
@@ -68,6 +72,22 @@ _QuietOpt = Annotated[
     typer.Option(
         "--quiet",
         help="Suppress the summary and info notes; warnings/errors still show.",
+    ),
+]
+_JsonFloatDigitsOpt = Annotated[
+    int,
+    typer.Option(
+        "--json-float-digits",
+        metavar="N",
+        min=1,
+        max=MAX_FLOAT_DIGITS,
+        help=(
+            "Write every float in the case's JSON files with N significant "
+            f"digits (1-{MAX_FLOAT_DIGITS}); {MAX_FLOAT_DIGITS} keeps full "
+            "precision. Parquet files are unaffected. Below 10 digits novomodelo may "
+            "reject the case, since it cross-checks JSON values against Parquet "
+            "tables and unit-group sums to a 1e-9 relative tolerance."
+        ),
     ),
 ]
 _FormatOpt = Annotated[
@@ -195,6 +215,7 @@ def _convert_newave(
             ),
         ),
     ] = False,
+    json_float_digits: _JsonFloatDigitsOpt = DEFAULT_FLOAT_DIGITS,
     verbose: _VerboseOpt = 0,
     log_file: _LogFileOpt = None,
     no_color: _NoColorOpt = False,
@@ -211,6 +232,7 @@ def _convert_newave(
             diagnostics_json=diagnostics_json,
             json_output=json_output,
             dry_run=dry_run,
+            json_float_digits=json_float_digits,
             verbose=verbose,
             log_file=log_file,
             no_color=no_color,
@@ -258,6 +280,7 @@ def _convert_decomp(
             ),
         ),
     ] = False,
+    json_float_digits: _JsonFloatDigitsOpt = DEFAULT_FLOAT_DIGITS,
     no_fcf: Annotated[
         bool,
         typer.Option(
@@ -295,6 +318,7 @@ def _convert_decomp(
             json_output=json_output,
             dry_run=dry_run,
             no_fcf=no_fcf,
+            json_float_digits=json_float_digits,
             verbose=verbose,
             log_file=log_file,
             no_color=no_color,

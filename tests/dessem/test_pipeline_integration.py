@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -40,12 +41,14 @@ def _make_pool(
     slots: tuple[EntitySlotRecord, ...],
     n_pieces: int,
     warm_start: int = 0,
+    zero_columns: tuple[int, ...] = (),
 ) -> StageCutPool:
     """Create a synthetic cut pool."""
     pieces = []
     n_slots = len(slots)
     for i in range(n_pieces):
         coef = np.array([100.0 + i + j for j in range(n_slots)], dtype=np.float64)
+        coef[list(zero_columns)] = 0.0
         coef.setflags(write=False)
         pieces.append(
             AffinePieceRecord(
@@ -446,6 +449,46 @@ def _bucket(start: int, end: int) -> EntitySlotRecord:
     )
 
 
+def _travel_time_pools(
+    *extra_buckets: EntitySlotRecord, zero_columns: tuple[int, ...] = ()
+) -> dict[int, StageCutPool]:
+    # Each pool's two buckets are the two weeks after its stage ends.
+    bucket_dates = (20260108, 20260115, 20260122, 20260129, 20260205)
+    return {
+        stage: _make_pool(
+            stage,
+            stage,
+            stage,
+            _make_slots(3)
+            + (
+                _bucket(bucket_dates[stage], bucket_dates[stage + 1]),
+                _bucket(bucket_dates[stage + 1], bucket_dates[stage + 2]),
+            )
+            + extra_buckets,
+            n_pieces=5,
+            zero_columns=zero_columns,
+        )
+        for stage in range(3)
+    }
+
+
+def _export_travel_time(
+    case_dir: Path, source: SourceDeck, output_dir: Path, pools: dict[int, StageCutPool]
+) -> tuple[int, list[dx.Diagnostic]]:
+    with (
+        patch("novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy") as read,
+        dx.collect() as diagnostics,
+    ):
+        read.return_value = PolicyCheckpoint(_make_manifest(), pools)
+        result = run_export(
+            case_dir=case_dir,
+            source=replace(source, travel_time_codes=(102,)),
+            output_dir=output_dir,
+            settings=ExportSettings(emit_audit_csv=True),
+        )
+    return result, list(diagnostics)
+
+
 class TestTravelTimeExport:
     """UHE_B's water reaches UHE_A 240 h after release, on weekly stages."""
 
@@ -453,36 +496,10 @@ class TestTravelTimeExport:
     def exported(
         self, travel_time_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
     ) -> tuple[Path, list[str]]:
-        # Each pool's two buckets are the two weeks after its stage ends.
-        bucket_dates = (20260108, 20260115, 20260122, 20260129, 20260205)
-        pools = {
-            stage: _make_pool(
-                stage,
-                stage,
-                stage,
-                _make_slots(3)
-                + (
-                    _bucket(bucket_dates[stage], bucket_dates[stage + 1]),
-                    _bucket(bucket_dates[stage + 1], bucket_dates[stage + 2]),
-                ),
-                n_pieces=5,
-            )
-            for stage in range(3)
-        }
         output_dir = tmp_path / "dessem_fcf"
-        with (
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
-            ) as read,
-            dx.collect() as diagnostics,
-        ):
-            read.return_value = PolicyCheckpoint(_make_manifest(), pools)
-            result = run_export(
-                case_dir=travel_time_case_dir,
-                source=replace(synthetic_source, travel_time_codes=(102,)),
-                output_dir=output_dir,
-                settings=ExportSettings(emit_audit_csv=True),
-            )
+        result, diagnostics = _export_travel_time(
+            travel_time_case_dir, synthetic_source, output_dir, _travel_time_pools()
+        )
 
         assert result == 0
         return output_dir, [diagnostic.code for diagnostic in diagnostics]
@@ -530,6 +547,69 @@ class TestTravelTimeExport:
         assert "20,reg7_travel_time,1,codigo_usina,0,102" in mapcut_rows
         assert "20,reg7_travel_time,1,numero_horas,1,240" in mapcut_rows
         assert "21,reg8_travel_time,1,indice_lag,0,1" in mapcut_rows
+
+    def test_undated_buckets_are_skipped(
+        self, travel_time_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        pools = _travel_time_pools(_bucket(UNDATED, UNDATED), zero_columns=(5,))
+
+        result, diagnostics = _export_travel_time(
+            travel_time_case_dir, synthetic_source, tmp_path / "dessem_fcf", pools
+        )
+
+        assert result == 0
+        codes = [d.code for d in diagnostics]
+        assert "dessem-fcf-undated-buckets-priced" not in codes
+        info = next(
+            d for d in diagnostics if d.code == "dessem-fcf-travel-time-exported"
+        )
+        assert any("no arrival window" in note for note in info.notes)
+        _, cortdeco = cross_check_pair(
+            tmp_path / "dessem_fcf" / "mapcut.rv0",
+            tmp_path / "dessem_fcf" / "cortdeco.rv0",
+        )
+        for cut in cortdeco.cuts:
+            piece = round(cut.rhs) - 1
+            first, second = 103.0 + piece, 104.0 + piece
+            np.testing.assert_allclose(
+                cut.pi_qdefp,
+                [(96 * first + 72 * second) / 168 / 1000, 72 * first / 168 / 1000],
+            )
+
+    def test_coefficients_on_undated_buckets_are_dropped_with_a_warning(
+        self, travel_time_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        pools = _travel_time_pools(_bucket(UNDATED, UNDATED))
+
+        result, diagnostics = _export_travel_time(
+            travel_time_case_dir, synthetic_source, tmp_path / "dessem_fcf", pools
+        )
+
+        assert result == 0
+        warning = next(
+            d for d in diagnostics if d.code == "dessem-fcf-undated-buckets-priced"
+        )
+        assert warning.severity is dx.Severity.WARNING
+        assert "15 cut coefficient(s)" in warning.summary  # 3 pools x 5 cuts x 1 bucket
+        assert "Pool 0: 5 coefficient(s) on 1 undated bucket(s)." in warning.notes
+
+    def test_undated_bucket_warning_has_no_repo_internal_references(
+        self, travel_time_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        pools = _travel_time_pools(_bucket(UNDATED, UNDATED))
+
+        _, diagnostics = _export_travel_time(
+            travel_time_case_dir, synthetic_source, tmp_path / "dessem_fcf", pools
+        )
+
+        warning = next(
+            d for d in diagnostics if d.code == "dessem-fcf-undated-buckets-priced"
+        )
+        text = " ".join([warning.summary, *warning.notes, warning.remediation or ""])
+        for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", ".py", "::"):
+            assert leak not in text
+        # A bare "_" would trip on pi_qdefp, a cortdeco field users meet.
+        assert not re.search(r"(?<![A-Za-z0-9])_[a-z]", text)
 
 
 class TestCrossCheckIntegration:

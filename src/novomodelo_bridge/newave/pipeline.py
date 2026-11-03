@@ -35,7 +35,7 @@ from novomodelo_bridge.newave.converters import thermal as thermal_conv
 from novomodelo_bridge.newave.files import unindexed_libs_diagnostic
 from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +178,7 @@ def convert_newave_case(
     *,
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Convert a source-model case directory to a Novomodelo case directory.
 
@@ -198,6 +199,9 @@ def convert_newave_case(
         When ``True``, run the full in-memory conversion but write nothing to
         *dst* (no files, no subdirectories). The would-write paths are still
         recorded in :attr:`ConversionReport.would_write_paths`.
+    float_digits:
+        Significant digits of the floats in the case's JSON files; ``None``
+        keeps full precision.
 
     Returns
     -------
@@ -217,7 +221,9 @@ def convert_newave_case(
         violation in the converted artifacts. No report is returned.
     """
     return run_conversion(
-        lambda: _convert_newave_case_impl(src, dst, on_phase, dry_run=dry_run),
+        lambda: _convert_newave_case_impl(
+            src, dst, on_phase, dry_run=dry_run, float_digits=float_digits
+        ),
         dst,
         NEWAVE_CLEARED_ARTIFACTS,
         dry_run=dry_run,
@@ -230,6 +236,7 @@ def _convert_newave_case_impl(
     on_phase: Callable[[str], None] | None = None,
     *,
     dry_run: bool = False,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Run the conversion pipeline (warning capture handled by the wrapper).
 
@@ -275,8 +282,15 @@ def _convert_newave_case_impl(
     logger.debug("Converting thermals")
     thermals_dict = thermal_conv.convert_thermals(case, id_map)
 
+    logger.debug("Converting load stats")
+    load_table = stochastic_conv.convert_load_stats(case, id_map)
+
     logger.debug("Converting buses")
-    buses_dict = network_conv.convert_buses(case, id_map)
+    buses_dict = network_conv.convert_buses(
+        case,
+        id_map,
+        reference_load_mw=network_conv.mean_bus_load_mw(load_table, case.horizon),
+    )
 
     logger.debug("Converting lines")
     lines_dict = network_conv.convert_lines(case, id_map)
@@ -330,9 +344,6 @@ def _convert_newave_case_impl(
 
     logger.debug("Converting inflow stats")
     inflow_table = stochastic_conv.convert_inflow_stats(case, id_map)
-
-    logger.debug("Converting load stats")
-    load_table = stochastic_conv.convert_load_stats(case, id_map)
 
     logger.debug("Converting inflow history from vazoes.dat")
     inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)
@@ -434,7 +445,7 @@ def _convert_newave_case_impl(
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in
     # exactly one place, rather than guarding ~30 individual write sites.
-    writer = CaseWriter(dst, dry_run=dry_run)
+    writer = CaseWriter(dst, dry_run=dry_run, float_digits=float_digits)
 
     step("Writing JSON")
     writer.write_json("config.json", config_dict)

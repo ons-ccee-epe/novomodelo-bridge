@@ -64,9 +64,11 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.travel_time import (
     TravelTimePlant,
+    UndatedBucketAudit,
     max_lag,
     release_lag_weights,
     travel_time_plants,
+    undated_bucket_audit,
 )
 from novomodelo_bridge.dessem.exporters.fcf.eco.audit_raw_cuts import emit_eco_csvs
 from novomodelo_bridge.dessem.exporters.fcf.manifest import (
@@ -106,10 +108,27 @@ def _emit_export_warnings() -> None:
     )
 
 
-def _emit_travel_time_info(plants: tuple[TravelTimePlant, ...]) -> None:
+def _emit_travel_time_info(
+    plants: tuple[TravelTimePlant, ...], undated: UndatedBucketAudit
+) -> None:
     """Report the plants whose in-transit water the cuts price (premise P3)."""
     if not plants:
         return
+    notes = [
+        f"Plant {plant.code}: its water reaches the plant downstream "
+        f"{plant.hours} h after release."
+        for plant in plants
+    ] + [
+        "Premise P3: a release spread evenly over its stage arrives "
+        "spread evenly over an equally long span; release periods "
+        "before the study are as long as its first stage."
+    ]
+    if undated.total_buckets:
+        notes.append(
+            f"{undated.total_buckets} transit bucket(s) carry no arrival window, "
+            "Novomodelo's placeholders for water that would arrive after the "
+            "study ends; they take no part in pi_qdefp."
+        )
     emit(
         Diagnostic(
             code="dessem-fcf-travel-time-exported",
@@ -121,16 +140,42 @@ def _emit_travel_time_info(plants: tuple[TravelTimePlant, ...]) -> None:
                 "plant(s), by the stage it was released in, up to "
                 f"{max_lag(plants)} stage(s) back."
             ),
+            notes=notes,
+        )
+    )
+
+
+def _emit_undated_bucket_warning(undated: UndatedBucketAudit) -> None:
+    """Warn when cuts price transit buckets premise P3 gives no weight."""
+    if not undated.total_priced:
+        return
+    emit(
+        Diagnostic(
+            code="dessem-fcf-undated-buckets-priced",
+            severity=Severity.WARNING,
+            category="FCF export",
+            title="Coefficients on undated transit buckets dropped",
+            summary=(
+                f"{undated.total_priced} cut coefficient(s) sit on transit buckets "
+                "with no arrival window and are left out of pi_qdefp."
+            ),
             notes=[
-                f"Plant {plant.code}: its water reaches the plant downstream "
-                f"{plant.hours} h after release."
-                for plant in plants
+                f"Pool {count.pool_id}: {count.priced} coefficient(s) on "
+                f"{count.buckets} undated bucket(s)."
+                for count in undated.per_pool
+                if count.priced
             ]
             + [
-                "Premise P3: a release spread evenly over its stage arrives "
-                "spread evenly over an equally long span; release periods "
-                "before the study are as long as its first stage."
+                "Premise P3: a release is priced through the buckets its water "
+                "arrives in; a bucket with no arrival window has no release to charge."
             ],
+            remediation=(
+                "The exported cuts carry no value for the water those "
+                "coefficients priced, so they can overstate the future cost "
+                "and are no longer a guaranteed lower bound on it. Check "
+                "whether the case's boundary future-cost function prices "
+                "water that arrives after the study ends."
+            ),
         )
     )
 
@@ -391,7 +436,11 @@ def run_export(
             travel_time = travel_time_plants(
                 inputs.hydros, source.hydros, source.travel_time_codes, inputs.stages
             )
-            _emit_travel_time_info(travel_time)
+            undated = undated_bucket_audit(
+                {pool_id: pools[pool_id] for pool_id in trunk_pool_ids}
+            )
+            _emit_travel_time_info(travel_time, undated)
+            _emit_undated_bucket_warning(undated)
 
             # P8: Audit inflow lag drops
             inflow_lag_drop_audit(pools)
