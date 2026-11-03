@@ -14,6 +14,13 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert newave` and `convert decomp` take `--json-float-digits N`** and
+  write the case's JSON floats with N significant digits (1 to 17, default 15),
+  so their JSON files differ from an earlier conversion's; pass 17 to keep full
+  precision. Below about 10 digits novomodelo can reject the case.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins

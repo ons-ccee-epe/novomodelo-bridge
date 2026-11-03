@@ -70,7 +70,7 @@ from novomodelo_bridge.decomp.fcf.writer import (
     write_boundary_checkpoint,
 )
 from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -711,6 +711,7 @@ def import_boundary_fcf(
     cost_scale_factor: float,
     config: dict | None = None,
     initial_conditions: dict | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> Path | None:
     """Import the source model's boundary FCF into the converted case at
     ``case_dir``.
@@ -783,7 +784,7 @@ def import_boundary_fcf(
 
     # A real, non-dry-run writer: the importer runs a real ``novomodelo`` pass and
     # never runs under ``--dry-run``.
-    writer = CaseWriter(case_dir)
+    writer = CaseWriter(case_dir, float_digits=float_digits)
 
     cortesh = Cortesh.read(str(case.files.cortesh))
     cuts = read_cortes(case.files.cortes, cortesh, boundary_stage=None)
