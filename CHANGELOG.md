@@ -16,106 +16,96 @@ links are cobre-bridge's.
 
 ### Added
 
-- **`convert newave` and `convert decomp` take `--json-float-digits N`** and
-  write the case's JSON floats with N significant digits (1 to 17, default 15),
-  so their JSON files differ from an earlier conversion's; pass 17 to keep full
-  precision. Below about 10 digits novomodelo can reject the case.
-- **`convert decomp` converts the `FE` contract terms of `RE` constraints**
-  into `contract_import`/`contract_export` terms. A term whose number matches
-  no single `CI`/`CE` contract in its submarket drops its constraint, with a
-  `decomp-fe-no-contract` warning.
+- **`convert newave` and `convert decomp` take `--json-float-digits N`**, the
+  significant digits of the case's JSON floats (1 to 17, default 15), so the
+  JSON files differ from an earlier conversion's. Pass 17 for full precision;
+  below about 10, novomodelo can reject the case.
+- **`convert decomp` converts the `FE` contract terms of `RE` constraints.** A
+  term that matches no single `CI`/`CE` contract of its submarket drops the
+  constraint, with a `decomp-fe-no-contract` warning.
 
 ### Changed
 
-- **`convert newave` and `convert decomp` write every hydro plant's available
-  power and turbined-flow limit on every stage, binding or not**, and
-  `convert decomp` adds Itaipu's total available power as DECOMP reports it.
-  Reconvert to see the values; the solved case changes only at floating-point
+- **`convert newave` and `convert decomp` write each hydro plant's available
+  power and turbined-flow limit on every stage, binding or not**, in
+  `constraints/hydro_bounds.parquet` and
+  `constraints/hydro_unit_group_bounds.parquet`, and `convert decomp` gives
+  Itaipu its total available power. Results change only at floating-point
   rounding.
-- **`AC ALTEFE` overrides set the head of DECOMP's turbined-flow limit.** They
-  were reported and ignored.
+- **`convert decomp` applies `AC ALTEFE` overrides to the head of the
+  turbined-flow limit**; it reported and ignored them. Reconvert decks that
+  carry them.
 - **The bridge requires idecomp 1.18.2, inewave 1.17.1 and cfinterface 1.10.3
   or newer.**
-- **`convert newave` and `convert decomp` warn about the lines of the
-  electrical-constraint file they do not read** (`libs-unread-lines`). Record
-  names are read only in full and in upper case; a misspelled name starting
-  with `RE` used to be read as an `RE` constraint, and `convert newave` accepted
-  any case.
-- **A LIBS index line without a file name stops `convert newave` and
-  `convert decomp`**, as a blank file name already did; it used to be skipped.
-- **`convert newave` reads `CDESVIO` only in upper case, like the other
-  `modif.dat` records.** A maximum flow that is not a number drops the channel
-  with `diversion-channel-dropped`; it used to stop the conversion.
-- **`convert newave` reads only each plant's first `USINA` block of `modif.dat`,
-  as the NEWAVE manual allows.** The records of a repeated block, or before the
-  first `USINA`, are listed by a `modif-records-ignored` warning; merge each
-  plant into one block to keep them.
-- **`compare newave` reads `pmo.dat` once, not twice**, which takes a few
-  seconds off the comparison of a large case. The results are unchanged.
-- **`compare decomp` exits 1 when the DECOMP deck is not found**, as
-  `compare newave` does; it used to exit 2. An unreadable Novomodelo output
-  still exits 2 on both tracks.
-- **The development tools are a dependency group, not the `dev` extra.**
-  `uv sync` installs them; `pip install -e '.[dev]'` no longer does.
-- **The sdist no longer carries agent rules, caches or checkouts** (dotfiles,
-  `_*` folders, `CLAUDE.md`, `AGENTS.md`); it still carries `tests/`.
-- **The license is declared as the SPDX expression `Apache-2.0`**, with
-  `LICENSE` and `NOTICE` as license files, in place of the license classifier.
+- **BREAKING:** `convert newave` and `convert decomp` read the record names of
+  the electrical-constraint file only complete and in upper case. A lower-case
+  name, which `convert newave` read, or a misspelled one starting with `RE`,
+  read as an `RE` constraint, is now skipped and listed in a
+  `libs-unread-lines` warning; correct it in the deck.
+- **BREAKING:** `convert newave` and `convert decomp` stop on a LIBS index line
+  without a file name, as on a blank file name; they skipped it. Remove the
+  line or name its file.
+- **BREAKING:** `convert newave` reads only each plant's first `USINA` block of
+  `modif.dat`, as the NEWAVE manual allows, and lists the records it skips in a
+  `modif-records-ignored` warning; merge each plant into one block to keep
+  them. `CDESVIO` is read only in upper case, like the other records, and a
+  maximum flow that is not a number drops the channel with
+  `diversion-channel-dropped` instead of stopping the conversion.
+- **BREAKING:** `compare decomp` exits 1 when the DECOMP deck is not found, as
+  `compare newave` does; it exited 2. An unreadable novomodelo output still
+  exits 2 on both tracks.
 
 ### Fixed
 
 - **`convert decomp` applies an `AC` record of a January study from the week
   it names**; it took effect a week late or early, or stopped the conversion
   for a later month with a blank year. Reconvert January DECOMP cases.
-- **`convert decomp` resolves a LIBS `disp_usih(66)` term to both Itaipu
-  frequency halves' available power**; on a stage with only one half under
-  maintenance it took that half alone. `decomp-electrical-disp-usih-substituted`
-  is now always informational.
-- **`export dessem` exports a case whose water in transit outlives the study**
-  instead of failing with `year -214749 is out of range`; a cut coefficient on
-  water that would arrive after the study ends is dropped with a
+- **`convert decomp` takes both Itaipu frequency halves' available power for a
+  LIBS `disp_usih(66)` term**; on a stage with only one half under maintenance
+  it took that half alone. `decomp-electrical-disp-usih-substituted` is now
+  always informational.
+- **`export dessem` exports a case whose water in transit outlives the study**;
+  it failed with `year -214749 is out of range`. A cut coefficient on water
+  arriving after the study ends is dropped, with a
   `dessem-fcf-undated-buckets-priced` warning.
 - **`convert newave` reads the deficit depths in `sistema.dat` as a share of
-  load.** A 5 % segment was written as 0.05 MW, so nearly all deficit was
-  priced at the last segment's cost; each depth is now that share of the
-  submarket's mean study load, listed in a `deficit-depth-from-mean-load`
-  warning. Reconvert NEWAVE cases.
-- **`convert decomp` converts the GNL plants of later revisions**, which failed
-  or did not pass `novomodelo validate` from the second revision of a month on,
-  and keeps a plant whose `GL` commits 0 MW. The weeks after the study follow
-  the deck's `GL` weeks and take the `TG` cost and limits of the months they
-  cover; `GL` weeks without patamar durations are weighted by `cortesh.dat`,
-  with a `decomp-gnl-block-hours-fallback` warning when it does not cover their
-  month. Reconvert DECOMP cases with GNL plants.
+  load**: a 5 % segment was written as 0.05 MW, so nearly all deficit was
+  priced at the last segment's cost. Each depth is now that share of the
+  submarket's mean study load (`deficit-depth-from-mean-load`); reconvert
+  NEWAVE cases.
+- **`convert decomp` converts the GNL plants of a month's later revisions**,
+  which failed or did not pass `novomodelo validate`, and keeps a plant whose
+  `GL` commits 0 MW. A `GL` week without patamar durations that `cortesh.dat`
+  does not cover gets a `decomp-gnl-block-hours-fallback` warning. Reconvert
+  DECOMP cases with GNL plants.
 - **`convert newave` reads a blank `RE-LIM-FORM-PER-PAT` limit as unbounded**,
-  as the NEWAVE manual states; it used to stop the conversion, or drop the line
+  as the NEWAVE manual states; it stopped the conversion, or dropped the line
   when the upper limit was left off. A conditional limit (`se(...)`) stops the
   conversion with a message naming it.
 - **`convert newave` points `agrint.dat` and electrical-constraint terms at
   the right line when an interchange pair first appears after the study's
   first month**; they could point at another pair's line.
-- **`convert newave` no longer reads a mandatory minimum interchange
-  (`flag` 1 in `sistema.dat`) as an interchange limit**; it is left out.
-- **`convert newave` fails naming the group when an `agrint.dat` limit record
-  has no first-block limit**; it used to shift the other blocks' limits. A blank
-  later block still repeats the previous block's limit.
-- **`--json` prints the verdict envelope for a command line the parser
-  rejects.** An unknown option or command, a missing argument or an invalid
-  value left stdout empty; it now prints the envelope, with status `error` and
-  a `usage-error` diagnostic, and still exits 2.
-- **Text files are read and written as UTF-8 on every platform.** On Windows
-  they used the locale's code page, so accented text could be misread.
-- **`export dessem` reads a DECOMP deck that has no `dadgnl`.** It failed with
-  an internal error; it now exports with no GNL thermals, as `convert decomp`
-  already did.
-- **A deck missing a register the conversion needs fails with a message naming
-  it** (for example, a DECOMP deck with no UH records, or a `dger.dat` with no
-  study start). Several such cases crashed with an internal `AttributeError`
-  or `TypeError` instead.
-- **`export dessem` writes its files on Windows.** It stopped at the first one
-  with `PermissionError`, opening the output directory to flush the rename.
-- **The CLI writes UTF-8 to a Windows pipe or redirect**, whose code page cannot
-  encode the status glyphs; commands crashed with `UnicodeEncodeError`.
+- **`convert newave` no longer reads a mandatory minimum interchange (`flag` 1
+  in `sistema.dat`) as an interchange limit**; it is left out.
+- **BREAKING:** `convert newave` stops, naming the group, when an `agrint.dat`
+  limit record has no first-block limit; it shifted the other blocks' limits.
+  A blank later block still repeats the previous block's limit.
+- **`--json` prints the verdict envelope when the command line is rejected**:
+  an unknown option or command, a missing argument or an invalid value left
+  stdout empty. The envelope carries status `error` and a `usage-error`
+  diagnostic, and the exit code is still 2.
+- **Every command reads and writes its text files as UTF-8 on every
+  platform, and writes UTF-8 to a Windows pipe or redirect.** On Windows,
+  accented text in a file could be misread, and output to a pipe crashed with
+  `UnicodeEncodeError`.
+- **`export dessem` exports a DECOMP deck that has no `dadgnl`**, with no GNL
+  thermals; it failed with an internal error.
+- **`convert newave` and `convert decomp` name the missing register when a
+  deck lacks one they need** (a DECOMP deck with no `UH` records, a `dger.dat`
+  with no study start); they crashed with an internal `AttributeError` or
+  `TypeError`.
+- **`export dessem` writes its files on Windows**; it stopped at the first one
+  with `PermissionError`.
 - **`convert --dry-run` wraps a long path in its listing** instead of cutting it
   short.
 - **`compare decomp` reads each `dec_oper_*.csv` in the layout of the DECOMP
