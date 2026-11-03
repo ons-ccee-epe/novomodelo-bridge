@@ -266,7 +266,7 @@ def convert_buses(
         for i, seg in enumerate(active_segs):
             depth_mw = None
             if i < len(active_segs) - 1:
-                # TRACKED NOVOMODELO-GAP (C-deficit-depth): the source model gives
+                # TRACKED NOVOMODELO-GAP (C35): the source model gives
                 # depth as a fraction of load per stage, novomodelo takes one fixed
                 # MW depth per bus. Remove when novomodelo accepts a load-relative depth.
                 load = reference_load_mw[bus_id]
