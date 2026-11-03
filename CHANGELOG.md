@@ -106,10 +106,12 @@ links are cobre-bridge's.
   encode the status glyphs; commands crashed with `UnicodeEncodeError`.
 - **`convert --dry-run` wraps a long path in its listing** instead of cutting it
   short.
-
 - **`compare decomp` reads each `dec_oper_*.csv` in the layout of the DECOMP
-  release that wrote it**: with DECOMP 32.9 or later, deficit, marginal cost and
-  the energy balance no longer come from shifted `dec_oper_sist.csv` columns.
+  release named in its banner**, among the layouts idecomp knows; a DECOMP 31.0
+  output was read with a later release's columns. A release older than every
+  known layout stops the comparison with a message naming it. A
+  `dec_oper_sist.csv` from DECOMP 32.9 or later is still read shifted until
+  idecomp adds that layout.
 
 ## [0.19.1] - 2026-10-26
 
