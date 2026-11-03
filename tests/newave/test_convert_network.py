@@ -12,7 +12,10 @@ import pytest
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case
-from tests.newave.conftest import _make_sistema_mock
+from tests.newave.conftest import _make_deficit_df, _make_sistema_mock
+
+_BUS_LOAD_MW = {0: 2000.0, 1: 1000.0, 2: 0.0}
+
 
 # ---------------------------------------------------------------------------
 # Bus conversion
@@ -32,14 +35,18 @@ class TestConvertBuses:
         from novomodelo_bridge.newave.converters.network import convert_buses
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
-        result = convert_buses(case, self._make_id_map())
+        result = convert_buses(
+            case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW
+        )
         assert "buses" in result
 
     def test_bus_count_includes_fictitious(self, tmp_path) -> None:
         from novomodelo_bridge.newave.converters.network import convert_buses
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
-        result = convert_buses(case, self._make_id_map())
+        result = convert_buses(
+            case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW
+        )
         # 3 subsystems total: 1, 2, 99.
         assert len(result["buses"]) == 3
 
@@ -47,7 +54,9 @@ class TestConvertBuses:
         from novomodelo_bridge.newave.converters.network import convert_buses
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
-        result = convert_buses(case, self._make_id_map())
+        result = convert_buses(
+            case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW
+        )
         ids = [b["id"] for b in result["buses"]]
         assert ids == sorted(ids)
         assert ids[0] == 0
@@ -56,7 +65,9 @@ class TestConvertBuses:
         from novomodelo_bridge.newave.converters.network import convert_buses
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
-        result = convert_buses(case, self._make_id_map())
+        result = convert_buses(
+            case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW
+        )
         for b in result["buses"]:
             assert "deficit_segments" in b
             assert isinstance(b["deficit_segments"], list)
@@ -66,10 +77,77 @@ class TestConvertBuses:
         from novomodelo_bridge.newave.converters.network import convert_buses
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
-        result = convert_buses(case, self._make_id_map())
+        result = convert_buses(
+            case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW
+        )
         for b in result["buses"]:
             last_seg = b["deficit_segments"][-1]
             assert last_seg["depth_mw"] is None
+
+    def test_segment_depth_is_fraction_of_mean_load(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.network import convert_buses
+
+        deficit = _make_deficit_df(n_patamares=2)
+        deficit.loc[deficit["patamar_deficit"] == 1, "corte"] = 0.05
+        sistema = MagicMock()
+        sistema.custo_deficit = deficit
+        case = make_case(tmp_path, sistema=sistema)
+        result = convert_buses(
+            case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW
+        )
+        depths = {
+            b["id"]: b["deficit_segments"][0]["depth_mw"] for b in result["buses"]
+        }
+        assert depths[0] == pytest.approx(0.05 * 2000.0)
+        assert depths[1] == pytest.approx(0.05 * 1000.0)
+
+
+class TestMeanBusLoad:
+    def test_weights_each_bus_by_stage_hours(self) -> None:
+        from novomodelo_bridge.newave.converters.network import mean_bus_load_mw
+        from novomodelo_bridge.newave.horizon import StudyHorizon
+
+        horizon = StudyHorizon(
+            start_year=2023,
+            start_month=1,
+            num_anos=1,
+            num_anos_pos=0,
+            study_months=2,
+            total_stages=2,
+        )
+        load_table = pa.table(
+            {
+                "bus_id": pa.array([0, 0], pa.int32()),
+                "stage_id": pa.array([0, 1], pa.int32()),
+                "mean_mw": pa.array([100.0, 300.0]),
+                "std_mw": pa.array([0.0, 0.0]),
+            }
+        )
+        jan_hours, feb_hours = 744, 672
+        expected = (100.0 * jan_hours + 300.0 * feb_hours) / (jan_hours + feb_hours)
+        assert mean_bus_load_mw(load_table, horizon) == pytest.approx({0: expected})
+
+    def test_leaves_post_study_stages_out(self) -> None:
+        from novomodelo_bridge.newave.converters.network import mean_bus_load_mw
+        from novomodelo_bridge.newave.horizon import StudyHorizon
+
+        horizon = StudyHorizon(
+            start_year=2023,
+            start_month=1,
+            num_anos=1,
+            num_anos_pos=1,
+            study_months=1,
+            total_stages=2,
+        )
+        load_table = pa.table(
+            {
+                "bus_id": pa.array([0, 0], pa.int32()),
+                "stage_id": pa.array([0, 1], pa.int32()),
+                "mean_mw": pa.array([100.0, 900.0]),
+                "std_mw": pa.array([0.0, 0.0]),
+            }
+        )
+        assert mean_bus_load_mw(load_table, horizon) == pytest.approx({0: 100.0})
 
 
 # ---------------------------------------------------------------------------
