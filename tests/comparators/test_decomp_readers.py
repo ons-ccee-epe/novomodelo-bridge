@@ -25,7 +25,6 @@ from idecomp.decomp import (
     DecOperGnl,
     DecOperRee,
     DecOperRheSoft,
-    DecOperSist,
     EcoFpha,
     Relato,
 )
@@ -529,10 +528,6 @@ class TestDecOperLayoutByRelease:
         with pytest.raises(ValueError, match=r"DECOMP 30\.5, older than every layout"):
             _read_dec_oper(tmp_path, "dec_oper_sist.csv", _layout_recorder([]))
 
-    @pytest.mark.skipif(
-        "32.9" not in DecOperSist.VERSIONS,
-        reason="the installed idecomp predates the DECOMP 32.9 dec_oper_sist layout",
-    )
     def test_dec_oper_sist_from_32_15_reads_the_ande_column_unshifted(
         self, tmp_path: Path
     ) -> None:

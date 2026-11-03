@@ -35,7 +35,7 @@ links are cobre-bridge's.
 - **`convert decomp` applies `AC ALTEFE` overrides to the head of the
   turbined-flow limit**; it reported and ignored them. Reconvert decks that
   carry them.
-- **The bridge requires idecomp 1.18.2, inewave 1.17.1 and cfinterface 1.10.3
+- **The bridge requires idecomp 1.18.3, inewave 1.17.1 and cfinterface 1.10.3
   or newer.**
 - **BREAKING:** `convert newave` and `convert decomp` read the record names of
   the electrical-constraint file only complete and in upper case. A lower-case
@@ -112,11 +112,11 @@ links are cobre-bridge's.
 - **`convert --dry-run` wraps a long path in its listing** instead of cutting it
   short.
 - **`compare decomp` reads each `dec_oper_*.csv` in the layout of the DECOMP
-  release named in its banner**, among the layouts idecomp knows; a DECOMP 31.0
-  output was read with a later release's columns. A release older than every
-  known layout stops the comparison with a message naming it. A
-  `dec_oper_sist.csv` from DECOMP 32.9 or later is still read shifted until
-  idecomp adds that layout.
+  release named in its banner**: with DECOMP 32.9 or later, deficit, marginal
+  cost and the energy balance came from shifted `dec_oper_sist.csv` columns,
+  and a DECOMP 31.0 output was read with a later release's columns. A release
+  older than every known layout stops the comparison with a message naming it.
+  Rerun `compare decomp` on DECOMP 32.9 or later results.
 - **`compare` draws each line's capacity on the Network tab as the hours-weighted
   mean of its block limits**, the same weighting as the plotted flow: a line
   whose limit changes by block no longer shows a stage below its lower bound.
