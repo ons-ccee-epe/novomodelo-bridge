@@ -16,15 +16,10 @@ links are cobre-bridge's.
 
 ### Added
 
-- **`convert --json-float-digits N`** writes every float in the converted
-  case's JSON files with N significant digits (1 to 17), on both the NEWAVE
-  and DECOMP tracks, including the files the DECOMP boundary FCF import
-  rewrites. The default is 15, so a conversion without the option now writes
-  floats such as `208.19733988000294` as `208.197339880003`; pass 17 to keep
-  full float64 precision as before. Parquet files are never rounded.
-  Novomodelo cross-checks JSON values against the Parquet tables and
-  unit-group sums against plant totals to a 1e-9 relative tolerance, so fewer
-  than about 10 digits can make it reject the case.
+- **`convert newave` and `convert decomp` take `--json-float-digits N`** and
+  write the case's JSON floats with N significant digits (1 to 17, default 15),
+  so their JSON files differ from an earlier conversion's; pass 17 to keep full
+  precision. Below about 10 digits novomodelo can reject the case.
 
 ## [0.19.1] - 2026-10-26
 
