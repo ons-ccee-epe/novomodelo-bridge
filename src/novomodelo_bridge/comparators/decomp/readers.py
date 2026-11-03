@@ -30,7 +30,7 @@ from __future__ import annotations
 import functools
 import logging
 import re
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from pathlib import Path
 from typing import Protocol
 
@@ -66,7 +66,56 @@ class _TableFile(Protocol):
 
 
 class _TableReader(Hashable, Protocol):
-    def read(self, path: str, /) -> _TableFile: ...
+    def read(self, path: str, /, version: str | None = None) -> _TableFile: ...
+
+
+#: The source-model release stamped in a result file's banner, e.g.
+#: ``Versao 32.15.1_coin``; the files are ISO-8859-1, so it is matched on bytes.
+_SOURCE_MODEL_VERSION = re.compile(rb"Versao\s+(\d+(?:\.\d+)*)")
+_BANNER_BYTES = 4096
+
+
+def _numeric_version(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in text.split("."))
+
+
+def _source_model_version(path: Path) -> str | None:
+    """The source-model release in *path*'s banner, or ``None`` without one."""
+    with path.open("rb") as handle:
+        match = _SOURCE_MODEL_VERSION.search(handle.read(_BANNER_BYTES))
+    return match.group(1).decode("ascii") if match else None
+
+
+def _table_format_key(path: Path, reader_cls: _TableReader) -> str | None:
+    """The ``reader_cls.VERSIONS`` key of the layout *path* was written in.
+
+    Picks the newest key no newer than the banner's release, compared as
+    numbers: idecomp's own ``read(version=...)`` compares them as strings, so
+    handing it the raw release (``32.15.1``) resolves to an older layout than
+    ``32.9`` and reads the columns shifted. A file without a banner, or a
+    reader without registered layouts, is read in the reader's default layout.
+
+    Raises:
+        ValueError: The banner names a release older than every registered
+            layout.
+    """
+    versions: Mapping[str, object] | None = getattr(reader_cls, "VERSIONS", None)
+    if not versions:
+        return None
+    release = _source_model_version(path)
+    if release is None:
+        _LOG.debug("%s has no source-model version banner", path.name)
+        return None
+    target = _numeric_version(release)
+    eligible = [key for key in versions if _numeric_version(key) <= target]
+    if not eligible:
+        raise ValueError(
+            f"{path.name} was written by DECOMP {release}, older than every "
+            f"layout this reader knows ({', '.join(sorted(versions))})"
+        )
+    key = max(eligible, key=_numeric_version)
+    _LOG.debug("Reading %s (DECOMP %s) in the %s layout", path.name, release, key)
+    return key
 
 
 def _resolve_result_file(case_dir: Path, filename: str) -> Path | None:
@@ -112,7 +161,8 @@ def _parse_dec_oper(
     """Parse a table once per file *version* (path, mtime, size): one
     comparison reads the larger tables several times."""
     path = version[0]
-    return _finalize_table(path, reader_cls.read(str(path)).tabela)
+    layout = _table_format_key(path, reader_cls)
+    return _finalize_table(path, reader_cls.read(str(path), version=layout).tabela)
 
 
 def read_dec_oper_sist(case_dir: Path) -> pl.DataFrame:
