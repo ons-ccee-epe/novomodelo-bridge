@@ -79,14 +79,19 @@ P10 = (
 )
 
 P11 = (
-    "P11: mapcut reg 10 emits zeros for parcela_custo_geracao_termica_minima, "
+    "P11: mapcut reg 10's geracao_termica_minima_gerada_gnl holds, per stage, the "
+    "cost of the GNL generation committed before the study: for each GNL thermal, "
+    "the value_mw of the initial_conditions.json commitment window that covers the "
+    "stage, times the stage's block hours from stages.json, times the thermal's "
+    "cost_per_mwh from thermals.json, summed, converted to 10^3 R$ as in P2 and "
+    "not discounted. Novomodelo treats these commitments as sunk, so its cut "
+    "intercepts leave this cost out. parcela_custo_geracao_termica_minima, "
     "parcela_custo_contrato_importacao_minimo, "
-    "parcela_custo_contrato_exportacao_minimo, "
-    "geracao_termica_minima_sinalizada_gnl and "
-    "geracao_termica_minima_gerada_gnl; they are DECOMP operational quantities "
-    "from the deck's own data, non-zero in the reference, and are not "
-    "derivable from a Novomodelo policy checkpoint, whose cut intercept already "
-    "embeds the constant term. Only taxa_desconto is filled."
+    "parcela_custo_contrato_exportacao_minimo and "
+    "geracao_termica_minima_sinalizada_gnl are written as zeros: they are DECOMP "
+    "operational quantities from the deck's own data, non-zero in the reference, "
+    "and are not derivable from a Novomodelo policy checkpoint. taxa_desconto "
+    "holds the P9 discount factors."
 )
 
 P12 = (

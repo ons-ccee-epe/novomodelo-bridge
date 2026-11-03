@@ -6,6 +6,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.premises import (
     P3,
     P4,
     P5,
+    P11,
     P12,
     P14,
     PREMISES,
@@ -41,6 +42,22 @@ class TestPremises:
 
     def test_p5_is_not_dormant(self) -> None:
         assert "DORMANT" not in P5
+
+    def test_p11_states_the_committed_gnl_cost(self) -> None:
+        assert P11.startswith("P11: ")
+        assert "geracao_termica_minima_gerada_gnl holds" in P11
+        assert "cost_per_mwh" in P11
+        assert "sunk" in P11
+        assert "embeds the constant term" not in P11
+
+    def test_p11_keeps_the_four_zero_parcels(self) -> None:
+        for name in (
+            "parcela_custo_geracao_termica_minima",
+            "parcela_custo_contrato_importacao_minimo",
+            "parcela_custo_contrato_exportacao_minimo",
+            "geracao_termica_minima_sinalizada_gnl",
+        ):
+            assert name in P11
 
     def test_p12_states_the_block_hours(self) -> None:
         assert "hours" in P12

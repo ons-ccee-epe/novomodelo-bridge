@@ -146,7 +146,9 @@ def _export_dessem(
     every load block, and mapcut record 9 carries that stage's load-block
     hours. The policy's other GNL coefficients are left out and counted in the
     log. A plant with no coefficient for that delivery, or a coefficient of
-    exactly zero, gets 0.0 and a warning.
+    exactly zero, gets 0.0 and a warning. Each stage's mapcut record 10 also
+    carries the cost of the GNL generation committed before the study, from
+    the case's initial_conditions.json, in 10³ R$.
     """
     _configure_logging(verbose, log_file)
 
