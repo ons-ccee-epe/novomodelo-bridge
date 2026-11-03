@@ -107,8 +107,8 @@ def index_slots(slots: Sequence[EntitySlotRecord]) -> SlotIndex:
     )
 
 
-def has_delivery_date(slot: EntitySlotRecord) -> bool:
-    """Whether the slot carries a real delivery interval."""
+def has_interval(slot: EntitySlotRecord) -> bool:
+    """Whether the slot's `interval_start` is set rather than `UNDATED`."""
     return slot.interval_start != UNDATED
 
 
@@ -359,7 +359,7 @@ def delivery_slot_map(
         return {}
 
     for position in positions:
-        if not has_delivery_date(slots[position]):
+        if not has_interval(slots[position]):
             raise MappingError(
                 f"anticipated-thermal slot at position {position} "
                 f"carries no delivery date"
