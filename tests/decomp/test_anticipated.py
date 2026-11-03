@@ -440,20 +440,19 @@ _STUDY_SPANS = [
 ]
 
 
-def test_month_end_duration_hours_uses_month_last_day_not_next_month_start() -> None:
-    # 2026-06 has 30 days: 30 - 6 = 24 d = 576 h, not the 25 d/600 h a
-    # next-month-start boundary would give.
-    assert _month_end_duration_hours(date(2026, 6, 6)) == 576.0
+def test_month_end_duration_hours_runs_to_the_next_month_start() -> None:
+    # 2026-06-06 -> 2026-07-01: 25 d, the month's last day included.
+    assert _month_end_duration_hours(date(2026, 6, 6)) == 600.0
     # 2026 is not a leap year: February has 28 days.
-    assert _month_end_duration_hours(date(2026, 2, 1)) == 648.0
+    assert _month_end_duration_hours(date(2026, 2, 1)) == 672.0
 
 
 def test_build_post_study_calendar_matches_novomodelo_e2e_oracle() -> None:
     # class4_end = 2026-05-16 (both plants' shared já-comandada cutoff): a
     # 24 h stub + 2 operative weeks fill class-4 up to it, then one
     # class-3 stage per study stage (3 weekly mirrors + the trailing
-    # monthly mirror, spanning to the end of ITS OWN calendar month, June)
-    # -- the exact 7-stage shape novomodelo's own post-study e2e fixture pins.
+    # monthly mirror, spanning to the end of its own civil month, June) --
+    # the faithful calendar of novomodelo's anticipated-commitments design.
     stages = _build_post_study_calendar(_STUDY_SPANS, date(2026, 5, 16))
 
     assert [(s["start_date"], s["duration_hours"]) for s in stages] == [
@@ -463,7 +462,7 @@ def test_build_post_study_calendar_matches_novomodelo_e2e_oracle() -> None:
         ("2026-05-16", 168.0),
         ("2026-05-23", 168.0),
         ("2026-05-30", 168.0),
-        ("2026-06-06", 576.0),
+        ("2026-06-06", 600.0),
     ]
     # One class-3 mirror stage per study stage, plus the class-4 fill.
     assert len(stages) == 3 + len(_STUDY_SPANS)
@@ -506,16 +505,16 @@ def test_build_post_study_calendar_no_class4_fill_when_class4_end_is_horizon_end
     None
 ):
     # No já-comandada run at all (class4_end == horizon_end): the class-4
-    # fill is empty and the class-3 mirror starts immediately at
-    # horizon_end, even though 2026-05-01 (Friday) is off the Saturday grid
-    # -- there is nothing left to align to.
+    # fill is empty and the class-3 mirror starts at horizon_end, its first
+    # week cut at the first Saturday (2026-05-01 is a Friday) so the rest
+    # stays on the operative-week grid.
     stages = _build_post_study_calendar(_STUDY_SPANS, date(2026, 5, 1))
 
     assert [(s["start_date"], s["duration_hours"]) for s in stages] == [
-        ("2026-05-01", 168.0),
-        ("2026-05-08", 168.0),
-        ("2026-05-15", 168.0),
-        ("2026-05-22", 216.0),  # May has 31 days: 31 - 22 = 9 d = 216 h
+        ("2026-05-01", 24.0),
+        ("2026-05-02", 168.0),
+        ("2026-05-09", 168.0),
+        ("2026-05-16", 384.0),  # to 2026-06-01: 16 d, May 31 included
     ]
     assert len(stages) == len(_STUDY_SPANS)
 
@@ -691,40 +690,83 @@ def test_convert_gnl_thermal_bounds_cover_only_class3_stages() -> None:
         assert indices == [3, 4, 5, 6]
 
 
-def test_convert_gnl_thermal_bounds_cover_every_stage_when_no_class4_run() -> None:
-    # No já-comandada commitment at all -> class4_end defaults to
-    # horizon_end, so the class-4 fill is empty and the class-3 mirror (one
-    # stage per study stage) starts immediately: every calendar stage is
-    # class-3 and gets a thermal_bounds row. The complementary boundary to
-    # test_convert_gnl_thermal_bounds_cover_only_class3_stages -- the class-3
-    # mirror always starts exactly at class4_end, so a calendar with every
-    # stage class-4 is not constructible.
-    santa = _SANTA
-    model = GnlCommitmentModel(
+def _santa_with_gl_weeks(last: date, *, last_hours: float) -> GnlCommitmentModel:
+    """SANTA CRUZ with consecutive 0 MW ``gl`` weeks from 2026-03-14 to *last*,
+    the last declaring *last_hours*."""
+    starts = []
+    day = date(2026, 3, 14)
+    while day <= last:
+        starts.append(day)
+        day += timedelta(weeks=1)
+    weeks = tuple(
+        GnlStageCommitment(i + 1, start, 0.0, last_hours if start == last else 168.0)
+        for i, start in enumerate(starts)
+    )
+    return GnlCommitmentModel(
         tg=_TG,
-        thermals=(santa,),
-        commitments={
-            86: GnlCommitment(
-                86, (GnlStageCommitment(1, date(2026, 3, 14), 0.0, 168.0),)
-            )
-        },
+        thermals=(_SANTA,),
+        commitments={86: GnlCommitment(86, weeks)},
         weeks_per_month=_EMIT_WEEKS_PER_MONTH,
         nl_lag_months={86: 2},
     )
+
+
+def test_convert_gnl_stubs_0_mw_when_the_next_gl_week_starts_past_the_horizon() -> None:
+    # The 7 gl weeks end with the week of 2026-04-25, cut at the horizon end
+    # (Friday 2026-05-01): the month after the study starts with the week of
+    # 2026-05-02, so the day before it is a 0 MW stub and the study's first
+    # week decides the week of 2026-05-02.
     e = convert_gnl(
-        model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
+        _santa_with_gl_weeks(date(2026, 4, 25), last_hours=144.0),
+        first_thermal_id=94,
+        bus_id_of=_BUS_OF,
+        calendar=_EMIT_CALENDAR,
     )
 
     pss = e.post_study_stages
     assert pss is not None
     assert [(s["start_date"], s["duration_hours"]) for s in pss["stages"]] == [
-        ("2026-05-01", 168.0),
-        ("2026-05-08", 168.0),
-        ("2026-05-15", 168.0),
-        ("2026-05-22", 216.0),
+        ("2026-05-01", 24.0),
+        ("2026-05-02", 168.0),
+        ("2026-05-09", 168.0),
+        ("2026-05-16", 168.0),
+        ("2026-05-23", 216.0),
+    ]
+    indices = sorted(b["post_study_stage_index"] for b in pss["thermal_bounds"])
+    assert indices == [1, 2, 3, 4]
+    assert e.past_anticipated_commitments[-1] == {
+        "thermal_id": 94,
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-02",
+        "value_mw": 0.0,
+    }
+    assert e.thermals[0]["anticipated_config"] == {"lead_time_hours": 1176.0}
+
+
+def test_convert_gnl_decides_the_week_straddling_the_horizon_without_a_stub() -> None:
+    # The gl weeks end with the week of 2026-04-18: the month after the study
+    # starts with the week of 2026-04-25, already under way at the horizon end
+    # (2026-05-01), so the study's first week decides its remainder to the
+    # Saturday, no stub, and the lead reaches the horizon end.
+    e = convert_gnl(
+        _santa_with_gl_weeks(date(2026, 4, 18), last_hours=168.0),
+        first_thermal_id=94,
+        bus_id_of=_BUS_OF,
+        calendar=_EMIT_CALENDAR,
+    )
+
+    pss = e.post_study_stages
+    assert pss is not None
+    assert [(s["start_date"], s["duration_hours"]) for s in pss["stages"]] == [
+        ("2026-05-01", 24.0),
+        ("2026-05-02", 168.0),
+        ("2026-05-09", 168.0),
+        ("2026-05-16", 384.0),
     ]
     indices = sorted(b["post_study_stage_index"] for b in pss["thermal_bounds"])
     assert indices == [0, 1, 2, 3]
+    assert all(p["end_date"] <= "2026-05-01" for p in e.past_anticipated_commitments)
+    assert e.thermals[0]["anticipated_config"] == {"lead_time_hours": 1152.0}
 
 
 def test_convert_gnl_raises_on_differing_class4_end_across_plants() -> None:
@@ -803,9 +845,9 @@ def test_convert_gnl_warns_on_nonuniform_nl_lag(
         )
 
     assert any("differing anticipation lags" in r.message for r in caplog.records)
-    # Neither plant declares a já-comandada window, so class4_end defaults to
-    # horizon_end: the emitted lead reaches exactly the study horizon
-    # (1152 h = 48 days).
+    # Neither plant declares a já-comandada window and their gl weeks end well
+    # before the horizon, so class4_end defaults to horizon_end: the emitted
+    # lead reaches exactly the study horizon (1152 h = 48 days).
     assert all(
         t["anticipated_config"] == {"lead_time_hours": 1152.0} for t in e.thermals
     )
@@ -934,10 +976,10 @@ def _santa_model(
     )
 
 
-def test_convert_gnl_prices_post_study_stages_from_the_month_they_start_in() -> None:
-    # Já-comandada weeks to 2026-05-16, then the mirror: weeks starting 16, 23
-    # and 30 May (the last ending in June) take May's tg (stage 5), the month
-    # starting 6 June takes June's (stage 6).
+def test_convert_gnl_prices_post_study_stages_by_their_hours_in_each_month() -> None:
+    # Já-comandada weeks to 2026-05-16, then the mirror: the weeks of 16 and
+    # 23 May take May's tg (stage 5), the week of 30 May blends May's 2 days
+    # with June's 5, and the month starting 6 June takes June's (stage 6).
     tg = _tg_with_post_study_months(
         {**_tg_row(86, "SANTA CRUZ", cvu=210.0, disp=350.0), "estagio": 5},
         {**_tg_row(86, "SANTA CRUZ", cvu=0.0, disp=0.0), "estagio": 6},
@@ -959,7 +1001,7 @@ def test_convert_gnl_prices_post_study_stages_from_the_month_they_start_in() -> 
     ] == [
         ("2026-05-16", 210.0, 350.0),
         ("2026-05-23", 210.0, 350.0),
-        ("2026-05-30", 210.0, 350.0),
+        ("2026-05-30", 60.0, 100.0),
         ("2026-06-06", 0.0, 0.0),
     ]
     assert e.thermals[0]["generation"] == {"min_mw": 0.0, "max_mw": 500.0}
@@ -1002,7 +1044,12 @@ def test_convert_gnl_class4_window_takes_the_last_study_stage_tg() -> None:
     assert [
         (b["post_study_stage_index"], b["max_mw"])
         for b in e.post_study_stages["thermal_bounds"]
-    ] == [(3, 600.0), (4, 600.0), (5, 600.0), (6, 300.0)]
+    ] == [
+        (3, 600.0),
+        (4, 600.0),
+        (5, pytest.approx(2 / 7 * 600.0 + 5 / 7 * 300.0)),
+        (6, 300.0),
+    ]
 
 
 def test_convert_gnl_rejects_tg_past_the_post_study_months() -> None:

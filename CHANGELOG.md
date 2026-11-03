@@ -34,11 +34,11 @@ links are cobre-bridge's.
   warning. Reconvert NEWAVE cases.
 - **`convert decomp` converts the GNL plants of later revisions**, which failed
   or did not pass `novomodelo validate` from the second revision of a month on,
-  and keeps a plant whose `GL` commits 0 MW. Each week after the study takes the
-  `TG` cost and limits of its own month; `GL` weeks without patamar durations
-  are weighted by `cortesh.dat`, with a `decomp-gnl-block-hours-fallback`
-  warning when it does not cover their month. Reconvert DECOMP cases with GNL
-  plants.
+  and keeps a plant whose `GL` commits 0 MW. The weeks after the study follow
+  the deck's `GL` weeks and take the `TG` cost and limits of the months they
+  cover; `GL` weeks without patamar durations are weighted by `cortesh.dat`,
+  with a `decomp-gnl-block-hours-fallback` warning when it does not cover their
+  month. Reconvert DECOMP cases with GNL plants.
 
 ## [0.19.1] - 2026-10-26
 
