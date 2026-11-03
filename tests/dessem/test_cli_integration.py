@@ -461,6 +461,29 @@ class TestExportDessemCli:
         assert [d["code"] for d in errors] == ["dessem-fcf-export-failed"]
         assert errors[0]["summary"] == "no checkpoint here"
 
+    def test_json_input_read_failure_emits_export_failed(
+        self,
+        synthetic_case_dir: Path,
+        deck_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        (synthetic_case_dir / "initial_conditions.json").unlink()
+
+        with patch(
+            "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+        ) as read:
+            read.return_value = PolicyCheckpoint(_make_manifest(), _make_pools_dict())
+            result = self._invoke_json(
+                deck_dir, synthetic_case_dir, tmp_path / "output"
+            )
+
+        assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        assert verdict["status"] == "error"
+        errors = [d for d in verdict["diagnostics"] if d["severity"] == "error"]
+        assert [d["code"] for d in errors] == ["dessem-fcf-export-failed"]
+        assert "initial_conditions.json" in errors[0]["summary"]
+
     def test_json_missing_case_dir_emits_one_error_verdict(
         self, deck_dir: Path, tmp_path: Path
     ) -> None:

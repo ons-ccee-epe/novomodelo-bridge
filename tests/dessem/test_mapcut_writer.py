@@ -1,10 +1,16 @@
 """Tests for dessem/exporters/fcf/mapcut_writer.py."""
 
+import csv
+import logging
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from idecomp.decomp import Mapcut
 
+from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
+    write_mapcut_content_csv,
+)
 from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
     MapcutContents,
     read_mapcut,
@@ -42,6 +48,7 @@ def minimal_header() -> MapcutHeader:
         patamares_gnl=(3, 3),
         gnl_patamar_hours=(27.0, 68.0, 73.0),
         taxa_desconto=(1.0, 0.998),
+        geracao_termica_minima_gerada_gnl=(1234.5, 0.0),
     )
 
 
@@ -95,30 +102,10 @@ class TestWriteMapcut:
 class TestMapcutValidation:
     """Test header validation in write_mapcut."""
 
-    def test_mismatched_codigos_uhes_raises(self, tmp_path: Path) -> None:
-        header = MapcutHeader(
-            numero_iteracoes=10,
-            numero_cortes=6,
-            numero_submercados=5,
-            numero_uhes=5,  # Says 5
-            numero_cenarios=2,
-            numero_estagios=2,
-            numero_semanas=2,
-            dia=1,
-            mes=1,
-            ano=2026,
-            codigos_uhes=(1, 2, 3),  # But only 3
-            codigos_uhes_jusante=(0, 1, 1),
-            indice_no_arvore=(1, 1),
-            indice_primeiro_no_estagio=(1, 2),
-            patamares_por_estagio=(3, 3),
-            registro_ultimo_corte_no=(6, 5),
-            codigos_submercados_gnl=(1, 2),
-            lag_meses_gnl=(2, 2),
-            patamares_gnl=(3, 3),
-            gnl_patamar_hours=(27.0, 68.0, 73.0),
-            taxa_desconto=(1.0, 0.998),
-        )
+    def test_mismatched_codigos_uhes_raises(
+        self, tmp_path: Path, minimal_header: MapcutHeader
+    ) -> None:
+        header = replace(minimal_header, numero_uhes=5)
 
         with pytest.raises(LayoutError, match="inconsistent"):
             write_mapcut(header, tmp_path / "mapcut.rv0")
@@ -282,3 +269,99 @@ class TestGnlTrailingBlock:
 
         assert written.codigos_submercados_gnl == ()
         assert written.gnl_trailing_block == ()
+
+
+class TestCommittedGnlCost:
+    """Reg 10's last value is the committed GNL cost, written without scaling."""
+
+    @pytest.fixture
+    def written(self, tmp_path: Path, minimal_header: MapcutHeader) -> Path:
+        path = tmp_path / "mapcut.rv0"
+        write_mapcut(minimal_header, path)
+        return path
+
+    def test_round_trip_carries_the_cost_in_the_last_position(
+        self, written: Path
+    ) -> None:
+        assert read_mapcut(written).cost_records == (
+            (1.0, 0.0, 0.0, 0.0, 0.0, 1234.5),
+            (0.998, 0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+
+    def test_content_csv_mirrors_the_cost_row(
+        self, written: Path, tmp_path: Path
+    ) -> None:
+        mirror = tmp_path / "mapcut_content.csv"
+        write_mapcut_content_csv(read_mapcut(written), mirror)
+
+        with mirror.open(encoding="utf-8", newline="") as handle:
+            rows = [
+                row
+                for row in csv.DictReader(handle)
+                if row["record_kind"] == "reg10_cost"
+                and row["field"] == "geracao_termica_minima_gerada_gnl"
+            ]
+
+        assert {row["position"] for row in rows} == {"5"}
+        assert [float(row["value"]) for row in rows] == [1234.5, 0.0]
+
+    def test_idecomp_reads_the_cost_from_its_own_column(self, written: Path) -> None:
+        costs = Mapcut.read(str(written)).dados_custos
+
+        assert costs["geracao_termica_minima_gerada_gnl"].tolist() == [1234.5, 0.0]
+        for column in (
+            "parcela_custo_geracao_termica_minima",
+            "parcela_custo_contrato_importacao_minimo",
+            "parcela_custo_contrato_exportacao_minimo",
+            "geracao_termica_minima_sinalizada_gnl",
+        ):
+            assert set(costs[column]) == {0.0}
+
+    @pytest.mark.parametrize(
+        ("values", "message"),
+        [
+            pytest.param(
+                (1.0,),
+                r"geracao_termica_minima_gerada_gnl has 1 entries but numero_estagios is 2",
+                id="length",
+            ),
+            pytest.param(
+                (float("nan"), 0.0),
+                r"geracao_termica_minima_gerada_gnl holds a non-finite value",
+                id="non-finite",
+            ),
+        ],
+    )
+    def test_header_refusals_write_no_file(
+        self,
+        tmp_path: Path,
+        minimal_header: MapcutHeader,
+        values: tuple[float, ...],
+        message: str,
+    ) -> None:
+        path = tmp_path / "mapcut.rv0"
+        header = replace(minimal_header, geracao_termica_minima_gerada_gnl=values)
+
+        with pytest.raises(LayoutError, match=message):
+            write_mapcut(header, path)
+
+        assert not path.exists()
+
+    def test_p11_log_names_the_four_zero_parcels_only(
+        self,
+        tmp_path: Path,
+        minimal_header: MapcutHeader,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            write_mapcut(minimal_header, tmp_path / "mapcut.rv0")
+
+        (message,) = [m for m in caplog.messages if m.startswith("P11")]
+        for parcel in (
+            "parcela_custo_geracao_termica_minima",
+            "parcela_custo_contrato_importacao_minimo",
+            "parcela_custo_contrato_exportacao_minimo",
+            "geracao_termica_minima_sinalizada_gnl",
+        ):
+            assert parcel in message
+        assert "geracao_termica_minima_gerada_gnl" not in message

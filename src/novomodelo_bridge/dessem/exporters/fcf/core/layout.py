@@ -28,6 +28,14 @@ TAMANHO_CORTE = 26976
 PHYSICAL_RECORD_COUNT = 14
 PHYSICAL_RECORD_FIRST = 4
 PHYSICAL_RECORD_LAST = PHYSICAL_RECORD_FIRST + PHYSICAL_RECORD_COUNT - 1
+COST_FIELDS = (
+    "taxa_desconto",
+    "parcela_custo_geracao_termica_minima",
+    "parcela_custo_contrato_importacao_minimo",
+    "parcela_custo_contrato_exportacao_minimo",
+    "geracao_termica_minima_sinalizada_gnl",
+    "geracao_termica_minima_gerada_gnl",
+)
 
 _MAX_POINTER = 2**31 - 1
 _HEADER_RECORD_COUNT = 4

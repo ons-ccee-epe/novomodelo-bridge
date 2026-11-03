@@ -16,6 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    COST_FIELDS,
     PHYSICAL_RECORD_FIRST,
     PHYSICAL_RECORD_LAST,
     RECORD_SIZE,
@@ -206,8 +207,7 @@ def read_mapcut(path: Path) -> MapcutContents:
     for stage in range(numero_estagios):
         gnl_indices.append(record_idx)
         record_idx += 1
-        cost_record = _float64s(data, record_idx, 6)
-        cost_records.append(cost_record)
+        cost_records.append(_float64s(data, record_idx, len(COST_FIELDS)))
         record_idx += 1
     for _ in range(numero_cenarios - numero_estagios):
         gnl_indices.append(record_idx)

@@ -7,9 +7,10 @@ All fixtures are generated programmatically - no external data dependencies.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import replace
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     BlockInfo,
     BusInfo,
     CaseInputs,
+    CommitmentWindow,
     HydroInfo,
     StageInfo,
     ThermalInfo,
@@ -36,6 +38,39 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     StageCutPool,
 )
 from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
+
+
+def weekly_windows(
+    thermal_id: int, values_mw: Sequence[float] = (0.0, 0.0, 0.0)
+) -> tuple[CommitmentWindow, ...]:
+    """One commitment window per value, on the builders' contiguous weeks from 2026-01-01."""
+    return tuple(
+        CommitmentWindow(
+            thermal_id=thermal_id,
+            start_date=date(2026, 1, 1) + timedelta(days=7 * k),
+            end_date=date(2026, 1, 8) + timedelta(days=7 * k),
+            value_mw=value_mw,
+        )
+        for k, value_mw in enumerate(values_mw)
+    )
+
+
+def write_commitments(case_dir: Path, windows: Sequence[CommitmentWindow]) -> None:
+    (case_dir / "initial_conditions.json").write_text(
+        json.dumps(
+            {
+                "past_anticipated_commitments": [
+                    {
+                        "thermal_id": w.thermal_id,
+                        "start_date": w.start_date.isoformat(),
+                        "end_date": w.end_date.isoformat(),
+                        "value_mw": w.value_mw,
+                    }
+                    for w in windows
+                ]
+            }
+        )
+    )
 
 
 @pytest.fixture
@@ -166,8 +201,8 @@ def synthetic_inputs() -> CaseInputs:
     stages = tuple(
         StageInfo(
             id=i,
-            start_date=f"2026-01-0{i + 1}",
-            end_date=f"2026-01-0{i + 8}",
+            start_date=f"2026-01-{1 + 7 * i:02d}",
+            end_date=f"2026-01-{8 + 7 * i:02d}",
             blocks=(
                 BlockInfo(id=0, name="leve", hours=24.0),
                 BlockInfo(id=1, name="media", hours=72.0),
@@ -202,8 +237,20 @@ def synthetic_inputs() -> CaseInputs:
         ),
     )
     thermals = (
-        ThermalInfo(id=100, name="GNL_A", bus_id=0, lead_time_hours=1512.0),
-        ThermalInfo(id=101, name="CONV_A", bus_id=1, lead_time_hours=None),
+        ThermalInfo(
+            id=100,
+            name="GNL_A",
+            bus_id=0,
+            lead_time_hours=1512.0,
+            cost_per_mwh=200.0,
+        ),
+        ThermalInfo(
+            id=101,
+            name="CONV_A",
+            bus_id=1,
+            lead_time_hours=None,
+            cost_per_mwh=150.0,
+        ),
     )
     buses = (
         BusInfo(id=0, name="SE"),
@@ -219,6 +266,7 @@ def synthetic_inputs() -> CaseInputs:
         thermals=thermals,
         buses=buses,
         annual_discount_rate=0.12,
+        past_anticipated_commitments=weekly_windows(100),
     )
 
 
@@ -305,6 +353,7 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
                 "id": t.id,
                 "name": t.name,
                 "bus_id": t.bus_id,
+                "cost_per_mwh": t.cost_per_mwh,
                 **(
                     {"anticipated_config": {"lead_time_hours": t.lead_time_hours}}
                     if t.lead_time_hours is not None
@@ -316,6 +365,8 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
     }
     (system_dir / "thermals.json").write_text(json.dumps(thermals_data, indent=2))
 
+    write_commitments(case_dir, synthetic_inputs.past_anticipated_commitments)
+
     # buses.json
     buses_data = {
         "buses": [{"id": b.id, "name": b.name} for b in synthetic_inputs.buses]
@@ -325,29 +376,16 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
     return case_dir
 
 
-def _weekly_stage_dates(case_dir: Path) -> dict[str, Any]:
-    """Rewrite `case_dir`'s stages onto contiguous weeks from 2026-01-01.
-
-    Returns the rewritten `stages.json` content for a caller that edits it further.
-    """
-    stages_path = case_dir / "stages.json"
-    stages = json.loads(stages_path.read_text())
-    for position, stage in enumerate(stages["stages"]):
-        stage["start_date"] = f"2026-01-{1 + 7 * position:02d}"
-        stage["end_date"] = f"2026-01-{8 + 7 * position:02d}"
-    stages_path.write_text(json.dumps(stages))
-    return stages
-
-
 @pytest.fixture
 def gnl_case_dir(synthetic_case_dir: Path) -> Path:
-    """`synthetic_case_dir` on weekly stages with a second GNL thermal, GNL_B."""
-    stages = _weekly_stage_dates(synthetic_case_dir)
+    """`synthetic_case_dir` with a second GNL thermal, GNL_B, and stage 1's blocks at 27, 68 and 73 h."""
+    stages_path = synthetic_case_dir / "stages.json"
+    stages = json.loads(stages_path.read_text())
     for block, hours in zip(
         stages["stages"][1]["blocks"], (27.0, 68.0, 73.0), strict=True
     ):
         block["hours"] = hours
-    (synthetic_case_dir / "stages.json").write_text(json.dumps(stages))
+    stages_path.write_text(json.dumps(stages))
 
     thermals_path = synthetic_case_dir / "system" / "thermals.json"
     thermals = json.loads(thermals_path.read_text())
@@ -356,10 +394,12 @@ def gnl_case_dir(synthetic_case_dir: Path) -> Path:
             "id": 102,
             "name": "GNL_B",
             "bus_id": 2,
+            "cost_per_mwh": 300.0,
             "anticipated_config": {"lead_time_hours": 1512.0},
         }
     )
     thermals_path.write_text(json.dumps(thermals))
+    write_commitments(synthetic_case_dir, weekly_windows(100) + weekly_windows(102))
     return synthetic_case_dir
 
 
@@ -377,9 +417,7 @@ def gnl_source(synthetic_source: SourceDeck) -> SourceDeck:
 
 @pytest.fixture
 def travel_time_case_dir(synthetic_case_dir: Path) -> Path:
-    """`synthetic_case_dir` on contiguous weekly stages, UHE_B 240 h above UHE_A."""
-    _weekly_stage_dates(synthetic_case_dir)
-
+    """`synthetic_case_dir` with UHE_B 240 h above UHE_A."""
     hydros_path = synthetic_case_dir / "system" / "hydros.json"
     hydros = json.loads(hydros_path.read_text())
     hydros["hydros"][1]["travel_time_hours"] = 240.0

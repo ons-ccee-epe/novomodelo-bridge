@@ -2,14 +2,17 @@
 
 import logging
 from dataclasses import replace
+from datetime import date
 
 import numpy as np
 import pytest
 
 from novomodelo_bridge.core.policy_dates import UNDATED
+from novomodelo_bridge.core.tolerances import floats_differ
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     BlockInfo,
     CaseInputs,
+    CommitmentWindow,
     HydroInfo,
     StageInfo,
     ThermalInfo,
@@ -28,10 +31,12 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     discount_factors,
     downstream_positions,
     gnl_block,
+    gnl_committed_costs,
     gnl_drop_audit,
     gnl_lag_months,
     match_source_hydros,
     negate_gnl_array,
+    parse_end_date,
     plant_codes,
     select_gnl_deliveries,
     select_submarket_buses,
@@ -166,8 +171,14 @@ class TestMatchSourceHydros:
             match_source_hydros([_hydro(0, None), _hydro(1, 0)], source)
 
 
-def _gnl(thermal_id: int, name: str) -> ThermalInfo:
-    return ThermalInfo(id=thermal_id, name=name, bus_id=0, lead_time_hours=1512.0)
+def _gnl(thermal_id: int, name: str, cost_per_mwh: float = 0.0) -> ThermalInfo:
+    return ThermalInfo(
+        id=thermal_id,
+        name=name,
+        bus_id=0,
+        lead_time_hours=1512.0,
+        cost_per_mwh=cost_per_mwh,
+    )
 
 
 class TestGnlLagMonths:
@@ -648,3 +659,269 @@ class TestDownstreamPositions:
     def test_unknown_downstream_hydro_raises(self) -> None:
         with pytest.raises(MappingError, match="names downstream hydro 9"):
             downstream_positions([_hydro(0, 9)], (0,))
+
+
+def _window(thermal_id: int, start: str, end: str, mw: float) -> CommitmentWindow:
+    return CommitmentWindow(
+        thermal_id=thermal_id,
+        start_date=date.fromisoformat(start),
+        end_date=date.fromisoformat(end),
+        value_mw=mw,
+    )
+
+
+def _weekly_windows(thermal_id: int, *mw: float) -> list[CommitmentWindow]:
+    return [
+        _window(thermal_id, stage.start_date, stage.end_date, value)
+        for stage, value in zip(_weekly_stages(), mw, strict=True)
+    ]
+
+
+class TestGnlCommittedCosts:
+    """Premise P11: the committed GNL cost of each stage, in DECOMP's 10^3 R$."""
+
+    def test_two_plants_with_one_window_per_stage(self) -> None:
+        stages = _weekly_stages()
+        thermals = [_gnl(100, "GNL_A", 200.0), _gnl(102, "GNL_B", 300.0)]
+        windows = [
+            _window(100, "2026-08-15", "2026-08-22", 10.0),
+            _window(100, "2026-08-22", "2026-08-29", 0.0),
+            _window(100, "2026-08-29", "2026-09-05", 0.0),
+            _window(102, "2026-08-15", "2026-08-22", 5.0),
+            _window(102, "2026-08-22", "2026-08-29", 20.0),
+            _window(102, "2026-08-29", "2026-09-05", 0.0),
+        ]
+
+        costs = gnl_committed_costs(stages, thermals, windows)
+
+        assert [c.value for c in costs] == [588.0, 1008.0, 0.0]
+        assert [c.committed_mw for c in costs] == [
+            (10.0, 5.0),
+            (0.0, 20.0),
+            (0.0, 0.0),
+        ]
+
+    def test_each_entry_carries_its_stage_and_its_block_hours(self) -> None:
+        stages = _weekly_stages()
+
+        costs = gnl_committed_costs(stages, [], [])
+
+        assert [c.stage for c in costs] == stages
+        assert [c.hours for c in costs] == [168.0, 168.0, 168.0]
+
+    def test_a_window_over_two_stages_contributes_to_each(self) -> None:
+        windows = [_window(100, "2026-08-15", "2026-08-29", 10.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 336.0, 0.0]
+        assert costs[2].committed_mw[0] is None
+
+    def test_a_window_starting_before_the_study_covers_its_first_stage(self) -> None:
+        windows = [_window(100, "2026-08-01", "2026-08-22", 10.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 0.0, 0.0]
+
+    def test_a_window_ending_on_the_study_start_contributes_nothing(self) -> None:
+        windows = [_window(100, "2026-08-01", "2026-08-15", 10.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [0.0, 0.0, 0.0]
+        assert [c.committed_mw for c in costs] == [(None,), (None,), (None,)]
+
+    def test_a_window_after_the_horizon_contributes_nothing_and_raises_nothing(
+        self,
+    ) -> None:
+        windows = [
+            _window(100, "2026-08-15", "2026-08-29", 10.0),
+            _window(100, "2026-09-05", "2026-09-12", 10.0),
+        ]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 336.0, 0.0]
+
+    def test_an_uncovered_stage_is_priced_at_zero_and_not_checked_for_hours(
+        self,
+    ) -> None:
+        stages = [
+            _stage(0, "2026-08-15", "2026-08-22", (168.0,)),
+            _stage(1, "2026-08-22", "2026-08-29", (100.0,)),
+        ]
+        windows = [_window(100, "2026-08-15", "2026-08-22", 10.0)]
+
+        costs = gnl_committed_costs(stages, [_gnl(100, "GNL_A", 200.0)], windows)
+
+        assert [c.value for c in costs] == [336.0, 0.0]
+        assert costs[1].committed_mw == (None,)
+
+    def test_no_gnl_thermal_and_no_window_is_never_refused_on_hours(self) -> None:
+        stages = [_stage(0, "2026-08-01", "2026-09-01", (730.0,))]
+
+        costs = gnl_committed_costs(stages, [], [])
+
+        assert [c.value for c in costs] == [0.0]
+        assert costs[0].committed_mw == ()
+
+    def test_rv2_values_reproduce_the_decomp_mapcut_record(self) -> None:
+        stages = [
+            _stage(0, "2026-08-15", "2026-08-22", (168.0,)),
+            _stage(1, "2026-08-22", "2026-08-29", (168.0,)),
+            _stage(2, "2026-08-29", "2026-09-05", (168.0,)),
+            _stage(3, "2026-09-05", "2026-10-01", (624.0,)),
+        ]
+        thermals = [_gnl(98, "SANTA CRUZ", 181.34), _gnl(99, "PSERGIPE I", 363.06)]
+        santa_cruz_mw = (350.0, 350.0, 56.25, 21000 / 624)
+        windows = [
+            window
+            for stage, mw in zip(stages, santa_cruz_mw, strict=True)
+            for window in (
+                _window(98, stage.start_date, stage.end_date, mw),
+                _window(99, stage.start_date, stage.end_date, 0.0),
+            )
+        ]
+
+        costs = gnl_committed_costs(stages, thermals, windows)
+
+        expected = (10662.792, 10662.792, 1713.663, 3808.14)
+        for cost, value in zip(costs, expected, strict=True):
+            assert not floats_differ(cost.value, value)
+
+    def test_a_window_covering_a_stage_in_part_raises(self) -> None:
+        windows = [_window(100, "2026-08-18", "2026-08-22", 10.0)]
+
+        with pytest.raises(
+            MappingError,
+            match=r"GNL thermal 100 \(GNL_A\) has a commitment window from "
+            r"2026-08-18 to 2026-08-22 that covers stage 0 .* only in part",
+        ):
+            gnl_committed_costs(_weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows)
+
+    def test_two_half_windows_tiling_a_stage_raise_at_the_first(self) -> None:
+        windows = [
+            _window(100, "2026-08-15", "2026-08-18", 10.0),
+            _window(100, "2026-08-18", "2026-08-22", 10.0),
+        ]
+
+        with pytest.raises(
+            MappingError, match=r"from 2026-08-15 to 2026-08-18 that covers stage 0"
+        ):
+            gnl_committed_costs(_weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows)
+
+    def test_block_hours_that_differ_from_the_calendar_span_raise(self) -> None:
+        stages = [_stage(0, "2026-08-15", "2026-08-22", (24.0, 72.0, 70.0))]
+        windows = [_window(100, "2026-08-15", "2026-08-22", 10.0)]
+
+        with pytest.raises(
+            MappingError, match=r"stage 0 .* sum to 166 h against 168 h"
+        ):
+            gnl_committed_costs(stages, [_gnl(100, "GNL_A", 200.0)], windows)
+
+    def test_a_non_iso_end_date_raises(self) -> None:
+        stage = _stage(0, "2026-08-01", "2026-13-01", (744.0,))
+
+        with pytest.raises(
+            MappingError, match=r"stage 0 end_date '2026-13-01' is not ISO-8601"
+        ):
+            parse_end_date(stage)
+
+    def test_no_stage_gives_no_cost(self) -> None:
+        assert gnl_committed_costs([], [_gnl(100, "GNL_A", 200.0)], []) == ()
+
+    @pytest.mark.parametrize(
+        ("gnl_thermals", "gnl_windows"),
+        [
+            ((_gnl(100, "GNL_A"),), _weekly_windows(100, 10.0, 0.0, 0.0)),
+            ((), []),
+        ],
+        ids=["with-gnl-thermals", "without-gnl-thermals"],
+    )
+    def test_a_window_of_a_thermal_that_is_not_gnl_raises(
+        self,
+        gnl_thermals: tuple[ThermalInfo, ...],
+        gnl_windows: list[CommitmentWindow],
+    ) -> None:
+        windows = [*gnl_windows, _window(101, "2026-08-15", "2026-08-22", 10.0)]
+
+        with pytest.raises(
+            MappingError,
+            match=r"from 2026-08-15 to 2026-08-22 names thermal 101, "
+            r"which is not a GNL thermal",
+        ):
+            gnl_committed_costs(_weekly_stages(), gnl_thermals, windows)
+
+    @pytest.mark.parametrize(
+        ("windows", "missing"),
+        [
+            (_weekly_windows(100, 10.0, 0.0, 0.0), r"102 \(GNL_B\)"),
+            ([], r"100 \(GNL_A\)"),
+        ],
+        ids=["other-thermal-has-windows", "no-windows-at-all"],
+    )
+    def test_a_gnl_thermal_without_a_window_raises(
+        self, windows: list[CommitmentWindow], missing: str
+    ) -> None:
+        thermals = [_gnl(100, "GNL_A"), _gnl(102, "GNL_B")]
+
+        with pytest.raises(
+            MappingError,
+            match=rf"GNL thermal {missing} has no commitment window in "
+            r"past_anticipated_commitments of initial_conditions\.json",
+        ):
+            gnl_committed_costs(_weekly_stages(), thermals, windows)
+
+    @pytest.mark.parametrize(
+        ("extra", "message"),
+        [
+            (
+                ("2026-08-29", "2026-09-12"),
+                r"from 2026-08-29 to 2026-09-12 that runs past the study's end "
+                r"2026-09-05",
+            ),
+            (
+                ("2026-08-15", "2026-08-29"),
+                r"GNL thermal 100 \(GNL_A\) has 2 commitment windows covering stage 0",
+            ),
+        ],
+        ids=["straddle", "overlap"],
+    )
+    def test_a_window_position_a_solved_case_cannot_hold_raises(
+        self, extra: tuple[str, str], message: str
+    ) -> None:
+        windows = [*_weekly_windows(100, 10.0, 0.0, 0.0), _window(100, *extra, 50.0)]
+
+        with pytest.raises(MappingError, match=message):
+            gnl_committed_costs(_weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows)
+
+    @pytest.mark.parametrize(
+        "extra",
+        [("2026-09-05", "2026-09-12"), ("2026-08-08", "2026-08-15")],
+        ids=["post-horizon", "pre-study"],
+    )
+    def test_a_window_with_no_coverage_on_any_stage_is_allowed(
+        self, extra: tuple[str, str]
+    ) -> None:
+        windows = [*_weekly_windows(100, 10.0, 0.0, 0.0), _window(100, *extra, 50.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 0.0, 0.0]
+        assert [c.committed_mw for c in costs] == [(10.0,), (0.0,), (0.0,)]
+
+    def test_no_gnl_thermal_and_no_window_prices_every_stage_at_zero(self) -> None:
+        costs = gnl_committed_costs(_weekly_stages(), (), ())
+
+        assert [c.value for c in costs] == [0.0, 0.0, 0.0]

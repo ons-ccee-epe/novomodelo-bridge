@@ -21,6 +21,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
     MapcutContents,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    COST_FIELDS,
     PHYSICAL_RECORD_FIRST,
     PHYSICAL_RECORD_LAST,
     gnl_positions,
@@ -35,15 +36,6 @@ MAPCUT_COLUMNS = (
     "field",
     "position",
     "value",
-)
-
-COST_FIELDS = (
-    "taxa_desconto",
-    "parcela_custo_geracao_termica_minima",
-    "parcela_custo_contrato_importacao_minimo",
-    "parcela_custo_contrato_exportacao_minimo",
-    "geracao_termica_minima_sinalizada_gnl",
-    "geracao_termica_minima_gerada_gnl",
 )
 
 _REG_ONE_SCALARS = (

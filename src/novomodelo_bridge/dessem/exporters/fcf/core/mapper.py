@@ -30,6 +30,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
 if TYPE_CHECKING:
     from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
         BusInfo,
+        CommitmentWindow,
         HydroInfo,
         StageInfo,
         ThermalInfo,
@@ -284,6 +285,16 @@ def parse_start_date(stage: StageInfo) -> date:
     except ValueError as exc:
         raise MappingError(
             f"stage {stage.id} start_date {stage.start_date!r} is not ISO-8601"
+        ) from exc
+
+
+def parse_end_date(stage: StageInfo) -> date:
+    """Parse a stage's end_date as ISO-8601."""
+    try:
+        return date.fromisoformat(stage.end_date)
+    except ValueError as exc:
+        raise MappingError(
+            f"stage {stage.id} end_date {stage.end_date!r} is not ISO-8601"
         ) from exc
 
 
@@ -699,3 +710,137 @@ def downstream_positions(
                 f"{hydro.downstream_id}, which the case does not hold"
             )
     return tuple(positions)
+
+
+# ---------------------------------------------------------------------------
+# Premise P11: committed GNL generation cost
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GnlCommittedCost:
+    """One stage's committed GNL cost; `value` is in 10^3 R$, and `committed_mw`
+    follows the GNL thermals' order, `None` where no window covers the stage.
+    """
+
+    stage: StageInfo
+    hours: float
+    committed_mw: tuple[float | None, ...]
+    value: float
+
+
+def _covers_whole(window: CommitmentWindow, start: date, end: date) -> bool | None:
+    """Whether *window* covers `[start, end)`: `True` whole, `False` in part, `None` not at all."""
+    if window.end_date <= start or window.start_date >= end:
+        return None
+    return window.start_date <= start and window.end_date >= end
+
+
+def _refuse_window_set(
+    stages: Sequence[StageInfo],
+    gnl_thermals: Sequence[ThermalInfo],
+    by_thermal: Mapping[int, Sequence[CommitmentWindow]],
+) -> None:
+    """Refuse the window sets novomodelo's anticipated-commitment checks reject."""
+    gnl_ids = {thermal.id for thermal in gnl_thermals}
+    for thermal_id, thermal_windows in by_thermal.items():
+        if thermal_id not in gnl_ids:
+            window = thermal_windows[0]
+            raise MappingError(
+                f"a commitment window from {window.start_date} to {window.end_date} "
+                f"names thermal {thermal_id}, which is not a GNL thermal of the "
+                "case; past_anticipated_commitments in initial_conditions.json "
+                "holds windows only for GNL thermals"
+            )
+    for thermal in gnl_thermals:
+        if thermal.id not in by_thermal:
+            raise MappingError(
+                f"GNL thermal {thermal.id} ({thermal.name}) has no commitment "
+                "window in past_anticipated_commitments of initial_conditions.json; "
+                "a solved case holds one for every GNL thermal"
+            )
+    horizon_end = parse_end_date(stages[-1])
+    for thermal in gnl_thermals:
+        for window in by_thermal[thermal.id]:
+            if window.start_date < horizon_end < window.end_date:
+                raise MappingError(
+                    f"GNL thermal {thermal.id} ({thermal.name}) has a commitment "
+                    f"window from {window.start_date} to {window.end_date} that "
+                    f"runs past the study's end {horizon_end}"
+                )
+
+
+def gnl_committed_costs(
+    stages: Sequence[StageInfo],
+    gnl_thermals: Sequence[ThermalInfo],
+    windows: Sequence[CommitmentWindow],
+) -> tuple[GnlCommittedCost, ...]:
+    """The cost of the GNL generation committed before the study, per stage.
+
+    Raises:
+        MappingError: a window names a thermal that is not a GNL thermal; a GNL
+            thermal has no window; a window covers the last stage and runs past
+            the study's end; two windows of one thermal cover the same stage
+            whole; a window covers a stage only in part; or a stage that holds
+            committed generation has block hours that differ from its calendar span.
+    """
+    if not stages:
+        return ()
+    by_thermal: dict[int, list[CommitmentWindow]] = {}
+    for window in windows:
+        by_thermal.setdefault(window.thermal_id, []).append(window)
+    _refuse_window_set(stages, gnl_thermals, by_thermal)
+
+    costs: list[GnlCommittedCost] = []
+    for stage in stages:
+        start = parse_start_date(stage)
+        end = parse_end_date(stage)
+        hours = math.fsum(block.hours for block in stage.blocks)
+        committed_mw: list[float | None] = []
+        for thermal in gnl_thermals:
+            whole: list[float] = []
+            for window in by_thermal[thermal.id]:
+                covers = _covers_whole(window, start, end)
+                if covers is False:
+                    raise MappingError(
+                        f"GNL thermal {thermal.id} ({thermal.name}) has a commitment "
+                        f"window from {window.start_date} to {window.end_date} that "
+                        f"covers stage {stage.id} ({start} to {end}) only in part; a "
+                        "commitment window must cover each stage it touches whole"
+                    )
+                if covers:
+                    whole.append(window.value_mw)
+            if len(whole) > 1:
+                raise MappingError(
+                    f"GNL thermal {thermal.id} ({thermal.name}) has {len(whole)} "
+                    f"commitment windows covering stage {stage.id} ({start} to "
+                    f"{end}); a stage is committed by one window at most"
+                )
+            committed_mw.append(whole[0] if whole else None)
+
+        if any(mw is not None for mw in committed_mw):
+            span = hours_between(start, end)
+            if floats_differ(hours, span):
+                raise MappingError(
+                    f"stage {stage.id} ({start} to {end}) holds committed GNL "
+                    f"generation, but its load blocks sum to {hours:g} h against "
+                    f"{span:g} h between its dates; the committed cost is priced on "
+                    "the stage's hours, so both must agree"
+                )
+
+        value = to_decomp_cost(
+            math.fsum(
+                mw * hours * thermal.cost_per_mwh
+                for mw, thermal in zip(committed_mw, gnl_thermals, strict=True)
+                if mw is not None
+            )
+        )
+        costs.append(
+            GnlCommittedCost(
+                stage=stage,
+                hours=hours,
+                committed_mw=tuple(committed_mw),
+                value=value,
+            )
+        )
+    return tuple(costs)

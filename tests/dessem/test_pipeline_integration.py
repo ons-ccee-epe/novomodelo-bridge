@@ -45,6 +45,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
 from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
+from tests.dessem.conftest import weekly_windows, write_commitments
 
 
 def _make_pool(
@@ -566,12 +567,20 @@ _SHORT_LEAD = "lead time shorter than the delivery stage"
 
 
 def _rewrite_gnl_lead(case_dir: Path, lead_time_hours: float | None) -> None:
-    """Set GNL_A's lead time in `thermals.json`, or drop its `anticipated_config`."""
+    """Set GNL_A's lead time in `thermals.json`, or make it a non-GNL thermal without commitment windows."""
     path = case_dir / "system" / "thermals.json"
     thermals = json.loads(path.read_text())
     gnl_a = next(t for t in thermals["thermals"] if t["name"] == "GNL_A")
     if lead_time_hours is None:
         del gnl_a["anticipated_config"]
+        conditions_path = case_dir / "initial_conditions.json"
+        conditions = json.loads(conditions_path.read_text())
+        conditions["past_anticipated_commitments"] = [
+            window
+            for window in conditions["past_anticipated_commitments"]
+            if window["thermal_id"] != gnl_a["id"]
+        ]
+        conditions_path.write_text(json.dumps(conditions))
     else:
         gnl_a["anticipated_config"]["lead_time_hours"] = lead_time_hours
     path.write_text(json.dumps(thermals))
@@ -632,7 +641,7 @@ class TestGnlDeliverySelection:
         (missing,) = self._missing(diagnostics)
         assert missing.severity == dx.Severity.WARNING
         assert missing.table is not None
-        assert missing.table.rows == [[86, "GNL_A", "2026-01-02", 1512.0, _NO_SLOT]]
+        assert missing.table.rows == [[86, "GNL_A", "2026-01-08", 1512.0, _NO_SLOT]]
         assert len(missing.notes) == 1
 
     @pytest.mark.parametrize(
@@ -661,7 +670,7 @@ class TestGnlDeliverySelection:
         assert missing.severity == dx.Severity.WARNING
         assert missing.table is not None
         assert missing.table.rows == [
-            [86, "GNL_A", "2026-01-02", lead_time_hours, cause]
+            [86, "GNL_A", "2026-01-08", lead_time_hours, cause]
         ]
         assert len(missing.notes) == 1
 
@@ -912,6 +921,7 @@ _EXPORTED = "dessem-fcf-gnl-coefficients-exported"
 _ZERO = "dessem-fcf-gnl-coefficient-zero"
 _REPEATED = "dessem-fcf-gnl-submarket-repeated"
 _ZEROED = "dessem-fcf-gnl-coefficients-zeroed"
+_COMMITTED = "dessem-fcf-gnl-committed-cost-exported"
 _GNL_A_ROW = [86, "GNL_A", 1, "2026-01-08 to 2026-01-15", 168.0, 200.0, 204.0]
 _GNL_B_ROW = [87, "GNL_B", 3, "2026-01-08 to 2026-01-15", 168.0, 150.0, 154.0]
 _REPOSITORY_TOKENS = (
@@ -1171,6 +1181,7 @@ class TestGnlDiagnostics:
                 _DELIVERY_MISSING,
                 id="short-lead",
             ),
+            pytest.param(_GnlScenario(), _COMMITTED, id="committed-cost"),
         ],
     )
     def test_gnl_diagnostics_hold_no_repository_internal_reference(
@@ -1221,6 +1232,130 @@ class TestGnlMapcutHours:
 
         with pytest.raises(LayoutError, match=r"patamares_gnl=\(2, 3\).*3 patamares"):
             cross_check_pair(mapcut_path, cortdeco_path)
+
+
+class TestGnlCommittedCostExport:
+    """Reg 10's last value is the cost of the GNL generation committed before the study."""
+
+    def test_each_stage_carries_its_committed_cost_and_nothing_else(
+        self, gnl_case_dir: Path, gnl_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        write_commitments(
+            gnl_case_dir,
+            weekly_windows(100, (10.0, 0.0, 0.0))
+            + weekly_windows(102, (5.0, 20.0, 0.0)),
+        )
+        output_dir = tmp_path / "dessem_fcf"
+
+        result, _ = _export_gnl(gnl_case_dir, gnl_source, output_dir, _GnlScenario())
+
+        assert result == 0
+        records = read_mapcut(output_dir / "mapcut.rv0").cost_records
+        assert [record[5] for record in records] == [588.0, 1008.0, 0.0]
+        assert all(record[1:5] == (0.0, 0.0, 0.0, 0.0) for record in records)
+
+
+class TestGnlCommittedCostDiagnostic:
+    """The committed-cost diagnostic reads its value back from mapcut and keeps a fixed header."""
+
+    _COLUMNS = ["Stage", "Period", "Hours", "GNL plants", "10³ R$"]
+
+    @staticmethod
+    def _export_two_plants(
+        case_dir: Path, source: SourceDeck, output_dir: Path
+    ) -> list[dx.Diagnostic]:
+        write_commitments(
+            case_dir,
+            weekly_windows(100, (10.0, 0.0, 0.0)) + weekly_windows(102, (5.0, 20.0)),
+        )
+        result, diagnostics = _export_gnl(case_dir, source, output_dir, _GnlScenario())
+        assert result == 0
+        return _with_code(diagnostics, _COMMITTED)
+
+    @staticmethod
+    def _export_zero_mw(
+        case_dir: Path, source: SourceDeck, output_dir: Path
+    ) -> list[dx.Diagnostic]:
+        result, diagnostics = _run_export_on_policy(
+            case_dir, source, output_dir, _make_pools_dict(), _make_manifest()
+        )
+        assert result == 0
+        return _with_code(diagnostics, _COMMITTED)
+
+    def test_two_plant_table_lists_every_plant_in_every_stage(
+        self, gnl_case_dir: Path, gnl_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        (committed,) = self._export_two_plants(gnl_case_dir, gnl_source, tmp_path)
+
+        assert committed.severity == dx.Severity.INFO
+        assert committed.category == "FCF export"
+        assert committed.table is not None
+        assert committed.table.columns == self._COLUMNS
+        assert committed.table.rows == [
+            [
+                0,
+                "2026-01-01 to 2026-01-08",
+                168.0,
+                "86 GNL_A: 10 MW, 87 GNL_B: 5 MW",
+                588.0,
+            ],
+            [
+                1,
+                "2026-01-08 to 2026-01-15",
+                168.0,
+                "86 GNL_A: 0 MW, 87 GNL_B: 20 MW",
+                1008.0,
+            ],
+            [2, "2026-01-15 to 2026-01-22", 168.0, "86 GNL_A: 0 MW, 87 GNL_B: -", 0.0],
+        ]
+        assert len(committed.notes) == 2
+
+    def test_a_covered_stage_at_zero_mw_is_reported_as_zero_mw(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        (committed,) = self._export_zero_mw(
+            synthetic_case_dir, synthetic_source, tmp_path
+        )
+
+        assert committed.table is not None
+        assert committed.table.columns == self._COLUMNS
+        assert [row[3:] for row in committed.table.rows] == [
+            ["86 GNL_A: 0 MW", 0.0]
+        ] * 3
+
+    def test_header_is_fixed_with_two_plants(
+        self, gnl_case_dir: Path, gnl_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        (committed,) = self._export_two_plants(gnl_case_dir, gnl_source, tmp_path)
+
+        assert committed.table is not None
+        assert committed.table.to_dict()["columns"] == self._COLUMNS
+
+    def test_header_is_fixed_with_one_plant(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        (committed,) = self._export_zero_mw(
+            synthetic_case_dir, synthetic_source, tmp_path
+        )
+
+        assert committed.table is not None
+        assert committed.table.to_dict()["columns"] == self._COLUMNS
+
+    def test_a_case_without_gnl_thermals_emits_none(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        _rewrite_gnl_lead(synthetic_case_dir, None)
+
+        result, diagnostics = _run_export_on_policy(
+            synthetic_case_dir,
+            replace(synthetic_source, gnl_thermals=()),
+            tmp_path,
+            _make_pools_dict(),
+            _make_manifest(),
+        )
+
+        assert result == 0
+        assert _with_code(diagnostics, _COMMITTED) == []
 
 
 class TestCrossCheckIntegration:
@@ -1391,3 +1526,40 @@ class TestFailureManifest:
 
         manifest: dict[str, Any] = json.loads(manifest_path.read_text())
         assert manifest["status"] == "failed"
+
+    def test_failure_manifest_on_input_read_error(
+        self,
+        synthetic_case_dir: Path,
+        synthetic_source: SourceDeck,
+        tmp_path: Path,
+    ) -> None:
+        """A missing initial_conditions.json is a handled export failure."""
+        (synthetic_case_dir / "initial_conditions.json").unlink()
+        output_dir = tmp_path / "dessem_fcf"
+
+        with (
+            dx.collect() as diagnostics,
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as read,
+        ):
+            read.return_value = PolicyCheckpoint(_make_manifest(), _make_pools_dict())
+            result = run_export(
+                case_dir=synthetic_case_dir,
+                source=synthetic_source,
+                output_dir=output_dir,
+                settings=ExportSettings(),
+            )
+
+        assert result == 1
+        errors = [d for d in diagnostics if d.code == "dessem-fcf-export-failed"]
+        assert len(errors) == 1
+        assert "initial_conditions.json" in errors[0].summary
+        assert errors[0].notes == ["Failed step: read settings-derived inputs"]
+
+        manifest: dict[str, Any] = json.loads(
+            (output_dir / "export_manifest.json").read_text()
+        )
+        assert manifest["status"] == "failed"
+        assert manifest["failed_step"] == "read settings-derived inputs"
+        assert not (output_dir / "mapcut.rv0").exists()

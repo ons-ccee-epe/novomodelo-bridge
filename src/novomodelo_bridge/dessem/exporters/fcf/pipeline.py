@@ -30,17 +30,20 @@ from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
     CortdecoContents,
+    MapcutContents,
     cross_check_pair,
     reject_pair,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     CaseInputs,
+    InputReadError,
     StageInfo,
     ThermalInfo,
     anticipated_thermals,
     read_case_inputs,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    COST_FIELDS,
     GNL_EXPORT_MIDDLE_OFFSET,
     CutBlockOffsets,
     LayoutError,
@@ -54,6 +57,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapcut_writer import (
     write_mapcut,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
+    GnlCommittedCost,
     GnlDeliveries,
     MappingError,
     SourceGnlThermal,
@@ -62,6 +66,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     downstream_positions,
     first_node_per_stage,
     gnl_block,
+    gnl_committed_costs,
     gnl_drop_audit,
     gnl_lag_months,
     inflow_lag_drop_audit,
@@ -335,6 +340,55 @@ def _emit_gnl_coefficient_zero(
     )
 
 
+def _emit_gnl_committed_cost(
+    mapcut: MapcutContents,
+    costs: Sequence[GnlCommittedCost],
+    source_plants: Sequence[SourceGnlThermal],
+) -> None:
+    """Report each stage's committed GNL cost as read back from `mapcut` record 10."""
+    if not source_plants:
+        return
+    value_field = COST_FIELDS.index("geracao_termica_minima_gerada_gnl")
+    rows: list[list[object]] = []
+    for index, cost in enumerate(costs):
+        entries = [
+            f"{plant.code} {plant.name}: " + ("-" if mw is None else f"{mw:g} MW")
+            for plant, mw in zip(source_plants, cost.committed_mw, strict=True)
+        ]
+        rows.append(
+            [
+                cost.stage.id,
+                f"{cost.stage.start_date} to {cost.stage.end_date}",
+                cost.hours,
+                ", ".join(entries),
+                mapcut.cost_records[index][value_field],
+            ]
+        )
+    emit(
+        Diagnostic(
+            code="dessem-fcf-gnl-committed-cost-exported",
+            severity=Severity.INFO,
+            category="FCF export",
+            title="GNL committed cost exported",
+            summary=(
+                "mapcut record 10 holds the cost of the GNL generation committed "
+                f"before the study for each of the {len(rows)} stages."
+            ),
+            table=DiagnosticTable(
+                columns=["Stage", "Period", "Hours", "GNL plants", "10³ R$"],
+                rows=rows,
+                justify=["right", "left", "right", "left", "right"],
+            ),
+            notes=[
+                "Each stage's value is the sum, over the GNL plants, of the "
+                "committed MW times the stage's load-block hours times the "
+                "plant's unit cost in the case, in 10³ R$ and not discounted.",
+                "A stage no commitment window covers is written as 0.0.",
+            ],
+        )
+    )
+
+
 def _emit_gnl_submarket_repeated(
     submarket_codes: Sequence[int], source_plants: Sequence[SourceGnlThermal]
 ) -> None:
@@ -474,6 +528,7 @@ def _assemble_mapcut_header(
     gnl_submarket_codes: tuple[int, ...],
     gnl_lags: tuple[int, ...],
     gnl_patamar_hours: tuple[float, ...],
+    gnl_committed_cost: tuple[float, ...],
     n_patamares: int,
     travel_time: tuple[TravelTimePlant, ...],
 ) -> MapcutHeader:
@@ -527,6 +582,7 @@ def _assemble_mapcut_header(
         patamares_gnl=patamares_gnl,
         gnl_patamar_hours=gnl_patamar_hours,
         taxa_desconto=factors,
+        geracao_termica_minima_gerada_gnl=gnl_committed_cost,
         tempo_viagem=travel_time,
     )
 
@@ -645,6 +701,9 @@ def run_export(
                 gnl_thermals, source.gnl_thermals, gnl_deliveries
             )
             gnl_drop = gnl_drop_audit(pools, trunk_pool_ids, gnl_deliveries)
+            committed_costs = gnl_committed_costs(
+                inputs.stages, gnl_thermals, inputs.past_anticipated_commitments
+            )
 
         current_step = "emit ECO CSVs"
         _step(EXPORT_PHASE_LABELS[4])
@@ -699,6 +758,7 @@ def run_export(
                 gnl_submarket_codes,
                 gnl_lags,
                 gnl_deliveries.block_hours,
+                tuple(cost.value for cost in committed_costs),
                 n_patamares,
                 travel_time,
             )
@@ -757,6 +817,9 @@ def run_export(
                 gnl_thermals,
                 source.gnl_thermals,
             )
+            _emit_gnl_committed_cost(
+                mapcut_contents, committed_costs, source.gnl_thermals
+            )
 
         current_step = "write content CSVs"
         _step(EXPORT_PHASE_LABELS[11])
@@ -796,7 +859,7 @@ def run_export(
         _LOG.info("export completed successfully")
         return 0
 
-    except (LayoutError, MappingError, PolicyFormatError) as exc:
+    except (InputReadError, LayoutError, MappingError, PolicyFormatError) as exc:
         _LOG.error("export failed at step '%s': %s", current_step, exc)
         emit(
             Diagnostic(
