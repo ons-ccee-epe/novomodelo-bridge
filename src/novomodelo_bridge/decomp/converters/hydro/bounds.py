@@ -17,6 +17,7 @@ available power and turbined limit as the source model reports them.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -47,7 +48,7 @@ _ITAIPU_CODE = 66
 
 #: Itaipu's unit-group id per frequency half (Hz). Groups follow the ascending
 #: ``MP``/``FD`` frequencies (:func:`_split_plant_frequencies`), so 50 Hz is
-#: group 0; the ``RI`` floors and the frequency-tagged ``RE`` bounds both key
+#: group 0; the ``RI`` limits and the frequency-tagged ``RE`` bounds both key
 #: on this map.
 ITAIPU_GROUP_BY_FREQUENCY_HZ: dict[float, int] = {50.0: 0, 60.0: 1}
 
@@ -579,14 +580,53 @@ def split_plant_generation_contributions(
     ]
 
 
-#: The two Itaipu frequency-half minimum-generation floors on the ``RI``
-#: register, keyed by the split-plant group id they bound. Each value is the
-#: ``RI`` column prefix whose per-patamar slots (``…_1``.. ``…_5``) carry that
-#: half's floor.
+#: Itaipu's per-frequency ``RI`` generation limits, keyed by the split-plant
+#: group id they bound. Each value is the ``RI`` column prefix whose
+#: per-patamar slots (``…_1``.. ``…_5``) carry that half's limit.
 _ITAIPU_MIN_GENERATION_PREFIXES: tuple[tuple[int, str], ...] = (
     (ITAIPU_GROUP_BY_FREQUENCY_HZ[50.0], "geracao_minima_50_hz"),
     (ITAIPU_GROUP_BY_FREQUENCY_HZ[60.0], "geracao_minima_60_hz"),
 )
+_ITAIPU_MAX_GENERATION_PREFIXES: tuple[tuple[int, str], ...] = (
+    (ITAIPU_GROUP_BY_FREQUENCY_HZ[50.0], "geracao_maxima_50_hz"),
+    (ITAIPU_GROUP_BY_FREQUENCY_HZ[60.0], "geracao_maxima_60_hz"),
+)
+
+
+def itaipu_frequency_group_values(
+    case: DecompCase,
+    id_map: DecompIdMap,
+    availability: Mapping[tuple[int, int, int], GroupBoundEntry],
+) -> dict[tuple[int, int, int], GroupBoundEntry]:
+    """*availability* with Itaipu's ``RI`` generation limits merged into its
+    two groups: each group's floor is its ``RI`` minimum, and its ceiling the
+    lower of its available power and its ``RI`` maximum, per block.
+
+    The ``RI`` limits ride on the availability entries rather than a second
+    table, so ``hydro_unit_group_bounds`` keeps one row per group, stage and
+    block. Every other plant's entries pass through unchanged.
+
+    Raises
+    ------
+    TypeError
+        If an Itaipu group's available power is not a stage-level float.
+    """
+    values = dict(availability)
+    for key, floor in convert_itaipu_frequency_min_generation(case, id_map).items():
+        values[key] = replace(values[key], min_generation_mw=floor)
+    for key, ceiling in convert_itaipu_frequency_max_generation(case, id_map).items():
+        available = values[key].max_generation_mw
+        if not isinstance(available, int | float):
+            raise TypeError(
+                f"Itaipu group {key[1]}, stage {key[2]}: available power must be "
+                f"a stage-level float to take the RI ceiling, got {available!r}"
+            )
+        capped = [min(float(available), value) for value in ceiling]
+        values[key] = replace(
+            values[key],
+            max_generation_mw=capped[0] if len(set(capped)) == 1 else capped,
+        )
+    return values
 
 
 def convert_itaipu_frequency_min_generation(
@@ -595,26 +635,47 @@ def convert_itaipu_frequency_min_generation(
 ) -> dict[tuple[int, int, int], list[float]]:
     """Itaipu's per-frequency minimum-generation floors from the ``RI`` register.
 
-    DECOMP's ``RI`` (restrição de Itaipu) register carries a must-run floor on
-    each Itaipu frequency half: ``geracao_minima_50_hz`` on the 50 Hz group
-    (on the plant's own SE bus, where it also serves the netted-in
-    Paraguay/ANDE load) and ``geracao_minima_60_hz`` on the 60 Hz group (on
-    the ``IV`` bus, the transshipment corridor into Ivaiporã). Each is a
-    per-(estágio, patamar) list, forward-filled across the calendar the same
-    way
+    ``geracao_minima_50_hz`` bounds the 50 Hz group (on the plant's own SE
+    bus, where it also serves the netted-in Paraguay/ANDE load) and
+    ``geracao_minima_60_hz`` the 60 Hz group (on the ``IV`` bus, the
+    transshipment corridor into Ivaiporã). In DECOMP the 50 Hz floor binds
+    (the 50 Hz half sits exactly at it), so dropping it lets the converted
+    case under-run Itaipu's 50 Hz half and backfill the ANDE load from the
+    rest of the system through SE's own lines.
+
+    Returns and raises as :func:`_itaipu_ri_frequency_limits`.
+    """
+    return _itaipu_ri_frequency_limits(case, id_map, _ITAIPU_MIN_GENERATION_PREFIXES)
+
+
+def convert_itaipu_frequency_max_generation(
+    case: DecompCase,
+    id_map: DecompIdMap,
+) -> dict[tuple[int, int, int], list[float]]:
+    """Itaipu's per-frequency generation ceilings from the ``RI`` register:
+    ``geracao_maxima_50_hz`` on the 50 Hz group and ``geracao_maxima_60_hz``
+    on the 60 Hz group.
+
+    Returns and raises as :func:`_itaipu_ri_frequency_limits`.
+    """
+    return _itaipu_ri_frequency_limits(case, id_map, _ITAIPU_MAX_GENERATION_PREFIXES)
+
+
+def _itaipu_ri_frequency_limits(
+    case: DecompCase,
+    id_map: DecompIdMap,
+    prefixes: Sequence[tuple[int, str]],
+) -> dict[tuple[int, int, int], list[float]]:
+    """One ``RI`` per-frequency limit list per Itaipu group and stage.
+
+    Each prefix is a per-(estágio, patamar) list, forward-filled across the
+    calendar the same way
     :func:`~novomodelo_bridge.decomp.converters.libs_electrical.read_carga_ande`
-    fills the co-located ``carga_ande`` load. In DECOMP the 50 Hz floor binds
-    (the 50 Hz
-    half sits exactly at it), so dropping it lets the converted case
-    under-run Itaipu's 50 Hz half and backfill the ANDE load from the rest of
-    the system through SE's own lines.
+    fills the co-located ``carga_ande`` load.
 
     Returns ``{(hydro_id, hydro_unit_group_id, stage_index): [MW per block]}``
-    for the two Itaipu groups, ready to merge into the
-    ``hydro_unit_group_bounds`` overlay's ``min_generation_mw`` column
-    (:func:`~novomodelo_bridge.decomp.group_bounds.convert_hydro_unit_group_bounds`).
-    Returns ``{}`` when the deck operates no Itaipu or carries no ``RI``
-    register (a deck with no Itaipu import).
+    for the two Itaipu groups, or ``{}`` when the deck operates no Itaipu or
+    carries no ``RI`` register (a deck with no Itaipu import).
 
     Raises
     ------
@@ -635,7 +696,7 @@ def convert_itaipu_frequency_min_generation(
     hydro_id = id_map.hydro_id(_ITAIPU_CODE)
     n_stages = len(calendar)
     result: dict[tuple[int, int, int], list[float]] = {}
-    for group_id, prefix in _ITAIPU_MIN_GENERATION_PREFIXES:
+    for group_id, prefix in prefixes:
         patamar_columns = [
             column
             for _, column in sorted(

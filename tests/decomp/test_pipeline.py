@@ -2216,12 +2216,13 @@ class TestMiniDeckItaipuFrequencyBounds:
     (7000 MW × ``MP`` × ``FD`` each), so novomodelo's plant cap never limits the
     sum of both halves to one half's limit.
 
-    Each group's ceiling is the lower of its sector's 7000 MW × ``MP`` × ``FD``
-    and its ``RE`` upper limit, and its floor the higher of the ``RI`` and
-    ``RE`` lower limits, per stage and block. The deck's 50 Hz half has every
-    source winning somewhere: ``MP`` (0.929, 0.900, 0.947), the ``FD`` of 0.877
-    on the last stage, ``LU 461`` and its stage-4 record, and ``RI 66``'s
-    stage-4 record."""
+    Each group's ceiling is the lowest of its sector's 7000 MW × ``MP`` × ``FD``,
+    its ``RE`` upper limit and its ``RI`` maximum, and its floor the higher of
+    the ``RI`` and ``RE`` lower limits, per stage and block. The deck's 50 Hz
+    half has every source winning somewhere: ``MP`` (0.929, 0.900, 0.947), the
+    ``FD`` of 0.877 on the last stage, ``LU 461`` and its stage-4 record, and
+    ``RI 66``'s two records, as floor and as ceiling; the 60 Hz half takes its
+    ``RI`` maximum on the last stage's second block."""
 
     def test_frequency_records_land_on_the_unit_groups(
         self, decomp_mini_deck: Path, tmp_path: Path
@@ -2258,12 +2259,12 @@ class TestMiniDeckItaipuFrequencyBounds:
         )
         floor_50hz = [(4267.2, 4073.2, 3491.7)] * 3 + [(3818.2, 3645.2, 3130.7)]
         ceiling_50hz = [
-            (6503.0, 6503.0, 6310.5),
+            (6400.0, 6503.0, 6310.5),
             (6300.0, 6300.0, 6300.0),
-            (6629.0, 6629.0, 6310.5),
-            (6139.0, 6139.0, 5949.5),
+            (6400.0, 6629.0, 6310.5),
+            (6139.0, 6139.0, 5800.0),
         ]
-        ceiling_60hz = [(7000.0,) * 3] * 3 + [(6139.0,) * 3]
+        ceiling_60hz = [(7000.0,) * 3] * 3 + [(6139.0, 6000.0, 6139.0)]
         expected = {
             "min_generation_mw": {0: floor_50hz, 1: [(2000.0,) * 3] * 4},
             "max_generation_mw": {0: ceiling_50hz, 1: ceiling_60hz},

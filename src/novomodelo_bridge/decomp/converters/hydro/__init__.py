@@ -29,7 +29,13 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
     convert_hydro_group_availability as convert_hydro_group_availability,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
+    convert_itaipu_frequency_max_generation as convert_itaipu_frequency_max_generation,
+)
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
     convert_itaipu_frequency_min_generation as convert_itaipu_frequency_min_generation,
+)
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
+    itaipu_frequency_group_values as itaipu_frequency_group_values,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
     plant_available_power as plant_available_power,

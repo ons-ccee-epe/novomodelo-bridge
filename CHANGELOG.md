@@ -64,6 +64,9 @@ links are cobre-bridge's.
   LIBS `disp_usih(66)` term**; on a stage with only one half under maintenance
   it took that half alone. `decomp-electrical-disp-usih-substituted` is now
   always informational.
+- **`convert decomp` caps each Itaipu frequency half at its `RI` maximum
+  generation**; a maximum below the other limits was ignored, so the converted
+  ceiling could sit above DECOMP's. Reconvert decks whose `RI` maxima bind.
 - **`export dessem` exports a case whose water in transit outlives the study**;
   it failed with `year -214749 is out of range`. A cut coefficient on water
   arriving after the study ends is dropped, with a

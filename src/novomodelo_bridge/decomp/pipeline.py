@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
@@ -1655,8 +1655,8 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
 
 
 def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
-    """The ``step("Converting constraints")`` phase: overlay the Itaipu
-    frequency floors on the per-group availability, resolve the per-hydro
+    """The ``step("Converting constraints")`` phase: overlay Itaipu's ``RI``
+    frequency limits on the per-group availability, resolve the per-hydro
     ``group_bounds``, and build the ``contract_bounds_table`` via
     :func:`_rejoin_contract_price`. Stores ``group_bounds``,
     ``contract_bounds_table``, ``energy_contracts_doc``, and ``contracts``
@@ -1666,7 +1666,6 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     dadger = artifacts.dadger
     calendar = artifacts.calendar
     id_map = artifacts.id_map
-    itaipu_operated = artifacts.itaipu_operated
     block_counts = artifacts.block_counts
     assert block_counts is not None
     census = artifacts.census
@@ -1676,21 +1675,9 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     availability_values = artifacts.availability_values
     assert availability_values is not None
 
-    # Itaipu's RI per-frequency must-run floors
-    # (geracao_minima_50/60_hz) overlay the same per-group table as the
-    # availability max caps. The 50 Hz floor binds in DECOMP (its 50 Hz half
-    # sits exactly at it), so without it the converted case under-runs Itaipu's
-    # 50 Hz half and backfills the ANDE load through SE's own lines. Merged
-    # into the availability entries (min on the same (hydro, group, stage) row
-    # as the availability max) rather than emitted as a second table.
-    group_values = dict(availability_values)
-    if itaipu_operated:
-        for key, min_generation in hydro_conv.convert_itaipu_frequency_min_generation(
-            case, id_map
-        ).items():
-            group_values[key] = replace(
-                group_values[key], min_generation_mw=min_generation
-            )
+    group_values = hydro_conv.itaipu_frequency_group_values(
+        case, id_map, availability_values
+    )
     group_bounds = group_bounds_conv.convert_hydro_unit_group_bounds(
         case, values=group_values
     )

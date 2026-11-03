@@ -2232,7 +2232,7 @@ reads = [
   { file = "polinjus" },
   { file = "vazoes" },
 ]
-summary = "Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `system/hydros.json`: a potência disponível do estágio (instalada × `MP` × `FD`) e o engolimento máximo do estágio de cada grupo em todos os estágios, limitando ou não, mais os pisos por frequência `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
+summary = "Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `system/hydros.json`: a potência disponível do estágio (instalada × `MP` × `FD`) e o engolimento máximo do estágio de cada grupo em todos os estágios, limitando ou não, mais os pisos e tetos por frequência do `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
 
   [[output.field]]
   path = "hydro_id"
@@ -2259,7 +2259,7 @@ summary = "Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `s
   path = "block_id"
   from = [ { file = "dadger", register = "DP", item = "numero_patamares" } ]
   status = "derived"
-  how = "Nulo na linha-base; 0..n−1 quando o piso `RI` de Itaipu difere entre patamares do estágio (a linha-base recebe então a média ponderada pelas horas) ou quando uma `RE` por frequência limita o grupo, por patamar. Disponibilidade e engolimento são valores de estágio."
+  how = "Nulo na linha-base; 0..n−1 quando um piso ou teto `RI` de Itaipu difere entre patamares do estágio (a linha-base recebe então a média ponderada pelas horas) ou quando uma `RE` por frequência limita o grupo, por patamar. Disponibilidade e engolimento são valores de estágio."
 
   [[output.field]]
   path = "min_turbined_m3s"
@@ -2325,7 +2325,7 @@ summary = "Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `s
     { file = "dadger", register = "LU", item = "limite_inferior" },
     { file = "dadger", register = "FU", item = "frequencia" },
   ]
-  how = "Piso de geração por frequência de Itaipu: `geracao_minima_50_hz` no grupo 0 e `geracao_minima_60_hz` no grupo 1, por patamar (colunas `_1`..`_5`), com estágios não declarados herdando o anterior (o `RI` precisa declarar o estágio 1). Os campos `geracao_maxima_*` do `RI` não são consumidos. Uma `RE` de termo único cujo `FU` traz `frequencia` 50 ou 60 limita o grupo dessa frequência com o `limite_inferior` do `LU`; vale o maior dos pisos. `frequencia` em outra usina interrompe a conversão."
+  how = "Piso de geração por frequência de Itaipu: `geracao_minima_50_hz` no grupo 0 e `geracao_minima_60_hz` no grupo 1, por patamar (colunas `_1`..`_5`), com estágios não declarados herdando o anterior (o `RI` precisa declarar o estágio 1). Uma `RE` de termo único cujo `FU` traz `frequencia` 50 ou 60 limita o grupo dessa frequência com o `limite_inferior` do `LU`; vale o maior dos pisos. `frequencia` em outra usina interrompe a conversão."
 
   [[output.field]]
   path = "max_generation_mw"
@@ -2340,8 +2340,10 @@ summary = "Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `s
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "codigo_usina" },
     { file = "dadger", register = "FD", item = "fator" },
+    { file = "dadger", register = "RI", item = "geracao_maxima_50_hz" },
+    { file = "dadger", register = "RI", item = "geracao_maxima_60_hz" },
   ]
-  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida em todos os estágios e limitada ao envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória), e o `limite_superior` do `LU` de uma `RE` por frequência também limita o grupo, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
+  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida em todos os estágios e limitada ao envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória); limitam também o grupo a geração máxima do `RI` (`geracao_maxima_50_hz` no grupo 0 e `geracao_maxima_60_hz` no grupo 1, por patamar, com a mesma herança de estágios do piso) e o `limite_superior` do `LU` de uma `RE` por frequência, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
 
 # ===== frag_F_dc_scenarios_constraints_fcf =====
 # Fragment F — DECOMP: cenários, restrições genéricas e função de custo futuro de fronteira.
@@ -3159,12 +3161,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   item = "estagio_inicio_producao"
   status = "unread"
   note = "Estágio em que a usina começa a produzir. Não lido: o conversor não emite `entry_stage_id` para hidrelétricas (fica no padrão nulo do esquema). Converter exige mapear este estágio para `entry_stage_id`."
-
-  [[source.item]]
-  register = "RI"
-  item = "geracao_maxima_50_hz_1..5"
-  status = "unread"
-  note = "Geração máxima do setor de 50 Hz de Itaipu por patamar. Não lida: o conversor usa a geração máxima de 60 Hz e as mínimas de 50 e 60 Hz. Converter exige emiti-la como teto do grupo de unidades de 50 Hz."
 
   [[source.item]]
   register = "CD"
