@@ -37,7 +37,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadgnl.rvN` › `GS` (opcional) |  |  |  | ● | ● |
 | `dadgnl.rvN` › `NL` (opcional) |  |  |  | ● | ● |
 | `dadgnl.rvN` › `TG` (opcional) |  |  |  | ● | ● |
-| `cortesh.dat` (opcional) |  | ● |  |  |  |
+| `cortesh.dat` (opcional) |  | ● |  | ● |  |
 
 ### `system/`
 
@@ -243,11 +243,11 @@ Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco
 
 ### `initial_conditions.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `AC`, `DP`, `DT`, `VI`), `hidr.dat`, `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`)  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `AC`, `DP`, `DT`, `VI`), `hidr.dat`, `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`), `cortesh.dat` (opcional)  
 **Quando:** sempre.  
 **Esquema:** [initial_conditions.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/initial_conditions.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/entity.py`
 
-Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara despacho GNL comprometido, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão.
+Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara usinas GNL, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
@@ -258,15 +258,15 @@ Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quand
 | `past_defluences[].start_date` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DP` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Início de cada janela, caminhando para trás a partir do início do estudo em passos de uma semana operativa (duração do estágio 0), com a última janela truncada no intervalo em trânsito `[início − duracao, início)`, para cobri-lo sem lacuna. |
 | `past_defluences[].end_date` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DP` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Fim de cada janela; a mais recente termina no início do estudo (nada datado no futuro) e cada janela encosta na seguinte, sem lacuna. |
 | `past_defluences[].value_m3s` | `dadger.rvN` › `VI` › `vazao_1..vazao_5` | Defluência da semana correspondente (`VI.vazao_k`, da mais recente para a mais antiga), em m³/s. Se o intervalo em trânsito precisa de mais janelas que as vazões declaradas, a mais antiga é reutilizada para manter a cobertura. |
-| `past_anticipated_commitments[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Id da térmica GNL criada em `system/thermals.json` (ids densos após a última térmica de `CT`, em ordem crescente de `codigo_usina` de `TG`). |
-| `past_anticipated_commitments[].start_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead global (soma das semanas `GS` dos meses do estudo × 168 h). Janelas de classe 4 (já comandadas): a `data_inicio` de cada semana `GL` a partir do fim do horizonte, com um stub a 0 MW quando a primeira começa depois dele. Num estudo só de estágios mensais: a data de início de cada um dos `lag` (`NL`) primeiros estágios do estudo, decididos antes dele; um `GL` após o fim do horizonte é rejeitado. |
-| `past_anticipated_commitments[].end_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DP` › `duracao` *(derivado; condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | Classe 2: a data final do estágio do estudo. Classe 4: a `data_inicio` da semana `GL` seguinte, ou uma semana operativa (168 h) após o início na última janela. Nenhuma janela pode cruzar o fim do horizonte. |
-| `past_anticipated_commitments[].value_mw` | `dadgnl.rvN` › `GL` › `geracao`, `dadgnl.rvN` › `GL` › `duracao`, `dadgnl.rvN` › `TG` › `inflexibilidade, disponibilidade` *(condicional: somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula))* | MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; nas janelas de classe 2, as semanas `GL` que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma). O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo. |
+| `past_anticipated_commitments[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado; condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado)* | Id da térmica GNL criada em `system/thermals.json` (ids densos após a última térmica de `CT`, em ordem crescente de `codigo_usina` de `TG`). |
+| `past_anticipated_commitments[].start_date` | `dadgnl.rvN` › `GL` › `estagio, data_inicio`, `dadgnl.rvN` › `GS` › `mes, semanas`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado)* | Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead `lead_time_hours` (até o corte já comandado), ou seja, todos os estágios do estudo. Janelas de classe 4 (já comandadas): uma por semana `GL` que o `GS` atribui a um mês após o estudo, pela posição (`estagio`) e não pela data; começa na `data_inicio` da semana, ou no fim do horizonte quando a semana começa antes dele (a primeira semana do mês 3 a partir da RV1), e há um stub a 0 MW quando a primeira começa depois do fim do horizonte. Num estudo só de estágios mensais: a data de início de cada um dos `lag` (`NL`) primeiros estágios do estudo, decididos antes dele; um `GL` após o fim do horizonte é rejeitado. |
+| `past_anticipated_commitments[].end_date` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadger.rvN` › `DP` › `duracao` *(derivado; condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado)* | Classe 2: a data final do estágio do estudo. Classe 4: a `data_inicio` da semana `GL` seguinte, ou uma semana operativa (168 h) após o início na última janela. Nenhuma janela pode cruzar o fim do horizonte. |
+| `past_anticipated_commitments[].value_mw` | `dadgnl.rvN` › `GL` › `geracao`, `dadgnl.rvN` › `GL` › `duracao`, `dadgnl.rvN` › `TG` › `inflexibilidade, disponibilidade`, `cortesh.dat` › `duracoes_patamares` *(condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado)* | MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; uma semana após o horizonte, que vem sem `duracao`, usa as frações de patamar do mês em que o `GS` a coloca, lidas do `cortesh.dat` (com aviso, as horas de patamar do último estágio do estudo quando o arquivo falta ou não cobre o mês; com aviso também quando a `geracao` difere entre patamares). Nas janelas de classe 2, as semanas `GL` que o `GS` atribui ao estudo e que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma); a semana que o `GS` coloca no mês seguinte mas que começa antes do fim do horizonte entra no último estágio com as horas até o fim do horizonte. O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo. |
 
 ### `post_study_stages.json`
 
 **Lê:** `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`), `dadger.rvN` (`DT`, `DP`, `AR`, `CT`, `SB`, `UH`)  
-**Quando:** somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou sempre num estudo só de estágios mensais  
+**Quando:** somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou sempre num estudo só de estágios mensais  
 **Código:** `src/novomodelo_bridge/decomp/converters/anticipated.py`
 
 Calendário pós-estudo na grade semanal (sábados): preenche as semanas já comandadas de `GL` após o fim do horizonte e depois espelha os estágios do estudo; cada térmica GNL recebe limites de preço apenas nos estágios sinalizados (classe 3), nunca nos já comandados. Num estudo só de estágios mensais, o calendário são os meses civis seguintes ao horizonte, tantos quanto o maior `lag` de `NL`, e cada térmica recebe limites de preço nos seus `lag` primeiros meses.
@@ -277,7 +277,7 @@ Calendário pós-estudo na grade semanal (sábados): preenche as semanas já com
 | `stages[].duration_hours` | `dadger.rvN` › `DP` › `duracao` *(derivado)* | Horas até o próximo sábado no stub; `168` nas semanas; no espelho do estágio mensal do estudo, as horas até o último dia do mês civil do próprio estágio espelhado. Num estudo só de estágios mensais, as horas do mês civil inteiro. |
 | `thermal_bounds[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado)* | Id da térmica GNL em `system/thermals.json`. |
 | `thermal_bounds[].post_study_stage_index` | `dadgnl.rvN` › `GL` › `data_inicio` *(derivado)* | Índice 0-based do estágio pós-estudo; apenas os estágios cujo início é igual ou posterior ao corte já comandado da usina recebem uma linha. Num estudo só de estágios mensais, os `lag` (`NL`) primeiros meses pós-estudo, decididos dentro do estudo. |
-| `thermal_bounds[].cost_per_mwh` | `dadgnl.rvN` › `TG` › `cvu`, `dadger.rvN` › `DP` › `duracao` | `cvu_1..3` do `TG` vigente no último estágio do estudo (o último declarado), ponderados pelas horas de patamar desse estágio. Num estudo só de estágios mensais, o `TG` do próprio mês pós-estudo (o eixo de estágios do `TG` continua após o estudo, um estágio por mês), ponderado pelas horas de patamar do último estágio do estudo. |
+| `thermal_bounds[].cost_per_mwh` | `dadgnl.rvN` › `TG` › `cvu`, `dadger.rvN` › `DP` › `duracao` | `cvu_1..3` do `TG` do mês em que o estágio começa (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), ponderados pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão. |
 | `thermal_bounds[].min_mw` | `dadgnl.rvN` › `TG` › `inflexibilidade`, `dadger.rvN` › `DP` › `duracao` | `inflexibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
 | `thermal_bounds[].max_mw` | `dadgnl.rvN` › `TG` › `disponibilidade`, `dadger.rvN` › `DP` › `duracao` | `disponibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
 
@@ -332,10 +332,10 @@ Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1 ponderados
 | `thermals[].cost_per_mwh` | `dadger.rvN` › `CT` › `cvu`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `TG` › `cvu` | CVU do estágio 1 por patamar (`cvu_k`, em branco lido como 0), ponderado pelas horas de patamar de `DP`; estágios seguintes vão para `constraints/thermal_bounds.parquet`. GNL: o mesmo com o `TG` do estágio 1. |
 | `thermals[].generation.min_mw` | `dadger.rvN` › `CT` › `inflexibilidade`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `TG` › `inflexibilidade` | Inflexibilidade do estágio 1 por patamar, ponderada pelas horas de patamar. GNL: a menor inflexibilidade de `TG` entre os estágios, cada um ponderado pelas suas horas de patamar (um estágio sem registro `TG` herda o último declarado, como em `CT`), para que todo compromisso dentro da capacidade do seu estágio seja aceito. |
 | `thermals[].generation.max_mw` | `dadger.rvN` › `CT` › `disponibilidade`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `TG` › `disponibilidade` | Disponibilidade do estágio 1 por patamar, ponderada pelas horas de patamar. GNL: a maior disponibilidade de `TG` entre os estágios, com a mesma ponderação e herança da inflexibilidade. |
-| `thermals[].anticipated_config.lead_time_hours` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadgnl.rvN` › `GS` › `mes, semanas`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente nas térmicas GNL de um estudo com semanas operativas, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula))* | Lead físico por usina, em horas: da data de início do estudo até o fim da última semana já comandada da usina em `GL` (o corte de classe 4). Sem calendário `GS`, a duração do primeiro estágio. |
-| `thermals[].anticipated_config.lead_stages` | `dadgnl.rvN` › `NL` › `lag` *(derivado; condicional: somente nas térmicas GNL de um estudo só de estágios mensais, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula))* | O `lag` da usina em `NL`, em estágios: o despacho entregue no estágio m é decidido no estágio m − lag. Cada mês `GS` precisa ter um único intervalo, e o `lag` fica entre 1 e o número de estágios do estudo. |
-| `thermals[].entry_stage_id` | — *(sempre nulo; condicional: somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido)* | Sempre nulo: térmicas GNL estão ativas em todo o horizonte. Térmicas de `CT` omitem o campo. |
-| `thermals[].exit_stage_id` | — *(sempre nulo; condicional: somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido)* | Sempre nulo: térmicas GNL não saem dentro do horizonte. Térmicas de `CT` omitem o campo. |
+| `thermals[].anticipated_config.lead_time_hours` | `dadgnl.rvN` › `GL` › `data_inicio`, `dadgnl.rvN` › `GS` › `mes, semanas`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente nas térmicas GNL de um estudo com semanas operativas, quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado)* | Lead físico por usina, em horas: da data de início do estudo até o fim da última semana já comandada da usina em `GL` (o corte de classe 4). Sem calendário `GS`, a duração do primeiro estágio. |
+| `thermals[].anticipated_config.lead_stages` | `dadgnl.rvN` › `NL` › `lag` *(derivado; condicional: somente nas térmicas GNL de um estudo só de estágios mensais, quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado)* | O `lag` da usina em `NL`, em estágios: o despacho entregue no estágio m é decidido no estágio m − lag. Cada mês `GS` precisa ter um único intervalo, e o `lag` fica entre 1 e o número de estágios do estudo. |
+| `thermals[].entry_stage_id` | — *(sempre nulo; condicional: somente nas térmicas GNL, quando `dadgnl` declara usinas GNL (registros `TG`))* | Sempre nulo: térmicas GNL estão ativas em todo o horizonte. Térmicas de `CT` omitem o campo. |
+| `thermals[].exit_stage_id` | — *(sempre nulo; condicional: somente nas térmicas GNL, quando `dadgnl` declara usinas GNL (registros `TG`))* | Sempre nulo: térmicas GNL não saem dentro do horizonte. Térmicas de `CT` omitem o campo. |
 
 ### `system/hydros.json`
 
@@ -2012,7 +2012,7 @@ Médias de longo termo mensais das vazões naturais por posto, lidas só para a 
 
 **Estado:** convertido em parte. **Lido por:** `boundary/`, `constraints/generic_constraint_bounds.parquet`, `initial_conditions.json`, `post_study_stages.json`, `system/thermals.json`.
 
-- `data_inicio` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
+- `estagio, data_inicio` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
 - `data_inicio` → `initial_conditions.json` › `past_anticipated_commitments[].end_date`
 - `geracao` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
 - `duracao` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
@@ -2029,6 +2029,7 @@ Médias de longo termo mensais das vazões naturais por posto, lidas só para a 
 
 **Estado:** convertido. **Lido por:** `boundary/`, `initial_conditions.json`, `post_study_stages.json`, `system/thermals.json`.
 
+- `mes, semanas` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
 - `mes, semanas` → `system/thermals.json` › `thermals[].anticipated_config.lead_time_hours`
 
 ### `dadgnl.rvN` › `NL`
@@ -2162,11 +2163,12 @@ Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de f
 
 ### `cortesh.dat`
 
-**Estado:** convertido. **Lido por:** `boundary/`, `stages.json`.
+**Estado:** convertido. **Lido por:** `boundary/`, `initial_conditions.json`, `stages.json`.
 
 - `alfa_cvar, lambda_cvar` → `stages.json` › `stages[].risk_measure`
 - `alfa_cvar` → `stages.json` › `stages[].risk_measure.cvar.alpha`
 - `lambda_cvar` → `stages.json` › `stages[].risk_measure.cvar.lambda`
+- `duracoes_patamares` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
 
 ### `cortes*.dat`
 

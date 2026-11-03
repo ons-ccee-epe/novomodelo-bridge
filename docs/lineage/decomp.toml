@@ -400,8 +400,9 @@ reads = [
   { file = "dadgnl", register = "GL" },
   { file = "dadgnl", register = "GS" },
   { file = "dadgnl", register = "NL" },
+  { file = "cortesh" },
 ]
-summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara despacho GNL comprometido, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
+summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara usinas GNL, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
 
   [[output.field]]
   path = "storage[].hydro_id"
@@ -450,28 +451,28 @@ summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em 
   path = "past_anticipated_commitments[].thermal_id"
   from = [ { file = "dadgnl", register = "TG", item = "codigo_usina" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "Id da térmica GNL criada em `system/thermals.json` (ids densos após a última térmica de `CT`, em ordem crescente de `codigo_usina` de `TG`)."
 
   [[output.field]]
   path = "past_anticipated_commitments[].start_date"
-  from = [ { file = "dadgnl", register = "GL", item = "data_inicio" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
+  from = [ { file = "dadgnl", register = "GL", item = "estagio, data_inicio" }, { file = "dadgnl", register = "GS", item = "mes, semanas" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
-  how = "Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead global (soma das semanas `GS` dos meses do estudo × 168 h). Janelas de classe 4 (já comandadas): a `data_inicio` de cada semana `GL` a partir do fim do horizonte, com um stub a 0 MW quando a primeira começa depois dele. Num estudo só de estágios mensais: a data de início de cada um dos `lag` (`NL`) primeiros estágios do estudo, decididos antes dele; um `GL` após o fim do horizonte é rejeitado."
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
+  how = "Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead `lead_time_hours` (até o corte já comandado), ou seja, todos os estágios do estudo. Janelas de classe 4 (já comandadas): uma por semana `GL` que o `GS` atribui a um mês após o estudo, pela posição (`estagio`) e não pela data; começa na `data_inicio` da semana, ou no fim do horizonte quando a semana começa antes dele (a primeira semana do mês 3 a partir da RV1), e há um stub a 0 MW quando a primeira começa depois do fim do horizonte. Num estudo só de estágios mensais: a data de início de cada um dos `lag` (`NL`) primeiros estágios do estudo, decididos antes dele; um `GL` após o fim do horizonte é rejeitado."
 
   [[output.field]]
   path = "past_anticipated_commitments[].end_date"
   from = [ { file = "dadgnl", register = "GL", item = "data_inicio" }, { file = "dadger", register = "DP", item = "duracao" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "Classe 2: a data final do estágio do estudo. Classe 4: a `data_inicio` da semana `GL` seguinte, ou uma semana operativa (168 h) após o início na última janela. Nenhuma janela pode cruzar o fim do horizonte."
 
   [[output.field]]
   path = "past_anticipated_commitments[].value_mw"
-  from = [ { file = "dadgnl", register = "GL", item = "geracao" }, { file = "dadgnl", register = "GL", item = "duracao" }, { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" } ]
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
-  how = "MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; nas janelas de classe 2, as semanas `GL` que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma). O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo."
+  from = [ { file = "dadgnl", register = "GL", item = "geracao" }, { file = "dadgnl", register = "GL", item = "duracao" }, { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" }, { file = "cortesh", item = "duracoes_patamares" } ]
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
+  how = "MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; uma semana após o horizonte, que vem sem `duracao`, usa as frações de patamar do mês em que o `GS` a coloca, lidas do `cortesh.dat` (com aviso, as horas de patamar do último estágio do estudo quando o arquivo falta ou não cobre o mês; com aviso também quando a `geracao` difere entre patamares). Nas janelas de classe 2, as semanas `GL` que o `GS` atribui ao estudo e que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma); a semana que o `GS` coloca no mês seguinte mas que começa antes do fim do horizonte entra no último estágio com as horas até o fim do horizonte. O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo."
 
 # ---------------------------------------------------------------------------
 # system/buses.json
@@ -639,28 +640,28 @@ summary = "Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1
   path = "thermals[].anticipated_config.lead_time_hours"
   from = [ { file = "dadgnl", register = "GL", item = "data_inicio" }, { file = "dadgnl", register = "GS", item = "mes, semanas" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
   status = "derived"
-  when = "somente nas térmicas GNL de um estudo com semanas operativas, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula)"
+  when = "somente nas térmicas GNL de um estudo com semanas operativas, quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "Lead físico por usina, em horas: da data de início do estudo até o fim da última semana já comandada da usina em `GL` (o corte de classe 4). Sem calendário `GS`, a duração do primeiro estágio."
 
   [[output.field]]
   path = "thermals[].anticipated_config.lead_stages"
   from = [ { file = "dadgnl", register = "NL", item = "lag" } ]
   status = "derived"
-  when = "somente nas térmicas GNL de um estudo só de estágios mensais, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula)"
+  when = "somente nas térmicas GNL de um estudo só de estágios mensais, quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "O `lag` da usina em `NL`, em estágios: o despacho entregue no estágio m é decidido no estágio m − lag. Cada mês `GS` precisa ter um único intervalo, e o `lag` fica entre 1 e o número de estágios do estudo."
 
   [[output.field]]
   path = "thermals[].entry_stage_id"
   from = []
   status = "null"
-  when = "somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido"
+  when = "somente nas térmicas GNL, quando `dadgnl` declara usinas GNL (registros `TG`)"
   how = "Sempre nulo: térmicas GNL estão ativas em todo o horizonte. Térmicas de `CT` omitem o campo."
 
   [[output.field]]
   path = "thermals[].exit_stage_id"
   from = []
   status = "null"
-  when = "somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido"
+  when = "somente nas térmicas GNL, quando `dadgnl` declara usinas GNL (registros `TG`)"
   how = "Sempre nulo: térmicas GNL não saem dentro do horizonte. Térmicas de `CT` omitem o campo."
 
 # ---------------------------------------------------------------------------
@@ -1030,7 +1031,7 @@ summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundo
 [[output]]
 path = "post_study_stages.json"
 kind = "json"
-when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou sempre num estudo só de estágios mensais"
+when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou sempre num estudo só de estágios mensais"
 module = "src/novomodelo_bridge/decomp/converters/anticipated.py"
 reads = [
   { file = "dadgnl", register = "TG" },
@@ -1073,7 +1074,7 @@ summary = "Calendário pós-estudo na grade semanal (sábados): preenche as sema
   [[output.field]]
   path = "thermal_bounds[].cost_per_mwh"
   from = [ { file = "dadgnl", register = "TG", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" } ]
-  how = "`cvu_1..3` do `TG` vigente no último estágio do estudo (o último declarado), ponderados pelas horas de patamar desse estágio. Num estudo só de estágios mensais, o `TG` do próprio mês pós-estudo (o eixo de estágios do `TG` continua após o estudo, um estágio por mês), ponderado pelas horas de patamar do último estágio do estudo."
+  how = "`cvu_1..3` do `TG` do mês em que o estágio começa (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), ponderados pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão."
 
   [[output.field]]
   path = "thermal_bounds[].min_mw"

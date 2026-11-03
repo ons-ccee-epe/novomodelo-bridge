@@ -55,6 +55,17 @@ non-controllable generation per node), pumping stations, energy contracts,
 generic constraints from the deck's restriction registers, and head-dependent
 production planes where the deck uses them.
 
+The committed weeks of a fuel-constrained thermal (the `GL` register) belong
+to the study or to a month after it by their position in the `GS` register, not
+by their dates. From the second revision of a month on, the first committed
+week of the month after the study starts a few days before the study ends; it
+is held from the end of the study, and its days before that count in the last
+study stage, weighted by their hours. The weeks after the study declare no patamar durations, so their
+patamares are weighted by their month's shares in `cortesh.dat`. When that file
+is absent or does not cover the month, the last study stage's patamar hours are
+used instead, with a warning; a week that commits different MW per patamar is
+also reported.
+
 A plant's diverted flow (`QDES`) reaches its diversion target, the plant named
 by `AC DESVIO` or else by the `desvio` field of `hidr.dat`, through a Novomodelo
 diversion channel. The channel carries the `AC DESVIO` flow limit; a plant
