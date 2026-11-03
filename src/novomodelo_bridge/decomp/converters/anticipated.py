@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, require_frame
+from novomodelo_bridge.core.policy_dates import hours_between
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
 from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
 
@@ -987,7 +988,7 @@ def _month_end_duration_hours(start: date) -> float:
     """Hours from ``start`` to the end of its civil month, the next month's
     first day exclusive (``2026-06-06`` -> ``2026-07-01``, 600 h)."""
     _, last_day = _calendar.monthrange(start.year, start.month)
-    return float(last_day - start.day + 1) * 24.0
+    return hours_between(start, start.replace(day=last_day) + timedelta(days=1))
 
 
 def _days_to_saturday(day: date) -> int:
@@ -1046,7 +1047,7 @@ def _build_post_study_calendar(
         cursor += _ONE_OPERATIVE_WEEK
 
     for s_start, s_end in stage_spans:
-        span_hours = (s_end - s_start).days * 24.0
+        span_hours = hours_between(s_start, s_end)
         duration = (
             _days_to_saturday(cursor) * 24.0
             if span_hours == _HOURS_PER_OPERATIVE_WEEK
@@ -1207,8 +1208,14 @@ def _post_study_months(horizon_end: date, count: int) -> list[dict]:
     start = horizon_end
     for _ in range(count):
         _, days = _calendar.monthrange(start.year, start.month)
-        stages.append({"start_date": start.isoformat(), "duration_hours": days * 24.0})
-        start += timedelta(days=days)
+        end = start + timedelta(days=days)
+        stages.append(
+            {
+                "start_date": start.isoformat(),
+                "duration_hours": hours_between(start, end),
+            }
+        )
+        start = end
     return stages
 
 
@@ -1251,7 +1258,7 @@ def _post_study_month_hours(
             offset = (
                 (cursor.year - horizon_end.year) * 12 + cursor.month - horizon_end.month
             )
-            hours[offset] = hours.get(offset, 0.0) + (month_end - cursor).days * 24.0
+            hours[offset] = hours.get(offset, 0.0) + hours_between(cursor, month_end)
             cursor = month_end
         shares.append(hours)
     return shares
@@ -1444,7 +1451,7 @@ def convert_gnl(
     if model.weeks_per_month:
         class4_end = _shared_class4_end(classification, model.thermals, horizon_end)
         post_calendar = _build_post_study_calendar(stage_spans, class4_end)
-        lead_hours = (class4_end - horizon_start).days * 24.0
+        lead_hours = hours_between(horizon_start, class4_end)
     else:
         # No GS calendar (a real dadgnl always declares GS; this is a degenerate
         # deck): there is no post-study horizon to anticipate into, so the plant

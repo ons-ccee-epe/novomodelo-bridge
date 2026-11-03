@@ -9,6 +9,7 @@ Field order within each record follows `idecomp`'s own section definitions.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    COST_FIELDS,
     PHYSICAL_RECORD_COUNT,
     PHYSICAL_RECORD_FIRST,
     PHYSICAL_RECORD_LAST,
@@ -37,7 +39,6 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 STAGE_RECORD_LEADING_FLAG = 1
-_COST_FIELDS_PER_STAGE = 6
 
 _Segment = tuple[Literal["<i4", "<f8"], Sequence[int] | Sequence[float]]
 
@@ -65,7 +66,12 @@ class MapcutHeader:
     codigos_submercados_gnl: tuple[int, ...]
     lag_meses_gnl: tuple[int, ...]
     patamares_gnl: tuple[int, ...]
+    #: The delivery stage's block hours, one per patamar; reg 9 repeats each per GNL entry.
+    gnl_patamar_hours: tuple[float, ...]
     taxa_desconto: tuple[float, ...]
+    #: Per stage, the committed GNL cost in 10^3 R$, already divided by premise P2's
+    #: divisor and never multiplied; DECOMP's name says generation but it holds a cost.
+    geracao_termica_minima_gerada_gnl: tuple[float, ...]
     tempo_viagem: tuple[TravelTimePlant, ...] = ()
 
     @property
@@ -133,6 +139,12 @@ def _validate(header: MapcutHeader) -> None:
             header.numero_estagios,
         ),
         (
+            "geracao_termica_minima_gerada_gnl",
+            len(header.geracao_termica_minima_gerada_gnl),
+            "numero_estagios",
+            header.numero_estagios,
+        ),
+        (
             "lag_meses_gnl",
             len(header.lag_meses_gnl),
             "codigos_submercados_gnl",
@@ -151,6 +163,25 @@ def _validate(header: MapcutHeader) -> None:
                 f"{field} has {actual} entries but {against} is {expected}; "
                 f"the header is internally inconsistent"
             )
+    hours = header.gnl_patamar_hours
+    for patamares in header.patamares_gnl:
+        if patamares != len(hours):
+            raise LayoutError(
+                f"patamares_gnl holds {patamares} but gnl_patamar_hours has "
+                f"{len(hours)} entries; the header is internally inconsistent"
+            )
+    if hours and not header.codigos_submercados_gnl:
+        raise LayoutError(
+            f"gnl_patamar_hours has {len(hours)} entries but codigos_submercados_gnl "
+            f"is empty; the header is internally inconsistent"
+        )
+    if not all(math.isfinite(value) for value in hours):
+        raise LayoutError(f"gnl_patamar_hours holds a non-finite value: {hours}")
+    values = header.geracao_termica_minima_gerada_gnl
+    if not all(math.isfinite(value) for value in values):
+        raise LayoutError(
+            f"geracao_termica_minima_gerada_gnl holds a non-finite value: {values}"
+        )
     for plant in header.tempo_viagem:
         if len(plant.arrival_shares) != header.numero_estagios:
             raise LayoutError(
@@ -248,7 +279,12 @@ def _travel_time_records(header: MapcutHeader, first_index: int) -> list[bytes]:
 
 
 def _gnl_record(header: MapcutHeader, index: int) -> bytes:
-    """Reg 9: GNL configuration. P12: trailing block is zeros."""
+    """Reg 9: GNL configuration.
+
+    The trailing float64 block holds `gnl_patamar_hours` patamar-major with GNL
+    entries inner: each patamar's hours once per entry, so hours `(27, 68)` with
+    two entries read `27, 27, 68, 68`, not `27, 68, 27, 68`.
+    """
     ngnl = len(header.codigos_submercados_gnl)
     return _record(
         index,
@@ -261,13 +297,19 @@ def _gnl_record(header: MapcutHeader, index: int) -> bytes:
                 *header.patamares_gnl,
             ),
         ),
-        ("<f8", [0.0] * (header.numero_estagios * ngnl)),
+        ("<f8", [hours for hours in header.gnl_patamar_hours for _ in range(ngnl)]),
     )
 
 
 def _cost_record(header: MapcutHeader, stage: int, index: int) -> bytes:
-    """Reg 10: cost fields. P11: only taxa_desconto is filled."""
-    fields = [header.taxa_desconto[stage]] + [0.0] * (_COST_FIELDS_PER_STAGE - 1)
+    """Reg 10: taxa_desconto and the committed GNL cost; the other parcels are zeros (P11)."""
+    values = {
+        "taxa_desconto": header.taxa_desconto[stage],
+        "geracao_termica_minima_gerada_gnl": header.geracao_termica_minima_gerada_gnl[
+            stage
+        ],
+    }
+    fields = [values.get(name, 0.0) for name in COST_FIELDS]
     return _record(index, ("<f8", fields))
 
 
@@ -319,8 +361,12 @@ def write_mapcut(header: MapcutHeader, path: Path) -> int:
         PHYSICAL_RECORD_FIRST,
         PHYSICAL_RECORD_LAST,
     )
-    _LOG.warning("P11: reg 10 cost fields emitted as zeros except taxa_desconto")
-    _LOG.warning("P12: reg 9 trailing GNL block emitted as zeros")
+    _LOG.warning(
+        "P11: reg 10 writes zeros for parcela_custo_geracao_termica_minima, "
+        "parcela_custo_contrato_importacao_minimo, "
+        "parcela_custo_contrato_exportacao_minimo and "
+        "geracao_termica_minima_sinalizada_gnl"
+    )
     _LOG.info(
         "wrote mapcut %s: records=%d bytes=%d numero_cortes=%d numero_cenarios=%d "
         "n_utv=%d max_lag=%d",

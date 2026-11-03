@@ -9,7 +9,6 @@ from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
     CutInput,
     serialize_cut,
     write_cortdeco,
-    zeroed_gnl_block,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     TAMANHO_CORTE,
@@ -21,30 +20,31 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
 @pytest.fixture
 def simple_offsets() -> CutBlockOffsets:
     """Simple offsets for 3 hydros, no GNL."""
-    return CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=4, pi_gnl=4, ncoef=4)
+    return CutBlockOffsets(
+        rhs=0,
+        pi_varm=1,
+        pi_qdefp=4,
+        pi_gnl=4,
+        ncoef=4,
+        n_sbm_gnl=0,
+        n_estagios=3,
+        n_patamares=3,
+    )
 
 
 @pytest.fixture
 def offsets_with_gnl() -> CutBlockOffsets:
     """Offsets with GNL block: 3 hydros, 2*3*3=18 GNL slots."""
-    return CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=4, pi_gnl=4, ncoef=22)
-
-
-class TestZeroedGnlBlock:
-    """Test P14: zeroed GNL block creation."""
-
-    def test_correct_size(self, offsets_with_gnl: CutBlockOffsets) -> None:
-        block = zeroed_gnl_block(offsets_with_gnl)
-        expected_size = offsets_with_gnl.ncoef - offsets_with_gnl.pi_gnl
-        assert len(block) == expected_size
-
-    def test_all_zeros(self, offsets_with_gnl: CutBlockOffsets) -> None:
-        block = zeroed_gnl_block(offsets_with_gnl)
-        assert np.all(block == 0.0)
-
-    def test_dtype_float64(self, offsets_with_gnl: CutBlockOffsets) -> None:
-        block = zeroed_gnl_block(offsets_with_gnl)
-        assert block.dtype == np.float64
+    return CutBlockOffsets(
+        rhs=0,
+        pi_varm=1,
+        pi_qdefp=4,
+        pi_gnl=4,
+        ncoef=22,
+        n_sbm_gnl=2,
+        n_estagios=3,
+        n_patamares=3,
+    )
 
 
 class TestCutInput:
@@ -109,21 +109,62 @@ class TestSerializeCut:
             serialize_cut(cut, pointer=0, offsets=simple_offsets)
 
     def test_pi_qdefp_sits_between_storage_and_gnl_unnegated(self) -> None:
-        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=7)
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=3,
+            pi_gnl=5,
+            ncoef=7,
+            n_sbm_gnl=1,
+            n_estagios=2,
+            n_patamares=1,
+        )
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1000.0, 2000.0]),
             pi_qdefp=np.array([-3000.0, -4000.0]),
-            pi_gnl=np.array([0.0, 0.0]),
+            pi_gnl=np.array([-150.0, -150.0]),
         )
 
         record = serialize_cut(cut, pointer=0, offsets=offsets)
 
         values = np.frombuffer(record, dtype="<f8", count=7, offset=4)
-        assert values.tolist() == [1.0, 1.0, 2.0, -3.0, -4.0, 0.0, 0.0]
+        assert values.tolist() == [1.0, 1.0, 2.0, -3.0, -4.0, 150.0, 150.0]
+
+    def test_p2_exempts_pi_gnl(self) -> None:
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=3,
+            pi_gnl=3,
+            ncoef=5,
+            n_sbm_gnl=1,
+            n_estagios=2,
+            n_patamares=1,
+        )
+        cut = CutInput(
+            intercept=1000.0,
+            pi_varm=np.array([1000.0, 2000.0]),
+            pi_qdefp=np.array([]),
+            pi_gnl=np.array([-200.0, 0.0]),
+        )
+
+        record = serialize_cut(cut, pointer=0, offsets=offsets)
+
+        values = np.frombuffer(record, dtype="<f8", count=5, offset=4)
+        assert values.tolist() == [1.0, 1.0, 2.0, 200.0, 0.0]
 
     def test_mismatched_pi_qdefp_raises(self) -> None:
-        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=5)
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=3,
+            pi_gnl=5,
+            ncoef=5,
+            n_sbm_gnl=0,
+            n_estagios=1,
+            n_patamares=1,
+        )
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0]),
@@ -134,7 +175,16 @@ class TestSerializeCut:
             serialize_cut(cut, pointer=0, offsets=offsets)
 
     def test_non_finite_pi_qdefp_names_its_block(self) -> None:
-        offsets = CutBlockOffsets(rhs=0, pi_varm=1, pi_qdefp=3, pi_gnl=5, ncoef=5)
+        offsets = CutBlockOffsets(
+            rhs=0,
+            pi_varm=1,
+            pi_qdefp=3,
+            pi_gnl=5,
+            ncoef=5,
+            n_sbm_gnl=0,
+            n_estagios=1,
+            n_patamares=1,
+        )
         cut = CutInput(
             intercept=1000.0,
             pi_varm=np.array([1.0, 2.0]),
@@ -217,10 +267,9 @@ class TestWriteCortdeco:
                 cuts, tmp_path / "cortdeco.rv0", numero_cortes=5, offsets=simple_offsets
             )
 
-    def test_p14_nonzero_gnl_raises(
+    def test_later_node_gnl_is_refused_without_leaving_files(
         self, tmp_path: Path, offsets_with_gnl: CutBlockOffsets
     ) -> None:
-        """P14: non-zero GNL coefficients should raise."""
         gnl_size = offsets_with_gnl.ncoef - offsets_with_gnl.pi_gnl
         cuts = [
             [
@@ -228,14 +277,44 @@ class TestWriteCortdeco:
                     intercept=1000.0,
                     pi_varm=np.array([1.0, 2.0, 3.0]),
                     pi_qdefp=np.array([]),
-                    pi_gnl=np.ones(gnl_size),  # Non-zero!
+                    pi_gnl=pi_gnl,
                 )
             ]
+            for pi_gnl in (np.zeros(gnl_size), np.ones(gnl_size))
         ]
-        with pytest.raises(LayoutError, match="P14"):
-            write_cortdeco(
-                cuts,
-                tmp_path / "cortdeco.rv0",
-                numero_cortes=1,
-                offsets=offsets_with_gnl,
-            )
+        path = tmp_path / "cortdeco.rv0"
+
+        with pytest.raises(LayoutError, match="first cut-building node"):
+            write_cortdeco(cuts, path, numero_cortes=2, offsets=offsets_with_gnl)
+
+        assert not path.exists()
+        assert not path.with_name(path.name + ".partial").exists()
+
+    def test_first_node_replicated_gnl_is_written(
+        self, tmp_path: Path, offsets_with_gnl: CutBlockOffsets
+    ) -> None:
+        gnl_size = offsets_with_gnl.ncoef - offsets_with_gnl.pi_gnl
+        first_node_gnl = np.zeros(gnl_size)
+        first_node_gnl[:3] = -200.0
+        cuts = [
+            [
+                CutInput(
+                    intercept=1000.0,
+                    pi_varm=np.array([1.0, 2.0, 3.0]),
+                    pi_qdefp=np.array([]),
+                    pi_gnl=pi_gnl,
+                )
+            ]
+            for pi_gnl in (first_node_gnl, np.zeros(gnl_size))
+        ]
+        path = tmp_path / "cortdeco.rv0"
+
+        write_cortdeco(cuts, path, numero_cortes=2, offsets=offsets_with_gnl)
+
+        node_0_record = 1
+        start = node_0_record * TAMANHO_CORTE + 4 + 8 * offsets_with_gnl.pi_gnl
+        written = np.frombuffer(
+            path.read_bytes()[start : start + 8 * gnl_size], dtype="<f8"
+        )
+        assert written[:3].tolist() == [200.0, 200.0, 200.0]
+        assert not written[3:].any()

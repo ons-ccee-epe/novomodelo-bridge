@@ -30,6 +30,7 @@ from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.pandas_utils import as_int
+from novomodelo_bridge.core.policy_dates import hours_between, yyyymmdd_from_date
 from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.anticipated import (
     classify_gnl_windows,
@@ -142,10 +143,6 @@ def _gnl_targets_from(
     )
 
 
-def _date_int(day: date) -> int:
-    return day.year * 10_000 + day.month * 100 + day.day
-
-
 def _commanded_deliveries(
     model: GnlCommitmentModel,
     week_months: Mapping[date, tuple[int, int]],
@@ -175,7 +172,7 @@ def _commanded_deliveries(
                     submercado=submercado_of[code],
                     month=month_key(year, month),
                     block_mw=week.block_mw,
-                    hours=(window.end_date - window.start_date).days * 24.0,
+                    hours=hours_between(window.start_date, window.end_date),
                 )
             )
     return tuple(deliveries)
@@ -234,7 +231,9 @@ def _plan_gnl_ring(
     return GnlRingPlan(
         targets=targets,
         months=months,
-        week_months={_date_int(day): month_key(*ym) for day, ym in weeks.items()},
+        week_months={
+            yyyymmdd_from_date(day): month_key(*ym) for day, ym in weeks.items()
+        },
         commanded=_commanded_deliveries(model, weeks, calendar),
     )
 

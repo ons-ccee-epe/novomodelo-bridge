@@ -22,14 +22,12 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from novomodelo_bridge.core.policy_dates import UNDATED as UNDATED
+
 _LOG = logging.getLogger(__name__)
 
 # Entity type codes from novomodelo's policy.fbs schema.
 VALID_ENTITY_TYPES = frozenset({0, 1, 2, 3})
-
-# `YYYYMMDD` date fields carry i32::MIN on the families they do not apply to, and on
-# a transit bucket whose arrival would fall past the study end (novomodelo's structural pad).
-UNDATED = -2147483648
 
 POLICY_OUTPUT_RELATIVE = Path("output")
 POLICY_SUBDIR = "policy"

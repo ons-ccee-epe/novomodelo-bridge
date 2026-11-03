@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from novomodelo_bridge.core.policy_dates import UNDATED
 from novomodelo_bridge.decomp.fcf.bootstrap import TerminalManifest
 from novomodelo_bridge.decomp.fcf.cortes import (
     BoundaryCuts,
@@ -124,9 +125,6 @@ def make_boundary_cuts(
     )
 
 
-_SLOT_DATE_SENTINEL = -2147483648
-
-
 def _next_month_anchor(yyyymmdd: int) -> int:
     """The `YYYYMM01` of the month after `yyyymmdd`'s — a valid interval end
     strictly after any `interval_start` inside that month.
@@ -149,7 +147,7 @@ def make_slot(
     subindex: int,
     *,
     was_active: bool = True,
-    interval_start: int = _SLOT_DATE_SENTINEL,
+    interval_start: int = UNDATED,
     interval_end: int | None = None,
 ) -> dict[str, object]:
     """One hand-authored terminal-manifest slot dict.
@@ -161,15 +159,13 @@ def make_slot(
     `interval_end` defaults to the next-month anchor when `interval_start` is
     live and left unset — novomodelo's checkpoint writer rejects a live
     `interval_start` with no paired `interval_end` — and to the sentinel
-    otherwise. The default `-2147483648` is `i32::MIN`, novomodelo's
+    otherwise. The default `UNDATED` is novomodelo's
     `ENTITY_SLOT_DATE_SENTINEL` for "no date" — the same value
     `write_policy_checkpoint` itself defaults to when a slot omits the key.
     """
     if interval_end is None:
         interval_end = (
-            _next_month_anchor(interval_start)
-            if interval_start != _SLOT_DATE_SENTINEL
-            else _SLOT_DATE_SENTINEL
+            _next_month_anchor(interval_start) if interval_start != UNDATED else UNDATED
         )
     return {
         "entity_type": entity_type,

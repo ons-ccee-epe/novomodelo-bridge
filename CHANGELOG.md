@@ -26,6 +26,15 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **`export dessem` writes the GNL coefficients in `cortdeco`** for the
+  delivery of the case's second stage, that stage's load-block hours in
+  `mapcut` record 9, and the cost of the GNL generation committed before
+  the study in `mapcut` record 10, instead of zeros; export existing cases
+  again to get them. `dessem-fcf-gnl-coefficients-exported`,
+  `dessem-fcf-gnl-delivery-missing`, `dessem-fcf-gnl-coefficient-zero` and
+  `dessem-fcf-gnl-submarket-repeated` replace
+  `dessem-fcf-gnl-coefficients-zeroed`, and
+  `dessem-fcf-gnl-committed-cost-exported` reports the committed cost.
 - **`convert newave` and `convert decomp` write each hydro plant's available
   power and turbined-flow limit on every stage, binding or not**, in
   `constraints/hydro_bounds.parquet` and
