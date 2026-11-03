@@ -999,16 +999,15 @@ def _line_bounds_and_meta(
     warning) rather than raising, unchanged from before this module routed
     through the shared readers.
     """
-    line_bounds = novomodelo_readers.read_novomodelo_stage_line_bounds(
-        novomodelo_output_dir
-    )
-
     try:
         line_meta = novomodelo_readers.read_novomodelo_lines(novomodelo_output_dir)
     except novomodelo_readers.NovomodeloReadError as exc:
         _LOG.warning("Failed to read lines.json for network tab: %s", exc)
         line_meta = []
 
+    line_bounds = novomodelo_readers.read_novomodelo_stage_line_bounds(
+        novomodelo_output_dir, line_meta
+    )
     return line_bounds, line_meta
 
 

@@ -1684,9 +1684,9 @@ def _write_line_case(
     case_dir: Path,
     rows: list[tuple[int, int, int | None, float, float]],
     capacities: dict[int, tuple[float, float]],
-) -> None:
-    """``line_bounds.parquet`` rows ``(line, stage, block, direct, reverse)`` and
-    ``lines.json`` capacities ``{line: (direct, reverse)}``."""
+) -> list[dict]:
+    """Write ``line_bounds.parquet`` rows ``(line, stage, block, direct, reverse)``
+    and return the ``lines.json`` lines for capacities ``{line: (direct, reverse)}``."""
     constraints_dir = case_dir / "constraints"
     constraints_dir.mkdir(parents=True)
     line, stage, block, direct, reverse = zip(*rows, strict=True)
@@ -1702,13 +1702,10 @@ def _write_line_case(
         ),
         constraints_dir / "line_bounds.parquet",
     )
-    system_dir = case_dir / "system"
-    system_dir.mkdir()
-    lines = [
+    return [
         {"id": lid, "capacity": {"direct_mw": d, "reverse_mw": r}}
         for lid, (d, r) in capacities.items()
     ]
-    (system_dir / "lines.json").write_text(json.dumps({"lines": lines}))
 
 
 class TestReadNovomodeloStageLineBounds:
@@ -1716,7 +1713,7 @@ class TestReadNovomodeloStageLineBounds:
         self, tmp_path: Path
     ) -> None:
         _write_stages_json(tmp_path, {0: [(0, 30.0), (1, 69.0), (2, 69.0)]})
-        _write_line_case(
+        lines = _write_line_case(
             tmp_path,
             [
                 (4, 0, None, 6000.0, 4200.0),
@@ -1727,20 +1724,24 @@ class TestReadNovomodeloStageLineBounds:
             {4: (6000.0, 4200.0)},
         )
 
-        row = read_novomodelo_stage_line_bounds(tmp_path / "output").row(0, named=True)
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
 
         assert row["direct_mw"] == pytest.approx((30 * 6000 + 138 * 4000) / 168)
         assert row["reverse_mw"] == pytest.approx((30 * 4200 + 138 * 1000) / 168)
 
     def test_block_without_override_takes_the_base_row(self, tmp_path: Path) -> None:
         _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 3.0)]})
-        _write_line_case(
+        lines = _write_line_case(
             tmp_path,
             [(0, 0, None, 800.0, 600.0), (0, 0, 1, 400.0, 200.0)],
             {0: (5000.0, 5000.0)},
         )
 
-        row = read_novomodelo_stage_line_bounds(tmp_path / "output").row(0, named=True)
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
 
         assert row["direct_mw"] == pytest.approx((800.0 + 3 * 400.0) / 4)
         assert row["reverse_mw"] == pytest.approx((600.0 + 3 * 200.0) / 4)
@@ -1749,9 +1750,13 @@ class TestReadNovomodeloStageLineBounds:
         self, tmp_path: Path
     ) -> None:
         _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
-        _write_line_case(tmp_path, [(0, 0, 0, 400.0, 200.0)], {0: (1000.0, 800.0)})
+        lines = _write_line_case(
+            tmp_path, [(0, 0, 0, 400.0, 200.0)], {0: (1000.0, 800.0)}
+        )
 
-        row = read_novomodelo_stage_line_bounds(tmp_path / "output").row(0, named=True)
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
 
         assert row["direct_mw"] == pytest.approx(700.0)
         assert row["reverse_mw"] == pytest.approx(500.0)
@@ -1760,13 +1765,15 @@ class TestReadNovomodeloStageLineBounds:
         self, tmp_path: Path
     ) -> None:
         _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
-        _write_line_case(
+        lines = _write_line_case(
             tmp_path,
             [(0, 0, 0, 99999.0, 300.0), (0, 0, 1, 500.0, 300.0)],
             {0: (99999.0, 300.0)},
         )
 
-        row = read_novomodelo_stage_line_bounds(tmp_path / "output").row(0, named=True)
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
 
         assert row["direct_mw"] == 99999.0
         assert row["reverse_mw"] == pytest.approx(300.0)
@@ -1774,18 +1781,20 @@ class TestReadNovomodeloStageLineBounds:
     def test_without_block_hours_block_zero_stands_for_the_stage(
         self, tmp_path: Path
     ) -> None:
-        _write_line_case(
+        lines = _write_line_case(
             tmp_path,
             [(0, 0, 0, 400.0, 200.0), (0, 0, 1, 900.0, 700.0)],
             {0: (1000.0, 1000.0)},
         )
 
-        row = read_novomodelo_stage_line_bounds(tmp_path / "output").row(0, named=True)
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
 
         assert (row["direct_mw"], row["reverse_mw"]) == (400.0, 200.0)
 
     def test_absent_line_bounds_returns_typed_empty_frame(self, tmp_path: Path) -> None:
-        df = read_novomodelo_stage_line_bounds(tmp_path / "output")
+        df = read_novomodelo_stage_line_bounds(tmp_path / "output", [])
 
         assert df.is_empty()
         assert df.columns == ["line_id", "stage_id", "direct_mw", "reverse_mw"]

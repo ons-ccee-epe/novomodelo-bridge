@@ -1118,11 +1118,17 @@ _STAGE_LINE_BOUNDS_SCHEMA = pl.Schema(
 )
 
 
-def read_novomodelo_stage_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_stage_line_bounds(
+    novomodelo_output_dir: Path, lines: Iterable[dict]
+) -> pl.DataFrame:
     """Line capacity per (line, stage), comparable with the stage-mean flow.
 
+    *lines* is ``lines.json``'s ``"lines"`` list as the caller read it, never
+    re-read here: an unparseable ``lines.json`` must degrade the Network tab
+    in the caller, not raise from the bounds.
+
     Each block's capacity is its override row, else the stage's base row
-    (``block_id`` null), else the line's ``lines.json`` capacity; the stage
+    (``block_id`` null), else the line's *lines* capacity; the stage
     value is their block-hours-weighted mean, the same weighting
     :func:`read_novomodelo_line_means` gives the flow. Never the base row
     alone: it holds the max over blocks, and a stage mean drawn against it, or
@@ -1158,7 +1164,7 @@ def read_novomodelo_stage_line_bounds(novomodelo_output_dir: Path) -> pl.DataFra
                     line.get("capacity", {}).get("reverse_mw", math.inf)
                 ),
             }
-            for line in read_novomodelo_lines(novomodelo_output_dir)
+            for line in lines
         ],
         schema={
             "line_id": pl.Int32,
