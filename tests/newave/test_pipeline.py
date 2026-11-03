@@ -411,6 +411,7 @@ class TestConversionWarningCapture:
             on_phase: object = None,
             *,
             dry_run: bool = False,
+            float_digits: int | None = None,
         ) -> ConversionReport:
             log.warning("vazpast.dat unreadable; using empty tendency")
             log.warning("vazpast.dat unreadable; using empty tendency")  # duplicate
@@ -476,6 +477,7 @@ class TestConversionWarningCapture:
             on_phase: object = None,
             *,
             dry_run: bool = False,
+            float_digits: int | None = None,
         ) -> object:
             # Simulate a write phase that got partway: a top-level JSON and a
             # system/ subdir were written before the failure.
@@ -546,6 +548,7 @@ class TestConversionWarningCapture:
             on_phase: object = None,
             *,
             dry_run: bool = False,
+            float_digits: int | None = None,
         ) -> object:
             raise RuntimeError("boom")
 
@@ -573,6 +576,7 @@ def test_convert_newave_case_threads_on_phase(tmp_path: Path) -> None:
         on_phase: object = None,
         *,
         dry_run: bool = False,
+        float_digits: int | None = None,
     ) -> ConversionReport:
         if on_phase is not None:
             on_phase("Discovering files")  # type: ignore[operator]
