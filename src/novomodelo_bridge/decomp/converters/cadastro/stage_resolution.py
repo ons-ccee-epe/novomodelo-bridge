@@ -66,6 +66,14 @@ def _parse_month(mes: str | int | float | None) -> int | None:
     return month
 
 
+def _resolve_year(ano: int | float | None, calendar: Sequence[OperativeStage]) -> int:
+    """Normalize an ``AC`` ``ano`` field, a blank one defaulting to the
+    first stage's operative year."""
+    if ano is None or pd.isna(ano):
+        return calendar[0].operative_year
+    return int(ano)
+
+
 def resolve_effective_stage(
     mes: str | int | float | None,
     semana: int | float | None,
@@ -77,11 +85,12 @@ def resolve_effective_stage(
     A blank ``mes`` (per :func:`_parse_month`: ``None``, NaN, or an
     empty/whitespace-only string) means the override is effective from the
     initial stage (index ``0``). Otherwise ``(ano, mes)`` is resolved to an
-    operative month against *calendar*: a blank ``ano`` defaults to the
-    calendar's first stage's year, a month strictly before the calendar's
-    horizon also resolves to the initial stage, and a month strictly after
-    the horizon resolves to ``None`` for the caller to report as
-    out-of-horizon. ``semana`` selects a 1-based operative week within that
+    operative month against *calendar*, keyed on each stage's
+    ``operative_year`` (a January study's first week starts in December): a
+    blank ``ano`` defaults to the first stage's operative year, a month
+    strictly before the calendar's horizon also resolves to the initial
+    stage, and a month strictly after the horizon resolves to ``None`` for
+    the caller to report as out-of-horizon. ``semana`` selects a 1-based operative week within that
     resolved month; a blank ``semana`` (``None``, NaN, or ``0``) resolves to
     the month's first stage, and any other value clamps to the month's last
     available stage (a month represented only by an aggregated stage maps
@@ -99,20 +108,18 @@ def resolve_effective_stage(
     if month is None:
         return 0
 
-    resolved_ano = (
-        calendar[0].start_date.year if ano is None or pd.isna(ano) else int(ano)
-    )
+    resolved_ano = _resolve_year(ano, calendar)
 
     target = resolved_ano * 12 + (month - 1)
     month_stages = [
         stage
         for stage in calendar
-        if stage.season_id == month - 1 and stage.start_date.year == resolved_ano
+        if stage.season_id == month - 1 and stage.operative_year == resolved_ano
     ]
 
     if not month_stages:
-        first_ordinal = calendar[0].start_date.year * 12 + calendar[0].season_id
-        last_ordinal = calendar[-1].start_date.year * 12 + calendar[-1].season_id
+        first_ordinal = calendar[0].operative_year * 12 + calendar[0].season_id
+        last_ordinal = calendar[-1].operative_year * 12 + calendar[-1].season_id
         if target < first_ordinal:
             return 0
         if target > last_ordinal:

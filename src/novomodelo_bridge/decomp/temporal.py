@@ -74,6 +74,21 @@ class OperativeStage:
         """Total stage duration in hours."""
         return sum(self.block_hours)
 
+    @property
+    def operative_year(self) -> int:
+        """Year of the ``season_id`` month, not ``start_date.year``.
+
+        A January study's first week starts in the previous December
+        (27/12/2025 for January 2026), so the operative month is the
+        ``season_id`` month nearest ``start_date``.
+        """
+        months_from_start = self.season_id - (self.start_date.month - 1)
+        if months_from_start < -6:
+            return self.start_date.year + 1
+        if months_from_start > 6:
+            return self.start_date.year - 1
+        return self.start_date.year
+
 
 def hours_weighted(values: Sequence[float], stage: OperativeStage) -> float:
     """Hours-weighted mean of per-block *values* over *stage*'s block hours.

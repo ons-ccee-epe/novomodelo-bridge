@@ -59,6 +59,9 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`convert decomp` applies an `AC` record of a January study from the week
+  it names**; it took effect a week late or early, or stopped the conversion
+  for a later month with a blank year. Reconvert January DECOMP cases.
 - **`export dessem` exports a case whose water in transit outlives the study**
   instead of failing with `year -214749 is out of range`; a cut coefficient on
   water that would arrive after the study ends is dropped with a

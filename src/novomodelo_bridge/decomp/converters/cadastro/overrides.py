@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.converters.cadastro.stage_resolution import (
     _parse_month,
+    _resolve_year,
     resolve_effective_stage,
 )
 
@@ -143,12 +144,9 @@ def _out_of_horizon_record(
     :func:`_read_diversion_overrides`, which report an out-of-horizon override
     the same way, differing only in the *param* label.
     """
-    resolved_ano = (
-        calendar[0].start_date.year if ano is None or pd.isna(ano) else int(ano)
-    )
     month = _parse_month(mes)
     assert month is not None  # eff is None only for a non-blank mes
-    return OutOfHorizon(code, param, month, resolved_ano)
+    return OutOfHorizon(code, param, month, _resolve_year(ano, calendar))
 
 
 def _read_scalar_overrides(
