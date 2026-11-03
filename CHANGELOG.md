@@ -14,8 +14,19 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert newave` and `convert decomp` take `--json-float-digits N`** and
+  write the case's JSON floats with N significant digits (1 to 17, default 15),
+  so their JSON files differ from an earlier conversion's; pass 17 to keep full
+  precision. Below about 10 digits novomodelo can reject the case.
+
 ### Fixed
 
+- **`export dessem` exports a case whose water in transit outlives the study**
+  instead of failing with `year -214749 is out of range`; a cut coefficient on
+  water that would arrive after the study ends is dropped with a
+  `dessem-fcf-undated-buckets-priced` warning.
 - **`convert newave` reads the deficit depths in `sistema.dat` as a share of
   load.** A 5 % segment was written as 0.05 MW, so nearly all deficit was
   priced at the last segment's cost; each depth is now that share of the

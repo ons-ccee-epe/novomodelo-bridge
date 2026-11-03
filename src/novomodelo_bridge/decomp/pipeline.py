@@ -73,7 +73,7 @@ from novomodelo_bridge.decomp.files import (
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 _LOG = logging.getLogger(__name__)
 
@@ -1957,6 +1957,7 @@ def convert_decomp_case(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
 
@@ -1978,6 +1979,9 @@ def convert_decomp_case(
         ``initial_conditions.json``, so a caller (the CLI's boundary-FCF
         step) can thread them into ``import_boundary_fcf`` without
         re-reading either file. ``None`` (the default) leaves it unused.
+    float_digits:
+        Significant digits of the floats in the case's JSON files; ``None``
+        keeps full precision.
 
     Returns
     -------
@@ -2016,6 +2020,7 @@ def convert_decomp_case(
             on_phase=on_phase,
             dry_run=dry_run,
             fcf_inputs_out=fcf_inputs_out,
+            float_digits=float_digits,
         ),
         dst,
         DECOMP_CLEARED_ARTIFACTS,
@@ -2030,6 +2035,7 @@ def _convert_decomp_case_impl(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Run the DECOMP conversion pipeline (warning capture handled by the wrapper).
 
@@ -2054,7 +2060,7 @@ def _convert_decomp_case_impl(
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in
     # exactly one place, rather than guarding ~24 individual write sites.
-    writer = CaseWriter(dst, dry_run=dry_run)
+    writer = CaseWriter(dst, dry_run=dry_run, float_digits=float_digits)
 
     step("Converting entities")
     _convert_core_entities(artifacts, writer)
