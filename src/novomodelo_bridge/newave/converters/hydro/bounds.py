@@ -285,13 +285,13 @@ def convert_per_stage_capacity_caps(
     """Per-stage :func:`_operational_caps` the static ``hydros.json``
     declaration cannot carry.
 
-    Every plant gets its available power as ``max_generation_mw`` at every
-    stage, below the rated power ``hydros.json`` declares as the FPHA fit's
-    ceiling. A plant whose MODIF.DAT CFUGA/CMONT records move its operating head
-    gets ``max_turbined_m3s`` at every stage, with the stage's tailrace and
-    upstream level; an expanding plant is rated with the machines in service at
-    each stage and, without CFUGA/CMONT, gets ``max_turbined_m3s`` only before
-    its last machine enters.
+    Every plant gets its available power as ``max_generation_mw`` and its
+    turbined limit as ``max_turbined_m3s`` at every stage, binding or not. The
+    available power sits below the rated power ``hydros.json`` declares as the
+    FPHA fit's ceiling. A plant whose MODIF.DAT CFUGA/CMONT records move its
+    operating head has its turbined limit at the stage's tailrace and upstream
+    level; an expanding plant is rated with the machines in service at each
+    stage.
 
     Returns a ``(hydro_id, stage_id, max_turbined_m3s, max_generation_mw)``
     table, or ``None`` when the case has no plant or no stage.
@@ -306,7 +306,7 @@ def convert_per_stage_capacity_caps(
 
     hydro_ids: list[int] = []
     stage_ids: list[int] = []
-    max_turbined_vals: list[float | None] = []
+    max_turbined_vals: list[float] = []
     max_generation_vals: list[float] = []
     gap_stages: dict[tuple[int, str, str, str], list[int]] = {}
 
@@ -345,9 +345,7 @@ def convert_per_stage_capacity_caps(
             max_turbined, max_generation = caps[key]
             hydro_ids.append(hydro_id)
             stage_ids.append(stage_id)
-            max_turbined_vals.append(
-                max_turbined if drop_overrides or stage_id < ramp_end else None
-            )
+            max_turbined_vals.append(max_turbined)
             max_generation_vals.append(max_generation)
 
     if gap_stages:
@@ -387,9 +385,8 @@ def _per_stage_turbined_envelope(
     (novomodelo rule 43) with zero risk of the two ever drifting apart: they are
     two views of the same table, not two formulas that happen to agree today.
 
-    Returns an empty dict when no plant has CFUGA/CMONT temporal overrides or
-    a machine ramp, so callers must treat a missing key as "no per-stage
-    variation", not as zero.
+    A plant the table skips is absent, so callers must treat a missing key
+    as "no per-stage variation", not as zero.
     """
     table = convert_per_stage_capacity_caps(case, id_map)
     if table is None:
@@ -400,8 +397,6 @@ def _per_stage_turbined_envelope(
         table["max_turbined_m3s"].to_pylist(),
         strict=True,
     ):
-        if value is None:
-            continue
         current = envelope.get(hydro_id)
         if current is None or value > current:
             envelope[hydro_id] = value

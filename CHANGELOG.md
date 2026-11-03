@@ -27,6 +27,11 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **`convert newave` and `convert decomp` write every hydro plant's available
+  power and turbined-flow limit on every stage, binding or not**, and
+  `convert decomp` adds Itaipu's total available power as DECOMP reports it.
+  Reconvert to see the values; the solved case changes only at floating-point
+  rounding.
 - **`AC ALTEFE` overrides set the head of DECOMP's turbined-flow limit.** They
   were reported and ignored.
 - **The bridge requires idecomp 1.18.2, inewave 1.17.1 and cfinterface 1.10.3
@@ -62,6 +67,10 @@ links are cobre-bridge's.
 - **`convert decomp` applies an `AC` record of a January study from the week
   it names**; it took effect a week late or early, or stopped the conversion
   for a later month with a blank year. Reconvert January DECOMP cases.
+- **`convert decomp` resolves a LIBS `disp_usih(66)` term to both Itaipu
+  frequency halves' available power**; on a stage with only one half under
+  maintenance it took that half alone. `decomp-electrical-disp-usih-substituted`
+  is now always informational.
 - **`export dessem` exports a case whose water in transit outlives the study**
   instead of failing with `year -214749 is out of range`; a cut coefficient on
   water that would arrive after the study ends is dropped with a

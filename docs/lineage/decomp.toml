@@ -1975,7 +1975,7 @@ summary = "Famílias de curvas de nível de jusante por usina (uma linha por seg
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base ou limite de turbinamento de Itaipu)"
+when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base, ou limite de turbinamento e potência disponível de Itaipu)"
 module = "src/novomodelo_bridge/decomp/converters/bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
@@ -2086,7 +2086,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso. Para Itaipu (código 66), também o limite da usina por estágio, `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`: qmaxT como em `generation.max_turbined_m3s` de `system/hydros.json`, aqui sem o fator `MP` × `FD`, e Pdisp_g a potência de cada conjunto × `MP` × `FD` da sua frequência; emitido só nos estágios em que fica abaixo da soma dos tetos dos grupos além da tolerância numérica. Vale o menor dos tetos."
+  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso. Para Itaipu (código 66), também o limite da usina por estágio, `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`: qmaxT como em `generation.max_turbined_m3s` de `system/hydros.json`, aqui sem o fator `MP` × `FD`, e Pdisp_g a potência de cada conjunto × `MP` × `FD` da sua frequência; emitido em todos os estágios, mesmo quando iguala a soma dos tetos dos grupos. Vale o menor dos tetos."
 
   [[output.field]]
   path = "min_generation_mw"
@@ -2109,8 +2109,11 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "LU", item = "limite_superior" },
     { file = "dadger", register = "FU", item = "codigo_usina" },
     { file = "dadger", register = "FU", item = "coeficiente" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1..5" },
+    { file = "dadger", register = "MP", item = "manutencao" },
+    { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar, truncado ao `generation.max_generation_mw` declarado da usina (caso BELO MONTE, RE de 11000 MW acima da capacidade); um truncamento material gera aviso. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina."
+  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar, truncado ao `generation.max_generation_mw` declarado da usina (caso BELO MONTE, RE de 11000 MW acima da capacidade); um truncamento material gera aviso. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina. Para Itaipu (código 66), também a potência disponível da usina em todos os estágios: a soma, sobre os dois grupos, da potência do conjunto × `MP` × `FD` da sua frequência, a mesma Pdisp que o DECOMP reporta para a usina. Fica acima ou igual à soma dos tetos dos grupos em cada patamar e não limita além deles. Vale o menor dos tetos."
 
   [[output.field]]
   path = "min_storage_hm3"
@@ -2210,7 +2213,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
 [[output]]
 path = "constraints/hydro_unit_group_bounds.parquet"
 kind = "parquet"
-when = "somente quando algum grupo tem, em algum estágio, disponibilidade (MP × FD) ou engolimento corrigido pela queda abaixo do envelope declarado, ou quando Itaipu é operada com pisos `RI`"
+when = ""
 module = "src/novomodelo_bridge/decomp/group_bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
@@ -2229,7 +2232,7 @@ reads = [
   { file = "polinjus" },
   { file = "vazoes" },
 ]
-summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `unit_groups` de `system/hydros.json`, esparsas: só onde a disponibilidade por estágio (instalada × `MP` × `FD`) ou o engolimento corrigido pela queda do estágio fica abaixo do envelope do grupo, mais os pisos por frequência `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
+summary = "Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `system/hydros.json`: a potência disponível do estágio (instalada × `MP` × `FD`) e o engolimento máximo do estágio de cada grupo em todos os estágios, limitando ou não, mais os pisos por frequência `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
 
   [[output.field]]
   path = "hydro_id"
@@ -2310,7 +2313,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Engolimento máximo do estágio (o cálculo de `generation.max_turbined_m3s` em `system/hydros.json`, avaliado no estágio em vez do máximo), emitido só quando fica abaixo do envelope do grupo além da tolerância numérica. Para Itaipu, `min(T, Pdisp_g / ρ_eq)` por conjunto, como no envelope do grupo."
+  how = "Engolimento máximo do estágio (o cálculo de `generation.max_turbined_m3s` em `system/hydros.json`, avaliado no estágio em vez do máximo), emitido em todos os estágios. Para Itaipu, `min(T, Pdisp_g / ρ_eq)` por conjunto, como no envelope do grupo."
 
   [[output.field]]
   path = "min_generation_mw"
@@ -2338,7 +2341,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "FD", item = "codigo_usina" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida só quando fica abaixo do envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória), e o `limite_superior` do `LU` de uma `RE` por frequência também limita o grupo, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
+  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida em todos os estágios e limitada ao envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória), e o `limite_superior` do `LU` de uma `RE` por frequência também limita o grupo, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
 
 # ===== frag_F_dc_scenarios_constraints_fcf =====
 # Fragment F — DECOMP: cenários, restrições genéricas e função de custo futuro de fronteira.

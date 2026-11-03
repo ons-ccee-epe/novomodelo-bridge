@@ -26,13 +26,16 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
     _build_split_unit_groups as _build_split_unit_groups,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
-    _rated_envelope as _rated_envelope,
-)
-from novomodelo_bridge.decomp.converters.hydro.bounds import (
     convert_hydro_group_availability as convert_hydro_group_availability,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
     convert_itaipu_frequency_min_generation as convert_itaipu_frequency_min_generation,
+)
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
+    plant_available_power as plant_available_power,
+)
+from novomodelo_bridge.decomp.converters.hydro.bounds import (
+    split_plant_generation_contributions as split_plant_generation_contributions,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
     split_plant_group_id as split_plant_group_id,

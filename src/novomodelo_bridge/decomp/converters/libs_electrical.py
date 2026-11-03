@@ -71,7 +71,10 @@ from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
-from novomodelo_bridge.decomp.converters.hydro import _ITAIPU_CODE, _rated_envelope
+from novomodelo_bridge.decomp.converters.hydro import (
+    _ITAIPU_CODE,
+    plant_available_power,
+)
 from novomodelo_bridge.decomp.converters.ncs import pq_block_generation
 from novomodelo_bridge.decomp.load import _per_stage_block_loads
 
@@ -80,7 +83,6 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
-    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -2245,23 +2247,10 @@ def active_cells(
 # ---------------------------------------------------------------------------
 
 
-class AvailablePowerSource(Enum):
-    """Which tier resolved one plant/stage's ``disp_usih`` available power
-    (``A_h``), per Requirement 1's PRIMARY-vs-FALLBACK OQ-2 decision (this
-    module's header): the maintenance-aware availability overlay (the
-    PRIMARY source :func:`build_available_power` sums), or the un-derated
-    rated envelope (the FALLBACK — used only where the overlay carries no
-    entry, never as the primary source)."""
-
-    OVERLAY = "overlay"
-    RATED_ENVELOPE = "rated_envelope"
-
-
 class _UnresolvableDispUsih(Exception):
     """Internal control-flow signal: one bucket-C ``disp_usih`` term's
-    available power could not be resolved from *either*
-    :class:`AvailablePower` tier (Requirement 5) — the plant is absent from
-    both the availability overlay and the rated-envelope fallback.
+    available power could not be resolved (Requirement 5) — the plant is
+    absent from the :class:`AvailablePower` lookup.
 
     Deliberately not a :class:`ValueError`, mirroring
     :class:`_UnresolvableBucketBTerm`: :func:`assemble_bound` is the sole
@@ -2278,116 +2267,62 @@ class AvailablePower:
     the ``disp_usih`` reformulation (OQ-2, approved for a weekly/monthly
     reserve margin).
 
-    ``overlay`` is the PRIMARY source, keyed by the plant's deck code (never
-    its ``hydro_id``, since :func:`resolve_disp_usih` resolves a term by the
-    code it was parsed with): ``convert_hydro_group_availability``'s
-    per-(hydro, group, stage) ``availability_mw`` (``installed × MP × FD``,
-    hydraulic-capped), summed across a plant's unit-groups per stage.
-    ``rated_envelope`` is the FALLBACK ONLY, keyed by deck code: the
-    un-derated ``_rated_envelope`` ``max_generation`` for a plant/stage the
-    overlay carries no entry for — never read as the primary source
-    (Requirement 1's pitfall).
+    ``overlay`` is keyed by the plant's deck code, never its ``hydro_id``,
+    since :func:`resolve_disp_usih` resolves a term by the code it was parsed
+    with.
     """
 
     overlay: Mapping[tuple[int, int], float]
-    rated_envelope: Mapping[int, float]
 
-    def resolve(
-        self, code: int, stage_index: int
-    ) -> tuple[float, AvailablePowerSource]:
-        """*code*'s ``A_h`` at *stage_index*, and which tier produced it.
-
-        Tries the maintenance-aware overlay first (the PRIMARY source);
-        falls back to the un-derated rated envelope only when the overlay
-        carries no entry for this exact ``(code, stage_index)`` — never the
-        other way around.
+    def resolve(self, code: int, stage_index: int) -> float:
+        """*code*'s ``A_h`` at *stage_index*.
 
         Raises
         ------
         _UnresolvableDispUsih
-            When *code* is absent from *both* tiers (Requirement 5).
+            When *code* has no available power at *stage_index*
+            (Requirement 5).
         """
-        overlay_value = self.overlay.get((code, stage_index))
-        if overlay_value is not None:
-            return overlay_value, AvailablePowerSource.OVERLAY
-        fallback_value = self.rated_envelope.get(code)
-        if fallback_value is not None:
-            return fallback_value, AvailablePowerSource.RATED_ENVELOPE
-        raise _UnresolvableDispUsih(
-            f"plant {code} has no available power at stage {stage_index} "
-            "(absent from both the availability overlay and the rated "
-            "envelope)"
-        )
+        value = self.overlay.get((code, stage_index))
+        if value is None:
+            raise _UnresolvableDispUsih(
+                f"plant {code} has no available power at stage {stage_index}"
+            )
+        return value
 
 
 def build_available_power(
-    case: DecompCase,
     id_map: DecompIdMap,
     *,
     overlay: Mapping[tuple[int, int, int], GroupBoundEntry],
-    effective: EffectiveCadastro,
 ) -> AvailablePower:
     """Build the :class:`AvailablePower` lookup (Requirement 1) from
     :func:`~novomodelo_bridge.decomp.converters.hydro.bounds.
-    convert_hydro_group_availability`'s raw per-(hydro_id,
-    hydro_unit_group_id, stage_id) *overlay*.
-
-    Sums each entry's ``max_generation_mw`` across a plant's unit-groups per
-    stage, re-keying the ``hydro_id`` it is stored under onto the plant's own
-    deck code (:meth:`~novomodelo_bridge.decomp.id_map.DecompIdMap.hydro_id`'s
-    inverse) — :func:`resolve_disp_usih` resolves a parsed ``disp_usih(code)``
-    term by that same deck code, never by ``hydro_id``. A group with no entry
-    at a given stage contributes nothing to the sum: *overlay* is sparse by
-    construction (only stores a value where the maintenance-derated figure
-    falls below that group's own declared envelope), so a stage/group absent
-    from it means "no further restriction beyond the rated envelope", not
-    "zero" — which is exactly what the :meth:`AvailablePower.resolve`
-    fallback then supplies.
-
-    Precomputes the FALLBACK tier for every declared hydro plant
-    (:attr:`~novomodelo_bridge.decomp.id_map.DecompIdMap.hydro_codes`) via
-    :func:`~novomodelo_bridge.decomp.converters.hydro.bounds._rated_envelope`'s
-    ``max_generation`` — the un-derated rated envelope — so
-    :meth:`AvailablePower.resolve` never needs *hidr*/*effective* itself at
-    resolve time.
+    convert_hydro_group_availability`'s per-(hydro_id, hydro_unit_group_id,
+    stage_id) *overlay*: each plant's
+    :func:`~novomodelo_bridge.decomp.converters.hydro.bounds.
+    plant_available_power`, re-keyed from ``hydro_id`` onto the plant's deck
+    code.
     """
-    hidr = case.hidr
     code_by_hydro_id = {id_map.hydro_id(code): code for code in id_map.hydro_codes}
-
-    overlay_sums: dict[tuple[int, int], float] = {}
-    for (hydro_id, _group_id, stage_id), entry in overlay.items():
-        if entry.max_generation_mw is None:
-            continue
-        code = code_by_hydro_id.get(hydro_id)
-        if code is None:
-            continue
-        key = (code, stage_id)
-        overlay_sums[key] = overlay_sums.get(key, 0.0) + float(
-            entry.max_generation_mw  # ty: ignore[invalid-argument-type] overlay entries are scalar
-        )
-
-    rated_envelope = {
-        code: _rated_envelope(hidr.loc[code], code, effective)[1]
-        for code in id_map.hydro_codes
-    }
-
-    return AvailablePower(overlay=overlay_sums, rated_envelope=rated_envelope)
+    return AvailablePower(
+        overlay={
+            (code_by_hydro_id[hydro_id], stage_id): total
+            for (hydro_id, stage_id), total in plant_available_power(overlay).items()
+        }
+    )
 
 
 def resolve_disp_usih(term: ParsedTerm, stage_index: int, a_h: AvailablePower) -> float:
     """*term*'s (a bucket-C ``disp_usih`` term) plant's ``A_h`` at
-    *stage_index* (Requirement 2) — the value :func:`build_available_power`
-    resolved: the per-plant availability-overlay sum when present, else the
-    rated-envelope fallback.
+    *stage_index* (Requirement 2), as :func:`build_available_power` summed it.
 
     Raises
     ------
     _UnresolvableDispUsih
-        Propagated from :meth:`AvailablePower.resolve` when the plant is
-        absent from *both* tiers.
+        Propagated from :meth:`AvailablePower.resolve`.
     """
-    value, _source = a_h.resolve(term.args[0], stage_index)
-    return value
+    return a_h.resolve(term.args[0], stage_index)
 
 
 def _flip_operator(sense: str) -> str:
@@ -2417,36 +2352,21 @@ def _emit_disp_usih_substitution(
     plant_code: int,
     stage_index: int,
     a_h_value: float,
-    source: AvailablePowerSource,
 ) -> None:
     """Emit the spec-§4b fidelity diagnostic for one ``disp_usih -> A_h``
-    substitution (Requirement 3), naming the plant code, the stage, the
-    ``A_h`` value used, and which :class:`AvailablePowerSource` tier
-    produced it (Requirement 1's "log which was used").
-
-    ``Severity.INFO`` for the maintenance-aware overlay (the intended
-    primary path); ``Severity.WARNING`` for the un-derated rated-envelope
-    fallback — a second approximation stacked on top of the reference-head
-    one, worth flagging more loudly than the primary path.
+    substitution (Requirement 3), naming the plant code, the stage, and the
+    ``A_h`` value used.
     """
-    severity = (
-        Severity.INFO if source is AvailablePowerSource.OVERLAY else Severity.WARNING
-    )
-    source_label = (
-        "the maintenance-aware availability overlay"
-        if source is AvailablePowerSource.OVERLAY
-        else "the un-derated rated-envelope fallback"
-    )
     emit(
         Diagnostic(
             code="decomp-electrical-disp-usih-substituted",
-            severity=severity,
+            severity=Severity.INFO,
             category="Special constraints",
             title="disp_usih resolved to a reference-head available-power constant",
             summary=(
                 f"Restriction {restriction_code}: disp_usih({plant_code}) at "
                 f"stage {stage_index} substituted A_h={a_h_value:g} MW, from "
-                f"{source_label}."
+                "the maintenance-aware availability overlay."
             ),
             remediation=(
                 "This reformulates the reserve constraint into a generation "
@@ -2501,9 +2421,8 @@ def _fold_reserve_disp_usih(
         does not cover.
     _UnresolvableDispUsih
         Propagated from :func:`resolve_disp_usih` when a paired plant's
-        ``A_h`` cannot be resolved from either :class:`AvailablePower` tier
-        (Requirement 5) — the caller (:func:`assemble_bound`) is the sole
-        catcher.
+        ``A_h`` cannot be resolved (Requirement 5) — the caller
+        (:func:`assemble_bound`) is the sole catcher.
     """
     assert restriction.operator is not None  # INEQUACAO invariant
 
@@ -2541,11 +2460,9 @@ def _fold_reserve_disp_usih(
                 "paired with a ger_usih term of the exact opposite "
                 "coefficient — outside the documented reserve pattern"
             )
-        a_h_value, source = a_h.resolve(code, stage_index)
+        a_h_value = a_h.resolve(code, stage_index)
         reserve_sum += disp_term.coefficient * a_h_value
-        _emit_disp_usih_substitution(
-            restriction.code, code, stage_index, a_h_value, source
-        )
+        _emit_disp_usih_substitution(restriction.code, code, stage_index, a_h_value)
 
     if ger_by_plant:
         leftover_code = next(iter(ger_by_plant))

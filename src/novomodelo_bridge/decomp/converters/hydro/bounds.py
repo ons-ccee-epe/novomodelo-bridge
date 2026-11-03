@@ -10,7 +10,9 @@ both can import from here, never the reverse.
 available power (installed × ``MP`` × ``FD``) as its per-stage overlay;
 ``max_turbined_m3s`` is the envelope of the source model's per-stage turbined
 limit (:class:`~novomodelo_bridge.decomp.converters.hydro.turbine_limit.
-TurbineLimits`), with each stage's limit as its overlay.
+TurbineLimits`), with each stage's limit as its overlay. The overlay is written
+on every stage, binding or not, so the converted case shows each group's
+available power and turbined limit as the source model reports them.
 """
 
 from __future__ import annotations
@@ -21,12 +23,12 @@ import pandas as pd
 
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame
-from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.core.turbine import MachineSet
+from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
@@ -394,11 +396,6 @@ def _frequency_row(
     return rows.iloc[0]
 
 
-def _below_envelope(value: float, envelope: float) -> bool:
-    """Whether *value* is below *envelope* past relative float noise."""
-    return value < envelope - relative_tolerance(envelope)
-
-
 def _single_group_factor_rows(records: pd.DataFrame | None) -> dict[int, pd.Series]:
     """``{code: row}`` for a maintenance/availability register (``MP``/``FD``),
     keeping only single-group plants — mirrors the shipped rule test's own
@@ -429,35 +426,6 @@ def _stage_register_factor(
             f"{stage_index} (column {column!r} missing or blank)"
         )
     return float(row[column])
-
-
-def _availability_bound_entry(
-    q_g: float,
-    availability_mw: float,
-    q_envelope: float,
-    p_envelope: float,
-) -> GroupBoundEntry | None:
-    """One ``(hydro/group, stage)``'s availability-overlay entry, or ``None`` if
-    neither bound column falls below that group's own declared envelope.
-
-    ``max_generation_mw`` is *availability_mw* (installed × MP × FD — the
-    source model's own reported available capacity, ``potencia_disponivel``)
-    when it falls below *p_envelope*; ``max_turbined_m3s`` is the stage's
-    turbined limit *q_g* when it falls below *q_envelope*. The turbined limit
-    already holds the generator limit ``Pdisp / ρ_eq``, so no second
-    ``ρ_eq · q`` generation cap is folded in: it would only duplicate it, and
-    understate an FPHA plant whose production curve beats the linear
-    ``ρ_eq``.
-    """
-    max_generation_mw = (
-        availability_mw if _below_envelope(availability_mw, p_envelope) else None
-    )
-    max_turbined_m3s = q_g if _below_envelope(q_g, q_envelope) else None
-    if max_generation_mw is None and max_turbined_m3s is None:
-        return None
-    return GroupBoundEntry(
-        max_generation_mw=max_generation_mw, max_turbined_m3s=max_turbined_m3s
-    )
 
 
 def stage_availability_factors(
@@ -522,17 +490,18 @@ def convert_hydro_group_availability(
 
     ``max_generation_mw`` is the available power, the stage's AC-adjusted
     installed power times :func:`stage_availability_factors`' ``MP × FD``,
-    against the group's rated envelope (:func:`_rated_envelope`, or Itaipu's
-    per-conjunto :func:`_conjunto_rated_envelope`). ``max_turbined_m3s`` is
-    the stage's turbined limit against its envelope over the horizon
-    (*turbine_limits*). Itaipu's groups follow its ascending frequencies, as
+    capped at the group's rated envelope (:func:`_rated_envelope`, or
+    Itaipu's per-conjunto :func:`_conjunto_rated_envelope`), which novomodelo
+    rejects a group bound for exceeding. ``max_turbined_m3s`` is the stage's
+    turbined limit (*turbine_limits*). The turbined limit already holds the
+    generator limit ``Pdisp / ρ_eq``, so no ``ρ_eq · q`` generation cap is
+    folded in: it would understate an FPHA plant whose production curve beats
+    the linear ``ρ_eq``. Itaipu's groups follow its ascending frequencies, as
     :func:`_build_split_unit_groups` numbers them.
 
     Returns the ``(hydro_id, hydro_unit_group_id, stage_id) ->
-    GroupBoundEntry`` mapping ``convert_hydro_unit_group_bounds``
-    consumes unchanged — populated *sparsely*, only where an emitted value
-    falls below that group's own declared envelope, the same "only where it
-    differs" convention every sibling emitter uses.
+    GroupBoundEntry`` mapping ``convert_hydro_unit_group_bounds`` consumes,
+    with both columns set for every operated plant's every group and stage.
     """
     factors = stage_availability_factors(case, id_map, effective=effective)
     values: dict[tuple[int, int, int], GroupBoundEntry] = {}
@@ -546,7 +515,6 @@ def convert_hydro_group_availability(
                 )
             else:
                 _, p_envelope = _rated_envelope(hreg, code, effective)
-            q_envelope = turbine_limits.envelope(code, group_id)
             for stage in case.calendar:
                 if code == _ITAIPU_CODE:
                     _, installed_mw = _conjunto_rated_ac_adjusted(
@@ -556,15 +524,59 @@ def convert_hydro_group_availability(
                     _, installed_mw = _compute_max_turbined_rated_ac_adjusted(
                         hreg, code, effective, stage.index
                     )
-                entry = _availability_bound_entry(
-                    turbine_limits.cap(code, group_id, stage.index),
-                    installed_mw * factors[(code, group_id, stage.index)],
-                    q_envelope,
-                    p_envelope,
+                values[(hydro_id, group_id, stage.index)] = GroupBoundEntry(
+                    max_generation_mw=min(
+                        installed_mw * factors[(code, group_id, stage.index)],
+                        p_envelope,
+                    ),
+                    max_turbined_m3s=turbine_limits.cap(code, group_id, stage.index),
                 )
-                if entry is not None:
-                    values[(hydro_id, group_id, stage.index)] = entry
     return values
+
+
+def plant_available_power(
+    availability: Mapping[tuple[int, int, int], GroupBoundEntry],
+) -> dict[tuple[int, int], float]:
+    """``{(hydro_id, stage_id): MW}``: each plant's available power, its unit
+    groups' :func:`convert_hydro_group_availability` ``max_generation_mw``
+    summed per stage."""
+    totals: dict[tuple[int, int], float] = {}
+    for (hydro_id, _group_id, stage_id), entry in availability.items():
+        value = entry.max_generation_mw
+        if not isinstance(value, float):
+            raise TypeError(
+                f"hydro {hydro_id}, stage {stage_id}: availability "
+                f"max_generation_mw must be a stage-level float, got {value!r}"
+            )
+        key = (hydro_id, stage_id)
+        totals[key] = totals.get(key, 0.0) + value
+    return totals
+
+
+def split_plant_generation_contributions(
+    availability: Mapping[tuple[int, int, int], GroupBoundEntry],
+) -> list[BoundContribution]:
+    """The ``hydro`` ``generation`` upper bound of each plant split into
+    several unit groups: its :func:`plant_available_power`, on every stage.
+
+    The group ceilings already bound the plant; this row restates their sum
+    on the plant, where the source model reports it.
+    """
+    split_ids = {hydro_id for hydro_id, group_id, _ in availability if group_id > 0}
+    return [
+        BoundContribution(
+            family="hydro",
+            entity_id=hydro_id,
+            stage_id=stage_id,
+            block_id=None,
+            axis="generation",
+            lower=None,
+            upper=total,
+            contributor="split_plant_availability",
+        )
+        for (hydro_id, stage_id), total in plant_available_power(availability).items()
+        if hydro_id in split_ids
+    ]
 
 
 #: The two Itaipu frequency-half minimum-generation floors on the ``RI``

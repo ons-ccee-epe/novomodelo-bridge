@@ -278,8 +278,6 @@ def _hydro_context(case: NewaveCase, id_map: NewaveIdMap) -> _HydroContext:
     # novomodelo rule 43 forbids any hydro_bounds row from raising max_turbined_m3s
     # above the plant's own declared value, so the reference-head value
     # (``_generation_caps``) must be raised to cover every emitted per-stage row.
-    # Empty for a hydro with no per-stage turbined cap, which keeps its declared
-    # value unchanged.
     turbined_envelope = _per_stage_turbined_envelope(case, id_map)
 
     expansion_configs = _expansion_configs(case, cadastro)

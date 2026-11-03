@@ -59,7 +59,6 @@ from novomodelo_bridge.core.tailrace import (
     tailrace_families_from_polinjus,
     tailrace_level_m,
 )
-from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.core.turbine import (
     head_limited_flow,
     tailrace_limited_flow,
@@ -244,29 +243,21 @@ def plant_turbine_limit_contributions(
     turbine_limits: TurbineLimits, id_map: DecompIdMap
 ) -> list[BoundContribution]:
     """The ``hydro`` ``turbined`` upper bounds carrying
-    :attr:`TurbineLimits.plant_caps`, one per stage where the plant cap is
-    below its groups' summed caps."""
-    contributions: list[BoundContribution] = []
-    for code, stage_caps in turbine_limits.plant_caps.items():
-        for stage_index, cap in enumerate(stage_caps):
-            groups_total = sum(
-                turbine_limits.cap(code, group_id, stage_index)
-                for group_id in range(turbine_limits.group_count(code))
-            )
-            if cap < groups_total - relative_tolerance(groups_total):
-                contributions.append(
-                    BoundContribution(
-                        family="hydro",
-                        entity_id=id_map.hydro_id(code),
-                        stage_id=stage_index,
-                        block_id=None,
-                        axis="turbined",
-                        lower=None,
-                        upper=cap,
-                        contributor="turbine_limit",
-                    )
-                )
-    return contributions
+    :attr:`TurbineLimits.plant_caps`, one per plant and stage."""
+    return [
+        BoundContribution(
+            family="hydro",
+            entity_id=id_map.hydro_id(code),
+            stage_id=stage_index,
+            block_id=None,
+            axis="turbined",
+            lower=None,
+            upper=cap,
+            contributor="turbine_limit",
+        )
+        for code, stage_caps in turbine_limits.plant_caps.items()
+        for stage_index, cap in enumerate(stage_caps)
+    ]
 
 
 def _unregulated_inflow(
