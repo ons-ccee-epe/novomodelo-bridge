@@ -107,6 +107,10 @@ links are cobre-bridge's.
 - **`convert --dry-run` wraps a long path in its listing** instead of cutting it
   short.
 
+- **`compare decomp` reads each `dec_oper_*.csv` in the layout of the DECOMP
+  release that wrote it**: with DECOMP 32.9 or later, deficit, marginal cost and
+  the energy balance no longer come from shifted `dec_oper_sist.csv` columns.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins
