@@ -112,6 +112,9 @@ links are cobre-bridge's.
   known layout stops the comparison with a message naming it. A
   `dec_oper_sist.csv` from DECOMP 32.9 or later is still read shifted until
   idecomp adds that layout.
+- **`compare` draws each line's capacity on the Network tab as the hours-weighted
+  mean of its block limits**, the same weighting as the plotted flow: a line
+  whose limit changes by block no longer shows a stage below its lower bound.
 
 ## [0.19.1] - 2026-10-26
 

@@ -548,6 +548,30 @@ class TestLineBoundsAndMeta:
         assert line_bounds.is_empty()
         assert line_meta == []
 
+    def test_unparseable_lines_json_keeps_the_bounds_and_empties_meta(
+        self, tmp_path: Path
+    ) -> None:
+        case_dir = tmp_path / "case"
+        output_dir = _write_lines_json(case_dir, [])
+        (case_dir / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+        _write_line_bounds_parquet(
+            case_dir,
+            [
+                {
+                    "line_id": 0,
+                    "stage_id": 0,
+                    "block_id": None,
+                    "direct_mw": 1200.0,
+                    "reverse_mw": 800.0,
+                }
+            ],
+        )
+
+        line_bounds, line_meta = _line_bounds_and_meta(output_dir)
+
+        assert line_meta == []
+        assert line_bounds.row(0, named=True)["direct_mw"] == 1200.0
+
 
 def _patch_network(
     monkeypatch: pytest.MonkeyPatch,

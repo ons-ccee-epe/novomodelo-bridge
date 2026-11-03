@@ -1206,11 +1206,13 @@ def _line_bounds_and_meta(
 ) -> tuple[pl.DataFrame, list[dict]]:
     """Novomodelo's per-stage line bounds and ``lines.json`` metadata.
 
+    The bounds come from :func:`read_novomodelo_stage_line_bounds`, weighted
+    over the blocks as the plotted stage-mean flow is.
+
     A missing or unparseable ``lines.json`` degrades to an empty ``line_meta``.
     """
-    from novomodelo_bridge.novomodelo.readers import read_novomodelo_line_bounds
+    from novomodelo_bridge.novomodelo.readers import read_novomodelo_stage_line_bounds
 
-    line_bounds = read_novomodelo_line_bounds(novomodelo_output_dir)
     lines_json_path = case_dir_for(novomodelo_output_dir) / "system" / "lines.json"
     line_meta: list[dict] = []
     if lines_json_path.exists():
@@ -1222,6 +1224,7 @@ def _line_bounds_and_meta(
             )
         except Exception:
             _LOG.warning("Failed to read lines.json")
+    line_bounds = read_novomodelo_stage_line_bounds(novomodelo_output_dir, line_meta)
     return line_bounds, line_meta
 
 

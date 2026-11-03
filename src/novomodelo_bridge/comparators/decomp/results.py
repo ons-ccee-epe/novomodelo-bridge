@@ -985,13 +985,9 @@ def _line_bounds_and_meta(
     them exactly the way ``results.compare_results`` does for the source
     model's own Network tab, via the shared ``novomodelo_readers`` readers:
 
-    - ``line_bounds``: :func:`novomodelo_readers.read_novomodelo_line_bounds` verbatim.
-      This is already per-stage: ``decomp/converters/network.py::convert_lines`` writes
-      one base row (``block_id`` null) per ``(line, stage)`` carrying the
-      resolved max-of-blocks ``IA`` capacity for that stage, so a case whose
-      capacity genuinely never changes across stages naturally produces
-      identical per-stage rows here -- no separate static-capacity broadcast
-      needs implementing on top.
+    - ``line_bounds``: :func:`novomodelo_readers.read_novomodelo_stage_line_bounds`,
+      one capacity per ``(line, stage)`` weighted over the blocks as the
+      plotted stage-mean flow is.
     - ``line_meta``: :func:`novomodelo_readers.read_novomodelo_lines`'s ``"lines"``
       list verbatim -- each entry's own nested ``capacity.direct_mw``/
       ``capacity.reverse_mw`` is exactly the shape ``line_summary_chart``
@@ -1003,14 +999,15 @@ def _line_bounds_and_meta(
     warning) rather than raising, unchanged from before this module routed
     through the shared readers.
     """
-    line_bounds = novomodelo_readers.read_novomodelo_line_bounds(novomodelo_output_dir)
-
     try:
         line_meta = novomodelo_readers.read_novomodelo_lines(novomodelo_output_dir)
     except novomodelo_readers.NovomodeloReadError as exc:
         _LOG.warning("Failed to read lines.json for network tab: %s", exc)
         line_meta = []
 
+    line_bounds = novomodelo_readers.read_novomodelo_stage_line_bounds(
+        novomodelo_output_dir, line_meta
+    )
     return line_bounds, line_meta
 
 
