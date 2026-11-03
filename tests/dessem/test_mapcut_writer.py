@@ -49,7 +49,7 @@ class TestMapcutHeader:
 
     def test_header_is_frozen(self, minimal_header: MapcutHeader) -> None:
         with pytest.raises(AttributeError):
-            minimal_header.numero_cortes = 100  # type: ignore[misc]  # intentional mutation to test frozen
+            minimal_header.numero_cortes = 100  # ty: ignore[invalid-assignment] intentional mutation to test frozen
 
 
 class TestWriteMapcut:

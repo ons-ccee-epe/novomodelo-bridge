@@ -32,19 +32,21 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
-from novomodelo_bridge.core.errors import BridgeError
+from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
     GenericConstraintResult,
+    Slot,
     hard_slack,
     soft_slack,
 )
+from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
+from novomodelo_bridge.core.pandas_utils import as_float, as_int, as_timestamp, is_na
 from novomodelo_bridge.core.productivity import (
     compute_productivity,
     stored_energy_productivity,
 )
-from novomodelo_bridge.core.source_text import read_source_text
 from novomodelo_bridge.core.stored_energy import (
     StoredEnergyShare,
     cascade_share,
@@ -52,17 +54,26 @@ from novomodelo_bridge.core.stored_energy import (
 )
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
+from novomodelo_bridge.newave.converters.network import line_ids
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import active_hydros
 from novomodelo_bridge.newave.switches import switch_off_diagnostic
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet
+    from collections.abc import Iterator
+    from collections.abc import Set as AbstractSet
+
+    from inewave.libs.restricoes import Restricoes
+    from inewave.newave import Agrint
+
+    from novomodelo_bridge.newave.horizon import StudyHorizon
 
 _LOG = logging.getLogger(__name__)
 
 _CATEGORY = "Special constraints"
+
+_VMINOP_DEFAULT_PENALTY = 1000.0
 
 
 @dataclass
@@ -136,6 +147,15 @@ class VminopResult(NamedTuple):
     bounds: pa.Table
     referenced_hydro_ids: list[int]
     per_stage_parameters: dict[str, list[float]]
+
+
+class _VminopRees(NamedTuple):
+    """Per-REE inputs of the VminOP constraints, keyed by REE code."""
+
+    plants: dict[int, list[int]]
+    shares: dict[int, list[StoredEnergyShare]]
+    penalties: dict[int, float]
+    names: dict[int, str]
 
 
 def vminop_pct_name(ree_code: int) -> str:
@@ -346,7 +366,7 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
 
     try:
         cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
-        confhd_df = case.confhd.usinas
+        confhd_df = case.hydro_plants
         fictitious = case.fictitious_codes
     except (OSError, ValueError, AttributeError, TypeError, KeyError):
         return None
@@ -438,8 +458,10 @@ def _curve_seasonalizes(configuracoes_penalizacao: list[Any] | None) -> bool:
     source model manual table, p.32-33). Returns ``False`` (freeze — the manual default)
     when the field is absent or unparseable.
     """
+    if configuracoes_penalizacao is None:
+        return False
     try:
-        return int(configuracoes_penalizacao[2]) == 1  # type: ignore[index]
+        return int(configuracoes_penalizacao[2]) == 1
     except (TypeError, ValueError, IndexError):
         return False
 
@@ -547,195 +569,17 @@ def convert_vminop_constraints(
     # whole tail. Default (parse failure / absent) is freeze, matching the manual.
     seasonalize_curve_post_study = _curve_seasonalizes(curva.configuracoes_penalizacao)
 
-    penalty_df = curva.custos_penalidades
-    confhd = case.confhd
-    hidr = case.hidr
-    ree_file = case.ree
-
-    cadastro = _apply_permanent_overrides(hidr.cadastro, case)
-    confhd_df = confhd.usinas
-
-    _horizon = case.horizon
-    start_month = _horizon.start_month
-    start_year = _horizon.start_year
-    num_stages = _horizon.total_stages
-
-    # Plants with no positive integrated cascade productivity store no energy.
-    fictitious = case.fictitious_codes
-    acc_prod = compute_accumulated_integrated_productivities(
-        cadastro, confhd_df, fictitious=fictitious
-    )
-
-    hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
-    ree_terms = _vminop_ree_shares(cadastro, id_map, acc_prod, hydro_to_ree)
-    per_stage_parameters: dict[str, list[float]] = {}
-
-    ree_hydros: dict[int, list[int]] = defaultdict(list)
-    for code, ree_code in hydro_to_ree.items():
-        ree_hydros[ree_code].append(code)
-
-    # Build penalty lookup: ree_code -> penalty value
-    penalty_map: dict[int, float] = {}
-    if penalty_df is not None and not penalty_df.empty:
-        for _, row in penalty_df.iterrows():
-            penalty_map[int(row["codigo_ree"])] = float(row["penalidade"])
-
-    # REE names from ree.dat
-    ree_names: dict[int, str] = {}
-    ree_df = ree_file.rees
-    if ree_df is not None:
-        for _, row in ree_df.iterrows():
-            ree_names[int(row["codigo"])] = str(row["nome"]).strip()
-
-    # REEs that have constraints in curva.dat
-    constraint_rees = sorted(curva_df["codigo_ree"].unique())
+    rees = _read_vminop_rees(case, id_map, curva.custos_penalidades)
 
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
-    all_referenced_ids: set[int] = set()
-
-    # Loop-accumulate-then-emit-once: one record per skipped/clamped REE,
-    # emitted after the loop so the per-REE detail survives finalize_diagnostics'
-    # (code, summary) de-dup (see converters/thermal.py's _GtminRecord idiom).
-    vminop_skips: list[_VminopSkip] = []
-    penalty_clamps: list[_VminopPenaltyClamp] = []
-
-    for ree_code in constraint_rees:
-        ree_code = int(ree_code)
-        hydros_in_ree = ree_hydros.get(ree_code, [])
-
-        if not hydros_in_ree:
-            vminop_skips.append(
-                _VminopSkip(
-                    ree_code=ree_code,
-                    ree_name=ree_names.get(ree_code, str(ree_code)),
-                    reason="no hydro plants",
-                )
-            )
-            continue
-
-        shares = ree_terms.get(ree_code, [])
-        if not shares:
-            vminop_skips.append(
-                _VminopSkip(
-                    ree_code=ree_code,
-                    ree_name=ree_names.get(ree_code, "?"),
-                    reason="no valid terms for VminOP expression",
-                )
-            )
-            continue
-
-        pct_name = vminop_pct_name(ree_code)
-        expression = stored_energy_floor([(1.0, s) for s in shares], pct_name)
-        # Every hydro an ``@…_h{id}`` parameter names must be declared.
-        referenced_ids = [int(h) for h in re.findall(r"@\w+?_h(\d+)\b", expression)]
-        ree_name = ree_names.get(ree_code, str(ree_code))
-        penalty = penalty_map.get(ree_code, 1000.0)
-        if penalty <= 0.0:
-            penalty_clamps.append(
-                _VminopPenaltyClamp(
-                    ree_code=ree_code,
-                    ree_name=ree_name,
-                    declared=penalty,
-                    applied=1000.0,
-                )
-            )
-            penalty = 1000.0
-
-        # Curve percentage per stage. curva.dat only covers the study period.
-        # Extend into the post-study ("Período Estático Final") per source-model's
-        # rule (manual table p.32-33): seasonalize (repeat the last study year's
-        # monthly curve) when curva.dat's third penalization field is set,
-        # otherwise freeze December's value across the whole tail.
-        study_months = _horizon.study_months
-        ree_curva = curva_df[curva_df["codigo_ree"] == ree_code].sort_values("data")
-
-        seasonal_pct: dict[int, float] = {}  # calendar_month -> last percentage
-        pct_by_stage: dict[int, float] = {}
-        for _, crow in ree_curva.iterrows():
-            dt: datetime = crow["data"]
-            stage_id = (dt.year - start_year) * 12 + (dt.month - start_month)
-            if stage_id < 0 or stage_id >= num_stages:
-                continue
-            percentage = float(crow["valor"])
-            seasonal_pct[dt.month] = percentage  # last value wins
-            pct_by_stage[stage_id] = percentage
-
-        # In-study gaps (and the post-study tail when seasonalized) use the
-        # seasonal pattern; otherwise the tail freezes at the last in-study
-        # stage's percentage (December of the last study year, forward-filled if
-        # that exact stage had no explicit row).
-        if seasonal_pct:
-            in_study = [s for s in pct_by_stage if s < study_months]
-            freeze_pct = pct_by_stage[max(in_study)] if in_study else None
-            for stage_id in range(num_stages):
-                if stage_id in pct_by_stage:
-                    continue
-                if stage_id >= study_months and not seasonalize_curve_post_study:
-                    pct = freeze_pct
-                else:
-                    cal_month = ((start_month - 1 + stage_id) % 12) + 1
-                    pct = seasonal_pct.get(cal_month)
-                if pct is not None:
-                    pct_by_stage[stage_id] = pct
-
-        if not pct_by_stage:
-            continue
-
-        builder.add(
-            name=f"VminOP_{ree_name}",
-            description=f"Minimum stored energy for REE {ree_code} ({ree_name})",
-            expression=expression,
-            slack=soft_slack(penalty, "per_unit"),
-            slots=[(stage_id, None, 0.0, None) for stage_id in sorted(pct_by_stage)],
-        )
-        per_stage_parameters[pct_name] = [
-            pct_by_stage.get(stage_id, 0.0) / 100.0 for stage_id in range(num_stages)
-        ]
-        all_referenced_ids.update(referenced_ids)
-
-    if vminop_skips:
-        emit(
-            Diagnostic(
-                code="vminop-ree-not-expressible",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=f"VminOP constraint not expressible ({len(vminop_skips)} REE(s))",
-                summary=(
-                    f"{len(vminop_skips)} REE(s) with a curva.dat VminOP entry "
-                    "could not be expressed as a generic constraint; skipping."
-                ),
-                table=DiagnosticTable(
-                    columns=["REE", "Name", "Reason"],
-                    rows=[[s.ree_code, s.ree_name, s.reason] for s in vminop_skips],
-                    justify=["right", "left", "left"],
-                ),
-            ),
-            logger=_LOG,
-        )
-    if penalty_clamps:
-        emit(
-            Diagnostic(
-                code="vminop-penalty-nonpositive",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=f"VminOP penalty not positive ({len(penalty_clamps)} REE(s))",
-                summary=(
-                    f"{len(penalty_clamps)} REE(s) declare a curva.dat VminOP "
-                    "penalty that is not positive; using 1000.0 instead."
-                ),
-                table=DiagnosticTable(
-                    columns=["REE", "Name", "Declared", "Applied"],
-                    rows=[
-                        [c.ree_code, c.ree_name, c.declared, c.applied]
-                        for c in penalty_clamps
-                    ],
-                    justify=["right", "left", "right", "right"],
-                ),
-                remediation="Check curva.dat's penalty column for these REEs.",
-            ),
-            logger=_LOG,
-        )
+    per_stage_parameters, all_referenced_ids = _add_vminop_constraints(
+        builder,
+        curva_df,
+        rees,
+        case.horizon,
+        seasonalize=seasonalize_curve_post_study,
+    )
 
     result = builder.result()
     if result is None:
@@ -762,97 +606,358 @@ def convert_vminop_constraints(
     )
 
 
+def _read_vminop_rees(
+    case: NewaveCase, id_map: NewaveIdMap, penalty_df: pd.DataFrame | None
+) -> _VminopRees:
+    """Each REE's plants, VminOP shares, curva.dat penalty and ree.dat name."""
+    hidr = case.hidr
+    ree_file = case.ree
+
+    cadastro = _apply_permanent_overrides(hidr.cadastro, case)
+    confhd_df = case.hydro_plants
+
+    # Plants with no positive integrated cascade productivity store no energy.
+    fictitious = case.fictitious_codes
+    acc_prod = compute_accumulated_integrated_productivities(
+        cadastro, confhd_df, fictitious=fictitious
+    )
+
+    hydro_to_ree = _build_hydro_to_ree(confhd_df, fictitious=fictitious)
+    shares = _vminop_ree_shares(cadastro, id_map, acc_prod, hydro_to_ree)
+
+    plants: dict[int, list[int]] = defaultdict(list)
+    for code, ree_code in hydro_to_ree.items():
+        plants[ree_code].append(code)
+
+    penalties: dict[int, float] = {}
+    if penalty_df is not None and not penalty_df.empty:
+        for _, row in penalty_df.iterrows():
+            penalties[int(row["codigo_ree"])] = float(row["penalidade"])
+
+    names: dict[int, str] = {}
+    ree_df = ree_file.rees
+    if ree_df is not None:
+        for _, row in ree_df.iterrows():
+            names[int(row["codigo"])] = str(row["nome"]).strip()
+
+    return _VminopRees(plants, shares, penalties, names)
+
+
+def _add_vminop_constraints(
+    builder: GenericConstraintBuilder,
+    curva_df: pd.DataFrame,
+    rees: _VminopRees,
+    horizon: StudyHorizon,
+    *,
+    seasonalize: bool,
+) -> tuple[dict[str, list[float]], set[int]]:
+    """Add one VminOP constraint per curva.dat REE that can carry one.
+
+    Returns the ``pct_vminop_ree{code}`` per-stage parameters and the hydro ids
+    the added expressions reference.
+    """
+    per_stage_parameters: dict[str, list[float]] = {}
+    all_referenced_ids: set[int] = set()
+
+    # Loop-accumulate-then-emit-once: one record per skipped/clamped REE,
+    # emitted after the loop so the per-REE detail survives finalize_diagnostics'
+    # (code, summary) de-dup (see converters/thermal.py's _GtminRecord idiom).
+    vminop_skips: list[_VminopSkip] = []
+    penalty_clamps: list[_VminopPenaltyClamp] = []
+
+    for ree_code in sorted(curva_df["codigo_ree"].unique()):
+        ree_code = int(ree_code)
+        hydros_in_ree = rees.plants.get(ree_code, [])
+
+        if not hydros_in_ree:
+            vminop_skips.append(
+                _VminopSkip(
+                    ree_code=ree_code,
+                    ree_name=rees.names.get(ree_code, str(ree_code)),
+                    reason="no hydro plants",
+                )
+            )
+            continue
+
+        shares = rees.shares.get(ree_code, [])
+        if not shares:
+            vminop_skips.append(
+                _VminopSkip(
+                    ree_code=ree_code,
+                    ree_name=rees.names.get(ree_code, "?"),
+                    reason="no valid terms for VminOP expression",
+                )
+            )
+            continue
+
+        pct_name = vminop_pct_name(ree_code)
+        expression = stored_energy_floor([(1.0, s) for s in shares], pct_name)
+        # Every hydro an ``@…_h{id}`` parameter names must be declared.
+        referenced_ids = [int(h) for h in re.findall(r"@\w+?_h(\d+)\b", expression)]
+        ree_name = rees.names.get(ree_code, str(ree_code))
+        penalty = rees.penalties.get(ree_code, _VMINOP_DEFAULT_PENALTY)
+        if penalty <= 0.0:
+            penalty_clamps.append(
+                _VminopPenaltyClamp(
+                    ree_code=ree_code,
+                    ree_name=ree_name,
+                    declared=penalty,
+                    applied=_VMINOP_DEFAULT_PENALTY,
+                )
+            )
+            penalty = _VMINOP_DEFAULT_PENALTY
+
+        ree_curva = curva_df[curva_df["codigo_ree"] == ree_code].sort_values("data")
+        pct_by_stage = _vminop_pct_by_stage(ree_curva, horizon, seasonalize=seasonalize)
+        if not pct_by_stage:
+            continue
+
+        builder.add(
+            name=f"VminOP_{ree_name}",
+            description=f"Minimum stored energy for REE {ree_code} ({ree_name})",
+            expression=expression,
+            slack=soft_slack(penalty, "per_unit"),
+            slots=[(stage_id, None, 0.0, None) for stage_id in sorted(pct_by_stage)],
+        )
+        per_stage_parameters[pct_name] = [
+            pct_by_stage.get(stage_id, 0.0) / 100.0
+            for stage_id in range(horizon.total_stages)
+        ]
+        all_referenced_ids.update(referenced_ids)
+
+    _emit_vminop_skips(vminop_skips)
+    _emit_vminop_penalty_clamps(penalty_clamps)
+    return per_stage_parameters, all_referenced_ids
+
+
+def _vminop_pct_by_stage(
+    ree_curva: pd.DataFrame, horizon: StudyHorizon, *, seasonalize: bool
+) -> dict[int, float]:
+    """One REE's security-curve percentage on each stage it binds, by stage id."""
+    # Curve percentage per stage. curva.dat only covers the study period.
+    # Extend into the post-study ("Período Estático Final") per source-model's
+    # rule (manual table p.32-33): seasonalize (repeat the last study year's
+    # monthly curve) when curva.dat's third penalization field is set,
+    # otherwise freeze December's value across the whole tail.
+    start_year = horizon.start_year
+    start_month = horizon.start_month
+    num_stages = horizon.total_stages
+    study_months = horizon.study_months
+
+    seasonal_pct: dict[int, float] = {}  # calendar_month -> last percentage
+    pct_by_stage: dict[int, float] = {}
+    for _, crow in ree_curva.iterrows():
+        dt: datetime = crow["data"]
+        stage_id = (dt.year - start_year) * 12 + (dt.month - start_month)
+        if stage_id < 0 or stage_id >= num_stages:
+            continue
+        percentage = float(crow["valor"])
+        seasonal_pct[dt.month] = percentage  # last value wins
+        pct_by_stage[stage_id] = percentage
+
+    # In-study gaps (and the post-study tail when seasonalized) use the
+    # seasonal pattern; otherwise the tail freezes at the last in-study
+    # stage's percentage (December of the last study year, forward-filled if
+    # that exact stage had no explicit row).
+    if seasonal_pct:
+        in_study = [s for s in pct_by_stage if s < study_months]
+        freeze_pct = pct_by_stage[max(in_study)] if in_study else None
+        for stage_id in range(num_stages):
+            if stage_id in pct_by_stage:
+                continue
+            if stage_id >= study_months and not seasonalize:
+                pct = freeze_pct
+            else:
+                cal_month = ((start_month - 1 + stage_id) % 12) + 1
+                pct = seasonal_pct.get(cal_month)
+            if pct is not None:
+                pct_by_stage[stage_id] = pct
+
+    return pct_by_stage
+
+
+def _emit_vminop_skips(skips: list[_VminopSkip]) -> None:
+    """Emit the ``vminop-ree-not-expressible`` WARNING, one row per skipped REE."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="vminop-ree-not-expressible",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"VminOP constraint not expressible ({len(skips)} REE(s))",
+            summary=(
+                f"{len(skips)} REE(s) with a curva.dat VminOP entry "
+                "could not be expressed as a generic constraint; skipping."
+            ),
+            table=DiagnosticTable(
+                columns=["REE", "Name", "Reason"],
+                rows=[[s.ree_code, s.ree_name, s.reason] for s in skips],
+                justify=["right", "left", "left"],
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
+def _emit_vminop_penalty_clamps(clamps: list[_VminopPenaltyClamp]) -> None:
+    """Emit the ``vminop-penalty-nonpositive`` WARNING, one row per clamped REE."""
+    if not clamps:
+        return
+    emit(
+        Diagnostic(
+            code="vminop-penalty-nonpositive",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"VminOP penalty not positive ({len(clamps)} REE(s))",
+            summary=(
+                f"{len(clamps)} REE(s) declare a curva.dat VminOP "
+                f"penalty that is not positive; using {_VMINOP_DEFAULT_PENALTY} "
+                "instead."
+            ),
+            table=DiagnosticTable(
+                columns=["REE", "Name", "Declared", "Applied"],
+                rows=[[c.ree_code, c.ree_name, c.declared, c.applied] for c in clamps],
+                justify=["right", "left", "right", "right"],
+            ),
+            remediation="Check curva.dat's penalty column for these REEs.",
+        ),
+        logger=_LOG,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Electric constraints from restricao-eletrica.csv
 # ---------------------------------------------------------------------------
 
 _UNBOUNDED_THRESHOLD = -1.0e29  # values below this are treated as -inf
 
+_YearMonth = tuple[int, int]
 
-def _parse_restricao_eletrica(
-    path: Path,
+_ELECTRIC_FIELD_LABELS = {
+    "codigo_restricao": "constraint code",
+    "formula": "formula",
+    "data_inicio": "start period (YYYY/MM)",
+    "data_fim": "end period (YYYY/MM)",
+    "patamar": "load block",
+}
+
+
+class _ElectricLimit(NamedTuple):
+    """One ``RE-LIM-FORM-PER-PAT`` row; a ``None`` limit is unbounded."""
+
+    first: _YearMonth
+    last: _YearMonth
+    block: int  # 1-based patamar
+    lower: float | None
+    upper: float | None
+
+
+def _read_restricao_eletrica(
+    restricoes: Restricoes, path: Path
 ) -> tuple[
     dict[int, str],
-    dict[int, tuple[str, str]],
-    list[tuple[int, str, str, int, float, float]],
+    dict[int, tuple[_YearMonth, _YearMonth]],
+    dict[int, list[_ElectricLimit]],
 ]:
-    """Parse ``restricao-eletrica.csv`` into its three sections.
+    """restricao-eletrica.csv's formulas (``RE``), horizons (``RE-HORIZ-PER``)
+    and limits (``RE-LIM-FORM-PER-PAT``), by constraint code.
 
-    Returns
-    -------
-    expressions : dict[int, str]
-        Mapping from constraint code to raw formula string.
-    horizons : dict[int, tuple[str, str]]
-        Mapping from constraint code to (PerIni, PerFin) as "YYYY/MM" strings.
-    bounds : list[tuple[int, str, str, int, float, float]]
-        Each element is (cod_rest, PerIni, PerFin, pat, lim_inf, lim_sup).
+    Raises:
+        SourceFileError: a record lacks a field the conversion needs, or a
+            limit is not a number, such as the manual's conditional ``se(...)``
+            limits.
     """
-    expressions: dict[int, str] = {}
-    horizons: dict[int, tuple[str, str]] = {}
-    bounds: list[tuple[int, str, str, int, float, float]] = []
+    expressions = {
+        as_int(row["codigo_restricao"]): str(row["formula"])
+        for row in _electric_rows(
+            restricoes.re(df=True), "RE", ("codigo_restricao", "formula"), path
+        )
+    }
+    horizons = {
+        as_int(row["codigo_restricao"]): (
+            _year_month(row["data_inicio"]),
+            _year_month(row["data_fim"]),
+        )
+        for row in _electric_rows(
+            restricoes.re_horiz_per(df=True),
+            "RE-HORIZ-PER",
+            ("codigo_restricao", "data_inicio", "data_fim"),
+            path,
+        )
+    }
+    limits: dict[int, list[_ElectricLimit]] = defaultdict(list)
+    for row in _electric_rows(
+        restricoes.re_lim_form_per(df=True),
+        "RE-LIM-FORM-PER-PAT",
+        ("codigo_restricao", "data_inicio", "data_fim", "patamar"),
+        path,
+    ):
+        cod = as_int(row["codigo_restricao"])
+        limits[cod].append(
+            _ElectricLimit(
+                first=_year_month(row["data_inicio"]),
+                last=_year_month(row["data_fim"]),
+                block=as_int(row["patamar"]),
+                lower=_electric_limit(row["limite_inferior"], cod, path),
+                upper=_electric_limit(row["limite_superior"], cod, path),
+            )
+        )
+    return expressions, horizons, dict(limits)
 
-    for raw_line in read_source_text(path).splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("&"):
-            continue
 
-        parts = [p.strip() for p in line.split(";")]
+def _electric_rows(
+    frame: pd.DataFrame,
+    record: str,
+    required: tuple[str, ...],
+    path: Path,
+) -> list[dict[str, object]]:
+    """*frame*'s rows, as read by inewave's ``df=True`` accessor of *record*.
 
-        if parts[0].upper() == "RE" and len(parts) >= 3:
-            cod = int(parts[1])
-            formula = parts[2]
-            expressions[cod] = formula
-
-        elif parts[0].upper() == "RE-HORIZ-PER" and len(parts) >= 4:
-            cod = int(parts[1])
-            horizons[cod] = (parts[2], parts[3])
-
-        elif parts[0].upper() == "RE-LIM-FORM-PER-PAT" and len(parts) >= 7:
-            cod = int(parts[1])
-            per_ini = parts[2]
-            per_fin = parts[3]
-            pat = int(parts[4])
-            lim_inf = float(parts[5])
-            lim_sup = float(parts[6])
-            bounds.append((cod, per_ini, per_fin, pat, lim_inf, lim_sup))
-
-    return expressions, horizons, bounds
-
-
-def _build_line_id_map(case: NewaveCase) -> dict[tuple[int, int], int]:
-    """Build the canonical (src, tgt) -> line_id mapping.
-
-    Replicates the exact logic from ``convert_lines`` in network.py so that
-    line IDs are consistent across both converters.
-
-    Returns
-    -------
-    dict[tuple[int, int], int]
-        Maps canonical (smaller_subsystem, larger_subsystem) to 0-based
-        line ID.  Only pairs from ``sistema.dat`` are included.
+    Raises:
+        SourceFileError: a row lacks one of the *required* columns; the reader
+            reads a missing or unreadable field as ``None``.
     """
-    sistema = case.sistema
-    limites_df = sistema.limites_intercambio
+    if frame.empty:
+        return []
+    rows: list[dict[str, object]] = frame.to_dict("records")
+    for row in rows:
+        missing = [_ELECTRIC_FIELD_LABELS[col] for col in required if is_na(row[col])]
+        if missing:
+            raise SourceFileError(
+                f"{path.name} has a {record} line without a readable "
+                f"{', '.join(missing)}",
+                path=str(path),
+                field=record,
+            )
+    return rows
 
-    if limites_df is None or limites_df.empty:
-        return {}
 
-    dger = case.dger
-    study_start_dt = datetime(dger.ano_inicio_estudo, dger.mes_inicio_estudo, 1)
-    first_month = limites_df[limites_df["data"] == study_start_dt]
-    if first_month.empty:
-        non_nan_df = limites_df.dropna(subset=["valor"])
-        if not non_nan_df.empty:
-            first_month = limites_df[limites_df["data"] == non_nan_df["data"].min()]
+def _year_month(value: object) -> _YearMonth:
+    stamp = as_timestamp(value)
+    return stamp.year, stamp.month
 
-    canonical_pairs: set[tuple[int, int]] = set()
-    for _, row in first_month.iterrows():
-        de = int(row["submercado_de"])
-        para = int(row["submercado_para"])
-        src, tgt = (de, para) if de < para else (para, de)
-        canonical_pairs.add((src, tgt))
 
-    return {pair: idx for idx, pair in enumerate(sorted(canonical_pairs))}
+def _electric_limit(value: object, cod: int, path: Path) -> float | None:
+    """A ``RE-LIM-FORM-PER-PAT`` limit, ``None`` when unbounded: a blank field
+    (manual §3.45.2) or a value at or below ``_UNBOUNDED_THRESHOLD``.
+
+    Raises:
+        SourceFileError: the limit is not a number.
+    """
+    if is_na(value) or not str(value).strip():
+        return None
+    try:
+        limit = float(str(value))
+    except ValueError as err:
+        raise SourceFileError(
+            f"{path.name}: constraint {cod} has the RE-LIM-FORM-PER-PAT limit "
+            f"{str(value).strip()!r}, which is not a number; conditional limits "
+            "are not converted",
+            path=str(path),
+            field="RE-LIM-FORM-PER-PAT",
+        ) from err
+    return None if limit <= _UNBOUNDED_THRESHOLD else limit
 
 
 # Term regex: optional sign and float coefficient, then function name and args.
@@ -965,7 +1070,7 @@ def _parse_formula(
             # ``line_direct``/``line_reverse`` so the sign is encoded by the variable
             # choice rather than by negating the coefficient (the latter would dilute
             # the bound when LP solutions route in the non-canonical direction).  See
-            # ``convert_agrint_constraints`` for the same rule applied to AGRINT terms.
+            # ``_agrint_expression`` for the same rule applied to AGRINT terms.
             var = (
                 f"line_direct({line_id})"
                 if from_sys < to_sys
@@ -979,10 +1084,25 @@ def _parse_formula(
     return _render_signed_expression(parsed_terms)
 
 
-def _parse_yyyymm(period_str: str) -> tuple[int, int]:
-    """Parse "YYYY/MM" into (year, month)."""
-    parts = period_str.strip().split("/")
-    return int(parts[0]), int(parts[1])
+def _stage_ids_between(
+    first: tuple[int, int],
+    last: tuple[int, int],
+    *,
+    start_year: int,
+    start_month: int,
+) -> Iterator[int]:
+    """0-based stage id of every ``(year, month)`` from *first* through *last*.
+
+    Months outside the horizon yield out-of-range ids; callers keep the stages
+    they cover.
+    """
+    year, month = first
+    while (year, month) <= last:
+        yield (year - start_year) * 12 + (month - start_month)
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
 
 
 # Sentinel stage index returned when the individualizado cutoff date is
@@ -1031,7 +1151,7 @@ def _get_individualizado_cutoff(
         end_month = int(row["mes_fim_individualizado"])
         end_year = int(row["ano_fim_individualizado"])
         return (end_year - start_year) * 12 + (end_month - start_month)
-    except Exception:  # noqa: BLE001
+    except Exception:
         emit(
             Diagnostic(
                 code="individualizado-cutoff-unknown",
@@ -1074,12 +1194,9 @@ def _parse_re_dat(
     conjuntos: dict[int, list[int]] = {}
     re_dat_bounds: dict[int, dict[tuple[int, int], float]] = {}
 
-    if case.files.re_dat is None:
-        return conjuntos, re_dat_bounds
-
     try:
         re_file = case.re_dat
-    except Exception:  # noqa: BLE001
+    except Exception:
         emit(
             Diagnostic(
                 code="re-dat-unreadable",
@@ -1090,6 +1207,9 @@ def _parse_re_dat(
             ),
             logger=_LOG,
         )
+        return conjuntos, re_dat_bounds
+
+    if re_file is None:
         return conjuntos, re_dat_bounds
 
     # Plant sets per constraint code.
@@ -1105,8 +1225,8 @@ def _parse_re_dat(
     if rest_df is None or rest_df.empty:
         return conjuntos, re_dat_bounds
 
-    for code, grp in rest_df.groupby("conjunto"):
-        code = int(code)
+    for group_key, grp in rest_df.groupby("conjunto"):
+        code = as_int(group_key)
         # Collect changepoints: [(stage_id, patamar, value)]
         changepoints: list[tuple[int, int, float]] = []
         for _, row in grp.iterrows():
@@ -1118,15 +1238,11 @@ def _parse_re_dat(
             value = float(row["restricao"])
 
             # Expand date range into individual stages.
-            y, m = ai, mi
-            while (y, m) <= (af, mf):
-                sid = (y - start_year) * 12 + (m - start_month)
+            for sid in _stage_ids_between(
+                (ai, mi), (af, mf), start_year=start_year, start_month=start_month
+            ):
                 if 0 <= sid < num_stages:
                     changepoints.append((sid, pat, value))
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
 
         if not changepoints:
             continue
@@ -1182,6 +1298,113 @@ def convert_electric_constraints(
         single-sided (a ``<=`` ceiling or a ``>=`` floor, never both), so
         exactly one endpoint is populated per row.
     """
+    re_path, has_re_dat = _enabled_electric_sources(case)
+    if re_path is None and not has_re_dat:
+        _LOG.debug("No electric constraints found; skipping.")
+        return None
+
+    sources, grid = _read_electric_sources(case, re_path, has_re_dat=has_re_dat)
+    if not sources.expressions and not sources.re_conjuntos:
+        _LOG.debug("No electric constraints found; skipping.")
+        return None
+
+    line_id_map = line_ids(case)
+
+    eletri_penalty = _resolve_eletri_penalty(case)
+    slack_config = (
+        soft_slack(eletri_penalty, "per_hour")
+        if eletri_penalty is not None and eletri_penalty > 0.0
+        else hard_slack()
+    )
+
+    allocator = allocator or ConstraintIdAllocator()
+    builder = GenericConstraintBuilder(allocator)
+
+    # Loop-accumulate-then-emit-once: one record per dropped term / skipped
+    # constraint, grouped by kind and emitted once after the loop (see
+    # converters/thermal.py's _GtminRecord idiom).
+    elec_term_skips: list[_ElectricTermSkip] = []
+    elec_constraint_skips: list[_ElectricConstraintSkip] = []
+
+    for cod in sorted(set(sources.expressions) | set(sources.re_conjuntos)):
+        novomodelo_expr = _electric_expression(
+            cod, sources, id_map, line_id_map, elec_term_skips
+        )
+        if novomodelo_expr is None:
+            elec_constraint_skips.append(
+                _ElectricConstraintSkip(
+                    constraint_code=cod, reason="no valid terms in expression"
+                )
+            )
+            continue
+
+        bounds = _electric_bounds(cod, sources, grid.horizon)
+        if not bounds.has_sup and not bounds.has_inf:
+            elec_constraint_skips.append(
+                _ElectricConstraintSkip(constraint_code=cod, reason="no bound data")
+            )
+            continue
+
+        _add_electric_constraint(
+            builder, cod, novomodelo_expr, slack_config, bounds, grid
+        )
+
+    _emit_electric_term_skips(elec_term_skips)
+    _emit_electric_constraint_skips(elec_constraint_skips)
+
+    result = builder.result()
+    if result is None:
+        return None
+
+    _LOG.info(
+        "Generated %d electric constraints with %d bounds "
+        "(individualizado cutoff at stage %d).",
+        len(result.constraints),
+        result.bounds.num_rows,
+        grid.cutoff,
+    )
+
+    return result
+
+
+@dataclass(frozen=True)
+class _ElectricSources:
+    """restricao-eletrica.csv's and RE.DAT's electric constraints, by constraint code."""
+
+    expressions: dict[int, str]
+    horizons: dict[int, tuple[_YearMonth, _YearMonth]]
+    csv_bounds: dict[int, list[_ElectricLimit]]
+    re_conjuntos: dict[int, list[int]]
+    re_dat_bounds: dict[int, dict[tuple[int, int], float]]
+
+
+class _ElectricGrid(NamedTuple):
+    """The stage/block grid electric bounds are laid on."""
+
+    horizon: StudyHorizon
+    num_patamares: int
+    cutoff: int
+    """First post-individualizado stage (:func:`_get_individualizado_cutoff`)."""
+
+
+class _ElectricBounds(NamedTuple):
+    """One electric constraint's limits by ``(stage_id, block_id)``, per source."""
+
+    csv_sup: dict[tuple[int, int], float]
+    csv_inf: dict[tuple[int, int], float]
+    re_sup: dict[tuple[int, int], float]
+
+    @property
+    def has_sup(self) -> bool:
+        return bool(self.csv_sup) or bool(self.re_sup)
+
+    @property
+    def has_inf(self) -> bool:
+        return bool(self.csv_inf)
+
+
+def _enabled_electric_sources(case: NewaveCase) -> tuple[Path | None, bool]:
+    """restricao-eletrica.csv's path and whether RE.DAT is read, per dger.dat."""
     switches = case.switches
     re_path = case.files.restricao_eletrica
     if re_path is not None and not switches.restricao_eletrica.on:
@@ -1191,44 +1414,48 @@ def convert_electric_constraints(
     if has_re_dat and not switches.re_dat.on:
         emit(switch_off_diagnostic(switches.re_dat), logger=_LOG)
         has_re_dat = False
+    return re_path, has_re_dat
 
-    if re_path is None and not has_re_dat:
-        _LOG.debug("No electric constraints found; skipping.")
-        return None
 
-    # Parse restricao-eletrica.csv (individualised period data).
+def _read_electric_sources(
+    case: NewaveCase, re_path: Path | None, *, has_re_dat: bool
+) -> tuple[_ElectricSources, _ElectricGrid]:
+    """Read restricao-eletrica.csv and RE.DAT, and the grid they are laid on."""
     expressions: dict[int, str] = {}
-    horizons: dict[int, tuple[str, str]] = {}
-    bounds_rows: list[tuple[int, str, str, int, float, float]] = []
+    horizons: dict[int, tuple[_YearMonth, _YearMonth]] = {}
+    csv_bounds: dict[int, list[_ElectricLimit]] = {}
+    if re_path is not None and (restricoes := case.restricao_eletrica) is not None:
+        unread = unread_lines_diagnostic(re_path, restricoes.data)
+        if unread is not None:
+            emit(unread, logger=_LOG)
+        expressions, horizons, csv_bounds = _read_restricao_eletrica(
+            restricoes, re_path
+        )
 
-    if re_path is not None:
-        expressions, horizons, bounds_rows = _parse_restricao_eletrica(re_path)
-
-    _horizon = case.horizon
-    start_month = _horizon.start_month
-    start_year = _horizon.start_year
-    num_anos = _horizon.num_anos
-    num_stages = _horizon.total_stages
-
+    horizon = case.horizon
     patamar = case.patamar
     num_patamares: int = patamar.numero_patamares or 1
-
-    # Individualised period cutoff.
-    cutoff = _get_individualizado_cutoff(case, start_year, start_month)
+    cutoff = _get_individualizado_cutoff(case, horizon.start_year, horizon.start_month)
 
     re_conjuntos: dict[int, list[int]] = {}
     re_dat_bounds: dict[int, dict[tuple[int, int], float]] = {}
     if has_re_dat:
         re_conjuntos, re_dat_bounds = _parse_re_dat(
-            case, start_year, start_month, num_stages, num_patamares
+            case,
+            horizon.start_year,
+            horizon.start_month,
+            horizon.total_stages,
+            num_patamares,
         )
 
-    if not expressions and not re_conjuntos:
-        _LOG.debug("No electric constraints found; skipping.")
-        return None
+    sources = _ElectricSources(
+        expressions, horizons, csv_bounds, re_conjuntos, re_dat_bounds
+    )
+    return sources, _ElectricGrid(horizon, num_patamares, cutoff)
 
-    line_id_map = _build_line_id_map(case)
 
+def _resolve_eletri_penalty(case: NewaveCase) -> float | None:
+    """The electric slack penalty in R$/MWh, or ``None`` when none is readable."""
     # Read ELETRI penalty from PENALID.DAT for slack costs. The source model manual v29
     # §3.24: ELETRI is energy-domain (R$/MWh) and applies only in individualized
     # periods. When absent in PENALID.DAT, the source model considers the constraint
@@ -1240,7 +1467,7 @@ def convert_electric_constraints(
     if case.files.penalid is not None:
         try:
             penalid = case.penalid
-            df_pen = penalid.penalidades
+            df_pen = penalid.penalidades if penalid is not None else None
             if df_pen is not None and not df_pen.empty:
                 eletri = df_pen[
                     (df_pen["variavel"] == "ELETRI")
@@ -1274,425 +1501,322 @@ def convert_electric_constraints(
             if _def_df is not None and not _def_df.empty:
                 eletri_penalty = 10.0 * float(_def_df["custo"].max())
         except (OSError, ValueError, KeyError):
-            pass
+            pass  # no default either: None makes the RE_* constraints hard
 
-    slack_config = (
-        soft_slack(eletri_penalty, "per_hour")
-        if eletri_penalty is not None and eletri_penalty > 0.0
-        else hard_slack()
-    )
+    return eletri_penalty
 
-    allocator = allocator or ConstraintIdAllocator()
-    builder = GenericConstraintBuilder(allocator)
 
-    # Index restricao-eletrica.csv bounds by constraint code.
-    csv_bounds_by_code: dict[int, list[tuple[str, str, int, float, float]]] = (
-        defaultdict(list)
-    )
-    for cod, per_ini, per_fin, pat, lim_inf, lim_sup in bounds_rows:
-        csv_bounds_by_code[cod].append((per_ini, per_fin, pat, lim_inf, lim_sup))
+def _electric_expression(
+    cod: int,
+    sources: _ElectricSources,
+    id_map: NewaveIdMap,
+    line_id_map: dict[tuple[int, int], int],
+    term_skips: list[_ElectricTermSkip],
+) -> str | None:
+    """Constraint ``cod``'s expression, from its restricao-eletrica.csv formula
+    when it has one, else the sum of its RE.DAT plants' ``hydro_generation``.
 
-    # All constraint codes from both sources.
-    all_codes = sorted(set(expressions.keys()) | set(re_conjuntos.keys()))
+    Every dropped term is recorded on *term_skips*; ``None`` when none is left.
+    """
+    if cod in sources.expressions:
+        return _parse_formula(
+            sources.expressions[cod],
+            id_map,
+            line_id_map,
+            constraint_code=cod,
+            skipped=term_skips,
+        )
 
-    # Loop-accumulate-then-emit-once: one record per dropped term / skipped
-    # constraint, grouped by kind and emitted once after the loop (see
-    # converters/thermal.py's _GtminRecord idiom).
-    elec_term_skips: list[_ElectricTermSkip] = []
-    elec_constraint_skips: list[_ElectricConstraintSkip] = []
-
-    for cod in all_codes:
-        # --- Build expression ---
-        has_csv = cod in expressions
-        has_re_dat = cod in re_conjuntos
-
-        if has_csv:
-            novomodelo_expr = _parse_formula(
-                expressions[cod],
-                id_map,
-                line_id_map,
-                constraint_code=cod,
-                skipped=elec_term_skips,
-            )
-        elif has_re_dat:
-            # RE.DAT-only: expression is sum of hydro_generation for plants.
-            terms: list[str] = []
-            for plant_code in sorted(re_conjuntos[cod]):
-                try:
-                    novomodelo_id = id_map.hydro_id(plant_code)
-                except KeyError:
-                    elec_term_skips.append(
-                        _ElectricTermSkip(
-                            constraint_code=cod,
-                            kind="hydro-unmapped",
-                            source="RE.DAT",
-                            hydro_code=plant_code,
-                        )
-                    )
-                    continue
-                terms.append(f"hydro_generation({novomodelo_id})")
-            novomodelo_expr = " + ".join(terms) if terms else None
-        else:
-            continue
-
-        if novomodelo_expr is None:
-            elec_constraint_skips.append(
-                _ElectricConstraintSkip(
-                    constraint_code=cod, reason="no valid terms in expression"
+    terms: list[str] = []
+    for plant_code in sorted(sources.re_conjuntos[cod]):
+        try:
+            novomodelo_id = id_map.hydro_id(plant_code)
+        except KeyError:
+            term_skips.append(
+                _ElectricTermSkip(
+                    constraint_code=cod,
+                    kind="hydro-unmapped",
+                    source="RE.DAT",
+                    hydro_code=plant_code,
                 )
             )
             continue
+        terms.append(f"hydro_generation({novomodelo_id})")
+    return " + ".join(terms) if terms else None
 
-        # --- Build bound maps for this constraint ---
-        # csv_sup/csv_inf: restricao-eletrica.csv bounds by (stage, block)
-        csv_sup: dict[tuple[int, int], float] = {}
-        csv_inf: dict[tuple[int, int], float] = {}
 
-        entries_for_code = csv_bounds_by_code.get(cod, [])
-        horizon = horizons.get(cod)
-        horiz_ini = _parse_yyyymm(horizon[0]) if horizon else (start_year, start_month)
-        horiz_fin = (
-            _parse_yyyymm(horizon[1]) if horizon else (start_year + num_anos - 1, 12)
+def _electric_bounds(
+    cod: int, sources: _ElectricSources, horizon: StudyHorizon
+) -> _ElectricBounds:
+    """Constraint ``cod``'s restricao-eletrica.csv limits and RE.DAT ceilings.
+
+    A csv limit is clipped to the constraint's ``RE-HORIZ-PER`` window, or to the
+    study years when it declares none.
+    """
+    csv_sup: dict[tuple[int, int], float] = {}
+    csv_inf: dict[tuple[int, int], float] = {}
+    start_year = horizon.start_year
+    start_month = horizon.start_month
+
+    horiz_ini, horiz_fin = sources.horizons.get(
+        cod, ((start_year, start_month), (start_year + horizon.num_anos - 1, 12))
+    )
+
+    for limit in sources.csv_bounds.get(cod, []):
+        block_id = limit.block - 1  # 1-based -> 0-based
+        for sid in _stage_ids_between(
+            max(limit.first, horiz_ini),
+            min(limit.last, horiz_fin),
+            start_year=start_year,
+            start_month=start_month,
+        ):
+            if 0 <= sid < horizon.total_stages:
+                if limit.upper is not None:
+                    csv_sup[(sid, block_id)] = limit.upper
+                if limit.lower is not None:
+                    csv_inf[(sid, block_id)] = limit.lower
+
+    return _ElectricBounds(csv_sup, csv_inf, sources.re_dat_bounds.get(cod, {}))
+
+
+def _add_electric_constraint(
+    builder: GenericConstraintBuilder,
+    cod: int,
+    expression: str,
+    slack: dict[str, object],
+    bounds: _ElectricBounds,
+    grid: _ElectricGrid,
+) -> None:
+    """Add ``RE_{cod}``'s ceiling and floor and one row per declared (stage, block).
+
+    The ceiling is RE.DAT's from the individualizado cutoff on and the csv's
+    elsewhere; the floor is the csv's.
+    """
+    sup_id: int | None = None
+    inf_id: int | None = None
+
+    if bounds.has_sup:
+        sup_id = builder.add_constraint(
+            name=f"RE_{cod}",
+            description=f"Electric constraint {cod}",
+            expression=expression,
+            slack=slack,
+        )
+    if bounds.has_inf:
+        inf_id = builder.add_constraint(
+            name=f"RE_{cod}",
+            description=f"Electric constraint {cod}",
+            expression=expression,
+            slack=slack,
         )
 
-        for per_ini, per_fin, pat, lim_inf, lim_sup in entries_for_code:
-            ini_year, ini_month = _parse_yyyymm(per_ini)
-            fin_year, fin_month = _parse_yyyymm(per_fin)
+    for stage_id in range(grid.horizon.total_stages):
+        is_post_indiv = stage_id >= grid.cutoff
 
-            ini_year, ini_month = max(
-                (ini_year, ini_month), horiz_ini, key=lambda t: t[0] * 12 + t[1]
-            )
-            fin_year, fin_month = min(
-                (fin_year, fin_month), horiz_fin, key=lambda t: t[0] * 12 + t[1]
-            )
+        for block_id in range(grid.num_patamares):
+            # Upper bound.
+            if sup_id is not None:
+                sup_val: float | None = None
+                if is_post_indiv and (stage_id, block_id) in bounds.re_sup:
+                    sup_val = bounds.re_sup[(stage_id, block_id)]
+                elif (stage_id, block_id) in bounds.csv_sup:
+                    sup_val = bounds.csv_sup[(stage_id, block_id)]
+                if sup_val is not None:
+                    builder.add_bound_row(
+                        sup_id,
+                        stage_id=stage_id,
+                        block_id=block_id,
+                        lower=None,
+                        upper=sup_val,
+                    )
 
-            block_id = pat - 1  # 1-based -> 0-based
+            # Lower bound.
+            if inf_id is not None:
+                inf_val: float | None = None
+                if (stage_id, block_id) in bounds.csv_inf:
+                    inf_val = bounds.csv_inf[(stage_id, block_id)]
+                if inf_val is not None:
+                    builder.add_bound_row(
+                        inf_id,
+                        stage_id=stage_id,
+                        block_id=block_id,
+                        lower=inf_val,
+                        upper=None,
+                    )
 
-            y, m = ini_year, ini_month
-            while (y, m) <= (fin_year, fin_month):
-                sid = (y - start_year) * 12 + (m - start_month)
-                if 0 <= sid < num_stages:
-                    if lim_sup > _UNBOUNDED_THRESHOLD:
-                        csv_sup[(sid, block_id)] = lim_sup
-                    if lim_inf > _UNBOUNDED_THRESHOLD:
-                        csv_inf[(sid, block_id)] = lim_inf
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
 
-        # RE.DAT upper bounds for post-individualised stages.
-        re_sup = re_dat_bounds.get(cod, {})
+def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
+    """Emit one WARNING per kind of dropped electric-constraint term."""
+    if not skips:
+        return
+    by_kind: dict[str, list[_ElectricTermSkip]] = defaultdict(list)
+    for skip in skips:
+        by_kind[skip.kind].append(skip)
 
-        # --- Determine senses ---
-        has_sup = bool(csv_sup) or bool(re_sup)
-        has_inf = bool(csv_inf)
-
-        if not has_sup and not has_inf:
-            elec_constraint_skips.append(
-                _ElectricConstraintSkip(constraint_code=cod, reason="no bound data")
-            )
-            continue
-
-        sup_id: int | None = None
-        inf_id: int | None = None
-
-        if has_sup:
-            sup_id = builder.add_constraint(
-                name=f"RE_{cod}",
-                description=f"Electric constraint {cod}",
-                expression=novomodelo_expr,
-                slack=slack_config,
-            )
-        if has_inf:
-            inf_id = builder.add_constraint(
-                name=f"RE_{cod}",
-                description=f"Electric constraint {cod}",
-                expression=novomodelo_expr,
-                slack=slack_config,
-            )
-
-        # --- Emit one row per declared (stage, block) bound ---
-        for stage_id in range(num_stages):
-            is_post_indiv = stage_id >= cutoff
-
-            for block_id in range(num_patamares):
-                # Upper bound.
-                if sup_id is not None:
-                    sup_val: float | None = None
-                    if is_post_indiv and (stage_id, block_id) in re_sup:
-                        sup_val = re_sup[(stage_id, block_id)]
-                    elif (stage_id, block_id) in csv_sup:
-                        sup_val = csv_sup[(stage_id, block_id)]
-                    if sup_val is not None:
-                        builder.add_bound_row(
-                            sup_id,
-                            stage_id=stage_id,
-                            block_id=block_id,
-                            lower=None,
-                            upper=sup_val,
-                        )
-
-                # Lower bound.
-                if inf_id is not None:
-                    inf_val: float | None = None
-                    if (stage_id, block_id) in csv_inf:
-                        inf_val = csv_inf[(stage_id, block_id)]
-                    if inf_val is not None:
-                        builder.add_bound_row(
-                            inf_id,
-                            stage_id=stage_id,
-                            block_id=block_id,
-                            lower=inf_val,
-                            upper=None,
-                        )
-
-    if elec_term_skips:
-        by_kind: dict[str, list[_ElectricTermSkip]] = defaultdict(list)
-        for skip in elec_term_skips:
-            by_kind[skip.kind].append(skip)
-
-        hydro_unmapped = by_kind.get("hydro-unmapped", [])
-        if hydro_unmapped:
-            emit(
-                Diagnostic(
-                    code="electric-constraint-hydro-unmapped",
-                    severity=Severity.WARNING,
-                    category=_CATEGORY,
-                    title=(
-                        "Electric constraint references an unmapped hydro "
-                        f"plant ({len(hydro_unmapped)})"
-                    ),
-                    summary=(
-                        f"{len(hydro_unmapped)} electric constraint term(s) "
-                        "reference a hydro plant code with no matching novomodelo "
-                        "entity; the term is dropped."
-                    ),
-                    table=DiagnosticTable(
-                        columns=["Constraint", "Hydro code", "Source"],
-                        rows=[
-                            [s.constraint_code, s.hydro_code, s.source]
-                            for s in hydro_unmapped
-                        ],
-                        justify=["right", "right", "left"],
-                    ),
-                ),
-                logger=_LOG,
-            )
-
-        no_line = by_kind.get("no-line", [])
-        if no_line:
-            emit(
-                Diagnostic(
-                    code="electric-constraint-interchange-no-line",
-                    severity=Severity.WARNING,
-                    category=_CATEGORY,
-                    title=(
-                        "Electric constraint interchange has no matching line "
-                        f"({len(no_line)})"
-                    ),
-                    summary=(
-                        f"{len(no_line)} electric constraint interchange "
-                        "term(s) reference a subsystem pair with no matching "
-                        "novomodelo line; the term is dropped."
-                    ),
-                    table=DiagnosticTable(
-                        columns=["Constraint", "From", "To"],
-                        rows=[
-                            [s.constraint_code, s.sys_from, s.sys_to] for s in no_line
-                        ],
-                        justify=["right", "right", "right"],
-                    ),
-                    remediation="Declare the pair as an interchange line.",
-                ),
-                logger=_LOG,
-            )
-
-        malformed = by_kind.get("malformed", [])
-        if malformed:
-            emit(
-                Diagnostic(
-                    code="electric-constraint-malformed-term",
-                    severity=Severity.WARNING,
-                    category=_CATEGORY,
-                    title=(
-                        f"Electric constraint has a malformed term ({len(malformed)})"
-                    ),
-                    summary=(
-                        f"{len(malformed)} electric constraint interchange "
-                        "term(s) declared fewer than 2 arguments; the term is "
-                        "dropped."
-                    ),
-                    table=DiagnosticTable(
-                        columns=["Constraint", "Term"],
-                        rows=[[s.constraint_code, s.raw] for s in malformed],
-                        justify=["right", "left"],
-                    ),
-                ),
-                logger=_LOG,
-            )
-
-    if elec_constraint_skips:
+    hydro_unmapped = by_kind.get("hydro-unmapped", [])
+    if hydro_unmapped:
         emit(
             Diagnostic(
-                code="electric-constraint-skipped",
+                code="electric-constraint-hydro-unmapped",
                 severity=Severity.WARNING,
                 category=_CATEGORY,
-                title=f"Electric constraint skipped ({len(elec_constraint_skips)})",
+                title=(
+                    "Electric constraint references an unmapped hydro "
+                    f"plant ({len(hydro_unmapped)})"
+                ),
                 summary=(
-                    f"{len(elec_constraint_skips)} electric constraint(s) "
-                    "could not be converted; skipping."
+                    f"{len(hydro_unmapped)} electric constraint term(s) "
+                    "reference a hydro plant code with no matching novomodelo "
+                    "entity; the term is dropped."
                 ),
                 table=DiagnosticTable(
-                    columns=["Constraint", "Reason"],
-                    rows=[[s.constraint_code, s.reason] for s in elec_constraint_skips],
+                    columns=["Constraint", "Hydro code", "Source"],
+                    rows=[
+                        [s.constraint_code, s.hydro_code, s.source]
+                        for s in hydro_unmapped
+                    ],
+                    justify=["right", "right", "left"],
+                ),
+            ),
+            logger=_LOG,
+        )
+
+    no_line = by_kind.get("no-line", [])
+    if no_line:
+        emit(
+            Diagnostic(
+                code="electric-constraint-interchange-no-line",
+                severity=Severity.WARNING,
+                category=_CATEGORY,
+                title=(
+                    "Electric constraint interchange has no matching line "
+                    f"({len(no_line)})"
+                ),
+                summary=(
+                    f"{len(no_line)} electric constraint interchange "
+                    "term(s) reference a subsystem pair with no matching "
+                    "novomodelo line; the term is dropped."
+                ),
+                table=DiagnosticTable(
+                    columns=["Constraint", "From", "To"],
+                    rows=[[s.constraint_code, s.sys_from, s.sys_to] for s in no_line],
+                    justify=["right", "right", "right"],
+                ),
+                remediation="Declare the pair as an interchange line.",
+            ),
+            logger=_LOG,
+        )
+
+    malformed = by_kind.get("malformed", [])
+    if malformed:
+        emit(
+            Diagnostic(
+                code="electric-constraint-malformed-term",
+                severity=Severity.WARNING,
+                category=_CATEGORY,
+                title=f"Electric constraint has a malformed term ({len(malformed)})",
+                summary=(
+                    f"{len(malformed)} electric constraint interchange "
+                    "term(s) declared fewer than 2 arguments; the term is "
+                    "dropped."
+                ),
+                table=DiagnosticTable(
+                    columns=["Constraint", "Term"],
+                    rows=[[s.constraint_code, s.raw] for s in malformed],
                     justify=["right", "left"],
                 ),
             ),
             logger=_LOG,
         )
 
-    result = builder.result()
-    if result is None:
-        return None
 
-    _LOG.info(
-        "Generated %d electric constraints with %d bounds "
-        "(individualizado cutoff at stage %d).",
-        len(result.constraints),
-        result.bounds.num_rows,
-        cutoff,
+def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> None:
+    """Emit the ``electric-constraint-skipped`` WARNING, one row per constraint."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="electric-constraint-skipped",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"Electric constraint skipped ({len(skips)})",
+            summary=(
+                f"{len(skips)} electric constraint(s) could not be converted; skipping."
+            ),
+            table=DiagnosticTable(
+                columns=["Constraint", "Reason"],
+                rows=[[s.constraint_code, s.reason] for s in skips],
+                justify=["right", "left"],
+            ),
+        ),
+        logger=_LOG,
     )
-
-    return result
 
 
 # ---------------------------------------------------------------------------
 # AGRINT.DAT — Exchange group constraints
 # ---------------------------------------------------------------------------
 
-_AGRINT_DEFAULT_PENALTY = 1000.0
 
-
-def _parse_agrint(
-    path: Path,
-    num_patamares: int = 3,
+def _agrint_tables(
+    agrint: Agrint, num_patamares: int
 ) -> tuple[
     dict[int, list[tuple[int, int, float]]],  # group_id -> [(A, B, coeff)]
     list[tuple[int, int, int, int | None, int | None, list[float]]],
-    # (group_id, mi, anoi, mf|None, anof|None, [lim per patamar])
+    # (group_id, mi, anoi, mf|None, anof|None, [lim per patamar]), in file order
 ]:
-    """Parse AGRINT.DAT into group definitions and limit rows.
+    """``agrint.dat``'s groups and limit records, one limit per deck block.
 
-    Returns
-    -------
-    groups : dict[int, list[tuple[int, int, float]]]
-        Mapping from group ID to a list of (A, B, coefficient) tuples.
-    limits : list of 6-tuples
-        Each element is
-        (group_id, start_month, start_year, end_month|None, end_year|None,
-         [lim_p1, lim_p2, lim_p3]).
+    A blank block column repeats the previous block's limit.
+
+    Raises:
+        FieldParseError: a limit record whose first block column is blank.
     """
+    groups_df = agrint.agrupamentos
+    limits_df = agrint.limites_agrupamentos
+    if groups_df is None or limits_df is None:
+        return {}, []
+
     groups: dict[int, list[tuple[int, int, float]]] = {}
+    for group_id, de, para, coefficient in zip(
+        groups_df["agrupamento"],
+        groups_df["submercado_de"],
+        groups_df["submercado_para"],
+        groups_df["coeficiente"],
+        strict=True,
+    ):
+        groups.setdefault(as_int(group_id), []).append(
+            (as_int(de), as_int(para), as_float(coefficient))
+        )
+
     limits: list[tuple[int, int, int, int | None, int | None, list[float]]] = []
-
-    in_groups_section = False
-    in_limits_section = False
-
-    with path.open(encoding="latin-1") as fh:
-        for raw_line in fh:
-            line = raw_line.rstrip("\r\n")
-
-            stripped = line.strip()
-            if not stripped or stripped.startswith("&"):
-                continue
-
-            upper = stripped.upper()
-
-            # Section headers
-            if "AGRUPAMENTOS" in upper:
-                if "LIMITES" not in upper:
-                    in_groups_section = True
-                    in_limits_section = False
-                    continue
-
-            if "LIMITES POR GRUPO" in upper:
-                in_groups_section = False
-                in_limits_section = True
-                continue
-
-            # Skip format/header comment lines
-            if stripped.startswith("#") or stripped.startswith("X"):
-                continue
-
-            if in_groups_section:
-                # Terminator
-                if stripped.startswith("999"):
-                    in_groups_section = False
-                    continue
-                # Data line: right-aligned fixed-width columns
-                # Format: XXX XXX XXX XX.XXXX
-                # columns: group(1-3), A(5-7), B(9-11), coeff(13-20)
-                try:
-                    parts = stripped.split()
-                    if len(parts) < 4:
-                        continue
-                    group_id = int(parts[0])
-                    a = int(parts[1])
-                    b = int(parts[2])
-                    coeff = float(parts[3])
-                    groups.setdefault(group_id, []).append((a, b, coeff))
-                except (ValueError, IndexError):
-                    continue
-
-            elif in_limits_section:
-                if stripped.startswith("999"):
-                    break
-                # Format: #AG MI ANOI MF ANOF LIM_P1 LIM_P2 LIM_P3 [description]
-                # MF/ANOF are optional (open-ended if blank)
-                try:
-                    parts = stripped.split()
-                    if len(parts) < 4:
-                        continue
-                    group_id = int(parts[0])
-                    mi = int(parts[1])
-                    anoi = int(parts[2])
-
-                    # Detect whether MF/ANOF are present by trying to parse
-                    # parts[3] and parts[4] as int before float limits.
-                    # Limits always end with '.' in the file, so they parse as float.
-                    # MF/ANOF are small integers (1-12 / 4-digit year).
-                    mf: int | None = None
-                    anof: int | None = None
-                    lim_start = 3
-
-                    # parts[3]: could be MF (int 1-12) or first limit (float w/ '.')
-                    if "." not in parts[3] and len(parts) > 5:
-                        # Could still be a year — check parts[4] too
-                        try:
-                            candidate_mf = int(parts[3])
-                            candidate_anof = int(parts[4])
-                            # Sanity: MF in [1,12], ANOF is a 4-digit year
-                            if (
-                                1 <= candidate_mf <= 12
-                                and 1900 <= candidate_anof <= 9999
-                            ):
-                                mf = candidate_mf
-                                anof = candidate_anof
-                                lim_start = 5
-                        except (ValueError, IndexError):
-                            pass
-
-                    lim_parts = parts[lim_start : lim_start + num_patamares]
-                    if len(lim_parts) < 1:
-                        continue
-                    lims = [float(lp.rstrip(".")) for lp in lim_parts]
-                    while len(lims) < num_patamares:
-                        lims.append(lims[-1])
-                    limits.append((group_id, mi, anoi, mf, anof, lims))
-                except (ValueError, IndexError):
-                    continue
-
+    record_number = (limits_df["patamar"] == 1).cumsum()
+    for _, record in limits_df.groupby(record_number, sort=False):
+        first = record.iloc[0]
+        group_id = as_int(first["agrupamento"])
+        values = (
+            record.set_index("patamar")["valor"]
+            .reindex(range(1, num_patamares + 1))
+            .ffill()
+        )
+        if values.isna().any():
+            raise FieldParseError(
+                f"agrint.dat: a limit record of group {group_id} has no first block limit",
+                path="agrint.dat",
+                field="LIMITES POR GRUPO",
+            )
+        start = as_timestamp(first["data_inicio"])
+        end = None if is_na(first["data_fim"]) else as_timestamp(first["data_fim"])
+        limits.append(
+            (
+                group_id,
+                start.month,
+                start.year,
+                None if end is None else end.month,
+                None if end is None else end.year,
+                [float(v) for v in values],
+            )
+        )
     return groups, limits
 
 
@@ -1704,15 +1828,15 @@ def convert_agrint_constraints(
     """Convert AGRINT.DAT exchange group constraints to Novomodelo generic constraints.
 
     Each group in AGRINT.DAT defines a weighted sum of directional interchange
-    flows.  Each group becomes one ``<=`` generic constraint with a high-default
-    slack penalty.  Bounds are stored per (constraint_id, stage_id, block_id).
+    flows.  Each group becomes one hard ``<=`` generic constraint (no slack).
+    Bounds are stored per (constraint_id, stage_id, block_id).
 
     Parameters
     ----------
     case:
         Parsed the source model case.
     id_map:
-        Entity ID mapping (used indirectly via ``_build_line_id_map``).
+        Entity ID mapping (used indirectly via ``line_ids``).
     allocator:
         Shared id source; defaults to a fresh :class:`ConstraintIdAllocator`
         (ids from 0) when omitted. The pipeline threads one instance across
@@ -1738,17 +1862,15 @@ def convert_agrint_constraints(
     patamar_ag = case.patamar
     num_patamares_ag: int = patamar_ag.numero_patamares or 1
 
-    groups, limits = _parse_agrint(case.files.agrint, num_patamares_ag)
+    agrint = case.agrint
+    if agrint is None:
+        return None
+    groups, limits = _agrint_tables(agrint, num_patamares_ag)
     if not groups or not limits:
         return None
 
-    _horizon = case.horizon
-    start_month = _horizon.start_month
-    start_year = _horizon.start_year
-    study_months = _horizon.study_months
-    num_stages = _horizon.total_stages
-
-    line_id_map = _build_line_id_map(case)
+    horizon = case.horizon
+    line_id_map = line_ids(case)
 
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
@@ -1760,136 +1882,23 @@ def convert_agrint_constraints(
     agrint_group_skips: list[_AgrintGroupSkip] = []
 
     for group_id in sorted(groups.keys()):
-        terms_raw = groups[group_id]
-
-        # The source model's ``Interc(A→B)`` is the *non-negative directional* flow from
-        # A to B (zero whenever physical flow goes B→A).  Novomodelo's ``line_direct(id)`` /
-        # ``line_reverse(id)`` are the matching non-negative LP variables:
-        # ``line_direct`` is the flow in the canonical (src<tgt) direction,
-        # ``line_reverse`` the flow in the opposite direction.
-        #
-        # The naive substitution ``-line_exchange`` (signed net flow,
-        # negated when reversed) would let the LHS go negative when one
-        # term is flowing in its non-canonical direction — diluting the
-        # bound at fictitious hubs and producing incorrect dispatch.
-        parsed_terms: list[tuple[float, str]] = []
-        for a, b, coeff in terms_raw:
-            src, tgt = (a, b) if a < b else (b, a)
-            line_id = line_id_map.get((src, tgt))
-            if line_id is None:
-                agrint_term_skips.append(
-                    _AgrintTermSkip(group_id=group_id, sys_a=a, sys_b=b)
-                )
-                continue
-            var = f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
-            parsed_terms.append((coeff, var))
-
-        if not parsed_terms:
+        expression = _agrint_expression(
+            group_id, groups[group_id], line_id_map, agrint_term_skips
+        )
+        if expression is None:
             agrint_group_skips.append(_AgrintGroupSkip(group_id=group_id))
             continue
-
-        expression = _render_signed_expression(parsed_terms)
-
-        # Collect study-period limit rows for this group, keyed by (stage, block).
-        # AGRINT has no seasonalize flag: The source model freezes its post-study limits
-        # at the last study stage value and ignores any post-study-dated agrint.dat
-        # entries (planned future expansion). The pmo.dat "LIMITES DOS AGRUPAMENTOS DE
-        # INTERCAMBIO (MWmedio)" block confirms this — its POS row is flat at the last
-        # study (December) value. So clamp to the study period here, then freeze the
-        # tail.
-        group_bounds: dict[tuple[int, int], float] = {}
-        for grp, mi, anoi, mf, anof, lims in limits:
-            if grp != group_id:
-                continue
-
-            # Determine effective end (open-ended => last study stage)
-            if mf is None or anof is None:
-                # Open-ended: run to the end of the study horizon
-                end_y = start_year + (num_stages - 1 + start_month - 1) // 12
-                end_m = (start_month - 1 + num_stages - 1) % 12 + 1
-            else:
-                end_y, end_m = anof, mf
-
-            # Iterate month by month within [mi/anoi .. end_m/end_y], keeping
-            # only the study period (post-study is handled by the freeze below).
-            y, m = anoi, mi
-            while (y, m) <= (end_y, end_m):
-                stage_id = (y - start_year) * 12 + (m - start_month)
-                if 0 <= stage_id < study_months:
-                    for block_idx, lim_val in enumerate(lims):
-                        group_bounds[(stage_id, block_idx)] = lim_val
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
-
-        # Emit study-period slots.
-        slots: list[tuple[int, int | None, float | None, float | None]] = [
-            (stage_id, block_idx, None, lim_val)
-            for (stage_id, block_idx), lim_val in group_bounds.items()
-        ]
-
-        # Freeze the last study stage value through the post-study tail.
-        last_study_stage = study_months - 1
-        if num_stages > study_months:
-            for block_idx in sorted({b for (_, b) in group_bounds}):
-                freeze_val = group_bounds.get((last_study_stage, block_idx))
-                if freeze_val is None:
-                    continue
-                for stage_id in range(study_months, num_stages):
-                    slots.append((stage_id, block_idx, None, freeze_val))
 
         builder.add(
             name=f"AGRINT_{group_id}",
             description=f"Exchange group constraint {group_id}",
             expression=expression,
             slack=hard_slack(),
-            slots=slots,
+            slots=_agrint_slots(group_id, limits, horizon),
         )
 
-    if agrint_term_skips:
-        emit(
-            Diagnostic(
-                code="agrint-interchange-no-line",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=(
-                    "AGRINT interchange has no matching line "
-                    f"({len(agrint_term_skips)})"
-                ),
-                summary=(
-                    f"{len(agrint_term_skips)} AGRINT group term(s) reference "
-                    "a subsystem pair with no matching novomodelo line; the term "
-                    "is dropped."
-                ),
-                table=DiagnosticTable(
-                    columns=["Group", "From", "To"],
-                    rows=[[s.group_id, s.sys_a, s.sys_b] for s in agrint_term_skips],
-                    justify=["right", "right", "right"],
-                ),
-                remediation="Declare the subsystem pair as an interchange line.",
-            ),
-            logger=_LOG,
-        )
-    if agrint_group_skips:
-        emit(
-            Diagnostic(
-                code="agrint-group-empty",
-                severity=Severity.WARNING,
-                category=_CATEGORY,
-                title=f"AGRINT group has no valid terms ({len(agrint_group_skips)})",
-                summary=(
-                    f"{len(agrint_group_skips)} AGRINT group(s) had no valid "
-                    "terms after line lookup; skipping."
-                ),
-                table=DiagnosticTable(
-                    columns=["Group"],
-                    rows=[[s.group_id] for s in agrint_group_skips],
-                    justify=["right"],
-                ),
-            ),
-            logger=_LOG,
-        )
+    _emit_agrint_term_skips(agrint_term_skips)
+    _emit_agrint_group_skips(agrint_group_skips)
 
     result = builder.result()
     if result is None:
@@ -1902,3 +1911,149 @@ def convert_agrint_constraints(
     )
 
     return result
+
+
+def _agrint_expression(
+    group_id: int,
+    terms_raw: list[tuple[int, int, float]],
+    line_id_map: dict[tuple[int, int], int],
+    term_skips: list[_AgrintTermSkip],
+) -> str | None:
+    """Group ``group_id``'s weighted sum of directional interchange flows.
+
+    Every term whose subsystem pair has no line is recorded on *term_skips*;
+    ``None`` when none is left.
+    """
+    # The source model's ``Interc(A→B)`` is the *non-negative directional* flow from
+    # A to B (zero whenever physical flow goes B→A).  Novomodelo's ``line_direct(id)`` /
+    # ``line_reverse(id)`` are the matching non-negative LP variables:
+    # ``line_direct`` is the flow in the canonical (src<tgt) direction,
+    # ``line_reverse`` the flow in the opposite direction.
+    #
+    # The naive substitution ``-line_exchange`` (signed net flow,
+    # negated when reversed) would let the LHS go negative when one
+    # term is flowing in its non-canonical direction — diluting the
+    # bound at fictitious hubs and producing incorrect dispatch.
+    parsed_terms: list[tuple[float, str]] = []
+    for a, b, coeff in terms_raw:
+        src, tgt = (a, b) if a < b else (b, a)
+        line_id = line_id_map.get((src, tgt))
+        if line_id is None:
+            term_skips.append(_AgrintTermSkip(group_id=group_id, sys_a=a, sys_b=b))
+            continue
+        var = f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
+        parsed_terms.append((coeff, var))
+
+    if not parsed_terms:
+        return None
+
+    return _render_signed_expression(parsed_terms)
+
+
+def _agrint_slots(
+    group_id: int,
+    limits: list[tuple[int, int, int, int | None, int | None, list[float]]],
+    horizon: StudyHorizon,
+) -> list[Slot]:
+    """Group ``group_id``'s ``<=`` limit per (stage, block), study and post-study."""
+    start_year = horizon.start_year
+    start_month = horizon.start_month
+    study_months = horizon.study_months
+    num_stages = horizon.total_stages
+
+    # Collect study-period limit rows for this group, keyed by (stage, block).
+    # AGRINT has no seasonalize flag: The source model freezes its post-study limits
+    # at the last study stage value and ignores any post-study-dated agrint.dat
+    # entries (planned future expansion). The pmo.dat "LIMITES DOS AGRUPAMENTOS DE
+    # INTERCAMBIO (MWmedio)" block confirms this — its POS row is flat at the last
+    # study (December) value. So clamp to the study period here, then freeze the
+    # tail.
+    group_bounds: dict[tuple[int, int], float] = {}
+    for grp, mi, anoi, mf, anof, lims in limits:
+        if grp != group_id:
+            continue
+
+        if mf is None or anof is None:
+            # Open-ended: run to the end of the whole horizon; the study-period
+            # filter below drops the post-study stages.
+            end_y = start_year + (num_stages - 1 + start_month - 1) // 12
+            end_m = (start_month - 1 + num_stages - 1) % 12 + 1
+        else:
+            end_y, end_m = anof, mf
+
+        # Iterate month by month within [mi/anoi .. end_m/end_y], keeping
+        # only the study period (post-study is handled by the freeze below).
+        for stage_id in _stage_ids_between(
+            (anoi, mi), (end_y, end_m), start_year=start_year, start_month=start_month
+        ):
+            if 0 <= stage_id < study_months:
+                for block_idx, lim_val in enumerate(lims):
+                    group_bounds[(stage_id, block_idx)] = lim_val
+
+    # Emit study-period slots.
+    slots: list[Slot] = [
+        (stage_id, block_idx, None, lim_val)
+        for (stage_id, block_idx), lim_val in group_bounds.items()
+    ]
+
+    # Freeze the last study stage value through the post-study tail.
+    last_study_stage = study_months - 1
+    if num_stages > study_months:
+        for block_idx in sorted({b for (_, b) in group_bounds}):
+            freeze_val = group_bounds.get((last_study_stage, block_idx))
+            if freeze_val is None:
+                continue
+            for stage_id in range(study_months, num_stages):
+                slots.append((stage_id, block_idx, None, freeze_val))
+
+    return slots
+
+
+def _emit_agrint_term_skips(skips: list[_AgrintTermSkip]) -> None:
+    """Emit the ``agrint-interchange-no-line`` WARNING, one row per dropped term."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="agrint-interchange-no-line",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"AGRINT interchange has no matching line ({len(skips)})",
+            summary=(
+                f"{len(skips)} AGRINT group term(s) reference "
+                "a subsystem pair with no matching novomodelo line; the term "
+                "is dropped."
+            ),
+            table=DiagnosticTable(
+                columns=["Group", "From", "To"],
+                rows=[[s.group_id, s.sys_a, s.sys_b] for s in skips],
+                justify=["right", "right", "right"],
+            ),
+            remediation="Declare the subsystem pair as an interchange line.",
+        ),
+        logger=_LOG,
+    )
+
+
+def _emit_agrint_group_skips(skips: list[_AgrintGroupSkip]) -> None:
+    """Emit the ``agrint-group-empty`` WARNING, one row per dropped group."""
+    if not skips:
+        return
+    emit(
+        Diagnostic(
+            code="agrint-group-empty",
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"AGRINT group has no valid terms ({len(skips)})",
+            summary=(
+                f"{len(skips)} AGRINT group(s) had no valid "
+                "terms after line lookup; skipping."
+            ),
+            table=DiagnosticTable(
+                columns=["Group"],
+                rows=[[s.group_id] for s in skips],
+                justify=["right"],
+            ),
+        ),
+        logger=_LOG,
+    )

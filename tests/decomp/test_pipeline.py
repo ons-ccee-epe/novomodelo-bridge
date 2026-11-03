@@ -10,6 +10,7 @@ import shutil
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -59,6 +60,11 @@ from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
+
+if TYPE_CHECKING:
+    from idecomp.decomp import Dadger, Vazoes
+
+    from novomodelo_bridge.decomp.case import DecompCase
 
 _ID_MAP = DecompIdMap(
     bus_codes=(1, 2),
@@ -451,12 +457,12 @@ class TestDecompCaseArtifacts:
         # field defaults to None until _convert_core_entities/_convert_scenarios
         # populate it.
         artifacts = DecompCaseArtifacts(
-            case=object(),
+            case=cast("DecompCase", object()),
             id_map=_ID_MAP,
-            dadger=object(),
+            dadger=cast("Dadger", object()),
             calendar=[],
-            vazoes=object(),
-            effective=object(),
+            vazoes=cast("Vazoes", object()),
+            effective=cast("EffectiveCadastro", object()),
             itaipu_operated=False,
             fan_probabilities=[1.0],
             tx=0.1,
@@ -767,29 +773,29 @@ class _CadastroDadger:
         self._uh = _cadastro_uh_frame()
         self._ac_volmax_frame = ac_volmax_frame
 
-    def uh(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
 
-    def vi(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def vi(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def ve(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ve(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def ti(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ti(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def ez(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ez(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def fp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fp(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
+        codigo_usina: int | None = None,
         modificacao: type | None = None,
-        df: bool = False,  # noqa: ARG002
+        df: bool = False,
     ) -> pd.DataFrame | None:
         from idecomp.decomp.modelos.dadger import ACVOLMAX
 
@@ -803,7 +809,7 @@ def _run_cadastro_pipeline(
     ac_volmax_frame: pd.DataFrame | None,
     *,
     to_generic: tuple[ConstraintRecord, ...] = (),
-    unreadable_electrical: tuple[object, ...] = (),
+    rha_detection: object | None = None,
     libs_electrical: object | None = None,
     diagnostics_out: list[Diagnostic] | None = None,
     dry_run: bool = False,
@@ -821,7 +827,7 @@ def _run_cadastro_pipeline(
     generic-constraint emitters consume, none of which the mock deck's
     ``Dadger`` can produce for real (it exposes no
     ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors).
-    *unreadable_electrical*/*libs_electrical* feed the
+    *rha_detection*/*libs_electrical* feed the
     detection helpers the same way — both otherwise patched to their
     empty/absent default so this shared fixture keeps regressing the
     bound-combine logic it was built for, undisturbed.
@@ -984,15 +990,12 @@ def _run_cadastro_pipeline(
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
         ),
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
-        # The mock deck exposes no real files (DecompCase.from_directory
-        # is patched wholesale above, so no real file I/O happens anywhere in this
-        # fixture) — the detection helpers read the raw deck files directly, so
-        # they must be patched here too, the same way the special-constraint
-        # reader above is.
+        # The mock deck has no RHA accessors and no real files
+        # (DecompCase.from_directory is patched wholesale above), so the
+        # detection helpers are patched too, the same way the
+        # special-constraint reader above is.
         "novomodelo_bridge.decomp.pipeline"
-        ".constraint_registers.detect_unreadable_electrical": list(
-            unreadable_electrical
-        ),
+        ".constraint_registers.detect_unconverted_rha": rha_detection,
         "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
             libs_electrical
         ),
@@ -1101,7 +1104,9 @@ class TestGnlWiring:
         call_kwargs = convert_gnl_mock.call_args.kwargs
         assert call_kwargs["first_thermal_id"] == 1
         assert call_kwargs["bus_id_of"] == _CADASTRO_ID_MAP.bus_id
-        written_stages = json.loads((dst / "stages.json").read_text())["stages"]
+        written_stages = json.loads((dst / "stages.json").read_text(encoding="utf-8"))[
+            "stages"
+        ]
         assert [
             (s.start_date.isoformat(), s.end_date.isoformat())
             for s in call_kwargs["calendar"]
@@ -1121,21 +1126,25 @@ class TestGnlWiring:
 
         thermal_ids = [
             t["id"]
-            for t in json.loads((dst / "system" / "thermals.json").read_text())[
-                "thermals"
-            ]
+            for t in json.loads(
+                (dst / "system" / "thermals.json").read_text(encoding="utf-8")
+            )["thermals"]
         ]
         assert thermal_ids == sorted(thermal_ids)
         assert {1, 2}.issubset(set(thermal_ids))
 
-        initial_conditions = json.loads((dst / "initial_conditions.json").read_text())
+        initial_conditions = json.loads(
+            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        )
         assert (
             initial_conditions["past_anticipated_commitments"]
             == _POPULATED_GNL_EMISSION.past_anticipated_commitments
         )
         assert "future_anticipated_deliveries" not in initial_conditions
 
-        post_study = json.loads((dst / "post_study_stages.json").read_text())
+        post_study = json.loads(
+            (dst / "post_study_stages.json").read_text(encoding="utf-8")
+        )
         assert post_study["thermal_bounds"]
 
     def test_empty_thermal_bounds_still_writes_post_study_stages(
@@ -1152,13 +1161,17 @@ class TestGnlWiring:
             gnl_emission=_EMPTY_THERMAL_BOUNDS_GNL_EMISSION,
         )
 
-        post_study = json.loads((dst / "post_study_stages.json").read_text())
+        post_study = json.loads(
+            (dst / "post_study_stages.json").read_text(encoding="utf-8")
+        )
         assert post_study["thermal_bounds"] == []
         expected_post_study = _EMPTY_THERMAL_BOUNDS_GNL_EMISSION.post_study_stages
         assert expected_post_study is not None
         assert post_study["stages"] == expected_post_study["stages"]
 
-        initial_conditions = json.loads((dst / "initial_conditions.json").read_text())
+        initial_conditions = json.loads(
+            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        )
         assert "future_anticipated_deliveries" not in initial_conditions
 
     def test_summary_log_names_only_thermal_count(
@@ -1203,12 +1216,16 @@ class TestCadastroPipelineWiring:
         assert table["min_storage_hm3"].to_pylist() == [None]
         assert table["max_storage_hm3"].to_pylist() == [None]
 
-        hydros = json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+        hydros = json.loads(
+            (dst / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"]
         reservoirs = {h["id"]: h["reservoir"] for h in hydros}
         assert reservoirs[0] == {"min_storage_hm3": 20.0, "max_storage_hm3": 100.0}
         assert reservoirs[1] == {"min_storage_hm3": 10.0, "max_storage_hm3": 50.0}
 
-        storage = json.loads((dst / "initial_conditions.json").read_text())["storage"]
+        storage = json.loads(
+            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        )["storage"]
         values = {row["hydro_id"]: row["value_hm3"] for row in storage}
         # 50% of the base [20, 100] / [10, 50] ranges.
         assert values[0] == pytest.approx(60.0)
@@ -1242,7 +1259,7 @@ class TestCadastroPipelineWiring:
         source model's own key order, pinned to the registry."""
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
 
-        doc = json.loads((dst / "initial_conditions.json").read_text())
+        doc = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))
         assert next(iter(doc)) == "$schema"
         assert doc["$schema"] == novomodelo_schemas.schema_url_for(
             "initial_conditions.json"
@@ -1287,7 +1304,9 @@ class TestCadastroPipelineWiring:
         outflow_only = [row for row in storage_rows if row["min_outflow_m3s"] == 5.0]
         assert len(outflow_only) == 1
 
-        hydros = json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+        hydros = json.loads(
+            (dst / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"]
         reservoirs = {h["id"]: h["reservoir"] for h in hydros}
         assert reservoirs[0]["max_storage_hm3"] == pytest.approx(250.0)
 
@@ -1446,7 +1465,11 @@ class TestGenericConstraintWiring:
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, to_generic=_all_synthetic_generics()
         )
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         ids = [c["id"] for c in doc["constraints"]]
         assert len(ids) == 4
         assert sorted(ids) == list(range(len(ids)))
@@ -1494,12 +1517,18 @@ class TestGenericConstraintWiring:
             tmp_path, ac_volmax_frame=None, to_generic=(varying,)
         )
 
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         assert "@coef_hv903_t1" in doc["constraints"][0]["expression"]
         params = {
             p["name"]: p
             for p in json.loads(
-                (dst / "constraints" / "generic_parameters.json").read_text()
+                (dst / "constraints" / "generic_parameters.json").read_text(
+                    encoding="utf-8"
+                )
             )["scalar_parameters"]
         }
         values = dict(params["coef_hv903_t1"]["values"])
@@ -1525,14 +1554,20 @@ class TestGenericConstraintWiring:
             tmp_path, ac_volmax_frame=None, to_generic=(_synthetic_rhe_record(),)
         )
 
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         rhe = doc["constraints"]
         assert [c["name"] for c in rhe] == ["RHE_904"]
 
         params = {
             p["name"]: p
             for p in json.loads(
-                (dst / "constraints" / "generic_parameters.json").read_text()
+                (dst / "constraints" / "generic_parameters.json").read_text(
+                    encoding="utf-8"
+                )
             )["scalar_parameters"]
         }
         referenced = set(re.findall(r"@(\w+)", rhe[0]["expression"]))
@@ -1574,7 +1609,7 @@ class TestGenericConstraintWiring:
     def test_detection_diagnostics_flow_through_the_dx_sink(
         self, tmp_path: Path
     ) -> None:
-        """The FE/RHA/LIBs-electrical detection diagnostics are
+        """The RHA/LIBs-electrical detection diagnostics are
         captured on the returned ``ConversionReport``, not only logged.
 
         ``convert_decomp_case`` now owns its own top-level
@@ -1583,13 +1618,6 @@ class TestGenericConstraintWiring:
         ``dx.collect()`` (which would be shadowed and see nothing)."""
         from novomodelo_bridge.core import diagnostics as dx
 
-        fe_diagnostic = dx.Diagnostic(
-            code="decomp-fe-participation-unreadable",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="FE electrical participation present but unreadable",
-            summary="synthetic FE finding",
-        )
         rha_diagnostic = dx.Diagnostic(
             code="decomp-rha-family-unconverted",
             severity=dx.Severity.WARNING,
@@ -1609,14 +1637,13 @@ class TestGenericConstraintWiring:
         _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
-            unreadable_electrical=(fe_diagnostic, rha_diagnostic),
+            rha_detection=rha_diagnostic,
             libs_electrical=libs_diagnostic,
             diagnostics_out=collected,
         )
 
         codes = {d.code for d in collected}
         assert {
-            "decomp-fe-participation-unreadable",
             "decomp-rha-family-unconverted",
             "decomp-libs-electrical-present",
         } <= codes
@@ -1640,7 +1667,11 @@ class TestGenericConstraintWiring:
             for column_index in range(row_group.num_columns):
                 assert row_group.column(column_index).compression == "ZSTD"
 
-        doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+        doc = json.loads(
+            (dst / "constraints" / "generic_constraints.json").read_text(
+                encoding="utf-8"
+            )
+        )
         assert doc["$schema"] == novomodelo_schemas.schema_url_for(
             "constraints/generic_constraints.json"
         )
@@ -1898,8 +1929,8 @@ class TestSpecialConstraintSurfaces:
             r for r in caplog.records if "deferred at this milestone" in r.message
         ]
 
-    def test_fe_rha_libs_are_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
-        """A deck with FE/RHA/LIBs surfaces reports each exactly once through
+    def test_rha_libs_are_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
+        """A deck with RHA/LIBs surfaces reports each exactly once through
         the structured ``Diagnostic``s.
 
         ``convert_decomp_case`` owns its own top-level ``dx.collect()``, so the
@@ -1908,13 +1939,6 @@ class TestSpecialConstraintSurfaces:
         nothing)."""
         from novomodelo_bridge.core import diagnostics as dx
 
-        fe_diagnostic = dx.Diagnostic(
-            code="decomp-fe-participation-unreadable",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="FE electrical participation present but unreadable",
-            summary="synthetic FE finding",
-        )
         rha_diagnostic = dx.Diagnostic(
             code="decomp-rha-family-unconverted",
             severity=dx.Severity.WARNING,
@@ -1934,14 +1958,13 @@ class TestSpecialConstraintSurfaces:
         _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
-            unreadable_electrical=(fe_diagnostic, rha_diagnostic),
+            rha_detection=rha_diagnostic,
             libs_electrical=libs_diagnostic,
             diagnostics_out=collected,
         )
 
         codes = {d.code for d in collected}
         assert {
-            "decomp-fe-participation-unreadable",
             "decomp-rha-family-unconverted",
             "decomp-libs-electrical-present",
         } <= codes

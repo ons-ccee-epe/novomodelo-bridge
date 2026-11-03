@@ -3,18 +3,37 @@
 Yields (lineno, text) pairs per file so every gate scans the same surfaces:
 ``#`` comment tokens (via tokenize, so strings containing ``#`` are never
 false-matched) and module/class/function docstrings (via ast).
+
+The scripts/ci gates are kept identical in novomodelo-bridge and novomodelo-mcp:
+the one per-repo fact, the package under ``src/``, is detected here. Change a
+gate in both repositories.
 """
 
 from __future__ import annotations
 
 import ast
+import sys
 import tokenize
 from collections.abc import Iterator
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = REPO_ROOT / "src" / "novomodelo_bridge"
-TESTS_ROOT = REPO_ROOT / "tests"
+# Test code: tests/, and the e2e/ workspace member where a repository has one.
+TEST_ROOTS = (REPO_ROOT / "tests", REPO_ROOT / "e2e")
+
+_Documented = ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+
+
+def _package_root() -> Path:
+    packages = sorted(p.parent for p in (REPO_ROOT / "src").glob("*/__init__.py"))
+    if len(packages) != 1:
+        found = len(packages)
+        print(f"expected one package under src/, found {found}", file=sys.stderr)
+        raise SystemExit(2)
+    return packages[0]
+
+
+SRC_ROOT = _package_root()
 
 
 def iter_py_files(root: Path) -> Iterator[Path]:
@@ -38,9 +57,7 @@ def iter_docstrings(path: Path) -> Iterator[tuple[int, str]]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
         return
-    nodes: list[ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef] = [
-        tree
-    ]
+    nodes: list[_Documented] = [tree]
     nodes += [
         node
         for node in ast.walk(tree)

@@ -121,6 +121,7 @@ def test_round_floats_leaves_non_float_values_untouched() -> None:
 def test_round_floats_passes_non_finite_values_through() -> None:
     rounded = round_floats([math.inf, -math.inf, math.nan], 3)
 
+    assert isinstance(rounded, list)
     assert rounded[0] == math.inf
     assert rounded[1] == -math.inf
     assert math.isnan(rounded[2])

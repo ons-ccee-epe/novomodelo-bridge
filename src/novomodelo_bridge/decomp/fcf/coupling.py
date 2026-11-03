@@ -20,19 +20,21 @@ difference is returned as a per-depth offset for the mapper to fold.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from novomodelo_bridge.core.inflow_windows import month_window
 from novomodelo_bridge.decomp.converters.cadastro import is_reservoir
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
-from novomodelo_bridge.decomp.scenarios import recent_observation_rows
+from novomodelo_bridge.decomp.scenarios import (
+    ObservationTables,
+    recent_observation_rows,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from datetime import date
 
     import pandas as pd
-    from idecomp.decomp import Vazoes
 
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -42,6 +44,38 @@ if TYPE_CHECKING:
 LAG_DEPTHS = 12
 
 _OFFSET_TOLERANCE = 1e-9
+
+
+class _CouplingTrunkTables(Protocol):
+    @property
+    def previsoes_com_postos_artificiais(self) -> pd.DataFrame | None: ...
+
+    @property
+    def cenarios_calculados_com_postos_artificiais(self) -> pd.DataFrame | None: ...
+
+
+class _OperationTrunkTables(Protocol):
+    @property
+    def previsoes(self) -> pd.DataFrame | None: ...
+
+    @property
+    def cenarios_gerados(self) -> pd.DataFrame | None: ...
+
+
+class _LagOffsetTables(_CouplingTrunkTables, _OperationTrunkTables, Protocol):
+    pass
+
+
+class _SourceOnlyTables(_CouplingTrunkTables, ObservationTables, Protocol):
+    pass
+
+
+class _TerminalFanTables(Protocol):
+    @property
+    def cenarios_calculados_com_postos_artificiais(self) -> pd.DataFrame | None: ...
+
+    @property
+    def cenarios_gerados(self) -> pd.DataFrame | None: ...
 
 
 @dataclass(frozen=True)
@@ -215,7 +249,7 @@ def _trunk_rows(
 
 
 def _coupling_trunk(
-    vazoes: Vazoes, calendar: Sequence[OperativeStage]
+    vazoes: _CouplingTrunkTables, calendar: Sequence[OperativeStage]
 ) -> list[tuple[date, date, pd.Series]]:
     return _trunk_rows(
         vazoes.previsoes_com_postos_artificiais,
@@ -225,7 +259,7 @@ def _coupling_trunk(
 
 
 def _operation_trunk(
-    vazoes: Vazoes, calendar: Sequence[OperativeStage]
+    vazoes: _OperationTrunkTables, calendar: Sequence[OperativeStage]
 ) -> list[tuple[date, date, pd.Series]]:
     return _trunk_rows(vazoes.previsoes, vazoes.cenarios_gerados, calendar)
 
@@ -237,7 +271,7 @@ def _terminal_fan(table: pd.DataFrame, terminal_estagio: int) -> list[pd.Series]
 
 
 def coupling_lag_offsets(
-    vazoes: Vazoes,
+    vazoes: _LagOffsetTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
@@ -277,7 +311,7 @@ def coupling_lag_offsets(
 
 
 def source_only_lag_inflows(
-    vazoes: Vazoes,
+    vazoes: _SourceOnlyTables,
     effective: EffectiveCadastro,
     plant_codes: Sequence[int],
     plant_indices: Iterable[int],
@@ -308,7 +342,7 @@ def source_only_lag_inflows(
 
 
 def terminal_shares(
-    vazoes: Vazoes,
+    vazoes: _TerminalFanTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     couplings: Iterable[HydroCoupling],
@@ -324,10 +358,15 @@ def terminal_shares(
     whole coupling inflow as the gap.
     """
     terminal_estagio = len(calendar)
-    coupling_fan = _terminal_fan(
-        vazoes.cenarios_calculados_com_postos_artificiais, terminal_estagio
-    )
-    operation_fan = _terminal_fan(vazoes.cenarios_gerados, terminal_estagio)
+    coupling_table = vazoes.cenarios_calculados_com_postos_artificiais
+    operation_table = vazoes.cenarios_gerados
+    if coupling_table is None or operation_table is None:
+        raise ValueError(
+            "the inflow file has no terminal fan "
+            "(cenarios_calculados_com_postos_artificiais / cenarios_gerados)"
+        )
+    coupling_fan = _terminal_fan(coupling_table, terminal_estagio)
+    operation_fan = _terminal_fan(operation_table, terminal_estagio)
     shares: list[TerminalShare] = []
     for coupling in couplings:
         code = id_map.hydro_codes[coupling.hydro_id]

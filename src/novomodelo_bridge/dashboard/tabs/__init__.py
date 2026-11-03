@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 if TYPE_CHECKING:
     from novomodelo_bridge.dashboard.data import DashboardData
@@ -16,12 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 class TabModule(Protocol):
-    """Structural interface that every dashboard tab module must satisfy."""
+    """Structural interface that every dashboard tab module must satisfy.
 
-    TAB_ID: str
-    TAB_LABEL: str
-    TAB_ORDER: int
-    REQUIRED_JS: list[str]
+    A module may also declare ``REQUIRED_JS: list[str]``; it is optional, so
+    :func:`collect_required_js` reads it with ``getattr``.
+    """
+
+    TAB_ID: Final[str]
+    TAB_LABEL: Final[str]
+    TAB_ORDER: Final[int]
 
     def can_render(self, data: DashboardData) -> bool:
         """Return True when this tab has sufficient data to be shown."""
@@ -97,7 +100,7 @@ def get_renderable_tabs(data: DashboardData) -> list[tuple[str, str, str]]:
             continue
         try:
             html = module.render(data)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "Tab %r raised an exception during render; showing an error "
                 "placeholder instead of dropping it: %s",

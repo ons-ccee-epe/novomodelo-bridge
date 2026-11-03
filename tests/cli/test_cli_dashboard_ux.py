@@ -77,11 +77,12 @@ def _spy_print_status(monkeypatch: pytest.MonkeyPatch) -> list[Console]:
 
     captured: list[Console] = []
 
-    def _spy(*args: object, **kwargs: object) -> None:
-        console = kwargs["console"]
+    def _spy(
+        message: str, *, console: Console | None = None, style: str | None = None
+    ) -> None:
         assert isinstance(console, Console)
         captured.append(console)
-        original(*args, **kwargs)
+        original(message, console=console, style=style)
 
     # `print_status` is patched on its DEFINING module (mock discipline): the
     # handler resolves the name off `cli.dashboard`'s own module globals, so a

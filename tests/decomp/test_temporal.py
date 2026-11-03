@@ -310,7 +310,7 @@ class TestFromDadger:
                 return pd.DataFrame(rows)
 
         with pytest.raises(ValueError, match="differ across"):
-            operative_calendar_from_dadger(_Dadger())  # type: ignore[arg-type]
+            operative_calendar_from_dadger(_Dadger())
 
 
 class TestCVaRRiskMeasure:

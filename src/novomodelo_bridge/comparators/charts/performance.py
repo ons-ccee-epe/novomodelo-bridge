@@ -134,16 +134,17 @@ def performance_iteration_chart(
             }
         )
 
-    layout: dict = {
-        "title": "Iteration Wall-Clock (seconds)",
-        "xaxis": {"title": "Iteration"},
-        "yaxis": {"title": "Total seconds"},
-    }
+    yaxis: dict[str, object] = {"title": "Total seconds"}
     # Clip the y-axis to actual data so the source model iter-1's clock-init garbage
     # doesn't compress every other iteration into a flat line at zero.
     if all_seconds:
         ymax = max(all_seconds) * 1.15
-        layout["yaxis"]["range"] = [0, ymax]
+        yaxis["range"] = [0, ymax]
+    layout: dict[str, object] = {
+        "title": "Iteration Wall-Clock (seconds)",
+        "xaxis": {"title": "Iteration"},
+        "yaxis": yaxis,
+    }
 
     return _plotly_div(traces, layout, height=420)
 

@@ -27,11 +27,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
+from inewave.libs.restricoes import Restricoes
 from inewave.libs.usinas_hidreletricas import UsinasHidreletricas
 from inewave.newave import (
     Adterm,
+    Agrint,
     Cadic,
     Clast,
     Confhd,
@@ -57,6 +59,7 @@ from inewave.newave import (
     VolrefSaz,
 )
 
+from novomodelo_bridge.core.pandas_utils import as_frame, require_frame
 from novomodelo_bridge.newave.files import NewaveFiles
 from novomodelo_bridge.newave.switches import DgerSwitches
 
@@ -65,6 +68,16 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.newave.horizon import StudyHorizon
     from novomodelo_bridge.newave.id_map import NewaveIdMap
+
+
+def hydro_plant_table(confhd: Confhd) -> pd.DataFrame:
+    """``confhd.dat``'s plant table; ``ValueError`` when the file has none."""
+    return require_frame(confhd.usinas, "hydro plant table in confhd.dat")
+
+
+def thermal_plant_table(conft: Conft) -> pd.DataFrame:
+    """``conft.dat``'s plant table; ``ValueError`` when the file has none."""
+    return require_frame(conft.usinas, "thermal plant table in conft.dat")
 
 
 @dataclass
@@ -179,6 +192,11 @@ class NewaveCase:
         return Cvar.read(str(path)) if path is not None else None
 
     @cached_property
+    def agrint(self) -> Agrint | None:
+        path = self.files.agrint
+        return Agrint.read(str(path)) if path is not None else None
+
+    @cached_property
     def re_dat(self) -> Re | None:
         path = self.files.re_dat
         return Re.read(str(path)) if path is not None else None
@@ -199,6 +217,11 @@ class NewaveCase:
         return Adterm.read(str(path)) if path is not None else None
 
     @cached_property
+    def restricao_eletrica(self) -> Restricoes | None:
+        path = self.files.restricao_eletrica
+        return Restricoes.read(str(path)) if path is not None else None
+
+    @cached_property
     def polinjus(self) -> UsinasHidreletricas | None:
         """Downstream-level curve families (``polinjus``), or ``None`` if absent.
 
@@ -209,7 +232,7 @@ class NewaveCase:
         path = self.files.polinjus
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
 
     @cached_property
     def volumes_referencia(self) -> UsinasHidreletricas | None:
@@ -218,7 +241,15 @@ class NewaveCase:
         path = self.files.volumes_referencia
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
+
+    @cached_property
+    def tratamento_fpha(self) -> UsinasHidreletricas | None:
+        """LIBS reader for the FPHA plane-reduction method, or ``None`` if absent."""
+        path = self.files.tratamento_fpha
+        if path is None:
+            return None
+        return UsinasHidreletricas.read(str(path))
 
     @cached_property
     def estacao_bombeamento(self) -> UsinasHidreletricas | None:
@@ -226,7 +257,7 @@ class NewaveCase:
         path = self.files.estacao_bombeamento
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
 
     @cached_property
     def estacao_bombeamento_submercado(self) -> UsinasHidreletricas | None:
@@ -234,7 +265,7 @@ class NewaveCase:
         path = self.files.estacao_bombeamento_submercado
         if path is None:
             return None
-        return cast(UsinasHidreletricas, UsinasHidreletricas.read(str(path)))
+        return UsinasHidreletricas.read(str(path))
 
     # --- Derived state ---------------------------------------------------------
 
@@ -280,7 +311,7 @@ class NewaveCase:
         reader = self.estacao_bombeamento
         if reader is None:
             return frozenset()
-        df = reader.estacao_bombeamento(df=True)
+        df = as_frame(reader.estacao_bombeamento(df=True))
         if df is None or df.empty:
             return frozenset()
         codes: set[int] = set()
@@ -288,6 +319,26 @@ class NewaveCase:
             if col in df.columns:
                 codes.update(int(c) for c in df[col].dropna())
         return frozenset(codes)
+
+    @property
+    def hydro_plants(self) -> pd.DataFrame:
+        """:func:`hydro_plant_table` of the cached ``confhd`` reader."""
+        return hydro_plant_table(self.confhd)
+
+    @property
+    def thermal_plants(self) -> pd.DataFrame:
+        """:func:`thermal_plant_table` of the cached ``conft`` reader."""
+        return thermal_plant_table(self.conft)
+
+    @property
+    def interchange_limits(self) -> pd.DataFrame | None:
+        """``sistema.dat``'s interchange maximums, without the ``flag`` 1 records.
+
+        A ``flag`` 1 record is a mandatory minimum interchange; read as a limit,
+        it would overwrite the pair's maximum in the same direction.
+        """
+        limits = self.sistema.limites_intercambio
+        return None if limits is None else limits[limits["flag"] == 0]
 
     @cached_property
     def fictitious_codes(self) -> frozenset[int]:
@@ -300,7 +351,7 @@ class NewaveCase:
         from novomodelo_bridge.newave.plants import fictitious_codes
 
         return fictitious_codes(
-            self.confhd.usinas,
+            self.hydro_plants,
             self.hidr.cadastro,
             pumping_related_codes=self.pumping_related_codes,
         )
@@ -321,7 +372,7 @@ class NewaveCase:
         from novomodelo_bridge.newave.plants import active_hydros
 
         return active_hydros(
-            self.confhd.usinas,
+            self.hydro_plants,
             fictitious=self.fictitious_codes,
             exph_df=self.exph.expansoes if self.exph is not None else None,
         )
@@ -332,7 +383,7 @@ class NewaveCase:
         from novomodelo_bridge.newave.plants import active_hydro_codes
 
         return active_hydro_codes(
-            self.confhd.usinas,
+            self.hydro_plants,
             fictitious=self.fictitious_codes,
             exph_df=self.exph.expansoes if self.exph is not None else None,
         )

@@ -35,6 +35,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     _resolve_relato2,
     _resolve_result_file,
     _resolve_revisioned_file,
+    _TableReader,
     read_avl_cortesfpha,
     read_dec_desvfpha,
     read_dec_estatfpha,
@@ -68,10 +69,10 @@ class _StubTimFile:
         self.tempos_etapas = table
 
 
-def _stub_reader(table: pd.DataFrame | None) -> type:
+def _stub_reader(table: pd.DataFrame | None) -> _TableReader:
     class _Reader:
         @staticmethod
-        def read(path: str) -> _StubFile:  # noqa: ARG004
+        def read(path: str) -> _StubFile:
             return _StubFile(table)
 
     return _Reader
@@ -436,7 +437,7 @@ class TestReadDecOperCore:
 
     def test_a_file_is_parsed_once_until_it_changes(self, tmp_path: Path) -> None:
         path = tmp_path / "dec_oper_sist.csv"
-        path.write_text("1")
+        path.write_text("1", encoding="utf-8")
         parsed: list[str] = []
         table = pd.DataFrame({"estagio": [1], "cmo": [10.0]})
 
@@ -449,7 +450,7 @@ class TestReadDecOperCore:
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         assert len(parsed) == 1
-        path.write_text("12")
+        path.write_text("12", encoding="utf-8")
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         assert len(parsed) == 2
 

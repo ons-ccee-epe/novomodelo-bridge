@@ -347,9 +347,8 @@ def build_heatmap(
     # Build per-(line_id, stage_id) capacity lookup from line_bounds
     bounds_lookup: dict[tuple[int, int], tuple[float, float]] = {}
     if not line_bounds.empty:
-        lb_indexed = line_bounds.set_index(["line_id", "stage_id"])
-        for (lid, sid), row in lb_indexed.iterrows():
-            bounds_lookup[(int(lid), int(sid))] = (
+        for _, row in line_bounds.iterrows():
+            bounds_lookup[(int(row["line_id"]), int(row["stage_id"]))] = (
                 float(row.get("direct_mw", 1.0)),
                 float(row.get("reverse_mw", 1.0)),
             )

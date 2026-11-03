@@ -20,8 +20,9 @@ from novomodelo_bridge.cli.compare import _run_decomp_comparison, _run_newave_co
 from novomodelo_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
 from novomodelo_bridge.cli.dashboard import _run_dashboard
 from novomodelo_bridge.cli.export import export_app
+from novomodelo_bridge.cli.failure import JsonUsageErrorGroup
 
-# noqa: F401 below -- re-exported so `cli._NULL_HANDLER` keeps resolving for the
+# Re-exported so ``cli._NULL_HANDLER`` keeps resolving for the
 # ``test_configure_logging_levels`` import + the ``cli._configure_logging`` spy sites.
 from novomodelo_bridge.cli.logging_config import NULL_HANDLER as _NULL_HANDLER  # noqa: F401
 from novomodelo_bridge.cli.logging_config import configure_logging as _configure_logging
@@ -139,6 +140,7 @@ _ToleranceOpt = Annotated[
 
 app = typer.Typer(
     name="novomodelo-bridge",
+    cls=JsonUsageErrorGroup,
     help="Convert power system data to Novomodelo input format.",
     no_args_is_help=True,
     rich_markup_mode="rich",
@@ -350,7 +352,8 @@ def _compare_decomp(
 ) -> None:
     """Compare a DECOMP run's published operation against Novomodelo's simulation.
 
-    Informational: always exits 0, reporting divergences without failing.
+    Informational: divergences never change the exit code. Exits 1 if the source
+    case is not found, and 2 if the Novomodelo output cannot be read.
 
     The Overview tab's cost breakdown is at present value on both sides:
     each stage's DECOMP parcels are discounted by that stage's ratio of
@@ -399,7 +402,8 @@ def _compare_newave(
 ) -> None:
     """Compare NEWAVE published results against Novomodelo simulation output.
 
-    Informational: always exits 0, reporting divergences without failing.
+    Informational: divergences never change the exit code. Exits 1 if the source
+    case is not found, and 2 if the Novomodelo output cannot be read.
     """
     _configure_logging(verbose, log_file)
     _run_newave_comparison(

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,13 +7,22 @@ name = "novomodelo-bridge"
 version = "0.19.1"
 description = "Convert NEWAVE and DECOMP cases to Novomodelo input format and compare the results"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 dependencies = [
-    "idecomp>=1.17.1",
-    # 1.16.1: first to read modif.dat VAZMINT PRE/POS markers (1.16.0: modif.dat
-    # POTEFE/VOLCOTA/COTAREA and vazoes.dat at 600 postos).
-    "inewave>=1.16.2",
+    # 1.10.3: a field missing at the end of a LIBS line reads as None, not as
+    # the previous line's value. Imported directly for its DefaultRegister.
+    "cfinterface>=1.10.3",
+    # 1.18.1: the LIBS index and files read with cfinterface 1.10.3.
+    # 1.18.2: Restricoes reads a record only when the line's first field is its
+    # identifier.
+    "idecomp>=1.18.2",
+    # 1.17.0: sistema.dat's separate `flag` column, and the typed readers the
+    # bridge relies on (CDESVIO, cut partition dates, newave.tim, Agrint).
+    # 1.17.1: Restricoes reads a record only when the line's first field is its
+    # identifier.
+    "inewave>=1.17.1",
     "pyarrow>=26.0.0",
     "pandas>=3.1.0",
     "plotly>=7.1.0",
@@ -27,7 +36,7 @@ dependencies = [
     "novomodelo-python==0.19.1",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "ty>=0.0.92",
@@ -41,6 +50,11 @@ novomodelo-bridge = "novomodelo_bridge.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/novomodelo_bridge"]
+
+[tool.hatch.build.targets.sdist]
+# Agent rules and tooling dotfiles, caches and root-level checkouts stay out.
+# Hatchling keeps .gitignore regardless.
+exclude = ["/.*", "/_*", "/CLAUDE.md", "/AGENTS.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -61,10 +75,9 @@ fail_under = 83
 # Ratchet: raise as coverage improves, never lower to dodge a regression — this is the combined aggregate over the 5 `source` modules above, not a per-module threshold.
 
 [tool.pyright]
-# Editor aid only — CI gates ruff (ruff.toml, whole tree) and the drift
-# checks that follow it in the lint job.
-# `ty` and pyright are local/editor aids only; neither is a CI step. Point
-# at the venv so the typed first-party deps (idecomp/inewave ship
+# Editor aid only: pyright does not run in CI. The CI lint job gates ruff
+# (ruff.toml, whole tree), `ty check` (the type gate) and the drift checks.
+# Point at the venv so the typed first-party deps (idecomp/inewave ship
 # py.typed) resolve instead of raising phantom missing-import errors.
 include = ["src", "tests"]
 venvPath = "."
@@ -78,3 +91,12 @@ typeCheckingMode = "off"
 reportMissingImports = "error"
 reportMissingModuleSource = "none"
 reportInvalidTypeForm = "none"
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.terminal]
+error-on-warning = true

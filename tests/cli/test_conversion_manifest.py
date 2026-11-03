@@ -20,9 +20,12 @@ from tests.conftest import make_nw_files
 
 
 def _in_git_checkout() -> bool:
+    """Whether the imported package sits in a git work tree (an editable install),
+    which is where ``git_sha`` looks; a wheel in site-packages has no SHA."""
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=Path(novomodelo_bridge.__file__).resolve().parent,
             capture_output=True,
             text=True,
             check=False,
@@ -62,7 +65,7 @@ def test_hash_input_files_hashes_present_files(tmp_path: Path) -> None:
     assert by_field["hidr"]["sha256"] == hashlib.sha256(hidr_bytes).hexdigest()
     assert by_field["hidr"]["size_bytes"] == len(hidr_bytes)
 
-    field_order = [entry["field"] for entry in entries]
+    field_order = [str(entry["field"]) for entry in entries]
     assert field_order == sorted(field_order)
 
 

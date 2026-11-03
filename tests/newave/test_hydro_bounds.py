@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -368,22 +369,22 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         id_map = self._make_id_map()
 
         case_without_declaration_fix = self._case_with_cfuga_on_usina_a(tmp_path)
+        caps_without_declaration_fix = convert_per_stage_capacity_caps(
+            case_without_declaration_fix, id_map
+        )
+        assert caps_without_declaration_fix is not None
         rows_without_declaration_fix = [
-            r
-            for r in convert_per_stage_capacity_caps(
-                case_without_declaration_fix, id_map
-            ).to_pylist()
-            if r["hydro_id"] == 0
+            r for r in caps_without_declaration_fix.to_pylist() if r["hydro_id"] == 0
         ]
 
         case_with_declaration_fix = self._case_with_cfuga_on_usina_a(tmp_path)
         convert_hydros(case_with_declaration_fix, id_map)  # exercises the raise
+        caps_with_declaration_fix = convert_per_stage_capacity_caps(
+            case_with_declaration_fix, id_map
+        )
+        assert caps_with_declaration_fix is not None
         rows_with_declaration_fix = [
-            r
-            for r in convert_per_stage_capacity_caps(
-                case_with_declaration_fix, id_map
-            ).to_pylist()
-            if r["hydro_id"] == 0
+            r for r in caps_with_declaration_fix.to_pylist() if r["hydro_id"] == 0
         ]
 
         assert len(rows_without_declaration_fix) == len(rows_with_declaration_fix) == 12
@@ -1581,7 +1582,9 @@ class TestTurbineLimitDataMissing:
     """A plant whose engolimento lacks a ``hidr.dat`` datum warns once, with
     the stages its cap was computed without it."""
 
-    def _gap_rows(self, tmp_path: Path, cadastro: pd.DataFrame) -> list[list]:
+    def _gap_rows(
+        self, tmp_path: Path, cadastro: pd.DataFrame
+    ) -> Sequence[Sequence[object]]:
         from novomodelo_bridge.newave.converters.hydro import (
             convert_per_stage_capacity_caps,
         )

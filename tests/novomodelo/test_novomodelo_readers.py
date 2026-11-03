@@ -24,6 +24,7 @@ from novomodelo_bridge.cli.args import CompareArgs
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.novomodelo.readers import (
     NovomodeloReadError,
     _load_entity_bus_map,
@@ -286,7 +287,9 @@ class TestSoftMetadataReadersStaySoft:
         out = tmp_path / "output"
         sysdir = tmp_path / "system"
         sysdir.mkdir(parents=True)
-        (sysdir / "thermals.json").write_text("{ this is not valid json ")
+        (sysdir / "thermals.json").write_text(
+            "{ this is not valid json ", encoding="utf-8"
+        )
         out.mkdir()
         assert read_novomodelo_thermal_metadata(out) == {}
 
@@ -1204,7 +1207,9 @@ class TestLoadEntityBusMapNoBareExcept:
     ) -> None:
         sysdir = tmp_path / "system"
         sysdir.mkdir(parents=True)
-        (sysdir / "thermals.json").write_text("{ this is not valid json ")
+        (sysdir / "thermals.json").write_text(
+            "{ this is not valid json ", encoding="utf-8"
+        )
 
         with pytest.raises(NovomodeloReadError):
             _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
@@ -1303,7 +1308,7 @@ class TestEnergyNotReweightedHandComputedProof:
         # the raw sum of generation_mwh across blocks divided by that
         # total -- one division, no second multiplication by hours.
         total_hours = sum(hours for _, hours in stage_blocks[0])  # 300.0
-        total_energy_mwh = sum(float(r["generation_mwh"]) for r in rows)  # 5000.0
+        total_energy_mwh = sum(as_float(r["generation_mwh"]) for r in rows)  # 5000.0
         correct = total_energy_mwh / total_hours  # 16.666...
 
         # Hand computation #2 (WRONG): the mistake the standing project
@@ -1313,7 +1318,7 @@ class TestEnergyNotReweightedHandComputedProof:
         hours_by_block = dict(stage_blocks[0])
         wrong_double_weighted = (
             sum(
-                float(r["generation_mwh"]) * hours_by_block[int(r["block_id"])]
+                as_float(r["generation_mwh"]) * hours_by_block[as_int(r["block_id"])]
                 for r in rows
             )
             / total_hours
@@ -1541,7 +1546,9 @@ class TestReadNovomodeloLines:
         system_dir = tmp_path / "system"
         system_dir.mkdir(parents=True)
         lines = [{"id": 0, "source_bus_id": 0, "target_bus_id": 1}]
-        (system_dir / "lines.json").write_text(json.dumps({"lines": lines}))
+        (system_dir / "lines.json").write_text(
+            json.dumps({"lines": lines}), encoding="utf-8"
+        )
 
         assert read_novomodelo_lines(out) == lines
 
@@ -1555,7 +1562,7 @@ class TestReadNovomodeloLines:
         out = tmp_path / "output"
         system_dir = tmp_path / "system"
         system_dir.mkdir(parents=True)
-        (system_dir / "lines.json").write_text("not valid json{")
+        (system_dir / "lines.json").write_text("not valid json{", encoding="utf-8")
 
         with pytest.raises(NovomodeloReadError, match="lines.json"):
             read_novomodelo_lines(out)
@@ -1582,7 +1589,7 @@ class TestReadNovomodeloFphaFitConfig:
             }
         ]
         (system_dir / "hydro_production_models.json").write_text(
-            json.dumps({"production_models": models})
+            json.dumps({"production_models": models}), encoding="utf-8"
         )
 
         result = read_novomodelo_fpha_fit_config(tmp_path / "output")
@@ -1596,7 +1603,9 @@ class TestReadNovomodeloFphaFitConfig:
             {"id": stage_id, "season_id": season, "blocks": [{"id": 0, "hours": 1.0}]}
             for stage_id, season in enumerate([8, 9, 8])
         ]
-        (tmp_path / "stages.json").write_text(json.dumps({"stages": stages}))
+        (tmp_path / "stages.json").write_text(
+            json.dumps({"stages": stages}), encoding="utf-8"
+        )
         system_dir = tmp_path / "system"
         system_dir.mkdir()
         models = [
@@ -1618,7 +1627,7 @@ class TestReadNovomodeloFphaFitConfig:
             }
         ]
         (system_dir / "hydro_production_models.json").write_text(
-            json.dumps({"production_models": models})
+            json.dumps({"production_models": models}), encoding="utf-8"
         )
 
         result = read_novomodelo_fpha_fit_config(tmp_path / "output").sort("stage_id")
@@ -1676,7 +1685,8 @@ class TestReadNovomodeloTrainingMetadata:
         training_dir = out / "training"
         training_dir.mkdir(parents=True)
         (training_dir / "metadata.json").write_text(
-            json.dumps({"version": "0.14.3", "duration_seconds": 12.0})
+            json.dumps({"version": "0.14.3", "duration_seconds": 12.0}),
+            encoding="utf-8",
         )
 
         assert read_novomodelo_training_metadata(out) == {
@@ -1700,7 +1710,9 @@ class TestReadNovomodeloTrainingMetadata:
         case_dir = tmp_path / "case"
         training_dir = case_dir / "training"
         training_dir.mkdir(parents=True)
-        (training_dir / "metadata.json").write_text(json.dumps({"version": "0.14.3"}))
+        (training_dir / "metadata.json").write_text(
+            json.dumps({"version": "0.14.3"}), encoding="utf-8"
+        )
 
         assert read_novomodelo_training_metadata(case_dir / "output") == {
             "version": "0.14.3"
@@ -1710,7 +1722,7 @@ class TestReadNovomodeloTrainingMetadata:
         out = tmp_path / "case" / "output"
         training_dir = out / "training"
         training_dir.mkdir(parents=True)
-        (training_dir / "metadata.json").write_text("not valid json{")
+        (training_dir / "metadata.json").write_text("not valid json{", encoding="utf-8")
 
         assert read_novomodelo_training_metadata(out) == {}
 

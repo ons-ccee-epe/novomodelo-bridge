@@ -79,13 +79,13 @@ class _StubDadger:
     ) -> None:
         self._ia, self._ri, self._dp = ia, ri, dp
 
-    def ia(self, df: bool = True) -> pd.DataFrame | None:  # noqa: ARG002
+    def ia(self, df: bool = True) -> pd.DataFrame | None:
         return self._ia
 
-    def ri(self, df: bool = True) -> pd.DataFrame | None:  # noqa: ARG002
+    def ri(self, df: bool = True) -> pd.DataFrame | None:
         return self._ri
 
-    def dp(self, df: bool = True) -> pd.DataFrame | None:  # noqa: ARG002
+    def dp(self, df: bool = True) -> pd.DataFrame | None:
         return self._dp
 
 

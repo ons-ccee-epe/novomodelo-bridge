@@ -52,16 +52,16 @@ class _StubDadger:
     ) -> None:
         self._sb, self._cd, self._dp, self._ia = sb, cd, dp, ia
 
-    def sb(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def sb(self, df: bool = False) -> pd.DataFrame | None:
         return self._sb
 
-    def cd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def cd(self, df: bool = False) -> pd.DataFrame | None:
         return self._cd
 
-    def dp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def dp(self, df: bool = False) -> pd.DataFrame | None:
         return self._dp
 
-    def ia(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ia(self, df: bool = False) -> pd.DataFrame | None:
         return self._ia
 
 

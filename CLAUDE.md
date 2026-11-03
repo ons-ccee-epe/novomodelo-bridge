@@ -21,9 +21,9 @@ adds only what an agent working in this checkout needs beyond them.
 ## Quick commands
 
 ```bash
-pip install -e ".[dev]"                      # or: uv sync --extra dev
-pytest                                       # suite; tier-2 tests skip without novomodelo-python
-ruff check . && ruff format --check .        # whole tree, as CI and the pre-commit hook run it
+uv sync                                      # install, dev group included
+uv run pytest                                # suite; tier-2 tests skip without novomodelo-python
+uv run ruff check . && uv run ruff format --check .   # whole tree, as CI and the pre-commit hook run it
 python3 scripts/ci/check_no_plan_leaks.py    # hard gates, also run by CI
 python3 scripts/ci/check_comment_refs.py
 python3 scripts/ci/check_doc_paths.py

@@ -184,12 +184,15 @@ def test_bootstrap_passes_single_iteration_run_contract(
     assert args == [str(tmp_path / "work" / "bootstrap_variant")]
     kwargs = calls[0]
     assert "skip_simulation" not in kwargs
-    assert kwargs["config_overrides"]["training.stopping_rules"] == [
+    overrides = kwargs["config_overrides"]
+    assert isinstance(overrides, dict)
+    assert overrides["training.stopping_rules"] == [
         {"type": "iteration_limit", "limit": 1}
     ]
-    assert kwargs["config_overrides"]["simulation.enabled"] is False
-    assert callable(kwargs["on_iteration"])
-    assert kwargs["on_iteration"](object()) is True  # stops at the first boundary
+    assert overrides["simulation.enabled"] is False
+    on_iteration = kwargs["on_iteration"]
+    assert callable(on_iteration)
+    assert on_iteration(object()) is True  # stops at the first boundary
 
 
 def test_bootstrap_flattens_terminal_fan_and_preserves_stage_content(

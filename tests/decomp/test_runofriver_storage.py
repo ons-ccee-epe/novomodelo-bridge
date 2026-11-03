@@ -115,10 +115,10 @@ class _StubDadger:
     def __init__(self, uh: pd.DataFrame) -> None:
         self._uh = uh
 
-    def uh(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
 
-    def ac(  # noqa: ARG002
+    def ac(
         self,
         codigo_usina: int | None = None,
         modificacao: type | None = None,
@@ -127,10 +127,10 @@ class _StubDadger:
         # No AC ALTEFE (or any other) overrides on this synthetic stub.
         return pd.DataFrame()
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
 

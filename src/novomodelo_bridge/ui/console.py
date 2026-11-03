@@ -43,7 +43,9 @@ from novomodelo_bridge.core.preflight import PreflightVerdict
 from novomodelo_bridge.ui.theme import COPPER_ACCENT, SEVERITY
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Generator, Sequence
+
+    from rich.console import JustifyMethod
 
     from novomodelo_bridge.comparators.verdict import CompareVerdict
     from novomodelo_bridge.core.conversion import ConversionReport
@@ -109,14 +111,15 @@ def get_console(
     highlighting so our text renders exactly as written.
     """
     stream = sys.stderr if stderr else sys.stdout
-    kwargs: dict[str, object] = {"file": stream, "highlight": False, "emoji": False}
-    if no_color:
-        kwargs["no_color"] = True
-    if width is not None:
-        kwargs["width"] = width
-    elif not stream.isatty():
-        kwargs["width"] = DEFAULT_WIDTH
-    return Console(**kwargs)
+    if width is None and not stream.isatty():
+        width = DEFAULT_WIDTH
+    return Console(
+        file=stream,
+        highlight=False,
+        emoji=False,
+        no_color=True if no_color else None,
+        width=width,
+    )
 
 
 def print_status(
@@ -142,7 +145,7 @@ def make_table(
     rows: Sequence[Sequence[object]],
     *,
     title: str | None = None,
-    justify: Sequence[str] | None = None,
+    justify: Sequence[JustifyMethod] | None = None,
     caption: str | None = None,
     row_styles: Sequence[str | None] | None = None,
 ) -> Table:
@@ -411,7 +414,7 @@ def conversion_progress(
     verbose: bool = False,
     quiet: bool = False,
     no_color: bool = False,
-) -> Iterator[Callable[[str], None]]:
+) -> Generator[Callable[[str], None]]:
     """Yield a ``step(label)`` callback that advances a transient progress bar.
 
     The bar (spinner + label + percentage) renders on stderr while a conversion
@@ -447,7 +450,7 @@ def spinner(
     verbose: bool = False,
     quiet: bool = False,
     no_color: bool = False,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Show an indeterminate stderr spinner for the duration of a whole operation.
 
     No-op when progress is disabled (non-TTY / ``--verbose`` / ``--quiet``).

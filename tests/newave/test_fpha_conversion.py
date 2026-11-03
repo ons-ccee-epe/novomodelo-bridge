@@ -9,7 +9,7 @@ plant stays on the constant-productivity path (regression-preserving).
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -235,8 +235,8 @@ class TestFphaConverters:
         modif: MagicMock | None = None,
         confhd: pd.DataFrame | None = None,
         exph: MagicMock | None = None,
-        plant_1: dict[str, object] | None = None,
-        plant_2: dict[str, object] | None = None,
+        plant_1: Mapping[str, object] | None = None,
+        plant_2: Mapping[str, object] | None = None,
         polinjus: MagicMock | None = None,
         volumes_referencia: MagicMock | None = None,
     ):
@@ -453,11 +453,9 @@ class TestFphaConverters:
         start = _operational_caps(hreg_with_machines(hreg, {1: 1}), "USINA_A")
         final = _operational_caps(hreg_with_machines(hreg, {1: 3}), "USINA_A")
 
-        caps = {
-            r["stage_id"]: r
-            for r in convert_per_stage_capacity_caps(case, id_map).to_pylist()
-            if r["hydro_id"] == 0
-        }
+        table = convert_per_stage_capacity_caps(case, id_map)
+        assert table is not None
+        caps = {r["stage_id"]: r for r in table.to_pylist() if r["hydro_id"] == 0}
         for stage_id in range(6):
             assert caps[stage_id]["max_turbined_m3s"] == pytest.approx(start[0])
             assert caps[stage_id]["max_generation_mw"] == pytest.approx(

@@ -67,6 +67,13 @@ class CompareArgs(CommonArgs):
 
 
 @dataclass(frozen=True)
+class ResolvedCompareArgs(CompareArgs):
+    """``CompareArgs`` after config and built-in defaults: ``tolerance`` is always set."""
+
+    tolerance: float
+
+
+@dataclass(frozen=True)
 class CheckArgs(CommonArgs):
     """Options for ``check newave`` / ``check decomp``."""
 

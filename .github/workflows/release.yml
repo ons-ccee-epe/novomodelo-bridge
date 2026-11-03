@@ -1,8 +1,18 @@
 name: Release
 
+# Tag `vX.Y.Z` (the pyproject version): builds the wheel and sdist, runs the suite
+# against the built wheel, installs the wheel clean on every supported target and
+# Python, and publishes to PyPI.
+#
+# Only the canonical repository publishes. A mirror carries this file too and runs
+# the same checks on a tag, but its `publish` job is skipped.
+
 on:
   push:
     tags: ["v*"]
+
+permissions:
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -11,36 +21,149 @@ concurrency:
 jobs:
   build:
     name: Build package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
-      - run: pip install build
-      - run: python -m build
-      - uses: actions/upload-artifact@v4
+
+      - name: Version from pyproject (and the tag's)
+        id: version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the pyproject version ($version)"
+            exit 1
+          fi
+
+      - name: Wheel and sdist
+        run: uv build --out-dir dist
+
+      - name: Sdist without agent rules, caches or checkouts
+        run: |
+          extra=$(tar -tzf dist/*.tar.gz | cut -d/ -f2 | sort -u \
+            | grep -E '^([._]|CLAUDE\.md$|AGENTS\.md$)' | grep -vx '.gitignore' || true)
+          if [ -n "$extra" ]; then echo "::error::in the sdist: $extra"; exit 1; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
 
   test:
-    name: pytest (release gate)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The suite imports the installed wheel, not src/: an editable install would pass
+    # on a file the wheel leaves out.
+    name: pytest (release gate, built wheel)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
-      - run: pytest --tb=short
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Locked dependencies and the test tools, without the project
+        run: uv sync --locked --no-install-project
+
+      - name: Install the built wheel
+        run: uv pip install --no-deps dist/novomodelo_bridge-${{ needs.build.outputs.version }}-py3-none-any.whl
+
+      - name: The package under test comes from site-packages
+        run: >
+          uv run --no-sync python -c
+          "import novomodelo_bridge as m; print(m.__file__); assert 'site-packages' in m.__file__"
+
+      - run: uv run --no-sync pytest --tb=short
+
+  install:
+    # The wheel is the same on every target, but the dependencies it pulls are not: it is
+    # installed the way a user does (no checkout on the path, no uv.lock, fresh
+    # resolution) and converts the mini decks on each target and Python.
+    name: Clean install (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: tests/decks
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Keep the tool install out of the runner's own environments
+        run: |
+          echo "UV_TOOL_DIR=$RUNNER_TEMP/tools" >> "$GITHUB_ENV"
+          echo "UV_TOOL_BIN_DIR=$RUNNER_TEMP/bin" >> "$GITHUB_ENV"
+
+      - name: uv tool install of the wheel
+        run: >
+          uv tool install --python ${{ matrix.python-version }}
+          dist/novomodelo_bridge-${{ needs.build.outputs.version }}-py3-none-any.whl
+
+      - name: Version
+        working-directory: ${{ runner.temp }}
+        run: |
+          test "$("$UV_TOOL_BIN_DIR/novomodelo-bridge" --version)" = "novomodelo-bridge ${{ needs.build.outputs.version }}"
+
+      - name: Convert and validate the NEWAVE mini deck
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$UV_TOOL_BIN_DIR/novomodelo-bridge" convert newave "$GITHUB_WORKSPACE/tests/decks/newave_mini" case-newave \
+            --validate --json > newave.json
+          grep -q '"status": "ok"' newave.json
+          grep -q '"valid": true' newave.json
+
+      - name: Convert the DECOMP mini deck
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$UV_TOOL_BIN_DIR/novomodelo-bridge" convert decomp "$GITHUB_WORKSPACE/tests/decks/decomp_mini" case-decomp \
+            --no-fcf --json > decomp.json
+          grep -q '"status": "ok"' decomp.json
 
   publish:
+    # PyPI's trusted publisher is bound to the canonical repository, this file and the
+    # `pypi` environment: in any other repository the job does not run.
     name: Publish to PyPI
-    needs: [build, test]
-    runs-on: ubuntu-latest
+    needs: [build, test, install]
+    if: github.repository == 'ons-ccee-epe/novomodelo-bridge'
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       id-token: write
@@ -48,8 +171,9 @@ jobs:
       name: pypi
       url: https://pypi.org/p/novomodelo-bridge
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

@@ -85,7 +85,7 @@ def _seg_row(
 
 def test_returns_none_when_no_polinjus() -> None:
     case = _FakeCase(polinjus=None)
-    assert convert_tailrace_curves(case, _id_map([10])) is None  # type: ignore[arg-type]
+    assert convert_tailrace_curves(case, _id_map([10])) is None
 
 
 def test_returns_none_when_empty() -> None:
@@ -97,7 +97,7 @@ def test_returns_none_when_empty() -> None:
             segments=_segments([]),
         )
     )
-    assert convert_tailrace_curves(case, _id_map([10])) is None  # type: ignore[arg-type]
+    assert convert_tailrace_curves(case, _id_map([10])) is None
 
 
 def test_schema_matches_novomodelo_contract() -> None:
@@ -107,7 +107,7 @@ def test_schema_matches_novomodelo_contract() -> None:
     segments = _segments([_seg_row(10, 1, 1, 0.0, 1000.0)])
     case = _FakeCase(_FakePolinjus(families, segments))
 
-    table = convert_tailrace_curves(case, _id_map([10]))  # type: ignore[arg-type]
+    table = convert_tailrace_curves(case, _id_map([10]))
     assert table is not None
 
     fields = {f.name: (str(f.type), f.nullable) for f in table.schema}
@@ -158,7 +158,7 @@ def test_remaps_codes_joins_downstream_level_and_sorts() -> None:
     )
     case = _FakeCase(_FakePolinjus(families, segments))
 
-    table = convert_tailrace_curves(case, _id_map([10, 20]))  # type: ignore[arg-type]
+    table = convert_tailrace_curves(case, _id_map([10, 20]))
     assert table is not None
     out = table.to_pydict()
 
@@ -193,7 +193,7 @@ def test_skips_codes_absent_from_id_map() -> None:
     )
     case = _FakeCase(_FakePolinjus(families, segments))
 
-    table = convert_tailrace_curves(case, _id_map([10]))  # type: ignore[arg-type]
+    table = convert_tailrace_curves(case, _id_map([10]))
     assert table is not None
     assert table.to_pydict()["hydro_id"] == [0]
 
@@ -205,7 +205,7 @@ def test_returns_none_when_all_codes_unmapped() -> None:
     segments = _segments([_seg_row(99, 1, 1, 0.0, 100.0)])
     case = _FakeCase(_FakePolinjus(families, segments))
 
-    assert convert_tailrace_curves(case, _id_map([10])) is None  # type: ignore[arg-type]
+    assert convert_tailrace_curves(case, _id_map([10])) is None
 
 
 def test_nan_href_coerced_to_null() -> None:
@@ -221,7 +221,7 @@ def test_nan_href_coerced_to_null() -> None:
     segments = _segments([_seg_row(10, 1, 1, 0.0, 100.0)])
     case = _FakeCase(_FakePolinjus(families, segments))
 
-    table = convert_tailrace_curves(case, _id_map([10]))  # type: ignore[arg-type]
+    table = convert_tailrace_curves(case, _id_map([10]))
     assert table is not None
     assert table.to_pydict()["downstream_reference_level_m"] == [None]
 
@@ -237,4 +237,4 @@ def test_returns_none_when_a_frame_is_empty(missing: str) -> None:
     else:
         segments = segments.iloc[0:0]
     case = _FakeCase(_FakePolinjus(families, segments))
-    assert convert_tailrace_curves(case, _id_map([10])) is None  # type: ignore[arg-type]
+    assert convert_tailrace_curves(case, _id_map([10])) is None

@@ -20,6 +20,42 @@ links are cobre-bridge's.
   write the case's JSON floats with N significant digits (1 to 17, default 15),
   so their JSON files differ from an earlier conversion's; pass 17 to keep full
   precision. Below about 10 digits novomodelo can reject the case.
+- **`convert decomp` converts the `FE` contract terms of `RE` constraints**
+  into `contract_import`/`contract_export` terms. A term whose number matches
+  no single `CI`/`CE` contract in its submarket drops its constraint, with a
+  `decomp-fe-no-contract` warning.
+
+### Changed
+
+- **`AC ALTEFE` overrides set the head of DECOMP's turbined-flow limit.** They
+  were reported and ignored.
+- **The bridge requires idecomp 1.18.2, inewave 1.17.1 and cfinterface 1.10.3
+  or newer.**
+- **`convert newave` and `convert decomp` warn about the lines of the
+  electrical-constraint file they do not read** (`libs-unread-lines`). Record
+  names are read only in full and in upper case; a misspelled name starting
+  with `RE` used to be read as an `RE` constraint, and `convert newave` accepted
+  any case.
+- **A LIBS index line without a file name stops `convert newave` and
+  `convert decomp`**, as a blank file name already did; it used to be skipped.
+- **`convert newave` reads `CDESVIO` only in upper case, like the other
+  `modif.dat` records.** A maximum flow that is not a number drops the channel
+  with `diversion-channel-dropped`; it used to stop the conversion.
+- **`convert newave` reads only each plant's first `USINA` block of `modif.dat`,
+  as the NEWAVE manual allows.** The records of a repeated block, or before the
+  first `USINA`, are listed by a `modif-records-ignored` warning; merge each
+  plant into one block to keep them.
+- **`compare newave` reads `pmo.dat` once, not twice**, which takes a few
+  seconds off the comparison of a large case. The results are unchanged.
+- **`compare decomp` exits 1 when the DECOMP deck is not found**, as
+  `compare newave` does; it used to exit 2. An unreadable Novomodelo output
+  still exits 2 on both tracks.
+- **The development tools are a dependency group, not the `dev` extra.**
+  `uv sync` installs them; `pip install -e '.[dev]'` no longer does.
+- **The sdist no longer carries agent rules, caches or checkouts** (dotfiles,
+  `_*` folders, `CLAUDE.md`, `AGENTS.md`); it still carries `tests/`.
+- **The license is declared as the SPDX expression `Apache-2.0`**, with
+  `LICENSE` and `NOTICE` as license files, in place of the license classifier.
 
 ### Fixed
 
@@ -39,6 +75,31 @@ links are cobre-bridge's.
   cover; `GL` weeks without patamar durations are weighted by `cortesh.dat`,
   with a `decomp-gnl-block-hours-fallback` warning when it does not cover their
   month. Reconvert DECOMP cases with GNL plants.
+- **`convert newave` reads a blank `RE-LIM-FORM-PER-PAT` limit as unbounded**,
+  as the NEWAVE manual states; it used to stop the conversion, or drop the line
+  when the upper limit was left off. A conditional limit (`se(...)`) stops the
+  conversion with a message naming it.
+- **`convert newave` points `agrint.dat` and electrical-constraint terms at
+  the right line when an interchange pair first appears after the study's
+  first month**; they could point at another pair's line.
+- **`convert newave` no longer reads a mandatory minimum interchange
+  (`flag` 1 in `sistema.dat`) as an interchange limit**; it is left out.
+- **`convert newave` fails naming the group when an `agrint.dat` limit record
+  has no first-block limit**; it used to shift the other blocks' limits. A blank
+  later block still repeats the previous block's limit.
+- **`--json` prints the verdict envelope for a command line the parser
+  rejects.** An unknown option or command, a missing argument or an invalid
+  value left stdout empty; it now prints the envelope, with status `error` and
+  a `usage-error` diagnostic, and still exits 2.
+- **Text files are read and written as UTF-8 on every platform.** On Windows
+  they used the locale's code page, so accented text could be misread.
+- **`export dessem` reads a DECOMP deck that has no `dadgnl`.** It failed with
+  an internal error; it now exports with no GNL thermals, as `convert decomp`
+  already did.
+- **A deck missing a register the conversion needs fails with a message naming
+  it** (for example, a DECOMP deck with no UH records, or a `dger.dat` with no
+  study start). Several such cases crashed with an internal `AttributeError`
+  or `TypeError` instead.
 
 ## [0.19.1] - 2026-10-26
 

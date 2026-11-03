@@ -62,8 +62,8 @@ def _make_vazpast_mock(postos: list[int], months: list[int] | None = None) -> Ma
         for mes in months or list(range(1, 13)):
             rows.append(
                 {
-                    "codigo_usina": posto,
-                    "nome_usina": f"PLANT_{posto}",
+                    "codigo_posto": posto,
+                    "nome_posto": f"POSTO_{posto}",
                     "mes": mes,
                     "valor": float(rng.uniform(50.0, 500.0)),
                 }
@@ -301,7 +301,7 @@ class TestConvertRecentObservationWindows:
         tendency = _make_vazpast_mock(postos=[1, 2])
         case = _tendency_case(tmp_path, vazpast=tendency)
         windows = convert_recent_observation_windows(case, _ID_MAP)
-        source = tendency.tendencia.set_index(["codigo_usina", "mes"])["valor"]
+        source = tendency.tendencia.set_index(["codigo_posto", "mes"])["valor"]
 
         for hydro_id, posto in ((0, 1), (1, 2)):
             entries = [w for w in windows if w["hydro_id"] == hydro_id]
@@ -341,7 +341,7 @@ class TestConvertRecentObservationWindows:
         )
         windows = convert_recent_observation_windows(case, _ID_MAP)
         natural = {
-            (int(r["codigo_usina"]), int(r["mes"])): float(r["valor"])
+            (int(r["codigo_posto"]), int(r["mes"])): float(r["valor"])
             for _, r in tend.iterrows()
         }
         downstream = [e for e in windows if e["hydro_id"] == 1]
@@ -471,7 +471,7 @@ class TestArtificialGauge:
             tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE), vazpast=vazpast
         )
         windows = convert_recent_observation_windows(case, _ARTIFICIAL_ID_MAP)
-        natural = vazpast.tendencia.set_index(["codigo_usina", "mes"])["valor"]
+        natural = vazpast.tendencia.set_index(["codigo_posto", "mes"])["valor"]
         by_hydro: dict[int, list[dict]] = {}
         for entry in windows:
             by_hydro.setdefault(entry["hydro_id"], []).append(entry)

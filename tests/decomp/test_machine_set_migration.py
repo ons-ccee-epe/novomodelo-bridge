@@ -111,16 +111,16 @@ class _StubDadger:
     ) -> None:
         self._uh, self._mp, self._fd = uh, mp, fd
 
-    def uh(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame | None:
         return self._uh
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return self._mp
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return self._fd
 
-    def ac(  # noqa: ARG002
+    def ac(
         self,
         codigo_usina: int | None = None,
         modificacao: type | None = None,
@@ -143,7 +143,9 @@ def _dropping_machine_set_effective(
     mid-horizon ``NUMMAQ`` shrink no rv3 deck exercises (every machine-set
     override there resolves to stage 0, per the rv3 probe)."""
     machine_sets = tuple(
-        MachineSet(4, 25.0, 50.0) if stage < n_stages - 1 else MachineSet(2, 25.0, 50.0)
+        MachineSet(4, 25.0, 50.0, 80.0)
+        if stage < n_stages - 1
+        else MachineSet(2, 25.0, 50.0, 80.0)
         for stage in range(n_stages)
     )
     return EffectiveCadastro(

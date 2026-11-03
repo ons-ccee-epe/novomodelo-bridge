@@ -16,10 +16,11 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.newave.case import hydro_plant_table, thermal_plant_table
 from novomodelo_bridge.newave.plants import active_hydro_codes
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet
+    from collections.abc import Set as AbstractSet
 
     from inewave.newave import Confhd, Conft, Exph, Ree, Sistema
 
@@ -136,7 +137,7 @@ def build_id_map_from_readers(
     ``exph is None`` the enumeration is the in-service set: no ``NE`` plant is
     admitted.
     """
-    confhd_df = confhd.usinas
+    confhd_df = hydro_plant_table(confhd)
     if fictitious:
         rows = sorted(
             (
@@ -171,7 +172,7 @@ def build_id_map_from_readers(
     )
 
     # Thermal codes from conft.
-    conft_df = conft.usinas
+    conft_df = thermal_plant_table(conft)
     thermal_codes = [int(r["codigo_usina"]) for _, r in conft_df.iterrows()]
 
     # Subsystem codes from sistema deficit table.

@@ -10,52 +10,81 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint:
-    name: ruff + quality gates
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: ruff + type check + quality gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
-      # The ruff uv.lock pins, which the pre-commit hook runs from .venv;
-      # tests/test_packaging.py fails if the two differ.
-      - run: pip install "ruff==0.17.2"
-      - run: ruff check .
-      - run: ruff format --check .
-      # Drift/rot gates — conventions in .claude/rules/, docs in scripts/README.md
+
+      # --locked fails when uv.lock does not match pyproject.toml, so every
+      # tool below (ruff, ty) is the version the lock pins.
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+      # Drift/rot gates: conventions in .claude/rules/, docs in scripts/README.md
       - run: python3 scripts/ci/check_no_plan_leaks.py
       - run: python3 scripts/ci/check_comment_refs.py
       - run: python3 scripts/ci/check_doc_paths.py
 
+      - name: Type check (ty)
+        run: uv run ty check
+
   test:
-    name: pytest (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
         python-version: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python-version }}
-      # novomodelo-python is a core runtime dependency, so `.[dev]` pulls it on
-      # every Python in the matrix — the tier-2 (`requires_novomodelo_python`)
-      # boundary-FCF tests now run on all jobs, not just the primary one.
-      - run: pip install -e ".[dev]"
-      - run: pytest --tb=short
+
+      # novomodelo-python is a core runtime dependency, so the sync pulls it on
+      # every job: the tier-2 (`requires_novomodelo_python`) tests run on all of them.
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - run: uv run pytest --tb=short
 
   coverage:
     name: coverage (reader/align layer floor)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
-      - run: pytest --cov --cov-report=term-missing
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - run: uv run pytest --cov --cov-report=term-missing

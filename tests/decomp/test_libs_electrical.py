@@ -24,6 +24,7 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     GnlStageCommitment,
     GnlThermal,
 )
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     _GNL_TOKEN,
     ActivationRule,
@@ -74,14 +75,48 @@ class _StubRestricoes:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
-        if name.startswith("_"):
-            raise AttributeError(name)
+    def expressao_eletrica(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("expressao_eletrica")
 
-        def accessor(df: bool = True) -> pd.DataFrame | None:
-            return self._frames.get(name)
+    def alias_eletrico_valor_periodo_patamar(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("alias_eletrico_valor_periodo_patamar")
 
-        return accessor
+    def alias_eletrico(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("alias_eletrico")
+
+    def restricao_eletrica_horizonte_periodo(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_horizonte_periodo")
+
+    def restricao_eletrica_limite_formula_periodo_patamar(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_limite_formula_periodo_patamar")
+
+    def restricao_eletrica_inequacao_periodo_patamar(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_inequacao_periodo_patamar")
+
+    def restricao_eletrica_habilita(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_habilita")
+
+    def restricao_eletrica_regra_ativacao(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_regra_ativacao")
+
+    def restricao_eletrica_tratamento_violacao(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_tratamento_violacao")
+
+    def restricao_eletrica_formula(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_formula")
+
+    def restricao_eletrica_inequacao(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_inequacao")
 
 
 def _stage(index: int) -> OperativeStage:
@@ -912,7 +947,7 @@ class _StubElectricalDadger:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
+    def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -1026,7 +1061,7 @@ def _pq(*rows: tuple, n_patamares: int) -> pd.DataFrame:
 _PEQ_ID_MAP = DecompIdMap(bus_codes=(1, 2, 3, 4), bus_names=("SE", "S", "NE", "N"))
 
 
-def _peq_factory(n_stages: int = 2):  # noqa: ANN202 - test helper
+def _peq_factory(n_stages: int = 2):
     calendar = _ri_calendar(n_stages, n_blocks=2)
     dadger = _StubElectricalDadger(
         dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2),
@@ -1127,7 +1162,7 @@ def _gnl_model() -> GnlCommitmentModel:
     )
 
 
-def _gnl_factory():  # noqa: ANN202 - test helper
+def _gnl_factory():
     calendar = [
         OperativeStage(
             index=i,
@@ -1386,6 +1421,7 @@ def test_assemble_bound_empty_overrides_matches_pre_ticket_base_fold() -> None:
     restriction = _inequacao(505, "ger_usih(9)", "<=", "1000 - 0.02*val_demanda(1)")
     ctx = _dict_context({"val_demanda(1)": 400.0})
     model = _model()
+    assert restriction.lhs is not None
     lhs_partition = classify_terms(parse_linear_expression(restriction.lhs, model))
     assert restriction.rhs is not None
     rhs_partition = classify_terms(parse_linear_expression(restriction.rhs, model))
@@ -1594,7 +1630,12 @@ def test_build_available_power_for_disp_usih_sums_overlay_and_falls_back() -> No
         "novomodelo_bridge.decomp.converters.libs_electrical._rated_envelope",
         return_value=(0.0, 1500.0),
     ):
-        a_h = build_available_power(case, id_map, overlay=overlay, effective=object())
+        a_h = build_available_power(
+            case,
+            id_map,
+            overlay=overlay,
+            effective=EffectiveCadastro(base=hidr, n_stages=1, stage_varying={}),
+        )
 
     assert a_h.overlay == {(261, 0): 1000.0}
     assert a_h.rated_envelope == {261: 1500.0, 262: 1500.0}

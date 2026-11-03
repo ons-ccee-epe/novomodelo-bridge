@@ -395,7 +395,7 @@ def test_comparison_css_includes_enhanced_styles() -> None:
 
 def test_comparators_backward_compat() -> None:
     """All symbols re-exported from comparators.html_report must be importable."""
-    from novomodelo_bridge.comparators.html_report import (  # noqa: PLC0415
+    from novomodelo_bridge.comparators.html_report import (
         COLOR_DIFF,
         COLOR_MATCH,
         COLOR_NEWAVE,

@@ -1840,4 +1840,4 @@ def test_facet_panel_is_frozen() -> None:
 
     panel = FacetPanel(row=0, col=0, x_domain=[0.0, 1.0], y_domain=[0.0, 1.0])
     with pytest.raises(dataclasses.FrozenInstanceError):
-        panel.row = 1  # type: ignore[misc]
+        setattr(panel, "row", 1)

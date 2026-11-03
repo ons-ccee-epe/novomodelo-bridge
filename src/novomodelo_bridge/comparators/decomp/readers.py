@@ -30,6 +30,7 @@ from __future__ import annotations
 import functools
 import logging
 import re
+from collections.abc import Hashable
 from pathlib import Path
 from typing import Protocol
 
@@ -60,12 +61,12 @@ _LOG = logging.getLogger(__name__)
 class _TableFile(Protocol):
     """The idecomp reader surface the operation readers rely on."""
 
-    tabela: pd.DataFrame | None
+    @property
+    def tabela(self) -> pd.DataFrame | None: ...
 
 
-class _TableReader(Protocol):
-    @staticmethod
-    def read(path: str) -> _TableFile: ...
+class _TableReader(Hashable, Protocol):
+    def read(self, path: str, /) -> _TableFile: ...
 
 
 def _resolve_result_file(case_dir: Path, filename: str) -> Path | None:

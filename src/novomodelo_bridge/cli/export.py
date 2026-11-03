@@ -176,7 +176,7 @@ def _export_dessem(
     # rendered diagnostic or `--json` envelope, exit 1.
     try:
         source = read_source_deck(decomp_dir)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _fail(command, args, exc, 1)
     revision = source.revision
 
@@ -231,7 +231,7 @@ def _export_dessem(
                 )
     # Broad by design, as in `convert`: an unexpected export failure must still
     # reach the user as one rendered diagnostic or `--json` envelope, exit 1.
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _fail(command, args, exc, 1)
 
     status = "ok" if exit_code == 0 else "error"

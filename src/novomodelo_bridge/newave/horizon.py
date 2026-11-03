@@ -72,14 +72,34 @@ class StudyHorizon:
         return stage_id >= self.study_months
 
 
+def _required_field(value: int | None, field: str) -> int:
+    if value is None:
+        raise ValueError(f"dger.dat has no {field}")
+    return int(value)
+
+
+def study_start(dger: Dger) -> tuple[int, int]:
+    """The study's first ``(year, month)``; ``ValueError`` when ``dger.dat``
+    lacks either."""
+    return (
+        _required_field(dger.ano_inicio_estudo, "study start year"),
+        _required_field(dger.mes_inicio_estudo, "study start month"),
+    )
+
+
+def history_start_year(dger: Dger) -> int:
+    """The first year of the historical inflow record; ``ValueError`` when
+    ``dger.dat`` lacks it."""
+    return _required_field(dger.ano_inicial_historico, "historical record start year")
+
+
 def study_horizon(dger: Dger) -> StudyHorizon:
     """Resolve the :class:`StudyHorizon` from a parsed ``dger.dat``.
 
     ``num_anos_estudo`` falls back to 1 and ``num_anos_pos_estudo`` to 0 when
     absent/zero (the pipeline rejects a genuinely empty study earlier).
     """
-    start_year = int(dger.ano_inicio_estudo)
-    start_month = int(dger.mes_inicio_estudo)
+    start_year, start_month = study_start(dger)
     num_anos = int(dger.num_anos_estudo or 1)
     num_anos_pos = int(dger.num_anos_pos_estudo or 0)
     study_months = (13 - start_month) + (num_anos - 1) * 12

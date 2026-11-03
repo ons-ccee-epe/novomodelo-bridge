@@ -16,9 +16,12 @@ from novomodelo_bridge.core.git import git_sha
 
 
 def _in_git_checkout() -> bool:
+    """Whether the imported package sits in a git work tree (an editable install),
+    which is where ``git_sha`` looks; a wheel in site-packages has no SHA."""
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=Path(novomodelo_bridge.__file__).resolve().parent,
             capture_output=True,
             text=True,
             check=False,
@@ -51,10 +54,10 @@ def test_create_sets_bridge_version_and_timestamp() -> None:
 
 def test_create_threads_through_input_files_and_diagnostics() -> None:
     """``create``'s new keyword-only fields default empty and thread through."""
-    input_files = [
+    input_files: list[dict[str, object]] = [
         {"field": "dadger", "path": "dadger.rv0", "sha256": "abc", "size_bytes": 4}
     ]
-    diagnostics = [{"code": "x", "severity": "warning"}]
+    diagnostics: list[dict[str, object]] = [{"code": "x", "severity": "warning"}]
 
     manifest = ComparisonManifest.create(
         "compare decomp",

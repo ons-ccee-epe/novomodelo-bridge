@@ -27,7 +27,6 @@ from novomodelo_bridge.comparators.newave.readers import (
     read_medias_market,
     read_medias_ree,
     read_medias_sin,
-    read_medias_system,
     read_medias_thermal,
     read_newave_net_load,
     read_newave_net_load_nwlistop,
@@ -65,6 +64,34 @@ class TestMediasHydro:
         )
         assert row["value"].item() == 120.5
 
+    @pytest.mark.parametrize("end", [",", ""], ids=["trailing-comma", "no-comma"])
+    def test_reads_the_last_stage_whether_or_not_a_line_ends_in_a_comma(
+        self, tmp_path: Path, end: str
+    ) -> None:
+        (tmp_path / "MEDIAS-USIH.CSV").write_text(
+            f"USIH_ext,     VAR,       9,      10{end}\n"
+            f"       1,  GHIDUH,   120.5,   121.0{end}\n",
+            encoding="utf-8",
+        )
+
+        df = read_medias_hydro(tmp_path)
+
+        assert df.sort("stage")["value"].to_list() == [120.5, 121.0]
+
+    def test_a_value_printed_as_a_dash_has_no_row(self, tmp_path: Path) -> None:
+        (tmp_path / "MEDIAS-USIH.CSV").write_text(
+            "USIH_ext,     VAR,       9,      10,\n"
+            "       1,  GHIDUH,   120.5,   121.0,\n"
+            "       1, VIOL_NEG_EVAP,       -      ,     2.5,\n",
+            encoding="utf-8",
+        )
+
+        df = read_medias_hydro(tmp_path)
+
+        assert df.filter(pl.col("variable") == "VIOL_NEG_EVAP").select(
+            "stage", "value"
+        ).rows() == [(10, 2.5)]
+
     def test_degrades_to_empty_frame_on_missing_file(
         self, tmp_path: Path, caplog
     ) -> None:
@@ -75,11 +102,10 @@ class TestMediasHydro:
 
 
 class TestMediasThermal:
-    def test_parses_gter_per_plant_stage(self) -> None:
+    def test_parses_the_generation_variables_per_plant_stage(self) -> None:
         df = read_medias_thermal(_FIXTURE_DIR)
-        assert not df.is_empty()
         assert df["newave_code"].unique().to_list() == [1]
-        assert df["variable"].unique().to_list() == ["GTER"]
+        assert set(df["variable"].unique().to_list()) == {"GTMIN", "GTERM", "GTERMTOT"}
 
     def test_degrades_to_empty_frame_on_missing_file(
         self, tmp_path: Path, caplog
@@ -90,29 +116,31 @@ class TestMediasThermal:
         assert "MEDIAS-USIT.CSV" in caplog.text
 
 
-class TestMediasSystem:
+class TestMediasMarket:
     def test_parses_cmo_and_deft_per_submarket_stage(self) -> None:
-        df = read_medias_system(_FIXTURE_DIR)
+        df = read_medias_market(_FIXTURE_DIR)
         assert not df.is_empty()
         assert set(df["variable"].unique().to_list()) == {"CMO", "DEFT"}
+
+    def test_the_code_0_system_rows_are_not_read(self, tmp_path: Path) -> None:
+        (tmp_path / "MEDIAS-MERC.CSV").write_text(
+            "SBM_ext,VAR,       9,      10,\n"
+            "       0,COPER,  1000.0,  1100.0,\n"
+            "       1,CMO,   150.3,   152.1,\n",
+            encoding="utf-8",
+        )
+
+        df = read_medias_market(tmp_path)
+
+        assert df["newave_code"].unique().to_list() == [1]
 
     def test_degrades_to_empty_frame_on_missing_file(
         self, tmp_path: Path, caplog
     ) -> None:
         with caplog.at_level(logging.WARNING):
-            df = read_medias_system(tmp_path)
+            df = read_medias_market(tmp_path)
         assert df.is_empty()
         assert "MEDIAS-MERC.CSV" in caplog.text
-
-
-class TestMediasMarket:
-    def test_parses_all_market_variables(self) -> None:
-        df = read_medias_market(_FIXTURE_DIR)
-        assert not df.is_empty()
-        assert set(df["variable"].unique().to_list()) == {"CMO", "DEFT"}
-
-    def test_degrades_to_empty_frame_on_missing_file(self, tmp_path: Path) -> None:
-        assert read_medias_market(tmp_path).is_empty()
 
 
 class TestMediasSin:
@@ -142,86 +170,82 @@ class TestMediasRee:
 # ---------------------------------------------------------------------------
 
 
+_PMO_CONVERGENCE_HEADER = [
+    "    ITER               LIM.INF.                   ZINF               LIM.SUP."
+    "                   ZSUP                  DZINF             ZSUP ITER.",
+    "                        ($10^6)                ($10^6)                ($10^6)"
+    "                ($10^6)                    (%)                ($10^6)",
+    "   X----X" + "----------------------X" * 6,
+]
+
+
+def _write_pmo(directory: Path, rows: list[str]) -> Path:
+    path = directory / "pmo.dat"
+    path.write_text(
+        "\n".join([*_PMO_CONVERGENCE_HEADER, *rows, ""]), encoding="latin-1"
+    )
+    return path
+
+
 class TestPmoConvergence:
-    def test_parses_iteration_table_via_own_regex(self) -> None:
+    def test_reads_the_row_carrying_zsup_iter_of_each_iteration(self) -> None:
+        """The fixture prints three rows per iteration, as a run with several
+        forward series does; the first two are confidence-interval rows."""
         df = read_pmo_convergence(_FIXTURE_DIR)
         assert df.to_dicts() == [
             {
                 "iteration": 1,
-                "lower_bound": pytest.approx(5.551e8),
-                "upper_bound_mean": pytest.approx(5.804e8),
-                "upper_bound_best": pytest.approx(5.804e8),
+                "lower_bound": pytest.approx(555.1e6),
+                "upper_bound_mean": pytest.approx(580.4e6),
+                "upper_bound_best": pytest.approx(580.4e6),
             },
             {
                 "iteration": 2,
-                "lower_bound": pytest.approx(5.602e8),
-                "upper_bound_mean": pytest.approx(5.86e8),
-                "upper_bound_best": pytest.approx(5.804e8),
+                "lower_bound": pytest.approx(560.2e6),
+                "upper_bound_mean": pytest.approx(586.0e6),
+                "upper_bound_best": pytest.approx(580.4e6),
             },
         ]
 
-    def test_reads_only_the_iteration_rows_of_the_convergence_table(
+    def test_reads_two_rows_per_iteration_whose_numbers_overrun_the_columns(
         self, tmp_path: Path
     ) -> None:
-        """An electric-constraint year row before the table, a deficit-risk
-        year row inside it and a row past its page all carry seven numbers."""
-        risk_indent = " " * 61
-        (tmp_path / "pmo.dat").write_text(
-            "\n".join(
-                [
-                    " 2027     60.00      90.00      90.00     120.00     120.00"
-                    "     150.00     180.00",
-                    "    ITER               LIM.INF.                   ZINF"
-                    "               LIM.SUP.                   ZSUP"
-                    "                  DZINF             ZSUP ITER.",
-                    "      1     10.0     5.0     10.0     10.0     000h00min17.000s",
-                    "      1     10.0     5.0     10.0     10.0     -     10.0",
-                    f"{risk_indent}2025   0.0    0.0   0.0    0.0   0.0    0.0",
-                    " CEPEL   MODELO ESTRATEGICO DE GERACAO HIDROTERMICA",
-                    "      7     1.0     2.0     3.0     4.0     -     5.0",
-                ]
-            ),
-            encoding="latin-1",
-        )
-
-        df = read_pmo_convergence(tmp_path)
-
-        assert df["iteration"].to_list() == [1]
-
-    def test_several_forward_series_read_the_row_carrying_zsup_iter(
-        self, tmp_path: Path
-    ) -> None:
-        """Rows of a four-forward run: the 95% and 99% interval rows of the
-        best iteration, then the row ``CONVERG.TMP`` records."""
-        (tmp_path / "pmo.dat").write_text(
-            "\n".join(
-                [
-                    "    ITER               LIM.INF.                   ZINF"
-                    "               LIM.SUP.                   ZSUP"
-                    "                  DZINF             ZSUP ITER.",
-                    "      3                 2787.42               51384.44"
-                    "              274544.92              179245.92"
-                    "                                                B"
-                    "    000h03min12.000s",
-                    "      3                  345.15               51384.44"
-                    "              276987.19              179245.92"
-                    "                                                B     (99%)",
-                    "      3                    0.00               51384.44"
-                    "              256620.33              161321.33"
-                    "        0.006                        161976.25  B",
-                ]
-            ),
-            encoding="latin-1",
+        _write_pmo(
+            tmp_path,
+            [
+                "      1              4016521.0626873286                 214.9923938220"
+                "             4016521.0626873286             4016521.0626873286"
+                "                                         000h00min02.000s",
+                "      1              4016521.0626873286                 214.9923938220"
+                "             4016521.0626873286             4016521.0626873286"
+                "                -                     4016521.0626873286   ",
+                " " * 61 + "2025 100.0  631.6 100.0 1550.2   0.0    0.0 100.0   67.9",
+            ],
         )
 
         row = read_pmo_convergence(tmp_path).row(0, named=True)
 
         assert row == {
-            "iteration": 3,
-            "lower_bound": pytest.approx(51384.44e6),
-            "upper_bound_mean": pytest.approx(161976.25e6),
-            "upper_bound_best": pytest.approx(161321.33e6),
+            "iteration": 1,
+            "lower_bound": pytest.approx(214.9923938220e6),
+            "upper_bound_mean": pytest.approx(4016521.0626873286e6),
+            "upper_bound_best": pytest.approx(4016521.0626873286e6),
         }
+
+    def test_a_rewritten_pmo_is_read_again(self, tmp_path: Path) -> None:
+        pmo = tmp_path / "pmo.dat"
+        pmo.write_bytes((_FIXTURE_DIR / "pmo.dat").read_bytes())
+        assert read_pmo_convergence(tmp_path)["iteration"].to_list() == [1, 2]
+
+        lines = pmo.read_text(encoding="latin-1").splitlines()
+        first_of_iteration_2 = next(
+            i for i, line in enumerate(lines) if line.startswith("      2")
+        )
+        pmo.write_text(
+            "\n".join([*lines[:first_of_iteration_2], ""]), encoding="latin-1"
+        )
+
+        assert read_pmo_convergence(tmp_path)["iteration"].to_list() == [1]
 
     def test_degrades_to_empty_frame_on_missing_pmo(
         self, tmp_path: Path, caplog
@@ -230,6 +254,34 @@ class TestPmoConvergence:
             df = read_pmo_convergence(tmp_path)
         assert df.is_empty()
         assert "pmo.dat not found" in caplog.text
+
+    def test_degrades_to_empty_frame_without_a_convergence_table(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        (tmp_path / "pmo.dat").write_text(
+            " CEPEL   MODELO ESTRATEGICO DE GERACAO HIDROTERMICA\n", encoding="latin-1"
+        )
+        with caplog.at_level(logging.WARNING):
+            df = read_pmo_convergence(tmp_path)
+        assert df.is_empty()
+        assert "No convergence table" in caplog.text
+
+
+def test_one_comparison_parses_pmo_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inewave.newave import Pmo
+
+    (tmp_path / "pmo.dat").write_bytes((_FIXTURE_DIR / "pmo.dat").read_bytes())
+    parsed: list[str] = []
+    read = Pmo.read
+    monkeypatch.setattr(Pmo, "read", lambda path: parsed.append(path) or read(path))
+
+    read_pmo_convergence(tmp_path)
+    read_pmo_productivity_detail(tmp_path)
+    read_pmo_cost_breakdown(tmp_path)
+
+    assert parsed == [str(tmp_path / "pmo.dat")]
 
 
 class TestPmoProductivityDetail:

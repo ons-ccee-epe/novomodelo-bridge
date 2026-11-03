@@ -12,11 +12,13 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
+from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
     ConstraintIdAllocator,
 )
 from novomodelo_bridge.core.generic_constraint_format import GENERIC_BOUNDS_COLUMNS
+from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.constraints import (
     _cascade_sum,
@@ -780,19 +782,23 @@ class TestParseFormula:
 # ---------------------------------------------------------------------------
 
 
-def _make_electric_re_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
-    """Return a ``(case, id_map)`` pair for a single-code electric constraint:
-    ``restricao-eletrica.csv`` declaring a two-sided
-    ``[50, 200]`` limit on ``ger_usih(10)`` over 2020, with ``dger``/``sistema``
-    mocked to a 1-year 2020 study carrying no exchange/deficit data.
+_TWO_SIDED_RE = (
+    "RE;1;1.0ger_usih(10)\n"
+    "RE-HORIZ-PER;1;2020/01;2020/12\n"
+    "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n"
+)
+
+
+def _make_electric_re_case(
+    tmp_path: Path, re_text: str = _TWO_SIDED_RE
+) -> tuple[NewaveCase, NewaveIdMap]:
+    """Return a ``(case, id_map)`` pair whose ``restricao-eletrica.csv`` is
+    *re_text*, by default a two-sided ``[50, 200]`` limit on ``ger_usih(10)``
+    over 2020, with ``dger``/``sistema`` mocked to a 1-year 2020 study carrying
+    no exchange/deficit data.
     """
     re_path = tmp_path / "restricao-eletrica.csv"
-    re_path.write_text(
-        "RE;1;1.0ger_usih(10)\n"
-        "RE-HORIZ-PER;1;2020/01;2020/12\n"
-        "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
-        encoding="latin-1",
-    )
+    re_path.write_text(re_text, encoding="latin-1")
 
     dger = MagicMock()
     dger.mes_inicio_estudo = 1
@@ -907,6 +913,75 @@ class TestConvertElectricConstraints:
 
         assert result is not None
         assert result.bounds.schema.equals(GENERIC_BOUNDS_SCHEMA)
+
+    @pytest.mark.parametrize(
+        ("limits", "lower", "upper"),
+        [
+            ("1;;200.", set(), {200.0}),
+            ("1;50.;", {50.0}, set()),
+            ("1;50.", {50.0}, set()),
+            ("1;-1.1e30;200.", set(), {200.0}),
+        ],
+        ids=["blank-lower", "blank-upper", "missing-upper", "lower-sentinel"],
+    )
+    def test_a_blank_or_sentinel_limit_is_unbounded(
+        self, tmp_path: Path, limits: str, lower: set[float], upper: set[float]
+    ) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            f"RE;1;1.0ger_usih(10)\nRE-LIM-FORM-PER-PAT;1;2020/01;2020/12;{limits}\n",
+        )
+
+        result = convert_electric_constraints(case, id_map)
+
+        assert result is not None
+        assert len(result.constraints) == 1
+        rows = result.bounds.to_pylist()
+        assert {r["bound_lower"] for r in rows if r["bound_lower"] is not None} == lower
+        assert {r["bound_upper"] for r in rows if r["bound_upper"] is not None} == upper
+
+    def test_a_conditional_limit_is_rejected(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            "RE;1;1.0ger_usih(10)\n"
+            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;"
+            "se(demanda(1) < 1000, 10000, 8500);200.\n",
+        )
+
+        with pytest.raises(SourceFileError, match="which is not a number") as err:
+            convert_electric_constraints(case, id_map)
+        assert "se(demanda(1) < 1000, 10000, 8500)" in str(err.value)
+        assert err.value.field == "RE-LIM-FORM-PER-PAT"
+
+    def test_a_period_that_is_not_a_date_is_rejected(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            _TWO_SIDED_RE.replace("RE-HORIZ-PER;1;2020/01", "RE-HORIZ-PER;1;1"),
+        )
+
+        with pytest.raises(
+            SourceFileError, match=r"RE-HORIZ-PER line without a readable start period"
+        ):
+            convert_electric_constraints(case, id_map)
+
+    def test_lines_the_reader_keeps_as_text_are_warned(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            _TWO_SIDED_RE
+            + "re;2;1.0ger_usih(10)\nRESTRICAO-ELETRICA-FORMULA;3;ger_usih(10)\n",
+        )
+
+        with dx.collect() as collected:
+            result = convert_electric_constraints(case, id_map)
+
+        assert result is not None
+        assert {c["name"] for c in result.constraints} == {"RE_1"}
+        [unread] = [d for d in collected if d.code == UNREAD_LINES_CODE]
+        assert unread.table is not None
+        assert unread.table.rows == [
+            ["re;2;1.0ger_usih(10)"],
+            ["RESTRICAO-ELETRICA-FORMULA;3;ger_usih(10)"],
+        ]
 
 
 def _valid_ree_reader():
@@ -1353,7 +1428,7 @@ class TestConvertAgrintConstraints:
         fake_line_map = {(1, 3): 0}
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value=fake_line_map,
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1374,7 +1449,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1396,7 +1471,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result_0 = convert_agrint_constraints(case, id_map)
@@ -1421,7 +1496,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1463,7 +1538,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1519,7 +1594,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3, 11], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 11): 3, (3, 11): 4},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1555,7 +1630,7 @@ class TestConvertAgrintConstraints:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             result = convert_agrint_constraints(case, id_map)
@@ -1572,6 +1647,133 @@ class TestConvertAgrintConstraints:
         assert c2["expression"].startswith("line_reverse(0)")
         assert "line_exchange" not in c2["expression"]
         assert not c2["expression"].startswith("-")
+
+
+def _three_block_agrint_case(tmp_path: Path, limit_line: str) -> NewaveCase:
+    """A 3-block, one-year case whose single AGRINT group 1 (1 -> 3) has one
+    limit record, *limit_line*; sistema.dat lists the pair so the group has a line."""
+    agrint_path = tmp_path / "agrint.dat"
+    agrint_path.write_text(
+        "AGRUPAMENTOS DE INTERCAMBIO\n"
+        " #AG A   B   COEF\n"
+        " XXX XXX XXX XX.XXXX\n"
+        "   1   1   3  1.0000\n"
+        " 999\n"
+        "LIMITES POR GRUPO\n"
+        "  #AG MI ANOI MF ANOF LIM_P1  LIM_P2  LIM_P3\n"
+        " XXX  XX XXXX XX XXXX XXXXXX. XXXXXX. XXXXXX.\n"
+        f"{limit_line}\n"
+        " 999\n",
+        encoding="latin-1",
+    )
+    sistema = MagicMock()
+    sistema.limites_intercambio = pd.DataFrame(
+        [
+            {
+                "submercado_de": 1,
+                "submercado_para": 3,
+                "flag": 0,
+                "sentido": 0,
+                "data": datetime(2020, 1, 1),
+                "valor": 1000.0,
+            }
+        ]
+    )
+    return make_case(
+        make_nw_files(tmp_path, agrint=agrint_path),
+        dger=_make_dger_mock_for_agrint(),
+        patamar=MagicMock(numero_patamares=3),
+        sistema=sistema,
+    )
+
+
+def test_an_agrint_term_lands_on_its_line_when_another_pair_appears_later(
+    tmp_path: Path,
+) -> None:
+    """Pair 1-2 first appears in February; it sorts before pair 1-99, so the
+    first month's pairs alone would number 1-99 as line 0, which is 1-2's."""
+    from novomodelo_bridge.newave.converters.network import convert_lines
+    from tests.newave.conftest import _make_sistema_mock
+
+    jan, feb = datetime(2023, 1, 1), datetime(2023, 2, 1)
+    limits = [
+        (1, 99, jan),
+        (99, 1, jan),
+        (1, 99, feb),
+        (99, 1, feb),
+        (1, 2, feb),
+        (2, 1, feb),
+    ]
+    sistema = _make_sistema_mock()
+    sistema.limites_intercambio = pd.DataFrame(
+        [
+            {
+                "submercado_de": de,
+                "submercado_para": para,
+                "flag": 0,
+                "sentido": 0,
+                "data": data,
+                "valor": 1000.0,
+            }
+            for de, para, data in limits
+        ]
+    )
+    dger = _make_dger_mock_for_agrint()
+    dger.ano_inicio_estudo = 2023
+    agrint_path = tmp_path / "agrint.dat"
+    agrint_path.write_text(
+        "AGRUPAMENTOS DE INTERCAMBIO\n"
+        " # AG A   B   COEF\n"
+        " XXX XXX XXX XX.XXXX\n"
+        "   1   1  99  1.0000\n"
+        " 999\n"
+        "LIMITES POR GRUPO\n"
+        "  # AG MI ANOI MF ANOF LIM_P1  LIM_P2  LIM_P3\n"
+        " XXX  XX XXXX XX XXXX XXXXXX. XXXXXX. XXXXXX.\n"
+        "   1   1 2023 12 2023   5000.   5000.   5000.\n"
+        " 999\n",
+        encoding="latin-1",
+    )
+    case = make_case(
+        make_nw_files(tmp_path, agrint=agrint_path), dger=dger, sistema=sistema
+    )
+    id_map = NewaveIdMap(subsystem_ids=[1, 2, 99], hydro_codes=[], thermal_codes=[])
+
+    lines = convert_lines(case, id_map)["lines"]
+    line_1_99 = next(
+        line["id"]
+        for line in lines
+        if (line["source_bus_id"], line["target_bus_id"])
+        == (id_map.bus_id(1), id_map.bus_id(99))
+    )
+    result = convert_agrint_constraints(case, id_map)
+
+    assert result is not None
+    assert [c["expression"] for c in result[0]] == [f"line_direct({line_1_99})"]
+
+
+class TestAgrintBlankLimitColumns:
+    def test_blank_block_repeats_the_previous_block_limit(self, tmp_path: Path) -> None:
+        case = _three_block_agrint_case(
+            tmp_path, "   1   1 2020 12 2020  10000.   9000."
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
+
+        result = convert_agrint_constraints(case, id_map)
+
+        assert result is not None
+        bounds = result.bounds.to_pandas()
+        first_stage = bounds[bounds["stage_id"] == 0].sort_values("block_id")
+        assert list(first_stage["bound_upper"]) == [10000.0, 9000.0, 9000.0]
+
+    def test_blank_first_block_is_a_parse_error(self, tmp_path: Path) -> None:
+        case = _three_block_agrint_case(
+            tmp_path, "   1   1 2020 12 2020           9000.   8000."
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
+
+        with pytest.raises(FieldParseError, match="group 1 has no first block limit"):
+            convert_agrint_constraints(case, id_map)
 
 
 class TestConvertAgrintConstraintsEmission:
@@ -1606,7 +1808,7 @@ class TestConvertAgrintConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[1, 3], hydro_codes=[], thermal_codes=[])
 
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             with dx.collect() as collected:
@@ -1654,7 +1856,7 @@ class TestNewaveCrossEmitterAllocatorContiguity:
 
         allocator = ConstraintIdAllocator()
         with patch(
-            "novomodelo_bridge.newave.converters.constraints._build_line_id_map",
+            "novomodelo_bridge.newave.converters.constraints.line_ids",
             return_value={(1, 3): 0},
         ):
             electric_result = convert_electric_constraints(
