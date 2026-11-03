@@ -19,13 +19,15 @@ from novomodelo_bridge.cli.config import (
 
 
 def _isolate_discovery_env(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
-    """Point discovery's env lookups at *home* and unset ``XDG_CONFIG_HOME``.
+    """Point discovery's env lookups at *home* (``HOME``, or ``USERPROFILE`` on
+    Windows) and unset ``XDG_CONFIG_HOME``.
 
     Keeps the user-level fallbacks inside the test sandbox so an empty cwd chain
     cannot accidentally resolve a real ``~/.config`` file.
     """
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
 
 def test_no_file_returns_empty_config(

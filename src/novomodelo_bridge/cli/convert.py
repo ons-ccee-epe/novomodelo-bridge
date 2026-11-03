@@ -291,6 +291,7 @@ def _render_dry_run_summary(
         rows,
         title=f"{len(rows)} output files",
     )
+    table.columns[0].overflow = "fold"
     target.print(table)
 
 

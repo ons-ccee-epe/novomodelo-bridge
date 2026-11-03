@@ -84,7 +84,7 @@ class TestUsageErrors:
 
     @pytest.mark.parametrize("path", LEAF_COMMANDS, ids=" ".join)
     def test_every_command_leaves_a_usage_error_to_click_without_json(
-        self, path: list[str]
+        self, path: list[str], dumb_terminal: None
     ) -> None:
         result = _run([*path, "--no-such-option"])
 

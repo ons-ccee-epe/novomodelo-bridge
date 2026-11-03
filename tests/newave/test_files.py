@@ -10,6 +10,7 @@ subclass) carrying ``path``/``field`` location detail, instead of a bare
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -52,7 +53,9 @@ def test_resolve_required_missing_carries_path_and_field(tmp_path: Path) -> None
 
 
 def test_missing_caso_message_is_preserved(tmp_path: Path) -> None:
-    with pytest.raises(SourceFileError, match=f"caso.dat not found in {tmp_path}"):
+    with pytest.raises(
+        SourceFileError, match=f"caso.dat not found in {re.escape(str(tmp_path))}"
+    ):
         NewaveFiles.from_directory(tmp_path)
 
 
