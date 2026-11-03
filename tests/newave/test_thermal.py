@@ -682,6 +682,7 @@ class TestMaintenanceFileReading:
         with caplog.at_level(logging.WARNING, logger="novomodelo_bridge"):
             got = convert_thermal_bounds(empty, self._ID_MAP)
 
+        assert got is not None
         assert got.equals(convert_thermal_bounds(absent, self._ID_MAP))
         assert "could not be parsed" not in caplog.text
 

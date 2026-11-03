@@ -57,6 +57,7 @@ from novomodelo_bridge.comparators.operating_points import (
     window_gh_max,
     with_envelopes,
 )
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
@@ -375,9 +376,9 @@ def _plant_hydraulics(
     hidr = case.hidr
     families = tailrace_families(case, case.id_map)
     dadger = case.dadger
-    vl = dadger.vl(df=True)
-    vu = dadger.vu(df=True)
-    va = dadger.va(df=True)
+    vl = as_frame(dadger.vl(df=True))
+    vu = as_frame(dadger.vu(df=True))
+    va = as_frame(dadger.va(df=True))
     outflow_factor: dict[int, float] = (
         {}
         if vl is None

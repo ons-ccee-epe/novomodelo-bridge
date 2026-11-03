@@ -1,5 +1,7 @@
 """Tests for dessem/exporters/fcf/layout.py."""
 
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -23,8 +25,21 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     cut_head_indices,
     gnl_positions,
     mapcut_record_count,
+    sync_directory,
     travel_time_lag_starts,
 )
+
+
+def test_sync_directory_opens_no_directory_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_args: object) -> int:
+        raise PermissionError("a directory cannot be opened as a file")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(os, "open", refuse)
+
+    sync_directory(tmp_path)
 
 
 class TestConstants:

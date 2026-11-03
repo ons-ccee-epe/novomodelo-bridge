@@ -117,6 +117,11 @@ def index_slots(slots: Sequence[EntitySlotRecord]) -> SlotIndex:
     )
 
 
+def has_interval(slot: EntitySlotRecord) -> bool:
+    """Whether the slot's `interval_start` is set rather than `UNDATED`."""
+    return slot.interval_start != UNDATED
+
+
 # ---------------------------------------------------------------------------
 # Premise P2: Cost unit conversion
 # ---------------------------------------------------------------------------
@@ -443,7 +448,7 @@ def select_gnl_deliveries(
             if (
                 slot.entity_type != ENTITY_TYPE_ANTICIPATED_THERMAL
                 or slot.entity_id != thermal.id
-                or slot.interval_start == UNDATED
+                or not has_interval(slot)
             ):
                 continue
             try:

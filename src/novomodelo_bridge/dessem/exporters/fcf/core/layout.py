@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import itertools
 import os
+import sys
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -372,7 +373,12 @@ def write_durably(path: Path, payload: bytes) -> None:
 
 
 def sync_directory(path: Path) -> None:
-    """Force a completed rename in path to stable storage."""
+    """Force a completed rename in path to stable storage.
+
+    A no-op on Windows, which cannot open a directory as a file.
+    """
+    if sys.platform == "win32":
+        return
     descriptor = os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)

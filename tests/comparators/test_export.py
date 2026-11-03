@@ -123,10 +123,12 @@ def test_manifest_carries_source_dir_input_files_and_diagnostics(
     dataset = _make_dataset()
     nw = tmp_path / "newave"
     out = tmp_path / "artifacts"
-    input_files = [
+    input_files: list[dict[str, object]] = [
         {"field": "dger", "path": "dger.dat", "sha256": "deadbeef", "size_bytes": 4}
     ]
-    diagnostics = [{"code": "x", "severity": "warning", "category": "Test"}]
+    diagnostics: list[dict[str, object]] = [
+        {"code": "x", "severity": "warning", "category": "Test"}
+    ]
 
     write_artifacts(
         dataset,

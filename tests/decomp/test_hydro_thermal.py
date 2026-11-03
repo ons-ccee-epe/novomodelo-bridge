@@ -236,19 +236,19 @@ class _StubDadger:
     ) -> None:
         self._uh, self._ct, self._mp, self._fd = uh, ct, mp, fd
 
-    def uh(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame | None:
         return self._uh
 
-    def ct(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def ct(self, df: bool = False) -> pd.DataFrame | None:
         return self._ct
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return self._mp
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return self._fd
 
-    def ac(  # noqa: ARG002
+    def ac(
         self,
         codigo_usina: int | None = None,
         modificacao: type | None = None,

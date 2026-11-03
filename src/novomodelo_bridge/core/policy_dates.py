@@ -2,7 +2,9 @@
 
 novomodelo writes every per-slot date of a policy checkpoint as an integer
 `YYYYMMDD`, or as `UNDATED` (`i32::MIN`, novomodelo's `ENTITY_SLOT_DATE_SENTINEL`
-and `STAGE_CUTS_PRICED_STATE_DATE_SENTINEL`) when the slot carries no date.
+and `STAGE_CUTS_PRICED_STATE_DATE_SENTINEL`) when the slot carries no date: on
+the families a date does not apply to, and on a transit bucket whose arrival
+would fall past the study end (novomodelo's structural pad).
 """
 
 from __future__ import annotations

@@ -23,12 +23,18 @@ reduction method) and `RESTRICAO-ELETRICA-ESPECIAL` (the electrical
 constraints). Lines starting with `&` are comments. Without `indices.csv`, or
 with a key left out or commented out, that record is not part of the case: no
 tailrace curves, no electrical constraints from the CSV, and no plane
-reduction, which Novomodelo then leaves off. A key whose file is not in the
-directory makes the case fail to convert. A file with a usual LIBS name, such
-as `polinjus.csv`, that the index does not list is ignored, and `check newave`
-and `convert newave` warn about it. `indices.csv`, the plane-reduction file and
-the electrical-constraint file are each read as UTF-8 when they are valid UTF-8
-and as Latin-1 otherwise.
+reduction, which Novomodelo then leaves off. A key listed without a file name,
+or whose file is not in the directory, makes the case fail to convert. A file
+with a usual LIBS name, such as `polinjus.csv`, that the index does not list is
+ignored, and `check newave` and `convert newave` warn about it. `indices.csv`,
+the plane-reduction file and the electrical-constraint file are each read as
+UTF-8 when they are valid UTF-8 and as Latin-1 otherwise.
+
+The electrical-constraint file is read record by record, and a record name is
+recognized only in upper case, as the manual writes it. `convert newave` warns
+about every line that is not a record it reads (`libs-unread-lines`). A blank
+limit is unbounded, as the manual states. A conditional limit (`se(...)`) is
+not converted, and makes the case fail to convert.
 
 Many inputs are optional (`modif.dat`, `cvar.dat`, `curva.dat`, `agrint.dat`,
 and others). `check newave` prints one line per optional input that is absent
@@ -45,6 +51,12 @@ minimum outflow, `REST. TURBINAMENTO` for the dated turbining records of
 `modif.dat`, and `CANAL DE DESVIO` for its `CDESVIO` records. A file that is present but switched off is ignored, as NEWAVE
 ignores it, and both `check newave` and `convert newave` say so with an
 informational diagnostic. A switch line absent from `dger.dat` counts as on.
+
+`modif.dat` is read one `USINA` block per plant, as the NEWAVE manual allows.
+The records of a later block for the same plant, and any record before the
+first `USINA` record, are ignored, and `convert newave` lists them in a
+`modif-records-ignored` warning; merge each plant's records into one block to
+keep them.
 
 NEWAVE's text files are read by fixed columns, so a tab where the layout
 expects spaces shifts every field after it on its line, and a data line can
@@ -93,12 +105,12 @@ the same output.
   `modif.dat` becomes that plant's Novomodelo diversion channel, to the record's
   target plant and capped at its maximum flow; a maximum flow of 9 999 999
   m³/s or more, NEWAVE's "no limit" value, gives a channel without a limit
-  and is reported. Only `CDESVIO`
-  declares a channel; the `desvio` code of `hidr.dat` alone does not. A record
-  with no maximum flow, or whose target plant is not in the case, converts to
-  no channel and is reported, and so the plant releases only to its
-  downstream plant. The minimum storage for operating the channel
-  (`volume_desvio` in `hidr.dat`) is not converted.
+  and is reported. Only `CDESVIO` declares a channel; the `desvio` code of
+  `hidr.dat` alone does not. A record with no maximum flow (or one that is not
+  a number), or whose target plant is not in the case, converts to no channel
+  and is reported, and so the plant releases only to its downstream plant. The
+  minimum storage for operating the channel (`volume_desvio` in `hidr.dat`) is
+  not converted.
 - **Constraints.** The minimum-storage security curve (`curva.dat`), electric
   constraints (`restricao-eletrica.csv`), and interchange group limits
   (`agrint.dat`) all become Novomodelo generic constraints: linear expressions over

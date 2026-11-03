@@ -32,6 +32,7 @@ from novomodelo_bridge.newave.converters.stochastic import (
     _incremental_history,
     _vazpast_incremental,
 )
+from novomodelo_bridge.newave.horizon import study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 # Parquet schema for the windowed past-inflow history (Novomodelo >= 0.13).
@@ -109,8 +110,7 @@ def convert_recent_observation_windows(
     if not incremental:
         return []
 
-    dger = case.dger
-    months = previous_months(dger.ano_inicio_estudo, dger.mes_inicio_estudo, 12)
+    months = previous_months(*study_start(case.dger), 12)
 
     rows: list[tuple[int, date, date, float]] = []
     for hydro_id in sorted(incremental):

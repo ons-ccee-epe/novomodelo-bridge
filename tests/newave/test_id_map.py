@@ -176,7 +176,9 @@ class TestCrossReferenceConsistency:
         )
 
         buses_result = convert_buses(
-            make_case(nw_files, sistema=_make_sistema_mock()), id_map
+            make_case(nw_files, sistema=_make_sistema_mock()),
+            id_map,
+            reference_load_mw={0: 2000.0, 1: 1000.0, 2: 0.0},
         )
         hydros_result = convert_hydros(hydro_case, id_map)
         thermals_result = convert_thermals(thermal_case, id_map)

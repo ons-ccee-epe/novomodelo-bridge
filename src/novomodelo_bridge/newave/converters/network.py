@@ -6,14 +6,29 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import date
 
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.penalties import PCORTEOL, PEXC, PINT, hydro_penalty_costs
 from novomodelo_bridge.newave.case import NewaveCase
-from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, historical_start_date
+from novomodelo_bridge.newave.filling import month_hours
+from novomodelo_bridge.newave.horizon import (
+    POST_STUDY_YEAR,
+    StudyHorizon,
+    historical_start_date,
+    stage_dates_for,
+    study_start,
+)
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -122,18 +137,15 @@ _PINT_FICTITIOUS_DISCOUNT = 0.5
 _ELETRI_HIGH_MULT = 10.0
 
 
-def _build_canonical_pair_to_line_id(
-    case: NewaveCase,
-) -> dict[tuple[int, int], int]:
-    """Build the canonical (src, tgt) -> line_id mapping from sistema.dat.
+def line_ids(case: NewaveCase) -> dict[tuple[int, int], int]:
+    """``(smaller, larger)`` submarket code pair -> 0-based line id.
 
-    Scans ALL rows of ``sistema.limites_intercambio`` (all dates) to discover
-    the full set of interchange pairs.  This is the single authoritative source
-    used by ``convert_lines`` and ``convert_line_bounds`` to guarantee
-    consistent line IDs.
+    The one numbering of the lines: ``lines.json``, the line bounds and every
+    constraint term that names a pair use it. It numbers the pairs of every
+    date of ``sistema.dat``'s interchange limits, not only the first month's,
+    so a pair that first appears later does not shift the others.
     """
-    sistema = case.sistema
-    limites_df = sistema.limites_intercambio
+    limites_df = case.interchange_limits
     if limites_df is None or limites_df.empty:
         return {}
 
@@ -147,7 +159,31 @@ def _build_canonical_pair_to_line_id(
     return {pair: lid for lid, pair in enumerate(sorted(all_pairs))}
 
 
-def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
+def mean_bus_load_mw(load_table: pa.Table, horizon: StudyHorizon) -> dict[int, float]:
+    """Hours-weighted mean of each bus's ``mean_mw`` over the study stages."""
+    stage_hours = [month_hours(d.year, d.month) for d in stage_dates_for(horizon)]
+    totals: dict[int, float] = {}
+    hours: dict[int, float] = {}
+    for bus_id, stage_id, mean_mw in zip(
+        load_table["bus_id"].to_pylist(),
+        load_table["stage_id"].to_pylist(),
+        load_table["mean_mw"].to_pylist(),
+        strict=True,
+    ):
+        if stage_id >= horizon.study_months:
+            continue
+        weight = stage_hours[stage_id]
+        totals[bus_id] = totals.get(bus_id, 0.0) + mean_mw * weight
+        hours[bus_id] = hours.get(bus_id, 0.0) + weight
+    return {bus_id: totals[bus_id] / hours[bus_id] for bus_id in totals}
+
+
+def convert_buses(
+    case: NewaveCase,
+    id_map: NewaveIdMap,
+    *,
+    reference_load_mw: Mapping[int, float],
+) -> dict:
     """Convert the source model subsystem data to a Novomodelo ``buses.json`` dict.
 
     Reads ``sistema.dat`` from *case*.  Each subsystem (including
@@ -160,6 +196,9 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         Parsed the source model case.
     id_map:
         Pre-built ID mapping for bus IDs.
+    reference_load_mw:
+        Load per bus id (MW) that turns each segment's depth, a fraction of
+        load in the source model, into MW.
     """
     sistema = case.sistema
     deficit_df = sistema.custo_deficit
@@ -185,7 +224,7 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             }
 
         corte = row.get("corte")
-        depth_mw: float | None = (
+        depth_pu: float | None = (
             float(corte) if corte is not None and not is_na(corte) else None
         )
         cost_raw = row["custo"]
@@ -193,7 +232,7 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         buses_by_code[code]["segments"].append(
             {
                 "patamar": int(row["patamar_deficit"]),
-                "depth_mw": depth_mw,
+                "depth_pu": depth_pu,
                 "cost": cost,
             }
         )
@@ -215,24 +254,31 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     op_date = historical_start_date(case.dger)
 
     buses: list[dict] = []
+    scaled_rows: list[list[object]] = []
     for code, info in buses_by_code.items():
+        bus_id = id_map.bus_id(code)
         segs = sorted(info["segments"], key=lambda s: s["patamar"])
         active_segs = [s for s in segs if s["cost"] is not None and s["cost"] > 0]
         if not active_segs:
-            active_segs = [{"cost": fallback_cost, "depth_mw": None}]
+            active_segs = [{"cost": fallback_cost, "depth_pu": None}]
 
         deficit_segments: list[dict] = []
         for i, seg in enumerate(active_segs):
-            is_last = i == len(active_segs) - 1
-            deficit_segments.append(
-                {
-                    "depth_mw": None if is_last else seg["depth_mw"],
-                    "cost": seg["cost"],
-                }
-            )
+            depth_mw: float | None = None
+            depth_pu: float | None = seg["depth_pu"]
+            if i < len(active_segs) - 1 and depth_pu is not None:
+                # TRACKED NOVOMODELO-GAP (C35): the source model gives
+                # depth as a fraction of load per stage, novomodelo takes one fixed
+                # MW depth per bus. Remove when novomodelo accepts a load-relative depth.
+                load = reference_load_mw[bus_id]
+                depth_mw = depth_pu * load
+                scaled_rows.append(
+                    [info["name"], seg["patamar"], depth_pu, load, depth_mw]
+                )
+            deficit_segments.append({"depth_mw": depth_mw, "cost": seg["cost"]})
 
         bus_entry: dict = {
-            "id": id_map.bus_id(code),
+            "id": bus_id,
             "name": info["name"],
             "operational_start_date": op_date,
             "deficit_segments": deficit_segments,
@@ -240,6 +286,34 @@ def convert_buses(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         buses.append(bus_entry)
 
     buses.sort(key=lambda b: b["id"])
+
+    if scaled_rows:
+        emit(
+            Diagnostic(
+                code="deficit-depth-from-mean-load",
+                severity=Severity.WARNING,
+                category="Deficit",
+                title="Deficit segment depths fixed at the mean load",
+                summary=(
+                    "Deficit segment depths are a fraction of each stage's load in "
+                    "the source model but a fixed MW per bus in novomodelo; each "
+                    "depth is taken at the bus's hours-weighted mean load over the "
+                    "study period."
+                ),
+                table=DiagnosticTable(
+                    columns=[
+                        "Bus",
+                        "Segment",
+                        "Depth p.u.",
+                        "Mean load MW",
+                        "Depth MW",
+                    ],
+                    rows=scaled_rows,
+                    justify=["left", "right", "right", "right", "right"],
+                ),
+            ),
+            logger=_LOG,
+        )
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/buses.json"),
@@ -366,7 +440,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         Pre-built ID mapping for bus IDs.
     """
     sistema = case.sistema
-    limites_df = sistema.limites_intercambio
+    limites_df = case.interchange_limits
 
     if limites_df is None or limites_df.empty:
         return {
@@ -394,8 +468,7 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # pre-study months (before mes_inicio_estudo) may have NaN values.
     from datetime import datetime as _dt
 
-    dger = case.dger
-    study_start_dt = _dt(dger.ano_inicio_estudo, dger.mes_inicio_estudo, 1)
+    study_start_dt = _dt(*study_start(case.dger), 1)
     first_month = limites_df[limites_df["data"] == study_start_dt]
     if first_month.empty:
         first_month = limites_df.dropna(subset=["valor"])
@@ -426,12 +499,12 @@ def convert_lines(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         _assign_flow_direction(pair_map[key], de, para, sentido, valor)
 
     # Use the shared canonical mapping for consistent line IDs.
-    canonical_map = _build_canonical_pair_to_line_id(case)
+    canonical_map = line_ids(case)
 
     # Interconnections have no commissioning date; treat every line as in service
     # since the historical record (Novomodelo uses the date only as a canonical-ordering
     # key, tiebroken by id).
-    op_date = historical_start_date(dger)
+    op_date = historical_start_date(case.dger)
 
     lines: list[dict] = []
     for (src, tgt), line_id in sorted(canonical_map.items(), key=lambda x: x[1]):
@@ -477,7 +550,7 @@ def _read_penalid_costs(case: NewaveCase) -> dict[str, float]:
         _LOG.warning("penalid.dat could not be parsed (%s); using defaults.", exc)
         return {}
 
-    pen_df = penalid.penalidades
+    pen_df = penalid.penalidades if penalid is not None else None
     if pen_df is None or pen_df.empty:
         return {}
 
@@ -779,6 +852,226 @@ def convert_hydro_penalty_overrides(
     return pa.table(data, schema=schema)
 
 
+_LINE_BOUNDS_SCHEMA = pa.schema(
+    [
+        pa.field("line_id", pa.int32(), nullable=False),
+        pa.field("stage_id", pa.int32(), nullable=False),
+        pa.field("block_id", pa.int32(), nullable=True),
+        pa.field("direct_mw", pa.float64(), nullable=False),
+        pa.field("reverse_mw", pa.float64(), nullable=False),
+    ]
+)
+
+
+def _latest_year_values[K: tuple[int, ...], V](
+    by_year: Mapping[K, V],
+) -> dict[tuple[int, ...], V]:
+    """Re-key a ``(src, tgt, year, cal_month, ...)`` lookup without its year,
+    keeping the latest year's value for each remaining key."""
+    latest: dict[tuple[int, ...], tuple[int, V]] = {}
+    for key, value in by_year.items():
+        yr = key[2]
+        seasonal_key = key[:2] + key[3:]
+        existing = latest.get(seasonal_key)
+        if existing is None or yr > existing[0]:
+            latest[seasonal_key] = (yr, value)
+    return {k: v for k, (_, v) in latest.items()}
+
+
+@dataclass(frozen=True)
+class _InterchangeCaps:
+    """``sistema.dat::limites_intercambio`` as ``{direct_mw, reverse_mw}`` caps.
+
+    ``by_date`` is keyed by canonical ``(src, tgt, year, cal_month)``;
+    ``last_year`` by ``(src, tgt, cal_month)``, holding the latest listed year.
+    """
+
+    by_date: dict[tuple[int, int, int, int], dict[str, float]]
+    last_year: dict[tuple[int, ...], dict[str, float]]
+
+    @classmethod
+    def from_limites(cls, limites_df: pd.DataFrame) -> _InterchangeCaps:
+        date_lookup: dict[tuple[int, int, int, int], dict[str, float]] = {}
+
+        for _, row in limites_df.iterrows():
+            de = int(row["submercado_de"])
+            para = int(row["submercado_para"])
+            valor = float(row["valor"])
+            sentido = int(row["sentido"])
+            dt = row["data"]
+            yr = int(dt.year)
+            cal_month = int(dt.month)
+
+            src, tgt = (de, para) if de < para else (para, de)
+            key = (src, tgt, yr, cal_month)
+
+            if key not in date_lookup:
+                date_lookup[key] = {"direct_mw": 0.0, "reverse_mw": 0.0}
+
+            _assign_flow_direction(date_lookup[key], de, para, sentido, valor)
+
+        return cls(by_date=date_lookup, last_year=_latest_year_values(date_lookup))
+
+    def at(self, src: int, tgt: int, y: int, m: int) -> dict[str, float]:
+        """Caps of a study month, falling back to the last listed year's month."""
+        caps = self.by_date.get((src, tgt, y, m))
+        if caps is None:
+            caps = self.last_year.get(
+                (src, tgt, m), {"direct_mw": 0.0, "reverse_mw": 0.0}
+            )
+        return caps
+
+    def frozen_at(self, src: int, tgt: int, y: int, m: int) -> dict[str, float]:
+        """Caps the post-study tail freezes at, taken at the last study stage."""
+        return self.by_date.get((src, tgt, y, m)) or self.last_year.get(
+            (src, tgt, m), {"direct_mw": 0.0, "reverse_mw": 0.0}
+        )
+
+
+@dataclass(frozen=True)
+class _ExchangeBlockFactors:
+    """Per-block direct/reverse multipliers (novomodelo decision 10) folded from
+    ``patamar.dat::intercambio_patamares``, keyed like :class:`_InterchangeCaps`
+    plus a block so block rows derive as base × factor.
+
+    ``direct``/``reverse`` are keyed by ``(src, tgt, year, cal_month, block_id)``;
+    ``block_id`` is 0-based (patamar is 1-based in the source).
+    """
+
+    direct: dict[tuple[int, int, int, int, int], float]
+    reverse: dict[tuple[int, int, int, int, int], float]
+    num_blocks: int
+    last_direct: dict[tuple[int, ...], float]
+    last_reverse: dict[tuple[int, ...], float]
+
+    @classmethod
+    def from_patamar(cls, factors_df: pd.DataFrame | None) -> _ExchangeBlockFactors:
+        direct_factor_map: dict[tuple[int, int, int, int, int], float] = {}
+        reverse_factor_map: dict[tuple[int, int, int, int, int], float] = {}
+        num_blocks = 0
+
+        if factors_df is not None and not factors_df.empty:
+            all_blocks: set[int] = set()
+            for _, row in factors_df.iterrows():
+                de = int(row["submercado_de"])
+                para = int(row["submercado_para"])
+                val = float(row["valor"])
+                block_id = int(row["patamar"]) - 1
+                dt = row["data"]
+                yr = int(dt.year)
+                cal_month = int(dt.month)
+                all_blocks.add(block_id)
+
+                src, tgt = (de, para) if de < para else (para, de)
+                key = (src, tgt, yr, cal_month, block_id)
+                if de < para:
+                    direct_factor_map[key] = val
+                else:
+                    reverse_factor_map[key] = val
+
+            num_blocks = max(all_blocks) + 1
+
+        return cls(
+            direct=direct_factor_map,
+            reverse=reverse_factor_map,
+            num_blocks=num_blocks,
+            last_direct=_latest_year_values(direct_factor_map),
+            last_reverse=_latest_year_values(reverse_factor_map),
+        )
+
+    def for_month(
+        self, src: int, tgt: int, y: int, m: int, is_post_study: bool
+    ) -> list[tuple[int, float, float]]:
+        """Per-block ``(block_id, direct_factor, reverse_factor)`` for one
+        ``(src, tgt, year, month)``. A post-study stage, or a month the deck
+        omits, repeats the last listed year's factor for the same calendar month.
+        """
+        out: list[tuple[int, float, float]] = []
+        for block_id in range(self.num_blocks):
+            if is_post_study:
+                d_factor = self.last_direct.get((src, tgt, m, block_id), 1.0)
+                r_factor = self.last_reverse.get((src, tgt, m, block_id), 1.0)
+            else:
+                key_lookup = (src, tgt, y, m, block_id)
+                d_factor = self.direct.get(
+                    key_lookup,
+                    self.last_direct.get((src, tgt, m, block_id), 1.0),
+                )
+                r_factor = self.reverse.get(
+                    key_lookup,
+                    self.last_reverse.get((src, tgt, m, block_id), 1.0),
+                )
+            out.append((block_id, d_factor, r_factor))
+        return out
+
+
+@dataclass
+class _LineBoundRows:
+    """Column buffers of ``line_bounds.parquet``."""
+
+    line_id: list[int] = field(default_factory=list)
+    stage_id: list[int] = field(default_factory=list)
+    block_id: list[int | None] = field(default_factory=list)
+    direct_mw: list[float] = field(default_factory=list)
+    reverse_mw: list[float] = field(default_factory=list)
+    block_rows_emitted: int = 0
+
+    def _append(
+        self,
+        line_id: int,
+        stage_id: int,
+        block_id: int | None,
+        direct_mw: float,
+        reverse_mw: float,
+    ) -> None:
+        self.line_id.append(line_id)
+        self.stage_id.append(stage_id)
+        self.direct_mw.append(direct_mw)
+        self.reverse_mw.append(reverse_mw)
+        self.block_id.append(block_id)
+
+    def add_stage(
+        self,
+        line_id: int,
+        stage_id: int,
+        caps: dict[str, float],
+        block_factors: list[tuple[int, float, float]],
+    ) -> None:
+        """Append one line-stage's base row and its per-block override rows."""
+        base_direct = caps["direct_mw"]
+        base_reverse = caps["reverse_mw"]
+
+        # Stage-level base row (block_id = None) — kept unchanged and
+        # unconditionally, per novomodelo rule 36.
+        self._append(line_id, stage_id, None, base_direct, base_reverse)
+
+        # Per-block override rows, only where the factor differs from the
+        # base (i.e. is not 1.0 in both directions).
+        for block_id, d_factor, r_factor in block_factors:
+            if d_factor == 1.0 and r_factor == 1.0:
+                continue
+            self._append(
+                line_id,
+                stage_id,
+                block_id,
+                base_direct * d_factor,
+                base_reverse * r_factor,
+            )
+            self.block_rows_emitted += 1
+
+    def to_table(self) -> pa.Table:
+        return pa.table(
+            {
+                "line_id": pa.array(self.line_id, type=pa.int32()),
+                "stage_id": pa.array(self.stage_id, type=pa.int32()),
+                "block_id": pa.array(self.block_id, type=pa.int32()),
+                "direct_mw": pa.array(self.direct_mw, type=pa.float64()),
+                "reverse_mw": pa.array(self.reverse_mw, type=pa.float64()),
+            },
+            schema=_LINE_BOUNDS_SCHEMA,
+        )
+
+
 def convert_line_bounds(
     case: NewaveCase,
     id_map: NewaveIdMap,
@@ -792,8 +1085,7 @@ def convert_line_bounds(
     distinct from ``Some(b)``, so this base row is load-bearing: without it, a
     stage whose blocks are all uniform would fall back to ``lines.json``'s
     declared (stage-0) capacity for every later stage. It also reads
-    ``patamar.dat::intercambio_patamares`` — formerly emitted as a standalone
-    per-block-factor JSON document, now deleted — and folds each per-block
+    ``patamar.dat::intercambio_patamares`` and folds each per-block
     multiplicative factor into an absolute-MW override row, ``direct_mw =
     base_direct_mw × direct_factor`` (and the reverse equivalent), per novomodelo
     decision 10. A block row is emitted only where it differs
@@ -806,9 +1098,9 @@ def convert_line_bounds(
     limits have no seasonalize flag, so post-study base bounds freeze at the
     last study stage's value — but the per-block factors do **not** share
     that freeze: they seasonally repeat the last study year's per-calendar-
-    month pattern instead (unchanged from the deleted factor emitter), so a
-    post-study stage can still carry a non-trivial block override even though
-    its base bounds are frozen at the (possibly zero) freeze-point value.
+    month pattern instead, so a post-study stage can still carry a non-trivial
+    block override even though its base bounds are frozen at the (possibly
+    zero) freeze-point value.
 
     Parameters
     ----------
@@ -826,18 +1118,7 @@ def convert_line_bounds(
         ``direct_mw`` (DOUBLE), ``reverse_mw`` (DOUBLE), ``block_id``
         (INT32, nullable — ``None`` for the stage-level base row).
     """
-    sistema = case.sistema
-    limites_df: pd.DataFrame | None = sistema.limites_intercambio
-
-    _LINE_BOUNDS_SCHEMA = pa.schema(
-        [
-            pa.field("line_id", pa.int32(), nullable=False),
-            pa.field("stage_id", pa.int32(), nullable=False),
-            pa.field("block_id", pa.int32(), nullable=True),
-            pa.field("direct_mw", pa.float64(), nullable=False),
-            pa.field("reverse_mw", pa.float64(), nullable=False),
-        ]
-    )
+    limites_df = case.interchange_limits
 
     if limites_df is None or limites_df.empty:
         return pa.table(
@@ -861,129 +1142,11 @@ def convert_line_bounds(
     study_end_year = start_year + (start_month - 1 + study_months) // 12
     study_end_month = ((start_month - 1 + study_months) % 12) + 1
 
-    pair_to_line_id = _build_canonical_pair_to_line_id(case)
+    pair_to_line_id = line_ids(case)
+    caps = _InterchangeCaps.from_limites(limites_df)
+    factors = _ExchangeBlockFactors.from_patamar(case.patamar.intercambio_patamares)
 
-    # Build per-date lookup:
-    # {(src, tgt, year, cal_month) -> {direct_mw, reverse_mw}}
-    date_lookup: dict[tuple[int, int, int, int], dict[str, float]] = {}
-
-    for _, row in limites_df.iterrows():
-        de = int(row["submercado_de"])
-        para = int(row["submercado_para"])
-        valor = float(row["valor"])
-        sentido = int(row["sentido"])
-        dt = row["data"]
-        yr = int(dt.year)
-        cal_month = int(dt.month)
-
-        src, tgt = (de, para) if de < para else (para, de)
-        key = (src, tgt, yr, cal_month)
-
-        if key not in date_lookup:
-            date_lookup[key] = {"direct_mw": 0.0, "reverse_mw": 0.0}
-
-        _assign_flow_direction(date_lookup[key], de, para, sentido, valor)
-
-    # Build last-year lookup for post-study:
-    # {(src, tgt, cal_month) -> {direct_mw, reverse_mw}} — use the latest year.
-    last_year_per_key: dict[tuple[int, int, int], tuple[int, dict[str, float]]] = {}
-    for (src, tgt, yr, cal_month), caps in date_lookup.items():
-        key3 = (src, tgt, cal_month)
-        existing = last_year_per_key.get(key3)
-        if existing is None or yr > existing[0]:
-            last_year_per_key[key3] = (yr, caps)
-    last_year_lookup: dict[tuple[int, int, int], dict[str, float]] = {
-        k: v for k, (_, v) in last_year_per_key.items()
-    }
-
-    # Per-block factors (novomodelo decision 10): fold
-    # ``patamar.dat::intercambio_patamares`` into per-block direct/reverse
-    # multipliers, keyed like the base lookup above so block rows derive as
-    # base × factor.
-    patamar = case.patamar
-    factors_df: pd.DataFrame | None = patamar.intercambio_patamares
-
-    # {(src, tgt, year, cal_month, block_id) -> factor}; block_id is 0-based
-    # (patamar is 1-based in the source).
-    direct_factor_map: dict[tuple[int, int, int, int, int], float] = {}
-    reverse_factor_map: dict[tuple[int, int, int, int, int], float] = {}
-    num_blocks = 0
-
-    if factors_df is not None and not factors_df.empty:
-        all_blocks: set[int] = set()
-        for _, row in factors_df.iterrows():
-            de = int(row["submercado_de"])
-            para = int(row["submercado_para"])
-            val = float(row["valor"])
-            block_id = int(row["patamar"]) - 1
-            dt = row["data"]
-            yr = int(dt.year)
-            cal_month = int(dt.month)
-            all_blocks.add(block_id)
-
-            src, tgt = (de, para) if de < para else (para, de)
-            key = (src, tgt, yr, cal_month, block_id)
-            if de < para:
-                direct_factor_map[key] = val
-            else:
-                reverse_factor_map[key] = val
-
-        num_blocks = max(all_blocks) + 1
-
-    # Last-year seasonal lookups for post-study factor stages:
-    # {(src, tgt, cal_month, block_id) -> factor}
-    last_yr_direct_factor: dict[tuple[int, int, int, int], tuple[int, float]] = {}
-    last_yr_reverse_factor: dict[tuple[int, int, int, int], tuple[int, float]] = {}
-
-    for (src, tgt, yr, cal_month, block_id), val in direct_factor_map.items():
-        k4 = (src, tgt, cal_month, block_id)
-        existing = last_yr_direct_factor.get(k4)
-        if existing is None or yr > existing[0]:
-            last_yr_direct_factor[k4] = (yr, val)
-
-    for (src, tgt, yr, cal_month, block_id), val in reverse_factor_map.items():
-        k4 = (src, tgt, cal_month, block_id)
-        existing = last_yr_reverse_factor.get(k4)
-        if existing is None or yr > existing[0]:
-            last_yr_reverse_factor[k4] = (yr, val)
-
-    last_direct_factor: dict[tuple[int, int, int, int], float] = {
-        k: v for k, (_, v) in last_yr_direct_factor.items()
-    }
-    last_reverse_factor: dict[tuple[int, int, int, int], float] = {
-        k: v for k, (_, v) in last_yr_reverse_factor.items()
-    }
-
-    def _block_factors(
-        src: int, tgt: int, y: int, m: int, is_post_study: bool
-    ) -> list[tuple[int, float, float]]:
-        """Per-block (block_id, direct_factor, reverse_factor) for one
-        (src, tgt, year, month), applying the same post-study freeze-to-last-
-        seasonal-year fallback used for the base bounds above."""
-        out: list[tuple[int, float, float]] = []
-        for block_id in range(num_blocks):
-            if is_post_study:
-                d_factor = last_direct_factor.get((src, tgt, m, block_id), 1.0)
-                r_factor = last_reverse_factor.get((src, tgt, m, block_id), 1.0)
-            else:
-                key_lookup = (src, tgt, y, m, block_id)
-                d_factor = direct_factor_map.get(
-                    key_lookup,
-                    last_direct_factor.get((src, tgt, m, block_id), 1.0),
-                )
-                r_factor = reverse_factor_map.get(
-                    key_lookup,
-                    last_reverse_factor.get((src, tgt, m, block_id), 1.0),
-                )
-            out.append((block_id, d_factor, r_factor))
-        return out
-
-    rows_line_id: list[int] = []
-    rows_stage_id: list[int] = []
-    rows_direct: list[float] = []
-    rows_reverse: list[float] = []
-    rows_block_id: list[int | None] = []
-    block_rows_emitted = 0
+    rows = _LineBoundRows()
 
     # Last study stage's (year, calendar month). Interchange limits have no
     # seasonalize flag, so the post-study tail freezes at this stage's value
@@ -993,48 +1156,19 @@ def convert_line_bounds(
 
     for pair, line_id in sorted(pair_to_line_id.items(), key=lambda x: x[1]):
         src, tgt = pair
-        freeze_caps = date_lookup.get((src, tgt, ls_y, ls_m)) or last_year_lookup.get(
-            (src, tgt, ls_m), {"direct_mw": 0.0, "reverse_mw": 0.0}
-        )
+        freeze_caps = caps.frozen_at(src, tgt, ls_y, ls_m)
         y, m = start_year, start_month
         for stage_id in range(total_stages):
             is_post_study = (y > study_end_year) or (
                 y == study_end_year and m >= study_end_month
             )
-
-            if is_post_study:
-                caps = freeze_caps
-            else:
-                caps = date_lookup.get((src, tgt, y, m))
-                if caps is None:
-                    caps = last_year_lookup.get(
-                        (src, tgt, m), {"direct_mw": 0.0, "reverse_mw": 0.0}
-                    )
-
-            base_direct = caps["direct_mw"]
-            base_reverse = caps["reverse_mw"]
-
-            # Stage-level base row (block_id = None) — kept unchanged and
-            # unconditionally, per novomodelo rule 36.
-            rows_line_id.append(line_id)
-            rows_stage_id.append(stage_id)
-            rows_direct.append(base_direct)
-            rows_reverse.append(base_reverse)
-            rows_block_id.append(None)
-
-            # Per-block override rows, only where the factor differs from the
-            # base (i.e. is not 1.0 in both directions).
-            for block_id, d_factor, r_factor in _block_factors(
-                src, tgt, y, m, is_post_study
-            ):
-                if d_factor == 1.0 and r_factor == 1.0:
-                    continue
-                rows_line_id.append(line_id)
-                rows_stage_id.append(stage_id)
-                rows_direct.append(base_direct * d_factor)
-                rows_reverse.append(base_reverse * r_factor)
-                rows_block_id.append(block_id)
-                block_rows_emitted += 1
+            stage_caps = freeze_caps if is_post_study else caps.at(src, tgt, y, m)
+            rows.add_stage(
+                line_id,
+                stage_id,
+                stage_caps,
+                factors.for_month(src, tgt, y, m, is_post_study),
+            )
 
             m += 1
             if m > 12:
@@ -1045,20 +1179,11 @@ def convert_line_bounds(
         "line_bounds: emitted %d per-block override row(s) folded from "
         "patamar.dat exchange factors (novomodelo decision 10), alongside %d "
         "stage-level base row(s).",
-        block_rows_emitted,
-        len(rows_line_id) - block_rows_emitted,
+        rows.block_rows_emitted,
+        len(rows.line_id) - rows.block_rows_emitted,
     )
 
-    return pa.table(
-        {
-            "line_id": pa.array(rows_line_id, type=pa.int32()),
-            "stage_id": pa.array(rows_stage_id, type=pa.int32()),
-            "block_id": pa.array(rows_block_id, type=pa.int32()),
-            "direct_mw": pa.array(rows_direct, type=pa.float64()),
-            "reverse_mw": pa.array(rows_reverse, type=pa.float64()),
-        },
-        schema=_LINE_BOUNDS_SCHEMA,
-    )
+    return rows.to_table()
 
 
 def _in_study_horizon(
@@ -1068,14 +1193,12 @@ def _in_study_horizon(
 
     Year == ``POST_STUDY_YEAR`` marks a post-study entry (inewave convention).
     """
-    try:
-        yr = int(dt.year)  # type: ignore[union-attr]
-        mo = int(dt.month)  # type: ignore[union-attr]
-    except (AttributeError, TypeError, ValueError):
+    if not isinstance(dt, date) or is_na(dt):
         return False
+    yr = dt.year
     if yr == POST_STUDY_YEAR:
         return True
-    stage_id = (yr - start_year) * 12 + (mo - start_month)
+    stage_id = (yr - start_year) * 12 + (dt.month - start_month)
     return 0 <= stage_id < total_stages
 
 

@@ -111,16 +111,16 @@ class _StubDadger:
     ) -> None:
         self._uh, self._mp, self._fd = uh, mp, fd
 
-    def uh(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame | None:
         return self._uh
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return self._mp
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return self._fd
 
-    def ac(  # noqa: ARG002
+    def ac(
         self,
         codigo_usina: int | None = None,
         modificacao: type | None = None,
@@ -143,7 +143,9 @@ def _dropping_machine_set_effective(
     mid-horizon ``NUMMAQ`` shrink no rv3 deck exercises (every machine-set
     override there resolves to stage 0, per the rv3 probe)."""
     machine_sets = tuple(
-        MachineSet(4, 25.0, 50.0) if stage < n_stages - 1 else MachineSet(2, 25.0, 50.0)
+        MachineSet(4, 25.0, 50.0, 80.0)
+        if stage < n_stages - 1
+        else MachineSet(2, 25.0, 50.0, 80.0)
         for stage in range(n_stages)
     )
     return EffectiveCadastro(
@@ -212,12 +214,11 @@ def test_mid_horizon_nummaq_drop_entity_declares_pre_drop_envelope() -> None:
     assert group["max_generation_mw"] == pytest.approx(gen["max_generation_mw"])
 
 
-def test_mid_horizon_nummaq_drop_overlay_only_at_reduced_stage() -> None:
-    """The machine-count drop's own overlay row: sparse, lands only at the
-    reduced final stage, carrying both the lowered ``max_generation_mw``
-    (50 MW, rated) and the lowered ``max_turbined_m3s`` (the generator limit
-    50 / 0.72, below the rated 2 x 50 = 100 m3/s); the unchanged stages 0-1
-    get no row at all (MP = FD = 1)."""
+def test_mid_horizon_nummaq_drop_overlay_follows_the_machines_in_service() -> None:
+    """The overlay carries the rated 100 MW and the generator limit
+    100 / 0.72 m3/s on the unchanged stages 0-1 (MP = FD = 1), and the
+    reduced final stage's lowered 50 MW and 50 / 0.72 m3/s, below the rated
+    2 x 50 = 100 m3/s."""
     hidr = _hidr_frame()
     calendar = _calendar()
     effective = _dropping_machine_set_effective(hidr, len(calendar))
@@ -235,19 +236,18 @@ def test_mid_horizon_nummaq_drop_overlay_only_at_reduced_stage() -> None:
     )
     hydro_id = _ID_MAP.hydro_id(_HYDRO_CODE)
 
-    assert (hydro_id, 0, 0) not in values
-    assert (hydro_id, 0, 1) not in values
-
-    entry = values[(hydro_id, 0, 2)]
-    assert entry.max_generation_mw == pytest.approx(50.0)
-    assert entry.max_turbined_m3s == pytest.approx(50.0 / 0.72)
+    entries = [values[(hydro_id, 0, stage)] for stage in range(3)]
+    assert [e.max_generation_mw for e in entries] == pytest.approx([100.0, 100.0, 50.0])
+    assert [e.max_turbined_m3s for e in entries] == pytest.approx(
+        [100.0 / 0.72, 100.0 / 0.72, 50.0 / 0.72]
+    )
 
 
 def test_constant_machine_set_availability_matches_mp_fd_product() -> None:
     """With a constant (un-overridden) machine set, the availability overlay is
     ``installed x MP x FD`` and the turbined-flow limit falls with the same
     factor (the generator limit ``installed x MP x FD / rho_eq`` binds here).
-    A stage whose MP/FD factors stay at 1 (stage 0) gets no row."""
+    A stage whose MP/FD factors stay at 1 (stage 0) carries the rated values."""
     hidr = _hidr_frame()
     calendar = _calendar()
     effective = _no_override_effective(hidr, len(calendar))
@@ -285,7 +285,9 @@ def test_constant_machine_set_availability_matches_mp_fd_product() -> None:
     )
     hydro_id = _ID_MAP.hydro_id(_HYDRO_CODE)
 
-    assert (hydro_id, 0, 0) not in values
+    stage0 = values[(hydro_id, 0, 0)]
+    assert stage0.max_generation_mw == pytest.approx(100.0)
+    assert stage0.max_turbined_m3s == pytest.approx(100.0 / 0.72)
 
     stage1 = values[(hydro_id, 0, 1)]
     assert stage1.max_generation_mw == pytest.approx(50.0)

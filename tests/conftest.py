@@ -21,10 +21,11 @@ make_case``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -44,7 +45,7 @@ from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.files import NewaveFiles
 
 # Shared skip marker for tier-2 tests that need `novomodelo-python` (`import
-# novomodelo`). It is a core dev dependency (installed via `.[dev]`), so it is
+# novomodelo`). It is a core runtime dependency, so it is
 # present on every CI job; this ``skipif`` guards only a deliberately
 # novomodelo-free environment (e.g. a partial dev checkout). Use ``find_spec``
 # (import-free) so this module stays importable there too. ``condition`` is
@@ -94,6 +95,29 @@ requires_writer_binding = pytest.mark.skipif(
 )
 
 
+class FloatDigitsKwargs(TypedDict, total=False):
+    float_digits: int | None
+
+
+def case_json_floats(case_dir: Path) -> list[float]:
+    """Every float literal in the JSON files of a converted case directory."""
+    floats: list[float] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, float):
+            floats.append(value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    for path in sorted(case_dir.rglob("*.json")):
+        walk(json.loads(path.read_text(encoding="utf-8")))
+    return floats
+
+
 @pytest.fixture
 def decomp_mini_deck() -> Path:
     """Path to the committed DECOMP mini-deck under ``tests/decks/decomp_mini/``.
@@ -124,7 +148,7 @@ def newave_mini_deck() -> Path:
 
 @pytest.fixture
 def dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force a plain, fixed-width terminal for Typer ``--help`` content tests.
+    """Force a plain, fixed-width terminal for tests that read Typer's Rich output.
 
     Typer's Rich help (``rich_markup_mode="rich"``) renders its options table
     from the detected terminal. On CI, GitHub Actions sets
@@ -134,8 +158,10 @@ def dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     locally but fail on CI. ``TERM=dumb`` makes Rich treat the captured output as
     a plain, fixed-width stream and emit the help content deterministically.
 
-    Only the ``--help`` content tests opt in (via this fixture) so the fixed
-    width does not perturb width-sensitive rendering in the rest of the suite.
+    Forced terminal mode also styles usage errors, splitting the text a test
+    looks for with ANSI codes. Only tests that read help or usage-error text opt
+    in (via this fixture) so the fixed width does not perturb width-sensitive
+    rendering in the rest of the suite.
     The real CLI, writing to a normal stdout, is unaffected.
     """
     monkeypatch.setenv("TERM", "dumb")
@@ -213,20 +239,27 @@ def make_nw_files(tmp_path: Path, **overrides: Path | None) -> NewaveFiles:
     for name in _OPTIONAL:
         fields[name] = None
     fields.update(overrides)
-    return NewaveFiles(**fields)  # type: ignore[arg-type]
+    # ty cannot tie the keyword names computed from _REQUIRED/_OPTIONAL to the Path fields
+    return NewaveFiles(**fields)  # ty: ignore[invalid-argument-type]
 
 
 def modif_mock(*blocks: tuple[int, list]) -> MagicMock:
     """A ``Modif`` stand-in holding one ``USINA`` block per ``(code, records)``,
-    in order, as the register sequence the converter walks."""
+    in order; ``modificacoes_usina`` returns a plant's first block, as inewave's."""
     modif = MagicMock()
     data: list = []
+    first_blocks: dict[int, list] = {}
     for code, records in blocks:
         usina = MagicMock()
         type(usina).__name__ = "USINA"
         usina.codigo = code
         data.extend([usina, *records])
+        first_blocks.setdefault(code, list(records))
     modif.data = data
+    modif.usina.return_value = pd.DataFrame(
+        {"codigo": [code for code, _ in blocks], "nome": [""] * len(blocks)}
+    )
+    modif.modificacoes_usina.side_effect = lambda code: first_blocks.get(code, [])
     return modif
 
 
@@ -376,13 +409,16 @@ class _FakeDadger:
     """Return a preset DataFrame (or ``None``) for each register accessor.
 
     Shared across the decomp constraint-register and results-compare test
-    modules; import with ``from tests.conftest import _FakeDadger``.
+    modules; import with ``from tests.conftest import _FakeDadger``. The
+    special-constraint accessors are explicit so the double satisfies
+    ``ConstraintRegisters`` and ``RhaRegisters``; every other register resolves through
+    ``__getattr__``.
     """
 
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
+    def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -390,6 +426,57 @@ class _FakeDadger:
             return self._frames.get(name)
 
         return accessor
+
+    def re(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("re")
+
+    def fu(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("fu")
+
+    def ft(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("ft")
+
+    def fi(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("fi")
+
+    def fe(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("fe")
+
+    def lu(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("lu")
+
+    def hq(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("hq")
+
+    def lq(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("lq")
+
+    def cq(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("cq")
+
+    def hv(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("hv")
+
+    def lv(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("lv")
+
+    def cv(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("cv")
+
+    def he(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("he")
+
+    def cm(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("cm")
+
+    def ha(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("ha")
+
+    def la(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("la")
+
+    def ca(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("ca")
 
 
 def _fake_dataset(*, all_within_tol: bool = False) -> ComparisonDataset:
@@ -537,10 +624,10 @@ def _make_fake_newave_dir(tmp_path: Path) -> Path:
     """Create a directory with caso.dat, arquivos.dat, and all required stub files."""
     newave_dir = tmp_path / "newave_case"
     newave_dir.mkdir()
-    (newave_dir / "caso.dat").write_text("arquivos.dat\n")
-    (newave_dir / "arquivos.dat").write_text(_ARQUIVOS_DAT_CONTENT)
+    (newave_dir / "caso.dat").write_text("arquivos.dat\n", encoding="utf-8")
+    (newave_dir / "arquivos.dat").write_text(_ARQUIVOS_DAT_CONTENT, encoding="utf-8")
     for filename in _REQUIRED_STUB_FILES:
-        (newave_dir / filename).write_text("stub")
+        (newave_dir / filename).write_text("stub", encoding="utf-8")
     return newave_dir
 
 
@@ -596,7 +683,7 @@ _FAKE_HYDRO_ENERGY_PRODUCTIVITY_TABLE = pa.table(
 )
 
 
-def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type-arg]
+def _all_converter_patches(fake_id_map: MagicMock) -> list:
     """Return patch context managers for all converter functions.
 
     The parsed case is mocked at ``NewaveCase.from_directory``; its ``id_map``
@@ -620,6 +707,10 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:  # type: ignore[type
         patch(
             "novomodelo_bridge.newave.pipeline.network_conv.convert_buses",
             return_value=_FAKE_BUSES,
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.network_conv.mean_bus_load_mw",
+            return_value={},
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.network_conv.convert_lines",

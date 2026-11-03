@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
@@ -30,6 +29,7 @@ from idecomp.decomp import Dadgnl, Vazoes
 from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.policy_dates import hours_between, yyyymmdd_from_date
 from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -71,11 +71,13 @@ from novomodelo_bridge.decomp.fcf.writer import (
     write_boundary_checkpoint,
 )
 from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+    from idecomp.decomp import Dadger
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
@@ -144,33 +146,33 @@ def _gnl_targets_from(
 def _commanded_deliveries(
     model: GnlCommitmentModel,
     week_months: Mapping[date, tuple[int, int]],
-    horizon_end: date,
+    calendar: Sequence[OperativeStage],
 ) -> tuple[GnlCommandedDelivery, ...]:
     """The já-comandada (class-4) weeks with a nonzero ``gl`` dispatch.
 
     Read off :func:`classify_gnl_windows`, the same windows the conversion
     hands novomodelo as past commitments; the zero-MW grid stub carries nothing.
+    Patamar MW and month come from the window's own ``gl`` week, never from the
+    window start, which a week straddling the horizon end is clipped to; its
+    hours are the window's, the span novomodelo holds the commitment over.
     """
     submercado_of = {thermal.code: thermal.submarket_code for thermal in model.thermals}
-    block_mw_of = {
-        (code, stage.start_date): stage.block_mw
-        for code, commitment in model.commitments.items()
-        for stage in commitment.stages
-    }
     deliveries: list[GnlCommandedDelivery] = []
-    classification = classify_gnl_windows(model, horizon_end=horizon_end)
+    classification = classify_gnl_windows(model, calendar)
     for code, plant in sorted(classification.plants.items()):
-        for start, end, _mw in plant.class4_windows:
-            block_mw = block_mw_of.get((code, start), ())
-            if not any(block_mw):
+        for window in plant.class4_windows:
+            week = window.week
+            if week is None or not any(week.block_mw):
                 continue
-            year, month = week_months.get(start, (start.year, start.month))
+            year, month = week_months.get(
+                week.start_date, (week.start_date.year, week.start_date.month)
+            )
             deliveries.append(
                 GnlCommandedDelivery(
                     submercado=submercado_of[code],
                     month=month_key(year, month),
-                    block_mw=block_mw,
-                    hours=hours_between(start, end),
+                    block_mw=week.block_mw,
+                    hours=hours_between(window.start_date, window.end_date),
                 )
             )
     return tuple(deliveries)
@@ -232,32 +234,25 @@ def _plan_gnl_ring(
         week_months={
             yyyymmdd_from_date(day): month_key(*ym) for day, ym in weeks.items()
         },
-        commanded=_commanded_deliveries(model, weeks, calendar[-1].end_date),
+        commanded=_commanded_deliveries(model, weeks, calendar),
     )
 
 
-#: A ``CX`` register line: ``CX <complexo_code> <component_code>``. idecomp
-#: exposes no typed accessor for ``CX``, so it is parsed directly.
-_CX_LINE = re.compile(r"^CX\s+(\d+)\s+(\d+)")
-
-
-def _read_complexo_map(dadger_path: Path) -> dict[int, list[int]]:
-    """Parse the deck's ``CX`` register into ``{complexo_code: [component_codes]}``.
+def _complexo_map(dadger: Dadger) -> dict[int, list[int]]:
+    """The deck's ``CX`` register as ``{complexo_code: [component_codes]}``.
 
     ``CX`` couples a complex of the boundary cut (absent from the DECOMP
     model) to the individual DECOMP plants inside it. Empty when the deck has
-    no ``CX`` line or the file is absent.
+    no ``CX`` line.
     """
     complexo_map: dict[int, list[int]] = {}
-    if not dadger_path.is_file():
+    cx = dadger.cx(df=True)
+    if cx.empty:
         return complexo_map
-    with dadger_path.open(encoding="latin-1") as handle:
-        for line in handle:
-            match = _CX_LINE.match(line)
-            if match is not None:
-                complexo_map.setdefault(int(match.group(1)), []).append(
-                    int(match.group(2))
-                )
+    for complexo, component in zip(
+        cx["codigo_newave"], cx["codigo_decomp"], strict=True
+    ):
+        complexo_map.setdefault(as_int(complexo), []).append(as_int(component))
     return complexo_map
 
 
@@ -289,7 +284,7 @@ def _read_deck_coupling(
     vazoes = Vazoes.read(str(case.files.vazoes))
     plant_codes = cuts.header.plant_codes
     resolution = resolve_couplings(
-        plant_codes, case.id_map, effective, _read_complexo_map(case.files.dadger)
+        plant_codes, case.id_map, effective, _complexo_map(case.dadger)
     )
     coupled = {coupling.plant_index for coupling in resolution.couplings}
     source_only = source_only_lag_inflows(
@@ -710,6 +705,7 @@ def import_boundary_fcf(
     cost_scale_factor: float,
     config: dict | None = None,
     initial_conditions: dict | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> Path | None:
     """Import the source model's boundary FCF into the converted case at
     ``case_dir``.
@@ -782,7 +778,7 @@ def import_boundary_fcf(
 
     # A real, non-dry-run writer: the importer runs a real ``novomodelo`` pass and
     # never runs under ``--dry-run``.
-    writer = CaseWriter(case_dir)
+    writer = CaseWriter(case_dir, float_digits=float_digits)
 
     cortesh = Cortesh.read(str(case.files.cortesh))
     cuts = read_cortes(case.files.cortes, cortesh, boundary_stage=None)

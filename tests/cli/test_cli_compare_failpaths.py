@@ -220,7 +220,7 @@ class TestCompareDecompReadError:
         raise NovomodeloReadError("bad parquet partition")
 
     def test_json_emits_error_envelope_exit_2(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, decomp_mini_deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
@@ -228,7 +228,7 @@ class TestCompareDecompReadError:
         )
 
         code, stdout, stderr = _invoke_main(
-            ["compare", "decomp", str(tmp_path), str(tmp_path), "--json"],
+            ["compare", "decomp", str(decomp_mini_deck), str(tmp_path), "--json"],
             monkeypatch,
         )
 
@@ -240,7 +240,7 @@ class TestCompareDecompReadError:
         assert stderr == ""
 
     def test_plain_empty_stdout_stderr_diagnostic_exit_2(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, decomp_mini_deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
@@ -248,7 +248,7 @@ class TestCompareDecompReadError:
         )
 
         code, stdout, stderr = _invoke_main(
-            ["compare", "decomp", str(tmp_path), str(tmp_path)],
+            ["compare", "decomp", str(decomp_mini_deck), str(tmp_path)],
             monkeypatch,
         )
 

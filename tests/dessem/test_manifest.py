@@ -95,7 +95,7 @@ class TestWriteExportManifest:
         write_export_manifest(manifest, path)
 
         assert path.exists()
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         assert data["revision"] == "rv0"
 
     def test_json_is_sorted(self, tmp_path: Path) -> None:
@@ -110,7 +110,7 @@ class TestWriteExportManifest:
 
         write_export_manifest(manifest, path)
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         # Keys should be alphabetically sorted
         assert content.index('"a_key"') < content.index('"z_key"')
 

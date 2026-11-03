@@ -33,8 +33,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
+from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.core.season_calendar import (
     block_names,
     monthly_season_definitions,
@@ -72,6 +73,21 @@ class OperativeStage:
     def total_hours(self) -> float:
         """Total stage duration in hours."""
         return sum(self.block_hours)
+
+    @property
+    def operative_year(self) -> int:
+        """Year of the ``season_id`` month, not ``start_date.year``.
+
+        A January study's first week starts in the previous December
+        (27/12/2025 for January 2026), so the operative month is the
+        ``season_id`` month nearest ``start_date``.
+        """
+        months_from_start = self.season_id - (self.start_date.month - 1)
+        if months_from_start < -6:
+            return self.start_date.year + 1
+        if months_from_start > 6:
+            return self.start_date.year - 1
+        return self.start_date.year
 
 
 def hours_weighted(values: Sequence[float], stage: OperativeStage) -> float:
@@ -222,26 +238,48 @@ def _first_of_next_month(day: date) -> date:
     return date(day.year + (day.month == 12), day.month % 12 + 1, 1)
 
 
-def operative_calendar_from_dadger(dadger: Dadger) -> list[OperativeStage]:
+class _StudyDate(Protocol):
+    @property
+    def ano(self) -> int | None: ...
+
+    @property
+    def mes(self) -> int | None: ...
+
+    @property
+    def dia(self) -> int | None: ...
+
+
+class _CalendarRegisters(Protocol):
+    @property
+    def dt(self) -> _StudyDate | None: ...
+
+    def dp(self, *, df: bool) -> object: ...
+
+
+def operative_calendar_from_dadger(dadger: _CalendarRegisters) -> list[OperativeStage]:
     """Build the operative calendar from a deck's ``DT`` + ``DP`` records.
 
     Block durations must agree across subsystems for each stage (the deck
     defines one temporal grid); a mismatch is a hard error.
     """
     dt = dadger.dt
+    if dt is None or dt.ano is None or dt.mes is None or dt.dia is None:
+        raise ValueError(
+            "the deck has no complete DT record; cannot build the calendar"
+        )
     start = date(int(dt.ano), int(dt.mes), int(dt.dia))
 
-    dp = dadger.dp(df=True)
+    dp = as_frame(dadger.dp(df=True))
     if dp is None or dp.empty:
         raise ValueError("the deck has no DP records; cannot build the calendar")
 
     stage_block_hours: list[list[float]] = []
     expected = 1
     for estagio, group in dp.groupby("estagio", sort=True):
-        if int(estagio) != expected:
+        if as_int(estagio) != expected:
             raise ValueError(
                 f"DP stages must be contiguous from 1; expected {expected}, "
-                f"got {int(estagio)}"
+                f"got {as_int(estagio)}"
             )
         expected += 1
 
@@ -251,14 +289,14 @@ def operative_calendar_from_dadger(dadger: Dadger) -> list[OperativeStage]:
         for _, row in group.iterrows():
             if int(row["numero_patamares"]) != n_blocks:
                 raise ValueError(
-                    f"stage {int(estagio)}: numero_patamares differs across subsystems"
+                    f"stage {as_int(estagio)}: numero_patamares differs across subsystems"
                 )
             values = [float(row[c]) for c in columns]
             if reference is None:
                 reference = values
             elif values != reference:
                 raise ValueError(
-                    f"stage {int(estagio)}: block durations differ across "
+                    f"stage {as_int(estagio)}: block durations differ across "
                     f"subsystems ({values} vs {reference}); the deck defines "
                     "one temporal grid"
                 )
@@ -298,20 +336,18 @@ def _first_active(values: Sequence[float] | None) -> float | None:
 def _cortesh_cvar(cortesh_path: Path | None) -> tuple[float | None, float | None]:
     """The FCF header's active ``(alpha, lambda)`` CVaR fractions.
 
-    Reads ``cortesh.dat`` (``SecaoDadosCortesh.alfa_cvar``/``lambda_cvar``,
-    already fractions), returning the first active (nonzero) pair, or
+    Reads ``cortesh.dat`` (``Cortesh.alfa_cvar``/``lambda_cvar``, already
+    fractions), returning the first active (nonzero) pair, or
     ``(None, None)`` when the header is absent or CVaR is disabled there.
     """
     if cortesh_path is None:
         return None, None
     from inewave.newave import Cortesh
-    from inewave.newave.modelos.cortesh import SecaoDadosCortesh
 
-    ch = Cortesh.read(str(cortesh_path))
-    sec = next((s for s in ch.data.of_type(SecaoDadosCortesh)), None)
-    if sec is None or getattr(sec, "usa_cvar", 0) != 1:
+    cortesh = Cortesh.read(str(cortesh_path))
+    if cortesh.usa_cvar != 1:
         return None, None
-    return _first_active(sec.alfa_cvar), _first_active(sec.lambda_cvar)
+    return _first_active(cortesh.alfa_cvar), _first_active(cortesh.lambda_cvar)
 
 
 def resolve_cvar(dadger: Dadger, cortesh_path: Path | None) -> CVaRConfig | None:

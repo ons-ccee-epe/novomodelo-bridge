@@ -9,6 +9,7 @@ import ast
 import dataclasses
 import inspect
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from rich.console import Console
@@ -24,7 +25,15 @@ from novomodelo_bridge.cli.args import (
 _FAMILIES = (ConvertArgs, CompareArgs, CheckArgs, DashboardArgs)
 
 
-def _common_kwargs() -> dict[str, object]:
+class _CommonKwargs(TypedDict):
+    json_output: bool
+    verbose: int
+    log_file: Path | None
+    no_color: bool
+    quiet: bool
+
+
+def _common_kwargs() -> _CommonKwargs:
     return {
         "json_output": False,
         "verbose": 0,
@@ -77,7 +86,7 @@ def test_common_args_frozen_instance_raises_on_assignment() -> None:
     """Assigning a field on a frozen CommonArgs instance raises FrozenInstanceError."""
     args = CommonArgs(**_common_kwargs())
     with pytest.raises(dataclasses.FrozenInstanceError):
-        args.quiet = True  # type: ignore[misc]
+        setattr(args, "quiet", True)
 
 
 def test_convert_args_frozen_instance_raises_on_assignment() -> None:
@@ -92,7 +101,7 @@ def test_convert_args_frozen_instance_raises_on_assignment() -> None:
         dry_run=False,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        args.force = True  # type: ignore[misc]
+        setattr(args, "force", True)
 
 
 def test_compare_args_frozen_instance_raises_on_assignment() -> None:
@@ -106,14 +115,14 @@ def test_compare_args_frozen_instance_raises_on_assignment() -> None:
         out_dir=None,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        args.tolerance = 1.0  # type: ignore[misc]
+        setattr(args, "tolerance", 1.0)
 
 
 def test_check_args_frozen_instance_raises_on_assignment() -> None:
     """Assigning a field on a frozen CheckArgs instance raises FrozenInstanceError."""
     args = CheckArgs(**_common_kwargs(), src=Path("src"))
     with pytest.raises(dataclasses.FrozenInstanceError):
-        args.src = Path("other")  # type: ignore[misc]
+        setattr(args, "src", Path("other"))
 
 
 def test_dashboard_args_frozen_instance_raises_on_assignment() -> None:
@@ -125,7 +134,7 @@ def test_dashboard_args_frozen_instance_raises_on_assignment() -> None:
         open_browser=False,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        args.open_browser = True  # type: ignore[misc]
+        setattr(args, "open_browser", True)
 
 
 def test_convert_args_no_fcf_defaults_false() -> None:

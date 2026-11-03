@@ -57,7 +57,7 @@ class TestMapcutHeader:
 
     def test_header_is_frozen(self, minimal_header: MapcutHeader) -> None:
         with pytest.raises(AttributeError):
-            minimal_header.numero_cortes = 100  # type: ignore[misc]  # intentional mutation to test frozen
+            minimal_header.numero_cortes = 100  # ty: ignore[invalid-assignment] intentional mutation to test frozen
 
 
 class TestWriteMapcut:
@@ -307,6 +307,7 @@ class TestCommittedGnlCost:
 
     def test_idecomp_reads_the_cost_from_its_own_column(self, written: Path) -> None:
         costs = Mapcut.read(str(written)).dados_custos
+        assert costs is not None
 
         assert costs["geracao_termica_minima_gerada_gnl"].tolist() == [1234.5, 0.0]
         for column in (

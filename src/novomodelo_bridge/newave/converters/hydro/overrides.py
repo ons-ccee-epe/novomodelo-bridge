@@ -15,10 +15,31 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 import pandas as pd
+from inewave.newave.modelos.modif import (
+    CDESVIO,
+    CFUGA,
+    CMONT,
+    COTAREA,
+    NUMCNJ,
+    NUMMAQ,
+    POTEFE,
+    TURBMAXT,
+    TURBMINT,
+    USINA,
+    VAZMIN,
+    VAZMINT,
+    VMAXT,
+    VMINT,
+    VOLCOTA,
+    VOLMAX,
+    VOLMIN,
+)
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
@@ -27,6 +48,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
 )
 from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import POST_STUDY_YEAR, seasonal_step_function
 
@@ -48,6 +70,20 @@ _TEMPORAL_VALUE_ATTR = {
     "TURBMAXT": "turbinamento",
 }
 _TEMPORAL_OVERRIDE_TYPES = frozenset(_TEMPORAL_VALUE_ATTR)
+# Every temporal record but VAZMINT carries a required start date and no PRE/POS marker.
+_DATED_OVERRIDE_TYPES = _TEMPORAL_OVERRIDE_TYPES - {"VAZMINT"}
+
+type _DatedRecord = VMAXT | VMINT | CFUGA | CMONT | TURBMINT | TURBMAXT
+
+
+def _is_record[R: Register](rec: Register, kind: type[R]) -> TypeGuard[R]:
+    """Whether *rec* is a ``kind`` register, matched by class name as the module
+    dispatches records."""
+    return type(rec).__name__ == kind.__name__
+
+
+def _is_dated(rec: Register) -> TypeGuard[_DatedRecord]:
+    return type(rec).__name__ in _DATED_OVERRIDE_TYPES
 
 
 def _raw_unit(rec: object) -> str:
@@ -57,9 +93,8 @@ def _raw_unit(rec: object) -> str:
 
 def _volume_unit(rec: object) -> str | None:
     """``"h"`` (hm³) or ``"%"`` (percent of the useful volume) of a MODIF.DAT
-    volume record; ``None`` when its ``unidade`` column is absent or unknown.
-    The file quotes the unit (``'%'``), so quotes are stripped first."""
-    unit = _raw_unit(rec).strip().strip("'\"").strip().lower()
+    volume record; ``None`` when its ``unidade`` column is absent or unknown."""
+    unit = _raw_unit(rec).strip().lower()
     if unit in ("h", "hm3", "hm³"):
         return "h"
     if unit == "%":
@@ -67,13 +102,13 @@ def _volume_unit(rec: object) -> str | None:
     return None
 
 
-def _polynomial_coefficients(raw: list[float | None]) -> list[float]:
+def _polynomial_coefficients(raw: Sequence[float | None]) -> list[float]:
     """The coefficients of a MODIF.DAT polynomial record, a0 first.
 
     A blank field is a zero coefficient, not a missing one: a low-order
     polynomial leaves its tail blank instead of spelling out ``0.``.
     """
-    return [0.0 if pd.isna(value) else float(value) for value in raw]
+    return [0.0 if value is None or pd.isna(value) else float(value) for value in raw]
 
 
 def percent_of_useful_volume(percent: float, vol_min: float, vol_max: float) -> float:
@@ -109,27 +144,81 @@ def _emit_unknown_volume_units(
     )
 
 
-def _modif_blocks(modif: Modif) -> list[tuple[int | None, list[Register]]]:
-    """The records of ``modif.dat`` under each ``USINA`` record, in file order.
-
-    A plant may have several blocks, each its own entry; records before the
-    first ``USINA`` record come first, under ``None``. The registers are walked
-    directly because ``Modif.modificacoes_usina`` reads only a plant's first
-    block.
-    """
-    blocks: list[tuple[int | None, list[Register]]] = [(None, [])]
-    for register in modif.data:
-        if type(register).__name__ == "USINA":
-            blocks.append((int(register.codigo), []))
-        else:
-            blocks[-1][1].append(register)
-    return blocks if blocks[0][1] else blocks[1:]
-
-
 def _plant_blocks(modif: Modif) -> list[tuple[int, list[Register]]]:
-    return [
-        (code, records) for code, records in _modif_blocks(modif) if code is not None
-    ]
+    """Each plant's ``modif.dat`` records, in the order the plants first appear.
+
+    Only a plant's first ``USINA`` block counts, as in ``Modif.modificacoes_usina``;
+    ``modif-records-ignored`` reports the records left out.
+    """
+    usinas = modif.usina(df=True)
+    if usinas is None or usinas.empty:
+        return []
+    if usinas["codigo"].isna().any():
+        raise FieldParseError(
+            "modif.dat: a USINA record has no plant code",
+            path="modif.dat",
+            field="USINA",
+        )
+    names: dict[int, str] = {}
+    for code, name in zip(usinas["codigo"], usinas["nome"], strict=True):
+        names.setdefault(as_int(code), str(name).strip())
+    _emit_ignored_records(modif, names)
+    return [(code, modif.modificacoes_usina(code) or []) for code in names]
+
+
+def _emit_ignored_records(modif: Modif, names: dict[int, str]) -> None:
+    """Warn about the records outside every plant's first ``USINA`` block.
+
+    The NEWAVE manual allows one block per plant, so a repeated plant's later
+    blocks are ignored, and a record before the first ``USINA`` record belongs
+    to no plant. Header and comment lines read as ``DefaultRegister``, not as
+    records.
+    """
+    ignored: dict[int | None, Counter[str]] = {}
+    plant: int | None = None
+    in_first_block = False
+    seen: set[int | None] = set()
+    for register in modif.data:
+        if _is_record(register, USINA):
+            plant = register.codigo
+            in_first_block = plant not in seen
+            seen.add(plant)
+        elif not in_first_block and type(register).__name__ != "DefaultRegister":
+            ignored.setdefault(plant, Counter())[type(register).__name__] += 1
+    if not ignored:
+        return
+    total = sum(counts.total() for counts in ignored.values())
+    emit(
+        Diagnostic(
+            code="modif-records-ignored",
+            severity=Severity.WARNING,
+            category="Cadastro overrides",
+            title=f"MODIF.DAT records ignored ({total})",
+            summary=(
+                f"{total} MODIF.DAT record(s) lie outside a plant's first USINA "
+                "block and are ignored: the NEWAVE manual allows one block per "
+                "plant, and a record before the first USINA record belongs to "
+                "no plant."
+            ),
+            table=DiagnosticTable(
+                columns=["Code", "Name", "Records ignored"],
+                rows=[
+                    [
+                        "" if code is None else code,
+                        "before the first USINA" if code is None else names[code],
+                        ", ".join(f"{count} {kind}" for kind, count in counts.items()),
+                    ]
+                    for code, counts in ignored.items()
+                ],
+                justify=["right", "left", "left"],
+            ),
+            remediation=(
+                "Move the listed records into the plant's first USINA block in "
+                "MODIF.DAT."
+            ),
+        ),
+        logger=_LOG,
+    )
 
 
 def _apply_permanent_overrides(
@@ -187,19 +276,19 @@ def _apply_permanent_overrides(
         for rec in records:
             type_name = type(rec).__name__
 
-            # Skip temporal override types — handled separately.
-            if type_name in _TEMPORAL_OVERRIDE_TYPES:
+            # Temporal records and CDESVIO are converted elsewhere, not into the cadastro.
+            if type_name in _TEMPORAL_OVERRIDE_TYPES or _is_record(rec, CDESVIO):
                 continue
 
-            if type_name == "VAZMIN":
-                result.loc[code, "vazao_minima_historica"] = float(rec.vazao)
+            if _is_record(rec, VAZMIN):
+                result.loc[code, "vazao_minima_historica"] = as_float(rec.vazao)
 
-            elif type_name in ("VOLMAX", "VOLMIN"):
+            elif _is_record(rec, VOLMAX) or _is_record(rec, VOLMIN):
                 unit = _volume_unit(rec)
                 if unit is None:
                     unit_unknown.append((code, type_name, _raw_unit(rec)))
                     unit = "h"
-                value = float(rec.volume)
+                value = as_float(rec.volume)
                 if unit == "%":
                     base = cadastro.loc[code]
                     value = percent_of_useful_volume(
@@ -210,27 +299,27 @@ def _apply_permanent_overrides(
                 column = "volume_maximo" if type_name == "VOLMAX" else "volume_minimo"
                 result.loc[code, column] = value
 
-            elif type_name == "NUMCNJ":
+            elif _is_record(rec, NUMCNJ):
                 result.loc[code, "numero_conjuntos_maquinas"] = int(rec.numero)
 
-            elif type_name == "NUMMAQ":
-                set_num = int(rec.conjunto)
-                n_maq = int(rec.numero_maquinas)
+            elif _is_record(rec, NUMMAQ):
+                set_num = as_int(rec.conjunto)
+                n_maq = as_int(rec.numero_maquinas)
                 result.loc[code, f"maquinas_conjunto_{set_num}"] = n_maq
 
-            elif type_name == "POTEFE":
+            elif _is_record(rec, POTEFE):
                 # ``potencia_nominal_conjunto_*`` is the conjunto's POTEF.
-                set_num = int(rec.conjunto)
-                result.loc[code, f"potencia_nominal_conjunto_{set_num}"] = float(
+                set_num = as_int(rec.conjunto)
+                result.loc[code, f"potencia_nominal_conjunto_{set_num}"] = as_float(
                     rec.potencia
                 )
 
-            elif type_name == "VOLCOTA":
+            elif _is_record(rec, VOLCOTA):
                 result.loc[code, [f"a{i}_volume_cota" for i in range(5)]] = (
                     _polynomial_coefficients(rec.polinomio_volume_cota)
                 )
 
-            elif type_name == "COTAREA":
+            elif _is_record(rec, COTAREA):
                 result.loc[code, [f"a{i}_cota_area" for i in range(5)]] = (
                     _polynomial_coefficients(rec.polinomio_cota_area)
                 )
@@ -307,53 +396,37 @@ class DiversionRecord:
 def read_diversion_records(case: NewaveCase) -> dict[int, DiversionRecord]:
     """``{plant code: its CDESVIO record}`` from ``modif.dat``.
 
-    inewave keeps ``CDESVIO`` as an unparsed line, so its free-format fields
-    are split here and the record belongs to the ``USINA`` record above it.
-    A plant with more than one keeps the last, as with the other permanent
-    records.
+    A plant whose block has more than one keeps the last, as with the other
+    permanent records. A flow inewave cannot parse reads as no flow given.
 
     Raises:
-        FieldParseError: a record before any ``USINA`` record, without an
-            integer target code, diverting to its own plant, or with a flow
-            that is not a non-negative number.
+        FieldParseError: a record without an integer target code, diverting to
+            its own plant, or with a negative or infinite flow.
     """
     modif = case.modif
     if modif is None:
         return {}
     records: dict[int, DiversionRecord] = {}
-    for plant, registers in _modif_blocks(modif):
+    for plant, registers in _plant_blocks(modif):
         for register in registers:
-            line = getattr(register, "data", None)
-            if not isinstance(line, str):
-                continue
-            fields = line.split()
-            if not fields or fields[0].upper() != "CDESVIO":
-                continue
-            if plant is None:
-                raise _cdesvio_error("a CDESVIO record comes before any USINA record")
-            records[plant] = _parse_cdesvio(plant, fields[1:])
+            if _is_record(register, CDESVIO):
+                records[plant] = _diversion_record(plant, register)
     return records
 
 
-def _parse_cdesvio(plant: int, values: list[str]) -> DiversionRecord:
-    try:
-        target = int(values[0])
-    except (IndexError, ValueError):
+def _diversion_record(plant: int, register: CDESVIO) -> DiversionRecord:
+    target = register.codigo_usina_jusante
+    if target is None:
         raise _cdesvio_error(
             f"the CDESVIO record of plant {plant} has no integer target plant code"
-        ) from None
+        )
     if target == plant:
         raise _cdesvio_error(f"the CDESVIO record of plant {plant} diverts to itself")
-    if len(values) < 2:
-        return DiversionRecord(target, None)
-    try:
-        max_flow = float(values[1])
-    except ValueError:
-        max_flow = math.nan
-    if not math.isfinite(max_flow) or max_flow < 0.0:
+    max_flow = register.limite_vazao
+    if max_flow is not None and (not math.isfinite(max_flow) or max_flow < 0.0):
         raise _cdesvio_error(
             f"the CDESVIO record of plant {plant} gives the maximum flow "
-            f"{values[1]!r}; expected a non-negative number in m³/s"
+            f"{max_flow:g}; expected a non-negative number in m³/s"
         )
     return DiversionRecord(target, max_flow)
 
@@ -436,31 +509,30 @@ def _extract_temporal_overrides(
         plant_overrides: list[dict] = []
         for rec in records:
             type_name = type(rec).__name__
-            if type_name not in _TEMPORAL_OVERRIDE_TYPES:
-                continue
-
-            # VMAXT/VMINT carry a unit column ('h' hm³ or '%' of useful volume);
-            # a record with no recognisable unit is taken as '%' and reported.
             unit: str | None = None
-            if type_name in ("VMAXT", "VMINT"):
-                unit = _volume_unit(rec)
-                if unit is None:
-                    unit_unknown.append((code, type_name, _raw_unit(rec)))
-                    unit = "%"
 
             # Only VAZMINT admits the PRE/POS markers, so only it reads them.
-            if type_name == "VAZMINT":
+            if _is_record(rec, VAZMINT):
                 period = rec.periodo
                 start = rec.data_inicio
                 if rec.mes is None or (period is None and start is None):
                     undated.append((code, type_name))
                     continue
                 month = int(rec.mes)
-                year = None if period is not None else int(start.year)
-            else:
+                year = None if period is not None or start is None else int(start.year)
+            elif _is_dated(rec):
                 period = None
                 month = int(rec.data_inicio.month)
                 year = int(rec.data_inicio.year)
+                # VMAXT/VMINT carry a unit column ('h' hm³ or '%' of useful volume);
+                # a record with no recognisable unit is taken as '%' and reported.
+                if type_name in ("VMAXT", "VMINT"):
+                    unit = _volume_unit(rec)
+                    if unit is None:
+                        unit_unknown.append((code, type_name, _raw_unit(rec)))
+                        unit = "%"
+            else:
+                continue
 
             override: dict = {
                 "type": type_name,

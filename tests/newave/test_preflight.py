@@ -23,7 +23,7 @@ _OPTIONAL_FIELDS = [
 ]
 
 
-def _all_optionals_present(tmp_path: Path) -> dict[str, Path]:
+def _all_optionals_present(tmp_path: Path) -> dict[str, Path | None]:
     """Every optional input resolved to a path under *tmp_path* (none absent)."""
     return {name: tmp_path / f"{name}.dat" for name in _OPTIONAL_FIELDS}
 
@@ -47,7 +47,7 @@ class TestRunPreflight:
         # All optionals present except cvar (left None): discovery succeeds, the
         # single absent optional is advisory-only and does not block or warn.
         present = _all_optionals_present(tmp_path)
-        present["cvar"] = None  # type: ignore[assignment]
+        present["cvar"] = None
         files = make_nw_files(tmp_path, **present)
         monkeypatch.setattr(preflight.NewaveFiles, "from_directory", lambda _src: files)
 
@@ -82,7 +82,7 @@ class TestRunPreflight:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         files = make_nw_files(tmp_path, **_all_optionals_present(tmp_path))
-        files.clast.write_text("    1 A\n\t2 B\n")
+        files.clast.write_text("    1 A\n\t2 B\n", encoding="utf-8")
         monkeypatch.setattr(preflight.NewaveFiles, "from_directory", lambda _src: files)
 
         result = run_preflight(tmp_path)

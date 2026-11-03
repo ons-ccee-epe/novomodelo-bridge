@@ -219,14 +219,17 @@ def tailrace_families_from_polinjus(
         the families cannot be ordered for interpolation.
     """
     reference = {
-        (int(row.codigo_usina), int(row.indice_familia)): row.nivel_montante_referencia
-        for row in families.itertuples()
+        (int(row["codigo_usina"]), int(row["indice_familia"])): row[
+            "nivel_montante_referencia"
+        ]
+        for row in families.to_dict("records")
     }
     by_code: dict[int, list[TailraceFamily]] = {}
     ordered = segments.sort_values(
         ["codigo_usina", "indice_familia", "indice_polinomio"], kind="stable"
     )
-    for (code, family), rows in ordered.groupby(
+    # pandas types group keys as Hashable; a list of columns yields (code, family) tuples
+    for (code, family), rows in ordered.groupby(  # ty: ignore[not-iterable]
         ["codigo_usina", "indice_familia"], sort=False
     ):
         level = reference.get((int(code), int(family)))
@@ -237,16 +240,24 @@ def tailrace_families_from_polinjus(
                 ),
                 segments=tuple(
                     TailraceSegment(
-                        outflow_max_m3s=float(row.limite_superior_vazao_jusante),
+                        outflow_max_m3s=float(limit),
                         coefficients=(
-                            float(row.coeficiente_a0),
-                            float(row.coeficiente_a1),
-                            float(row.coeficiente_a2),
-                            float(row.coeficiente_a3),
-                            float(row.coeficiente_a4),
+                            float(a0),
+                            float(a1),
+                            float(a2),
+                            float(a3),
+                            float(a4),
                         ),
                     )
-                    for row in rows.itertuples()
+                    for limit, a0, a1, a2, a3, a4 in zip(
+                        rows["limite_superior_vazao_jusante"],
+                        rows["coeficiente_a0"],
+                        rows["coeficiente_a1"],
+                        rows["coeficiente_a2"],
+                        rows["coeficiente_a3"],
+                        rows["coeficiente_a4"],
+                        strict=True,
+                    )
                 ),
             )
         )

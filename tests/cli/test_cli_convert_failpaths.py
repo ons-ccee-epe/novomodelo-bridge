@@ -74,7 +74,7 @@ class TestConvertNewaveDestNotEmptyFailpath:
         src.mkdir()
         dst = tmp_path / "dst"
         dst.mkdir()
-        (dst / "existing.txt").write_text("hello")
+        (dst / "existing.txt").write_text("hello", encoding="utf-8")
 
         result = _run_cli_subprocess("convert", "newave", str(src), str(dst), "--json")
 
@@ -94,7 +94,7 @@ class TestConvertNewaveDestNotEmptyFailpath:
         src.mkdir()
         dst = tmp_path / "dst"
         dst.mkdir()
-        (dst / "existing.txt").write_text("hello")
+        (dst / "existing.txt").write_text("hello", encoding="utf-8")
 
         result = _run_cli_subprocess("convert", "newave", str(src), str(dst))
 
@@ -138,7 +138,7 @@ class TestCliExitCodes:
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         dst.mkdir()
-        (dst / "existing.txt").write_text("hello")
+        (dst / "existing.txt").write_text("hello", encoding="utf-8")
 
         result = _run_cli_subprocess("convert", "newave", str(src), str(dst))
         assert result.returncode == 1

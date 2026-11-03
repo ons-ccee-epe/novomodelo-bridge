@@ -21,9 +21,9 @@ adds only what an agent working in this checkout needs beyond them.
 ## Quick commands
 
 ```bash
-pip install -e ".[dev]"                      # or: uv sync --extra dev
-pytest                                       # suite; tier-2 tests skip without novomodelo-python
-ruff check . && ruff format --check .        # whole tree, as CI and the pre-commit hook run it
+uv sync                                      # install, dev group included
+uv run pytest                                # suite; tier-2 tests skip without novomodelo-python
+uv run ruff check . && uv run ruff format --check .   # whole tree, as CI and the pre-commit hook run it
 python3 scripts/ci/check_no_plan_leaks.py    # hard gates, also run by CI
 python3 scripts/ci/check_comment_refs.py
 python3 scripts/ci/check_doc_paths.py
@@ -41,7 +41,8 @@ is read and are the authoritative statements; do not restate them here:
 
 - `.claude/rules/comments.md` (`**/*.py`) — comment and docstring discipline.
 - `.claude/rules/doc-integrity.md` (`*.md`) — prose docs: no hand-frozen
-  counts or versions, every cited path resolves, sober voice.
+  counts or versions, every cited path resolves, sober voice, and the
+  CHANGELOG admission test and entry shape.
 - `.claude/rules/testing.md` (`tests/`) — the three test tiers, deck guards,
   mock discipline, golden files.
 - `.claude/rules/bridge.md` (`src/`) — twin-track symmetry, the tracked

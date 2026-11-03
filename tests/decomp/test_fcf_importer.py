@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from idecomp.decomp import Dadger
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.case import DecompCase
@@ -30,13 +31,13 @@ from novomodelo_bridge.decomp.fcf.coupling import (
     TerminalShare,
 )
 from novomodelo_bridge.decomp.fcf.importer import (
+    _complexo_map,
     _DeckCoupling,
     _emit_coupling_diagnostics,
     _emit_import_diagnostics,
     _emit_transit_pricing,
     _gnl_targets_from,
     _plan_gnl_ring,
-    _read_complexo_map,
     import_boundary_fcf,
 )
 from novomodelo_bridge.decomp.fcf.mapper import (
@@ -284,7 +285,9 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
 
     assert calls[0]["stage_id"] == 4
     assert calls[0]["graph_stage_id"] == 3
-    assert config["policy"]["boundary"] == {"path": "boundary"}
+    policy = config["policy"]
+    assert isinstance(policy, dict)
+    assert policy["boundary"] == {"path": "boundary"}
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +295,7 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
 # ---------------------------------------------------------------------------
 
 
-def test_read_complexo_map_groups_components_by_complex(tmp_path: Path) -> None:
+def test_complexo_map_groups_components_by_complex(tmp_path: Path) -> None:
     dadger = tmp_path / "dadger.rv2"
     dadger.write_text(
         "& CX  complexo componente\n"
@@ -303,11 +306,14 @@ def test_read_complexo_map_groups_components_by_complex(tmp_path: Path) -> None:
         encoding="latin-1",
     )
 
-    assert _read_complexo_map(dadger) == {132: [147, 146], 176: [175]}
+    assert _complexo_map(Dadger.read(str(dadger))) == {132: [147, 146], 176: [175]}
 
 
-def test_read_complexo_map_is_empty_without_a_dadger(tmp_path: Path) -> None:
-    assert _read_complexo_map(tmp_path / "absent.rv2") == {}
+def test_complexo_map_is_empty_without_cx_lines(tmp_path: Path) -> None:
+    dadger = tmp_path / "dadger.rv2"
+    dadger.write_text("UH  147  10\n", encoding="latin-1")
+
+    assert _complexo_map(Dadger.read(str(dadger))) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +464,52 @@ def test_plan_gnl_ring_folds_only_nonzero_commanded_weeks() -> None:
 
     assert plan.commanded == (
         GnlCommandedDelivery(1, _MAY, (500.0, 500.0, 0.0), 168.0),
+    )
+
+
+#: A later revision's calendar: four October weeks, then November to 2026-12-01.
+_REVISION_CALENDAR = (
+    *(
+        _stage(
+            i,
+            date(2026, 10, 10) + timedelta(weeks=i),
+            date(2026, 10, 17) + timedelta(weeks=i),
+        )
+        for i in range(4)
+    ),
+    _stage(4, date(2026, 11, 7), date(2026, 12, 1)),
+)
+
+
+def test_plan_gnl_ring_folds_the_week_straddling_the_horizon_over_its_clipped_span() -> (
+    None
+):
+    """`gs` books week 8 (2026-11-28) to December; it is held from the horizon."""
+    commitment = GnlCommitment(
+        code=86,
+        stages=(
+            _gl_week(7, date(2026, 11, 21), (0.0, 0.0, 0.0)),
+            _gl_week(8, date(2026, 11, 28), (300.0, 100.0, 0.0)),
+            _gl_week(9, date(2026, 12, 5), (0.0, 0.0, 0.0)),
+        ),
+    )
+    model = _make_gnl_model(
+        (_make_gnl_thermal(86, 1),),
+        commitments={86: commitment},
+        weeks_per_month={1: 4, 2: 3, 3: 6},
+    )
+
+    plan = _plan_gnl_ring(
+        model,
+        (GnlThermalTarget(94, 1),),
+        {(2026, 12): (0.2, 0.3, 0.5)},
+        (2026, 11),
+        2,
+        _REVISION_CALENDAR,
+    )
+
+    assert plan.commanded == (
+        GnlCommandedDelivery(1, month_key(2026, 12), (300.0, 100.0, 0.0), 96.0),
     )
 
 

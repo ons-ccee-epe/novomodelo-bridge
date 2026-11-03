@@ -54,9 +54,9 @@ class TestReadCaseInputs:
 
     def test_negative_travel_time_raises(self, synthetic_case_dir: Path) -> None:
         hydros_path = synthetic_case_dir / "system" / "hydros.json"
-        hydros = json.loads(hydros_path.read_text())
+        hydros = json.loads(hydros_path.read_text(encoding="utf-8"))
         hydros["hydros"][0]["travel_time_hours"] = -1.0
-        hydros_path.write_text(json.dumps(hydros))
+        hydros_path.write_text(json.dumps(hydros), encoding="utf-8")
 
         with pytest.raises(InputReadError, match="must be non-negative"):
             read_case_inputs(synthetic_case_dir)
@@ -70,9 +70,9 @@ class TestReadCaseInputs:
 
     def test_missing_cost_per_mwh_raises(self, synthetic_case_dir: Path) -> None:
         thermals_path = synthetic_case_dir / "system" / "thermals.json"
-        thermals = json.loads(thermals_path.read_text())
+        thermals = json.loads(thermals_path.read_text(encoding="utf-8"))
         del thermals["thermals"][1]["cost_per_mwh"]
-        thermals_path.write_text(json.dumps(thermals))
+        thermals_path.write_text(json.dumps(thermals), encoding="utf-8")
 
         with pytest.raises(
             InputReadError, match=r"missing required key thermals\[1\]\.cost_per_mwh"
@@ -81,9 +81,9 @@ class TestReadCaseInputs:
 
     def test_negative_cost_per_mwh_raises(self, synthetic_case_dir: Path) -> None:
         thermals_path = synthetic_case_dir / "system" / "thermals.json"
-        thermals = json.loads(thermals_path.read_text())
+        thermals = json.loads(thermals_path.read_text(encoding="utf-8"))
         thermals["thermals"][1]["cost_per_mwh"] = -1.0
-        thermals_path.write_text(json.dumps(thermals))
+        thermals_path.write_text(json.dumps(thermals), encoding="utf-8")
 
         with pytest.raises(
             InputReadError,
@@ -107,7 +107,9 @@ class TestReadInitialConditions:
         assert [t.cost_per_mwh for t in inputs.thermals] == [200.0, 150.0]
 
     def test_absent_key_reads_as_no_windows(self, synthetic_case_dir: Path) -> None:
-        (synthetic_case_dir / "initial_conditions.json").write_text("{}")
+        (synthetic_case_dir / "initial_conditions.json").write_text(
+            "{}", encoding="utf-8"
+        )
 
         inputs = read_case_inputs(synthetic_case_dir)
 
@@ -124,10 +126,10 @@ class TestReadInitialConditions:
 
     def test_unknown_keys_are_ignored(self, synthetic_case_dir: Path) -> None:
         path = synthetic_case_dir / "initial_conditions.json"
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_text(encoding="utf-8"))
         document["note"] = "x"
         document["past_anticipated_commitments"][0]["note"] = "x"
-        path.write_text(json.dumps(document))
+        path.write_text(json.dumps(document), encoding="utf-8")
 
         inputs = read_case_inputs(synthetic_case_dir)
 
@@ -152,7 +154,7 @@ class TestReadInitialConditions:
         self, synthetic_case_dir: Path, document: Any, message: str
     ) -> None:
         (synthetic_case_dir / "initial_conditions.json").write_text(
-            json.dumps(document)
+            json.dumps(document), encoding="utf-8"
         )
 
         with pytest.raises(InputReadError, match=message):
@@ -199,9 +201,9 @@ class TestReadInitialConditions:
         self, synthetic_case_dir: Path, override: dict[str, Any], message: str
     ) -> None:
         path = synthetic_case_dir / "initial_conditions.json"
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_text(encoding="utf-8"))
         document["past_anticipated_commitments"][0].update(override)
-        path.write_text(json.dumps(document))
+        path.write_text(json.dumps(document), encoding="utf-8")
 
         with pytest.raises(InputReadError, match=message):
             read_case_inputs(synthetic_case_dir)

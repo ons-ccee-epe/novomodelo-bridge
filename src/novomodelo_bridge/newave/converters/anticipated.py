@@ -55,6 +55,8 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from inewave.newave import Dger, Patamar
 
+from novomodelo_bridge.core.pandas_utils import as_int
+
 if TYPE_CHECKING:
     from novomodelo_bridge.newave.case import NewaveCase
 
@@ -181,7 +183,8 @@ def read_anticipated_dispatch(
         )
         return {}
 
-    despachos: pd.DataFrame | None = case.adterm.despachos
+    adterm = case.adterm
+    despachos: pd.DataFrame | None = adterm.despachos if adterm is not None else None
     if despachos is None or despachos.empty:
         return {}
 
@@ -201,7 +204,7 @@ def read_anticipated_dispatch(
 
     result: dict[int, AnticipatedDispatch] = {}
     for code, group in despachos.groupby("codigo_usina"):
-        code_int = int(code)
+        code_int = as_int(code)
         max_lag = int(group["lag"].max())
         if max_lag <= 0:
             continue

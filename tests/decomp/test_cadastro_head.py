@@ -54,9 +54,9 @@ class _FakeDadger:
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
+        codigo_usina: int | None = None,
         modificacao: type | None = None,
-        df: bool = True,  # noqa: ARG002
+        df: bool = True,
     ) -> pd.DataFrame | None:
         if modificacao is None:
             return None
@@ -69,10 +69,10 @@ class _StubDadger:
     the overlay's hydraulic ceiling is the only thing under test.
     """
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
 
@@ -337,9 +337,8 @@ def test_per_stage_rho_eq_does_not_cap_generation() -> None:
     """A plant's ``PROESP`` doubles from stage 1 onward, so its per-stage
     ρ_eq doubles too — but that no longer lowers ``max_generation_mw``. The
     generation cap is the installed × MP × FD availability (head-independent),
-    and the hydraulic limit binds through the turbined-flow limit instead. With no MP/FD derate here the availability
-    equals the rated envelope, so no lowered generation overlay is emitted at
-    any stage.
+    and the hydraulic limit binds through the turbined-flow limit instead. With
+    no MP/FD derate here the availability is the rated 1000 MW at every stage.
     """
     hidr = _hidr_frame(
         {
@@ -374,9 +373,9 @@ def test_per_stage_rho_eq_does_not_cap_generation() -> None:
     )
     hydro_id = id_map.hydro_id(1)
 
-    for stage_index in range(3):
-        entry = values.get((hydro_id, 0, stage_index))
-        assert entry is None or entry.max_generation_mw is None
+    assert [
+        values[(hydro_id, 0, stage_index)].max_generation_mw for stage_index in range(3)
+    ] == pytest.approx([1000.0] * 3)
 
 
 # ---------------------------------------------------------------------------
@@ -456,9 +455,8 @@ def test_no_override_is_byte_identical() -> None:
     equals the base-registry formula bit-for-bit — reconstructed
     here independently via the same shared coeffs-keyed primitives
     (``mean_cota``, ``apply_hydraulic_loss``) the production code now calls.
-    The head no longer feeds a generation cap, so the availability overlay emits no
-    lowered ``max_generation_mw`` (availability, at the rated envelope here,
-    owns that column).
+    The head no longer feeds a generation cap, so the availability overlay's
+    ``max_generation_mw`` stays at the 400 MW rated envelope on every stage.
     """
     hidr = _hidr_frame(
         {
@@ -504,9 +502,9 @@ def test_no_override_is_byte_identical() -> None:
         turbine_limits=flat_turbine_limits(id_map, len(case.calendar)),
     )
     hydro_id = id_map.hydro_id(1)
-    for stage_index in range(3):
-        entry = values.get((hydro_id, 0, stage_index))
-        assert entry is None or entry.max_generation_mw is None
+    assert [
+        values[(hydro_id, 0, stage_index)].max_generation_mw for stage_index in range(3)
+    ] == pytest.approx([400.0] * 3)
 
 
 # ---------------------------------------------------------------------------

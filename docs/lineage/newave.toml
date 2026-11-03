@@ -713,12 +713,12 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   [[output.field]]
   path = "recent_observations[].hydro_id"
   from = [
-    { file = "vazpast", item = "tendencia · codigo_usina" },
+    { file = "vazpast", item = "tendencia · codigo_posto" },
     { file = "confhd", item = "usinas · posto" },
   ]
   status = "derived"
   when = "somente quando `vazpast.dat` está presente com dados de tendência"
-  how = "`codigo_usina` de `vazpast.dat` é o posto; cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id."
+  how = "Cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id."
 
   [[output.field]]
   path = "recent_observations[].start_date"
@@ -764,6 +764,7 @@ reads = [
   { file = "sistema" },
   { file = "dger" },
   { file = "ree" },
+  { file = "c_adic" },
 ]
 summary = "Uma barra por submercado de `sistema.dat` (fictícios incluídos), com os patamares de déficit."
 
@@ -797,8 +798,11 @@ summary = "Uma barra por submercado de `sistema.dat` (fictícios incluídos), co
 
   [[output.field]]
   path = "buses[].deficit_segments[].depth_mw"
-  from = [ { file = "sistema", item = "custo_deficit · corte" } ]
-  how = "Profundidade `corte` do patamar; o último segmento de cada barra é sempre nulo (ilimitado)."
+  from = [
+    { file = "sistema", item = "custo_deficit · corte" },
+    { file = "sistema", item = "mercado_energia" },
+  ]
+  how = "Profundidade `corte` do patamar, que o `sistema.dat` dá em p.u. da carga, multiplicada pela carga média da barra nos estágios de estudo (ponderada pelas horas de cada estágio, sem o pós-estudo), porque o Novomodelo aceita uma profundidade fixa em MW por barra. O último segmento de cada barra é sempre nulo (ilimitado). Gera o aviso `deficit-depth-from-mean-load`."
 
 # =============================================================================
 # system/lines.json
@@ -856,16 +860,18 @@ summary = "Uma linha por par não ordenado de submercados presente em `limites_i
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "dger", item = "mes_inicio_estudo" },
     { file = "dger", item = "ano_inicio_estudo" },
   ]
-  how = "Limite (MW) no sentido menor→maior código no mês de início do estudo (`sentido` 0 é de→para, 1 é para→de). Sem linha nessa data usa a primeira data com valor; par sem linha recebe 0."
+  how = "Limite (MW) no sentido menor→maior código no mês de início do estudo (`sentido` 0 é de→para, 1 é para→de), só dos registros com `flag` 0. Sem linha nessa data usa a primeira data com valor; par sem linha recebe 0."
 
   [[output.field]]
   path = "lines[].capacity.reverse_mw"
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "dger", item = "mes_inicio_estudo" },
     { file = "dger", item = "ano_inicio_estudo" },
   ]
@@ -1143,15 +1149,17 @@ summary = "Uma linha base por (linha, estágio) com os limites de intercâmbio d
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "patamar", item = "intercambio_patamares · valor" },
   ]
-  how = "Linha base: limite menor→maior código no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano."
+  how = "Linha base: limite menor→maior código (registros com `flag` 0) no (ano, mês) do estágio, com recuo ao último ano do arquivo no mesmo mês; no pós-estudo congela no valor do último estágio de estudo. Linha por patamar: base × fator de `intercambio_patamares` (de→para com de < para), fator do pós-estudo repetindo o padrão mensal do último ano."
 
   [[output.field]]
   path = "reverse_mw"
   from = [
     { file = "sistema", item = "limites_intercambio · valor" },
     { file = "sistema", item = "limites_intercambio · sentido" },
+    { file = "sistema", item = "limites_intercambio · flag" },
     { file = "patamar", item = "intercambio_patamares · valor" },
   ]
   how = "Mesma regra no sentido maior→menor código (fator de `intercambio_patamares` com de > para)."
@@ -1700,10 +1708,10 @@ summary = "Uma entrada por usina hidrelétrica ativa de `confhd.dat` (em operaç
   path = "hydros[].diversion"
   from = [
     { file = "dger", item = "canal_desvio" },
-    { file = "modif", item = "CDESVIO · usina de jusante" },
-    { file = "modif", item = "CDESVIO · vazão máxima" },
+    { file = "modif", item = "CDESVIO · codigo_usina_jusante" },
+    { file = "modif", item = "CDESVIO · limite_vazao" },
   ]
-  how = "Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, ou nulo (sem limite) quando ela vale 9 999 999 m³/s ou mais, o valor do NEWAVE para canal sem limite (diagnóstico `diversion-channel-unlimited`). Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`)."
+  how = "Canal de desvio declarado por `CDESVIO` no bloco `USINA` da usina, com `downstream_id` da usina de jusante do canal e `max_flow_m3s` igual à vazão máxima do registro, ou nulo (sem limite) quando ela vale 9 999 999 m³/s ou mais, o valor do NEWAVE para canal sem limite (diagnóstico `diversion-channel-unlimited`). Só `CDESVIO` declara canal: o código `desvio` de `hidr.dat` sozinho não declara. Nulo quando `canal_desvio` vale 0 (diagnóstico `dger-switch-off`) e quando o registro não tem vazão máxima (ou a traz ilegível) ou a usina de jusante do canal está fora do caso (diagnóstico `diversion-channel-dropped`). Os desvios de água de `dsvagua.dat` não são canais: viram retirada por estágio (`water_withdrawal_m3s` em `constraints/hydro_bounds.parquet`)."
 
   [[output.field]]
   path = "hydros[].filling"
@@ -2297,7 +2305,7 @@ summary = "Famílias de curvas de nível de jusante (polinômios por partes na v
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "sempre que o caso tem usina hidrelétrica ativa: toda usina recebe, em todo estágio, a potência disponível como `max_generation_mw`"
+when = "sempre que o caso tem usina hidrelétrica ativa: toda usina recebe, em todo estágio, a potência disponível como `max_generation_mw` e o engolimento máximo como `max_turbined_m3s`"
 module = "src/novomodelo_bridge/newave/converters/hydro/bounds.py"
 reads = [
   { file = "dsvagua" },
@@ -2404,7 +2412,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "exph", item = "data_inicio_enchimento" },
     { file = "exph", item = "duracao_enchimento" },
   ]
-  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o limite de `hydros[].generation.max_turbined_m3s` com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, o engolimento de `hydros[].generation.max_turbined_m3s` no estágio, sob FPHA e sob produtibilidade constante: em todo estágio de usina com `CFUGA`/`CMONT`, com o canal de fuga e o nível de montante vigentes no estágio, e, para usina `EE`, com as máquinas em operação no estágio; usina `EE` sem `CFUGA`/`CMONT` recebe linha só nos estágios anteriores à entrada da última máquina de `exph.dat`. Nulo nas demais linhas. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o limite de `hydros[].generation.max_turbined_m3s` com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, o engolimento de `hydros[].generation.max_turbined_m3s` no estágio, sob FPHA e sob produtibilidade constante, em toda usina e todo estágio, limitando ou não: com o canal de fuga e o nível de montante vigentes no estágio para usina com `CFUGA`/`CMONT` e, para usina `EE`, com as máquinas em operação no estágio; nas demais usinas é o próprio valor declarado. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
 
   [[output.field]]
   path = "min_outflow_m3s"
@@ -2932,7 +2940,7 @@ summary = "Limites por restrição, estágio e patamar das três famílias, conc
     { file = "patamar", item = "numero_patamares" },
   ]
   status = "derived"
-  how = "Nulo para a curva de segurança (limite por estágio, todos os patamares). Elétricas: `pat` menos 1; `patamar` 0 de `re.dat` expande para todos os `numero_patamares` patamares. Agrupamentos: posição da coluna de limite na linha de `agrint.dat` (uma por patamar; colunas faltantes repetem a última)."
+  how = "Nulo para a curva de segurança (limite por estágio, todos os patamares). Elétricas: `pat` menos 1; `patamar` 0 de `re.dat` expande para todos os `numero_patamares` patamares. Agrupamentos: posição da coluna de limite na linha de `agrint.dat`, uma por patamar do deck; coluna em branco repete o limite do patamar anterior, e registro sem o limite do primeiro patamar interrompe a conversão."
 
   [[output.field]]
   path = "bound_lower"
@@ -2940,7 +2948,7 @@ summary = "Limites por restrição, estágio e patamar das três famílias, conc
     { file = "curva", item = "curva_seguranca · valor" },
     { file = "restricao_eletrica", item = "RE-LIM-FORM-PER-PAT · lim_inf" },
   ]
-  how = "Curva de segurança: 0.0 em cada estágio com curva; o limite está na própria expressão (o Novomodelo soma o valor do parquet ao lado direito simbólico). Elétricas: `lim_inf` de `restricao-eletrica.csv` quando maior que −1e29 (valores abaixo são ilimitados). Nulo para tetos elétricos, `re.dat` e agrupamentos."
+  how = "Curva de segurança: 0.0 em cada estágio com curva; o limite está na própria expressão (o Novomodelo soma o valor do parquet ao lado direito simbólico). Elétricas: `lim_inf` de `restricao-eletrica.csv`; um campo em branco (manual, seção 3.45.2) ou um valor até −1e29 é ilimitado e não gera piso, e um limite condicional (`se(...)`) interrompe a conversão com erro. Nulo para tetos elétricos, `re.dat` e agrupamentos."
 
   [[output.field]]
   path = "bound_upper"
@@ -2949,7 +2957,7 @@ summary = "Limites por restrição, estágio e patamar das três famílias, conc
     { file = "re_dat", item = "restricoes · restricao" },
     { file = "agrint", item = "limites_agrupamentos · valor" },
   ]
-  how = "Elétricas: `lim_sup` de `restricao-eletrica.csv` (quando maior que −1e29) nos estágios individualizados; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos."
+  how = "Elétricas: `lim_sup` de `restricao-eletrica.csv` nos estágios individualizados, com as mesmas regras de `lim_inf` para campo em branco, valor até −1e29 e limite condicional; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos."
 
 # =============================================================================
 # system/pumping_stations.json
@@ -3249,9 +3257,9 @@ file = "sistema"
   note = "Os segmentos de déficit são derivados das linhas de `custo_deficit` (`patamar_deficit`, `custo`, `corte`); a contagem declarada não é lida."
 
   [[source.item]]
-  item = "limites_intercambio · flag"
+  item = "limites_intercambio · registros com flag 1"
   status = "unread"
-  note = "Coluna de flag do bloco de limites de intercâmbio; o bridge usa apenas `submercado_de`, `submercado_para`, `sentido`, `data` e `valor`."
+  note = "Intercâmbio mínimo obrigatório. Não é convertido nem reportado: os limites de `system/lines.json` e de `constraints/line_bounds.parquet` usam só os registros com `flag` 0."
 
 [[source]]
 file = "clast"
@@ -3309,7 +3317,7 @@ note = "Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo n
 
 [[source]]
 file = "modif"
-note = "Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio, `CFUGA`/`CMONT` alteram a produtibilidade por estágio e `CDESVIO` declara o canal de desvio da usina (`hydros[].diversion`)."
+note = "Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio, `CFUGA`/`CMONT` alteram a produtibilidade por estágio e `CDESVIO` declara o canal de desvio da usina (`hydros[].diversion`). Só o primeiro bloco `USINA` de cada usina é lido, como admite o manual do NEWAVE; os registros de um bloco repetido e os anteriores ao primeiro `USINA` são ignorados e listados no diagnóstico `modif-records-ignored`."
 
   [[source.item]]
   item = "VMINP"
@@ -3426,7 +3434,7 @@ note = "Lido integralmente: `valores_constantes` para `cvar = 1` e `alfa_variave
 
 [[source]]
 file = "agrint"
-note = "Lido por um parser próprio de texto, não pelo `inewave`. Limites pós-estudo do arquivo são ignorados: o bridge congela o último estágio de estudo, como o NEWAVE."
+note = "Limites pós-estudo do arquivo são ignorados: o bridge congela o último estágio de estudo, como o NEWAVE."
 
   [[source.item]]
   item = "limites_agrupamentos · comentario"
@@ -3488,7 +3496,7 @@ note = "Localizado pela chave `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` de `indi
 
 [[source]]
 file = "restricao_eletrica"
-note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido por um parser próprio; um arquivo com esse nome que o índice não lista é ignorado, com aviso."
+note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido pelo leitor `Restricoes` do inewave; um arquivo com esse nome que o índice não lista é ignorado, com aviso. Os nomes de registro só são reconhecidos em maiúsculas, como o manual os escreve, e cada linha que não é um registro conhecido é ignorada e listada no aviso `libs-unread-lines`."
 
   [[source.item]]
   item = "funções de fórmula além de ger_usih e ener_interc"
@@ -3498,7 +3506,7 @@ note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e l
   [[source.item]]
   item = "registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*"
   status = "unread"
-  note = "Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O parser ignora toda linha cujo primeiro campo não seja `RE`, `RE-HORIZ-PER` ou `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`."
+  note = "Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O conversor só usa os registros `RE`, `RE-HORIZ-PER` e `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`."
 
 [[source]]
 file = "caso"
@@ -3513,4 +3521,4 @@ note = "Índice que nomeia cada arquivo de dados do caso. Lido apenas para local
 [[source]]
 file = "libs_index"
 status = "index"
-note = "Índice dos arquivos LIBs, procurado pelo nome fixo `indices.csv` na pasta do deck. Cada registro LIBs convertido é lido do arquivo que o índice aponta para a sua chave: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE`, `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem índice, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro."
+note = "Índice dos arquivos LIBs, procurado pelo nome fixo `indices.csv` na pasta do deck. Cada registro LIBs convertido é lido do arquivo que o índice aponta para a sua chave: `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE`, `HIDRELETRICA-FPHA-METODO-REDUCAO-CORTES` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem índice, nenhum arquivo LIBs é lido; uma chave listada sem nome de arquivo, ou cujo arquivo não existe na pasta, é erro."

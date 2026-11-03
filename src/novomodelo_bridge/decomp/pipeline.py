@@ -13,12 +13,14 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import polars as pl
 import pyarrow as pa
 from idecomp.decomp import Dadger, Vazoes
+from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core import emission_checks
@@ -34,7 +36,12 @@ from novomodelo_bridge.core.diversion import (
     is_unlimited_flow,
     unlimited_channels_diagnostic,
 )
-from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.generic_constraint_builder import (
+    ConstraintIdAllocator,
+    GenericConstraintResult,
+)
+from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
+from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.decomp import (
     bounds_accumulator,
@@ -67,13 +74,14 @@ from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
+from novomodelo_bridge.decomp.fcf.cortes import read_patamar_fractions
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
     unindexed_libs_diagnostic,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 _LOG = logging.getLogger(__name__)
 
@@ -142,13 +150,13 @@ class DecompCaseArtifacts:
     census: constraint_registers.ConstraintCensus | None = None
     pumping_ids: dict[int, int] | None = None
     block_counts: dict[int, int] | None = None
+    availability_values: (
+        dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry] | None
+    ) = None
     hydro_bounds: pa.Table | None = None
     thermal_bounds_table: pa.Table | None = None
     pumping_bounds_table: pa.Table | None = None
     # Populated by `_convert_constraints`.
-    availability_values: (
-        dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry] | None
-    ) = None
     group_bounds: pa.Table | None = None
     contract_bounds_table: pa.Table | None = None
     energy_contracts_doc: dict | None = None
@@ -249,6 +257,14 @@ def _rejoin_thermal_cost(thermal_bounds: pa.Table, cost_table: pa.Table) -> pa.T
     )
 
 
+def _optional_int(value: object) -> int | None:
+    return None if value is None else as_int(value)
+
+
+def _optional_float(value: object) -> float | None:
+    return None if value is None else as_float(value)
+
+
 def _row_group_contributions(
     rows: Sequence[Mapping[str, object]],
     *,
@@ -277,9 +293,10 @@ def _row_group_contributions(
     per-block values it was averaged from could raise a lower or lower an
     upper the source data never asked for.
     """
-    groups: dict[tuple[object, object], list[Mapping[str, object]]] = {}
+    groups: dict[tuple[int, int], list[Mapping[str, object]]] = {}
     for row in rows:
-        groups.setdefault((row[id_column], row["stage_id"]), []).append(row)
+        key = (as_int(row[id_column]), as_int(row["stage_id"]))
+        groups.setdefault(key, []).append(row)
 
     contribs: list[bounds_accumulator.BoundContribution] = []
     for (entity_id, stage_id), group_rows in groups.items():
@@ -297,12 +314,12 @@ def _row_group_contributions(
 
             if base_row is not None:
                 base_lower = (
-                    base_row[spec.lower_column]
+                    _optional_float(base_row[spec.lower_column])
                     if spec.lower_column and not lower_overridden
                     else None
                 )
                 base_upper = (
-                    base_row[spec.upper_column]
+                    _optional_float(base_row[spec.upper_column])
                     if spec.upper_column and not upper_overridden
                     else None
                 )
@@ -326,10 +343,18 @@ def _row_group_contributions(
                         family=family,
                         entity_id=entity_id,
                         stage_id=stage_id,
-                        block_id=row["block_id"],
+                        block_id=_optional_int(row["block_id"]),
                         axis=axis,
-                        lower=row[spec.lower_column] if spec.lower_column else None,
-                        upper=row[spec.upper_column] if spec.upper_column else None,
+                        lower=(
+                            _optional_float(row[spec.lower_column])
+                            if spec.lower_column
+                            else None
+                        ),
+                        upper=(
+                            _optional_float(row[spec.upper_column])
+                            if spec.upper_column
+                            else None
+                        ),
                         contributor=contributor,
                     )
                 )
@@ -585,8 +610,8 @@ def _attach_water_withdrawal(
     )
 
     key = ["hydro_id", "stage_id", "block_id"]
-    hb = _fill_block_sentinel(pl.from_arrow(hydro_bounds))
-    w = _fill_block_sentinel(pl.from_arrow(withdrawal_bounds))
+    hb = _fill_block_sentinel(pl.DataFrame(hydro_bounds))
+    w = _fill_block_sentinel(pl.DataFrame(withdrawal_bounds))
     merged = _restore_block_null(
         merge_bound_tables(hb, w, on=key, precedence="base")
     ).sort(["hydro_id", "stage_id", "block_id"], nulls_last=False)
@@ -807,10 +832,10 @@ def _libs_electrical_census_diagnostic(
     its own per-restriction WARNING/INFO diagnostic).
 
     This supersedes the flat ``decomp-libs-electrical-present`` warning for
-    the converted subset (:func:`_emit_and_write` suppresses that warning
-    once a model converts) -- this is the one place a caller reads
-    how much of the entry actually converted, so no "not converted" claim
-    survives over it.
+    the converted subset (:func:`_emit_constraint_detection_diagnostics`
+    suppresses that warning once a model converts) -- this is the one place a
+    caller reads how much of the entry actually converted, so no "not
+    converted" claim survives over it.
     """
     n_converted = len(result.converted_codes)
     n_dropped = sum(len(codes) for codes in result.deferred.values())
@@ -930,7 +955,12 @@ def _discover(src: Path) -> DecompCaseArtifacts:
         dx.emit(relink_diagnostic, logger=_LOG)
     fan_probabilities = scenarios_conv.terminal_fan_probabilities(vazoes, calendar)
 
-    tx = float(dadger.tx.taxa) / 100.0
+    tx_register = dadger.tx
+    if tx_register is None or tx_register.taxa is None:
+        raise ValueError(
+            "the deck has no TX record with a discount rate; cannot convert"
+        )
+    tx = float(tx_register.taxa) / 100.0
 
     return DecompCaseArtifacts(
         case=case,
@@ -945,28 +975,17 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     )
 
 
-def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
-    """The ``step("Converting entities")`` phase: CVaR, ``config``/``stages``,
-    FPHA configs, productivity, penalties, the ``initial_conditions`` doc,
-    buses, hydros (kept on *artifacts*, not written -- the bounds phase defers
-    ``hydros.json`` for the diversion-channel coupling), lines (+ the Itaipu
-    SE<->IV line), pumping, thermals + the GNL splice, production models,
-    energy-productivity parquet, geometry, tailrace, and the
-    non-controllable-source registry. Populates *artifacts*' entity fields.
-    """
+def _convert_config_and_stages(
+    artifacts: DecompCaseArtifacts, writer: CaseWriter
+) -> None:
+    """Write ``config.json`` and ``stages.json``, carrying the deck's CVaR risk
+    measure onto every stage, and store both dicts on *artifacts*."""
     case = artifacts.case
-    id_map = artifacts.id_map
-    dadger = artifacts.dadger
-    effective = artifacts.effective
-    itaipu_operated = artifacts.itaipu_operated
-    tx = artifacts.tx
-    fan_probabilities = artifacts.fan_probabilities
-
     # DECOMP risk aversion (CVaR): resolve the AR register / FCF-header CVaR
     # into a per-stage novomodelo risk measure, emitted uniformly across all stages
     # (temporal.stage_records) so novomodelo admits the gap stopping rule under CVaR
     # with enumerated forwards (it computes the exact risk-adjusted upper bound).
-    cvar = temporal_conv.resolve_cvar(dadger, case.files.cortesh)
+    cvar = temporal_conv.resolve_cvar(artifacts.dadger, case.files.cortesh)
     if cvar is not None:
         dx.emit(
             dx.Diagnostic(
@@ -989,12 +1008,178 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     writer.write_json("config.json", artifacts.config)
     stages_dict = temporal_conv.convert_stages(
         case,
-        annual_discount_rate=tx,
-        fan_probabilities=fan_probabilities,
+        annual_discount_rate=artifacts.tx,
+        fan_probabilities=artifacts.fan_probabilities,
         cvar=cvar,
     )
     artifacts.stages_dict = stages_dict
     writer.write_json("stages.json", stages_dict)
+
+
+def _fpha_stage_models(
+    artifacts: DecompCaseArtifacts,
+    fpha_codes: set[int],
+    initial_volumes: dict[int, float],
+    turbine_limits: hydro_conv.TurbineLimits,
+) -> dict[int, list[dict]]:
+    """Each FPHA-eligible plant's per-stage production model: the FPHA fit
+    anchored at its initial volume, or the outage model on a stage whose
+    plant turbine limit is zero."""
+    stage_models: dict[int, list[dict]] = {}
+    if not fpha_codes:
+        return stage_models
+    case = artifacts.case
+    effective = artifacts.effective
+    if case.mlt is None:
+        dx.emit(fpha_conv.mlt_absent_diagnostic(len(fpha_codes)), logger=_LOG)
+    fpha_windows = fpha_conv.volume_window_rule(artifacts.dadger, artifacts.calendar)
+    for code in fpha_codes:
+        vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
+        reference_volume = {"volume_hm3": initial_volumes.get(code, vmin)}
+        stage_models[code] = [
+            hydro_conv.outage_stage_model()
+            if turbine_limits.plant_limit(code, stage.index) <= 0.0
+            else {
+                "model": "fpha",
+                "fpha_config": fpha_conv.fpha_config(
+                    effective,
+                    case.mlt,
+                    code,
+                    stage.index,
+                    fpha_windows,
+                    turbined_fit_max_m3s=turbine_limits.fit_maxima[code][stage.index],
+                ),
+                "reference_volume": reference_volume,
+            }
+            for stage in artifacts.calendar
+        ]
+    outside_tailrace = fpha_conv.spill_outside_tailrace(effective, stage_models)
+    if outside_tailrace is not None:
+        dx.emit(outside_tailrace, logger=_LOG)
+    return stage_models
+
+
+def _convert_lines_with_itaipu_link(
+    artifacts: DecompCaseArtifacts,
+) -> tuple[dict, pa.Table]:
+    """The deck's lines and line bounds, plus the SE<->IV connection an
+    operated Itaipu needs."""
+    case = artifacts.case
+    id_map = artifacts.id_map
+    lines_doc, line_bounds = network_conv.convert_lines(case, id_map)
+    if artifacts.itaipu_operated:
+        # When Itaipu is operated (the split-plant topology relocates its 60 Hz
+        # group to the IV bus), the IV bus needs a connection to SE. append_iv_se_line
+        # synthesizes an SE<->IV line only when the deck's own IA register does
+        # NOT already wire IV<->SE; when it does (as on most Itaipu decks), the
+        # helper reuses that line -- its real operational capacity -- and adding
+        # a second one would make novomodelo reject the duplicate.
+        itaipu_submercado = int(case.hidr.loc[hydro_conv._ITAIPU_CODE, "submercado"])
+        lines_doc, line_bounds = network_conv.append_iv_se_line(
+            case,
+            lines_doc=lines_doc,
+            line_bounds=line_bounds,
+            source_bus_id=id_map.transhipment_bus_id,
+            target_bus_id=id_map.bus_id(itaipu_submercado),
+            capacity_mw=network_conv._itaipu_60hz_capacity_mw(artifacts.dadger),
+        )
+    return lines_doc, line_bounds
+
+
+def _convert_thermals_with_gnl(
+    artifacts: DecompCaseArtifacts, writer: CaseWriter, initial_conditions_doc: dict
+) -> tuple[dict, anticipated_conv.GnlCommitmentModel | None]:
+    """The thermal registry with the dadgnl GNL fleet spliced in, and the GNL
+    commitment model (``None`` when the deck has no dadgnl file).
+
+    Extends *initial_conditions_doc* with the GNL left boundary and writes
+    ``post_study_stages.json`` when the deck declares a GS calendar.
+    """
+    case = artifacts.case
+    id_map = artifacts.id_map
+    thermals_dict = thermal_conv.convert_thermals(case, id_map)
+    # GNL (fuel-constrained) thermals are declared in dadgnl, absent from CT, so
+    # the thermal converter never sees them. Read the commitment model and emit
+    # the created thermals plus their anticipated ring: the mandatory left
+    # boundary (past_anticipated_commitments, including any já-comandada
+    # post-horizon run) and, when the deck declares a GS calendar, the
+    # post-study thermal_bounds carrier (post_study_stages.json).
+    gnl_model = (
+        anticipated_conv.read_gnl_model(case.dadgnl)
+        if case.dadgnl is not None
+        else None
+    )
+    if gnl_model is not None:
+        gnl_model = anticipated_conv.fill_undeclared_block_hours(
+            gnl_model,
+            case.calendar,
+            read_patamar_fractions(Cortesh.read(str(case.files.cortesh)))
+            if case.files.cortesh is not None
+            else None,
+        )
+        gnl = anticipated_conv.convert_gnl(
+            gnl_model,
+            first_thermal_id=max(t["id"] for t in thermals_dict["thermals"]) + 1,
+            bus_id_of=id_map.bus_id,
+            calendar=case.calendar,
+        )
+        thermals_dict["thermals"].extend(gnl.thermals)
+        thermals_dict["thermals"].sort(key=lambda t: t["id"])
+        if gnl.past_anticipated_commitments:
+            initial_conditions_doc["past_anticipated_commitments"] = (
+                gnl.past_anticipated_commitments
+            )
+        if gnl.post_study_stages is not None:
+            writer.write_json("post_study_stages.json", gnl.post_study_stages)
+        _LOG.info(
+            "emitted %d GNL anticipated thermal(s) from dadgnl",
+            len(gnl.thermals),
+        )
+    return thermals_dict, gnl_model
+
+
+def _write_hydro_production_files(
+    artifacts: DecompCaseArtifacts,
+    writer: CaseWriter,
+    stage_models: dict[int, list[dict]],
+    productivity_parquet: pa.Table,
+) -> None:
+    """Write the per-stage production models, the energy-productivity table,
+    and the geometry and tailrace inputs of the FPHA fit."""
+    case = artifacts.case
+    id_map = artifacts.id_map
+    writer.write_json(
+        "system/hydro_production_models.json",
+        hydro_conv.convert_production_models(id_map, stage_models),
+    )
+    writer.write_parquet(
+        "system/hydro_energy_productivity.parquet", productivity_parquet
+    )
+    # FPHA geometry + tailrace inputs novomodelo fits the production function from.
+    writer.write_parquet(
+        "system/hydro_geometry.parquet",
+        fpha_conv.convert_hydro_geometry(artifacts.effective, id_map),
+    )
+    tailrace_table = fpha_conv.convert_tailrace_curves(case, id_map)
+    if tailrace_table is not None:
+        writer.write_parquet("system/tailrace_curves.parquet", tailrace_table)
+
+
+def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
+    """The ``step("Converting entities")`` phase: CVaR, ``config``/``stages``,
+    FPHA configs, productivity, penalties, the ``initial_conditions`` doc,
+    buses, hydros (kept on *artifacts*, not written -- the bounds phase defers
+    ``hydros.json`` for the diversion-channel coupling), lines (+ the Itaipu
+    SE<->IV line), pumping, thermals + the GNL splice, production models,
+    energy-productivity parquet, geometry, tailrace, and the
+    non-controllable-source registry. Populates *artifacts*' entity fields.
+    """
+    case = artifacts.case
+    id_map = artifacts.id_map
+    dadger = artifacts.dadger
+    effective = artifacts.effective
+
+    _convert_config_and_stages(artifacts, writer)
 
     # Both the FPHA reference volume and the constant-productivity ρ_eq are
     # anchored at the initial volume, not the full-range mean — see
@@ -1006,7 +1191,11 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         artifacts.calendar,
         initial_volumes=initial_volumes,
         incremental_inflows=scenarios_conv.expected_incremental_inflows(
-            artifacts.vazoes, effective, id_map, artifacts.calendar, fan_probabilities
+            artifacts.vazoes,
+            effective,
+            id_map,
+            artifacts.calendar,
+            artifacts.fan_probabilities,
         ),
         tailrace=hydro_conv.tailrace_families(case, id_map),
         availability_factors=hydro_conv.stage_availability_factors(
@@ -1016,36 +1205,9 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.turbine_limits = turbine_limits
     fpha_codes = fpha_conv.fpha_eligible_codes(effective, id_map)
     artifacts.fpha_codes = fpha_codes
-    stage_models: dict[int, list[dict]] = {}
-    if fpha_codes:
-        if case.mlt is None:
-            dx.emit(fpha_conv.mlt_absent_diagnostic(len(fpha_codes)), logger=_LOG)
-        fpha_windows = fpha_conv.volume_window_rule(dadger, artifacts.calendar)
-        for code in fpha_codes:
-            vmin, _ = cadastro_conv.effective_storage_range(effective, code, 0)
-            reference_volume = {"volume_hm3": initial_volumes.get(code, vmin)}
-            stage_models[code] = [
-                hydro_conv.outage_stage_model()
-                if turbine_limits.plant_limit(code, stage.index) <= 0.0
-                else {
-                    "model": "fpha",
-                    "fpha_config": fpha_conv.fpha_config(
-                        effective,
-                        case.mlt,
-                        code,
-                        stage.index,
-                        fpha_windows,
-                        turbined_fit_max_m3s=turbine_limits.fit_maxima[code][
-                            stage.index
-                        ],
-                    ),
-                    "reference_volume": reference_volume,
-                }
-                for stage in artifacts.calendar
-            ]
-        outside_tailrace = fpha_conv.spill_outside_tailrace(effective, stage_models)
-        if outside_tailrace is not None:
-            dx.emit(outside_tailrace, logger=_LOG)
+    stage_models = _fpha_stage_models(
+        artifacts, fpha_codes, initial_volumes, turbine_limits
+    )
 
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
@@ -1086,7 +1248,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     buses_doc = network_conv.convert_buses(case, id_map)
     artifacts.buses_doc = buses_doc
     writer.write_json("system/buses.json", buses_doc)
-    hydros_dict = hydro_conv.convert_hydros(
+    artifacts.hydros_dict = hydro_conv.convert_hydros(
         case,
         id_map,
         effective=effective,
@@ -1094,26 +1256,9 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         travel_time_hours=travel_time_hours,
         fpha_codes=fpha_codes,
     )
-    artifacts.hydros_dict = hydros_dict
     # hydros.json is written after the bound tables are resolved (below): its
     # diversion channels follow the resolved diversion bounds.
-    lines_doc, line_bounds = network_conv.convert_lines(case, id_map)
-    if itaipu_operated:
-        # When Itaipu is operated (the split-plant topology relocates its 60 Hz
-        # group to the IV bus), the IV bus needs a connection to SE. append_iv_se_line
-        # synthesizes an SE<->IV line only when the deck's own IA register does
-        # NOT already wire IV<->SE; when it does (as on most Itaipu decks), the
-        # helper reuses that line -- its real operational capacity -- and adding
-        # a second one would make novomodelo reject the duplicate.
-        itaipu_submercado = int(case.hidr.loc[hydro_conv._ITAIPU_CODE, "submercado"])
-        lines_doc, line_bounds = network_conv.append_iv_se_line(
-            case,
-            lines_doc=lines_doc,
-            line_bounds=line_bounds,
-            source_bus_id=id_map.transhipment_bus_id,
-            target_bus_id=id_map.bus_id(itaipu_submercado),
-            capacity_mw=network_conv._itaipu_60hz_capacity_mw(dadger),
-        )
+    lines_doc, line_bounds = _convert_lines_with_itaipu_link(artifacts)
     artifacts.lines_doc = lines_doc
     artifacts.line_bounds = line_bounds
     writer.write_json("system/lines.json", lines_doc)
@@ -1121,37 +1266,9 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         "system/pumping_stations.json",
         network_conv.convert_pumping_stations(case, id_map),
     )
-    thermals_dict = thermal_conv.convert_thermals(case, id_map)
-    # GNL (fuel-constrained) thermals are declared in dadgnl, absent from CT, so
-    # the thermal converter never sees them. Read the commitment model and emit
-    # the created thermals plus their anticipated ring: the mandatory left
-    # boundary (past_anticipated_commitments, including any já-comandada
-    # post-horizon run) and, when the deck declares a GS calendar, the
-    # post-study thermal_bounds carrier (post_study_stages.json).
-    gnl_model = (
-        anticipated_conv.read_gnl_model(case.dadgnl)
-        if case.dadgnl is not None
-        else None
+    thermals_dict, gnl_model = _convert_thermals_with_gnl(
+        artifacts, writer, initial_conditions_doc
     )
-    if gnl_model is not None:
-        gnl = anticipated_conv.convert_gnl(
-            gnl_model,
-            first_thermal_id=max(t["id"] for t in thermals_dict["thermals"]) + 1,
-            bus_id_of=id_map.bus_id,
-            calendar=case.calendar,
-        )
-        thermals_dict["thermals"].extend(gnl.thermals)
-        thermals_dict["thermals"].sort(key=lambda t: t["id"])
-        if gnl.past_anticipated_commitments:
-            initial_conditions_doc["past_anticipated_commitments"] = (
-                gnl.past_anticipated_commitments
-            )
-        if gnl.post_study_stages is not None:
-            writer.write_json("post_study_stages.json", gnl.post_study_stages)
-        _LOG.info(
-            "emitted %d GNL anticipated thermal(s) from dadgnl",
-            len(gnl.thermals),
-        )
     artifacts.thermals_dict = thermals_dict
     artifacts.gnl_model = gnl_model
     writer.write_json("system/thermals.json", thermals_dict)
@@ -1161,21 +1278,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # terms. Without a boundary FCF the inflow model is order 0, so the lags
     # are inert.
     writer.write_json("initial_conditions.json", initial_conditions_doc)
-    writer.write_json(
-        "system/hydro_production_models.json",
-        hydro_conv.convert_production_models(id_map, stage_models),
-    )
-    writer.write_parquet(
-        "system/hydro_energy_productivity.parquet", productivity_parquet
-    )
-    # FPHA geometry + tailrace inputs novomodelo fits the production function from.
-    writer.write_parquet(
-        "system/hydro_geometry.parquet",
-        fpha_conv.convert_hydro_geometry(effective, id_map),
-    )
-    tailrace_table = fpha_conv.convert_tailrace_curves(case, id_map)
-    if tailrace_table is not None:
-        writer.write_parquet("system/tailrace_curves.parquet", tailrace_table)
+    _write_hydro_production_files(artifacts, writer, stage_models, productivity_parquet)
 
     ncs_registry = ncs_conv.convert_non_controllable_sources(case, id_map)
     writer.write_json("system/non_controllable_sources.json", ncs_registry)
@@ -1268,27 +1371,11 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     )
 
 
-def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
-    """The ``step("Resolving bounds")`` phase: resolve every hydro/thermal/
-    pumping/line bound, fold in the TI irrigation withdrawal and the
-    diversion channels, and write the diversion-coupled ``system/hydros.json``
-    (deferred from ``_convert_core_entities``'s system-file block for exactly
-    that coupling). Stores the resolved bound tables and the
-    ``census``/``pumping_ids``/``block_counts`` maps the later phases need back
-    onto *artifacts*.
-    """
-    case = artifacts.case
-    dadger = artifacts.dadger
-    calendar = artifacts.calendar
-    id_map = artifacts.id_map
-    effective = artifacts.effective
-    hydros_dict = artifacts.hydros_dict
-    assert hydros_dict is not None
-    line_bounds = artifacts.line_bounds
-    assert line_bounds is not None
-    turbine_limits = artifacts.turbine_limits
-    assert turbine_limits is not None
-
+def _read_constraint_census(
+    dadger: Dadger, effective: cadastro_conv.EffectiveCadastro
+) -> constraint_registers.ConstraintCensus:
+    """The deck's special constraints split by lowering target, reporting any
+    conflicting bounds they declare as a diagnostic."""
     census = constraint_registers.read_constraints(dadger)
     if census.bound_conflicts:
         names = {
@@ -1302,23 +1389,14 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             ),
             logger=_LOG,
         )
-    pumping_ids = network_conv.pumping_station_id_map(dadger)
-    thermal_generation_contribs, thermal_cost_table = (
-        thermal_conv.convert_thermal_bounds(case, id_map)
-    )
-    # The RE `FU` single-hydro-generation and the RHQ `QTUR`/turbined bound
-    # producers each clamp their emitted upper to the plant's own declared
-    # max_generation_mw/max_turbined_m3s, so a looser source-declared ceiling
-    # on either axis (a real cross-source mismatch — see BELO MONTE's RE
-    # ceiling on both real decks) never trips novomodelo rule 43
-    # (emission_checks.check_hydro_bounds_no_raising, self-checked below).
-    hydro_capacities: dict[int, single_term_bounds.HydroCapacities] = {
-        hydro["id"]: single_term_bounds.HydroCapacities(
-            max_generation_mw=hydro["generation"]["max_generation_mw"],
-            max_turbined_m3s=hydro["generation"]["max_turbined_m3s"],
-        )
-        for hydro in hydros_dict["hydros"]
-    }
+    return census
+
+
+def _released_runofriver_codes(
+    effective: cadastro_conv.EffectiveCadastro, id_map: DecompIdMap
+) -> set[int]:
+    """The run-of-river plants whose minimum-outflow default is released,
+    reported as a diagnostic."""
     # Run-of-river plants from a cascade headwater down to (but excluding) the
     # first reservoir have their RQ/UH minimum-outflow default released, to
     # avoid infeasibility on a zero-inflow stage/scenario. Only the RQ/UH
@@ -1352,8 +1430,157 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             ),
             logger=_LOG,
         )
+    return unregulated_codes
+
+
+def _couple_diversion_channels(
+    hydro_bounds: pa.Table,
+    hydros_dict: dict,
+    base_diversion_channels: dict[int, dict],
+    id_map: DecompIdMap,
+    effective: cadastro_conv.EffectiveCadastro,
+) -> pa.Table:
+    """Give each hydro in *hydros_dict* the diversion channel its resolved
+    diversion bounds need, else its base channel.
+
+    Returns *hydro_bounds* with the diversion ceiling of every hydro whose
+    channel does not resolve closed to 0.
+    """
+    diversion = _diversion_channels(hydro_bounds, id_map, effective)
+    if diversion.dropped:
+        dx.emit(
+            _diversion_channel_dropped_diagnostic(
+                hydro_bounds, diversion.dropped, id_map, effective, hydros_dict
+            ),
+            logger=_LOG,
+        )
+        hydro_bounds = _close_diversion(hydro_bounds, diversion.dropped)
+    names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
+    unlimited: list[tuple[int, str, int, str, float]] = []
+    for hydro in hydros_dict["hydros"]:
+        channel = diversion.channels.get(hydro["id"]) or base_diversion_channels.get(
+            hydro["id"]
+        )
+        if channel is None:
+            continue
+        hydro["diversion"] = channel
+        code = id_map.hydro_codes[hydro["id"]]
+        source = _first_diversion_channel(effective, code)
+        if (
+            source is not None
+            and source.limit is not None
+            and is_unlimited_flow(source.limit)
+        ):
+            unlimited.append(
+                (
+                    code,
+                    hydro["name"],
+                    source.downstream,
+                    names.get(id_map.hydro_id(source.downstream), ""),
+                    source.limit,
+                )
+            )
+    if unlimited:
+        dx.emit(
+            unlimited_channels_diagnostic(unlimited, source="AC DESVIO"),
+            logger=_LOG,
+        )
+    if base_diversion_channels:
+        dx.emit(
+            dx.Diagnostic(
+                code="decomp-base-diversion-modeled",
+                severity=dx.Severity.INFO,
+                category="Diversion",
+                title="Base diversion channels modeled",
+                summary=(
+                    f"{len(base_diversion_channels)} hydro(s) "
+                    f"({sorted(base_diversion_channels)}) divert water through "
+                    "their hidr.dat or AC DESVIO desvio with no QDES restriction; "
+                    "each was given a diversion channel to the receiving plant, "
+                    "limited only by an AC DESVIO flow, so the diverted water "
+                    "reaches that plant."
+                ),
+            ),
+            logger=_LOG,
+        )
+    return hydro_bounds
+
+
+def _resolve_line_bounds(
+    line_bounds: pa.Table, block_counts: dict[int, int]
+) -> pa.Table:
+    """*line_bounds* resolved to one row per ``(line, stage, block)`` cell."""
+    # Line bounds now route through the same BoundContribution -> resolve()
+    # primitive as hydro/thermal/pumping in `_resolve_bounds`: a colliding
+    # pair of contributions on the direct/reverse axis intersects (or
+    # loud-fails on a genuine conflict) instead of one silently overwriting
+    # the other.
+    # bounds_accumulator.build_bound_tables only fans into its own three
+    # built-in tables, so line bounds fan out through _fan_resolved_rows
+    # instead (see its docstring).
+    line_contribs = _row_group_contributions(
+        line_bounds.to_pylist(),
+        family="line",
+        id_column="line_id",
+        axes=("direct", "reverse"),
+        contributor="convert_lines",
+    )
+    return _fan_resolved_rows(
+        [
+            ((row.entity_id, row.stage_id, row.block_id), row)
+            for row in bounds_accumulator.resolve(line_contribs, block_counts)
+        ],
+        schema=network_conv._LINE_BOUNDS_SCHEMA,
+        key_columns=("line_id", "stage_id", "block_id"),
+    ).sort_by([("line_id", "ascending"), *_BOUND_SORT_KEYS])
+
+
+def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
+    """The ``step("Resolving bounds")`` phase: resolve every hydro/thermal/
+    pumping/line bound, fold in the TI irrigation withdrawal and the
+    diversion channels, and write the diversion-coupled ``system/hydros.json``
+    (deferred from ``_convert_core_entities``'s system-file block for exactly
+    that coupling). Stores the resolved bound tables, the per-group
+    ``availability_values``, and the ``census``/``pumping_ids``/
+    ``block_counts`` maps the later phases need back onto *artifacts*.
+    """
+    case = artifacts.case
+    dadger = artifacts.dadger
+    calendar = artifacts.calendar
+    id_map = artifacts.id_map
+    effective = artifacts.effective
+    hydros_dict = artifacts.hydros_dict
+    assert hydros_dict is not None
+    line_bounds = artifacts.line_bounds
+    assert line_bounds is not None
+    turbine_limits = artifacts.turbine_limits
+    assert turbine_limits is not None
+
+    census = _read_constraint_census(dadger, effective)
+    pumping_ids = network_conv.pumping_station_id_map(dadger)
+    thermal_generation_contribs, thermal_cost_table = (
+        thermal_conv.convert_thermal_bounds(case, id_map)
+    )
+    # The RE `FU` single-hydro-generation and the RHQ `QTUR`/turbined bound
+    # producers each clamp their emitted upper to the plant's own declared
+    # max_generation_mw/max_turbined_m3s, so a looser source-declared ceiling
+    # on either axis (a real cross-source mismatch — see BELO MONTE's RE
+    # ceiling on both real decks) never trips novomodelo rule 43
+    # (emission_checks.check_hydro_bounds_no_raising, self-checked below).
+    hydro_capacities: dict[int, single_term_bounds.HydroCapacities] = {
+        hydro["id"]: single_term_bounds.HydroCapacities(
+            max_generation_mw=hydro["generation"]["max_generation_mw"],
+            max_turbined_m3s=hydro["generation"]["max_turbined_m3s"],
+        )
+        for hydro in hydros_dict["hydros"]
+    }
+    unregulated_codes = _released_runofriver_codes(effective, id_map)
+    availability_values = hydro_conv.convert_hydro_group_availability(
+        case, id_map, effective=effective, turbine_limits=turbine_limits
+    )
     # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
-    # storage envelope, a split plant's turbined-flow limit, the CT thermal
+    # storage envelope, a split plant's turbined-flow limit and available
+    # power, the CT thermal
     # generation bounds, and the RE/RHQ/RHV single-term special-constraint
     # bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
@@ -1369,6 +1596,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         *bounds_conv.convert_volume_espera_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_spillage_upper_bounds(case, id_map),
         *hydro_conv.plant_turbine_limit_contributions(turbine_limits, id_map),
+        *hydro_conv.split_plant_generation_contributions(availability_values),
         *thermal_generation_contribs,
         *single_term_bounds.single_term_bound_contributions(
             case,
@@ -1404,59 +1632,9 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         bounds_conv.convert_irrigation_withdrawal(case, id_map),
         block_counts,
     )
-    diversion = _diversion_channels(hydro_bounds, id_map, effective)
-    if diversion.dropped:
-        dx.emit(
-            _diversion_channel_dropped_diagnostic(
-                hydro_bounds, diversion.dropped, id_map, effective, hydros_dict
-            ),
-            logger=_LOG,
-        )
-        hydro_bounds = _close_diversion(hydro_bounds, diversion.dropped)
-    names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
-    unlimited: list[tuple[int, str, int, str, float]] = []
-    for hydro in hydros_dict["hydros"]:
-        channel = diversion.channels.get(hydro["id"]) or base_diversion_channels.get(
-            hydro["id"]
-        )
-        if channel is None:
-            continue
-        hydro["diversion"] = channel
-        code = id_map.hydro_codes[hydro["id"]]
-        source = _first_diversion_channel(effective, code)
-        if source is not None and is_unlimited_flow(source.limit):
-            unlimited.append(
-                (
-                    code,
-                    hydro["name"],
-                    source.downstream,
-                    names.get(id_map.hydro_id(source.downstream), ""),
-                    source.limit,
-                )
-            )
-    if unlimited:
-        dx.emit(
-            unlimited_channels_diagnostic(unlimited, source="AC DESVIO"),
-            logger=_LOG,
-        )
-    if base_diversion_channels:
-        dx.emit(
-            dx.Diagnostic(
-                code="decomp-base-diversion-modeled",
-                severity=dx.Severity.INFO,
-                category="Diversion",
-                title="Base diversion channels modeled",
-                summary=(
-                    f"{len(base_diversion_channels)} hydro(s) "
-                    f"({sorted(base_diversion_channels)}) divert water through "
-                    "their hidr.dat or AC DESVIO desvio with no QDES restriction; "
-                    "each was given a diversion channel to the receiving plant, "
-                    "limited only by an AC DESVIO flow, so the diverted water "
-                    "reaches that plant."
-                ),
-            ),
-            logger=_LOG,
-        )
+    hydro_bounds = _couple_diversion_channels(
+        hydro_bounds, hydros_dict, base_diversion_channels, id_map, effective
+    )
     writer.write_json("system/hydros.json", hydros_dict)
     thermal_bounds_table = _rejoin_thermal_cost(
         bound_tables.thermal, thermal_cost_table
@@ -1464,32 +1642,12 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     pumping_bounds_table = bound_tables.pumping.sort_by(
         [("pumping_station_id", "ascending"), *_BOUND_SORT_KEYS]
     )
-    # Line bounds now route through the same BoundContribution -> resolve()
-    # primitive as hydro/thermal/pumping above: a colliding pair of
-    # contributions on the direct/reverse axis intersects (or loud-fails on a
-    # genuine conflict) instead of one silently overwriting the other.
-    # bounds_accumulator.build_bound_tables only fans into its own three
-    # built-in tables, so line bounds fan out through _fan_resolved_rows
-    # instead (see its docstring).
-    line_contribs = _row_group_contributions(
-        line_bounds.to_pylist(),
-        family="line",
-        id_column="line_id",
-        axes=("direct", "reverse"),
-        contributor="convert_lines",
-    )
-    line_bounds = _fan_resolved_rows(
-        [
-            ((row.entity_id, row.stage_id, row.block_id), row)
-            for row in bounds_accumulator.resolve(line_contribs, block_counts)
-        ],
-        schema=network_conv._LINE_BOUNDS_SCHEMA,
-        key_columns=("line_id", "stage_id", "block_id"),
-    ).sort_by([("line_id", "ascending"), *_BOUND_SORT_KEYS])
+    line_bounds = _resolve_line_bounds(line_bounds, block_counts)
 
     artifacts.census = census
     artifacts.pumping_ids = pumping_ids
     artifacts.block_counts = block_counts
+    artifacts.availability_values = availability_values
     artifacts.hydro_bounds = hydro_bounds
     artifacts.thermal_bounds_table = thermal_bounds_table
     artifacts.pumping_bounds_table = pumping_bounds_table
@@ -1497,57 +1655,31 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
 
 
 def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
-    """The ``step("Converting constraints")`` phase: build per-group
-    per-stage availability (+ the Itaipu frequency-floor overlay), resolve
-    the per-hydro ``group_bounds``, and build the ``contract_bounds_table``
-    via :func:`_rejoin_contract_price`. Stores ``availability_values``,
-    ``group_bounds``, ``contract_bounds_table``, ``energy_contracts_doc``,
-    and ``contracts`` onto *artifacts* for :func:`_emit_and_write`.
+    """The ``step("Converting constraints")`` phase: overlay Itaipu's ``RI``
+    frequency limits on the per-group availability, resolve the per-hydro
+    ``group_bounds``, and build the ``contract_bounds_table`` via
+    :func:`_rejoin_contract_price`. Stores ``group_bounds``,
+    ``contract_bounds_table``, ``energy_contracts_doc``, and ``contracts``
+    onto *artifacts* for :func:`_emit_and_write`.
     """
     case = artifacts.case
     dadger = artifacts.dadger
     calendar = artifacts.calendar
     id_map = artifacts.id_map
-    effective = artifacts.effective
-    itaipu_operated = artifacts.itaipu_operated
     block_counts = artifacts.block_counts
     assert block_counts is not None
     census = artifacts.census
     assert census is not None
     hydros_dict = artifacts.hydros_dict
     assert hydros_dict is not None
-    turbine_limits = artifacts.turbine_limits
-    assert turbine_limits is not None
+    availability_values = artifacts.availability_values
+    assert availability_values is not None
 
-    # Per-group per-stage availability (installed × MP × FD) and turbined-flow
-    # limit for every plant,
-    # single-group and Itaipu's own two per-frequency groups (code 66) alike.
-    # Sparse by construction — a value only lands here where it lowers that
-    # group's own declared envelope — so novomodelo rule 45 (a group-bound max_*
-    # may not exceed that group's declared max) is now reachable; its mirror
-    # is wired into the self-check block below.
-    availability_values = hydro_conv.convert_hydro_group_availability(
-        case, id_map, effective=effective, turbine_limits=turbine_limits
+    group_values = hydro_conv.itaipu_frequency_group_values(
+        case, id_map, availability_values
     )
-    # Itaipu's RI per-frequency must-run floors
-    # (geracao_minima_50/60_hz) overlay the same per-group table as the
-    # availability max caps. The 50 Hz floor binds in DECOMP (its 50 Hz half
-    # sits exactly at it), so without it the converted case under-runs Itaipu's
-    # 50 Hz half and backfills the ANDE load through SE's own lines. Merged
-    # into the availability entries (min on the same (hydro, group, stage) row
-    # as the availability max) rather than emitted as a second table.
-    if itaipu_operated:
-        for key, min_generation in hydro_conv.convert_itaipu_frequency_min_generation(
-            case, id_map
-        ).items():
-            existing = availability_values.get(key)
-            availability_values[key] = (
-                replace(existing, min_generation_mw=min_generation)
-                if existing is not None
-                else group_bounds_conv.GroupBoundEntry(min_generation_mw=min_generation)
-            )
     group_bounds = group_bounds_conv.convert_hydro_unit_group_bounds(
-        case, values=availability_values
+        case, values=group_values
     )
     # hydro_unit_group_id is scoped WITHIN its own hydro
     # (_build_split_unit_groups/build_mirror_unit_group number each plant's
@@ -1643,68 +1775,45 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
         resolved_contract_power, contract_bounds_table
     ).sort_by([("contract_id", "ascending"), *_BOUND_SORT_KEYS])
 
-    artifacts.availability_values = availability_values
     artifacts.group_bounds = group_bounds
     artifacts.contract_bounds_table = contract_bounds_table
     artifacts.energy_contracts_doc = energy_contracts_doc
     artifacts.contracts = contracts
 
 
-def _emit_and_write(
-    artifacts: DecompCaseArtifacts, writer: CaseWriter
-) -> ConversionReport:
-    """The ``step("Writing outputs")`` phase: run the post-emission self-checks
-    (``emission_checks.run_and_gate``) before any constraint parquet is
-    written, write the bound parquets, emit the RE -> RHQ/RHV -> RHE ->
-    LIBs-electrical generic constraints over one shared
-    :class:`ConstraintIdAllocator`, write the generic-constraint artifacts and
-    scalar parameters, emit the detection diagnostics and the travel-time
-    deferral warning, and return the
-    :class:`~novomodelo_bridge.core.conversion.ConversionReport` built from
-    ``writer.would_write``.
-    """
-    case = artifacts.case
-    dadger = artifacts.dadger
-    calendar = artifacts.calendar
-    id_map = artifacts.id_map
-    effective = artifacts.effective
-    fan_probabilities = artifacts.fan_probabilities
-    hydros_dict = artifacts.hydros_dict
-    assert hydros_dict is not None
-    thermals_dict = artifacts.thermals_dict
-    assert thermals_dict is not None
-    buses_doc = artifacts.buses_doc
-    assert buses_doc is not None
-    lines_doc = artifacts.lines_doc
-    assert lines_doc is not None
-    stages_dict = artifacts.stages_dict
-    assert stages_dict is not None
-    deficit_cost = artifacts.deficit_cost
-    assert deficit_cost is not None
-    gnl_model = artifacts.gnl_model
-    hydro_bounds = artifacts.hydro_bounds
-    assert hydro_bounds is not None
-    thermal_bounds_table = artifacts.thermal_bounds_table
-    assert thermal_bounds_table is not None
-    pumping_bounds_table = artifacts.pumping_bounds_table
-    assert pumping_bounds_table is not None
-    line_bounds = artifacts.line_bounds
-    assert line_bounds is not None
-    group_bounds = artifacts.group_bounds
-    assert group_bounds is not None
-    contract_bounds_table = artifacts.contract_bounds_table
-    assert contract_bounds_table is not None
-    census = artifacts.census
-    assert census is not None
-    pumping_ids = artifacts.pumping_ids
-    assert pumping_ids is not None
-    availability_values = artifacts.availability_values
-    assert availability_values is not None
-    contracts = artifacts.contracts
-    assert contracts is not None
-    energy_contracts_doc = artifacts.energy_contracts_doc
-    assert energy_contracts_doc is not None
+class _BoundTables(NamedTuple):
+    """The resolved bound tables the write phase self-checks and writes."""
 
+    hydro: pa.Table
+    thermal: pa.Table
+    pumping: pa.Table
+    line: pa.Table
+    group: pa.Table
+    contract: pa.Table
+
+    @classmethod
+    def from_artifacts(cls, artifacts: DecompCaseArtifacts) -> _BoundTables:
+        """The tables ``_resolve_bounds`` and ``_convert_constraints`` stored."""
+        hydro = artifacts.hydro_bounds
+        assert hydro is not None
+        thermal = artifacts.thermal_bounds_table
+        assert thermal is not None
+        pumping = artifacts.pumping_bounds_table
+        assert pumping is not None
+        line = artifacts.line_bounds
+        assert line is not None
+        group = artifacts.group_bounds
+        assert group is not None
+        contract = artifacts.contract_bounds_table
+        assert contract is not None
+        return cls(hydro, thermal, pumping, line, group, contract)
+
+
+def _run_emission_self_checks(
+    bounds: _BoundTables, *, hydros_dict: dict, thermals_dict: dict, stages_dict: dict
+) -> None:
+    """Raise on an ``ERROR``-severity self-check finding, via
+    ``emission_checks.run_and_gate``."""
     # Post-emission self-checks: mirror cheap novomodelo load invariants (rules 43,
     # 41, 45, 38, 36, and the block_id-range rule) over the in-memory artifacts
     # before the constraint tables are written. rule 43 is reachable because
@@ -1713,162 +1822,196 @@ def _emit_and_write(
     # to one; it raises when such a bound exceeds the entity's own declared
     # capacity. See novomodelo_bridge.core.emission_checks for the rule scope.
     bound_families = [
-        emission_checks.BoundFamily("Hydro", "hydro_id", hydro_bounds),
-        emission_checks.BoundFamily("Thermal", "thermal_id", thermal_bounds_table),
-        emission_checks.BoundFamily("Line", "line_id", line_bounds),
+        emission_checks.BoundFamily("Hydro", "hydro_id", bounds.hydro),
+        emission_checks.BoundFamily("Thermal", "thermal_id", bounds.thermal),
+        emission_checks.BoundFamily("Line", "line_id", bounds.line),
         emission_checks.BoundFamily(
             "HydroUnitGroup",
             "hydro_id",
-            group_bounds,
+            bounds.group,
             group_column="hydro_unit_group_id",
         ),
-        emission_checks.BoundFamily("Contract", "contract_id", contract_bounds_table),
-        emission_checks.BoundFamily(
-            "Pumping", "pumping_station_id", pumping_bounds_table
-        ),
+        emission_checks.BoundFamily("Contract", "contract_id", bounds.contract),
+        emission_checks.BoundFamily("Pumping", "pumping_station_id", bounds.pumping),
     ]
 
     def _run_emission_checks() -> None:
-        emission_checks.check_hydro_bounds_no_raising(hydros_dict, hydro_bounds)
+        emission_checks.check_hydro_bounds_no_raising(hydros_dict, bounds.hydro)
         emission_checks.check_unit_group_envelope(hydros_dict)
-        emission_checks.check_group_bound_envelope(hydros_dict, group_bounds)
+        emission_checks.check_group_bound_envelope(hydros_dict, bounds.group)
         emission_checks.check_bound_row_uniqueness(bound_families)
         emission_checks.check_bound_block_id_range(stages_dict, bound_families)
         emission_checks.check_block_id_not_on_anticipated_thermal(
-            thermals_dict, thermal_bounds_table
+            thermals_dict, bounds.thermal
         )
-        emission_checks.check_diversion_has_channel(hydros_dict, hydro_bounds)
+        emission_checks.check_diversion_has_channel(hydros_dict, bounds.hydro)
 
     emission_checks.run_and_gate(_run_emission_checks)
 
-    writer.write_parquet("constraints/thermal_bounds.parquet", thermal_bounds_table)
-    writer.write_parquet("constraints/line_bounds.parquet", line_bounds)
-    if hydro_bounds.num_rows:
-        writer.write_parquet("constraints/hydro_bounds.parquet", hydro_bounds)
-    if pumping_bounds_table.num_rows:
-        writer.write_parquet("constraints/pumping_bounds.parquet", pumping_bounds_table)
-    if group_bounds.num_rows:
+
+def _write_bound_tables(
+    writer: CaseWriter,
+    bounds: _BoundTables,
+    *,
+    contracts: list[contracts_conv.Contract],
+    energy_contracts_doc: dict,
+) -> None:
+    """Write the bound parquets, skipping an empty optional family, and the
+    energy-contract registry when the deck declares contracts."""
+    writer.write_parquet("constraints/thermal_bounds.parquet", bounds.thermal)
+    writer.write_parquet("constraints/line_bounds.parquet", bounds.line)
+    if bounds.hydro.num_rows:
+        writer.write_parquet("constraints/hydro_bounds.parquet", bounds.hydro)
+    if bounds.pumping.num_rows:
+        writer.write_parquet("constraints/pumping_bounds.parquet", bounds.pumping)
+    if bounds.group.num_rows:
         writer.write_parquet(
-            "constraints/hydro_unit_group_bounds.parquet", group_bounds
+            "constraints/hydro_unit_group_bounds.parquet", bounds.group
         )
     if contracts:
         writer.write_json("system/energy_contracts.json", energy_contracts_doc)
-    if contract_bounds_table.num_rows:
-        writer.write_parquet(
-            "constraints/contract_bounds.parquet", contract_bounds_table
-        )
+    if bounds.contract.num_rows:
+        writer.write_parquet("constraints/contract_bounds.parquet", bounds.contract)
 
-    # Emit every RE/RHQ/RHV/RHE special constraint that did NOT lower to an
-    # entity bound (`census.to_generic`, resolved once in `_resolve_bounds`)
-    # as a Novomodelo generic constraint, over one shared 0-based constraint-id
-    # allocator so ids never collide across emitters regardless of which
-    # family produced them. The emitters run in this fixed order;
-    # `big_m`, `line_map`, and `hydro_to_ree` are shared inputs every emitter
-    # needs but none of them reads the deck to build for itself.
+
+class _SharedEmitterInputs(NamedTuple):
+    """The inputs the generic-constraint emitters share, built once."""
+
+    big_m: float
+    line_map: dict[tuple[int, int], int]
+    hydro_to_ree: dict[int, int]
+    allocator: ConstraintIdAllocator
+
+
+def _shared_emitter_inputs(
+    dadger: Dadger, deficit_cost: float, lines_doc: dict
+) -> _SharedEmitterInputs:
+    """The big-M penalty, the FI line map, the operated hydro -> REE map, and a
+    fresh 0-based constraint-id allocator.
+
+    Raises
+    ------
+    ValueError
+        If the deck has no ``UH`` records.
+    """
     big_m = constraints_conv.big_m_penalty(deficit_cost)
     line_map = constraints_conv.build_fi_line_map(lines_doc["lines"])
-    uh = dadger.uh(df=True)
+    uh = as_frame(dadger.uh(df=True))
+    if uh is None:
+        raise ValueError("the deck has no UH records; cannot map hydros to REEs")
     operated_uh = uh[uh["volume_inicial"].notna()]
     hydro_to_ree = {
         int(row["codigo_usina"]): int(row["codigo_ree"])
         for _, row in operated_uh.iterrows()
     }
+    return _SharedEmitterInputs(big_m, line_map, hydro_to_ree, ConstraintIdAllocator())
 
-    # Read the deck's LIBs-era electrical-constraint file (the LIBS index's
-    # RESTRICAO-ELETRICA-ESPECIAL entry, resolved by discover_decomp_files)
-    # once: both the narrowed detect_libs_electrical decision and the
-    # generic-constraint emitter below thread this same `libs_electrical_model`,
-    # so neither can disagree about whether the deck's long-form subset
-    # converted. `read_libs_electrical` returns `None` for a short-form-only
-    # (RE/RE-* or date-indexed) file -- that fallback stays on
-    # detect_libs_electrical's flat warning.
-    libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None = None
-    if case.libs_restricao_eletrica is not None:
-        libs_electrical_model = libs_electrical_conv.read_libs_electrical(
-            case.libs_restricao_eletrica,
-            calendar,
-            gnl_thermal_codes=_gnl_thermal_codes(gnl_model, id_map),
-        )
 
-    generic_constraints: list[dict] = []
-    generic_bound_tables: list[pa.Table] = []
-    allocator = ConstraintIdAllocator()
-
+def _emit_special_constraint_generics(
+    artifacts: DecompCaseArtifacts,
+    shared: _SharedEmitterInputs,
+    *,
+    census: constraint_registers.ConstraintCensus,
+    pumping_ids: dict[int, int],
+) -> list[constraints_conv.DecompGenericResult]:
+    """The RE, RHQ/RHV and RHE generic constraints, in that emitter order,
+    leaving out an emitter with nothing to emit."""
+    case = artifacts.case
+    id_map = artifacts.id_map
+    contracts = artifacts.contracts
+    assert contracts is not None
     re_generics = constraints_conv.emit_re_generics(
         case,
         id_map,
         census=census,
-        line_map=line_map,
-        big_m=big_m,
-        allocator=allocator,
+        line_map=shared.line_map,
+        contract_tokens=constraints_conv.build_contract_token_map(contracts),
+        big_m=shared.big_m,
+        allocator=shared.allocator,
     )
-    if re_generics is not None:
-        generic_constraints.extend(re_generics.constraints)
-        generic_bound_tables.append(re_generics.bounds)
-
     rhq_rhv_generics = constraints_conv.emit_rhq_rhv_generics(
         case,
         id_map,
         census=census,
         pumping_station_ids=pumping_ids,
-        effective=effective,
-        big_m=big_m,
-        allocator=allocator,
+        effective=artifacts.effective,
+        big_m=shared.big_m,
+        allocator=shared.allocator,
     )
-    if rhq_rhv_generics is not None:
-        generic_constraints.extend(rhq_rhv_generics.constraints)
-        generic_bound_tables.append(rhq_rhv_generics.bounds)
-
     rhe_generics = constraints_conv.emit_rhe_generics(
         case,
         id_map,
         census=census,
-        effective=effective,
-        hydro_to_ree=hydro_to_ree,
-        ez_fractions=rhe_shares_conv.read_ez_fractions(dadger),
-        allocator=allocator,
+        effective=artifacts.effective,
+        hydro_to_ree=shared.hydro_to_ree,
+        ez_fractions=rhe_shares_conv.read_ez_fractions(artifacts.dadger),
+        allocator=shared.allocator,
     )
-    if rhe_generics is not None:
-        generic_constraints.extend(rhe_generics.constraints)
-        generic_bound_tables.append(rhe_generics.bounds)
+    return [
+        result
+        for result in (re_generics, rhq_rhv_generics, rhe_generics)
+        if result is not None
+    ]
 
-    # The 4th generic-constraint emitter link -- every
-    # LIBs-era long-form electrical restriction that resolved
-    # (`libs_electrical_model`, read once above), spliced after RHE so the
-    # unconditional write block below picks it up automatically, identical in
-    # shape to the three links above. Built only when the deck actually
-    # carries a long-form model, since none of these inputs are otherwise
-    # needed.
-    libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None = None
-    if libs_electrical_model is not None:
-        context_factory = libs_electrical_conv.build_data_context(
-            case, id_map, model=libs_electrical_model, gnl_model=gnl_model
-        )
-        a_h = libs_electrical_conv.build_available_power(
-            case, id_map, overlay=availability_values, effective=effective
-        )
-        ncs_id_by_pee_code = ncs_conv.build_pee_ncs_id_map(case, id_map)
-        conjh_bus_by_code_group = {
-            (id_map.hydro_codes[entry["id"]], group_index): group["bus_id"]
-            for entry in hydros_dict["hydros"]
-            for group_index, group in enumerate(entry["unit_groups"], start=1)
-        }
-        libs_electrical_result = libs_electrical_emit.emit_libs_electrical_generics(
-            libs_electrical_model,
-            id_map,
-            context_factory,
-            a_h,
-            calendar,
-            ncs_id_by_pee_code,
-            conjh_bus_by_code_group,
-            line_map,
-            big_m,
-            allocator,
-        )
-        if libs_electrical_result.generic is not None:
-            generic_constraints.extend(libs_electrical_result.generic.constraints)
-            generic_bound_tables.append(libs_electrical_result.generic.bounds)
 
+def _emit_libs_electrical_generics(
+    artifacts: DecompCaseArtifacts,
+    model: libs_electrical_conv.LibsElectricalModel,
+    shared: _SharedEmitterInputs,
+    *,
+    availability_values: dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry],
+    hydros_dict: dict,
+) -> libs_electrical_emit.LibsElectricalResult:
+    """Every long-form LIBs electrical restriction of *model* that resolves, as
+    a generic constraint."""
+    case = artifacts.case
+    id_map = artifacts.id_map
+    context_factory = libs_electrical_conv.build_data_context(
+        case, id_map, model=model, gnl_model=artifacts.gnl_model
+    )
+    a_h = libs_electrical_conv.build_available_power(
+        id_map, overlay=availability_values
+    )
+    ncs_id_by_pee_code = ncs_conv.build_pee_ncs_id_map(case, id_map)
+    conjh_bus_by_code_group = {
+        (id_map.hydro_codes[entry["id"]], group_index): group["bus_id"]
+        for entry in hydros_dict["hydros"]
+        for group_index, group in enumerate(entry["unit_groups"], start=1)
+    }
+    return libs_electrical_emit.emit_libs_electrical_generics(
+        model,
+        id_map,
+        context_factory,
+        a_h,
+        artifacts.calendar,
+        ncs_id_by_pee_code,
+        conjh_bus_by_code_group,
+        shared.line_map,
+        shared.big_m,
+        shared.allocator,
+    )
+
+
+def _write_generic_constraints(
+    writer: CaseWriter,
+    id_map: DecompIdMap,
+    special_generics: list[constraints_conv.DecompGenericResult],
+    libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None,
+) -> None:
+    """Write the generic constraints with their bounds, and the scalar
+    parameters their expressions reference."""
+    emitted: list[constraints_conv.DecompGenericResult | GenericConstraintResult] = [
+        *special_generics
+    ]
+    if (
+        libs_electrical_result is not None
+        and libs_electrical_result.generic is not None
+    ):
+        emitted.append(libs_electrical_result.generic)
+    generic_constraints = [
+        constraint for result in emitted for constraint in result.constraints
+    ]
+    generic_bound_tables = [result.bounds for result in emitted]
     if generic_constraints:
         writer.write_json(
             "constraints/generic_constraints.json",
@@ -1887,38 +2030,37 @@ def _emit_and_write(
     # Every `@name` a surviving expression references must resolve, or novomodelo
     # fails to load the case.
     if any("@" in constraint["expression"] for constraint in generic_constraints):
-        parameterized = [
-            result
-            for result in (re_generics, rhq_rhv_generics, rhe_generics)
-            if result is not None
-        ]
         write_scalar_parameters(
             writer,
             build_decomp_scalar_parameters(
                 [id_map.hydro_id(code) for code in id_map.hydro_codes],
                 per_stage={
                     name: values
-                    for result in parameterized
+                    for result in special_generics
                     for name, values in result.per_stage_parameters.items()
                 },
                 expressions={
                     name: body
-                    for result in parameterized
+                    for result in special_generics
                     for name, body in result.expression_parameters.items()
                 },
             ),
         )
 
-    # The FE/RHA/LIBs-electrical detection diagnostics each surface
-    # once, through the structured sink, alongside the flat deferral warning
-    # below (the matching clause is deduped out of that warning).
-    for detection in constraint_registers.detect_unreadable_electrical(
-        case.files.dadger
-    ):
-        dx.emit(detection, logger=_LOG)
+
+def _emit_constraint_detection_diagnostics(
+    case: DecompCase,
+    libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None,
+    libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None,
+) -> None:
+    """Report the electrical-constraint files the conversion cannot read, and
+    the LIBs electrical census."""
+    rha_detection = constraint_registers.detect_unconverted_rha(case.dadger)
+    if rha_detection is not None:
+        dx.emit(rha_detection, logger=_LOG)
     # The flat presence warning is narrowed to the subset
-    # `libs_electrical_model` (read once above) did NOT convert -- a
-    # short-form-only (RE/RE-*, date-indexed) file, or no long-form card at
+    # `libs_electrical_model` (read once by `_emit_and_write`) did NOT
+    # convert -- a short-form-only (RE/RE-*, date-indexed) file, or no long-form card at
     # all despite the indices.csv entry. Once the long-form subset
     # converts, the census INFO below is authoritative and this flat warning
     # would otherwise be a stale "not converted" claim over that subset.
@@ -1929,6 +2071,114 @@ def _emit_and_write(
         dx.emit(libs_detection, logger=_LOG)
     if libs_electrical_result is not None:
         dx.emit(_libs_electrical_census_diagnostic(libs_electrical_result), logger=_LOG)
+
+
+def _emit_and_write(
+    artifacts: DecompCaseArtifacts, writer: CaseWriter
+) -> ConversionReport:
+    """The ``step("Writing outputs")`` phase: run the post-emission self-checks
+    (``emission_checks.run_and_gate``) before any constraint parquet is
+    written, write the bound parquets, emit the RE -> RHQ/RHV -> RHE ->
+    LIBs-electrical generic constraints over one shared
+    :class:`ConstraintIdAllocator`, write the generic-constraint artifacts and
+    scalar parameters, emit the detection diagnostics, and return the
+    :class:`~novomodelo_bridge.core.conversion.ConversionReport` built from
+    ``writer.would_write``.
+    """
+    case = artifacts.case
+    dadger = artifacts.dadger
+    calendar = artifacts.calendar
+    id_map = artifacts.id_map
+    fan_probabilities = artifacts.fan_probabilities
+    hydros_dict = artifacts.hydros_dict
+    assert hydros_dict is not None
+    thermals_dict = artifacts.thermals_dict
+    assert thermals_dict is not None
+    buses_doc = artifacts.buses_doc
+    assert buses_doc is not None
+    lines_doc = artifacts.lines_doc
+    assert lines_doc is not None
+    stages_dict = artifacts.stages_dict
+    assert stages_dict is not None
+    deficit_cost = artifacts.deficit_cost
+    assert deficit_cost is not None
+    bounds = _BoundTables.from_artifacts(artifacts)
+    census = artifacts.census
+    assert census is not None
+    pumping_ids = artifacts.pumping_ids
+    assert pumping_ids is not None
+    availability_values = artifacts.availability_values
+    assert availability_values is not None
+    contracts = artifacts.contracts
+    assert contracts is not None
+    energy_contracts_doc = artifacts.energy_contracts_doc
+    assert energy_contracts_doc is not None
+
+    _run_emission_self_checks(
+        bounds,
+        hydros_dict=hydros_dict,
+        thermals_dict=thermals_dict,
+        stages_dict=stages_dict,
+    )
+    _write_bound_tables(
+        writer, bounds, contracts=contracts, energy_contracts_doc=energy_contracts_doc
+    )
+
+    # Emit every RE/RHQ/RHV/RHE special constraint that did NOT lower to an
+    # entity bound (`census.to_generic`, resolved once in `_resolve_bounds`)
+    # as a Novomodelo generic constraint, over one shared 0-based constraint-id
+    # allocator so ids never collide across emitters regardless of which
+    # family produced them. The emitters run in this fixed order;
+    # `big_m`, `line_map`, and `hydro_to_ree` are shared inputs every emitter
+    # needs but none of them reads the deck to build for itself.
+    shared = _shared_emitter_inputs(dadger, deficit_cost, lines_doc)
+
+    # Read the deck's LIBs-era electrical-constraint file (the LIBS index's
+    # RESTRICAO-ELETRICA-ESPECIAL entry, resolved by discover_decomp_files)
+    # once: both the narrowed detect_libs_electrical decision and the
+    # generic-constraint emitter below thread this same `libs_electrical_model`,
+    # so neither can disagree about whether the deck's long-form subset
+    # converted. `read_libs_electrical` returns `None` for a short-form-only
+    # (RE/RE-* or date-indexed) file -- that fallback stays on
+    # detect_libs_electrical's flat warning.
+    libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None = None
+    libs_file = case.files.libs_restricao_eletrica
+    restricoes = case.libs_restricao_eletrica
+    if libs_file is not None and restricoes is not None:
+        unread = unread_lines_diagnostic(libs_file, restricoes.data)
+        if unread is not None:
+            dx.emit(unread, logger=_LOG)
+        libs_electrical_model = libs_electrical_conv.read_libs_electrical(
+            restricoes,
+            calendar,
+            gnl_thermal_codes=_gnl_thermal_codes(artifacts.gnl_model, id_map),
+        )
+
+    special_generics = _emit_special_constraint_generics(
+        artifacts, shared, census=census, pumping_ids=pumping_ids
+    )
+
+    # The 4th generic-constraint emitter link -- every
+    # LIBs-era long-form electrical restriction that resolved
+    # (`libs_electrical_model`, read once above), spliced after RHE so the
+    # unconditional write block below picks it up automatically, identical in
+    # shape to the three links above. Built only when the deck actually
+    # carries a long-form model, since none of these inputs are otherwise
+    # needed.
+    libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None = None
+    if libs_electrical_model is not None:
+        libs_electrical_result = _emit_libs_electrical_generics(
+            artifacts,
+            libs_electrical_model,
+            shared,
+            availability_values=availability_values,
+            hydros_dict=hydros_dict,
+        )
+
+    _write_generic_constraints(writer, id_map, special_generics, libs_electrical_result)
+    _emit_constraint_detection_diagnostics(
+        case, libs_electrical_model, libs_electrical_result
+    )
 
     _LOG.info(
         "converted %d buses, %d hydros, %d thermals, %d stages, terminal fan %d",
@@ -1957,6 +2207,7 @@ def convert_decomp_case(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
 
@@ -1978,6 +2229,9 @@ def convert_decomp_case(
         ``initial_conditions.json``, so a caller (the CLI's boundary-FCF
         step) can thread them into ``import_boundary_fcf`` without
         re-reading either file. ``None`` (the default) leaves it unused.
+    float_digits:
+        Significant digits of the floats in the case's JSON files; ``None``
+        keeps full precision.
 
     Returns
     -------
@@ -2016,6 +2270,7 @@ def convert_decomp_case(
             on_phase=on_phase,
             dry_run=dry_run,
             fcf_inputs_out=fcf_inputs_out,
+            float_digits=float_digits,
         ),
         dst,
         DECOMP_CLEARED_ARTIFACTS,
@@ -2030,6 +2285,7 @@ def _convert_decomp_case_impl(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Run the DECOMP conversion pipeline (warning capture handled by the wrapper).
 
@@ -2054,7 +2310,7 @@ def _convert_decomp_case_impl(
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in
     # exactly one place, rather than guarding ~24 individual write sites.
-    writer = CaseWriter(dst, dry_run=dry_run)
+    writer = CaseWriter(dst, dry_run=dry_run, float_digits=float_digits)
 
     step("Converting entities")
     _convert_core_entities(artifacts, writer)

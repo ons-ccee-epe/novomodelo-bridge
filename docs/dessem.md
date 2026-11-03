@@ -127,7 +127,7 @@ and every export copies it into `export_manifest.json`. In brief:
 |---------|--------|
 | P1 | `mapcut` physical records (indices 4–17) are written as zeros. |
 | P2 | Intercepts and the storage and in-transit water coefficients are divided by 1000 (R$ to 10³ R$); GNL coefficients stay in R$/MWh. |
-| P3 | Travel-time plants follow the deck's `VI` records; each release's in-transit water is valued from the transit buckets it arrives in. |
+| P3 | Travel-time plants follow the deck's `VI` records; each release's in-transit water is valued from the transit buckets it arrives in. A bucket with no arrival window (water that would arrive after the study ends) takes no weight; a coefficient found on one is dropped with a warning. |
 | P4 | GNL coefficients change sign (Novomodelo negative, DECOMP positive). |
 | P5 | A delivery's GNL value is written unchanged on every load block, never split by block hours. |
 | P6 | Submarket is `bus_id + 1`; the `IV` transhipment bus is excluded. |

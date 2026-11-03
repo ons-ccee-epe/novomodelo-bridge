@@ -66,6 +66,16 @@ class TestBuildOperativeCalendar:
         assert calendar[-1].start_date == date(2027, 1, 2)
         assert calendar[-1].end_date == date(2027, 2, 1)
         assert [s.season_id for s in calendar] == [11, 11, 11, 11, 11, 0]
+        assert [s.operative_year for s in calendar] == [2026] * 5 + [2027]
+
+    def test_january_deck_first_week_belongs_to_the_new_year(self) -> None:
+        # A January rv0: first week 27/12/2025→03/01/2026, six weekly stages
+        # then February aggregated (07/02→01/03 is 22 days = 528 h).
+        calendar = build_operative_calendar(
+            date(2025, 12, 27), [[168.0]] * 6 + [[528.0]]
+        )
+        assert [s.season_id for s in calendar] == [0] * 6 + [1]
+        assert [s.operative_year for s in calendar] == [2026] * 7
 
     def test_rejects_non_saturday_start(self) -> None:
         with pytest.raises(ValueError, match="Saturday"):
@@ -310,7 +320,7 @@ class TestFromDadger:
                 return pd.DataFrame(rows)
 
         with pytest.raises(ValueError, match="differ across"):
-            operative_calendar_from_dadger(_Dadger())  # type: ignore[arg-type]
+            operative_calendar_from_dadger(_Dadger())
 
 
 class TestCVaRRiskMeasure:

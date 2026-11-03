@@ -1736,22 +1736,9 @@ class TestParseCadical:
 def _make_vazpast_mock(
     postos: list[int],
     num_months: int = 12,
-    end_year: int = 2019,
-    end_month: int = 12,
 ) -> MagicMock:
-    """Build a synthetic Vazpast mock with monthly tendency data.
-
-    The ``tendencia`` DataFrame has columns ``codigo_usina``, ``nome_usina``,
-    ``mes`` (1-12), and ``valor``, with one row per (posto, calendar month).
-    This matches the format expected by ``convert_past_inflows`` after the
-    production code was updated to read ``vazpast_obj.tendencia`` instead of
-    ``vazpast_obj.vazoes``.
-
-    ``end_year`` and ``end_month`` are accepted for API compatibility but
-    the tendencia format is calendar-month based, not date based.
-    ``num_months`` is capped at 12 (the tendencia has at most one row per
-    calendar month per plant).
-    """
+    """Build a synthetic Vazpast mock: one ``tendencia`` row per (posto, calendar
+    month), months 1 to ``min(num_months, 12)``."""
     rng = np.random.default_rng(99)
     rows = []
     n_months = min(num_months, 12)
@@ -1759,8 +1746,8 @@ def _make_vazpast_mock(
         for mes in range(1, n_months + 1):
             rows.append(
                 {
-                    "codigo_usina": posto,
-                    "nome_usina": f"PLANT_{posto}",
+                    "codigo_posto": posto,
+                    "nome_posto": f"POSTO_{posto}",
                     "mes": mes,
                     "valor": float(rng.uniform(50.0, 500.0)),
                 }

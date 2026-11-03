@@ -15,6 +15,7 @@ from novomodelo_bridge.newave.converters.hydro import (
     read_cadastro,
 )
 from novomodelo_bridge.newave.converters.thermal import thermal_generation_bounds
+from novomodelo_bridge.newave.horizon import study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import filling_hydro_codes
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
@@ -91,7 +92,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # admission predicate ``case.active_hydros`` uses; ``set()`` when there is no
     # filling plant, so the in-loop guard below never fires.
     exph_df = case.exph.expansoes if case.exph is not None else None
-    filling = filling_hydro_codes(case.confhd.usinas, exph_df)
+    filling = filling_hydro_codes(case.hydro_plants, exph_df)
 
     storage: list[dict] = []
     filling_storage: list[dict] = []
@@ -186,8 +187,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     anticipated = read_anticipated_dispatch(case)
     gen_bounds = thermal_generation_bounds(case) if anticipated else {}
     if anticipated:
-        start_month = int(case.dger.mes_inicio_estudo)
-        start_year = int(case.dger.ano_inicio_estudo)
+        start_year, start_month = study_start(case.dger)
     past_anticipated_commitments: list[dict] = []
     for newave_code, dispatch in anticipated.items():
         try:

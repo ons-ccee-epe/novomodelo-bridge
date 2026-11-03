@@ -145,7 +145,7 @@ class TestHydroBoundsNoRaising:
         # entity, column, stage, declared, offending — all named.
         assert row[0] == 0
         assert row[1] == "max_turbined_m3s"
-        assert "3" in row[2]
+        assert isinstance(row[2], str) and "3" in row[2]
         assert row[3] == 100.0
         assert row[4] == 150.0
 
@@ -237,6 +237,7 @@ class TestClampHydroBoundsToDeclared:
 
         # The raised value is clamped to the declaration; the in-envelope one is
         # untouched.
+        assert result is not None
         assert result["max_turbined_m3s"].to_pylist() == [100.0, 80.0]
 
         warnings = [d for d in collected if d.severity is Severity.WARNING]
@@ -247,7 +248,7 @@ class TestClampHydroBoundsToDeclared:
         row = diag.table.rows[0]
         assert row[0] == 0  # hydro id
         assert row[1] == "max_turbined_m3s"  # column
-        assert "0" in row[2]  # stage
+        assert isinstance(row[2], str) and "0" in row[2]  # stage
         assert row[3] == 100.0  # declared bound clamped to
         assert row[4] == 150.0  # original value
 
@@ -269,6 +270,7 @@ class TestClampHydroBoundsToDeclared:
         with dx.collect() as collected:
             result = clamp_hydro_bounds_to_declared(hydros, hydro_bounds)
 
+        assert result is not None
         assert result["max_outflow_m3s"].to_pylist() == [500.0]
         assert any(d.severity is Severity.WARNING for d in collected)
 
@@ -304,6 +306,7 @@ class TestClampHydroBoundsToDeclared:
         with dx.collect() as collected:
             result = clamp_hydro_bounds_to_declared(hydros, hydro_bounds)
 
+        assert result is not None
         assert result["max_outflow_m3s"].to_pylist() == [131.0]
         assert any(d.severity is Severity.WARNING for d in collected)
 
@@ -464,7 +467,7 @@ class TestGroupBoundEnvelope:
         assert row[0] == 0
         assert row[1] == 0
         assert row[2] == "max_generation_mw"
-        assert "2" in row[3]
+        assert isinstance(row[3], str) and "2" in row[3]
         assert row[4] == 30.0
         assert row[5] == 35.0
 

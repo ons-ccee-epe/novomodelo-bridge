@@ -69,7 +69,8 @@ def write_commitments(case_dir: Path, windows: Sequence[CommitmentWindow]) -> No
                     for w in windows
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
 
@@ -327,7 +328,9 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
             for s in synthetic_inputs.stages
         ],
     }
-    (case_dir / "stages.json").write_text(json.dumps(stages_data, indent=2))
+    (case_dir / "stages.json").write_text(
+        json.dumps(stages_data, indent=2), encoding="utf-8"
+    )
 
     # hydros.json
     hydros_data = {
@@ -344,7 +347,9 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
             for h in synthetic_inputs.hydros
         ]
     }
-    (system_dir / "hydros.json").write_text(json.dumps(hydros_data, indent=2))
+    (system_dir / "hydros.json").write_text(
+        json.dumps(hydros_data, indent=2), encoding="utf-8"
+    )
 
     # thermals.json
     thermals_data = {
@@ -363,7 +368,9 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
             for t in synthetic_inputs.thermals
         ]
     }
-    (system_dir / "thermals.json").write_text(json.dumps(thermals_data, indent=2))
+    (system_dir / "thermals.json").write_text(
+        json.dumps(thermals_data, indent=2), encoding="utf-8"
+    )
 
     write_commitments(case_dir, synthetic_inputs.past_anticipated_commitments)
 
@@ -371,7 +378,9 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
     buses_data = {
         "buses": [{"id": b.id, "name": b.name} for b in synthetic_inputs.buses]
     }
-    (system_dir / "buses.json").write_text(json.dumps(buses_data, indent=2))
+    (system_dir / "buses.json").write_text(
+        json.dumps(buses_data, indent=2), encoding="utf-8"
+    )
 
     return case_dir
 
@@ -380,15 +389,15 @@ def synthetic_case_dir(tmp_path: Path, synthetic_inputs: CaseInputs) -> Path:
 def gnl_case_dir(synthetic_case_dir: Path) -> Path:
     """`synthetic_case_dir` with a second GNL thermal, GNL_B, and stage 1's blocks at 27, 68 and 73 h."""
     stages_path = synthetic_case_dir / "stages.json"
-    stages = json.loads(stages_path.read_text())
+    stages = json.loads(stages_path.read_text(encoding="utf-8"))
     for block, hours in zip(
         stages["stages"][1]["blocks"], (27.0, 68.0, 73.0), strict=True
     ):
         block["hours"] = hours
-    stages_path.write_text(json.dumps(stages))
+    stages_path.write_text(json.dumps(stages), encoding="utf-8")
 
     thermals_path = synthetic_case_dir / "system" / "thermals.json"
-    thermals = json.loads(thermals_path.read_text())
+    thermals = json.loads(thermals_path.read_text(encoding="utf-8"))
     thermals["thermals"].append(
         {
             "id": 102,
@@ -398,7 +407,7 @@ def gnl_case_dir(synthetic_case_dir: Path) -> Path:
             "anticipated_config": {"lead_time_hours": 1512.0},
         }
     )
-    thermals_path.write_text(json.dumps(thermals))
+    thermals_path.write_text(json.dumps(thermals), encoding="utf-8")
     write_commitments(synthetic_case_dir, weekly_windows(100) + weekly_windows(102))
     return synthetic_case_dir
 
@@ -419,7 +428,7 @@ def gnl_source(synthetic_source: SourceDeck) -> SourceDeck:
 def travel_time_case_dir(synthetic_case_dir: Path) -> Path:
     """`synthetic_case_dir` with UHE_B 240 h above UHE_A."""
     hydros_path = synthetic_case_dir / "system" / "hydros.json"
-    hydros = json.loads(hydros_path.read_text())
+    hydros = json.loads(hydros_path.read_text(encoding="utf-8"))
     hydros["hydros"][1]["travel_time_hours"] = 240.0
-    hydros_path.write_text(json.dumps(hydros))
+    hydros_path.write_text(json.dumps(hydros), encoding="utf-8")
     return synthetic_case_dir

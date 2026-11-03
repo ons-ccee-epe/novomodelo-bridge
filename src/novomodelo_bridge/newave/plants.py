@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet
+    from collections.abc import Set as AbstractSet
 
 # Productivity at or below this is treated as "no generation" (the source model FICT
 # accounting plants carry produtibilidade_especifica == 0 exactly).

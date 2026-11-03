@@ -33,6 +33,7 @@ from tests.comparators.conftest import (
     _patch_aligned_frames,
     _patch_shared_case,
     _ree_id_map,
+    _unmapped_codes,
 )
 
 
@@ -373,7 +374,7 @@ class TestBuildDecompDatasetEvaporation:
             & (pl.col("variable") == "evaporation_m3s")
         )
         assert evap_rows.is_empty()
-        assert dataset.metadata["unmapped"]["evaporation"] == []
+        assert _unmapped_codes(dataset, "evaporation") == []
         build_comparison_report(dataset)  # must not raise
 
     def test_both_sides_present_tidy_carries_evaporation_rows(
@@ -395,7 +396,7 @@ class TestBuildDecompDatasetEvaporation:
         )
         assert set(evap_rows["source"].unique().to_list()) == {"newave", "novomodelo"}
         assert evap_rows.height == 4  # 2 plants * 2 sources
-        assert dataset.metadata["unmapped"]["evaporation"] == []
+        assert _unmapped_codes(dataset, "evaporation") == []
 
         summary_vars = set(dataset.summary["variable"].to_list())
         assert "evaporation_m3s" in summary_vars
@@ -418,7 +419,7 @@ class TestBuildDecompDatasetEvaporation:
 
         dataset = build_decomp_dataset(tmp_path, tmp_path)
 
-        assert dataset.metadata["unmapped"]["evaporation"] == [1]
+        assert _unmapped_codes(dataset, "evaporation") == [1]
 
     def test_hydro_plant_detail_tab_carries_evaporation_content(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

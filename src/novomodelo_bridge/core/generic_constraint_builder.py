@@ -14,7 +14,7 @@ slot/sentinel helpers (:data:`UNBOUNDED`, :func:`is_bounded`,
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, TypeGuard
 
 import pyarrow as pa
 
@@ -97,7 +97,7 @@ if GENERIC_BOUNDS_SCHEMA.names != list(GENERIC_BOUNDS_COLUMNS):
 UNBOUNDED = 1e21
 
 
-def is_bounded(value: float | None) -> bool:
+def is_bounded(value: float | None) -> TypeGuard[float]:
     """True iff *value* is a real (non-``None``, non-sentinel) bound."""
     return value is not None and abs(value) < UNBOUNDED
 

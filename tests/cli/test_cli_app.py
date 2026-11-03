@@ -5,7 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.cli.conftest import _run_cli_subprocess
 from tests.conftest import _make_fake_newave_dir
+
+
+def test_output_is_utf8_when_the_stream_locale_cannot_encode_the_glyphs(
+    tmp_path: Path,
+) -> None:
+    result = _run_cli_subprocess(
+        "check", "newave", str(tmp_path), env={"PYTHONIOENCODING": "cp1252"}
+    )
+
+    assert result.returncode == 2
+    assert "\u2716" in result.stdout + result.stderr
+    assert "UnicodeEncodeError" not in result.stderr
 
 
 class TestTyperApp:

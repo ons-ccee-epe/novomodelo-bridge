@@ -24,6 +24,7 @@ from novomodelo_bridge.cli.args import CompareArgs
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.novomodelo.readers import (
     NovomodeloReadError,
     _load_entity_bus_map,
@@ -41,6 +42,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_line_means,
     read_novomodelo_lines,
     read_novomodelo_lp_max_generation,
+    read_novomodelo_stage_line_bounds,
     read_novomodelo_thermal_means,
     read_novomodelo_thermal_metadata,
     read_novomodelo_training_metadata,
@@ -286,7 +288,9 @@ class TestSoftMetadataReadersStaySoft:
         out = tmp_path / "output"
         sysdir = tmp_path / "system"
         sysdir.mkdir(parents=True)
-        (sysdir / "thermals.json").write_text("{ this is not valid json ")
+        (sysdir / "thermals.json").write_text(
+            "{ this is not valid json ", encoding="utf-8"
+        )
         out.mkdir()
         assert read_novomodelo_thermal_metadata(out) == {}
 
@@ -1204,7 +1208,9 @@ class TestLoadEntityBusMapNoBareExcept:
     ) -> None:
         sysdir = tmp_path / "system"
         sysdir.mkdir(parents=True)
-        (sysdir / "thermals.json").write_text("{ this is not valid json ")
+        (sysdir / "thermals.json").write_text(
+            "{ this is not valid json ", encoding="utf-8"
+        )
 
         with pytest.raises(NovomodeloReadError):
             _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
@@ -1303,7 +1309,7 @@ class TestEnergyNotReweightedHandComputedProof:
         # the raw sum of generation_mwh across blocks divided by that
         # total -- one division, no second multiplication by hours.
         total_hours = sum(hours for _, hours in stage_blocks[0])  # 300.0
-        total_energy_mwh = sum(float(r["generation_mwh"]) for r in rows)  # 5000.0
+        total_energy_mwh = sum(as_float(r["generation_mwh"]) for r in rows)  # 5000.0
         correct = total_energy_mwh / total_hours  # 16.666...
 
         # Hand computation #2 (WRONG): the mistake the standing project
@@ -1313,7 +1319,7 @@ class TestEnergyNotReweightedHandComputedProof:
         hours_by_block = dict(stage_blocks[0])
         wrong_double_weighted = (
             sum(
-                float(r["generation_mwh"]) * hours_by_block[int(r["block_id"])]
+                as_float(r["generation_mwh"]) * hours_by_block[as_int(r["block_id"])]
                 for r in rows
             )
             / total_hours
@@ -1541,7 +1547,9 @@ class TestReadNovomodeloLines:
         system_dir = tmp_path / "system"
         system_dir.mkdir(parents=True)
         lines = [{"id": 0, "source_bus_id": 0, "target_bus_id": 1}]
-        (system_dir / "lines.json").write_text(json.dumps({"lines": lines}))
+        (system_dir / "lines.json").write_text(
+            json.dumps({"lines": lines}), encoding="utf-8"
+        )
 
         assert read_novomodelo_lines(out) == lines
 
@@ -1555,7 +1563,7 @@ class TestReadNovomodeloLines:
         out = tmp_path / "output"
         system_dir = tmp_path / "system"
         system_dir.mkdir(parents=True)
-        (system_dir / "lines.json").write_text("not valid json{")
+        (system_dir / "lines.json").write_text("not valid json{", encoding="utf-8")
 
         with pytest.raises(NovomodeloReadError, match="lines.json"):
             read_novomodelo_lines(out)
@@ -1582,7 +1590,7 @@ class TestReadNovomodeloFphaFitConfig:
             }
         ]
         (system_dir / "hydro_production_models.json").write_text(
-            json.dumps({"production_models": models})
+            json.dumps({"production_models": models}), encoding="utf-8"
         )
 
         result = read_novomodelo_fpha_fit_config(tmp_path / "output")
@@ -1596,7 +1604,9 @@ class TestReadNovomodeloFphaFitConfig:
             {"id": stage_id, "season_id": season, "blocks": [{"id": 0, "hours": 1.0}]}
             for stage_id, season in enumerate([8, 9, 8])
         ]
-        (tmp_path / "stages.json").write_text(json.dumps({"stages": stages}))
+        (tmp_path / "stages.json").write_text(
+            json.dumps({"stages": stages}), encoding="utf-8"
+        )
         system_dir = tmp_path / "system"
         system_dir.mkdir()
         models = [
@@ -1618,7 +1628,7 @@ class TestReadNovomodeloFphaFitConfig:
             }
         ]
         (system_dir / "hydro_production_models.json").write_text(
-            json.dumps({"production_models": models})
+            json.dumps({"production_models": models}), encoding="utf-8"
         )
 
         result = read_novomodelo_fpha_fit_config(tmp_path / "output").sort("stage_id")
@@ -1670,13 +1680,134 @@ class TestReadNovomodeloLineBounds:
             read_novomodelo_line_bounds(out)
 
 
+def _write_line_case(
+    case_dir: Path,
+    rows: list[tuple[int, int, int | None, float, float]],
+    capacities: dict[int, tuple[float, float]],
+) -> list[dict]:
+    """Write ``line_bounds.parquet`` rows ``(line, stage, block, direct, reverse)``
+    and return the ``lines.json`` lines for capacities ``{line: (direct, reverse)}``."""
+    constraints_dir = case_dir / "constraints"
+    constraints_dir.mkdir(parents=True)
+    line, stage, block, direct, reverse = zip(*rows, strict=True)
+    pq.write_table(
+        pa.table(
+            {
+                "line_id": pa.array(line, type=pa.int32()),
+                "stage_id": pa.array(stage, type=pa.int32()),
+                "block_id": pa.array(block, type=pa.int32()),
+                "direct_mw": pa.array(direct, type=pa.float64()),
+                "reverse_mw": pa.array(reverse, type=pa.float64()),
+            }
+        ),
+        constraints_dir / "line_bounds.parquet",
+    )
+    return [
+        {"id": lid, "capacity": {"direct_mw": d, "reverse_mw": r}}
+        for lid, (d, r) in capacities.items()
+    ]
+
+
+class TestReadNovomodeloStageLineBounds:
+    def test_weights_block_overrides_by_hours_not_the_base_row(
+        self, tmp_path: Path
+    ) -> None:
+        _write_stages_json(tmp_path, {0: [(0, 30.0), (1, 69.0), (2, 69.0)]})
+        lines = _write_line_case(
+            tmp_path,
+            [
+                (4, 0, None, 6000.0, 4200.0),
+                (4, 0, 0, 6000.0, 4200.0),
+                (4, 0, 1, 4000.0, 1000.0),
+                (4, 0, 2, 4000.0, 1000.0),
+            ],
+            {4: (6000.0, 4200.0)},
+        )
+
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
+
+        assert row["direct_mw"] == pytest.approx((30 * 6000 + 138 * 4000) / 168)
+        assert row["reverse_mw"] == pytest.approx((30 * 4200 + 138 * 1000) / 168)
+
+    def test_block_without_override_takes_the_base_row(self, tmp_path: Path) -> None:
+        _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 3.0)]})
+        lines = _write_line_case(
+            tmp_path,
+            [(0, 0, None, 800.0, 600.0), (0, 0, 1, 400.0, 200.0)],
+            {0: (5000.0, 5000.0)},
+        )
+
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
+
+        assert row["direct_mw"] == pytest.approx((800.0 + 3 * 400.0) / 4)
+        assert row["reverse_mw"] == pytest.approx((600.0 + 3 * 200.0) / 4)
+
+    def test_block_without_any_row_takes_the_line_capacity(
+        self, tmp_path: Path
+    ) -> None:
+        _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
+        lines = _write_line_case(
+            tmp_path, [(0, 0, 0, 400.0, 200.0)], {0: (1000.0, 800.0)}
+        )
+
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
+
+        assert row["direct_mw"] == pytest.approx(700.0)
+        assert row["reverse_mw"] == pytest.approx(500.0)
+
+    def test_direction_unbounded_in_one_block_stays_unbounded(
+        self, tmp_path: Path
+    ) -> None:
+        _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
+        lines = _write_line_case(
+            tmp_path,
+            [(0, 0, 0, 99999.0, 300.0), (0, 0, 1, 500.0, 300.0)],
+            {0: (99999.0, 300.0)},
+        )
+
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
+
+        assert row["direct_mw"] == 99999.0
+        assert row["reverse_mw"] == pytest.approx(300.0)
+
+    def test_without_block_hours_block_zero_stands_for_the_stage(
+        self, tmp_path: Path
+    ) -> None:
+        lines = _write_line_case(
+            tmp_path,
+            [(0, 0, 0, 400.0, 200.0), (0, 0, 1, 900.0, 700.0)],
+            {0: (1000.0, 1000.0)},
+        )
+
+        row = read_novomodelo_stage_line_bounds(tmp_path / "output", lines).row(
+            0, named=True
+        )
+
+        assert (row["direct_mw"], row["reverse_mw"]) == (400.0, 200.0)
+
+    def test_absent_line_bounds_returns_typed_empty_frame(self, tmp_path: Path) -> None:
+        df = read_novomodelo_stage_line_bounds(tmp_path / "output", [])
+
+        assert df.is_empty()
+        assert df.columns == ["line_id", "stage_id", "direct_mw", "reverse_mw"]
+
+
 class TestReadNovomodeloTrainingMetadata:
     def test_present_returns_dict(self, tmp_path: Path) -> None:
         out = tmp_path / "case" / "output"
         training_dir = out / "training"
         training_dir.mkdir(parents=True)
         (training_dir / "metadata.json").write_text(
-            json.dumps({"version": "0.14.3", "duration_seconds": 12.0})
+            json.dumps({"version": "0.14.3", "duration_seconds": 12.0}),
+            encoding="utf-8",
         )
 
         assert read_novomodelo_training_metadata(out) == {
@@ -1700,7 +1831,9 @@ class TestReadNovomodeloTrainingMetadata:
         case_dir = tmp_path / "case"
         training_dir = case_dir / "training"
         training_dir.mkdir(parents=True)
-        (training_dir / "metadata.json").write_text(json.dumps({"version": "0.14.3"}))
+        (training_dir / "metadata.json").write_text(
+            json.dumps({"version": "0.14.3"}), encoding="utf-8"
+        )
 
         assert read_novomodelo_training_metadata(case_dir / "output") == {
             "version": "0.14.3"
@@ -1710,7 +1843,7 @@ class TestReadNovomodeloTrainingMetadata:
         out = tmp_path / "case" / "output"
         training_dir = out / "training"
         training_dir.mkdir(parents=True)
-        (training_dir / "metadata.json").write_text("not valid json{")
+        (training_dir / "metadata.json").write_text("not valid json{", encoding="utf-8")
 
         assert read_novomodelo_training_metadata(out) == {}
 

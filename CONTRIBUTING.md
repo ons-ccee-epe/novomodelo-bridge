@@ -9,7 +9,7 @@ and quality gates are organised, and lists the conventions CI enforces. Read
 ```bash
 git clone https://github.com/ons-ccee-epe/novomodelo-bridge.git
 cd novomodelo-bridge
-uv sync --extra dev             # or: python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+uv sync                         # dev group included; or: python -m venv .venv && . .venv/bin/activate && pip install -e . --group dev
 uv run novomodelo-bridge --version
 ```
 
@@ -31,16 +31,18 @@ ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 ```bash
 pytest                                        # the test suite
 ruff check . && ruff format --check .         # lint and formatting, whole tree
+ty check                                      # type check, as CI runs it
 python3 scripts/ci/check_no_plan_leaks.py     # no planning vocabulary in shipped artifacts
 python3 scripts/ci/check_comment_refs.py      # no rot-prone references in source prose
 python3 scripts/ci/check_doc_paths.py         # every path cited in the docs resolves
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff and the three gates on one Python,
-the test suite on every Python version the project supports, and a coverage
-floor on the comparator reader layer (`[tool.coverage]` in `pyproject.toml`).
-CI installs the ruff version `uv.lock` pins, so a ruff upgrade changes both
-together; `tests/test_packaging.py` fails if they differ.
+CI (`.github/workflows/ci.yml`) runs ruff, `ty check` and the three gates on
+one Python, the test suite on Linux, Windows and macOS on every Python version
+the project supports, and a coverage floor on the comparator reader layer
+(`[tool.coverage]` in `pyproject.toml`). The workflows install from `uv.lock`
+(`uv sync --locked`), so a ruff or ty upgrade is a lock change;
+`tests/test_packaging.py` fails if a workflow installs another way.
 `scripts/README.md` describes each gate and the advisory reports next to them.
 
 ### Test tiers and local data
@@ -148,5 +150,8 @@ A bridge release `X.Y.Z` pairs with novomodelo `X.Y.Z`.
    (`src/novomodelo_bridge/novomodelo/compat.py`) together and refresh `uv.lock`;
    `tests/test_packaging.py` fails if they differ.
 2. Move the `Unreleased` entries in `CHANGELOG.md` under the new version.
-3. Tag `vX.Y.Z` and push the tag. `.github/workflows/release.yml` builds,
-   runs the suite, and publishes to PyPI through trusted publishing.
+3. Tag `vX.Y.Z` and push the tag; it must equal `version` in `pyproject.toml`.
+   `.github/workflows/release.yml` builds the wheel and sdist, runs the suite
+   against the built wheel, installs the wheel clean on Linux, Windows and macOS
+   and converts the mini decks, and publishes to PyPI through trusted
+   publishing. Only the canonical repository publishes.
