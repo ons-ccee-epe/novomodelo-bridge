@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,6 +32,7 @@ import polars as pl
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
 from novomodelo_bridge.core.pandas_utils import as_int
+from novomodelo_bridge.core.tolerances import BIG_M
 from novomodelo_bridge.novomodelo.case_io import (
     case_dir_for,
     resolve_hydro_productivities,
@@ -1104,6 +1106,107 @@ def read_novomodelo_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
         raise NovomodeloReadError(
             f"Failed to read line_bounds.parquet: {path}"
         ) from exc
+
+
+_STAGE_LINE_BOUNDS_SCHEMA = pl.Schema(
+    {
+        "line_id": pl.Int32,
+        "stage_id": pl.Int32,
+        "direct_mw": pl.Float64,
+        "reverse_mw": pl.Float64,
+    }
+)
+
+
+def read_novomodelo_stage_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Line capacity per (line, stage), comparable with the stage-mean flow.
+
+    Each block's capacity is its override row, else the stage's base row
+    (``block_id`` null), else the line's ``lines.json`` capacity; the stage
+    value is their block-hours-weighted mean, the same weighting
+    :func:`read_novomodelo_line_means` gives the flow. Never the base row
+    alone: it holds the max over blocks, and a stage mean drawn against it, or
+    against any single block, reads as a violation that no block has. A
+    direction unbounded in any block stays unbounded for the stage. Without
+    block hours, block 0 stands for the stage, as it does for the flow.
+
+    Returns ``line_id``, ``stage_id``, ``direct_mw``, ``reverse_mw``; typed-empty
+    when ``line_bounds.parquet`` is absent.
+    """
+    empty = pl.DataFrame(schema=_STAGE_LINE_BOUNDS_SCHEMA)
+    raw = read_novomodelo_line_bounds(novomodelo_output_dir)
+    if raw.is_empty():
+        return empty
+    raw = raw.cast({c: t for c, t in _LINE_BOUNDS_SCHEMA.items() if c in raw.columns})
+    block_hours = _load_block_hours(novomodelo_output_dir)
+    if block_hours is None:
+        block_hours = (
+            raw.select("stage_id")
+            .unique()
+            .with_columns(
+                pl.lit(0, dtype=pl.Int32).alias("block_id"), pl.lit(1.0).alias("hours")
+            )
+        )
+    static = pl.DataFrame(
+        [
+            {
+                "line_id": int(line["id"]),
+                "static_direct": float(
+                    line.get("capacity", {}).get("direct_mw", math.inf)
+                ),
+                "static_reverse": float(
+                    line.get("capacity", {}).get("reverse_mw", math.inf)
+                ),
+            }
+            for line in read_novomodelo_lines(novomodelo_output_dir)
+        ],
+        schema={
+            "line_id": pl.Int32,
+            "static_direct": pl.Float64,
+            "static_reverse": pl.Float64,
+        },
+    )
+    base = raw.filter(pl.col("block_id").is_null()).select(
+        "line_id",
+        "stage_id",
+        pl.col("direct_mw").alias("base_direct"),
+        pl.col("reverse_mw").alias("base_reverse"),
+    )
+    override = raw.filter(pl.col("block_id").is_not_null())
+    per_block = (
+        raw.select("line_id", "stage_id")
+        .unique()
+        .join(block_hours, on="stage_id")
+        .join(override, on=["line_id", "stage_id", "block_id"], how="left")
+        .join(base, on=["line_id", "stage_id"], how="left")
+        .join(static, on="line_id", how="left")
+        .with_columns(
+            pl.coalesce(
+                "direct_mw", "base_direct", "static_direct", pl.lit(math.inf)
+            ).alias("direct_mw"),
+            pl.coalesce(
+                "reverse_mw", "base_reverse", "static_reverse", pl.lit(math.inf)
+            ).alias("reverse_mw"),
+        )
+    )
+
+    def _stage_value(column: str) -> pl.Expr:
+        unbounded = pl.col(column).abs() >= BIG_M
+        weighted = (pl.col(column) * pl.col("hours")).sum() / pl.col("hours").sum()
+        return (
+            pl.when(unbounded.any())
+            .then(pl.col(column).max())
+            .otherwise(weighted)
+            .alias(column)
+        )
+
+    return (
+        per_block.group_by("line_id", "stage_id")
+        .agg(_stage_value("direct_mw"), _stage_value("reverse_mw"))
+        .select(list(_STAGE_LINE_BOUNDS_SCHEMA))
+        .cast(_STAGE_LINE_BOUNDS_SCHEMA)
+        .sort("line_id", "stage_id")
+    )
 
 
 def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:

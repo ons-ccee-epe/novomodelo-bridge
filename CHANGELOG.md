@@ -111,6 +111,10 @@ links are cobre-bridge's.
   release that wrote it**: with DECOMP 32.9 or later, deficit, marginal cost and
   the energy balance no longer come from shifted `dec_oper_sist.csv` columns.
 
+- **`compare` draws each line's capacity on the Network tab as the hours-weighted
+  mean of its block limits**, the same weighting as the plotted flow: a line
+  whose limit changes by block no longer shows a stage below its lower bound.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins
