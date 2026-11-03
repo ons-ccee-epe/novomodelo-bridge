@@ -148,7 +148,7 @@ def newave_mini_deck() -> Path:
 
 @pytest.fixture
 def dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force a plain, fixed-width terminal for Typer ``--help`` content tests.
+    """Force a plain, fixed-width terminal for tests that read Typer's Rich output.
 
     Typer's Rich help (``rich_markup_mode="rich"``) renders its options table
     from the detected terminal. On CI, GitHub Actions sets
@@ -158,8 +158,10 @@ def dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     locally but fail on CI. ``TERM=dumb`` makes Rich treat the captured output as
     a plain, fixed-width stream and emit the help content deterministically.
 
-    Only the ``--help`` content tests opt in (via this fixture) so the fixed
-    width does not perturb width-sensitive rendering in the rest of the suite.
+    Forced terminal mode also styles usage errors, splitting the text a test
+    looks for with ANSI codes. Only tests that read help or usage-error text opt
+    in (via this fixture) so the fixed width does not perturb width-sensitive
+    rendering in the rest of the suite.
     The real CLI, writing to a normal stdout, is unaffected.
     """
     monkeypatch.setenv("TERM", "dumb")

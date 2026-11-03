@@ -100,6 +100,12 @@ links are cobre-bridge's.
   it** (for example, a DECOMP deck with no UH records, or a `dger.dat` with no
   study start). Several such cases crashed with an internal `AttributeError`
   or `TypeError` instead.
+- **`export dessem` writes its files on Windows.** It stopped at the first one
+  with `PermissionError`, opening the output directory to flush the rename.
+- **The CLI writes UTF-8 to a Windows pipe or redirect**, whose code page cannot
+  encode the status glyphs; commands crashed with `UnicodeEncodeError`.
+- **`convert --dry-run` wraps a long path in its listing** instead of cutting it
+  short.
 
 ## [0.19.1] - 2026-10-26
 

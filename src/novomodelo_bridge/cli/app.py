@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import codecs
+import io
 import logging
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -517,6 +520,18 @@ def _dashboard(
     )
 
 
+def _use_utf8_streams() -> None:
+    """Write stdout and stderr as UTF-8 whatever their encoding: a Windows pipe
+    or redirect otherwise takes the ANSI code page, which cannot encode the
+    status glyphs."""
+    for stream in (sys.stdout, sys.stderr):
+        if (
+            isinstance(stream, io.TextIOWrapper)
+            and codecs.lookup(stream.encoding).name != "utf-8"
+        ):
+            stream.reconfigure(encoding="utf-8")
+
+
 def main() -> None:
     """Console entry point: run the Typer app, restoring the logger afterwards.
 
@@ -524,6 +539,7 @@ def main() -> None:
     ``_configure_logging`` flips, and removes + closes any ``--log-file``
     ``FileHandler`` it attached, so a real CLI run never leaks logging state.
     """
+    _use_utf8_streams()
     pkg_logger = logging.getLogger("novomodelo_bridge")
     prior_propagate = pkg_logger.propagate
     try:
