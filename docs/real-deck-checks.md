@@ -133,6 +133,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | DECOMP's plane form and exact production function | DECOMP's planes in `avl_cortesfpha_dec.rvN`, evaluated with the storage above the `hidr.dat` minimum and the `VU` lateral flow of the same block, reproduce the `Ghid (FPHA)` column of `dec_desvfpha.rvN`, so the comparison reads them in that form. The exact production function rebuilt from the deck (cota polynomial, `polinjus` families read at the downstream plant's printed forebay, `VL`, `VU` and `VA` flows, `hidr.dat` losses, the `eco_fpha_.rvN` generation limit) reproduces its `Ghid (FPH)` column on the reduced deck within 0.004 MW at the median point and 0.62 MW at the worst, a plant with a drowned tailrace. The monthly deck's run writes no `dec_desvfpha.rvN`, which is why the comparison does not depend on it. The unit tests in `tests/comparators/test_decomp_operating_points.py` pin the same conventions on one plant's committed excerpt. Captured with DECOMP 32.0.1 in October 2026. |
 
+### A January DECOMP deck, whose first week starts in December
+
+| Check | Verified |
+| --- | --- |
+| Dated `AC` records against DECOMP's `oper_disp_usih.csv` | On the January 2026 PMO, whose `DT` week starts on 27/12/2025, the dated `AC` records name January weeks 1 to 6 and February week 1, all with the year. Each plant's available generation on each stage, the sum of its unit groups' `max_generation_mw` read from `hydro_unit_group_bounds.parquet` or else the group's envelope in `hydros.json`, matches the `GhidrMax` column of DECOMP's `oper_disp_usih.csv` to its print resolution on every plant and stage. That includes the first week, where `AC NUMMAQ` takes Tucuruí's third set from 11 to 9 machines. Itaipu's rows are per block and also carry its `RE` ceilings, so its availability is read with those ceilings set apart. A three-iteration `novomodelo run` of the converted case loads the same per-stage unit-group limits, as its `training/dictionaries/bounds.parquet` shows; no full run is needed for this check. The unit tests in `tests/decomp/test_cadastro_calendar.py` and `tests/decomp/test_cadastro_machine.py` pin the same week resolution on a synthetic January calendar. Captured with DECOMP 32.0.1 and novomodelo 0.19.1 in November 2026. |
+
 ### A NEWAVE FPHA run with every plant's nwlistop tables, plus its solved novomodelo case
 
 | Check | Verified |

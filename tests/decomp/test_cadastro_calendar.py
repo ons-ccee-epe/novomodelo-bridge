@@ -4,7 +4,8 @@ Pins the ``(mes, semana, ano)`` -> stage-index resolution rules of
 ``novomodelo_bridge.decomp.converters.cadastro.stage_resolution.resolve_effective_stage``
 against a synthetic two-month operative calendar (two July weekly stages +
 one August monthly stage), mirroring the calendar shape the source model's
-operative weeks and months produce. ``mes`` is exercised in its real
+operative weeks and months produce, and against a January study whose first
+week starts in the previous December. ``mes`` is exercised in its real
 representation — a 3-letter Portuguese month-abbreviation string, with an
 empty string for a blank month, and ``semana``/``ano`` as floats or NaN —
 plus a synthetic int/float ``mes`` back-compat case.
@@ -78,6 +79,47 @@ def test_month_before_horizon_is_stage_zero(calendar: list[OperativeStage]) -> N
 
 def test_month_after_horizon_is_none(calendar: list[OperativeStage]) -> None:
     assert resolve_effective_stage("OUT", None, 2026.0, calendar) is None
+
+
+@pytest.fixture
+def january_calendar() -> list[OperativeStage]:
+    """A January 2026 study: stage 0 starts 27/12/2025; stages 0..5 are the
+    January weekly stages, stage 6 the February monthly stage."""
+    return build_operative_calendar(date(2025, 12, 27), [[168.0]] * 6 + [[528.0]])
+
+
+def test_january_study_dated_first_week_is_stage_zero(
+    january_calendar: list[OperativeStage],
+) -> None:
+    assert resolve_effective_stage("JAN", 1.0, 2026.0, january_calendar) == 0
+
+
+def test_january_study_dated_semana_n_is_stage_n_minus_one(
+    january_calendar: list[OperativeStage],
+) -> None:
+    assert resolve_effective_stage("JAN", 2.0, 2026.0, january_calendar) == 1
+    assert resolve_effective_stage("JAN", None, 2026.0, january_calendar) == 0
+
+
+def test_january_study_blank_year_is_the_operative_year(
+    january_calendar: list[OperativeStage],
+) -> None:
+    nan = float("nan")
+    assert resolve_effective_stage("JAN", 1.0, nan, january_calendar) == 0
+    assert resolve_effective_stage("JAN", 2.0, nan, january_calendar) == 1
+    assert resolve_effective_stage("FEV", 1.0, nan, january_calendar) == 6
+
+
+def test_january_study_previous_december_is_stage_zero(
+    january_calendar: list[OperativeStage],
+) -> None:
+    assert resolve_effective_stage("DEZ", 4.0, 2025.0, january_calendar) == 0
+
+
+def test_january_study_month_after_horizon_is_none(
+    january_calendar: list[OperativeStage],
+) -> None:
+    assert resolve_effective_stage("MAR", None, float("nan"), january_calendar) is None
 
 
 def test_unrecognized_month_raises_value_error(

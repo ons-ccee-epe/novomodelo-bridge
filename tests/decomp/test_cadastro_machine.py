@@ -446,6 +446,64 @@ def test_build_effective_cadastro_applied_counts_distinct_pairs_and_plants(
     assert report.applied["numero_maquinas"] == 2
 
 
+def _january_study_nummaq(semana: float, ano: float) -> _FakeDadger:
+    """A Tucuruí-shaped ``AC NUMMAQ``: conjunto 3 drops from the ``hidr``
+    base 11 machines to 9 in a January week."""
+    return _FakeDadger(
+        {
+            ACNUMMAQ: _ac_frame(
+                {
+                    "codigo_usina": 275,
+                    "indice_conjunto": 3,
+                    "numero_maquinas": 9,
+                    "mes": "JAN",
+                    "semana": semana,
+                    "ano": ano,
+                }
+            ),
+        }
+    )
+
+
+_TUCURUI_CONJUNTO_3 = _hidr_frame(
+    {
+        275: {
+            "desvio": 0.0,
+            "maquinas_conjunto_3": 11.0,
+            "potencia_nominal_conjunto_3": 390.0,
+            "vazao_nominal_conjunto_3": 576.0,
+            "queda_nominal_conjunto_3": 60.8,
+        }
+    }
+)
+_ELEVEN = MachineSet(11, 390.0, 576.0, 60.8)
+_NINE = MachineSet(9, 390.0, 576.0, 60.8)
+
+
+def test_build_effective_cadastro_january_study_first_week_override_applies_from_stage_zero() -> (
+    None
+):
+    """In a January study the first week starts in December; an ``AC`` for
+    January week 1 still takes effect at stage 0."""
+    calendar = build_operative_calendar(date(2025, 12, 27), [[168.0]] * 6 + [[528.0]])
+    effective, _ = build_effective_cadastro(
+        _january_study_nummaq(1.0, 2026.0), _TUCURUI_CONJUNTO_3, calendar
+    )
+    assert [effective.machine_set(275, 3, s) for s in range(7)] == [_NINE] * 7
+
+
+def test_build_effective_cadastro_january_study_blank_year_week_two_applies_from_stage_one() -> (
+    None
+):
+    calendar = build_operative_calendar(date(2025, 12, 27), [[168.0]] * 6 + [[528.0]])
+    effective, _ = build_effective_cadastro(
+        _january_study_nummaq(2.0, float("nan")), _TUCURUI_CONJUNTO_3, calendar
+    )
+    assert [effective.machine_set(275, 3, s) for s in range(7)] == [_ELEVEN] + [
+        _NINE
+    ] * 6
+
+
 def test_build_effective_cadastro_unknown_code_compound_key_raises_value_error(
     calendar: list[OperativeStage],
 ) -> None:
