@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import subprocess
 import sys
 import typing
 import webbrowser
@@ -27,19 +26,11 @@ from typer.testing import CliRunner, Result
 from novomodelo_bridge.cli import app
 from novomodelo_bridge.cli.args import DashboardArgs
 from novomodelo_bridge.cli.dashboard import _run_dashboard
+from tests.cli.conftest import _run_cli_subprocess
 
 
 def _invoke(argv: list[str]) -> Result:
     return CliRunner().invoke(app, argv)
-
-
-def _run_cli_subprocess(*args: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the novomodelo-bridge entry point as a real subprocess."""
-    return subprocess.run(
-        [sys.executable, "-m", "novomodelo_bridge.cli", *args],
-        capture_output=True,
-        text=True,
-    )
 
 
 def _make_case_dir(tmp_path: Path) -> Path:
