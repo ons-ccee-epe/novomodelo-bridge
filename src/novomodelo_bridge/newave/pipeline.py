@@ -40,7 +40,7 @@ from novomodelo_bridge.newave.files import unindexed_libs_diagnostic
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +184,7 @@ class _EntityArtifacts:
     hydros: dict
     geometry: pa.Table
     thermals: dict
+    load_stats: pa.Table
     buses: dict
     lines: dict
     pumping: dict
@@ -199,7 +200,6 @@ class _TemporalStochasticArtifacts:
     config: dict
     initial_conditions: dict
     inflow_stats: pa.Table
-    load_stats: pa.Table
     inflow_history: pa.Table
     water_withdrawal: pa.Table | None
     storage_bounds: pa.Table | None
@@ -245,7 +245,8 @@ def _discover(src: Path) -> tuple[NewaveCase, NewaveIdMap]:
 
 def _convert_core_entities(case: NewaveCase, id_map: NewaveIdMap) -> _EntityArtifacts:
     """The ``step("Converting entities")`` phase: hydros and their geometry,
-    thermals, buses, lines, pumping stations, and ``penalties.json``.
+    thermals, the load statistics, buses, lines, pumping stations, and
+    ``penalties.json``.
     """
     logger.debug("Converting hydros")
     hydros_dict = hydro_conv.convert_hydros(case, id_map)
@@ -262,8 +263,15 @@ def _convert_core_entities(case: NewaveCase, id_map: NewaveIdMap) -> _EntityArti
     logger.debug("Converting thermals")
     thermals_dict = thermal_conv.convert_thermals(case, id_map)
 
+    logger.debug("Converting load stats")
+    load_table = stochastic_conv.convert_load_stats(case, id_map)
+
     logger.debug("Converting buses")
-    buses_dict = network_conv.convert_buses(case, id_map)
+    buses_dict = network_conv.convert_buses(
+        case,
+        id_map,
+        reference_load_mw=network_conv.mean_bus_load_mw(load_table, case.horizon),
+    )
 
     logger.debug("Converting lines")
     lines_dict = network_conv.convert_lines(case, id_map)
@@ -302,6 +310,7 @@ def _convert_core_entities(case: NewaveCase, id_map: NewaveIdMap) -> _EntityArti
         hydros=hydros_dict,
         geometry=geometry_table,
         thermals=thermals_dict,
+        load_stats=load_table,
         buses=buses_dict,
         lines=lines_dict,
         pumping=pumping_dict,
@@ -314,7 +323,7 @@ def _convert_temporal_and_stochastic(
     case: NewaveCase, id_map: NewaveIdMap
 ) -> _TemporalStochasticArtifacts:
     """The ``step("Converting temporal & stochastic")`` phase: stages, config,
-    initial conditions, the inflow/load statistics and history, and the per-stage
+    initial conditions, the inflow statistics and history, and the per-stage
     hydro bound sources.
     """
     logger.debug("Converting stages")
@@ -336,9 +345,6 @@ def _convert_temporal_and_stochastic(
     logger.debug("Converting inflow stats")
     inflow_table = stochastic_conv.convert_inflow_stats(case, id_map)
 
-    logger.debug("Converting load stats")
-    load_table = stochastic_conv.convert_load_stats(case, id_map)
-
     logger.debug("Converting inflow history from vazoes.dat")
     inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)
 
@@ -356,7 +362,6 @@ def _convert_temporal_and_stochastic(
         config=config_dict,
         initial_conditions=ic_dict,
         inflow_stats=inflow_table,
-        load_stats=load_table,
         inflow_history=inflow_history_table,
         water_withdrawal=withdrawal_table,
         storage_bounds=storage_bounds_table,
@@ -570,7 +575,7 @@ def _write_parquet_outputs(
         "scenarios/inflow_seasonal_stats.parquet", temporal.inflow_stats
     )
 
-    writer.write_parquet("scenarios/load_seasonal_stats.parquet", temporal.load_stats)
+    writer.write_parquet("scenarios/load_seasonal_stats.parquet", entities.load_stats)
 
     writer.write_parquet("scenarios/inflow_history.parquet", temporal.inflow_history)
 
@@ -692,6 +697,7 @@ def convert_newave_case(
     *,
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Convert a source-model case directory to a Novomodelo case directory.
 
@@ -712,6 +718,9 @@ def convert_newave_case(
         When ``True``, run the full in-memory conversion but write nothing to
         *dst* (no files, no subdirectories). The would-write paths are still
         recorded in :attr:`ConversionReport.would_write_paths`.
+    float_digits:
+        Significant digits of the floats in the case's JSON files; ``None``
+        keeps full precision.
 
     Returns
     -------
@@ -731,7 +740,9 @@ def convert_newave_case(
         violation in the converted artifacts. No report is returned.
     """
     return run_conversion(
-        lambda: _convert_newave_case_impl(src, dst, on_phase, dry_run=dry_run),
+        lambda: _convert_newave_case_impl(
+            src, dst, on_phase, dry_run=dry_run, float_digits=float_digits
+        ),
         dst,
         NEWAVE_CLEARED_ARTIFACTS,
         dry_run=dry_run,
@@ -744,6 +755,7 @@ def _convert_newave_case_impl(
     on_phase: Callable[[str], None] | None = None,
     *,
     dry_run: bool = False,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Run the conversion pipeline (warning capture handled by the wrapper).
 
@@ -774,7 +786,7 @@ def _convert_newave_case_impl(
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in
     # exactly one place, rather than guarding ~30 individual write sites.
-    writer = CaseWriter(dst, dry_run=dry_run)
+    writer = CaseWriter(dst, dry_run=dry_run, float_digits=float_digits)
 
     step("Writing JSON")
     _write_json_outputs(writer, entities, temporal, constraints)

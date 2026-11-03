@@ -176,7 +176,11 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
             ) as step,
         ):
             report: ConversionReport = convert_newave_case(
-                src, dst, on_phase=step, dry_run=args.dry_run
+                src,
+                dst,
+                on_phase=step,
+                dry_run=args.dry_run,
+                float_digits=args.json_float_digits,
             )
     except Exception as exc:
         _handle_conversion_pipeline_failure(
@@ -441,6 +445,7 @@ def _import_decomp_boundary_fcf(
                 cost_scale_factor=1.0,
                 config=config,
                 initial_conditions=initial_conditions,
+                float_digits=args.json_float_digits,
             )
     except Exception as exc:
         _handle_boundary_fcf_failure(
@@ -598,6 +603,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
                 on_phase=step,
                 dry_run=args.dry_run,
                 fcf_inputs_out=fcf_inputs,
+                float_digits=args.json_float_digits,
             )
     except Exception as exc:
         _handle_conversion_pipeline_failure(

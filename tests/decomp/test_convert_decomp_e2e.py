@@ -13,8 +13,14 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from novomodelo_bridge.decomp.pipeline import convert_decomp_case
-from tests.conftest import requires_novomodelo_python
+from tests.conftest import (
+    FloatDigitsKwargs,
+    case_json_floats,
+    requires_novomodelo_python,
+)
 
 #: A ``CI`` import contract 7 in submarket 1, and an ``FE`` line putting it into
 #: ``RE 21`` with coefficient -0.5 (fixed-width columns per the DECOMP manual).
@@ -77,3 +83,17 @@ def test_fe_contract_term_reaches_the_re_generic_constraint(
     )
     (re_21,) = [c for c in document["constraints"] if c["name"] == "RE_21"]
     assert re_21["expression"].endswith("- 0.5 * contract_import(0)")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "digits"), [({"float_digits": 4}, 4), ({}, 15)], ids=["4", "default"]
+)
+def test_decomp_mini_deck_writes_json_floats_at_requested_digits(
+    decomp_mini_deck: Path, tmp_path: Path, kwargs: FloatDigitsKwargs, digits: int
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True, **kwargs)
+
+    floats = case_json_floats(dst)
+    assert floats
+    assert all(value == float(f"{value:.{digits}g}") for value in floats)

@@ -89,6 +89,7 @@ $ novomodelo-bridge convert newave [OPTIONS] {src} {dst}
 * `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
+* `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]
 * `-v, --verbose`: Increase console log verbosity (-v INFO, -vv DEBUG).  [default: 0]
 * `--log-file PATH`: Write the full DEBUG log to PATH (the console verbosity is unaffected).
 * `--no-color`: Disable coloured output (also honoured via the NO_COLOR env var).
@@ -122,6 +123,7 @@ $ novomodelo-bridge convert decomp [OPTIONS] {src} {dst}
 * `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
+* `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]
 * `--no-fcf`: Skip importing the deck&#x27;s boundary FCF. By default, when the deck declares cortes/cortesh files (its FC records), they are imported as a terminal-stage novomodelo policy checkpoint via an in-process 1-iteration novomodelo pass (slow; requires novomodelo-python). Pass this for a quick conversion without the terminal FCF. The FCF is always skipped under --dry-run.
 * `-v, --verbose`: Increase console log verbosity (-v INFO, -vv DEBUG).  [default: 0]
 * `--log-file PATH`: Write the full DEBUG log to PATH (the console verbosity is unaffected).

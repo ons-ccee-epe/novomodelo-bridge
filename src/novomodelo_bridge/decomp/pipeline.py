@@ -20,6 +20,7 @@ from typing import NamedTuple
 import polars as pl
 import pyarrow as pa
 from idecomp.decomp import Dadger, Vazoes
+from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core import emission_checks
@@ -73,13 +74,14 @@ from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
+from novomodelo_bridge.decomp.fcf.cortes import read_patamar_fractions
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
     unindexed_libs_diagnostic,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 _LOG = logging.getLogger(__name__)
 
@@ -1108,6 +1110,13 @@ def _convert_thermals_with_gnl(
         else None
     )
     if gnl_model is not None:
+        gnl_model = anticipated_conv.fill_undeclared_block_hours(
+            gnl_model,
+            case.calendar,
+            read_patamar_fractions(Cortesh.read(str(case.files.cortesh)))
+            if case.files.cortesh is not None
+            else None,
+        )
         gnl = anticipated_conv.convert_gnl(
             gnl_model,
             first_thermal_id=max(t["id"] for t in thermals_dict["thermals"]) + 1,
@@ -2219,6 +2228,7 @@ def convert_decomp_case(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
 
@@ -2240,6 +2250,9 @@ def convert_decomp_case(
         ``initial_conditions.json``, so a caller (the CLI's boundary-FCF
         step) can thread them into ``import_boundary_fcf`` without
         re-reading either file. ``None`` (the default) leaves it unused.
+    float_digits:
+        Significant digits of the floats in the case's JSON files; ``None``
+        keeps full precision.
 
     Returns
     -------
@@ -2278,6 +2291,7 @@ def convert_decomp_case(
             on_phase=on_phase,
             dry_run=dry_run,
             fcf_inputs_out=fcf_inputs_out,
+            float_digits=float_digits,
         ),
         dst,
         DECOMP_CLEARED_ARTIFACTS,
@@ -2292,6 +2306,7 @@ def _convert_decomp_case_impl(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Run the DECOMP conversion pipeline (warning capture handled by the wrapper).
 
@@ -2316,7 +2331,7 @@ def _convert_decomp_case_impl(
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in
     # exactly one place, rather than guarding ~24 individual write sites.
-    writer = CaseWriter(dst, dry_run=dry_run)
+    writer = CaseWriter(dst, dry_run=dry_run, float_digits=float_digits)
 
     step("Converting entities")
     _convert_core_entities(artifacts, writer)

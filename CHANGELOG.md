@@ -16,6 +16,10 @@ links are cobre-bridge's.
 
 ### Added
 
+- **`convert newave` and `convert decomp` take `--json-float-digits N`** and
+  write the case's JSON floats with N significant digits (1 to 17, default 15),
+  so their JSON files differ from an earlier conversion's; pass 17 to keep full
+  precision. Below about 10 digits novomodelo can reject the case.
 - **`convert decomp` converts the `FE` contract terms of `RE` constraints**
   into `contract_import`/`contract_export` terms. A term whose number matches
   no single `CI`/`CE` contract in its submarket drops its constraint, with a
@@ -55,6 +59,22 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`export dessem` exports a case whose water in transit outlives the study**
+  instead of failing with `year -214749 is out of range`; a cut coefficient on
+  water that would arrive after the study ends is dropped with a
+  `dessem-fcf-undated-buckets-priced` warning.
+- **`convert newave` reads the deficit depths in `sistema.dat` as a share of
+  load.** A 5 % segment was written as 0.05 MW, so nearly all deficit was
+  priced at the last segment's cost; each depth is now that share of the
+  submarket's mean study load, listed in a `deficit-depth-from-mean-load`
+  warning. Reconvert NEWAVE cases.
+- **`convert decomp` converts the GNL plants of later revisions**, which failed
+  or did not pass `novomodelo validate` from the second revision of a month on,
+  and keeps a plant whose `GL` commits 0 MW. The weeks after the study follow
+  the deck's `GL` weeks and take the `TG` cost and limits of the months they
+  cover; `GL` weeks without patamar durations are weighted by `cortesh.dat`,
+  with a `decomp-gnl-block-hours-fallback` warning when it does not cover their
+  month. Reconvert DECOMP cases with GNL plants.
 - **`convert newave` reads a blank `RE-LIM-FORM-PER-PAT` limit as unbounded**,
   as the NEWAVE manual states; it used to stop the conversion, or drop the line
   when the upper limit was left off. A conditional limit (`se(...)`) stops the
