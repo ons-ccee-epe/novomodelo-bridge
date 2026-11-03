@@ -397,12 +397,12 @@ class TestFphaConverters:
         assert table is not None
         rows = table.to_pylist()
         for hydro_id, code in ((0, 1), (1, 2)):
-            available = _operational_caps(case.hidr.cadastro.loc[code], "X")[1]
+            turbined, available = _operational_caps(case.hidr.cadastro.loc[code], "X")
             plant_rows = [r for r in rows if r["hydro_id"] == hydro_id]
             assert [r["stage_id"] for r in plant_rows] == list(range(60))
             for row in plant_rows:
                 assert row["max_generation_mw"] == pytest.approx(available)
-                assert row["max_turbined_m3s"] is None
+                assert row["max_turbined_m3s"] == pytest.approx(turbined)
         assert _operational_caps(case.hidr.cadastro.loc[1], "X")[1] == pytest.approx(
             4 * 200.0 * _AVAILABILITY
         )
@@ -461,7 +461,7 @@ class TestFphaConverters:
             assert caps[stage_id]["max_generation_mw"] == pytest.approx(
                 200.0 * _AVAILABILITY
             )
-        assert caps[6]["max_turbined_m3s"] is None
+        assert caps[6]["max_turbined_m3s"] == pytest.approx(final[0])
         assert caps[6]["max_generation_mw"] == pytest.approx(3 * 200.0 * _AVAILABILITY)
 
         generation = convert_hydros(case, id_map)["hydros"][0]["generation"]

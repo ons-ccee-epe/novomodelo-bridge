@@ -1232,8 +1232,8 @@ class TestCadastroPipelineWiring:
         assert values[1] == pytest.approx(30.0)
 
     def test_plant_turbine_limit_lands_in_hydro_bounds(self, tmp_path: Path) -> None:
-        """A plant-wide turbined-flow limit below its groups' summed caps
-        becomes that stage's ``max_turbined_m3s``."""
+        """A plant-wide turbined-flow limit is that plant's ``max_turbined_m3s``
+        on every stage, including the stages where it equals its groups' sum."""
         limits = TurbineLimits(
             {(1, 0): (100.0,) * 3, (2, 0): (100.0,) * 3},
             plant_caps={1: (100.0, 80.0, 100.0)},
@@ -1249,7 +1249,7 @@ class TestCadastroPipelineWiring:
             for row in table.to_pylist()
             if row["max_turbined_m3s"] is not None
         ]
-        assert rows == [(0, 1, 80.0)]
+        assert rows == [(0, 0, 100.0), (0, 1, 80.0), (0, 2, 100.0)]
 
     def test_initial_conditions_json_stamps_schema_as_first_key(
         self, tmp_path: Path
@@ -2212,16 +2212,21 @@ class TestMiniDeckDiversionChannels:
 
 class TestMiniDeckItaipuFrequencyBounds:
     """The mini deck's 50/60 Hz ``RE`` records on Itaipu bound its two unit
-    groups; the plant row carries no generation bound, so novomodelo's plant cap
-    never limits the sum of both halves to one half's limit."""
+    groups; the plant row carries only the two halves' summed available power
+    (7000 MW × ``MP`` × ``FD`` each), so novomodelo's plant cap never limits the
+    sum of both halves to one half's limit.
+
+    Each group's ceiling is the lowest of its sector's 7000 MW × ``MP`` × ``FD``,
+    its ``RE`` upper limit and its ``RI`` maximum, and its floor the higher of
+    the ``RI`` and ``RE`` lower limits, per stage and block. The deck's 50 Hz
+    half has every source winning somewhere: ``MP`` (0.929, 0.900, 0.947), the
+    ``FD`` of 0.877 on the last stage, ``LU 461`` and its stage-4 record, and
+    ``RI 66``'s two records, as floor and as ceiling; the 60 Hz half takes its
+    ``RI`` maximum on the last stage's second block."""
 
     def test_frequency_records_land_on_the_unit_groups(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        import json
-
-        import pyarrow.parquet as pq
-
         from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 
         out = tmp_path / "out"
@@ -2240,25 +2245,45 @@ class TestMiniDeckItaipuFrequencyBounds:
             ).to_pylist()
             if row["hydro_id"] == itaipu
         ]
-        groups = [
+        group_rows = [
             row
             for row in pq.read_table(
                 out / "constraints" / "hydro_unit_group_bounds.parquet"
             ).to_pylist()
-            if row["hydro_id"] == itaipu and row["stage_id"] == 0
+            if row["hydro_id"] == itaipu and row["block_id"] is not None
         ]
 
-        assert plant
-        assert all(
-            row["min_generation_mw"] is None and row["max_generation_mw"] is None
-            for row in plant
+        assert all(row["min_generation_mw"] is None for row in plant)
+        assert [row["max_generation_mw"] for row in plant] == pytest.approx(
+            [13503.0, 13300.0, 13629.0, 12278.0]
         )
-        by_group_block = {
-            (row["hydro_unit_group_id"], row["block_id"]): row for row in groups
+        floor_50hz = [(4267.2, 4073.2, 3491.7)] * 3 + [(3818.2, 3645.2, 3130.7)]
+        ceiling_50hz = [
+            (6400.0, 6503.0, 6310.5),
+            (6300.0, 6300.0, 6300.0),
+            (6400.0, 6629.0, 6310.5),
+            (6139.0, 6139.0, 5800.0),
+        ]
+        ceiling_60hz = [(7000.0,) * 3] * 3 + [(6139.0, 6000.0, 6139.0)]
+        expected = {
+            "min_generation_mw": {0: floor_50hz, 1: [(2000.0,) * 3] * 4},
+            "max_generation_mw": {0: ceiling_50hz, 1: ceiling_60hz},
         }
-        assert by_group_block[(0, 2)]["max_generation_mw"] == 6310.5
-        assert by_group_block[(1, 0)]["min_generation_mw"] == 2000.0
-        assert by_group_block[(1, 0)]["max_generation_mw"] == 7000.0
+        for column, per_group in expected.items():
+            emitted = {
+                (row["hydro_unit_group_id"], row["stage_id"], row["block_id"]): row[
+                    column
+                ]
+                for row in group_rows
+            }
+            assert emitted == pytest.approx(
+                {
+                    (group, stage, block): grid[stage][block]
+                    for group, grid in per_group.items()
+                    for stage in range(4)
+                    for block in range(3)
+                }
+            ), column
 
 
 class TestMiniDeckFphaProductionModels:

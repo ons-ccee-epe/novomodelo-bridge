@@ -30,9 +30,12 @@ from novomodelo_bridge.decomp.converters.hydro import (
     TurbineLimits,
     compute_turbine_limits,
     convert_hydro_group_availability,
+    plant_available_power,
     plant_turbine_limit_contributions,
+    split_plant_generation_contributions,
     stage_availability_factors,
 )
+from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
@@ -377,13 +380,17 @@ def test_plant_limit_below_the_groups_sum_becomes_a_turbined_bound() -> None:
     assert [c.upper for c in contributions] == pytest.approx([180.0] * 3)
 
 
-def test_plant_limit_at_the_groups_sum_adds_no_bound() -> None:
-    """Both groups generator-bound: their caps already sum to the plant's."""
+def test_plant_limit_at_the_groups_sum_is_still_written_on_every_stage() -> None:
+    """Both groups generator-bound: their caps already sum to the plant's, and
+    the plant row restates it."""
     limits = _itaipu_limits(40.0, 40.0)
     contributions = plant_turbine_limit_contributions(
         limits, DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     )
-    assert contributions == []
+    assert [c.stage_id for c in contributions] == [0, 1, 2]
+    assert [c.upper for c in contributions] == pytest.approx(
+        [40.0 / 0.8 + 20.0 / 0.8] * 3
+    )
 
 
 def test_unconverged_limit_warns_and_keeps_the_last_flow() -> None:
@@ -555,8 +562,48 @@ def test_itaipu_fd_row_without_frequency_derates_both_groups() -> None:
 
     for group_id in (0, 1):
         assert factors[(66, group_id, 2)] == pytest.approx(0.877)
-        assert values[(0, group_id, 2)].max_generation_mw == pytest.approx(877.0)
-        assert (0, group_id, 0) not in values
+        assert [
+            values[(0, group_id, stage)].max_generation_mw for stage in range(3)
+        ] == pytest.approx([1000.0, 1000.0, 877.0])
+
+
+def test_split_plant_generation_bound_sums_its_groups_on_every_stage() -> None:
+    fd = pd.DataFrame(
+        [
+            {"codigo_usina": 66, "frequencia": frequency}
+            | {"fator_1": 1.0, "fator_2": factor, "fator_3": 0.877}
+            for frequency, factor in ((50.0, 0.5), (60.0, 1.0))
+        ]
+    )
+    case, effective = _itaipu_split_case(fd)
+    values = convert_hydro_group_availability(
+        case,
+        _ITAIPU_ID_MAP,
+        effective=effective,
+        turbine_limits=flat_turbine_limits(_ITAIPU_ID_MAP, 3, group_counts={66: 2}),
+    )
+
+    contributions = split_plant_generation_contributions(values)
+
+    assert [(c.family, c.entity_id, c.stage_id, c.block_id) for c in contributions] == [
+        ("hydro", 0, stage, None) for stage in range(3)
+    ]
+    assert {(c.axis, c.lower) for c in contributions} == {("generation", None)}
+    assert [c.upper for c in contributions] == pytest.approx([2000.0, 1500.0, 1754.0])
+
+
+def test_single_group_plant_gets_no_split_plant_generation_bound() -> None:
+    values = {
+        (0, 0, stage): GroupBoundEntry(max_generation_mw=500.0, max_turbined_m3s=50.0)
+        for stage in range(3)
+    }
+    assert split_plant_generation_contributions(values) == []
+
+
+def test_plant_available_power_rejects_a_per_block_generation_ceiling() -> None:
+    values = {(0, 0, 0): GroupBoundEntry(max_generation_mw=(500.0, 400.0))}
+    with pytest.raises(TypeError, match="hydro 0, stage 0"):
+        plant_available_power(values)
 
 
 def test_itaipu_fd_mixing_plant_wide_and_frequency_rows_raises() -> None:

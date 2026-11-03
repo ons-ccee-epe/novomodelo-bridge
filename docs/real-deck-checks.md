@@ -169,6 +169,12 @@ These were never tests. They are recorded so they can be repeated.
 | --- | --- |
 | GNL `ger_usit` abated with its `GL` commanded generation | On the copy of `DEC_ONS_062026_RV0_VE_LPPs_COMPLETAS`, the restrictions whose `GPC`/`GPC2` expressions include the `ger_usit` of the `dadgnl` GNL plant convert, and their bound is the deck's limit less the formula coefficient times the plant's commanded generation. A further copy with that plant's `GL` generation made different per block, and in one week of the monthly stage, moves each such bound in every active cell by its formula coefficient times the change in the block's commanded value, the monthly stage taking the `duracao`-weighted mean of its `GL` weeks; no other restriction moves. Captured in October 2026. |
 
+### Two full DECOMP decks and both mini decks, with capacity bounds written on every stage
+
+| Check | Verified |
+| --- | --- |
+| Capacity bounds on every stage leave the solved case unchanged | Each deck converted twice: once writing a plant's or unit group's available power and turbined-flow limit only where they bind, and once writing them on every stage. Only `hydro_bounds.parquet` and `hydro_unit_group_bounds.parquet` differ. Every added value equals the declared value novomodelo applied in its place. The exception is Itaipu's plant row, which carries the sum of its two frequency groups and sits at or above their summed ceilings on every block. `novomodelo validate` reports the same on both conversions. Converted with `--json-float-digits 17` and trained for a few iterations, the two conversions give bit-identical lower and upper bounds. The LP bounds novomodelo resolves differ only on Itaipu's plant row and on per-block copies of a group's turbined-flow limit that were already in force at stage level. At the default JSON precision, the restated values carry the parquet's full precision, where the other conversion fell back on the rounded `hydros.json` value, so the costs differ at floating-point rounding. Captured with novomodelo 0.19.1 in November 2026. |
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the

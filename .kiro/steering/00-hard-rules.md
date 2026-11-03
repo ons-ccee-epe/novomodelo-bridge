@@ -49,7 +49,8 @@ is read and are the authoritative statements; do not restate them here:
 
 - `.claude/rules/comments.md` (`**/*.py`) — comment and docstring discipline.
 - `.claude/rules/doc-integrity.md` (`*.md`) — prose docs: no hand-frozen
-  counts or versions, every cited path resolves, sober voice.
+  counts or versions, every cited path resolves, sober voice, and the
+  CHANGELOG admission test and entry shape.
 - `.claude/rules/testing.md` (`tests/`) — the three test tiers, deck guards,
   mock discipline, golden files.
 - `.claude/rules/bridge.md` (`src/`) — twin-track symmetry, the tracked

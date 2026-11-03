@@ -240,7 +240,8 @@ class TestConvertHydrosMaxTurbinedEnvelope:
     def test_seasonal_reference_volume_leaves_the_turbined_cap(
         self, tmp_path: Path
     ) -> None:
-        """A ``volref_saz.dat`` row moves the productivity, never the cap."""
+        """A ``volref_saz.dat`` row moves the productivity, never the cap: every
+        stage's turbined limit stays at the declared reference-head value."""
         from novomodelo_bridge.newave.converters.hydro import (
             _operational_caps,
             convert_hydros,
@@ -267,9 +268,13 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         )
 
         rows = _capacity_cap_rows(case, self._make_id_map())
-        assert {r["max_turbined_m3s"] for r in rows} == {None}
-        hydro_a = convert_hydros(case, self._make_id_map())["hydros"][0]
-        assert hydro_a["generation"]["max_turbined_m3s"] == pytest.approx(
+        hydros = convert_hydros(case, self._make_id_map())["hydros"]
+        for hydro in hydros:
+            declared = hydro["generation"]["max_turbined_m3s"]
+            assert {
+                r["max_turbined_m3s"] for r in rows if r["hydro_id"] == hydro["id"]
+            } == {declared}
+        assert hydros[0]["generation"]["max_turbined_m3s"] == pytest.approx(
             _operational_caps(_head_corrected_two_plant_cadastro().loc[1], "A")[0]
         )
 
@@ -327,7 +332,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
     ) -> None:
         """A hydro case with no MODIF at all (the common case) must declare
         exactly the reference-head value — the envelope lookup is a pure no-op
-        when ``convert_per_stage_capacity_caps`` carries no turbined cap."""
+        when every stage's turbined cap is that same value."""
         from novomodelo_bridge.newave.converters.hydro import (
             _operational_caps,
             convert_hydros,
@@ -1544,8 +1549,9 @@ class TestExpansionRampBounds:
 
     def test_ramp_turbined_cap_is_rated_at_the_declared_head(self, tmp_path) -> None:
         # Before the entry the cap equals what the plant declares with the
-        # entering machines absent: the same head path as the declaration, so
-        # the ramp neither diverges from it nor inflates it.
+        # entering machines absent, and from it on what it declares with them:
+        # the same head path as the declaration, so the ramp neither diverges
+        # from it nor inflates it.
         from novomodelo_bridge.newave.converters.hydro import (
             convert_hydros,
             convert_per_stage_capacity_caps,
@@ -1569,13 +1575,14 @@ class TestExpansionRampBounds:
         ee_case = _ee_expansion_case(tmp_path, cadastro=cadastro)
         table = convert_per_stage_capacity_caps(ee_case, self._id_map())
         assert table is not None
-        ramp = table.to_pandas().query("hydro_id == 1 and max_turbined_m3s.notna()")
-        assert list(ramp.stage_id) == [0, 1, 2, 3, 4, 5]
+        ramp = table.to_pandas().query("hydro_id == 1")
         start_cap = declared_turbined(_hydro_case(tmp_path, cadastro=start_only))
-        assert list(ramp.max_turbined_m3s) == [pytest.approx(start_cap)] * 6
-        assert declared_turbined(ee_case) == pytest.approx(
-            declared_turbined(_hydro_case(tmp_path, cadastro=cadastro))
-        )
+        final_cap = declared_turbined(_hydro_case(tmp_path, cadastro=cadastro))
+        assert len(ramp) > 6
+        assert list(ramp.max_turbined_m3s) == [pytest.approx(start_cap)] * 6 + [
+            pytest.approx(final_cap)
+        ] * (len(ramp) - 6)
+        assert declared_turbined(ee_case) == pytest.approx(final_cap)
 
 
 class TestTurbineLimitDataMissing:

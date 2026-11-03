@@ -20,7 +20,7 @@ counterpart is `.claude/rules/comments.md`.
   Durability and anti-drift dominate; a stale claim here is executed, not read.
 - **CHANGELOG.md** — release history for a CLI user. Provenance is *inverted*
   (history is the job); plan-leakage still applies (no epic/ticket tokens in
-  released entries). Entries follow §6.
+  released entries). Admission and entry shape are governed by §6.
 - **README.md / docs/** — newcomers and users, most with **no repo checkout**
   (pip install). Teaching voice is the job; promotional voice is not (§4).
   README.md doubles as the PyPI description, so it links to `docs/` by
@@ -90,23 +90,56 @@ in `plans/` (gitignored); public artifacts describe behavior, not how the work
 was organized. Gate: `scripts/ci/check_no_plan_leaks.py`. Commit messages may
 reference plan structure — they target git-log readers.
 
-## 6. CHANGELOG entries
+## 6. CHANGELOG entries — the CLI user is the only reader
 
-The reader runs the commands and reads the results, not the code. Every entry
-is written for that reader:
+The reader of `CHANGELOG.md` runs the `novomodelo-bridge` CLI on NEWAVE and
+DECOMP decks and works with the cases and reports it writes. Contributors and
+importers of the Python package are not its readers; the PR body carries what
+they need.
 
-- **One or two lines.** A bold lead naming the command and its user-visible
-  effect, then at most one clause on what changes in the results or what the
-  user must do (reconvert, a newer dependency, the paired novomodelo release).
-- **Keep the names the user meets** — commands, flags, diagnostic ids, deck
-  files and records. Leave out output field paths, parquet columns, formulas,
-  internal modules and functions, and how the change works; that belongs in
-  `docs/`, the lineage TOML and the commit message.
-- **No entry for a change the user cannot see**: refactors, tests and CI,
-  guards, contributor docs, packaging internals, or a fix to something not
-  yet released.
-- **Merge by theme.** A change that serves the same user-visible goal as an
-  existing `[Unreleased]` entry is folded into it, rewording it if needed,
-  instead of adding a sibling entry.
-- **A release intro is one line**: the novomodelo pairing and any action the user
+### Admission — does the change get an entry?
+
+An entry exists only for a change a CLI user can observe:
+
+- different converted values, files or reports;
+- a deck, record or option that is now refused, or newly accepted;
+- a new or changed error, warning or diagnostic id;
+- a changed default, command, flag, exit code or install requirement (a
+  newer dependency, the paired novomodelo release).
+
+Leave out: refactors, tests and CI, guards, contributor docs and tooling,
+packaging internals (sdist contents, metadata, dependency groups), speed-ups
+that leave the results unchanged, a fix to something not yet released, and
+cosmetic fixes such as a reworded message.
+
+### Shape — short and action-first
+
+- One or two sentences per entry: a bold lead naming the command and what
+  changed, then what the user must do (reconvert, rerun novomodelo, install a
+  newer dependency).
+- Keep the names the user meets: commands, flags, diagnostic ids, deck files
+  and records, and a converted-case file with its path
+  (`constraints/hydro_bounds.parquet`). Leave out parquet columns, JSON field
+  paths, formulas, internal modules and functions.
+- Keep the new default, the refusal condition, the remedy ("merge each plant
+  into one block to keep them", "reconvert NEWAVE cases") and a "results
+  change" note when converted values move.
+- Drop the mechanism, the rationale and edge-case sub-conditions. `docs/`,
+  the lineage TOML and the commit message own that detail.
+- Mark `**BREAKING:**` a change that needs the user to act for a deck, script
+  or reader that worked before: edit a deck, update a script that reads an
+  exit code or the `--json` envelope, update a reader of a converted file, or
+  change platform. Reconverting to pick up new values is not breaking; say it
+  in the entry instead.
+- A fix names the symptom the user saw ("stopped the conversion", "did not
+  pass `novomodelo validate`", "was written as 0.05 MW"), not its cause in the
+  code.
+- Merge related changes into one entry: a fix and the warning added with it,
+  several refusals of one record. Before appending to `[Unreleased]`, check
+  whether an entry serving the same goal should absorb the new change instead.
+- Sections follow Keep a Changelog: Added, Changed, Removed, Fixed. A removal
+  goes under Removed even when it is breaking.
+- A release intro is one line: the novomodelo pairing and any action the user
   must take.
+- Released sections stay as published; trim `[Unreleased]` before a release,
+  not history after it.

@@ -2305,7 +2305,7 @@ summary = "Famílias de curvas de nível de jusante (polinômios por partes na v
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "sempre que o caso tem usina hidrelétrica ativa: toda usina recebe, em todo estágio, a potência disponível como `max_generation_mw`"
+when = "sempre que o caso tem usina hidrelétrica ativa: toda usina recebe, em todo estágio, a potência disponível como `max_generation_mw` e o engolimento máximo como `max_turbined_m3s`"
 module = "src/novomodelo_bridge/newave/converters/hydro/bounds.py"
 reads = [
   { file = "dsvagua" },
@@ -2412,7 +2412,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "exph", item = "data_inicio_enchimento" },
     { file = "exph", item = "duracao_enchimento" },
   ]
-  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o limite de `hydros[].generation.max_turbined_m3s` com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, o engolimento de `hydros[].generation.max_turbined_m3s` no estágio, sob FPHA e sob produtibilidade constante: em todo estágio de usina com `CFUGA`/`CMONT`, com o canal de fuga e o nível de montante vigentes no estágio, e, para usina `EE`, com as máquinas em operação no estágio; usina `EE` sem `CFUGA`/`CMONT` recebe linha só nos estágios anteriores à entrada da última máquina de `exph.dat`. Nulo nas demais linhas. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
+  how = "Três origens, nesta precedência: (1) `TURBMAXT` de `modif.dat`, valor absoluto em degrau (valor maior ou igual a 99990 restaura o padrão; pós-estudo congelado); (2) para usina NE em enchimento, o limite de `hydros[].generation.max_turbined_m3s` com apenas as máquinas já em operação (`data_entrada_operacao` por conjunto, nunca antes do fim do enchimento), 0 antes de entrar em operação, e esta linha prevalece sobre qualquer outra no mesmo estágio; (3) onde ainda vazio, o engolimento de `hydros[].generation.max_turbined_m3s` no estágio, sob FPHA e sob produtibilidade constante, em toda usina e todo estágio, limitando ou não: com o canal de fuga e o nível de montante vigentes no estágio para usina com `CFUGA`/`CMONT` e, para usina `EE`, com as máquinas em operação no estágio; nas demais usinas é o próprio valor declarado. Valores acima do declarado em `hydros.json` são reduzidos ao declarado."
 
   [[output.field]]
   path = "min_outflow_m3s"

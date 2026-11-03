@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
@@ -150,13 +150,13 @@ class DecompCaseArtifacts:
     census: constraint_registers.ConstraintCensus | None = None
     pumping_ids: dict[int, int] | None = None
     block_counts: dict[int, int] | None = None
+    availability_values: (
+        dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry] | None
+    ) = None
     hydro_bounds: pa.Table | None = None
     thermal_bounds_table: pa.Table | None = None
     pumping_bounds_table: pa.Table | None = None
     # Populated by `_convert_constraints`.
-    availability_values: (
-        dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry] | None
-    ) = None
     group_bounds: pa.Table | None = None
     contract_bounds_table: pa.Table | None = None
     energy_contracts_doc: dict | None = None
@@ -1540,9 +1540,9 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     pumping/line bound, fold in the TI irrigation withdrawal and the
     diversion channels, and write the diversion-coupled ``system/hydros.json``
     (deferred from ``_convert_core_entities``'s system-file block for exactly
-    that coupling). Stores the resolved bound tables and the
-    ``census``/``pumping_ids``/``block_counts`` maps the later phases need back
-    onto *artifacts*.
+    that coupling). Stores the resolved bound tables, the per-group
+    ``availability_values``, and the ``census``/``pumping_ids``/
+    ``block_counts`` maps the later phases need back onto *artifacts*.
     """
     case = artifacts.case
     dadger = artifacts.dadger
@@ -1575,8 +1575,12 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         for hydro in hydros_dict["hydros"]
     }
     unregulated_codes = _released_runofriver_codes(effective, id_map)
+    availability_values = hydro_conv.convert_hydro_group_availability(
+        case, id_map, effective=effective, turbine_limits=turbine_limits
+    )
     # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
-    # storage envelope, a split plant's turbined-flow limit, the CT thermal
+    # storage envelope, a split plant's turbined-flow limit and available
+    # power, the CT thermal
     # generation bounds, and the RE/RHQ/RHV single-term special-constraint
     # bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
@@ -1592,6 +1596,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         *bounds_conv.convert_volume_espera_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_spillage_upper_bounds(case, id_map),
         *hydro_conv.plant_turbine_limit_contributions(turbine_limits, id_map),
+        *hydro_conv.split_plant_generation_contributions(availability_values),
         *thermal_generation_contribs,
         *single_term_bounds.single_term_bound_contributions(
             case,
@@ -1642,6 +1647,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     artifacts.census = census
     artifacts.pumping_ids = pumping_ids
     artifacts.block_counts = block_counts
+    artifacts.availability_values = availability_values
     artifacts.hydro_bounds = hydro_bounds
     artifacts.thermal_bounds_table = thermal_bounds_table
     artifacts.pumping_bounds_table = pumping_bounds_table
@@ -1649,57 +1655,31 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
 
 
 def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
-    """The ``step("Converting constraints")`` phase: build per-group
-    per-stage availability (+ the Itaipu frequency-floor overlay), resolve
-    the per-hydro ``group_bounds``, and build the ``contract_bounds_table``
-    via :func:`_rejoin_contract_price`. Stores ``availability_values``,
-    ``group_bounds``, ``contract_bounds_table``, ``energy_contracts_doc``,
-    and ``contracts`` onto *artifacts* for :func:`_emit_and_write`.
+    """The ``step("Converting constraints")`` phase: overlay Itaipu's ``RI``
+    frequency limits on the per-group availability, resolve the per-hydro
+    ``group_bounds``, and build the ``contract_bounds_table`` via
+    :func:`_rejoin_contract_price`. Stores ``group_bounds``,
+    ``contract_bounds_table``, ``energy_contracts_doc``, and ``contracts``
+    onto *artifacts* for :func:`_emit_and_write`.
     """
     case = artifacts.case
     dadger = artifacts.dadger
     calendar = artifacts.calendar
     id_map = artifacts.id_map
-    effective = artifacts.effective
-    itaipu_operated = artifacts.itaipu_operated
     block_counts = artifacts.block_counts
     assert block_counts is not None
     census = artifacts.census
     assert census is not None
     hydros_dict = artifacts.hydros_dict
     assert hydros_dict is not None
-    turbine_limits = artifacts.turbine_limits
-    assert turbine_limits is not None
+    availability_values = artifacts.availability_values
+    assert availability_values is not None
 
-    # Per-group per-stage availability (installed × MP × FD) and turbined-flow
-    # limit for every plant,
-    # single-group and Itaipu's own two per-frequency groups (code 66) alike.
-    # Sparse by construction — a value only lands here where it lowers that
-    # group's own declared envelope — so novomodelo rule 45 (a group-bound max_*
-    # may not exceed that group's declared max) is now reachable; its mirror
-    # is wired into the self-check block below.
-    availability_values = hydro_conv.convert_hydro_group_availability(
-        case, id_map, effective=effective, turbine_limits=turbine_limits
+    group_values = hydro_conv.itaipu_frequency_group_values(
+        case, id_map, availability_values
     )
-    # Itaipu's RI per-frequency must-run floors
-    # (geracao_minima_50/60_hz) overlay the same per-group table as the
-    # availability max caps. The 50 Hz floor binds in DECOMP (its 50 Hz half
-    # sits exactly at it), so without it the converted case under-runs Itaipu's
-    # 50 Hz half and backfills the ANDE load through SE's own lines. Merged
-    # into the availability entries (min on the same (hydro, group, stage) row
-    # as the availability max) rather than emitted as a second table.
-    if itaipu_operated:
-        for key, min_generation in hydro_conv.convert_itaipu_frequency_min_generation(
-            case, id_map
-        ).items():
-            existing = availability_values.get(key)
-            availability_values[key] = (
-                replace(existing, min_generation_mw=min_generation)
-                if existing is not None
-                else group_bounds_conv.GroupBoundEntry(min_generation_mw=min_generation)
-            )
     group_bounds = group_bounds_conv.convert_hydro_unit_group_bounds(
-        case, values=availability_values
+        case, values=group_values
     )
     # hydro_unit_group_id is scoped WITHIN its own hydro
     # (_build_split_unit_groups/build_mirror_unit_group number each plant's
@@ -1795,7 +1775,6 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
         resolved_contract_power, contract_bounds_table
     ).sort_by([("contract_id", "ascending"), *_BOUND_SORT_KEYS])
 
-    artifacts.availability_values = availability_values
     artifacts.group_bounds = group_bounds
     artifacts.contract_bounds_table = contract_bounds_table
     artifacts.energy_contracts_doc = energy_contracts_doc
@@ -1991,7 +1970,7 @@ def _emit_libs_electrical_generics(
         case, id_map, model=model, gnl_model=artifacts.gnl_model
     )
     a_h = libs_electrical_conv.build_available_power(
-        case, id_map, overlay=availability_values, effective=artifacts.effective
+        id_map, overlay=availability_values
     )
     ncs_id_by_pee_code = ncs_conv.build_pee_ncs_id_map(case, id_map)
     conjh_bus_by_code_group = {
