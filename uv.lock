@@ -162,16 +162,16 @@ wheels = [
 
 [[package]]
 name = "idecomp"
-version = "1.18.2"
+version = "1.18.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfinterface" },
     { name = "numpy" },
     { name = "pandas" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/28/44/d37fa7fc1805e319cc8b0462b51ad0870fe8a14c51a76673ebceea5a2c02/idecomp-1.18.2.tar.gz", hash = "sha256:e5561f88fd135f7d50a028ec768e3fe6f7207e083f2d67d868f1f1b5a03e5651", size = 901195, upload-time = "2026-10-30T14:34:40.767Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/b6/01e1dac45b709a45bb0ff049e9b26d751ce38f350f0e79ec2d413871ad50/idecomp-1.18.3.tar.gz", hash = "sha256:4718fbd28498edf16b78b07bce268f1b638d232056e23b739443385054ca7987", size = 902752, upload-time = "2026-11-03T22:10:47.56Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/66/0bc4c4c519a01fb17f9732b8845dec4a899b6eb65d8c176a7d83d20cd54c/idecomp-1.18.2-py3-none-any.whl", hash = "sha256:43f45bf9a651a9a9e1dd4090e7a23c9432a1293831ddfdf2d48f915a4b1c1b41", size = 148882, upload-time = "2026-10-30T14:34:39.147Z" },
+    { url = "https://files.pythonhosted.org/packages/69/57/f98443eae4baa9280b70bf89509f34c6183ad4a8c9ec57ea2a9532d3f9bd/idecomp-1.18.3-py3-none-any.whl", hash = "sha256:6e407f65c2c020afb163a4388c09835ba684b1f756b13d944d51856b7441b444", size = 148962, upload-time = "2026-11-03T22:10:46.008Z" },
 ]
 
 [[package]]
@@ -283,7 +283,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cfinterface", specifier = ">=1.10.3" },
-    { name = "idecomp", specifier = ">=1.18.2" },
+    { name = "idecomp", specifier = ">=1.18.3" },
     { name = "inewave", specifier = ">=1.17.1" },
     { name = "novomodelo-python", specifier = "==0.19.1" },
     { name = "pandas", specifier = ">=3.1.0" },
