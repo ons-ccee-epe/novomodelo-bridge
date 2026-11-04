@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novomodelo-bridge"
-version = "0.19.1"
+version = "0.20.0"
 description = "Convert NEWAVE and DECOMP cases to Novomodelo input format and compare the results"
 readme = "README.md"
 license = "Apache-2.0"
@@ -34,7 +34,7 @@ dependencies = [
     # boundary FCF by default and `convert --validate` / `compare` load novomodelo
     # output, so `import novomodelo` must work out of the box. Pinned exactly to
     # MIN_NOVOMODELO_VERSION in novomodelo/compat.py, which documents why.
-    "novomodelo-python==0.19.1",
+    "novomodelo-python==0.20.0",
 ]
 
 [dependency-groups]

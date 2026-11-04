@@ -256,7 +256,7 @@ wheels = [
 
 [[package]]
 name = "novomodelo-bridge"
-version = "0.19.1"
+version = "0.20.0"
 source = { editable = "." }
 dependencies = [
     { name = "cfinterface" },
@@ -285,7 +285,7 @@ requires-dist = [
     { name = "cfinterface", specifier = ">=1.10.3" },
     { name = "idecomp", specifier = ">=1.18.3" },
     { name = "inewave", specifier = ">=1.17.1" },
-    { name = "novomodelo-python", specifier = "==0.19.1" },
+    { name = "novomodelo-python", specifier = "==0.20.0" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "plotly", specifier = ">=7.1.0" },
     { name = "polars", specifier = ">=2.1.0" },
@@ -305,15 +305,16 @@ dev = [
 
 [[package]]
 name = "novomodelo-python"
-version = "0.19.1"
+version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/cc/4ddafe788c78efdcbee1656557824713da61fbb3340da2c5c7f07e0ea4e9/novomodelo_python-0.20.0.tar.gz", hash = "sha256:41e354336e3533ccc713081d706bafc9f81b33a6f0bfe5eee01b2d825e897ed1", size = 12237223, upload-time = "2026-11-04T01:43:05.933Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/c6/c4a8a2d78756cf62fd8e4bee0ceec95ba9f6791d428466050e81519b36e2/novomodelo_python-0.19.1-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:e9840310965c893c77155d6e6a620786b05d410aa19bc3a1d9a93ffae30b4aa2", size = 9211966, upload-time = "2026-10-26T21:05:34.44Z" },
-    { url = "https://files.pythonhosted.org/packages/15/7d/5721351602e9f7b34a91681016636926de791ac159a8966de7eb9d910466/novomodelo_python-0.19.1-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:be66a42261dde80cde64b0d487e768a857f4ab4cd17e810b3f62beeffbf42eed", size = 8382002, upload-time = "2026-10-26T21:05:36.661Z" },
-    { url = "https://files.pythonhosted.org/packages/ca/cd/e49de17243ca4330d1448c791c1360b6af8a84fa730ed8dbe6d3890ffdd1/novomodelo_python-0.19.1-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:39074c82a1a1c90e9edf1745896e17e9468602137be272efd28c3ae05385f37c", size = 9289242, upload-time = "2026-10-26T21:05:38.253Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/81/004285a1413bc21c07a373507707090486db8934fcf8d9b9d5aaa944b979/novomodelo_python-0.19.1-cp312-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:fd7cc6df9d8186a309f4a7ca879715ca324aeb9656c34421473584d58be9d88b", size = 9900453, upload-time = "2026-10-26T21:05:40.483Z" },
-    { url = "https://files.pythonhosted.org/packages/3c/05/6f41f8b22cdffd376dcd295a312351e785e7b7d1e6399a40a31ba02b0039/novomodelo_python-0.19.1-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:74928fe2e002df16472cd1d4c1072090b59d3586d5f5388828fea864ddba87e1", size = 16271082, upload-time = "2026-10-26T21:05:42.711Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/dc/4e7f5f87cef5aae9c6a2175940697cba97d129bb62043c70bd83e58f2383/novomodelo_python-0.19.1-cp312-abi3-win_amd64.whl", hash = "sha256:5a4106765a92c3b69a7a1709fbbf45ce881e1306fc72860321eb86be77eb05c8", size = 8195240, upload-time = "2026-10-26T21:05:45.19Z" },
+    { url = "https://files.pythonhosted.org/packages/46/49/d5e2458fbc62a5416dd31e7a60ea61f0f92c3fcd703d59ba6a40d0fccf10/novomodelo_python-0.20.0-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:e1a3e20aaad9b90a0f44176077e22dce9e5e850a5a47d553514aa0ee791f241d", size = 9227079, upload-time = "2026-11-04T01:42:50.152Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/04/f841ab4497f0f9e8c0924344c0b36abf87ab875848eab61aa3fe1bb41740/novomodelo_python-0.20.0-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:6853a3d941ff899be919aab58dc0f2e132a32a1cb2f63a7289d3e5854b875d33", size = 8383471, upload-time = "2026-11-04T01:42:52.862Z" },
+    { url = "https://files.pythonhosted.org/packages/47/23/49e3bfc4eb2cd4ded50f01004355544cd50d537611ded706a06fdb7281b7/novomodelo_python-0.20.0-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:48a15623bd9e46ef8f60f425ab45b95fe67f816e45af516268006b9575a24c89", size = 9301221, upload-time = "2026-11-04T01:42:54.817Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/35/49856436446519038491152800a585cf1d638d5ba480d2acd6b64944d093/novomodelo_python-0.20.0-cp312-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:313393a1f374b8f9776c696672944aa40f731a54b504d3bbbe6cf385b3f6db51", size = 9877523, upload-time = "2026-11-04T01:42:57.948Z" },
+    { url = "https://files.pythonhosted.org/packages/22/18/28037aeb7dbbbce6c07e5f8baf31cce4b509109782bd5b9235d01dcfcaea/novomodelo_python-0.20.0-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b5d6ebb6c7f03d9214babfc20f49a82dca0579f858574d277a11215656f82acc", size = 16266344, upload-time = "2026-11-04T01:43:00.607Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/c6/b8f84b0a7146344be55aa6f8c3451c373791b8cfd360c079407063c53646/novomodelo_python-0.20.0-cp312-abi3-win_amd64.whl", hash = "sha256:edb7dddb5ed441383e111511e0e2ed248481506ce8cfeadcbfc63c74442ffd9f", size = 8215269, upload-time = "2026-11-04T01:43:03.424Z" },
 ]
 
 [[package]]

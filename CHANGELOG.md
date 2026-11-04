@@ -14,6 +14,12 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-03
+
+Pairs the bridge with the **novomodelo 0.20.0** release and pins
+`novomodelo-python` to it; convert NEWAVE and DECOMP cases again and run
+novomodelo on them, as both releases change the results.
+
 ### Added
 
 - **`convert newave` and `convert decomp` take `--json-float-digits N`**, the
