@@ -7,6 +7,8 @@ shared schemas.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 import numpy as np
 import polars as pl
 import pytest
@@ -99,7 +101,9 @@ def test_novomodelo_plane_arrays_scales_only_the_intercept_by_kappa() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _split_points(rows: list[dict[str, object]], *, planes: bool) -> pl.DataFrame:
+def _split_points(
+    rows: Sequence[Mapping[str, object]], *, planes: bool
+) -> pl.DataFrame:
     schema: dict[str, type[pl.DataType]] = {
         "novomodelo_id": pl.Int64,
         "stage": pl.Int64,

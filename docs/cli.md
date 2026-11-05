@@ -89,6 +89,7 @@ $ novomodelo-bridge convert newave [OPTIONS] {src} {dst}
 * `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
+* `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]
 * `-v, --verbose`: Increase console log verbosity (-v INFO, -vv DEBUG).  [default: 0]
 * `--log-file PATH`: Write the full DEBUG log to PATH (the console verbosity is unaffected).
 * `--no-color`: Disable coloured output (also honoured via the NO_COLOR env var).
@@ -122,6 +123,7 @@ $ novomodelo-bridge convert decomp [OPTIONS] {src} {dst}
 * `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
+* `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]
 * `--no-fcf`: Skip importing the deck&#x27;s boundary FCF. By default, when the deck declares cortes/cortesh files (its FC records), they are imported as a terminal-stage novomodelo policy checkpoint via an in-process 1-iteration novomodelo pass (slow; requires novomodelo-python). Pass this for a quick conversion without the terminal FCF. The FCF is always skipped under --dry-run.
 * `-v, --verbose`: Increase console log verbosity (-v INFO, -vv DEBUG).  [default: 0]
 * `--log-file PATH`: Write the full DEBUG log to PATH (the console verbosity is unaffected).
@@ -152,7 +154,8 @@ $ novomodelo-bridge compare [OPTIONS] COMMAND [ARGS]...
 
 Compare a DECOMP run&#x27;s published operation against Novomodelo&#x27;s simulation.
 
-Informational: always exits 0, reporting divergences without failing.
+Informational: divergences never change the exit code. Exits 1 if the source
+case is not found, and 2 if the Novomodelo output cannot be read.
 
 The Overview tab&#x27;s cost breakdown is at present value on both sides:
 each stage&#x27;s DECOMP parcels are discounted by that stage&#x27;s ratio of
@@ -188,7 +191,8 @@ $ novomodelo-bridge compare decomp [OPTIONS] {decomp_dir} {novomodelo_output_dir
 
 Compare NEWAVE published results against Novomodelo simulation output.
 
-Informational: always exits 0, reporting divergences without failing.
+Informational: divergences never change the exit code. Exits 1 if the source
+case is not found, and 2 if the Novomodelo output cannot be read.
 
 **Usage**:
 
@@ -312,9 +316,14 @@ etc.), its hidr.dat codes label the hydro plants in the cut files, its
 dadgnl NL records give each GNL plant&#x27;s lag in months, and the order of
 its VI records numbers the plants with a water travel time.
 
-
-Warnings logged during export:
-- P14: GNL (anticipated thermal) coefficients emitted as zeros
+The cuts of the first cut-building node carry each GNL plant&#x27;s coefficient
+for the delivery of the case&#x27;s second stage, in R$/MWh and the same on
+every load block, and mapcut record 9 carries that stage&#x27;s load-block
+hours. The policy&#x27;s other GNL coefficients are left out and counted in the
+log. A plant with no coefficient for that delivery, or a coefficient of
+exactly zero, gets 0.0 and a warning. Each stage&#x27;s mapcut record 10 also
+carries the cost of the GNL generation committed before the study, from
+the case&#x27;s initial_conditions.json, in 10³ R$.
 
 **Usage**:
 

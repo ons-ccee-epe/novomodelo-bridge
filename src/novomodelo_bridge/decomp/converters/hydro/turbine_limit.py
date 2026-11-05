@@ -6,13 +6,14 @@ Before it optimises, the source model caps each plant's turbined flow at
 - ``qmaxT`` is the head-limited flow
   (:func:`~novomodelo_bridge.core.turbine.tailrace_limited_flow`) of the stage's
   machine sets, ``q_ef = Σ n·q_nom`` at ``h_ef``, the unit-weighted mean of the
-  ``hidr.dat`` rated heads. The forebay sits at the study's initial volume on
-  every stage; the tailrace rises with the flow along the plant's ``polinjus``
-  families, interpolated at the level of the plant downstream at its minimum
-  volume, or along its ``hidr.dat`` downstream polynomials when ``polinjus``
-  has none. When the plant's unregulated inflow, less what its reservoir can
-  still store over the stage, exceeds that flow, ``qmaxT`` is the head-limited
-  flow at that inflow instead.
+  sets' effective heads (``hidr.dat``, after ``AC ALTEFE``). The forebay sits
+  at the study's initial volume on every stage; the tailrace rises with the
+  flow along the plant's ``polinjus`` families, interpolated at the level of
+  the plant downstream at its minimum volume, or along its ``hidr.dat``
+  downstream polynomials when ``polinjus`` has none. When the plant's
+  unregulated inflow, less what its reservoir can still store over the stage,
+  exceeds that flow, ``qmaxT`` is the head-limited flow at that inflow
+  instead.
 - ``Pdisp / ρ_eq`` is the generator limit: the available power
   (installed × ``MP`` × ``FD``) over the equivalent productivity, the
   full-range mean for a reservoir and the reference volume's for a
@@ -39,8 +40,6 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple
 
-import pandas as pd
-
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
@@ -48,6 +47,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.pandas_utils import as_frame_or_empty
 from novomodelo_bridge.core.productivity import (
     KTURB_BY_TIPO_TURBINA,
     apply_hydraulic_loss,
@@ -59,7 +59,6 @@ from novomodelo_bridge.core.tailrace import (
     tailrace_families_from_polinjus,
     tailrace_level_m,
 )
-from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.core.turbine import (
     head_limited_flow,
     tailrace_limited_flow,
@@ -140,8 +139,10 @@ def tailrace_families(
         {}
         if polinjus is None
         else tailrace_families_from_polinjus(
-            polinjus.hidreletrica_curvajusante(df=True),
-            polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True),
+            as_frame_or_empty(polinjus.hidreletrica_curvajusante(df=True)),
+            as_frame_or_empty(
+                polinjus.hidreletrica_curvajusante_polinomio_segmento(df=True)
+            ),
         )
     )
     return {
@@ -242,29 +243,21 @@ def plant_turbine_limit_contributions(
     turbine_limits: TurbineLimits, id_map: DecompIdMap
 ) -> list[BoundContribution]:
     """The ``hydro`` ``turbined`` upper bounds carrying
-    :attr:`TurbineLimits.plant_caps`, one per stage where the plant cap is
-    below its groups' summed caps."""
-    contributions: list[BoundContribution] = []
-    for code, stage_caps in turbine_limits.plant_caps.items():
-        for stage_index, cap in enumerate(stage_caps):
-            groups_total = sum(
-                turbine_limits.cap(code, group_id, stage_index)
-                for group_id in range(turbine_limits.group_count(code))
-            )
-            if cap < groups_total - relative_tolerance(groups_total):
-                contributions.append(
-                    BoundContribution(
-                        family="hydro",
-                        entity_id=id_map.hydro_id(code),
-                        stage_id=stage_index,
-                        block_id=None,
-                        axis="turbined",
-                        lower=None,
-                        upper=cap,
-                        contributor="turbine_limit",
-                    )
-                )
-    return contributions
+    :attr:`TurbineLimits.plant_caps`, one per plant and stage."""
+    return [
+        BoundContribution(
+            family="hydro",
+            entity_id=id_map.hydro_id(code),
+            stage_id=stage_index,
+            block_id=None,
+            axis="turbined",
+            lower=None,
+            upper=cap,
+            contributor="turbine_limit",
+        )
+        for code, stage_caps in turbine_limits.plant_caps.items()
+        for stage_index, cap in enumerate(stage_caps)
+    ]
 
 
 def _unregulated_inflow(
@@ -310,15 +303,18 @@ def _stage_caps(
         _conjunto_machines(hreg, code, k, effective, s)
         for k in range(1, _conjunto_count(hreg, code, effective, s) + 1)
     ]
-    n_units = sum(n for n, _, _ in machines)
-    rated_flow = sum(n * q_nom for n, q_nom, _ in machines)
+    n_units = sum(m.units for m in machines)
+    rated_flow = sum(m.units * m.flow_m3s for m in machines)
     if n_units <= 0 or rated_flow <= 0.0:
         if code == _ITAIPU_CODE:
             return _StageCaps([0.0] * len(machines), 0.0, 0.0, True)
         return _StageCaps([0.0], None, 0.0, True)
-    nominal_head = _rated_head(hreg, [n for n, _, _ in machines])
+    unrated = [k for k, m in enumerate(machines, start=1) if m.head_m <= 0.0]
+    # 0.0 turns the head correction off when any set is unrated; never average the rest.
+    nominal_head = (
+        0.0 if unrated else sum(m.units * m.head_m for m in machines) / n_units
+    )
     gaps: list[tuple[str, str]] = []
-    unrated = _unrated_sets(hreg, len(machines))
     if unrated:
         gaps.append(
             (
@@ -384,9 +380,10 @@ def _stage_caps(
     if code == _ITAIPU_CODE:
         generator_limits = [
             _generator_limit(
-                n * p_nom * availability_factors[(code, group_id, s)], rho_eq
+                m.units * m.power_mw * availability_factors[(code, group_id, s)],
+                rho_eq,
             )
-            for group_id, (n, _, p_nom) in enumerate(machines)
+            for group_id, m in enumerate(machines)
         ]
         plant_cap = min(head_limited, sum(generator_limits))
         return _StageCaps(
@@ -397,7 +394,7 @@ def _stage_caps(
             tuple(gaps),
         )
     factor = availability_factors[(code, 0, s)]
-    installed = sum(n * p_nom for n, _, p_nom in machines)
+    installed = sum(m.units * m.power_mw for m in machines)
     return _StageCaps(
         [min(head_limited * factor, _generator_limit(installed * factor, rho_eq))],
         None,
@@ -405,32 +402,6 @@ def _stage_caps(
         converged,
         tuple(gaps),
     )
-
-
-def _rated_head(hreg: pd.Series, units: Sequence[int]) -> float:
-    """``h_ef`` (m), the unit-weighted mean of the machine sets' rated heads, or
-    ``0.0`` (no head limit) when any set declares none.
-
-    The heads stay the ``hidr.dat`` ones: ``AC ALTEFE`` is not consumed (see
-    the TRACKED NOVOMODELO-GAP in :func:`convert_hydros`).
-    """
-    if _unrated_sets(hreg, len(units)):
-        return 0.0
-    heads = [
-        float(hreg[f"queda_nominal_conjunto_{k}"]) for k in range(1, len(units) + 1)
-    ]
-    return sum(n * h for n, h in zip(units, heads, strict=True)) / sum(units)
-
-
-def _unrated_sets(hreg: pd.Series, count: int) -> list[int]:
-    """The machine sets among the first *count* that declare no positive
-    rated head."""
-    unrated = []
-    for k in range(1, count + 1):
-        head = hreg.get(f"queda_nominal_conjunto_{k}")
-        if head is None or pd.isna(head) or float(head) <= 0.0:
-            unrated.append(k)
-    return unrated
 
 
 def _generator_limit(available_mw: float, rho_eq: float) -> float:

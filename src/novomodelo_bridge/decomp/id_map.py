@@ -10,14 +10,20 @@ records). Other entity families join this map as their converters land.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from novomodelo_bridge.core.errors import FieldParseError
-
-if TYPE_CHECKING:
-    from idecomp.decomp import Dadger
+from novomodelo_bridge.core.pandas_utils import as_frame
 
 TRANSHIPMENT_BUS_NAME = "IV"
+
+
+class _IdMapRegisters(Protocol):
+    def sb(self, *, df: bool) -> object: ...
+
+    def uh(self, *, df: bool) -> object: ...
+
+    def ct(self, *, df: bool) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -55,9 +61,9 @@ class DecompIdMap:
             )
 
     @classmethod
-    def from_dadger(cls, dadger: Dadger) -> DecompIdMap:
+    def from_dadger(cls, dadger: _IdMapRegisters) -> DecompIdMap:
         """Build the map from a deck's ``SB`` + ``UH`` + ``CT`` records."""
-        sb = dadger.sb(df=True)
+        sb = as_frame(dadger.sb(df=True))
         if sb is None or sb.empty:
             raise FieldParseError(
                 "the deck has no SB records; cannot build the id map",
@@ -68,13 +74,13 @@ class DecompIdMap:
             for _, r in sb.iterrows()
         )
 
-        uh = dadger.uh(df=True)
+        uh = as_frame(dadger.uh(df=True))
         hydro_codes: tuple[int, ...] = ()
         if uh is not None and not uh.empty:
             operated = uh[uh["volume_inicial"].notna()]
             hydro_codes = tuple(sorted(int(c) for c in operated["codigo_usina"]))
 
-        ct = dadger.ct(df=True)
+        ct = as_frame(dadger.ct(df=True))
         thermal_codes: tuple[int, ...] = ()
         if ct is not None and not ct.empty:
             thermal_codes = tuple(sorted({int(c) for c in ct["codigo_usina"]}))

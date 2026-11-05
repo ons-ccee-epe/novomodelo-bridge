@@ -36,8 +36,12 @@ def _id_map() -> DecompIdMap:
     return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
 
 
-def _coupled_on(posto: int) -> SimpleNamespace:
-    return SimpleNamespace(coupling_gauge=lambda _code: posto)
+class _CoupledOn:
+    def __init__(self, posto: int) -> None:
+        self._posto = posto
+
+    def coupling_gauge(self, code: int) -> int:
+        return self._posto
 
 
 def _vazoes(monthly: pd.DataFrame | None, weekly: pd.DataFrame | None):
@@ -46,7 +50,7 @@ def _vazoes(monthly: pd.DataFrame | None, weekly: pd.DataFrame | None):
 
 def _run(monthly, weekly, posto: int = 1):
     return convert_recent_observation_windows(
-        _vazoes(monthly, weekly), _coupled_on(posto), _id_map(), _calendar()
+        _vazoes(monthly, weekly), _CoupledOn(posto), _id_map(), _calendar()
     )
 
 

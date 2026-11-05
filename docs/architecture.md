@@ -56,6 +56,7 @@ and renders one module per tab under `dashboard/tabs/`. Both reuse
 | `novomodelo`       | Novomodelo-side I/O: the case writer, the schema registry, version compatibility, output readers.                                                              |
 | `newave`      | The NEWAVE track: spine modules plus `converters/`.                                                                                                       |
 | `decomp`      | The DECOMP track: spine modules plus `converters/` and `fcf/` (boundary cost-to-go import).                                                               |
+| `dessem`      | The DESSEM export of a solved DECOMP-track case's cost-to-go function (`export dessem`). Reads the DECOMP deck through `decomp`.                          |
 | `comparators` | Source-vs-Novomodelo comparison, twin-tracked under `comparators/newave/` and `comparators/decomp/`, with shared chart code under `comparators/charts/`.       |
 | `ui`          | Rich terminal rendering (`ui/console.py`) and the HTML theme and document helpers (`ui/theme.py`, `ui/html/`). The only package that imports Rich.       |
 | `dashboard`   | The interactive Plotly dashboard: a data layer plus one module per tab.                                                                                  |
@@ -76,6 +77,7 @@ A package may import itself and the packages below it, never sideways or up:
 | `ui`          | `core`, `novomodelo`, `ui`                                                               |
 | `newave`      | `core`, `novomodelo`, `newave`                                                           |
 | `decomp`      | `core`, `novomodelo`, `decomp`                                                           |
+| `dessem`      | `core`, `novomodelo`, `decomp`, `dessem`                                                 |
 | `comparators` | `core`, `novomodelo`, `comparators`, plus `ui.theme` and `ui.html` (not the Rich console) |
 | `dashboard`   | `core`, `novomodelo`, `dashboard`, plus `ui.theme` and `ui.html`                         |
 | `cli`         | everything                                                                          |

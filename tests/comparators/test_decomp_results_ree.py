@@ -35,6 +35,7 @@ from tests.comparators.conftest import (
     _ree_dec_oper_ree_fixture,
     _ree_id_map,
     _ree_membership_fixture,
+    _unmapped_codes,
 )
 
 
@@ -295,7 +296,7 @@ class TestBuildDecompDatasetRee:
 
         ree_rows = dataset.tidy.filter(pl.col("entity_type") == "ree")
         assert ree_rows.is_empty()
-        assert dataset.metadata["unmapped"]["ree"] == []
+        assert _unmapped_codes(dataset, "ree") == []
         html = build_comparison_report(dataset)  # must not raise
         assert "REE Energy" not in html
 
@@ -316,7 +317,7 @@ class TestBuildDecompDatasetRee:
             "earm_final_mwmes",
         }
         assert set(ree_rows["source"].unique().to_list()) == {"newave", "novomodelo"}
-        assert dataset.metadata["unmapped"]["ree"] == []
+        assert _unmapped_codes(dataset, "ree") == []
 
     def test_report_ree_section_present_for_decomp_dataset(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

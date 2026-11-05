@@ -81,10 +81,10 @@ def read_reference_names(
     thermal_names: dict[int, str] = {}
     subsystem_names: dict[int, str] = {}
 
-    for _, row in case.confhd.usinas.iterrows():
+    for _, row in case.hydro_plants.iterrows():
         hydro_names[int(row["codigo_usina"])] = str(row["nome_usina"]).strip()
 
-    for _, row in case.conft.usinas.iterrows():
+    for _, row in case.thermal_plants.iterrows():
         thermal_names[int(row["codigo_usina"])] = str(row["nome_usina"]).strip()
 
     # Subsystem names from sistema.dat (deduplicate from custo_deficit rows)

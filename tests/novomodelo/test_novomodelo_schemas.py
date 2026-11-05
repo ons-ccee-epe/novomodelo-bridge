@@ -162,7 +162,9 @@ def test_generic_constraints_json_emit_matches_registry(tmp_path) -> None:
         )
         convert_newave_case(src, dst)
 
-    doc = json.loads((dst / "constraints" / "generic_constraints.json").read_text())
+    doc = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text(encoding="utf-8")
+    )
     assert (
         doc["$schema"]
         == novomodelo_schemas.SCHEMA_URLS["constraints/generic_constraints.json"]

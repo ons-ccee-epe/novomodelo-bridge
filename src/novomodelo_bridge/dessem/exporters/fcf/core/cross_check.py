@@ -16,13 +16,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    COST_FIELDS,
     PHYSICAL_RECORD_FIRST,
     PHYSICAL_RECORD_LAST,
     RECORD_SIZE,
     TAMANHO_CORTE,
     CutBlockOffsets,
     LayoutError,
-    assert_gnl_span_is_zero,
+    assert_gnl_support,
     assert_uniform_blocks,
     cortdeco_block_offsets,
     cortdeco_record_count,
@@ -206,8 +207,7 @@ def read_mapcut(path: Path) -> MapcutContents:
     for stage in range(numero_estagios):
         gnl_indices.append(record_idx)
         record_idx += 1
-        cost_record = _float64s(data, record_idx, 6)
-        cost_records.append(cost_record)
+        cost_records.append(_float64s(data, record_idx, len(COST_FIELDS)))
         record_idx += 1
     for _ in range(numero_cenarios - numero_estagios):
         gnl_indices.append(record_idx)
@@ -220,7 +220,7 @@ def read_mapcut(path: Path) -> MapcutContents:
     lag_meses_gnl = _int32s(data, gnl_rec, ngnl, offset=4 + 4 * ngnl)
     patamares_gnl = _int32s(data, gnl_rec, ngnl, offset=4 + 8 * ngnl)
     gnl_trailing_block = _float64s(
-        data, gnl_rec, numero_estagios * ngnl, offset=4 + 12 * ngnl
+        data, gnl_rec, sum(patamares_gnl), offset=4 + 12 * ngnl
     )
 
     taxa_desconto = tuple(cr[0] for cr in cost_records)
@@ -365,6 +365,11 @@ def cross_check_pair(
         n_estagios=scalars.numero_estagios,
         n_patamares=n_patamares,
     )
+    if any(count != n_patamares for count in mapcut_contents.patamares_gnl):
+        raise LayoutError(
+            f"mapcut reg 9 declares patamares_gnl={mapcut_contents.patamares_gnl} "
+            f"but reg 6 holds {n_patamares} patamares in every stage"
+        )
 
     n_nodes = scalars.numero_semanas
     cortdeco_contents = read_cortdeco(cortdeco_path, offsets, n_nodes)
@@ -402,9 +407,8 @@ def cross_check_pair(
             f"travel-time lag is {declared_lag}"
         )
 
-    # P14: Assert GNL span is zero
     expected_records = cortdeco_record_count(scalars.numero_cortes)
-    assert_gnl_span_is_zero(cortdeco_path, expected_records, offsets)
+    assert_gnl_support(cortdeco_path, expected_records, offsets, n_nodes)
 
     _LOG.info(
         "cross-check passed: numero_cortes=%d heads=%s offsets.ncoef=%d",

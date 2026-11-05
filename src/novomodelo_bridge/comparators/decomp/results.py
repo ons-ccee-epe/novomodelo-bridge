@@ -49,7 +49,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import polars as pl
 
@@ -74,6 +74,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
 from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
@@ -324,7 +325,7 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
     return (
         combined.select("estagio", "cenario", "probabilidade")
         .unique()
-        .cast(_SCENARIO_PROBABILITY_SCHEMA)
+        .cast(pl.Schema(_SCENARIO_PROBABILITY_SCHEMA))
         .sort(["estagio", "cenario"])
     )
 
@@ -984,13 +985,9 @@ def _line_bounds_and_meta(
     them exactly the way ``results.compare_results`` does for the source
     model's own Network tab, via the shared ``novomodelo_readers`` readers:
 
-    - ``line_bounds``: :func:`novomodelo_readers.read_novomodelo_line_bounds` verbatim.
-      This is already per-stage: ``decomp/converters/network.py::convert_lines`` writes
-      one base row (``block_id`` null) per ``(line, stage)`` carrying the
-      resolved max-of-blocks ``IA`` capacity for that stage, so a case whose
-      capacity genuinely never changes across stages naturally produces
-      identical per-stage rows here -- no separate static-capacity broadcast
-      needs implementing on top.
+    - ``line_bounds``: :func:`novomodelo_readers.read_novomodelo_stage_line_bounds`,
+      one capacity per ``(line, stage)`` weighted over the blocks as the
+      plotted stage-mean flow is.
     - ``line_meta``: :func:`novomodelo_readers.read_novomodelo_lines`'s ``"lines"``
       list verbatim -- each entry's own nested ``capacity.direct_mw``/
       ``capacity.reverse_mw`` is exactly the shape ``line_summary_chart``
@@ -1002,14 +999,15 @@ def _line_bounds_and_meta(
     warning) rather than raising, unchanged from before this module routed
     through the shared readers.
     """
-    line_bounds = novomodelo_readers.read_novomodelo_line_bounds(novomodelo_output_dir)
-
     try:
         line_meta = novomodelo_readers.read_novomodelo_lines(novomodelo_output_dir)
     except novomodelo_readers.NovomodeloReadError as exc:
         _LOG.warning("Failed to read lines.json for network tab: %s", exc)
         line_meta = []
 
+    line_bounds = novomodelo_readers.read_novomodelo_stage_line_bounds(
+        novomodelo_output_dir, line_meta
+    )
     return line_bounds, line_meta
 
 
@@ -1621,7 +1619,7 @@ def _decomp_max_stage(aligned: _AlignedDecompFrames) -> int | None:
             continue
         values = frame["stage_id"].drop_nulls()
         if not values.is_empty():
-            candidates.append(int(values.max()))  # type: ignore[arg-type]
+            candidates.append(as_int(values.max()))
     return max(candidates) if candidates else None
 
 
@@ -2145,7 +2143,7 @@ def _novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:
     available" and degrades to no evaporation rows, rather than fabricating
     one.
     """
-    block_hours = novomodelo_readers._load_block_hours(novomodelo_output_dir)  # noqa: SLF001
+    block_hours = novomodelo_readers._load_block_hours(novomodelo_output_dir)
     if block_hours is None or block_hours.is_empty():
         return {}
     totals = block_hours.group_by("stage_id").agg(pl.col("hours").sum().alias("hours"))
@@ -2483,10 +2481,11 @@ class _DecompConstraintLookups:
 #: Register term variables `_generic_constraint_lhs_decomp` cannot re-derive from
 #: ``dec_oper_*`` output: ``interchange`` (RE ``FI``) needs the bus/line direction
 #: resolution `decomp.converters.constraints.resolve_fi_term` does at conversion time;
-#: ``QBOM`` (HQ pumping) names a pumping-station code (not a hydro code), and no
-#: ``dec_oper_*`` table reports a pumping station's flow. A constraint carrying either
-#: is skipped whole (skip-not-partial), never a partial sum.
-_UNSUPPORTED_TERM_VARIABLES = frozenset({"interchange", "QBOM"})
+#: ``contract`` (RE ``FE``) has no contract lookup here; ``QBOM`` (HQ pumping) names
+#: a pumping-station code (not a hydro code), and no ``dec_oper_*`` table reports a
+#: pumping station's flow. A constraint carrying any of them is skipped whole
+#: (skip-not-partial), never a partial sum.
+_UNSUPPORTED_TERM_VARIABLES = frozenset({"interchange", "contract", "QBOM"})
 
 #: Matches a novomodelo generic constraint's ``name`` field as authored by the
 #: conversion-time emitters (``decomp.converters.constraints.emit_re_generics`` ->
@@ -2757,6 +2756,215 @@ def _generic_constraint_lhs_decomp(
     )
 
 
+def _aligned_result_comparisons(
+    aligned: _AlignedDecompFrames,
+) -> list[ResultComparison]:
+    """The hydro, realized-productivity, thermal and bus result rows."""
+    results: list[ResultComparison] = []
+    # Captured separately so the derived realized productivity
+    # (generation / turbined, per plant/stage) can be appended right after
+    # -- see _hydro_productivity_results.
+    hydro_results = _result_comparisons(
+        aligned.source_hydro,
+        aligned.novomodelo_hydro,
+        _HYDRO_VARIABLES,
+        names=aligned.hydro_names,
+    )
+    results.extend(hydro_results)
+    results.extend(_hydro_productivity_results(hydro_results))
+    results.extend(
+        _result_comparisons(
+            aligned.source_thermal,
+            aligned.novomodelo_thermal,
+            _THERMAL_VARIABLES,
+            names=aligned.thermal_names,
+        )
+    )
+    results.extend(
+        _result_comparisons(
+            aligned.source_bus,
+            aligned.novomodelo_bus,
+            _BUS_VARIABLES,
+            names=aligned.bus_names,
+        )
+    )
+    return results
+
+
+class _OverviewCostFields(TypedDict):
+    """The Overview tab's cost fields of
+    :class:`~novomodelo_bridge.comparators.model.PercentileData`, plus the
+    ``nw_sin`` frame their per-stage rows are unioned onto."""
+
+    nw_costs: dict[str, float]
+    novomodelo_costs: dict[str, float]
+    novomodelo_stage_costs: pl.DataFrame
+    nw_sin: pl.DataFrame
+
+
+def _overview_cost_fields(
+    decomp_dir: Path,
+    novomodelo_output_dir: Path,
+    deficit_costs: dict[int, float],
+    nw_sin: pl.DataFrame,
+) -> _OverviewCostFields:
+    """Both models' cost breakdowns and Novomodelo's per-stage costs.
+
+    The DECOMP per-stage ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows are unioned
+    onto *nw_sin*'s EARM/ENA rows via :func:`_union_cost_rows`.
+    """
+    nw_costs, nw_cost_rows = _cost_frames(decomp_dir, deficit_costs)
+    return {
+        "nw_costs": nw_costs,
+        "novomodelo_costs": novomodelo_readers.read_novomodelo_cost_breakdown(
+            novomodelo_output_dir
+        ),
+        "novomodelo_stage_costs": novomodelo_readers.read_novomodelo_stage_costs(
+            novomodelo_output_dir
+        ),
+        "nw_sin": _union_cost_rows(nw_sin, nw_cost_rows),
+    }
+
+
+class _PerformanceFields(TypedDict):
+    """The Performance tab's timing fields of
+    :class:`~novomodelo_bridge.comparators.model.PercentileData`."""
+
+    nw_tim_iterations: pl.DataFrame
+    nw_tim_stages: dict[str, float]
+    nw_max_stage: int | None
+    novomodelo_training_seconds: float
+    novomodelo_iteration_timing: pl.DataFrame
+
+
+def _performance_fields(
+    decomp_dir: Path, novomodelo_output_dir: Path, aligned: _AlignedDecompFrames
+) -> _PerformanceFields:
+    """Both models' wall-clock timings, with no fabricated DECOMP
+    forward/backward split."""
+    return {
+        "nw_tim_stages": _decomp_tim_stages(decomp_dir),
+        "nw_tim_iterations": _decomp_tim_iterations(decomp_dir),
+        # Doubles as the Constraints tab's stage clamp.
+        "nw_max_stage": _decomp_max_stage(aligned),
+        "novomodelo_training_seconds": (
+            novomodelo_readers.read_novomodelo_training_duration(novomodelo_output_dir)
+        ),
+        "novomodelo_iteration_timing": (
+            novomodelo_readers.read_novomodelo_iteration_timing(novomodelo_output_dir)
+        ),
+    }
+
+
+class _GenericConstraintFields(TypedDict):
+    """The Constraints tab's ``gc_*`` fields of
+    :class:`~novomodelo_bridge.comparators.model.PercentileData`."""
+
+    gc_constraints: list[dict]
+    gc_bounds: pl.DataFrame
+    gc_lhs_newave: pl.DataFrame
+    gc_lhs_novomodelo: pl.DataFrame
+
+
+def _generic_constraint_fields(
+    case: DecompCase, novomodelo_output_dir: Path, *, probabilities: pl.DataFrame
+) -> _GenericConstraintFields:
+    """Both models' generic-constraint LHS and their bounds.
+
+    The novomodelo-side pieces (constraint/bounds tables, simulation LHS) are
+    source-agnostic and reused verbatim from `constraints`; only the DECOMP-side
+    LHS (`_generic_constraint_lhs_decomp`) is new -- see that function's
+    docstring for the per-family derivation.
+    """
+    from novomodelo_bridge.comparators.constraints import (
+        evaluate_lhs_novomodelo,
+        load_resolved_generic_constraints,
+    )
+
+    novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
+    gc_resolved = load_resolved_generic_constraints(
+        novomodelo_case_dir, novomodelo_output_dir
+    )
+    gc_constraints = gc_resolved.constraints
+    if gc_constraints:
+        gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
+        gc_lhs_nw = _generic_constraint_lhs_decomp(
+            case, novomodelo_output_dir, gc_constraints, probabilities=probabilities
+        )
+    else:
+        gc_lhs_cb = pl.DataFrame()
+        gc_lhs_nw = pl.DataFrame()
+    return {
+        "gc_constraints": gc_constraints,
+        "gc_bounds": gc_resolved.bounds,
+        "gc_lhs_newave": gc_lhs_nw,
+        "gc_lhs_novomodelo": gc_lhs_cb,
+    }
+
+
+class _VerbatimReadFields(TypedDict):
+    """The :class:`~novomodelo_bridge.comparators.model.PercentileData` fields
+    passed through unchanged from a single reader each."""
+
+    bus: pl.DataFrame
+    nw_convergence: pl.DataFrame
+    novomodelo_convergence: pl.DataFrame
+    bus_aggregates: pl.DataFrame
+    novomodelo_bus_meta: dict[int, dict]
+    novomodelo_hydro_means: pl.DataFrame
+    line: pl.DataFrame
+    hydro: pl.DataFrame
+    novomodelo_hydro_per_stage_bounds: pl.DataFrame
+    thermal: pl.DataFrame
+
+
+def _verbatim_read_fields(
+    decomp_dir: Path, novomodelo_output_dir: Path
+) -> _VerbatimReadFields:
+    """The percentile bands, the Convergence overlay, the Energy Balance
+    novomodelo-side frames and the per-stage hydro bounds."""
+    return {
+        "bus": novomodelo_readers.read_novomodelo_bus_percentiles(
+            novomodelo_output_dir
+        ),
+        "nw_convergence": _decomp_convergence_frame(decomp_dir),
+        "novomodelo_convergence": novomodelo_readers.read_novomodelo_convergence(
+            novomodelo_output_dir
+        ),
+        "bus_aggregates": novomodelo_readers.read_novomodelo_bus_aggregates(
+            novomodelo_output_dir
+        ),
+        "novomodelo_bus_meta": novomodelo_readers.read_novomodelo_bus_metadata(
+            novomodelo_output_dir
+        ),
+        "novomodelo_hydro_means": novomodelo_readers.read_novomodelo_hydro_means(
+            novomodelo_output_dir
+        ),
+        "line": novomodelo_readers.read_novomodelo_line_percentiles(
+            novomodelo_output_dir
+        ),
+        # Never fabricate a percentile spread when the Novomodelo run has no hydro
+        # percentile output (e.g. the deterministic 2-node tree) --
+        # ``read_novomodelo_hydro_percentiles`` already degrades to an empty
+        # frame in that case, passed through verbatim.
+        "hydro": novomodelo_readers.read_novomodelo_hydro_percentiles(
+            novomodelo_output_dir
+        ),
+        "novomodelo_hydro_per_stage_bounds": (
+            novomodelo_readers.read_novomodelo_hydro_per_stage_bounds(
+                novomodelo_output_dir
+            )
+        ),
+        # Never fabricate a percentile spread when the Novomodelo run has no
+        # thermal percentile output (e.g. the deterministic 2-node tree):
+        # ``read_novomodelo_thermal_percentiles`` degrades to an empty frame,
+        # passed through verbatim.
+        "thermal": novomodelo_readers.read_novomodelo_thermal_percentiles(
+            novomodelo_output_dir
+        ),
+    }
+
+
 def build_decomp_dataset(
     decomp_dir: Path, novomodelo_output_dir: Path, *, tolerance: float = 1e-2
 ) -> ComparisonDataset:
@@ -2862,37 +3070,8 @@ def build_decomp_dataset(
     aligned = _read_aligned_frames(
         case, novomodelo_output_dir, probabilities=probabilities
     )
+    results = _aligned_result_comparisons(aligned)
 
-    results: list[ResultComparison] = []
-    # Captured separately so the derived realized productivity
-    # (generation / turbined, per plant/stage) can be appended right after
-    # -- see _hydro_productivity_results.
-    hydro_results = _result_comparisons(
-        aligned.source_hydro,
-        aligned.novomodelo_hydro,
-        _HYDRO_VARIABLES,
-        names=aligned.hydro_names,
-    )
-    results.extend(hydro_results)
-    results.extend(_hydro_productivity_results(hydro_results))
-    results.extend(
-        _result_comparisons(
-            aligned.source_thermal,
-            aligned.novomodelo_thermal,
-            _THERMAL_VARIABLES,
-            names=aligned.thermal_names,
-        )
-    )
-    results.extend(
-        _result_comparisons(
-            aligned.source_bus,
-            aligned.novomodelo_bus,
-            _BUS_VARIABLES,
-            names=aligned.bus_names,
-        )
-    )
-
-    # --- Network tab (line rows + line/line_bounds/line_meta) ---
     line_bounds, line_meta = _line_bounds_and_meta(novomodelo_output_dir)
     # The Network/Productivity/REE/evaporation sections below all reuse the
     # shared case's id map rather than each re-parsing the deck.
@@ -2906,42 +3085,21 @@ def build_decomp_dataset(
     )
     results.extend(line_results)
 
-    # --- Overview cost metadata (nw_costs / novomodelo_costs /
-    # nw_sin cost rows / novomodelo_stage_costs) ---
-    nw_costs, nw_cost_rows = _cost_frames(decomp_dir, bus_deficit_costs(case.dadger))
-    novomodelo_costs = novomodelo_readers.read_novomodelo_cost_breakdown(
-        novomodelo_output_dir
+    deficit_costs = bus_deficit_costs(case.dadger)
+    cost_fields = _overview_cost_fields(
+        decomp_dir, novomodelo_output_dir, deficit_costs, aligned.nw_sin
     )
-    novomodelo_stage_costs = novomodelo_readers.read_novomodelo_stage_costs(
-        novomodelo_output_dir
-    )
-    nw_sin = _union_cost_rows(aligned.nw_sin, nw_cost_rows)
-
-    # --- Performance tab timing metadata (no fabricated DECOMP
-    # forward/backward split) ---
-    nw_tim_stages = _decomp_tim_stages(decomp_dir)
-    nw_tim_iterations = _decomp_tim_iterations(decomp_dir)
-    nw_max_stage = _decomp_max_stage(aligned)
-    novomodelo_training_seconds = novomodelo_readers.read_novomodelo_training_duration(
-        novomodelo_output_dir
-    )
-    novomodelo_iteration_timing = novomodelo_readers.read_novomodelo_iteration_timing(
-        novomodelo_output_dir
-    )
-
-    # --- Hydro Operation + Plant Details tab metadata ---
+    performance_fields = _performance_fields(decomp_dir, novomodelo_output_dir, aligned)
     novomodelo_hydro_meta = _merge_hydro_bus_ids(
         novomodelo_readers.read_novomodelo_hydro_metadata(novomodelo_output_dir),
         novomodelo_readers.read_novomodelo_hydro_bus_labels(novomodelo_output_dir),
     )
 
-    # --- Productivity tab: both models at their operating points.
     operating_points = compare_operating_points(
         decomp_dir, case, novomodelo_output_dir, probabilities, aligned.hydro_names
     )
     _log_decomp_fpha_deck_summary(decomp_dir)
 
-    # --- REE energy rollup via membership. ---
     ree_results, unmapped_ree = _ree_result_comparisons(
         decomp_dir,
         aligned.novomodelo_hydro,
@@ -2951,9 +3109,6 @@ def build_decomp_dataset(
     )
     results.extend(ree_results)
 
-    # --- evaporation comparison (hydro, "evaporation_m3s"). See
-    # ``_evaporation_result_comparisons``'s docstring for the hm³ -> m³/s
-    # reconciliation.
     evaporation_results, unmapped_evaporation = _evaporation_result_comparisons(
         decomp_dir,
         novomodelo_output_dir,
@@ -2964,90 +3119,25 @@ def build_decomp_dataset(
     )
     results.extend(evaporation_results)
 
-    # --- Constraints tab (gc_* metadata). The novomodelo-side pieces
-    # (constraint/bounds tables, simulation LHS) are source-agnostic and
-    # reused verbatim from `constraints`; only the DECOMP-side LHS
-    # (`_generic_constraint_lhs_decomp`) is new -- see that function's
-    # docstring for the per-family derivation.
-    from novomodelo_bridge.comparators.constraints import (
-        evaluate_lhs_novomodelo,
-        load_resolved_generic_constraints,
+    constraint_fields = _generic_constraint_fields(
+        case, novomodelo_output_dir, probabilities=probabilities
     )
-
-    novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
-    gc_resolved = load_resolved_generic_constraints(
-        novomodelo_case_dir, novomodelo_output_dir
-    )
-    gc_constraints = gc_resolved.constraints
-    gc_bounds_df = gc_resolved.bounds
-    if gc_constraints:
-        gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
-        gc_lhs_nw = _generic_constraint_lhs_decomp(
-            case, novomodelo_output_dir, gc_constraints, probabilities=probabilities
-        )
-    else:
-        gc_lhs_cb = pl.DataFrame()
-        gc_lhs_nw = pl.DataFrame()
 
     pct = PercentileData(
         nw_bus_names=aligned.bus_names,
         nw_hydro_names=aligned.hydro_names,
-        bus=novomodelo_readers.read_novomodelo_bus_percentiles(novomodelo_output_dir),
         nw_market=aligned.nw_market,
         nw_net_load=aligned.nw_net_load,
-        nw_sin=nw_sin,
         # Fixed at 1, not derived — see the docstring above.
         nw_offset=1,
-        # Overview tab's Convergence overlay.
-        nw_convergence=_decomp_convergence_frame(decomp_dir),
-        novomodelo_convergence=novomodelo_readers.read_novomodelo_convergence(
-            novomodelo_output_dir
-        ),
-        nw_costs=nw_costs,
-        novomodelo_costs=novomodelo_costs,
-        novomodelo_stage_costs=novomodelo_stage_costs,
-        bus_aggregates=novomodelo_readers.read_novomodelo_bus_aggregates(
-            novomodelo_output_dir
-        ),
-        novomodelo_bus_meta=novomodelo_readers.read_novomodelo_bus_metadata(
-            novomodelo_output_dir
-        ),
-        novomodelo_hydro_means=novomodelo_readers.read_novomodelo_hydro_means(
-            novomodelo_output_dir
-        ),
-        line=novomodelo_readers.read_novomodelo_line_percentiles(novomodelo_output_dir),
         line_bounds=line_bounds,
         line_meta=line_meta,
-        # Performance tab timing metadata.
-        nw_tim_stages=nw_tim_stages,
-        nw_tim_iterations=nw_tim_iterations,
-        nw_max_stage=nw_max_stage,
-        novomodelo_training_seconds=novomodelo_training_seconds,
-        novomodelo_iteration_timing=novomodelo_iteration_timing,
-        # Hydro Operation + Plant Details tab metadata. Never
-        # fabricate a percentile spread when the Novomodelo run has no hydro
-        # percentile output (e.g. the deterministic 2-node tree) --
-        # ``read_novomodelo_hydro_percentiles`` already degrades to an empty
-        # frame in that case, passed through verbatim.
-        hydro=novomodelo_readers.read_novomodelo_hydro_percentiles(
-            novomodelo_output_dir
-        ),
         novomodelo_hydro_meta=novomodelo_hydro_meta,
-        novomodelo_hydro_per_stage_bounds=novomodelo_readers.read_novomodelo_hydro_per_stage_bounds(
-            novomodelo_output_dir
-        ),
         # DECOMP has no direct withdrawal/evaporation-slack analog --
         # stays at the dataclass empty-frame default (never set to a
         # DECOMP-derived source) so the slack charts render the novomodelo
         # Mean + p10/p90 band only (report_builder's has_newave=False path).
         nw_hydro_slacks=pl.DataFrame(),
-        # Thermal Operation + Plant Details tab metadata. Never fabricate a
-        # percentile spread when the Novomodelo run has no thermal percentile output
-        # (e.g. the deterministic 2-node tree): ``read_novomodelo_thermal_percentiles``
-        # degrades to an empty frame, passed through verbatim.
-        thermal=novomodelo_readers.read_novomodelo_thermal_percentiles(
-            novomodelo_output_dir
-        ),
         # DECOMP ships no pmo.dat, so the static productivity scatter/
         # building-blocks table have no counterpart -- stays at the empty-frame
         # default (never fabricated), rendering the "No productivity data
@@ -3055,21 +3145,19 @@ def build_decomp_dataset(
         # the ``productivity_mw_per_m3s`` rows appended to ``results`` above
         # (`_hydro_productivity_results`), not this field.
         productivity_detail=pl.DataFrame(),
+        **cost_fields,
+        **performance_fields,
+        **_verbatim_read_fields(decomp_dir, novomodelo_output_dir),
         **operating_point_fields(operating_points),
-        # Constraints tab LHS-vs-bound metadata. ``nw_max_stage``
-        # is unchanged (already set above by `_decomp_max_stage`) and
-        # doubles as this section's stage clamp.
-        gc_constraints=gc_constraints,
-        gc_bounds=gc_bounds_df,
-        gc_lhs_newave=gc_lhs_nw,
-        gc_lhs_novomodelo=gc_lhs_cb,
+        **constraint_fields,
     )
     dataset = build_results_dataset(results, pct, tolerance)
-    dataset.metadata["unmapped"] = {
+    unmapped: dict[str, list[int] | list[list[int]]] = {
         level: [int(code) for code in codes]
         for level, codes in aligned.unmapped.items()
     }
-    dataset.metadata["unmapped"]["line"] = unresolved_lines
-    dataset.metadata["unmapped"]["ree"] = unmapped_ree
-    dataset.metadata["unmapped"]["evaporation"] = unmapped_evaporation
+    unmapped["line"] = unresolved_lines
+    unmapped["ree"] = unmapped_ree
+    unmapped["evaporation"] = unmapped_evaporation
+    dataset.metadata["unmapped"] = unmapped
     return dataset

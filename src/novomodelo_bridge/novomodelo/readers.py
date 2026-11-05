@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,8 @@ import polars as pl
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.pandas_utils import as_int
+from novomodelo_bridge.core.tolerances import BIG_M
 from novomodelo_bridge.novomodelo.case_io import (
     case_dir_for,
     resolve_hydro_productivities,
@@ -63,9 +66,9 @@ def _parsed_stages(novomodelo_output_dir: Path) -> Iterator[list[dict]]:
         p = candidate / "stages.json"
         if p.exists():
             try:
-                with p.open() as f:
+                with p.open(encoding="utf-8") as f:
                     yield json.load(f).get("stages", [])
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
 
 
@@ -94,7 +97,7 @@ def _load_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame | None:
                         "hours": pl.Float64,
                     }
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     return None
 
@@ -181,7 +184,7 @@ def read_novomodelo_generic_constraint_echo(
         return None
     try:
         return pl.read_parquet(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(f"Failed to read {path}") from exc
 
 
@@ -215,7 +218,7 @@ def scan_simulation_entity(
         # the single choke point every simulation reader shares — instead of
         # leaking a raw polars error past each reader's narrower try/except.
         lf.collect_schema()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(f"Failed to scan parquets in {sim_dir}") from exc
 
     return lf
@@ -226,7 +229,7 @@ def scan_simulation_entity(
 # ``hive_partitioning=True`` derives from the ``scenario_id=NNNN`` partition
 # directory name rather than storing it in the file itself. Shared by the
 # present-but-empty fallback frame and the docstring below.
-_HYDRO_BUS_GENERATION_SCHEMA: dict[str, pl.DataType] = {
+_HYDRO_BUS_GENERATION_SCHEMA: dict[str, type[pl.DataType]] = {
     "stage_id": pl.Int32,
     "block_id": pl.Int32,
     "hydro_id": pl.Int32,
@@ -422,7 +425,7 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate hydro simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
@@ -436,22 +439,24 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
 
 
 #: Per-block hydro columns :func:`read_novomodelo_hydro_block_operation` returns.
-_HYDRO_BLOCK_COLUMNS: dict[str, type[pl.DataType]] = {
-    "scenario_id": pl.Int64,
-    "stage_id": pl.Int64,
-    "block_id": pl.Int64,
-    "hydro_id": pl.Int64,
-    "hours": pl.Float64,
-    "turbined_m3s": pl.Float64,
-    "spillage_m3s": pl.Float64,
-    "outflow_m3s": pl.Float64,
-    "incremental_inflow_m3s": pl.Float64,
-    "storage_initial_hm3": pl.Float64,
-    "storage_final_hm3": pl.Float64,
-    "generation_mw": pl.Float64,
-    "water_value_per_hm3": pl.Float64,
-    "accumulated_productivity_mw_per_m3s": pl.Float64,
-}
+_HYDRO_BLOCK_COLUMNS = pl.Schema(
+    {
+        "scenario_id": pl.Int64,
+        "stage_id": pl.Int64,
+        "block_id": pl.Int64,
+        "hydro_id": pl.Int64,
+        "hours": pl.Float64,
+        "turbined_m3s": pl.Float64,
+        "spillage_m3s": pl.Float64,
+        "outflow_m3s": pl.Float64,
+        "incremental_inflow_m3s": pl.Float64,
+        "storage_initial_hm3": pl.Float64,
+        "storage_final_hm3": pl.Float64,
+        "generation_mw": pl.Float64,
+        "water_value_per_hm3": pl.Float64,
+        "accumulated_productivity_mw_per_m3s": pl.Float64,
+    }
+)
 
 
 def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.DataFrame:
@@ -473,7 +478,7 @@ def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.Dat
             .join(block_hours.lazy(), on=["stage_id", "block_id"])
             .collect()
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read the hydro simulation rows in {novomodelo_output_dir}"
         ) from exc
@@ -482,19 +487,21 @@ def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.Dat
 
 def read_novomodelo_bus_block_prices(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Novomodelo's spot price per (scenario, stage, block, bus); empty when absent."""
-    schema: dict[str, type[pl.DataType]] = {
-        "scenario_id": pl.Int64,
-        "stage_id": pl.Int64,
-        "block_id": pl.Int64,
-        "bus_id": pl.Int64,
-        "spot_price": pl.Float64,
-    }
+    schema = pl.Schema(
+        {
+            "scenario_id": pl.Int64,
+            "stage_id": pl.Int64,
+            "block_id": pl.Int64,
+            "bus_id": pl.Int64,
+            "spot_price": pl.Float64,
+        }
+    )
     lf = scan_simulation_entity(novomodelo_output_dir, "buses")
     if lf is None:
         return pl.DataFrame(schema=schema)
     try:
         frame = lf.select(list(schema)).collect()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read the bus simulation rows in {novomodelo_output_dir}"
         ) from exc
@@ -553,9 +560,9 @@ def read_novomodelo_hydro_total_flows(
     if not hydros_path.exists():
         return empty
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             hydros_data = json.load(f)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to parse hydros.json for total-inflow topology: {hydros_path}"
         ) from exc
@@ -620,9 +627,9 @@ def _load_hydro_reservoir_flag(novomodelo_output_dir: Path) -> dict[int, bool]:
     if not hydros_path.exists():
         return {}
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {}
     out: dict[int, bool] = {}
     for h in data.get("hydros", []):
@@ -714,7 +721,7 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
             .agg(pl.col("mw_mean").mean())
             .collect(engine="streaming")
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate Novomodelo spillage-energy: "
             f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
@@ -765,7 +772,7 @@ def read_novomodelo_iteration_timing(novomodelo_output_dir: Path) -> pl.DataFram
         return empty
     try:
         df = pl.read_parquet(conv_path)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to read convergence.parquet for timings")
         return empty
     keep = ["iteration", "time_forward_ms", "time_backward_ms", "time_total_ms"]
@@ -796,7 +803,7 @@ def read_novomodelo_training_duration(novomodelo_output_dir: Path) -> float:
     if not meta_path.exists():
         return 0.0
     try:
-        with meta_path.open() as f:
+        with meta_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOG.warning("Failed to parse training/metadata.json")
@@ -889,7 +896,7 @@ def read_novomodelo_line_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate exchange simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'exchanges'}"
@@ -914,7 +921,7 @@ def read_novomodelo_line_percentiles(novomodelo_output_dir: Path) -> pl.DataFram
     try:
         per_sc = _weighted_scenario_values(lf, id_col, ["net_flow_mw"], [], block_hours)
         return _compute_percentiles(per_sc, ["net_flow_mw"])
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute line percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'exchanges'}"
@@ -945,7 +952,7 @@ def read_novomodelo_lp_max_generation(novomodelo_output_dir: Path) -> pl.DataFra
         return empty
     try:
         df = pl.read_parquet(bounds_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read bounds.parquet: {bounds_path}"
         ) from exc
@@ -996,7 +1003,7 @@ def read_novomodelo_hydro_withdrawal(novomodelo_output_dir: Path) -> pl.DataFram
         return empty
     try:
         df = pl.read_parquet(bounds_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read hydro_bounds.parquet: {bounds_path}"
         ) from exc
@@ -1036,7 +1043,7 @@ def read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir: Path) -> pl.Da
         "min_outflow_m3s",
         "min_generation_mw",
     ]
-    empty_schema: dict[str, pl.DataType] = {
+    empty_schema: dict[str, type[pl.DataType]] = {
         "entity_id": pl.Int64,
         "stage_id": pl.Int64,
     }
@@ -1046,7 +1053,7 @@ def read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir: Path) -> pl.Da
         return pl.DataFrame(schema=empty_schema)
     try:
         df = pl.read_parquet(bounds_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read hydro_bounds.parquet for dashboard bounds: {bounds_path}"
         ) from exc
@@ -1067,7 +1074,7 @@ def read_novomodelo_hydro_per_stage_bounds(novomodelo_output_dir: Path) -> pl.Da
 #: ``_LINE_BOUNDS_SCHEMA``): one stage-level
 #: base row per (line, stage) with ``block_id`` null, plus per-block
 #: absolute-MW override rows.
-_LINE_BOUNDS_SCHEMA: dict[str, pl.DataType] = {
+_LINE_BOUNDS_SCHEMA: dict[str, type[pl.DataType]] = {
     "line_id": pl.Int32,
     "stage_id": pl.Int32,
     "block_id": pl.Int32,
@@ -1095,10 +1102,117 @@ def read_novomodelo_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
         return empty
     try:
         return pl.read_parquet(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read line_bounds.parquet: {path}"
         ) from exc
+
+
+_STAGE_LINE_BOUNDS_SCHEMA = pl.Schema(
+    {
+        "line_id": pl.Int32,
+        "stage_id": pl.Int32,
+        "direct_mw": pl.Float64,
+        "reverse_mw": pl.Float64,
+    }
+)
+
+
+def read_novomodelo_stage_line_bounds(
+    novomodelo_output_dir: Path, lines: Iterable[dict]
+) -> pl.DataFrame:
+    """Line capacity per (line, stage), comparable with the stage-mean flow.
+
+    *lines* is ``lines.json``'s ``"lines"`` list as the caller read it, never
+    re-read here: an unparseable ``lines.json`` must degrade the Network tab
+    in the caller, not raise from the bounds.
+
+    Each block's capacity is its override row, else the stage's base row
+    (``block_id`` null), else the line's *lines* capacity; the stage
+    value is their block-hours-weighted mean, the same weighting
+    :func:`read_novomodelo_line_means` gives the flow. Never the base row
+    alone: it holds the max over blocks, and a stage mean drawn against it, or
+    against any single block, reads as a violation that no block has. A
+    direction unbounded in any block stays unbounded for the stage. Without
+    block hours, block 0 stands for the stage, as it does for the flow.
+
+    Returns ``line_id``, ``stage_id``, ``direct_mw``, ``reverse_mw``; typed-empty
+    when ``line_bounds.parquet`` is absent.
+    """
+    empty = pl.DataFrame(schema=_STAGE_LINE_BOUNDS_SCHEMA)
+    raw = read_novomodelo_line_bounds(novomodelo_output_dir)
+    if raw.is_empty():
+        return empty
+    raw = raw.cast({c: t for c, t in _LINE_BOUNDS_SCHEMA.items() if c in raw.columns})
+    block_hours = _load_block_hours(novomodelo_output_dir)
+    if block_hours is None:
+        block_hours = (
+            raw.select("stage_id")
+            .unique()
+            .with_columns(
+                pl.lit(0, dtype=pl.Int32).alias("block_id"), pl.lit(1.0).alias("hours")
+            )
+        )
+    static = pl.DataFrame(
+        [
+            {
+                "line_id": int(line["id"]),
+                "static_direct": float(
+                    line.get("capacity", {}).get("direct_mw", math.inf)
+                ),
+                "static_reverse": float(
+                    line.get("capacity", {}).get("reverse_mw", math.inf)
+                ),
+            }
+            for line in lines
+        ],
+        schema={
+            "line_id": pl.Int32,
+            "static_direct": pl.Float64,
+            "static_reverse": pl.Float64,
+        },
+    )
+    base = raw.filter(pl.col("block_id").is_null()).select(
+        "line_id",
+        "stage_id",
+        pl.col("direct_mw").alias("base_direct"),
+        pl.col("reverse_mw").alias("base_reverse"),
+    )
+    override = raw.filter(pl.col("block_id").is_not_null())
+    per_block = (
+        raw.select("line_id", "stage_id")
+        .unique()
+        .join(block_hours, on="stage_id")
+        .join(override, on=["line_id", "stage_id", "block_id"], how="left")
+        .join(base, on=["line_id", "stage_id"], how="left")
+        .join(static, on="line_id", how="left")
+        .with_columns(
+            pl.coalesce(
+                "direct_mw", "base_direct", "static_direct", pl.lit(math.inf)
+            ).alias("direct_mw"),
+            pl.coalesce(
+                "reverse_mw", "base_reverse", "static_reverse", pl.lit(math.inf)
+            ).alias("reverse_mw"),
+        )
+    )
+
+    def _stage_value(column: str) -> pl.Expr:
+        unbounded = pl.col(column).abs() >= BIG_M
+        weighted = (pl.col(column) * pl.col("hours")).sum() / pl.col("hours").sum()
+        return (
+            pl.when(unbounded.any())
+            .then(pl.col(column).max())
+            .otherwise(weighted)
+            .alias(column)
+        )
+
+    return (
+        per_block.group_by("line_id", "stage_id")
+        .agg(_stage_value("direct_mw"), _stage_value("reverse_mw"))
+        .select(list(_STAGE_LINE_BOUNDS_SCHEMA))
+        .cast(_STAGE_LINE_BOUNDS_SCHEMA)
+        .sort("line_id", "stage_id")
+    )
 
 
 def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
@@ -1146,7 +1260,7 @@ def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate thermal simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'thermals'}"
@@ -1204,7 +1318,7 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
                 .sort("entity_id", "stage_id")
                 .collect(engine="streaming")
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate bus simulation data: "
             f"{novomodelo_output_dir / 'simulation' / 'buses'}"
@@ -1331,7 +1445,7 @@ def read_novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFra
             lf, id_col, avail_flow, avail_stage, block_hours
         )
         return _compute_percentiles(per_sc, all_vars)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute hydro percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'hydros'}"
@@ -1355,7 +1469,7 @@ def read_novomodelo_thermal_percentiles(novomodelo_output_dir: Path) -> pl.DataF
             lf, id_col, ["generation_mw"], [], block_hours
         )
         return _compute_percentiles(per_sc, ["generation_mw"])
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute thermal percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'thermals'}"
@@ -1378,7 +1492,7 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
     try:
         per_sc = _weighted_scenario_values(lf, id_col, flow_cols, [], block_hours)
         return _compute_percentiles(per_sc, flow_cols)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute bus percentiles: "
             f"{novomodelo_output_dir / 'simulation' / 'buses'}"
@@ -1403,13 +1517,198 @@ def _load_entity_bus_map(
     if path is None:
         return {}
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
         return {int(e["id"]): int(e["bus_id"]) for e in data.get(entity, [])}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read {entity} bus map from {path}"
         ) from exc
+
+
+def _agg_bus_level_vars(
+    bus_lf: pl.LazyFrame | None,
+    block_hours: pl.DataFrame | None,
+) -> tuple[pl.DataFrame, list[str]] | None:
+    """Per-scenario load, deficit and excess by bus, with the variables present."""
+    if bus_lf is None:
+        return None
+
+    avail = set(bus_lf.collect_schema().names())
+    bus_avail = [c for c in ("load_mw", "deficit_mw", "excess_mw") if c in avail]
+    if not bus_avail:
+        return None
+
+    bid_col = "bus_id" if "bus_id" in avail else "entity_id"
+    if block_hours is not None:
+        bh = block_hours.lazy()
+        weighted_means = [
+            ((pl.col(c) * pl.col("hours")).sum() / pl.col("hours").sum()).alias(c)
+            for c in bus_avail
+        ]
+        bus_sc = (
+            bus_lf.join(bh, on=["stage_id", "block_id"])
+            .group_by(["scenario_id", bid_col, "stage_id"])
+            .agg(weighted_means)
+            .rename({bid_col: "bus_id"})
+            .collect(engine="streaming")
+        )
+    else:
+        bus_sc = (
+            bus_lf.filter(pl.col("block_id") == 0)
+            .group_by(["scenario_id", bid_col, "stage_id"])
+            .agg([pl.col(c).mean() for c in bus_avail])
+            .rename({bid_col: "bus_id"})
+            .collect(engine="streaming")
+        )
+    return bus_sc, bus_avail
+
+
+def _agg_entity_by_bus(
+    lf: pl.LazyFrame | None,
+    id_col: str,
+    value_col: str,
+    bus_map: dict[int, int],
+    out_col: str,
+    block_hours: pl.DataFrame | None,
+) -> pl.DataFrame | None:
+    """Aggregate an entity variable by bus with block-hours weighting."""
+    if lf is None or not bus_map:
+        return None
+
+    available = set(lf.collect_schema().names())
+    if value_col not in available:
+        return None
+
+    mapping = pl.DataFrame(
+        {id_col: list(bus_map.keys()), "bus_id": list(bus_map.values())}
+    )
+    joined = lf.join(mapping.lazy(), on=id_col)
+
+    bus_totals = joined.group_by(["scenario_id", "bus_id", "stage_id", "block_id"]).agg(
+        pl.col(value_col).sum()
+    )
+
+    if block_hours is not None:
+        bh = block_hours.lazy()
+        per_sc = (
+            bus_totals.join(bh, on=["stage_id", "block_id"])
+            .group_by(["scenario_id", "bus_id", "stage_id"])
+            .agg(
+                (pl.col(value_col) * pl.col("hours")).sum().alias("_w"),
+                pl.col("hours").sum().alias("_h"),
+            )
+            .with_columns((pl.col("_w") / pl.col("_h")).alias(out_col))
+            .drop("_w", "_h")
+        )
+    else:
+        per_sc = (
+            bus_totals.filter(pl.col("block_id") == 0)
+            .group_by(["scenario_id", "bus_id", "stage_id"])
+            .agg(pl.col(value_col).sum().alias(out_col))
+        )
+    return per_sc.collect(engine="streaming")
+
+
+def _agg_hydro_bus_generation(
+    novomodelo_output_dir: Path,
+    block_hours: pl.DataFrame | None,
+) -> pl.DataFrame:
+    """Aggregate hydro generation by bus from the 0.13 partition.
+
+    The partition already carries ``bus_id`` per row, so — unlike
+    thermal/NCS — no plant→bus map or join is needed here.
+
+    When ``block_hours`` (``stages.json``) is available, ``generation_mwh``
+    is already hours-weighted energy per block (novomodelo applies that
+    weighting on the writer side), so summing it across ``hydro_id`` and
+    ``block_id`` — including any null-``block_id`` stage-level row —
+    gives the bus/stage/scenario total energy with NO re-weighting.
+    Dividing that total by the stage's total hours converts it back into
+    the same hours-weighted mean-MW figure the thermal/NCS branches
+    compute, so ``hydro_gen_mw`` stays comparable to them and to the
+    pre-migration plant-keyed total.
+
+    Without ``stages.json`` there is no stage-hours denominator to
+    convert the energy total back to a power figure, so this branch
+    mirrors every sibling aggregator in this module (``_agg_entity_by_bus``,
+    :func:`read_novomodelo_hydro_means`, :func:`read_novomodelo_thermal_means`,
+    :func:`read_novomodelo_bus_means`): take the ``block_id == 0`` row — novomodelo's
+    per-block ``generation_mw`` is already a genuine MW figure, no
+    weighting needed — and sum it across hydros per bus/stage/scenario.
+    A null-``block_id`` stage-level row does not equal ``0`` and is
+    excluded here, exactly as the sibling branches exclude every
+    non-representative block. Summing ``generation_mwh`` instead (the
+    bug this branch fixes) would silently relabel an energy total as a
+    power figure, off by the block-hours factor.
+
+    Absence of the partition is deliberately NOT caught here — a
+    missing ``simulation/hydro_bus_generation/`` directory must surface
+    :class:`NovomodeloPartitionMissingError` to the caller of
+    :func:`read_novomodelo_bus_aggregates`, not degrade to zero hydro
+    generation per bus (the regression this function exists to fix).
+    """
+    lf = read_novomodelo_hydro_bus_generation(novomodelo_output_dir)
+
+    if block_hours is not None:
+        energy = lf.group_by(["scenario_id", "bus_id", "stage_id"]).agg(
+            pl.col("generation_mwh").sum().alias("_energy_mwh")
+        )
+        stage_hours = (
+            block_hours.lazy()
+            .group_by("stage_id")
+            .agg(pl.col("hours").sum().alias("_hours"))
+        )
+        per_sc = (
+            energy.join(stage_hours, on="stage_id")
+            .with_columns(
+                (pl.col("_energy_mwh") / pl.col("_hours")).alias("hydro_gen_mw")
+            )
+            .drop("_energy_mwh", "_hours")
+        )
+    else:
+        per_sc = (
+            lf.filter(pl.col("block_id") == 0)
+            .group_by(["scenario_id", "bus_id", "stage_id"])
+            .agg(pl.col("generation_mw").sum().alias("hydro_gen_mw"))
+        )
+
+    return per_sc.collect(engine="streaming")
+
+
+def _join_bus_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
+    """Full-join the per-scenario bus frames on scenario, bus and stage."""
+    merged = frames[0]
+    for f in frames[1:]:
+        merged = merged.join(
+            f,
+            on=["scenario_id", "bus_id", "stage_id"],
+            how="full",
+            coalesce=True,
+        )
+    return merged
+
+
+def _bus_scenario_percentiles(
+    merged: pl.DataFrame, variables: list[str]
+) -> pl.DataFrame:
+    """p10/p50/p90 across scenarios of each present *variables* column per bus/stage."""
+    aggs: list[pl.Expr] = []
+    for c in variables:
+        if c not in merged.columns:
+            continue
+        aggs.extend(
+            [
+                pl.col(c).quantile(0.1, interpolation="linear").alias(f"{c}_p10"),
+                pl.col(c).quantile(0.5, interpolation="linear").alias(f"{c}_p50"),
+                pl.col(c).quantile(0.9, interpolation="linear").alias(f"{c}_p90"),
+            ]
+        )
+
+    if not aggs:
+        return pl.DataFrame()
+
+    return merged.group_by("bus_id", "stage_id").agg(aggs).sort("bus_id", "stage_id")
 
 
 def read_novomodelo_bus_aggregates(
@@ -1437,7 +1736,6 @@ def read_novomodelo_bus_aggregates(
     block_hours = _load_block_hours(novomodelo_output_dir)
 
     bus_lf = scan_simulation_entity(novomodelo_output_dir, "buses")
-    bus_vars = ["load_mw", "deficit_mw", "excess_mw"]
 
     thermal_bus_map = _load_entity_bus_map(
         novomodelo_output_dir, "thermals", "thermal_id"
@@ -1449,156 +1747,20 @@ def read_novomodelo_bus_aggregates(
     )
     ncs_lf = scan_simulation_entity(novomodelo_output_dir, "non_controllables")
 
-    def _agg_entity_by_bus(
-        lf: pl.LazyFrame | None,
-        id_col: str,
-        value_col: str,
-        bus_map: dict[int, int],
-        out_col: str,
-    ) -> pl.DataFrame | None:
-        """Aggregate an entity variable by bus with block-hours weighting."""
-        if lf is None or not bus_map:
-            return None
-
-        available = set(lf.collect_schema().names())
-        if value_col not in available:
-            return None
-
-        mapping = pl.DataFrame(
-            {id_col: list(bus_map.keys()), "bus_id": list(bus_map.values())}
-        )
-        joined = lf.join(mapping.lazy(), on=id_col)
-
-        bus_totals = joined.group_by(
-            ["scenario_id", "bus_id", "stage_id", "block_id"]
-        ).agg(pl.col(value_col).sum())
-
-        if block_hours is not None:
-            bh = block_hours.lazy()
-            per_sc = (
-                bus_totals.join(bh, on=["stage_id", "block_id"])
-                .group_by(["scenario_id", "bus_id", "stage_id"])
-                .agg(
-                    (pl.col(value_col) * pl.col("hours")).sum().alias("_w"),
-                    pl.col("hours").sum().alias("_h"),
-                )
-                .with_columns((pl.col("_w") / pl.col("_h")).alias(out_col))
-                .drop("_w", "_h")
-            )
-        else:
-            per_sc = (
-                bus_totals.filter(pl.col("block_id") == 0)
-                .group_by(["scenario_id", "bus_id", "stage_id"])
-                .agg(pl.col(value_col).sum().alias(out_col))
-            )
-        return per_sc.collect(engine="streaming")
-
-    def _agg_hydro_bus_generation() -> pl.DataFrame:
-        """Aggregate hydro generation by bus from the 0.13 partition.
-
-        The partition already carries ``bus_id`` per row, so — unlike
-        thermal/NCS — no plant→bus map or join is needed here.
-
-        When ``block_hours`` (``stages.json``) is available, ``generation_mwh``
-        is already hours-weighted energy per block (novomodelo applies that
-        weighting on the writer side), so summing it across ``hydro_id`` and
-        ``block_id`` — including any null-``block_id`` stage-level row —
-        gives the bus/stage/scenario total energy with NO re-weighting.
-        Dividing that total by the stage's total hours converts it back into
-        the same hours-weighted mean-MW figure the thermal/NCS branches
-        compute, so ``hydro_gen_mw`` stays comparable to them and to the
-        pre-migration plant-keyed total.
-
-        Without ``stages.json`` there is no stage-hours denominator to
-        convert the energy total back to a power figure, so this branch
-        mirrors every sibling aggregator in this module (``_agg_entity_by_bus``,
-        :func:`read_novomodelo_hydro_means`, :func:`read_novomodelo_thermal_means`,
-        :func:`read_novomodelo_bus_means`): take the ``block_id == 0`` row — novomodelo's
-        per-block ``generation_mw`` is already a genuine MW figure, no
-        weighting needed — and sum it across hydros per bus/stage/scenario.
-        A null-``block_id`` stage-level row does not equal ``0`` and is
-        excluded here, exactly as the sibling branches exclude every
-        non-representative block. Summing ``generation_mwh`` instead (the
-        bug this branch fixes) would silently relabel an energy total as a
-        power figure, off by the block-hours factor.
-
-        Absence of the partition is deliberately NOT caught here — a
-        missing ``simulation/hydro_bus_generation/`` directory must surface
-        :class:`NovomodeloPartitionMissingError` to the caller of
-        :func:`read_novomodelo_bus_aggregates`, not degrade to zero hydro
-        generation per bus (the regression this function exists to fix).
-        """
-        lf = read_novomodelo_hydro_bus_generation(novomodelo_output_dir)
-
-        if block_hours is not None:
-            energy = lf.group_by(["scenario_id", "bus_id", "stage_id"]).agg(
-                pl.col("generation_mwh").sum().alias("_energy_mwh")
-            )
-            stage_hours = (
-                block_hours.lazy()
-                .group_by("stage_id")
-                .agg(pl.col("hours").sum().alias("_hours"))
-            )
-            per_sc = (
-                energy.join(stage_hours, on="stage_id")
-                .with_columns(
-                    (pl.col("_energy_mwh") / pl.col("_hours")).alias("hydro_gen_mw")
-                )
-                .drop("_energy_mwh", "_hours")
-            )
-        else:
-            per_sc = (
-                lf.filter(pl.col("block_id") == 0)
-                .group_by(["scenario_id", "bus_id", "stage_id"])
-                .agg(pl.col("generation_mw").sum().alias("hydro_gen_mw"))
-            )
-
-        return per_sc.collect(engine="streaming")
-
-    # Collect per-scenario frames.
     frames: list[pl.DataFrame] = []
     all_vars: list[str] = []
 
-    # Bus-level variables.
-    if bus_lf is not None:
-        avail = set(bus_lf.collect_schema().names())
-        bus_avail = [c for c in bus_vars if c in avail]
-        bid_col = "bus_id" if "bus_id" in avail else "entity_id"
-        if bus_avail and block_hours is not None:
-            bh = block_hours.lazy()
-            bus_sc = (
-                bus_lf.join(bh, on=["stage_id", "block_id"])
-                .group_by(["scenario_id", bid_col, "stage_id"])
-                .agg(
-                    [
-                        (
-                            (pl.col(c) * pl.col("hours")).sum() / pl.col("hours").sum()
-                        ).alias(c)
-                        for c in bus_avail
-                    ]
-                )
-                .rename({bid_col: "bus_id"})
-                .collect(engine="streaming")
-            )
-        elif bus_avail:
-            bus_sc = (
-                bus_lf.filter(pl.col("block_id") == 0)
-                .group_by(["scenario_id", bid_col, "stage_id"])
-                .agg([pl.col(c).mean() for c in bus_avail])
-                .rename({bid_col: "bus_id"})
-                .collect(engine="streaming")
-            )
-        else:
-            bus_sc = None
-        if bus_sc is not None:
-            frames.append(bus_sc)
-            all_vars.extend(bus_avail)
+    bus_level = _agg_bus_level_vars(bus_lf, block_hours)
+    if bus_level is not None:
+        bus_sc, bus_avail = bus_level
+        frames.append(bus_sc)
+        all_vars.extend(bus_avail)
 
     # Hydro generation: the partition already carries bus_id, so it is
     # aggregated directly rather than through the map/join loop below —
     # absence must raise, not silently drop out
     # of ``frames`` the way a ``None``-returning entity aggregation would.
-    frames.append(_agg_hydro_bus_generation())
+    frames.append(_agg_hydro_bus_generation(novomodelo_output_dir, block_hours))
     all_vars.append("hydro_gen_mw")
 
     # Thermal / NCS entity aggregations (still map-and-join: those entities
@@ -1619,22 +1781,12 @@ def read_novomodelo_bus_aggregates(
             "ncs_gen_mw",
         ),
     ]:
-        result = _agg_entity_by_bus(lf, id_col, val_col, bmap, out)
+        result = _agg_entity_by_bus(lf, id_col, val_col, bmap, out, block_hours)
         if result is not None:
             frames.append(result)
             all_vars.append(out)
 
-    if not frames:
-        return pl.DataFrame()
-
-    merged = frames[0]
-    for f in frames[1:]:
-        merged = merged.join(
-            f,
-            on=["scenario_id", "bus_id", "stage_id"],
-            how="full",
-            coalesce=True,
-        )
+    merged = _join_bus_frames(frames)
 
     if "load_mw" in merged.columns and "ncs_gen_mw" in merged.columns:
         merged = merged.with_columns(
@@ -1644,23 +1796,7 @@ def read_novomodelo_bus_aggregates(
         )
         all_vars.append("net_load_mw")
 
-    # Compute percentiles across scenarios.
-    aggs: list[pl.Expr] = []
-    for c in all_vars:
-        if c not in merged.columns:
-            continue
-        aggs.extend(
-            [
-                pl.col(c).quantile(0.1, interpolation="linear").alias(f"{c}_p10"),
-                pl.col(c).quantile(0.5, interpolation="linear").alias(f"{c}_p50"),
-                pl.col(c).quantile(0.9, interpolation="linear").alias(f"{c}_p90"),
-            ]
-        )
-
-    if not aggs:
-        return pl.DataFrame()
-
-    return merged.group_by("bus_id", "stage_id").agg(aggs).sort("bus_id", "stage_id")
+    return _bus_scenario_percentiles(merged, all_vars)
 
 
 def read_novomodelo_cost_breakdown(
@@ -1711,7 +1847,7 @@ def read_novomodelo_cost_breakdown(
 
         per_sc = lf.group_by("scenario_id").agg(disc_exprs)
         means = per_sc.select([pl.col(c).mean() for c in cols]).collect()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to read Novomodelo cost breakdown: "
             f"{novomodelo_output_dir / 'simulation' / 'costs'}"
@@ -1785,7 +1921,7 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
         per_sc = lf.group_by(["scenario_id", "stage_id"]).agg(agg_exprs)
         mean_cols = [pl.col(c).mean() for c in _ALL_COLS if c in available]
         df = per_sc.group_by("stage_id").agg(mean_cols).sort("stage_id").collect()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             "Failed to read Novomodelo per-stage costs: "
             f"{novomodelo_output_dir / 'simulation' / 'costs'}"
@@ -1823,7 +1959,7 @@ def read_converted_penalties(novomodelo_output_dir: Path) -> dict:
     ):
         if candidate.is_file():
             try:
-                return json.loads(candidate.read_text())
+                return json.loads(candidate.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 _LOG.warning("Failed to parse %s", candidate)
                 return {}
@@ -1855,7 +1991,7 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     try:
         df = pl.read_parquet(conv_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise NovomodeloReadError(
             f"Failed to read convergence.parquet: {conv_path}"
         ) from exc
@@ -1951,7 +2087,7 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
         return {}
 
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOG.warning("Failed to parse hydros.json")
@@ -2055,7 +2191,7 @@ def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int
         _LOG.warning("hydros.json not found near %s", novomodelo_output_dir)
         return {}
     try:
-        with hydros_path.open() as f:
+        with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         _LOG.warning("Failed to parse hydros.json for productivity detail")
@@ -2119,7 +2255,7 @@ def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
         _LOG.warning("lines.json not found near %s", novomodelo_output_dir)
         return []
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         raise NovomodeloReadError(f"Failed to parse lines.json: {path}") from exc
@@ -2137,9 +2273,9 @@ def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, d
         return {}
 
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to parse thermals.json")
         return {}
 
@@ -2160,9 +2296,9 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
         return {}
 
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOG.warning("Failed to parse buses.json")
         return {}
 
@@ -2217,11 +2353,11 @@ def read_novomodelo_fpha_fit_config(novomodelo_output_dir: Path) -> pl.DataFrame
     if path is None or block_hours is None:
         return empty
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             models = json.load(f).get("production_models", [])
     except (OSError, json.JSONDecodeError) as exc:
         raise NovomodeloReadError(f"Failed to read {path}") from exc
-    last_stage = int(block_hours["stage_id"].max())  # type: ignore[arg-type]
+    last_stage = as_int(block_hours["stage_id"].max())
     season_stages = _stage_seasons(novomodelo_output_dir)
     rows: list[dict[str, object]] = []
     for model in models:
@@ -2264,7 +2400,7 @@ def read_novomodelo_fpha_planes(novomodelo_output_dir: Path) -> pl.DataFrame | N
         return None
     try:
         df = pl.read_parquet(path)
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         msg = f"Failed to read {path}"
         raise NovomodeloReadError(msg) from err
     return None if df.is_empty() else df

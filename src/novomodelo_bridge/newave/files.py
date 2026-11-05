@@ -160,6 +160,7 @@ class NewaveFiles:
             If ``caso.dat`` is missing, the Arquivos file it references is
             missing, or any required file is absent.
         """
+        from inewave.libs import Indices
         from inewave.newave import Arquivos, Caso
 
         # --- Step 1: read caso.dat (case-insensitive) --------------------------
@@ -172,7 +173,13 @@ class NewaveFiles:
             )
 
         caso = Caso.read(str(caso_path))
-        arq_filename: str = caso.arquivos
+        arq_filename = caso.arquivos
+        if arq_filename is None:
+            raise SourceFileError(
+                f"caso.dat in {directory} names no Arquivos file",
+                path=str(caso_path),
+                field="caso.dat",
+            )
         _LOG.debug("caso.dat -> Arquivos file: %s", arq_filename)
 
         # --- Step 2: read the Arquivos file ------------------------------------
@@ -208,7 +215,7 @@ class NewaveFiles:
 
         # --- Step 4b: LIBS files, only those indices.csv declares ---------------
         libs_index = find_case_insensitive(directory, INDEX_FILENAME)
-        libs = read_libs_index(directory, libs_index)
+        libs = read_libs_index(directory, libs_index, Indices.read)
         polinjus = libs.path(HIDRELETRICA_CURVAJUSANTE)
         volumes_referencia = libs.path(HIDRELETRICA_CADASTRO_RESERVATORIO)
         tratamento_fpha = libs.path(HIDRELETRICA_FPHA_REDUCAO_CORTES)
@@ -221,7 +228,7 @@ class NewaveFiles:
             """Resolve an optional Arquivos attribute, returning None if absent."""
             try:
                 fname: str | None = getattr(arq, attr, None)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return None
             if not fname:
                 return None

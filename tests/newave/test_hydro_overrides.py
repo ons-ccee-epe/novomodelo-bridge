@@ -72,7 +72,7 @@ class TestApplyPermanentOverrides:
         volmax_rec.__class__.__name__ = "VOLMAX"
         type(volmax_rec).__name__ = "VOLMAX"
         volmax_rec.volume = 2000.0
-        volmax_rec.unidade = "'h'"
+        volmax_rec.unidade = "h"
 
         mock_modif = modif_mock((1, [volmax_rec]))
 
@@ -102,12 +102,12 @@ class TestApplyPermanentOverrides:
 
     def test_volmax_percent_is_of_the_useful_volume(self, tmp_path) -> None:
         """``VOLMAX 55 '%'`` on [100, 1000] is 100 + 0.55 * 900, not 55 hm³."""
-        result = self._apply(tmp_path, 1, [self._volume_rec("VOLMAX", 55.0, "'%'")])
+        result = self._apply(tmp_path, 1, [self._volume_rec("VOLMAX", 55.0, "%")])
         assert float(result.loc[1, "volume_maximo"]) == pytest.approx(595.0)
 
     def test_volmin_percent_is_of_the_useful_volume(self, tmp_path) -> None:
         """``VOLMIN 20 '%'`` on [50, 500] is 50 + 0.20 * 450."""
-        result = self._apply(tmp_path, 2, [self._volume_rec("VOLMIN", 20.0, "'%'")])
+        result = self._apply(tmp_path, 2, [self._volume_rec("VOLMIN", 20.0, "%")])
         assert float(result.loc[2, "volume_minimo"]) == pytest.approx(140.0)
 
     def test_percent_resolves_against_the_registry_regardless_of_order(
@@ -120,16 +120,25 @@ class TestApplyPermanentOverrides:
             tmp_path,
             1,
             [
-                self._volume_rec("VOLMIN", 200.0, "'h'"),
-                self._volume_rec("VOLMAX", 50.0, "'%'"),
+                self._volume_rec("VOLMIN", 200.0, "h"),
+                self._volume_rec("VOLMAX", 50.0, "%"),
             ],
         )
         assert float(result.loc[1, "volume_minimo"]) == pytest.approx(200.0)
         assert float(result.loc[1, "volume_maximo"]) == pytest.approx(550.0)
 
-    def test_unit_is_read_case_and_quote_insensitively(self, tmp_path) -> None:
+    def test_unit_is_read_case_and_space_insensitively(self, tmp_path) -> None:
         result = self._apply(tmp_path, 1, [self._volume_rec("VOLMAX", 800.0, " H ")])
         assert float(result.loc[1, "volume_maximo"]) == pytest.approx(800.0)
+
+    def test_the_quoted_unit_the_file_writes_reads_as_percent(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
+
+        modif = _read_modif(tmp_path, " USINA      1   USINA_A", " VOLMAX 55 '%'")
+        result = _apply_permanent_overrides(
+            self._base_cadastro(), self._modif_case(tmp_path, modif)
+        )
+        assert float(result.loc[1, "volume_maximo"]) == pytest.approx(595.0)
 
     def test_vazmin_override(self, tmp_path) -> None:
         """VAZMIN record updates vazao_minima_historica for the target plant."""
@@ -353,12 +362,12 @@ class TestExtractTemporalOverrides:
         type(vmaxt_rec).__name__ = "VMAXT"
         vmaxt_rec.data_inicio = datetime.datetime(2025, 1, 1)
         vmaxt_rec.volume = 73.2
-        vmaxt_rec.unidade = "'%'"
+        vmaxt_rec.unidade = "%"
         vmint_rec = MagicMock()
         type(vmint_rec).__name__ = "VMINT"
         vmint_rec.data_inicio = datetime.datetime(2025, 2, 1)
         vmint_rec.volume = 1500.0
-        vmint_rec.unidade = "'h'"
+        vmint_rec.unidade = "h"
 
         mock_modif = modif_mock((1, [vmaxt_rec, vmint_rec]))
 
@@ -859,7 +868,7 @@ class TestApplyPermanentOverridesDiagnostics:
         volmax_rec = MagicMock()
         type(volmax_rec).__name__ = "VOLMAX"
         volmax_rec.volume = 2000.0
-        volmax_rec.unidade = "'h'"
+        volmax_rec.unidade = "h"
 
         mock_modif = modif_mock((1, [volmax_rec]))
 
@@ -991,14 +1000,25 @@ class TestReadDiversionRecords:
             314: DiversionRecord(target=288, max_flow_m3s=9999999.0),
         }
 
-    def test_the_flow_is_optional_and_the_keyword_case_free(self, tmp_path) -> None:
+    def test_the_flow_is_optional(self, tmp_path) -> None:
         records = self._records(
             tmp_path,
             " USINA    118                               BILLINGS",
-            " cdesvio 119",
+            " CDESVIO 119",
         )
         assert records[118].target == 119
         assert records[118].max_flow_m3s is None
+
+    def test_an_unparseable_flow_reads_as_no_flow(self, tmp_path) -> None:
+        records = self._records(
+            tmp_path, " USINA    118    BILLINGS", " CDESVIO 119 abc"
+        )
+        assert records[118].max_flow_m3s is None
+
+    def test_a_lowercase_keyword_is_not_a_record(self, tmp_path) -> None:
+        assert (
+            self._records(tmp_path, " USINA    118    BILLINGS", " cdesvio 119") == {}
+        )
 
     def test_the_last_record_of_a_plant_wins(self, tmp_path) -> None:
         records = self._records(
@@ -1022,15 +1042,27 @@ class TestReadDiversionRecords:
             == {}
         )
 
+    def test_a_record_before_any_usina_is_ignored_with_a_warning(
+        self, tmp_path
+    ) -> None:
+        with dx.collect() as collected:
+            records = self._records(
+                tmp_path,
+                " CDESVIO 119 100.",
+                " USINA    118                               BILLINGS",
+            )
+        assert records == {}
+        (warning,) = [d for d in collected if d.code == "modif-records-ignored"]
+        assert warning.table is not None
+        assert list(warning.table.rows) == [["", "before the first USINA", "1 CDESVIO"]]
+
     @pytest.mark.parametrize(
         ("lines", "reason"),
         [
-            ((" CDESVIO 119 100.",), "before any USINA"),
             ((" USINA    118    BILLINGS", " CDESVIO"), "no integer target"),
             ((" USINA    118    BILLINGS", " CDESVIO X 100."), "no integer target"),
             ((" USINA    118    BILLINGS", " CDESVIO 118 100."), "diverts to itself"),
-            ((" USINA    118    BILLINGS", " CDESVIO 119 -1."), "'-1.'"),
-            ((" USINA    118    BILLINGS", " CDESVIO 119 abc"), "'abc'"),
+            ((" USINA    118    BILLINGS", " CDESVIO 119 -1."), "maximum flow -1;"),
         ],
     )
     def test_a_malformed_record_fails_naming_the_problem(
@@ -1045,8 +1077,8 @@ class TestReadDiversionRecords:
 
 
 class TestModifFileOrder:
-    """Records come from every ``USINA`` block of a real ``modif.dat``, in file
-    order, including the file's last record."""
+    """Records come from each plant's first ``USINA`` block of a real
+    ``modif.dat``, in file order, including the file's last record."""
 
     _USINA_A = " USINA      1                               USINA_A"
     _USINA_B = " USINA      2                               USINA_B"
@@ -1065,6 +1097,14 @@ class TestModifFileOrder:
         result = _apply_permanent_overrides(_make_hidr_cadastro(), case)
         assert float(result.loc[1, "vazao_minima_historica"]) == 71.0
 
+    def test_a_cdesvio_record_is_not_an_unsupported_override(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
+
+        case = self._case(tmp_path, self._USINA_A, " CDESVIO   2 100.")
+        with dx.collect() as collected:
+            _apply_permanent_overrides(_make_hidr_cadastro(), case)
+        assert [d.code for d in collected] == []
+
     def test_the_last_record_of_the_file_is_read(self, tmp_path) -> None:
         from novomodelo_bridge.newave.converters.hydro import (
             _extract_temporal_overrides,
@@ -1082,7 +1122,7 @@ class TestModifFileOrder:
             (12, pytest.approx(96.78)),
         ]
 
-    def test_every_block_of_a_plant_is_read_in_file_order(self, tmp_path) -> None:
+    def test_only_a_plants_first_block_counts(self, tmp_path) -> None:
         from novomodelo_bridge.newave.converters.hydro import (
             _apply_permanent_overrides,
             _extract_temporal_overrides,
@@ -1098,10 +1138,13 @@ class TestModifFileOrder:
             " VAZMINT   1 2026 1100.00",
             " VAZMIN       80",
         )
-        cadastro = _apply_permanent_overrides(_make_hidr_cadastro(), case)
-        assert float(cadastro.loc[1, "vazao_minima_historica"]) == 80.0
+        with dx.collect() as collected:
+            cadastro = _apply_permanent_overrides(_make_hidr_cadastro(), case)
+            temporal = _extract_temporal_overrides(case, [1, 2])
+        assert float(cadastro.loc[1, "vazao_minima_historica"]) == 71.0
         assert float(cadastro.loc[2, "vazao_minima_historica"]) == 5.0
-        temporal = _extract_temporal_overrides(case, [1, 2])
-        assert [(o["type"], o["month"], o["value"]) for o in temporal[1]] == [
-            ("VAZMINT", 1, 1100.0)
-        ]
+        assert temporal.get(1, []) == []
+        (warning,) = {d.code: d for d in collected}.values()
+        assert warning.code == "modif-records-ignored"
+        assert warning.table is not None
+        assert list(warning.table.rows) == [[1, "USINA_A", "1 VAZMINT, 1 VAZMIN"]]

@@ -32,19 +32,35 @@ fictitious plants, etc.) are skipped.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol
 
-import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.pandas_utils import as_frame_or_empty
 from novomodelo_bridge.core.tailrace import build_tailrace_table
 
 if TYPE_CHECKING:
-    from novomodelo_bridge.newave.case import NewaveCase
     from novomodelo_bridge.newave.id_map import NewaveIdMap
 
 
-def convert_tailrace_curves(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table | None:
+class _PolinjusReader(Protocol):
+    """The ``inewave.libs.UsinasHidreletricas`` accessors this converter calls."""
+
+    def hidreletrica_curvajusante(self, *, df: bool) -> object: ...
+
+    def hidreletrica_curvajusante_polinomio_segmento(self, *, df: bool) -> object: ...
+
+
+class _PolinjusCase(Protocol):
+    """The part of ``NewaveCase`` this converter reads."""
+
+    @property
+    def polinjus(self) -> _PolinjusReader | None: ...
+
+
+def convert_tailrace_curves(
+    case: _PolinjusCase, id_map: NewaveIdMap
+) -> pa.Table | None:
     """Build ``system/tailrace_curves.parquet`` from the source model's ``polinjus``
     families.
 
@@ -70,8 +86,8 @@ def convert_tailrace_curves(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table |
     if uh is None:
         return None
 
-    families = cast(pd.DataFrame, uh.hidreletrica_curvajusante(df=True))
-    segments = cast(
-        pd.DataFrame, uh.hidreletrica_curvajusante_polinomio_segmento(df=True)
+    families = as_frame_or_empty(uh.hidreletrica_curvajusante(df=True))
+    segments = as_frame_or_empty(
+        uh.hidreletrica_curvajusante_polinomio_segmento(df=True)
     )
     return build_tailrace_table(families, segments, id_map.hydro_id)

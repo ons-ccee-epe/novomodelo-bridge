@@ -1,7 +1,9 @@
 """Readers for the Novomodelo JSON inputs the conversion depends on.
 
 Only JSON is read. Because premise P1 zero-fills mapcut record indices 4-17,
-no Novomodelo Parquet artifact is needed.
+no Novomodelo Parquet artifact is needed. Stage-level cost overrides in
+constraints/thermal_bounds.parquet are deliberately not read, so a thermal is
+priced at its thermals.json cost_per_mwh at every stage.
 
 Stage durations are NOT uniform in the reference deck: stages 0-5 span 168
 hours each while stage 6 spans 600. Anything weighted by time must read the
@@ -14,6 +16,7 @@ import json
 import logging
 import math
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,7 @@ _LOG = logging.getLogger(__name__)
 
 _STAGES_FILE = "stages.json"
 _CONFIG_FILE = "config.json"
+_INITIAL_CONDITIONS_FILE = "initial_conditions.json"
 _SYSTEM_DIR = "system"
 _HYDROS_FILE = "hydros.json"
 _THERMALS_FILE = "thermals.json"
@@ -71,12 +75,26 @@ class HydroInfo:
 
 @dataclass(frozen=True)
 class ThermalInfo:
-    """One thermal plant. `lead_time_hours` is `None` when not GNL-capable."""
+    """One thermal plant. `lead_time_hours` is `None` when not GNL-capable.
+
+    `cost_per_mwh` is in R$/MWh.
+    """
 
     id: int
     name: str
     bus_id: int
     lead_time_hours: float | None
+    cost_per_mwh: float
+
+
+@dataclass(frozen=True)
+class CommitmentWindow:
+    """One `past_anticipated_commitments` window, `[start_date, end_date)` with the end excluded."""
+
+    thermal_id: int
+    start_date: date
+    end_date: date
+    value_mw: float
 
 
 @dataclass(frozen=True)
@@ -96,6 +114,7 @@ class CaseInputs:
     thermals: tuple[ThermalInfo, ...]
     buses: tuple[BusInfo, ...]
     annual_discount_rate: float
+    past_anticipated_commitments: tuple[CommitmentWindow, ...]
 
 
 def _load_json(path: Path) -> Any:
@@ -152,6 +171,17 @@ def _require_float(obj: Any, key: str, dotted: str) -> float:
     if not math.isfinite(number):
         raise InputReadError(f"{dotted} must be a finite number, got {value!r}")
     return number
+
+
+def _require_iso_date(obj: Any, key: str, dotted: str) -> date:
+    """Require an ISO-8601 date string."""
+    value = _require_str(obj, key, dotted)
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise InputReadError(
+            f"{dotted} must be an ISO-8601 date, got {value!r}"
+        ) from exc
 
 
 def _require_bool(obj: Any, key: str, dotted: str) -> bool:
@@ -271,12 +301,18 @@ def _read_thermals(path: Path) -> tuple[ThermalInfo, ...]:
                 f"{dotted}.anticipated_config.lead_time_hours",
             )
         )
+        cost = _require_float(entry, "cost_per_mwh", f"{dotted}.cost_per_mwh")
+        if cost < 0.0:
+            raise InputReadError(
+                f"{dotted}.cost_per_mwh must be non-negative, got {cost}"
+            )
         thermals.append(
             ThermalInfo(
                 id=_require_int(entry, "id", f"{dotted}.id"),
                 name=_require_str(entry, "name", f"{dotted}.name"),
                 bus_id=_require_int(entry, "bus_id", f"{dotted}.bus_id"),
                 lead_time_hours=lead_time,
+                cost_per_mwh=cost,
             )
         )
     return tuple(thermals)
@@ -294,6 +330,41 @@ def _read_buses(path: Path) -> tuple[BusInfo, ...]:
     )
 
 
+def _read_initial_conditions(path: Path) -> tuple[CommitmentWindow, ...]:
+    """Read the past_anticipated_commitments windows of initial_conditions.json."""
+    raw = _load_json(path)
+    if not isinstance(raw, dict):
+        raise InputReadError(
+            f"{path} must hold a JSON object, got {type(raw).__name__}"
+        )
+    if "past_anticipated_commitments" not in raw:
+        return ()
+    windows = []
+    for pos, entry in enumerate(
+        _require_list(
+            raw, "past_anticipated_commitments", "past_anticipated_commitments"
+        )
+    ):
+        dotted = f"past_anticipated_commitments[{pos}]"
+        thermal_id = _require_int(entry, "thermal_id", f"{dotted}.thermal_id")
+        start = _require_iso_date(entry, "start_date", f"{dotted}.start_date")
+        end = _require_iso_date(entry, "end_date", f"{dotted}.end_date")
+        value_mw = _require_float(entry, "value_mw", f"{dotted}.value_mw")
+        if end <= start:
+            raise InputReadError(
+                f"{dotted}.end_date {end} is not after start_date {start}"
+            )
+        windows.append(
+            CommitmentWindow(
+                thermal_id=thermal_id,
+                start_date=start,
+                end_date=end,
+                value_mw=value_mw,
+            )
+        )
+    return tuple(windows)
+
+
 def anticipated_thermals(inputs: CaseInputs) -> tuple[ThermalInfo, ...]:
     """Return the GNL-capable thermals, ascending by id."""
     return tuple(
@@ -305,7 +376,7 @@ def anticipated_thermals(inputs: CaseInputs) -> tuple[ThermalInfo, ...]:
 
 
 def read_case_inputs(case_dir: Path) -> CaseInputs:
-    """Read stages.json and the system/ inputs the conversion needs."""
+    """Read stages.json, initial_conditions.json and the system/ inputs the conversion needs."""
     case_dir = case_dir.resolve()
     system_dir = case_dir / _SYSTEM_DIR
     stages, annual_discount_rate = _read_stages(case_dir / _STAGES_FILE)
@@ -315,11 +386,14 @@ def read_case_inputs(case_dir: Path) -> CaseInputs:
         thermals=_read_thermals(system_dir / _THERMALS_FILE),
         buses=_read_buses(system_dir / _BUSES_FILE),
         annual_discount_rate=annual_discount_rate,
+        past_anticipated_commitments=_read_initial_conditions(
+            case_dir / _INITIAL_CONDITIONS_FILE
+        ),
     )
 
     _LOG.info(
         "read case inputs %s: stages=%d hydros=%d thermals=%d buses=%d "
-        "anticipated_thermals=%d annual_discount_rate=%s",
+        "anticipated_thermals=%d annual_discount_rate=%s commitment_windows=%d",
         case_dir,
         len(inputs.stages),
         len(inputs.hydros),
@@ -327,6 +401,7 @@ def read_case_inputs(case_dir: Path) -> CaseInputs:
         len(inputs.buses),
         len(anticipated_thermals(inputs)),
         inputs.annual_discount_rate,
+        len(inputs.past_anticipated_commitments),
     )
     terminal = sum(1 for h in inputs.hydros if h.downstream_id is None)
     _LOG.info("hydro topology: %d terminal plants with no downstream", terminal)

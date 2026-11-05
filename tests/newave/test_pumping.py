@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, PropertyMock
 
 import pandas as pd
@@ -17,9 +16,6 @@ from novomodelo_bridge.newave.converters.pumping import (
     pumping_station_id_map,
     read_pumping_inputs,
 )
-
-if TYPE_CHECKING:
-    from datetime import date
 
 
 def _mock_case(
@@ -53,11 +49,7 @@ def _mock_case(
     else:
         case.estacao_bombeamento_submercado = None
 
-    # confhd
-    if confhd_codes is not None:
-        case.confhd.usinas = {"codigo_usina": list(confhd_codes)}
-    else:
-        case.confhd.usinas = {"codigo_usina": []}
+    case.hydro_plants = pd.DataFrame({"codigo_usina": sorted(confhd_codes or ())})
 
     return case
 
@@ -294,7 +286,7 @@ class TestConvertPumpingBounds:
 
     def _mock_case_with_horizon(
         self, start: date, total_stages: int, n_blocks: int = 3
-    ) -> MagicMock:
+    ) -> tuple[MagicMock, list[date]]:
         """Create a mock case with a real-ish horizon for bounds tests."""
         case = MagicMock()
         case.horizon.start_year = start.year

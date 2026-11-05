@@ -373,9 +373,9 @@ class TestGenerateHydroGeometryDiagnostics:
 
         by_code = {row[1]: row for row in diag.table.rows}
         assert by_code[1][0] == "PLANT ONE"
-        assert "polynomial" in by_code[1][2]
+        assert "polynomial" in str(by_code[1][2])
         assert by_code[3][0] == "?"
-        assert "cadastro" in by_code[3][2]
+        assert "cadastro" in str(by_code[3][2])
         assert by_code[1][2] != by_code[3][2]
 
         _assert_no_repo_internal_leaks(collected)

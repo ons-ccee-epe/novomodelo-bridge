@@ -16,6 +16,7 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NOVOMODELO,
 )
 from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.core.pandas_utils import as_float
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 
@@ -200,8 +201,8 @@ def system_per_bus_chart(
         novomodelo_id = rows_sorted[0].novomodelo_id if rows_sorted else None
         bus_pct = pct_by_eid.get(novomodelo_id, {}) if novomodelo_id is not None else {}
         if bus_pct:
-            p10 = [float(bus_pct.get(s, {}).get(p10_col, 0) or 0) for s in stages]
-            p90 = [float(bus_pct.get(s, {}).get(p90_col, 0) or 0) for s in stages]
+            p10 = [as_float(bus_pct.get(s, {}).get(p10_col, 0) or 0) for s in stages]
+            p90 = [as_float(bus_pct.get(s, {}).get(p90_col, 0) or 0) for s in stages]
             traces.append(
                 {
                     "x": stages + stages[::-1],

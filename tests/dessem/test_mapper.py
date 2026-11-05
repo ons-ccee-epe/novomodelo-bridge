@@ -1,35 +1,55 @@
 """Tests for dessem/exporters/fcf/mapper.py."""
 
+import logging
+from dataclasses import replace
+from datetime import date
+
+import numpy as np
 import pytest
 
+from novomodelo_bridge.core.policy_dates import UNDATED
+from novomodelo_bridge.core.tolerances import floats_differ
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
+    BlockInfo,
     CaseInputs,
+    CommitmentWindow,
     HydroInfo,
+    StageInfo,
     ThermalInfo,
 )
+from novomodelo_bridge.dessem.exporters.fcf.core.layout import CutBlockOffsets
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     DAYS_PER_YEAR,
     DECOMP_COST_DIVISOR,
+    ENTITY_TYPE_ANTICIPATED_THERMAL,
     EXCLUDED_BUS_ID,
     SUBMARKET_COUNT,
+    GnlDeliveries,
     MappingError,
     SourceGnlThermal,
     SourceHydro,
     discount_factors,
     downstream_positions,
-    gnl_block_weights,
+    gnl_block,
+    gnl_committed_costs,
+    gnl_drop_audit,
     gnl_lag_months,
     match_source_hydros,
-    negate_gnl,
     negate_gnl_array,
+    parse_end_date,
     plant_codes,
+    select_gnl_deliveries,
     select_submarket_buses,
     storage_plant_ids,
     submarket_for_bus,
     to_decomp_cost,
     to_decomp_costs,
 )
-from novomodelo_bridge.dessem.exporters.fcf.core.reader import EntitySlotRecord
+from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
+    AffinePieceRecord,
+    EntitySlotRecord,
+    StageCutPool,
+)
 
 
 class TestCostConversion:
@@ -41,8 +61,6 @@ class TestCostConversion:
         assert to_decomp_cost(-1000.0) == -1.0
 
     def test_to_decomp_costs_array(self) -> None:
-        import numpy as np
-
         values = np.array([1000.0, 2000.0, 3000.0])
         result = to_decomp_costs(values)
         assert list(result) == [1.0, 2.0, 3.0]
@@ -54,37 +72,10 @@ class TestCostConversion:
 class TestGnlSignConvention:
     """Test P4: GNL sign negation."""
 
-    def test_negate_gnl_single(self) -> None:
-        assert negate_gnl(1.0) == -1.0
-        assert negate_gnl(-1.0) == 1.0
-        assert negate_gnl(0.0) == 0.0
-
     def test_negate_gnl_array(self) -> None:
-        import numpy as np
-
         values = np.array([1.0, -2.0, 0.0])
         result = negate_gnl_array(values)
         assert list(result) == [-1.0, 2.0, 0.0]
-
-
-class TestGnlBlockWeights:
-    """Test P5: GNL load block weighting."""
-
-    def test_weights_sum_to_one(self, synthetic_inputs: CaseInputs) -> None:
-        blocks = synthetic_inputs.stages[0].blocks
-        weights = gnl_block_weights(blocks)
-        assert sum(weights) == pytest.approx(1.0)
-
-    def test_weights_proportional_to_hours(self, synthetic_inputs: CaseInputs) -> None:
-        blocks = synthetic_inputs.stages[0].blocks
-        weights = gnl_block_weights(blocks)
-        total_hours = sum(b.hours for b in blocks)
-        for i, block in enumerate(blocks):
-            assert weights[i] == pytest.approx(block.hours / total_hours)
-
-    def test_empty_blocks_raises(self) -> None:
-        with pytest.raises(MappingError, match="empty block list"):
-            gnl_block_weights([])
 
 
 class TestSubmarketMapping:
@@ -136,18 +127,15 @@ class TestDiscountFactors:
         assert DAYS_PER_YEAR == 365.25
 
 
-_SENTINEL = -2147483648
-
-
 def _slot(entity_type: int, entity_id: int) -> EntitySlotRecord:
     return EntitySlotRecord(
         entity_type=entity_type,
         entity_id=entity_id,
         subindex=0,
         was_active=True,
-        reference_date=_SENTINEL,
-        interval_start=_SENTINEL,
-        interval_end=_SENTINEL,
+        reference_date=UNDATED,
+        interval_start=UNDATED,
+        interval_end=UNDATED,
     )
 
 
@@ -183,8 +171,14 @@ class TestMatchSourceHydros:
             match_source_hydros([_hydro(0, None), _hydro(1, 0)], source)
 
 
-def _gnl(thermal_id: int, name: str) -> ThermalInfo:
-    return ThermalInfo(id=thermal_id, name=name, bus_id=0, lead_time_hours=1512.0)
+def _gnl(thermal_id: int, name: str, cost_per_mwh: float = 0.0) -> ThermalInfo:
+    return ThermalInfo(
+        id=thermal_id,
+        name=name,
+        bus_id=0,
+        lead_time_hours=1512.0,
+        cost_per_mwh=cost_per_mwh,
+    )
 
 
 class TestGnlLagMonths:
@@ -217,6 +211,403 @@ class TestGnlLagMonths:
         source = [SourceGnlThermal(code=86, name="SANTA CRUZ", lag_months=None)]
         with pytest.raises(MappingError, match="GNL plant 86 .* has no NL record"):
             gnl_lag_months([_gnl(94, "SANTA CRUZ")], source)
+
+
+def _delivery_slot(
+    thermal_id: int, start: int, end: int, subindex: int = 0
+) -> EntitySlotRecord:
+    return EntitySlotRecord(
+        entity_type=ENTITY_TYPE_ANTICIPATED_THERMAL,
+        entity_id=thermal_id,
+        subindex=subindex,
+        was_active=True,
+        reference_date=UNDATED,
+        interval_start=start,
+        interval_end=end,
+    )
+
+
+def _pool(slots: list[EntitySlotRecord], graph_stage_id: int = 0) -> StageCutPool:
+    return StageCutPool(
+        stage_id=graph_stage_id,
+        node_id=-1,
+        graph_stage_id=graph_stage_id,
+        state_dimension=len(slots),
+        capacity=1,
+        warm_start_count=0,
+        populated_count=1,
+        cost_scale_factor=1.0,
+        slots=tuple(slots),
+        pieces=(),
+    )
+
+
+def _stage(stage_id: int, start: str, end: str, hours: tuple[float, ...]) -> StageInfo:
+    return StageInfo(
+        id=stage_id,
+        start_date=start,
+        end_date=end,
+        blocks=tuple(
+            BlockInfo(id=i, name=f"B{i}", hours=h) for i, h in enumerate(hours)
+        ),
+        storage_state=True,
+        inflow_lags_state=False,
+    )
+
+
+def _weekly_stages() -> list[StageInfo]:
+    return [
+        _stage(0, "2026-08-15", "2026-08-22", (24.0, 72.0, 72.0)),
+        _stage(1, "2026-08-22", "2026-08-29", (27.0, 68.0, 73.0)),
+        _stage(2, "2026-08-29", "2026-09-05", (24.0, 72.0, 72.0)),
+    ]
+
+
+def _storage_slots() -> list[EntitySlotRecord]:
+    return [_slot(0, hydro_id) for hydro_id in range(3)]
+
+
+def _ring_pool() -> StageCutPool:
+    """Three storage slots, then thermal 100's ring: the 22/08 week, then 29/08."""
+    return _pool(
+        [
+            *_storage_slots(),
+            _delivery_slot(100, 20260822, 20260829, subindex=0),
+            _delivery_slot(100, 20260829, 20260905, subindex=1),
+        ]
+    )
+
+
+class TestSelectGnlDeliveries:
+    """The exported GNL coefficient is the one priced on the stage after the first."""
+
+    def test_weekly_delivery_is_found_by_its_start_not_by_ring_subindex(self) -> None:
+        deliveries = select_gnl_deliveries(
+            _ring_pool(), [_gnl(100, "PLANT")], _weekly_stages()
+        )
+
+        assert deliveries.positions == (3,)
+        assert deliveries.block_hours == (27.0, 68.0, 73.0)
+        assert deliveries.hours == 168.0
+
+    def test_selection_ignores_ring_order(self) -> None:
+        pool = _pool(
+            [
+                *_storage_slots(),
+                _delivery_slot(100, 20260829, 20260905, subindex=0),
+                _delivery_slot(100, 20260822, 20260829, subindex=1),
+            ]
+        )
+
+        deliveries = select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+        assert deliveries.positions == (4,)
+
+    def test_monthly_stage_divides_by_its_own_hours(self) -> None:
+        stages = [
+            _stage(0, "2026-08-29", "2026-09-05", (24.0, 72.0, 72.0)),
+            _stage(1, "2026-09-05", "2026-10-01", (100.0, 250.0, 274.0)),
+        ]
+        pool = _pool([*_storage_slots(), _delivery_slot(100, 20260905, 20261001)])
+
+        deliveries = select_gnl_deliveries(pool, [_gnl(100, "PLANT")], stages)
+
+        assert deliveries.positions == (3,)
+        assert deliveries.hours == 624.0
+
+    def test_positions_follow_the_thermal_order_and_mark_the_missing_one(self) -> None:
+        pool = _pool(
+            [
+                *_storage_slots(),
+                _delivery_slot(101, 20260822, 20260829),
+                _delivery_slot(100, 20260829, 20260905),
+            ]
+        )
+
+        deliveries = select_gnl_deliveries(
+            pool, [_gnl(100, "A"), _gnl(101, "B")], _weekly_stages()
+        )
+
+        assert deliveries.positions == (None, 3)
+
+    def test_slot_hours_that_differ_from_the_stage_hours_raise(self) -> None:
+        pool = _pool([*_storage_slots(), _delivery_slot(100, 20260822, 20260830)])
+
+        with pytest.raises(
+            MappingError, match=r"thermal 100 \(PLANT\).*\(192 h\).*stage 1.*168 h"
+        ):
+            select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+    def test_reversed_interval_raises(self) -> None:
+        pool = _pool([*_storage_slots(), _delivery_slot(100, 20260822, 20260815)])
+
+        with pytest.raises(MappingError, match=r"\(-168 h\)"):
+            select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+    def test_two_slots_on_the_delivery_start_raise(self) -> None:
+        pool = _pool(
+            [
+                *_storage_slots(),
+                _delivery_slot(100, 20260822, 20260829, subindex=0),
+                _delivery_slot(100, 20260822, 20260829, subindex=1),
+            ]
+        )
+
+        with pytest.raises(
+            MappingError, match=r"thermal 100 \(PLANT\) has 2 slots delivering from"
+        ):
+            select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+    def test_single_stage_case_with_gnl_raises(self) -> None:
+        with pytest.raises(MappingError, match="has 1 stage"):
+            select_gnl_deliveries(
+                _ring_pool(), [_gnl(100, "PLANT")], _weekly_stages()[:1]
+            )
+
+    def test_first_pool_off_stage_zero_raises(self) -> None:
+        pool = _pool([*_storage_slots()], graph_stage_id=1)
+
+        with pytest.raises(MappingError, match="pool is at stage 1"):
+            select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+    def test_malformed_delivery_start_raises(self) -> None:
+        pool = _pool([*_storage_slots(), _delivery_slot(100, 20260230, 20260829)])
+
+        with pytest.raises(
+            MappingError, match=r"thermal 100 \(PLANT\).*20260230.*not a YYYYMMDD"
+        ):
+            select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+    def test_undated_delivery_end_raises(self) -> None:
+        pool = _pool([*_storage_slots(), _delivery_slot(100, 20260822, UNDATED)])
+
+        with pytest.raises(MappingError, match=r"thermal 100 \(PLANT\).*end .*not a"):
+            select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+    def test_undated_slots_are_skipped(self) -> None:
+        pool = _pool([*_storage_slots(), _delivery_slot(100, UNDATED, UNDATED)])
+
+        deliveries = select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+        assert deliveries.positions == (None,)
+
+    def test_missing_delivery_keeps_the_stage(self) -> None:
+        pool = _pool(_storage_slots())
+
+        deliveries = select_gnl_deliveries(pool, [_gnl(100, "PLANT")], _weekly_stages())
+
+        assert deliveries.positions == (None,)
+        assert deliveries.hours == 168.0
+
+    def test_no_gnl_thermal_gives_no_stage(self) -> None:
+        deliveries = select_gnl_deliveries(_ring_pool(), [], _weekly_stages())
+
+        assert deliveries == GnlDeliveries(stage=None, positions=())
+        assert deliveries.block_hours == ()
+        assert deliveries.hours == 0.0
+
+    def test_no_gnl_thermal_is_never_refused(self) -> None:
+        pool = _pool(_storage_slots(), graph_stage_id=1)
+
+        deliveries = select_gnl_deliveries(pool, [], _weekly_stages()[:1])
+
+        assert deliveries.stage is None
+
+
+def _gnl_offsets(n_sbm_gnl: int, n_estagios: int, n_patamares: int) -> CutBlockOffsets:
+    return CutBlockOffsets(
+        rhs=0,
+        pi_varm=1,
+        pi_qdefp=2,
+        pi_gnl=4,
+        ncoef=4 + n_sbm_gnl * n_estagios * n_patamares,
+        n_sbm_gnl=n_sbm_gnl,
+        n_estagios=n_estagios,
+        n_patamares=n_patamares,
+    )
+
+
+def _weekly_deliveries(*positions: int | None) -> GnlDeliveries:
+    return GnlDeliveries(stage=_weekly_stages()[1], positions=positions)
+
+
+class TestGnlBlock:
+    """A GNL coefficient is divided by the delivery stage's hours, once per entry."""
+
+    def test_weekly_block_holds_each_entry_value_on_every_patamar(self) -> None:
+        coefficients = np.array([0.0, 0.0, 0.0, -33600.0, 0.0, -25200.0])
+
+        block = gnl_block(_weekly_deliveries(3, 5), coefficients, _gnl_offsets(2, 3, 3))
+
+        assert block.tolist() == [-200.0] * 3 + [0.0] * 6 + [-150.0] * 3 + [0.0] * 6
+
+    def test_monthly_stage_divides_by_the_block_hours_sum(self) -> None:
+        stage = _stage(1, "2026-09-05", "2026-10-01", (100.0, 250.0, 274.0))
+        deliveries = GnlDeliveries(stage=stage, positions=(0,))
+
+        block = gnl_block(deliveries, np.array([-62400.0]), _gnl_offsets(1, 1, 3))
+
+        assert block.tolist() == [-100.0, -100.0, -100.0]
+
+    def test_missing_position_leaves_its_entry_zero(self) -> None:
+        coefficients = np.array([0.0, 0.0, 0.0, -33600.0, 0.0, -25200.0])
+
+        block = gnl_block(
+            _weekly_deliveries(None, 5), coefficients, _gnl_offsets(2, 3, 3)
+        )
+
+        assert block.tolist() == [0.0] * 9 + [-150.0] * 3 + [0.0] * 6
+
+    def test_value_is_the_direct_quotient_not_a_reciprocal_multiply(self) -> None:
+        block = gnl_block(
+            _weekly_deliveries(0), np.array([-1000.0]), _gnl_offsets(1, 1, 3)
+        )
+
+        assert block.tolist() == [-5.9523809523809526] * 3
+
+    def test_no_gnl_entries_give_an_empty_block(self) -> None:
+        deliveries = GnlDeliveries(stage=None, positions=())
+
+        block = gnl_block(deliveries, np.array([1.0]), _gnl_offsets(0, 3, 3))
+
+        assert block.tolist() == []
+
+    def test_position_count_that_differs_from_the_layout_raises(self) -> None:
+        with pytest.raises(
+            MappingError, match="1 GNL delivery positions but .* holds 2 GNL entries"
+        ):
+            gnl_block(_weekly_deliveries(3), np.zeros(6), _gnl_offsets(2, 3, 3))
+
+    def test_position_past_the_coefficient_vector_raises(self) -> None:
+        with pytest.raises(
+            MappingError, match="coefficient 6 but the coefficient vector has 6"
+        ):
+            gnl_block(_weekly_deliveries(6), np.zeros(6), _gnl_offsets(1, 3, 3))
+
+    def test_zero_hours_raise(self) -> None:
+        stage = _stage(1, "2026-08-22", "2026-08-29", (0.0, 0.0, 0.0))
+        deliveries = GnlDeliveries(stage=stage, positions=(0,))
+
+        with pytest.raises(MappingError, match="0 hours, which cannot convert"):
+            gnl_block(deliveries, np.array([-1.0]), _gnl_offsets(1, 1, 3))
+
+
+_MAPPER_LOGGER = "novomodelo_bridge.dessem.exporters.fcf.core.mapper"
+
+
+def _audit_slots() -> list[EntitySlotRecord]:
+    """Storage at positions 0-2, then GNL slots 3-6: two thermals, two slots each."""
+    return [
+        *_storage_slots(),
+        _delivery_slot(100, 20260108, 20260115, subindex=0),
+        _delivery_slot(100, 20260115, 20260122, subindex=1),
+        _delivery_slot(102, 20260115, 20260122, subindex=0),
+        _delivery_slot(102, 20260108, 20260115, subindex=2),
+    ]
+
+
+def _audit_pools(
+    slots: list[EntitySlotRecord], first_warm_start: int = 0
+) -> dict[int, StageCutPool]:
+    """Pools 0-2 of five pieces each; *first_warm_start* pieces of pool 0 are warm."""
+    pieces = tuple(
+        AffinePieceRecord(
+            slot_index=k,
+            iteration=k + 1,
+            forward_pass_index=0,
+            intercept=0.0,
+            coefficients=np.zeros(len(slots)),
+            is_active=True,
+        )
+        for k in range(5)
+    )
+    return {
+        pool_id: replace(
+            _pool(slots, pool_id),
+            pieces=pieces,
+            populated_count=5,
+            warm_start_count=first_warm_start if pool_id == 0 else 0,
+        )
+        for pool_id in range(3)
+    }
+
+
+def _mapper_messages(
+    caplog: pytest.LogCaptureFixture,
+) -> list[tuple[str, str]]:
+    return [
+        (record.levelname, record.getMessage())
+        for record in caplog.records
+        if record.name == _MAPPER_LOGGER
+    ]
+
+
+class TestGnlDropAudit:
+    """Premise P14 counts the GNL coefficients the written cuts leave out."""
+
+    def test_only_the_first_pool_writes_its_delivered_positions(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        pools = _audit_pools(_audit_slots())
+
+        with caplog.at_level(logging.INFO, logger=_MAPPER_LOGGER):
+            audit = gnl_drop_audit(pools, (0, 1, 2), _weekly_deliveries(3, 6))
+
+        assert audit.per_pool == ((0, 10), (1, 20), (2, 20))
+        assert audit.total == 50
+        assert _mapper_messages(caplog) == [
+            (
+                "WARNING",
+                "premise P14 drops 50 anticipated-thermal coefficients: "
+                "pool 0=10, pool 1=20, pool 2=20",
+            )
+        ]
+
+    def test_warm_start_pieces_are_not_written_cuts(self) -> None:
+        pools = _audit_pools(_audit_slots(), first_warm_start=2)
+
+        audit = gnl_drop_audit(pools, (0, 1, 2), _weekly_deliveries(3, 6))
+
+        assert audit.per_pool == ((0, 6), (1, 20), (2, 20))
+
+    def test_a_missing_delivery_counts_every_gnl_slot_of_the_first_pool(self) -> None:
+        pools = _audit_pools(_audit_slots())
+
+        audit = gnl_drop_audit(pools, (0, 1, 2), _weekly_deliveries(None, None))
+
+        assert audit.per_pool == ((0, 20), (1, 20), (2, 20))
+
+    def test_pools_outside_the_trunk_are_not_counted(self) -> None:
+        pools = _audit_pools(_audit_slots())
+
+        audit = gnl_drop_audit(pools, (0, 1), _weekly_deliveries(3, 6))
+
+        assert audit.per_pool == ((0, 10), (1, 20))
+        assert audit.total == 30
+
+    def test_no_trunk_pool_drops_nothing(self) -> None:
+        audit = gnl_drop_audit({}, (), GnlDeliveries(stage=None, positions=()))
+
+        assert audit.per_pool == ()
+        assert audit.total == 0
+
+    def test_pools_without_gnl_slots_log_one_info_and_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        pools = _audit_pools(_storage_slots())
+
+        with caplog.at_level(logging.INFO, logger=_MAPPER_LOGGER):
+            audit = gnl_drop_audit(
+                pools, (0, 1, 2), GnlDeliveries(stage=None, positions=())
+            )
+
+        assert audit.total == 0
+        assert _mapper_messages(caplog) == [
+            (
+                "INFO",
+                "premise P14 drops no anticipated-thermal coefficients on this case",
+            )
+        ]
 
 
 class TestStoragePlantIds:
@@ -268,3 +659,269 @@ class TestDownstreamPositions:
     def test_unknown_downstream_hydro_raises(self) -> None:
         with pytest.raises(MappingError, match="names downstream hydro 9"):
             downstream_positions([_hydro(0, 9)], (0,))
+
+
+def _window(thermal_id: int, start: str, end: str, mw: float) -> CommitmentWindow:
+    return CommitmentWindow(
+        thermal_id=thermal_id,
+        start_date=date.fromisoformat(start),
+        end_date=date.fromisoformat(end),
+        value_mw=mw,
+    )
+
+
+def _weekly_windows(thermal_id: int, *mw: float) -> list[CommitmentWindow]:
+    return [
+        _window(thermal_id, stage.start_date, stage.end_date, value)
+        for stage, value in zip(_weekly_stages(), mw, strict=True)
+    ]
+
+
+class TestGnlCommittedCosts:
+    """Premise P11: the committed GNL cost of each stage, in DECOMP's 10^3 R$."""
+
+    def test_two_plants_with_one_window_per_stage(self) -> None:
+        stages = _weekly_stages()
+        thermals = [_gnl(100, "GNL_A", 200.0), _gnl(102, "GNL_B", 300.0)]
+        windows = [
+            _window(100, "2026-08-15", "2026-08-22", 10.0),
+            _window(100, "2026-08-22", "2026-08-29", 0.0),
+            _window(100, "2026-08-29", "2026-09-05", 0.0),
+            _window(102, "2026-08-15", "2026-08-22", 5.0),
+            _window(102, "2026-08-22", "2026-08-29", 20.0),
+            _window(102, "2026-08-29", "2026-09-05", 0.0),
+        ]
+
+        costs = gnl_committed_costs(stages, thermals, windows)
+
+        assert [c.value for c in costs] == [588.0, 1008.0, 0.0]
+        assert [c.committed_mw for c in costs] == [
+            (10.0, 5.0),
+            (0.0, 20.0),
+            (0.0, 0.0),
+        ]
+
+    def test_each_entry_carries_its_stage_and_its_block_hours(self) -> None:
+        stages = _weekly_stages()
+
+        costs = gnl_committed_costs(stages, [], [])
+
+        assert [c.stage for c in costs] == stages
+        assert [c.hours for c in costs] == [168.0, 168.0, 168.0]
+
+    def test_a_window_over_two_stages_contributes_to_each(self) -> None:
+        windows = [_window(100, "2026-08-15", "2026-08-29", 10.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 336.0, 0.0]
+        assert costs[2].committed_mw[0] is None
+
+    def test_a_window_starting_before_the_study_covers_its_first_stage(self) -> None:
+        windows = [_window(100, "2026-08-01", "2026-08-22", 10.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 0.0, 0.0]
+
+    def test_a_window_ending_on_the_study_start_contributes_nothing(self) -> None:
+        windows = [_window(100, "2026-08-01", "2026-08-15", 10.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [0.0, 0.0, 0.0]
+        assert [c.committed_mw for c in costs] == [(None,), (None,), (None,)]
+
+    def test_a_window_after_the_horizon_contributes_nothing_and_raises_nothing(
+        self,
+    ) -> None:
+        windows = [
+            _window(100, "2026-08-15", "2026-08-29", 10.0),
+            _window(100, "2026-09-05", "2026-09-12", 10.0),
+        ]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 336.0, 0.0]
+
+    def test_an_uncovered_stage_is_priced_at_zero_and_not_checked_for_hours(
+        self,
+    ) -> None:
+        stages = [
+            _stage(0, "2026-08-15", "2026-08-22", (168.0,)),
+            _stage(1, "2026-08-22", "2026-08-29", (100.0,)),
+        ]
+        windows = [_window(100, "2026-08-15", "2026-08-22", 10.0)]
+
+        costs = gnl_committed_costs(stages, [_gnl(100, "GNL_A", 200.0)], windows)
+
+        assert [c.value for c in costs] == [336.0, 0.0]
+        assert costs[1].committed_mw == (None,)
+
+    def test_no_gnl_thermal_and_no_window_is_never_refused_on_hours(self) -> None:
+        stages = [_stage(0, "2026-08-01", "2026-09-01", (730.0,))]
+
+        costs = gnl_committed_costs(stages, [], [])
+
+        assert [c.value for c in costs] == [0.0]
+        assert costs[0].committed_mw == ()
+
+    def test_rv2_values_reproduce_the_decomp_mapcut_record(self) -> None:
+        stages = [
+            _stage(0, "2026-08-15", "2026-08-22", (168.0,)),
+            _stage(1, "2026-08-22", "2026-08-29", (168.0,)),
+            _stage(2, "2026-08-29", "2026-09-05", (168.0,)),
+            _stage(3, "2026-09-05", "2026-10-01", (624.0,)),
+        ]
+        thermals = [_gnl(98, "SANTA CRUZ", 181.34), _gnl(99, "PSERGIPE I", 363.06)]
+        santa_cruz_mw = (350.0, 350.0, 56.25, 21000 / 624)
+        windows = [
+            window
+            for stage, mw in zip(stages, santa_cruz_mw, strict=True)
+            for window in (
+                _window(98, stage.start_date, stage.end_date, mw),
+                _window(99, stage.start_date, stage.end_date, 0.0),
+            )
+        ]
+
+        costs = gnl_committed_costs(stages, thermals, windows)
+
+        expected = (10662.792, 10662.792, 1713.663, 3808.14)
+        for cost, value in zip(costs, expected, strict=True):
+            assert not floats_differ(cost.value, value)
+
+    def test_a_window_covering_a_stage_in_part_raises(self) -> None:
+        windows = [_window(100, "2026-08-18", "2026-08-22", 10.0)]
+
+        with pytest.raises(
+            MappingError,
+            match=r"GNL thermal 100 \(GNL_A\) has a commitment window from "
+            r"2026-08-18 to 2026-08-22 that covers stage 0 .* only in part",
+        ):
+            gnl_committed_costs(_weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows)
+
+    def test_two_half_windows_tiling_a_stage_raise_at_the_first(self) -> None:
+        windows = [
+            _window(100, "2026-08-15", "2026-08-18", 10.0),
+            _window(100, "2026-08-18", "2026-08-22", 10.0),
+        ]
+
+        with pytest.raises(
+            MappingError, match=r"from 2026-08-15 to 2026-08-18 that covers stage 0"
+        ):
+            gnl_committed_costs(_weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows)
+
+    def test_block_hours_that_differ_from_the_calendar_span_raise(self) -> None:
+        stages = [_stage(0, "2026-08-15", "2026-08-22", (24.0, 72.0, 70.0))]
+        windows = [_window(100, "2026-08-15", "2026-08-22", 10.0)]
+
+        with pytest.raises(
+            MappingError, match=r"stage 0 .* sum to 166 h against 168 h"
+        ):
+            gnl_committed_costs(stages, [_gnl(100, "GNL_A", 200.0)], windows)
+
+    def test_a_non_iso_end_date_raises(self) -> None:
+        stage = _stage(0, "2026-08-01", "2026-13-01", (744.0,))
+
+        with pytest.raises(
+            MappingError, match=r"stage 0 end_date '2026-13-01' is not ISO-8601"
+        ):
+            parse_end_date(stage)
+
+    def test_no_stage_gives_no_cost(self) -> None:
+        assert gnl_committed_costs([], [_gnl(100, "GNL_A", 200.0)], []) == ()
+
+    @pytest.mark.parametrize(
+        ("gnl_thermals", "gnl_windows"),
+        [
+            ((_gnl(100, "GNL_A"),), _weekly_windows(100, 10.0, 0.0, 0.0)),
+            ((), []),
+        ],
+        ids=["with-gnl-thermals", "without-gnl-thermals"],
+    )
+    def test_a_window_of_a_thermal_that_is_not_gnl_raises(
+        self,
+        gnl_thermals: tuple[ThermalInfo, ...],
+        gnl_windows: list[CommitmentWindow],
+    ) -> None:
+        windows = [*gnl_windows, _window(101, "2026-08-15", "2026-08-22", 10.0)]
+
+        with pytest.raises(
+            MappingError,
+            match=r"from 2026-08-15 to 2026-08-22 names thermal 101, "
+            r"which is not a GNL thermal",
+        ):
+            gnl_committed_costs(_weekly_stages(), gnl_thermals, windows)
+
+    @pytest.mark.parametrize(
+        ("windows", "missing"),
+        [
+            (_weekly_windows(100, 10.0, 0.0, 0.0), r"102 \(GNL_B\)"),
+            ([], r"100 \(GNL_A\)"),
+        ],
+        ids=["other-thermal-has-windows", "no-windows-at-all"],
+    )
+    def test_a_gnl_thermal_without_a_window_raises(
+        self, windows: list[CommitmentWindow], missing: str
+    ) -> None:
+        thermals = [_gnl(100, "GNL_A"), _gnl(102, "GNL_B")]
+
+        with pytest.raises(
+            MappingError,
+            match=rf"GNL thermal {missing} has no commitment window in "
+            r"past_anticipated_commitments of initial_conditions\.json",
+        ):
+            gnl_committed_costs(_weekly_stages(), thermals, windows)
+
+    @pytest.mark.parametrize(
+        ("extra", "message"),
+        [
+            (
+                ("2026-08-29", "2026-09-12"),
+                r"from 2026-08-29 to 2026-09-12 that runs past the study's end "
+                r"2026-09-05",
+            ),
+            (
+                ("2026-08-15", "2026-08-29"),
+                r"GNL thermal 100 \(GNL_A\) has 2 commitment windows covering stage 0",
+            ),
+        ],
+        ids=["straddle", "overlap"],
+    )
+    def test_a_window_position_a_solved_case_cannot_hold_raises(
+        self, extra: tuple[str, str], message: str
+    ) -> None:
+        windows = [*_weekly_windows(100, 10.0, 0.0, 0.0), _window(100, *extra, 50.0)]
+
+        with pytest.raises(MappingError, match=message):
+            gnl_committed_costs(_weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows)
+
+    @pytest.mark.parametrize(
+        "extra",
+        [("2026-09-05", "2026-09-12"), ("2026-08-08", "2026-08-15")],
+        ids=["post-horizon", "pre-study"],
+    )
+    def test_a_window_with_no_coverage_on_any_stage_is_allowed(
+        self, extra: tuple[str, str]
+    ) -> None:
+        windows = [*_weekly_windows(100, 10.0, 0.0, 0.0), _window(100, *extra, 50.0)]
+
+        costs = gnl_committed_costs(
+            _weekly_stages(), [_gnl(100, "GNL_A", 200.0)], windows
+        )
+
+        assert [c.value for c in costs] == [336.0, 0.0, 0.0]
+        assert [c.committed_mw for c in costs] == [(10.0,), (0.0,), (0.0,)]
+
+    def test_no_gnl_thermal_and_no_window_prices_every_stage_at_zero(self) -> None:
+        costs = gnl_committed_costs(_weekly_stages(), (), ())
+
+        assert [c.value for c in costs] == [0.0, 0.0, 0.0]

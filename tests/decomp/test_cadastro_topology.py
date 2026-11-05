@@ -42,6 +42,8 @@ from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
@@ -65,15 +67,15 @@ class _FakeDadger:
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
+        codigo_usina: int | None = None,
         modificacao: type | None = None,
-        df: bool = True,  # noqa: ARG002
+        df: bool = True,
     ) -> pd.DataFrame | None:
         if modificacao is None:
             return None
         return self._frames.get(modificacao)
 
-    def uh(self, df: bool = True) -> pd.DataFrame | None:  # noqa: ARG002
+    def uh(self, df: bool = True) -> pd.DataFrame | None:
         return self._uh
 
 
@@ -82,7 +84,7 @@ class _StubVazoes:
     below, keyed by ``posto`` station columns as strings.
     """
 
-    def __init__(self, columns: dict[str, tuple[float, float, float]]) -> None:
+    def __init__(self, columns: Mapping[str, tuple[float, ...]]) -> None:
         self.previsoes = pd.DataFrame(
             [
                 {"estagio": 1, **{k: v[0] for k, v in columns.items()}},

@@ -10,7 +10,6 @@ synthetic inputs only.
 
 from __future__ import annotations
 
-import logging
 import math
 from collections.abc import Mapping, Sequence
 from datetime import date
@@ -23,15 +22,20 @@ from idecomp.decomp.modelos.dadger import ACALTEFE
 from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.core.tailrace import TailraceFamily, TailraceSegment
 from novomodelo_bridge.decomp.case import DecompCase
-from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.converters.cadastro import (
+    EffectiveCadastro,
+    build_effective_cadastro,
+)
 from novomodelo_bridge.decomp.converters.hydro import (
     TurbineLimits,
     compute_turbine_limits,
     convert_hydro_group_availability,
-    convert_hydros,
+    plant_available_power,
     plant_turbine_limit_contributions,
+    split_plant_generation_contributions,
     stage_availability_factors,
 )
+from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
@@ -114,17 +118,22 @@ def _limits(
     inflows: Mapping[int, float] | None = None,
     initial_volumes: Mapping[int, float] | None = None,
     factors: Mapping[tuple[int, int], float] | None = None,
+    altefe: pd.DataFrame | None = None,
 ) -> TurbineLimits:
     """The limits for the plants in *rows*, the same inputs on every stage.
 
     Every plant defaults to the flat tailrace, zero inflow, its minimum
     volume and an ``MP × FD`` of 1 on group 0 (``(code, group)`` keys in
-    *factors* override it).
+    *factors* override it). *altefe* is an ``AC ALTEFE`` frame resolved
+    through the effective cadastro.
     """
     hidr = _hidr_frame(rows)
     codes = tuple(rows)
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=codes)
     calendar = _calendar()
+    effective, _ = build_effective_cadastro(
+        _FakeDadger(uh=_uh_frame(codes), altefe=altefe), hidr, calendar
+    )
     stages = range(len(calendar))
     all_factors = {(code, 0, s): 1.0 for code in codes for s in stages} | {
         (code, group, s): value
@@ -132,7 +141,7 @@ def _limits(
         for s in stages
     }
     return compute_turbine_limits(
-        EffectiveCadastro(base=hidr, n_stages=len(calendar), stage_varying={}),
+        effective,
         id_map,
         calendar,
         initial_volumes={
@@ -175,6 +184,37 @@ def test_missing_rated_head_turbines_the_rated_flow() -> None:
     row = _plant_row(conjuntos=((2, 50.0, 1000.0, math.nan),))
     limits = _limits({1: row})
     assert limits.cap(1, 0, 0) == pytest.approx(100.0)
+
+
+def _altefe(altura: float, *, mes: str = "AGO") -> pd.DataFrame:
+    """Plant 1, set 1's ``AC ALTEFE`` from the August monthly stage (stage 2)."""
+    return pd.DataFrame(
+        [
+            {
+                "codigo_usina": 1,
+                "indice_conjunto": 1,
+                "altura": altura,
+                "mes": mes,
+                "semana": 1.0,
+                "ano": 2026.0,
+            }
+        ]
+    )
+
+
+def test_altefe_override_is_the_head_the_limit_is_corrected_against() -> None:
+    limits = _limits({1: _plant_row()}, altefe=_altefe(320.0))
+    assert [limits.cap(1, 0, s) for s in range(3)] == pytest.approx(
+        [100.0, 100.0, 100.0 * (80.0 / 320.0) ** 0.5]
+    )
+
+
+def test_altefe_override_rates_a_set_hidr_leaves_unrated() -> None:
+    row = _plant_row(conjuntos=((2, 50.0, 1000.0, math.nan),))
+    limits = _limits({1: row}, altefe=_altefe(320.0))
+    assert [limits.cap(1, 0, s) for s in range(3)] == pytest.approx(
+        [100.0, 100.0, 100.0 * (80.0 / 320.0) ** 0.5]
+    )
 
 
 def test_rising_tailrace_settles_within_a_cubic_metre_of_the_fixed_point() -> None:
@@ -340,13 +380,17 @@ def test_plant_limit_below_the_groups_sum_becomes_a_turbined_bound() -> None:
     assert [c.upper for c in contributions] == pytest.approx([180.0] * 3)
 
 
-def test_plant_limit_at_the_groups_sum_adds_no_bound() -> None:
-    """Both groups generator-bound: their caps already sum to the plant's."""
+def test_plant_limit_at_the_groups_sum_is_still_written_on_every_stage() -> None:
+    """Both groups generator-bound: their caps already sum to the plant's, and
+    the plant row restates it."""
     limits = _itaipu_limits(40.0, 40.0)
     contributions = plant_turbine_limit_contributions(
         limits, DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     )
-    assert contributions == []
+    assert [c.stage_id for c in contributions] == [0, 1, 2]
+    assert [c.upper for c in contributions] == pytest.approx(
+        [40.0 / 0.8 + 20.0 / 0.8] * 3
+    )
 
 
 def test_unconverged_limit_warns_and_keeps_the_last_flow() -> None:
@@ -375,7 +419,7 @@ def test_converged_limits_emit_no_diagnostic() -> None:
     assert sink == []
 
 
-def _gap_rows(row: dict) -> list[list[object]]:
+def _gap_rows(row: dict) -> Sequence[Sequence[object]]:
     with collect() as sink:
         _limits({1: row})
     (diagnostic,) = [d for d in sink if d.code == "turbine-limit-data-missing"]
@@ -429,20 +473,20 @@ class _FakeDadger:
     ) -> None:
         self._uh, self._altefe, self._mp, self._fd = uh, altefe, mp, fd
 
-    def uh(self, df: bool = False) -> pd.DataFrame:  # noqa: ARG002
+    def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
 
-    def mp(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def mp(self, df: bool = False) -> pd.DataFrame | None:
         return self._mp
 
-    def fd(self, df: bool = False) -> pd.DataFrame | None:  # noqa: ARG002
+    def fd(self, df: bool = False) -> pd.DataFrame | None:
         return self._fd
 
     def ac(
         self,
-        codigo_usina: int | None = None,  # noqa: ARG002
+        codigo_usina: int | None = None,
         modificacao: type | None = None,
-        df: bool = False,  # noqa: ARG002
+        df: bool = False,
     ) -> pd.DataFrame | None:
         return self._altefe if modificacao is ACALTEFE else None
 
@@ -465,26 +509,6 @@ def _three_stage_case(dadger: _FakeDadger, hidr: pd.DataFrame) -> DecompCase:
     return make_decomp_case(
         Path("unused"), dadger=dadger, hidr=hidr, calendar=_calendar()
     )
-
-
-def test_acaltefe_present_warns_and_proceeds(caplog: pytest.LogCaptureFixture) -> None:
-    """An ``AC ALTEFE`` override is logged as a tracked gap (idecomp exposes no
-    value accessor for it): the rated heads stay the ``hidr.dat`` ones."""
-    hidr = _hidr_frame({1: _plant_row()})
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
-    dadger = _FakeDadger(uh=_uh_frame([1]), altefe=pd.DataFrame([{"codigo_usina": 1}]))
-
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
-    ):
-        convert_hydros(
-            _three_stage_case(dadger, hidr),
-            id_map,
-            effective=EffectiveCadastro(base=hidr, n_stages=3, stage_varying={}),
-            turbine_limits=flat_turbine_limits(id_map, 3),
-        )
-
-    assert any("ALTEFE" in r.message for r in caplog.records)
 
 
 def _itaipu_split_case(fd: pd.DataFrame) -> tuple[DecompCase, EffectiveCadastro]:
@@ -538,8 +562,48 @@ def test_itaipu_fd_row_without_frequency_derates_both_groups() -> None:
 
     for group_id in (0, 1):
         assert factors[(66, group_id, 2)] == pytest.approx(0.877)
-        assert values[(0, group_id, 2)].max_generation_mw == pytest.approx(877.0)
-        assert (0, group_id, 0) not in values
+        assert [
+            values[(0, group_id, stage)].max_generation_mw for stage in range(3)
+        ] == pytest.approx([1000.0, 1000.0, 877.0])
+
+
+def test_split_plant_generation_bound_sums_its_groups_on_every_stage() -> None:
+    fd = pd.DataFrame(
+        [
+            {"codigo_usina": 66, "frequencia": frequency}
+            | {"fator_1": 1.0, "fator_2": factor, "fator_3": 0.877}
+            for frequency, factor in ((50.0, 0.5), (60.0, 1.0))
+        ]
+    )
+    case, effective = _itaipu_split_case(fd)
+    values = convert_hydro_group_availability(
+        case,
+        _ITAIPU_ID_MAP,
+        effective=effective,
+        turbine_limits=flat_turbine_limits(_ITAIPU_ID_MAP, 3, group_counts={66: 2}),
+    )
+
+    contributions = split_plant_generation_contributions(values)
+
+    assert [(c.family, c.entity_id, c.stage_id, c.block_id) for c in contributions] == [
+        ("hydro", 0, stage, None) for stage in range(3)
+    ]
+    assert {(c.axis, c.lower) for c in contributions} == {("generation", None)}
+    assert [c.upper for c in contributions] == pytest.approx([2000.0, 1500.0, 1754.0])
+
+
+def test_single_group_plant_gets_no_split_plant_generation_bound() -> None:
+    values = {
+        (0, 0, stage): GroupBoundEntry(max_generation_mw=500.0, max_turbined_m3s=50.0)
+        for stage in range(3)
+    }
+    assert split_plant_generation_contributions(values) == []
+
+
+def test_plant_available_power_rejects_a_per_block_generation_ceiling() -> None:
+    values = {(0, 0, 0): GroupBoundEntry(max_generation_mw=(500.0, 400.0))}
+    with pytest.raises(TypeError, match="hydro 0, stage 0"):
+        plant_available_power(values)
 
 
 def test_itaipu_fd_mixing_plant_wide_and_frequency_rows_raises() -> None:

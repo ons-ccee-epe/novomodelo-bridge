@@ -54,7 +54,8 @@ def read_source_deck(directory: Path) -> SourceDeck:
             )
         name = str(hidr.loc[code, "nome_usina"]).strip()
         hydros[case.id_map.hydro_id(code)] = SourceHydro(code=code, name=name)
-    gnl_model = read_gnl_model(case.dadgnl)
+    dadgnl = case.dadgnl
+    gnl_model = None if dadgnl is None else read_gnl_model(dadgnl)
     gnl_thermals = (
         ()
         if gnl_model is None

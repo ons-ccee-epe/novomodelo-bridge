@@ -58,7 +58,7 @@ def load_names(case_dir: Path) -> dict[tuple[str, int], str]:
     for entity in ("hydros", "buses", "thermals", "lines", "non_controllable_sources"):
         path = case_dir / "system" / f"{entity}.json"
         if path.exists():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             for item in data.get(entity, []):
                 names[(entity, item["id"])] = item.get("name", str(item["id"]))
@@ -82,7 +82,7 @@ def load_stage_labels(case_dir: Path) -> dict[int, str]:
     path = case_dir / "stages.json"
     if not path.exists():
         return {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     parsed: list[tuple[int, pd.Timestamp | None]] = []
@@ -123,7 +123,7 @@ def load_stage_dates(case_dir: Path) -> dict[int, str]:
     path = case_dir / "stages.json"
     if not path.exists():
         return {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     dates: dict[int, str] = {}
     for stage in data.get("stages", []):
@@ -202,7 +202,7 @@ def load_hydro_bus_map(case_dir: Path) -> dict[int, int]:
     path = case_dir / "system" / "hydros.json"
     if not path.exists():
         return {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         d = json.load(f)
     result: dict[int, int] = {}
     for h in d["hydros"]:
@@ -217,7 +217,7 @@ def load_thermal_metadata(case_dir: Path) -> dict[int, dict]:
     path = case_dir / "system" / "thermals.json"
     if not path.exists():
         return {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         d = json.load(f)
     result = {}
     for t in d["thermals"]:
@@ -241,7 +241,7 @@ def load_ncs_bus_map(case_dir: Path) -> dict[int, int]:
     path = case_dir / "system" / "non_controllable_sources.json"
     if not path.exists():
         return {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         d = json.load(f)
     return {n["id"]: n["bus_id"] for n in d["non_controllable_sources"]}
 
@@ -274,7 +274,7 @@ def load_hydro_metadata(
     path = case_dir / "system" / "hydros.json"
     if not path.exists():
         return {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         d = json.load(f)
     # Share the single canonical productivity cascade with the comparator so
     # the dashboard and compare report never disagree on a plant's ρ.
@@ -504,14 +504,14 @@ def load_temporal_context(case_dir: Path) -> TemporalContext:
     config: dict = {}
     if config_path.exists():
         try:
-            with config_path.open() as f:
+            with config_path.open(encoding="utf-8") as f:
                 config = json.load(f)
         except json.JSONDecodeError:
             logger.warning("Failed to parse config.json; using empty dict")
     discount_rate = float(config.get("discount_rate", 0.0))
 
     stages_json_path = case_dir / "stages.json"
-    with stages_json_path.open() as f:
+    with stages_json_path.open(encoding="utf-8") as f:
         stages_data = json.load(f)
 
     # stages.json policy_graph is the authoritative discount rate when present.
@@ -694,7 +694,7 @@ def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
     lf_path = case_dir / "scenarios" / "load_factors.json"
     load_factors_list: list[dict] = []
     if lf_path.exists():
-        with lf_path.open() as f:
+        with lf_path.open(encoding="utf-8") as f:
             load_factors_list = json.load(f)["load_factors"]
 
     non_fictitious_bus_ids = compute_non_fictitious_bus_ids(load_stats)
@@ -851,7 +851,7 @@ def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerform
     )
     scaling_path = case_dir / "output" / "training" / "scaling_report.json"
     if scaling_path.exists():
-        with scaling_path.open() as f:
+        with scaling_path.open(encoding="utf-8") as f:
             scaling_report: dict = json.load(f)
     else:
         scaling_report = {}
@@ -937,7 +937,7 @@ def load_stochastic_data(case_dir: Path) -> StochasticData:
 
         report_path = stochastic_dir / "fitting_report.json"
         if report_path.exists():
-            fitting_report: dict = json.load(report_path.open())
+            fitting_report: dict = json.load(report_path.open(encoding="utf-8"))
         else:
             logger.warning(
                 "output/stochastic/fitting_report.json missing; using empty dict"
@@ -946,7 +946,7 @@ def load_stochastic_data(case_dir: Path) -> StochasticData:
 
         corr_path = stochastic_dir / "correlation.json"
         if corr_path.exists():
-            correlation: dict = json.load(corr_path.open())
+            correlation: dict = json.load(corr_path.open(encoding="utf-8"))
         else:
             logger.warning(
                 "output/stochastic/correlation.json missing; using empty dict"
@@ -1036,7 +1036,7 @@ def load_output_metadata(case_dir: Path) -> OutputMetadata:
         if not meta_path.exists():
             return {}
         try:
-            with meta_path.open() as f:
+            with meta_path.open(encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
             logger.warning("Failed to parse output/%s/metadata.json", subdir)
@@ -1080,7 +1080,7 @@ def load_generic_constraints(case_dir: Path) -> GenericConstraintData:
     gc_path = case_dir / "constraints" / "generic_constraints.json"
     constraints: list[dict] = []
     if gc_path.exists():
-        with gc_path.open() as f:
+        with gc_path.open(encoding="utf-8") as f:
             gc_data = json.load(f)
         constraints = gc_data.get("constraints", [])
 

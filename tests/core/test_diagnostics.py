@@ -105,8 +105,10 @@ class TestToDict:
         payload = diag.to_dict()
         assert payload["code"] == "thermal-gtmin-above-capacity"
         assert payload["severity"] == "warning"
-        assert payload["table"]["columns"] == ["Plant", "GTMIN MW"]
-        assert payload["table"]["rows"] == [["ANGRA 2", 1350.0]]
+        table = payload["table"]
+        assert isinstance(table, dict)
+        assert table["columns"] == ["Plant", "GTMIN MW"]
+        assert table["rows"] == [["ANGRA 2", 1350.0]]
         assert payload["notes"] == ["a note"]
         assert payload["remediation"] == "check EXPT"
 

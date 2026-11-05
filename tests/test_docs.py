@@ -24,6 +24,7 @@ _REQUIRED_TOKENS: tuple[str, ...] = (
     "check decomp",
     "compare newave",
     "compare decomp",
+    "export dessem",
     "dashboard",
     "--json",
     "--dry-run",

@@ -26,7 +26,13 @@ from novomodelo_bridge.comparators.model import (
 from novomodelo_bridge.core.tolerances import is_effectively_infinite
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from rich.console import JustifyMethod
+    from rich.table import Table
+
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
+    from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
     from novomodelo_bridge.core.diagnostics import Diagnostic
 
 # -------------------------------------------------------------------
@@ -191,11 +197,34 @@ class _MakeTableSpy:
     def __init__(self) -> None:
         self.records: list[dict[str, object]] = []
 
-    def __call__(self, *args: object, **kwargs: object) -> object:
+    def __call__(
+        self,
+        columns: Sequence[str],
+        rows: Sequence[Sequence[object]],
+        *,
+        title: str | None = None,
+        justify: Sequence[JustifyMethod] | None = None,
+        caption: str | None = None,
+        row_styles: Sequence[str | None] | None = None,
+    ) -> Table:
         from novomodelo_bridge.ui.console import make_table
 
-        self.records.append(dict(kwargs))
-        return make_table(*args, **kwargs)  # type: ignore[arg-type]
+        self.records.append(
+            {
+                "title": title,
+                "justify": justify,
+                "caption": caption,
+                "row_styles": row_styles,
+            }
+        )
+        return make_table(
+            columns,
+            rows,
+            title=title,
+            justify=justify,
+            caption=caption,
+            row_styles=row_styles,
+        )
 
 
 class TestToleranceRowColouring:
@@ -682,7 +711,9 @@ class TestReconstructedCost:
     def test_read_converted_penalties(self, tmp_path: Path) -> None:
         from novomodelo_bridge.novomodelo.readers import read_converted_penalties
 
-        (tmp_path / "penalties.json").write_text('{"hydro": {"spillage_cost": 0.5}}')
+        (tmp_path / "penalties.json").write_text(
+            '{"hydro": {"spillage_cost": 0.5}}', encoding="utf-8"
+        )
         out = tmp_path / "output"
         out.mkdir()
         # Found at the case root (parent of output).
@@ -972,7 +1003,7 @@ class TestEdgeCases:
         """The source model readers return empty DataFrames when dir missing."""
         from novomodelo_bridge.comparators.newave.readers import (
             read_medias_hydro,
-            read_medias_system,
+            read_medias_market,
             read_medias_thermal,
             read_pmo_convergence,
             read_pmo_productivity_detail,
@@ -981,7 +1012,7 @@ class TestEdgeCases:
         fake_dir = tmp_path / "nonexistent"
         assert read_medias_hydro(fake_dir).is_empty()
         assert read_medias_thermal(fake_dir).is_empty()
-        assert read_medias_system(fake_dir).is_empty()
+        assert read_medias_market(fake_dir).is_empty()
         assert read_pmo_convergence(fake_dir).is_empty()
         assert read_pmo_productivity_detail(fake_dir).is_empty()
 
@@ -1237,7 +1268,6 @@ class TestCompareResultsReturnsDataset:
         for name in (
             "read_medias_hydro",
             "read_medias_thermal",
-            "read_medias_system",
             "read_medias_market",
             "read_medias_sin",
             "read_nwlistop_intercambio",
@@ -1372,9 +1402,21 @@ class TestCompareResultsReturnsDataset:
 
         real_detail = analyze.build_productivity_detail
 
-        def _detail(*args: object) -> object:
-            seen["accumulated"] = args[4]
-            return real_detail(*args)
+        def _detail(
+            alignment: EntityAlignment,
+            nw_prod_detail: pl.DataFrame,
+            nw_cadastro: pd.DataFrame,
+            novomodelo_prod_detail: dict[int, dict],
+            cb_accumulated: dict[int, float],
+        ) -> pl.DataFrame:
+            seen["accumulated"] = cb_accumulated
+            return real_detail(
+                alignment,
+                nw_prod_detail,
+                nw_cadastro,
+                novomodelo_prod_detail,
+                cb_accumulated,
+            )
 
         monkeypatch.setattr(analyze, "build_productivity_detail", _detail)
 
@@ -1441,7 +1483,8 @@ class TestProductivityDetail:
                         },
                     ]
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
     def test_novomodelo_productivity_detail_reader(self, tmp_path: Path) -> None:
@@ -1904,7 +1947,8 @@ class TestGenericConstraintF3Loaders:
                         }
                     ]
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         constraints = load_generic_constraints(tmp_path)

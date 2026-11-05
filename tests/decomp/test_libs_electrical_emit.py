@@ -533,7 +533,7 @@ def test_libs_electrical_result_is_frozen_with_expected_fields() -> None:
     assert result.converted_codes == (1, 2)
     assert result.deferred == {"inactive": (3,)}
     with pytest.raises(AttributeError):
-        result.converted_codes = (4,)  # type: ignore[misc]
+        result.converted_codes = (4,)  # ty: ignore[invalid-assignment] frozen dataclass: the assignment is the test
 
 
 def test_emit_reserve_a1_end_to_end_generation_cap() -> None:
@@ -546,7 +546,7 @@ def test_emit_reserve_a1_end_to_end_generation_cap() -> None:
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={407: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={(1, 0): 1000.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(1, 0): 1000.0})
 
     result = emit_libs_electrical_generics(
         model,
@@ -588,7 +588,7 @@ def test_emit_reserve_a3_negative_cap_stays_feasible_via_slack() -> None:
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={408: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={(1, 0): 200.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(1, 0): 200.0})
 
     result = emit_libs_electrical_generics(
         model,
@@ -624,7 +624,7 @@ def test_emit_active_only_stage0_block0_single_bounds_row() -> None:
         rules={10: "demanda_sin >= 50000"},
     )
     factory = _demanda_sin_context_factory({(0, 0): 60000.0})
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     result = emit_libs_electrical_generics(
         model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0
@@ -653,7 +653,7 @@ def test_emit_violation_penalty_overrides_big_m() -> None:
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={702: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     result = emit_libs_electrical_generics(
         model,
@@ -685,7 +685,7 @@ def test_emit_inactive_everywhere_defers_without_duplicate_diagnostic() -> None:
         rules={10: "demanda_sin >= 50000"},
     )
     factory = _demanda_sin_context_factory({})  # every cell defaults to 0.0
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     with dx.collect() as sink:
         result = emit_libs_electrical_generics(
@@ -707,7 +707,7 @@ def test_emit_unresolved_bucket_a_token_defers_without_partial_constraint() -> N
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={704: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     with dx.collect() as sink:
         result = emit_libs_electrical_generics(
@@ -738,7 +738,7 @@ def test_emit_unresolved_bucket_bc_term_defers_whole_restriction() -> None:
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={705: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     def _unresolvable_carga_ande(term: ParsedTerm) -> float:
         if term.token == "carga_ande":
@@ -774,7 +774,7 @@ def test_emit_cell_inconsistent_terms_raises_value_error_naming_restriction() ->
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={706: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     def _stub_assemble_bound(
         restriction: ElectricalRestriction,
@@ -822,7 +822,7 @@ def test_emit_sorted_restriction_codes_deterministic_ids() -> None:
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions=restrictions, rules={}
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     result = emit_libs_electrical_generics(
         model,
@@ -864,7 +864,7 @@ def test_emit_unrecognized_token_defers_one_restriction_sibling_converts() -> No
         restrictions={709: unrecognized, 710: resolvable},
         rules={},
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     with dx.collect() as sink:
         result = emit_libs_electrical_generics(
@@ -901,7 +901,7 @@ def test_emit_no_unrecognized_tokens_leaves_deferred_reason_empty() -> None:
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={711: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     result = emit_libs_electrical_generics(
         model,
@@ -930,7 +930,7 @@ def test_emit_propagates_plain_value_error_not_unrecognized_token() -> None:
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={712: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     def _stub_assemble_bound(
         restriction: ElectricalRestriction,
@@ -983,7 +983,7 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
         restrictions={720: rule_broken, 721: resolvable},
         rules={20: "mmgd_N_PCHgd >= 50000"},
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     with dx.collect() as sink:
         result = emit_libs_electrical_generics(
@@ -1023,7 +1023,7 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
         restrictions={722: restriction},
         rules={30: "demanda(3 >= 5"},
     )
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     with pytest.raises(ValueError, match="unbalanced parentheses") as exc_info:
         emit_libs_electrical_generics(

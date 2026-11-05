@@ -983,7 +983,8 @@ class TestLoadGenericConstraintsF3Shape:
         constraints_dir.mkdir()
         (constraints_dir / "generic_constraints.json").write_text(
             '{"constraints": [{"id": 0, "name": "HV_1", '
-            '"expression": "hydro_storage(0)", "slack": {"enabled": false}}]}'
+            '"expression": "hydro_storage(0)", "slack": {"enabled": false}}]}',
+            encoding="utf-8",
         )
         write_generic_constraint_echo(
             tmp_path / "output",

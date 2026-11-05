@@ -45,9 +45,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import date
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.core.policy_dates import (
+    UNDATED,
+    date_from_yyyymmdd,
+    hours_between,
+)
 from novomodelo_bridge.core.units import C_M3S2HM3, MEAN_MONTH_HOURS
 
 if TYPE_CHECKING:
@@ -64,11 +68,6 @@ _HYDRO_TRANSIT_BUCKET = 3
 
 #: `HydroStorage`'s `subindex` is always 0 (policy.fbs: one slot per plant).
 _STORAGE_SUBINDEX = 0
-
-#: novomodelo's `ENTITY_SLOT_DATE_SENTINEL` (`i32::MIN`), the "no date" value of every
-#: per-slot date field; an undated `AnticipatedThermalState` slot is never a GNL
-#: target.
-_SLOT_DATE_SENTINEL = -2147483648
 
 _INFLOW_LAG_FACTOR = MEAN_MONTH_HOURS * C_M3S2HM3
 
@@ -263,12 +262,6 @@ def _index_manifest(manifest: TerminalManifest) -> dict[tuple[int, int, int], in
     }
 
 
-def _yyyymmdd(value: int) -> date:
-    year, rest = divmod(value, 10_000)
-    month, day = divmod(rest, 100)
-    return date(year, month, day)
-
-
 def _dated_ring_slots(
     manifest: TerminalManifest,
 ) -> dict[int, tuple[tuple[int, int, int], ...]]:
@@ -282,7 +275,7 @@ def _dated_ring_slots(
         if _slot_int(slot, "entity_type") != _ANTICIPATED_THERMAL_STATE:
             continue
         interval_start = _slot_int(slot, "interval_start")
-        if interval_start == _SLOT_DATE_SENTINEL:
+        if interval_start == UNDATED:
             continue
         by_thermal.setdefault(_slot_int(slot, "entity_id"), []).append(
             (interval_start, _slot_int(slot, "interval_end"), position)
@@ -408,7 +401,7 @@ def _resolve_gnl(
             continue
         unpriced = 0
         for interval_start, interval_end, position in slots:
-            start = _yyyymmdd(interval_start)
+            start = date_from_yyyymmdd(interval_start)
             key = gnl_plan.week_months.get(
                 interval_start, month_key(start.year, start.month)
             )
@@ -416,7 +409,7 @@ def _resolve_gnl(
             if month is None:
                 unpriced += 1
                 continue
-            hours = (_yyyymmdd(interval_end) - start).days * 24.0
+            hours = hours_between(start, date_from_yyyymmdd(interval_end))
             # TRACKED NOVOMODELO-GAP (C24): the ring holds one MW per slot, so the
             # source's per-patamar prices collapse onto it, hours-weighted.
             resolved[position] = layout.weights(

@@ -264,9 +264,8 @@ class ExpansionConfig:
         """Cadastro row *hreg* at the configuration ``hydros.json`` declares.
 
         The final one, never the study-start one: novomodelo forbids a per-stage
-        bound above the declaration and the stages past the ramp carry no
-        bound, so a start-configuration declaration would cap the plant there
-        for the rest of the horizon.
+        bound above the declaration, so a start-configuration declaration
+        would cap the plant there for the rest of the horizon.
         """
         return self.hreg_at(hreg, self.full_online_stage)
 

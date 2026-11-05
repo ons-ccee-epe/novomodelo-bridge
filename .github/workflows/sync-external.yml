@@ -45,7 +45,7 @@ jobs:
       DESTINATION: ons-ccee-epe/${{ github.event.repository.name }}
       REF: ${{ github.event_name == 'pull_request' && 'refs/heads/main' || github.ref }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
           fetch-depth: 0

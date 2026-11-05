@@ -7,6 +7,7 @@ April), coupled at April 2026.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from types import SimpleNamespace
 
@@ -16,7 +17,6 @@ import pytest
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.fcf.coupling import (
     BorrowedOwner,
-    TerminalShare,
     carried_lag_share,
     coupling_lag_offsets,
     lag_months,
@@ -63,7 +63,11 @@ _PLANTS = {
 }
 
 
-def _effective(**overrides: object) -> EffectiveCadastro:
+def _effective(
+    *,
+    stage_varying: Mapping[tuple[int, str], tuple[float, ...]] | None = None,
+    coupling_gauges: Mapping[int, tuple[int, ...]] | None = None,
+) -> EffectiveCadastro:
     base = pd.DataFrame.from_dict(
         _PLANTS,
         orient="index",
@@ -73,8 +77,8 @@ def _effective(**overrides: object) -> EffectiveCadastro:
     return EffectiveCadastro(
         base=base,
         n_stages=len(_CALENDAR),
-        stage_varying=overrides.get("stage_varying", {}),  # type: ignore[arg-type]
-        coupling_gauges=overrides.get("coupling_gauges", {}),  # type: ignore[arg-type]
+        stage_varying={} if stage_varying is None else stage_varying,
+        coupling_gauges={} if coupling_gauges is None else coupling_gauges,
     )
 
 
@@ -230,10 +234,11 @@ def test_terminal_shares_lists_differing_and_source_only_plants() -> None:
         vazoes, effective, _id_map(1, 2), couplings, (260,), _CALENDAR
     )
 
-    assert shares == (
-        TerminalShare(1, 11, 1, pytest.approx(5.0)),
-        TerminalShare(260, 260, None, pytest.approx(7.0)),
-    )
+    assert [(s.plant_code, s.coupling_posto, s.operation_posto) for s in shares] == [
+        (1, 11, 1),
+        (260, 260, None),
+    ]
+    assert [s.max_gap_m3s for s in shares] == pytest.approx([5.0, 7.0])
 
 
 #: Monthly stages only: January is the deterministic trunk, February the fan.

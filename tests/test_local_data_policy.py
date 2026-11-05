@@ -27,6 +27,8 @@ _TESTS_ROOT = Path(__file__).resolve().parent
 _EXAMPLE_TREE = re.compile(r"""Path\(\s*["']example/|/\s*["']example["']""")
 # `Path.home()` / `expanduser()` reach outside the repository by construction.
 _HOME_DIRECTORY = re.compile(r"Path\.home\(\)|\.expanduser\(")
+# A string literal that starts at a home directory names one machine's layout.
+_ABSOLUTE_HOME = re.compile(r"""["'](?:/home/|/Users/)""")
 
 
 def _sibling_sources() -> list[tuple[Path, str]]:
@@ -63,3 +65,22 @@ def test_no_test_depends_on_the_developer_home_directory() -> None:
     not a fixture; vendor the file under ``tests/fixtures/`` instead.
     """
     assert _offenders(_HOME_DIRECTORY) == []
+
+
+def test_no_test_names_an_absolute_home_path() -> None:
+    """No test module holds a quoted path that starts at a home directory.
+
+    A copied ``/home/<user>/...`` or ``/Users/<user>/...`` literal resolves on
+    one machine only; real-format inputs belong under ``tests/fixtures/`` and
+    ``tests/decks/``, and a whole-deck check belongs in
+    ``docs/real-deck-checks.md``.
+    """
+    assert _offenders(_ABSOLUTE_HOME) == []
+
+
+def test_absolute_home_pattern_matches_home_literals() -> None:
+    """The pattern needs the opening quote, so prose mentions do not match."""
+    assert _ABSOLUTE_HOME.search('"/home/someone/git/DECKS"')
+    assert _ABSOLUTE_HOME.search("'/Users/someone/x'")
+    assert not _ABSOLUTE_HOME.search("Path.home()")
+    assert not _ABSOLUTE_HOME.search("see /home/ in the docs")

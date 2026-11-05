@@ -4,7 +4,8 @@ Synthetic tables for the parsing contracts, plus small real-format result
 file excerpts under ``tests/fixtures/decomp_results/`` for the file layout:
 the ``dec_oper_*`` and ``decomp.tim`` excerpts come from the
 sintetizador-decomp project's test mocks; ``avl_cortesfpha_dec``,
-``eco_fpha_`` and ``dec_desvfpha`` are trimmed from a March 2026 weekly run.
+``eco_fpha_`` and ``dec_desvfpha`` are trimmed from a March 2026 weekly run;
+``dec_oper_sist`` is the head of an October 2026 run written by DECOMP 32.15.1.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     _resolve_relato2,
     _resolve_result_file,
     _resolve_revisioned_file,
+    _TableReader,
     read_avl_cortesfpha,
     read_dec_desvfpha,
     read_dec_estatfpha,
@@ -42,6 +44,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_oper_gnl,
     read_dec_oper_ree,
     read_dec_oper_rhesoft,
+    read_dec_oper_sist,
     read_decomp_tim,
     read_eco_fpha,
     read_relato2_costs,
@@ -68,10 +71,10 @@ class _StubTimFile:
         self.tempos_etapas = table
 
 
-def _stub_reader(table: pd.DataFrame | None) -> type:
+def _stub_reader(table: pd.DataFrame | None) -> _TableReader:
     class _Reader:
         @staticmethod
-        def read(path: str) -> _StubFile:  # noqa: ARG004
+        def read(path: str, version: str | None = None) -> _StubFile:
             return _StubFile(table)
 
     return _Reader
@@ -436,22 +439,105 @@ class TestReadDecOperCore:
 
     def test_a_file_is_parsed_once_until_it_changes(self, tmp_path: Path) -> None:
         path = tmp_path / "dec_oper_sist.csv"
-        path.write_text("1")
+        path.write_text("1", encoding="utf-8")
         parsed: list[str] = []
         table = pd.DataFrame({"estagio": [1], "cmo": [10.0]})
 
         class _Counting:
             @staticmethod
-            def read(path: str) -> _StubFile:
+            def read(path: str, version: str | None = None) -> _StubFile:
                 parsed.append(path)
                 return _StubFile(table)
 
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         assert len(parsed) == 1
-        path.write_text("12")
+        path.write_text("12", encoding="utf-8")
         _read_dec_oper(tmp_path, "dec_oper_sist.csv", _Counting)
         assert len(parsed) == 2
+
+
+_LAYOUTS = {"31.0.2": "v31", "31.1.2": "v31_1", "32.9": "v32_9"}
+
+
+def _banner(release: str) -> str:
+    return (
+        "*" * 71
+        + "\n*  CEPEL: DECOMP     - Versao "
+        + release
+        + " - Jul/2026(L)              *\n"
+        + "*" * 71
+        + "\n"
+    )
+
+
+def _layout_recorder(seen: list[str | None]) -> _TableReader:
+    table = pd.DataFrame({"estagio": [1], "cmo": [10.0]})
+
+    class _Reader:
+        VERSIONS = _LAYOUTS
+
+        @staticmethod
+        def read(path: str, version: str | None = None) -> _StubFile:
+            seen.append(version)
+            return _StubFile(table)
+
+    return _Reader
+
+
+class TestDecOperLayoutByRelease:
+    """`_read_dec_oper` reads each file in the layout of the release that wrote it."""
+
+    @pytest.mark.parametrize(
+        ("release", "layout"),
+        [
+            ("32.15.1_coin", "32.9"),
+            ("32.9", "32.9"),
+            ("33.0", "32.9"),
+            ("31.21", "31.1.2"),
+            ("31.1.2", "31.1.2"),
+            ("31.0.5", "31.0.2"),
+        ],
+    )
+    def test_newest_layout_not_newer_than_the_release_compared_as_numbers(
+        self, tmp_path: Path, release: str, layout: str
+    ) -> None:
+        (tmp_path / "dec_oper_sist.csv").write_text(
+            _banner(release), encoding="latin-1"
+        )
+        seen: list[str | None] = []
+        _read_dec_oper(tmp_path, "dec_oper_sist.csv", _layout_recorder(seen))
+        assert seen == [layout]
+
+    def test_file_without_banner_reads_in_the_default_layout(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "dec_oper_sist.csv").write_text("estagio;cmo\n")
+        seen: list[str | None] = []
+        _read_dec_oper(tmp_path, "dec_oper_sist.csv", _layout_recorder(seen))
+        assert seen == [None]
+
+    def test_reader_without_layouts_reads_in_its_default(self, tmp_path: Path) -> None:
+        (tmp_path / "dec_oper_sist.csv").write_text(_banner("32.15.1"))
+        table = pd.DataFrame({"estagio": [1], "cmo": [10.0]})
+        result = _read_dec_oper(tmp_path, "dec_oper_sist.csv", _stub_reader(table))
+        assert result.shape == (1, 2)
+
+    def test_release_older_than_every_layout_raises(self, tmp_path: Path) -> None:
+        (tmp_path / "dec_oper_sist.csv").write_text(_banner("30.5"))
+        with pytest.raises(ValueError, match=r"DECOMP 30\.5, older than every layout"):
+            _read_dec_oper(tmp_path, "dec_oper_sist.csv", _layout_recorder([]))
+
+    def test_dec_oper_sist_from_32_15_reads_the_ande_column_unshifted(
+        self, tmp_path: Path
+    ) -> None:
+        shutil.copy(_RESULTS_EXCERPT / "dec_oper_sist.csv", tmp_path)
+        first = read_dec_oper_sist(tmp_path).row(0, named=True)
+        assert first["ande_MW"] == pytest.approx(3842.0)
+        assert first["itaipu_50MW"] == pytest.approx(6992.0)
+        assert first["deficit_MW"] == pytest.approx(0.0)
+        assert first["earm_final_MWmes"] == pytest.approx(117684.14)
+        assert first["cmo"] == pytest.approx(46.68)
 
 
 class TestRealDeckReaders:
@@ -853,7 +939,7 @@ class TestReadDecOperGnl:
         monkeypatch.setattr(
             DecOperGnl,
             "read",
-            staticmethod(lambda _path: _StubFile(stub_table)),
+            staticmethod(lambda _path, version=None: _StubFile(stub_table)),
         )
         result = read_dec_oper_gnl(tmp_path)
         assert isinstance(result, pl.DataFrame)
@@ -880,7 +966,7 @@ class TestReadDecOperGnl:
         monkeypatch.setattr(
             DecOperGnl,
             "read",
-            staticmethod(lambda _path: _StubFile(None)),
+            staticmethod(lambda _path, version=None: _StubFile(None)),
         )
         with pytest.raises(ValueError, match="parsed empty"):
             read_dec_oper_gnl(tmp_path)
@@ -917,7 +1003,7 @@ class TestReadDecOperRee:
         monkeypatch.setattr(
             DecOperRee,
             "read",
-            staticmethod(lambda _path: _StubFile(stub_table)),
+            staticmethod(lambda _path, version=None: _StubFile(stub_table)),
         )
         result = read_dec_oper_ree(tmp_path)
         assert isinstance(result, pl.DataFrame)
@@ -944,7 +1030,7 @@ class TestReadDecOperRee:
         monkeypatch.setattr(
             DecOperRee,
             "read",
-            staticmethod(lambda _path: _StubFile(None)),
+            staticmethod(lambda _path, version=None: _StubFile(None)),
         )
         with pytest.raises(ValueError, match="parsed empty"):
             read_dec_oper_ree(tmp_path)
@@ -986,7 +1072,7 @@ class TestReadDecOperEvap:
         monkeypatch.setattr(
             DecOperEvap,
             "read",
-            staticmethod(lambda _path: _StubFile(stub_table)),
+            staticmethod(lambda _path, version=None: _StubFile(stub_table)),
         )
         result = read_dec_oper_evap(tmp_path)
         assert isinstance(result, pl.DataFrame)
@@ -1029,7 +1115,7 @@ class TestReadDecOperEvap:
         monkeypatch.setattr(
             DecOperEvap,
             "read",
-            staticmethod(lambda _path: _StubFile(None)),
+            staticmethod(lambda _path, version=None: _StubFile(None)),
         )
         with pytest.raises(ValueError, match="parsed empty"):
             read_dec_oper_evap(tmp_path)
@@ -1057,7 +1143,7 @@ class TestReadDecOperRheSoft:
         monkeypatch.setattr(
             DecOperRheSoft,
             "read",
-            staticmethod(lambda _path: _StubFile(stub_table)),
+            staticmethod(lambda _path, version=None: _StubFile(stub_table)),
         )
         result = read_dec_oper_rhesoft(tmp_path)
         assert isinstance(result, pl.DataFrame)
@@ -1096,7 +1182,7 @@ class TestReadDecOperRheSoft:
         monkeypatch.setattr(
             DecOperRheSoft,
             "read",
-            staticmethod(lambda _path: _StubFile(None)),
+            staticmethod(lambda _path, version=None: _StubFile(None)),
         )
         with pytest.raises(ValueError, match="parsed empty"):
             read_dec_oper_rhesoft(tmp_path)

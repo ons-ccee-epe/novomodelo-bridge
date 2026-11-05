@@ -24,7 +24,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from novomodelo_bridge.dessem.exporters.fcf.core.mapper import MappingError, index_slots
+from novomodelo_bridge.core.policy_dates import date_from_yyyymmdd, hours_between
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
+    MappingError,
+    has_interval,
+    index_slots,
+)
 
 if TYPE_CHECKING:
     from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
@@ -32,11 +37,13 @@ if TYPE_CHECKING:
         StageInfo,
     )
     from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceHydro
-    from novomodelo_bridge.dessem.exporters.fcf.core.reader import EntitySlotRecord
+    from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
+        EntitySlotRecord,
+        StageCutPool,
+    )
 
 _LOG = logging.getLogger(__name__)
 
-_HOURS_PER_DAY = 24
 _COVERAGE_TOLERANCE_HOURS = 1e-9
 
 Window = tuple[float, float]
@@ -63,17 +70,40 @@ class TravelTimePlant:
         return tuple(len(shares) - 1 for shares in self.arrival_shares)
 
 
+@dataclass(frozen=True)
+class UndatedBucketCount:
+    """One pool's undated transit buckets and the non-zero cut coefficients found on them."""
+
+    pool_id: int
+    buckets: int
+    priced: int
+
+
+@dataclass(frozen=True)
+class UndatedBucketAudit:
+    """Counted record of the undated transit buckets premise P3 gives no weight, per pool."""
+
+    per_pool: tuple[UndatedBucketCount, ...]
+
+    @property
+    def total_buckets(self) -> int:
+        return sum(count.buckets for count in self.per_pool)
+
+    @property
+    def total_priced(self) -> int:
+        return sum(count.priced for count in self.per_pool)
+
+
 def max_lag(plants: Sequence[TravelTimePlant]) -> int:
     """`mapcut`'s `max_lag`, also the release lags each cut carries per plant."""
     return max((lag for plant in plants for lag in plant.stage_lags), default=0)
 
 
-def _hours_since(origin: date, day: date) -> float:
-    return float((day - origin).days * _HOURS_PER_DAY)
-
-
 def _yyyymmdd(value: int) -> date:
-    return date(value // 10000, value // 100 % 100, value % 100)
+    try:
+        return date_from_yyyymmdd(value)
+    except ValueError as exc:
+        raise MappingError(f"{value} is not a YYYYMMDD date") from exc
 
 
 def stage_windows(stages: Sequence[StageInfo]) -> tuple[Window, ...]:
@@ -85,8 +115,8 @@ def stage_windows(stages: Sequence[StageInfo]) -> tuple[Window, ...]:
     origin = date.fromisoformat(stages[0].start_date)
     windows = tuple(
         (
-            _hours_since(origin, date.fromisoformat(stage.start_date)),
-            _hours_since(origin, date.fromisoformat(stage.end_date)),
+            hours_between(origin, date.fromisoformat(stage.start_date)),
+            hours_between(origin, date.fromisoformat(stage.end_date)),
         )
         for stage in stages
     )
@@ -203,15 +233,25 @@ def travel_time_plants(
 def _bucket_windows(
     slots: Sequence[EntitySlotRecord], origin: date, pool_id: int
 ) -> dict[int, list[tuple[int, Window]]]:
-    """Each downstream plant's transit-bucket positions and arrival windows."""
+    """Each downstream plant's transit-bucket positions and arrival windows.
+
+    Undated buckets count for the orphan check but get no window.
+    """
     by_plant: dict[int, list[tuple[int, Window]]] = {}
     for position in index_slots(slots).transit_bucket:
         slot = slots[position]
-        window = (
-            _hours_since(origin, _yyyymmdd(slot.interval_start)),
-            _hours_since(origin, _yyyymmdd(slot.interval_end)),
+        buckets = by_plant.setdefault(slot.entity_id, [])
+        if not has_interval(slot):
+            continue
+        buckets.append(
+            (
+                position,
+                (
+                    hours_between(origin, _yyyymmdd(slot.interval_start)),
+                    hours_between(origin, _yyyymmdd(slot.interval_end)),
+                ),
+            )
         )
-        by_plant.setdefault(slot.entity_id, []).append((position, window))
     for plant_id, buckets in by_plant.items():
         ordered = sorted(window for _, window in buckets)
         for earlier, later in itertools.pairwise(ordered):
@@ -286,3 +326,51 @@ def release_lag_weights(
                     f"{covered} of its {transit_hours} h"
                 )
     return weights
+
+
+def undated_bucket_audit(pools: Mapping[int, StageCutPool]) -> UndatedBucketAudit:
+    """Count each pool's undated transit buckets and the exported coefficients on them.
+
+    Only the pieces premise P10 exports count, so `priced` is what leaves pi_qdefp.
+    """
+    per_pool: list[UndatedBucketCount] = []
+    for pool_id in sorted(pools):
+        pool = pools[pool_id]
+        undated = [
+            position
+            for position in index_slots(pool.slots).transit_bucket
+            if not has_interval(pool.slots[position])
+        ]
+        priced = sum(
+            1
+            for piece in pool.pieces
+            if piece.slot_index >= pool.warm_start_count
+            for position in undated
+            if piece.coefficients[position] != 0.0
+        )
+        per_pool.append(UndatedBucketCount(pool_id, len(undated), priced))
+    audit = UndatedBucketAudit(per_pool=tuple(per_pool))
+
+    if audit.total_buckets:
+        _LOG.info(
+            "premise P3: %d undated transit bucket(s) take no weight: %s",
+            audit.total_buckets,
+            ", ".join(
+                f"pool {count.pool_id}={count.buckets}"
+                for count in audit.per_pool
+                if count.buckets
+            ),
+        )
+    else:
+        _LOG.info("premise P3: every transit bucket is dated on this case")
+    if audit.total_priced:
+        _LOG.warning(
+            "premise P3: %d non-zero coefficient(s) on undated transit buckets dropped: %s",
+            audit.total_priced,
+            ", ".join(
+                f"pool {count.pool_id}={count.priced}"
+                for count in audit.per_pool
+                if count.priced
+            ),
+        )
+    return audit

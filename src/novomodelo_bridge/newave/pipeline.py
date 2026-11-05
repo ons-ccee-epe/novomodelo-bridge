@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pyarrow as pa
@@ -19,7 +20,10 @@ from novomodelo_bridge.core.conversion import (
     ConversionReport,
     run_conversion,
 )
-from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.core.generic_constraint_builder import (
+    ConstraintIdAllocator,
+    GenericConstraintResult,
+)
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters import constraints as constraints_conv
@@ -33,9 +37,10 @@ from novomodelo_bridge.newave.converters import tailrace as tailrace_conv
 from novomodelo_bridge.newave.converters import temporal as temporal_conv
 from novomodelo_bridge.newave.converters import thermal as thermal_conv
 from novomodelo_bridge.newave.files import unindexed_libs_diagnostic
+from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
-from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +141,8 @@ def _merge_hydro_bounds(
 
     import polars as pl
 
-    w = pl.from_arrow(withdrawal)
-    s = pl.from_arrow(storage)
+    w = pl.DataFrame(withdrawal)
+    s = pl.DataFrame(storage)
     merged = merge_bound_tables(w, s, on=["hydro_id", "stage_id"], precedence="base")
     merged = merged.sort("hydro_id", "stage_id")
     return merged.to_arrow()
@@ -162,89 +167,67 @@ def _fold_per_stage_capacity_caps(
 
     import polars as pl
 
-    h = pl.from_arrow(capacity_caps)
+    h = pl.DataFrame(capacity_caps)
     if base is None:
         return h.sort("hydro_id", "stage_id").to_arrow()
 
-    b = pl.from_arrow(base)
+    b = pl.DataFrame(base)
     merged = merge_bound_tables(b, h, on=["hydro_id", "stage_id"], precedence="base")
     merged = merged.sort("hydro_id", "stage_id")
     return merged.to_arrow()
 
 
-def convert_newave_case(
-    src: Path,
-    dst: Path,
-    *,
-    on_phase: Callable[[str], None] | None = None,
-    dry_run: bool = False,
-) -> ConversionReport:
-    """Convert a source-model case directory to a Novomodelo case directory.
+@dataclass(frozen=True)
+class _EntityArtifacts:
+    """What the ``step("Converting entities")`` phase produces."""
 
-    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
-    failure clears the written outputs and forwards the below-``ERROR``
-    findings collected before it.
+    hydros: dict
+    geometry: pa.Table
+    thermals: dict
+    load_stats: pa.Table
+    buses: dict
+    lines: dict
+    pumping: dict
+    pumping_bounds: pa.Table | None
+    penalties: dict
 
-    Parameters
-    ----------
-    src:
-        Path to the source model case directory.  Must exist and contain every
-        required source-model input file.
-    dst:
-        Path to the output Novomodelo case directory.  Must not exist or must be
-        empty (call site is responsible for enforcing the --force contract
-        before calling this function).
-    dry_run:
-        When ``True``, run the full in-memory conversion but write nothing to
-        *dst* (no files, no subdirectories). The would-write paths are still
-        recorded in :attr:`ConversionReport.would_write_paths`.
 
-    Returns
-    -------
-    ConversionReport
-        Summary of what was converted, including a ``warnings`` list of every
-        degraded-input substitution that occurred (empty when the conversion
-        ran clean).
+@dataclass(frozen=True)
+class _TemporalStochasticArtifacts:
+    """What the ``step("Converting temporal & stochastic")`` phase produces."""
 
-    Raises
-    ------
-    FileNotFoundError
-        If *src* does not exist, is not a directory, or a required source-model
-        file is missing.
-    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
-        A ``ValueError``: a post-emission self-check in
-        :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
-        violation in the converted artifacts. No report is returned.
+    stages: dict
+    config: dict
+    initial_conditions: dict
+    inflow_stats: pa.Table
+    inflow_history: pa.Table
+    water_withdrawal: pa.Table | None
+    storage_bounds: pa.Table | None
+    capacity_caps: pa.Table | None
+
+
+@dataclass(frozen=True)
+class _ConstraintArtifacts:
+    """What the ``step("Converting constraints")`` phase produces."""
+
+    vminop: constraints_conv.VminopResult | None
+    electric: GenericConstraintResult | None
+    agrint: GenericConstraintResult | None
+    load_factors: dict
+    line_bounds: pa.Table
+    ncs: dict
+    ncs_factors: dict
+    ncs_stats: pa.Table
+    production_models: dict
+    hydro_energy_productivity: pa.Table
+    tailrace: pa.Table | None
+    thermal_bounds: pa.Table | None
+
+
+def _discover(src: Path) -> tuple[NewaveCase, NewaveIdMap]:
+    """The ``step("Discovering files")`` phase: bind *src* into one
+    :class:`NewaveCase`, emit its deck-hygiene diagnostics, and build its id map.
     """
-    return run_conversion(
-        lambda: _convert_newave_case_impl(src, dst, on_phase, dry_run=dry_run),
-        dst,
-        NEWAVE_CLEARED_ARTIFACTS,
-        dry_run=dry_run,
-    )
-
-
-def _convert_newave_case_impl(
-    src: Path,
-    dst: Path,
-    on_phase: Callable[[str], None] | None = None,
-    *,
-    dry_run: bool = False,
-) -> ConversionReport:
-    """Run the conversion pipeline (warning capture handled by the wrapper).
-
-    ``on_phase`` (when given) is called once at each boundary in
-    :data:`CONVERSION_PHASE_LABELS`, so the CLI can advance a progress bar without
-    the pipeline knowing anything about rendering.
-
-    When ``dry_run`` is ``True``, the build phases run exactly as for a real run,
-    but the write phase creates no directories and writes no files; the paths that
-    would have been written are still accumulated and recorded on the report.
-    """
-    report = ConversionReport()
-    step = on_phase if on_phase is not None else (lambda _label: None)
-
-    step("Discovering files")
     logger.debug("Discovering NEWAVE files from %s", src)
     # Build the parsed-case object once; every converter reads its parsed inputs from
     # ``case`` (each source-model file parsed once and cached).
@@ -257,9 +240,14 @@ def _convert_newave_case_impl(
         dx.emit(unindexed)
 
     logger.debug("Building NewaveIdMap from %s", src)
-    id_map = case.id_map
+    return case, case.id_map
 
-    step("Converting entities")
+
+def _convert_core_entities(case: NewaveCase, id_map: NewaveIdMap) -> _EntityArtifacts:
+    """The ``step("Converting entities")`` phase: hydros and their geometry,
+    thermals, the load statistics, buses, lines, pumping stations, and
+    ``penalties.json``.
+    """
     logger.debug("Converting hydros")
     hydros_dict = hydro_conv.convert_hydros(case, id_map)
 
@@ -275,8 +263,15 @@ def _convert_newave_case_impl(
     logger.debug("Converting thermals")
     thermals_dict = thermal_conv.convert_thermals(case, id_map)
 
+    logger.debug("Converting load stats")
+    load_table = stochastic_conv.convert_load_stats(case, id_map)
+
     logger.debug("Converting buses")
-    buses_dict = network_conv.convert_buses(case, id_map)
+    buses_dict = network_conv.convert_buses(
+        case,
+        id_map,
+        reference_load_mw=network_conv.mean_bus_load_mw(load_table, case.horizon),
+    )
 
     logger.debug("Converting lines")
     lines_dict = network_conv.convert_lines(case, id_map)
@@ -311,7 +306,26 @@ def _convert_newave_case_impl(
         prod_media_sin=prod_media_sin,
     )
 
-    step("Converting temporal & stochastic")
+    return _EntityArtifacts(
+        hydros=hydros_dict,
+        geometry=geometry_table,
+        thermals=thermals_dict,
+        load_stats=load_table,
+        buses=buses_dict,
+        lines=lines_dict,
+        pumping=pumping_dict,
+        pumping_bounds=pumping_bounds_table,
+        penalties=penalties_dict,
+    )
+
+
+def _convert_temporal_and_stochastic(
+    case: NewaveCase, id_map: NewaveIdMap
+) -> _TemporalStochasticArtifacts:
+    """The ``step("Converting temporal & stochastic")`` phase: stages, config,
+    initial conditions, the inflow statistics and history, and the per-stage
+    hydro bound sources.
+    """
     logger.debug("Converting stages")
     stages_dict = temporal_conv.convert_stages(case, id_map)
 
@@ -331,9 +345,6 @@ def _convert_newave_case_impl(
     logger.debug("Converting inflow stats")
     inflow_table = stochastic_conv.convert_inflow_stats(case, id_map)
 
-    logger.debug("Converting load stats")
-    load_table = stochastic_conv.convert_load_stats(case, id_map)
-
     logger.debug("Converting inflow history from vazoes.dat")
     inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)
 
@@ -346,18 +357,30 @@ def _convert_newave_case_impl(
     logger.debug("Converting per-stage capacity caps")
     capacity_caps_table = hydro_conv.convert_per_stage_capacity_caps(case, id_map)
 
+    return _TemporalStochasticArtifacts(
+        stages=stages_dict,
+        config=config_dict,
+        initial_conditions=ic_dict,
+        inflow_stats=inflow_table,
+        inflow_history=inflow_history_table,
+        water_withdrawal=withdrawal_table,
+        storage_bounds=storage_bounds_table,
+        capacity_caps=capacity_caps_table,
+    )
+
+
+def _convert_constraints(case: NewaveCase, id_map: NewaveIdMap) -> _ConstraintArtifacts:
+    """The ``step("Converting constraints")`` phase: the VminOP, electric and
+    AGRINT generic constraints over one shared :class:`ConstraintIdAllocator`,
+    plus the load factors, line and thermal bounds, non-controllable sources,
+    production models, energy-productivity overrides, and tailrace curves.
+    """
     allocator = ConstraintIdAllocator()
 
-    step("Converting constraints")
     logger.debug("Converting VminOP constraints")
     vminop_result = constraints_conv.convert_vminop_constraints(
         case, id_map, allocator=allocator
     )
-    vminop_referenced_ids: list[int] = []
-    vminop_per_stage_parameters: dict[str, list[float]] = {}
-    if vminop_result is not None:
-        vminop_referenced_ids = list(vminop_result.referenced_hydro_ids)
-        vminop_per_stage_parameters = vminop_result.per_stage_parameters
 
     logger.debug("Converting electric constraints")
     electric_result = constraints_conv.convert_electric_constraints(
@@ -398,109 +421,189 @@ def _convert_newave_case_impl(
     logger.debug("Converting thermal bounds from expt.dat and manutt.dat")
     thermal_bounds_table = thermal_conv.convert_thermal_bounds(case, id_map)
 
-    # Merge hydro_bounds before the write phase so the post-emission
-    # self-checks see the exact table that will be written.
-    hydro_bounds_table = _merge_hydro_bounds(withdrawal_table, storage_bounds_table)
+    return _ConstraintArtifacts(
+        vminop=vminop_result,
+        electric=electric_result,
+        agrint=agrint_result,
+        load_factors=load_factors_dict,
+        line_bounds=line_bounds_table,
+        ncs=ncs_dict,
+        ncs_factors=ncs_factors_dict,
+        ncs_stats=ncs_stats_table,
+        production_models=production_models_dict,
+        hydro_energy_productivity=hydro_energy_productivity_table,
+        tailrace=tailrace_table,
+        thermal_bounds=thermal_bounds_table,
+    )
+
+
+def _resolve_hydro_bounds(
+    hydros_dict: dict, temporal: _TemporalStochasticArtifacts
+) -> pa.Table | None:
+    """Merge the per-stage hydro bound sources into ``hydro_bounds.parquet``.
+
+    Resolved before the write phase so the post-emission self-checks see the
+    exact table that will be written.
+    """
+    hydro_bounds_table = _merge_hydro_bounds(
+        temporal.water_withdrawal, temporal.storage_bounds
+    )
     hydro_bounds_table = _fold_per_stage_capacity_caps(
-        hydro_bounds_table, capacity_caps_table
+        hydro_bounds_table, temporal.capacity_caps
     )
 
     # Clamp any per-stage MAX bound above the plant's declared envelope back to
-    # the declared value (WARNING, not silent), so the rule-43 self-check below
-    # passes on the result.
-    hydro_bounds_table = emission_checks.clamp_hydro_bounds_to_declared(
+    # the declared value (WARNING, not silent), so the rule-43 self-check in
+    # ``_run_emission_checks`` passes on the result.
+    return emission_checks.clamp_hydro_bounds_to_declared(
         hydros_dict, hydro_bounds_table
     )
 
-    # Post-emission self-checks: mirror cheap novomodelo load invariants
-    # (rules 43, 41, 36, and the block_id-range rule) over the in-memory
-    # artifacts before anything is written. See novomodelo_bridge.core.emission_checks
-    # for the rule scope.
+
+def _run_emission_checks(
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    constraints: _ConstraintArtifacts,
+    hydro_bounds_table: pa.Table | None,
+) -> None:
+    """Gate the write phase on the post-emission self-checks.
+
+    They mirror cheap novomodelo load invariants (rules 43, 41, 36, and the
+    block_id-range rule) over the in-memory artifacts before anything is
+    written. See novomodelo_bridge.core.emission_checks for the rule scope.
+    """
+    hydros_dict = entities.hydros
     bound_families = [
         emission_checks.BoundFamily("Hydro", "hydro_id", hydro_bounds_table),
-        emission_checks.BoundFamily("Thermal", "thermal_id", thermal_bounds_table),
-        emission_checks.BoundFamily("Line", "line_id", line_bounds_table),
+        emission_checks.BoundFamily(
+            "Thermal", "thermal_id", constraints.thermal_bounds
+        ),
+        emission_checks.BoundFamily("Line", "line_id", constraints.line_bounds),
     ]
 
     def _run_checks() -> None:
         emission_checks.check_hydro_bounds_no_raising(hydros_dict, hydro_bounds_table)
         emission_checks.check_unit_group_envelope(hydros_dict)
         emission_checks.check_bound_row_uniqueness(bound_families)
-        emission_checks.check_bound_block_id_range(stages_dict, bound_families)
+        emission_checks.check_bound_block_id_range(temporal.stages, bound_families)
         emission_checks.check_diversion_has_channel(hydros_dict, hydro_bounds_table)
 
     emission_checks.run_and_gate(_run_checks)
 
-    # Every output path is routed through one ``CaseWriter`` so the
-    # would-write listing, the byte format, and the dry-run gate live in
-    # exactly one place, rather than guarding ~30 individual write sites.
-    writer = CaseWriter(dst, dry_run=dry_run)
 
-    step("Writing JSON")
-    writer.write_json("config.json", config_dict)
-    writer.write_json("stages.json", stages_dict)
-    writer.write_json("penalties.json", penalties_dict)
-    writer.write_json("initial_conditions.json", ic_dict)
-    writer.write_json("system/hydros.json", hydros_dict)
-    writer.write_json("system/thermals.json", thermals_dict)
-    writer.write_json("system/buses.json", buses_dict)
-    writer.write_json("system/lines.json", lines_dict)
-    writer.write_json("system/pumping_stations.json", pumping_dict)
-    writer.write_json("system/non_controllable_sources.json", ncs_dict)
-    writer.write_json("scenarios/load_factors.json", load_factors_dict)
-    writer.write_json("scenarios/non_controllable_factors.json", ncs_factors_dict)
+def _scalar_parameters(constraints: _ConstraintArtifacts) -> dict:
+    """Build ``constraints/generic_parameters.json``.
 
-    writer.write_json("system/hydro_production_models.json", production_models_dict)
+    novomodelo rejects an undeclared @name, so the file always declares the
+    per-hydro computed parameters of every hydro a VminOP share references
+    or a production model names (for handwritten constraints), plus the
+    VminOP curve fractions and coupled-cascade shares.
+    """
+    vminop_result = constraints.vminop
+    vminop_referenced_ids: list[int] = []
+    vminop_per_stage_parameters: dict[str, list[float]] = {}
+    if vminop_result is not None:
+        vminop_referenced_ids = list(vminop_result.referenced_hydro_ids)
+        vminop_per_stage_parameters = vminop_result.per_stage_parameters
 
-    # novomodelo rejects an undeclared @name, so the file always declares the
-    # per-hydro computed parameters of every hydro a VminOP share references
-    # or a production model names (for handwritten constraints), plus the
-    # VminOP curve fractions and coupled-cascade shares.
     all_hydro_ids = sorted(
         set(vminop_referenced_ids)
         | {
             int(m["hydro_id"])
-            for m in production_models_dict.get("production_models", [])
+            for m in constraints.production_models.get("production_models", [])
         }
     )
-    scalar_parameters_dict = scalar_params_conv.build_scalar_parameters(
+    return scalar_params_conv.build_scalar_parameters(
         all_hydro_ids,
         per_stage=vminop_per_stage_parameters,
     )
-    writer.write_json("constraints/generic_parameters.json", scalar_parameters_dict)
 
-    step("Writing Parquet")
-    writer.write_parquet("system/hydro_geometry.parquet", geometry_table)
 
+def _write_json_outputs(
+    writer: CaseWriter,
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    constraints: _ConstraintArtifacts,
+) -> None:
+    """The ``step("Writing JSON")`` phase."""
+    writer.write_json("config.json", temporal.config)
+    writer.write_json("stages.json", temporal.stages)
+    writer.write_json("penalties.json", entities.penalties)
+    writer.write_json("initial_conditions.json", temporal.initial_conditions)
+    writer.write_json("system/hydros.json", entities.hydros)
+    writer.write_json("system/thermals.json", entities.thermals)
+    writer.write_json("system/buses.json", entities.buses)
+    writer.write_json("system/lines.json", entities.lines)
+    writer.write_json("system/pumping_stations.json", entities.pumping)
+    writer.write_json("system/non_controllable_sources.json", constraints.ncs)
+    writer.write_json("scenarios/load_factors.json", constraints.load_factors)
+    writer.write_json(
+        "scenarios/non_controllable_factors.json", constraints.ncs_factors
+    )
+
+    writer.write_json(
+        "system/hydro_production_models.json", constraints.production_models
+    )
+    writer.write_json(
+        "constraints/generic_parameters.json", _scalar_parameters(constraints)
+    )
+
+
+def _write_parquet_outputs(
+    writer: CaseWriter,
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    constraints: _ConstraintArtifacts,
+    hydro_bounds_table: pa.Table | None,
+) -> None:
+    """Write the ``step("Writing Parquet")`` phase's converted tables, skipping
+    the optional ones the case does not ship."""
+    writer.write_parquet("system/hydro_geometry.parquet", entities.geometry)
+
+    hydro_energy_productivity_table = constraints.hydro_energy_productivity
     if hydro_energy_productivity_table.num_rows > 0:
         writer.write_parquet(
             "system/hydro_energy_productivity.parquet",
             hydro_energy_productivity_table,
         )
 
-    # Optional tailrace curves (polinjus) — only written when the case ships them.
+    tailrace_table = constraints.tailrace
     if tailrace_table is not None and tailrace_table.num_rows > 0:
         writer.write_parquet("system/tailrace_curves.parquet", tailrace_table)
 
-    writer.write_parquet("scenarios/inflow_seasonal_stats.parquet", inflow_table)
+    writer.write_parquet(
+        "scenarios/inflow_seasonal_stats.parquet", temporal.inflow_stats
+    )
 
-    writer.write_parquet("scenarios/load_seasonal_stats.parquet", load_table)
+    writer.write_parquet("scenarios/load_seasonal_stats.parquet", entities.load_stats)
 
-    writer.write_parquet("scenarios/inflow_history.parquet", inflow_history_table)
+    writer.write_parquet("scenarios/inflow_history.parquet", temporal.inflow_history)
 
-    writer.write_parquet("constraints/line_bounds.parquet", line_bounds_table)
+    writer.write_parquet("constraints/line_bounds.parquet", constraints.line_bounds)
 
-    writer.write_parquet("scenarios/non_controllable_stats.parquet", ncs_stats_table)
+    writer.write_parquet(
+        "scenarios/non_controllable_stats.parquet", constraints.ncs_stats
+    )
 
     if hydro_bounds_table is not None:
         writer.write_parquet("constraints/hydro_bounds.parquet", hydro_bounds_table)
 
+    thermal_bounds_table = constraints.thermal_bounds
     if thermal_bounds_table is not None:
         writer.write_parquet("constraints/thermal_bounds.parquet", thermal_bounds_table)
 
+    pumping_bounds_table = entities.pumping_bounds
     if pumping_bounds_table is not None and pumping_bounds_table.num_rows > 0:
         writer.write_parquet("constraints/pumping_bounds.parquet", pumping_bounds_table)
 
+
+def _write_penalty_overrides(
+    writer: CaseWriter,
+    case: NewaveCase,
+    id_map: NewaveIdMap,
+    entities: _EntityArtifacts,
+) -> None:
+    """Convert and write the per-bus and per-stage hydro penalty overrides."""
     # Per-bus excess-cost override: forbid energy excess at fictitious
     # submarkets (pure transshipment nodes) by pricing it prohibitively.
     bus_penalty_table = network_conv.convert_bus_penalty_overrides(case, id_map)
@@ -518,11 +621,13 @@ def _convert_newave_case_impl(
     per_stage_sin = _compute_per_stage_sin_productivities(case)
     if per_stage_sin is not None:
         per_stage_rho_avg, per_stage_rho_max_acum = per_stage_sin
-        hydro_ids = [int(h["id"]) for h in hydros_dict.get("hydros", []) if "id" in h]
+        hydro_ids = [
+            int(h["id"]) for h in entities.hydros.get("hydros", []) if "id" in h
+        ]
         hydro_penalty_table = network_conv.convert_hydro_penalty_overrides(
             case,
             hydro_ids,
-            penalties_dict["hydro"],
+            entities.penalties["hydro"],
             per_stage_rho_avg,
             per_stage_rho_max_acum,
         )
@@ -531,17 +636,26 @@ def _convert_newave_case_impl(
                 "constraints/penalty_overrides_hydro.parquet", hydro_penalty_table
             )
 
+
+def _write_generic_constraints(
+    writer: CaseWriter, constraints: _ConstraintArtifacts
+) -> None:
+    """Merge the VminOP, electric and AGRINT generic constraints into one
+    ``generic_constraints.json`` and one bounds parquet."""
     all_constraints: list[dict] = []
     bounds_tables: list[pa.Table] = []
 
+    vminop_result = constraints.vminop
     if vminop_result is not None:
         all_constraints.extend(vminop_result.constraints_dict.get("constraints", []))
         bounds_tables.append(vminop_result.bounds)
 
+    electric_result = constraints.electric
     if electric_result is not None:
         all_constraints.extend(electric_result.constraints)
         bounds_tables.append(electric_result.bounds)
 
+    agrint_result = constraints.agrint
     if agrint_result is not None:
         all_constraints.extend(agrint_result.constraints)
         bounds_tables.append(agrint_result.bounds)
@@ -561,14 +675,128 @@ def _convert_newave_case_impl(
                 "constraints/generic_constraint_bounds.parquet", merged_bounds
             )
 
-    report.hydro_count = len(hydros_dict.get("hydros", []))
-    report.thermal_count = len(thermals_dict.get("thermals", []))
-    report.bus_count = len(buses_dict.get("buses", []))
-    report.line_count = len(lines_dict.get("lines", []))
-    report.stage_count = len(stages_dict.get("stages", []))
-    report.would_write_paths = [str(p) for p in writer.would_write]
 
-    return report
+def _build_report(
+    entities: _EntityArtifacts,
+    temporal: _TemporalStochasticArtifacts,
+    writer: CaseWriter,
+) -> ConversionReport:
+    return ConversionReport(
+        hydro_count=len(entities.hydros.get("hydros", [])),
+        thermal_count=len(entities.thermals.get("thermals", [])),
+        bus_count=len(entities.buses.get("buses", [])),
+        line_count=len(entities.lines.get("lines", [])),
+        stage_count=len(temporal.stages.get("stages", [])),
+        would_write_paths=[str(p) for p in writer.would_write],
+    )
+
+
+def convert_newave_case(
+    src: Path,
+    dst: Path,
+    *,
+    on_phase: Callable[[str], None] | None = None,
+    dry_run: bool = False,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
+) -> ConversionReport:
+    """Convert a source-model case directory to a Novomodelo case directory.
+
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
+    failure clears the written outputs and forwards the below-``ERROR``
+    findings collected before it.
+
+    Parameters
+    ----------
+    src:
+        Path to the source model case directory.  Must exist and contain every
+        required source-model input file.
+    dst:
+        Path to the output Novomodelo case directory.  Must not exist or must be
+        empty (call site is responsible for enforcing the --force contract
+        before calling this function).
+    dry_run:
+        When ``True``, run the full in-memory conversion but write nothing to
+        *dst* (no files, no subdirectories). The would-write paths are still
+        recorded in :attr:`ConversionReport.would_write_paths`.
+    float_digits:
+        Significant digits of the floats in the case's JSON files; ``None``
+        keeps full precision.
+
+    Returns
+    -------
+    ConversionReport
+        Summary of what was converted, including a ``warnings`` list of every
+        degraded-input substitution that occurred (empty when the conversion
+        ran clean).
+
+    Raises
+    ------
+    FileNotFoundError
+        If *src* does not exist, is not a directory, or a required source-model
+        file is missing.
+    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+        A ``ValueError``: a post-emission self-check in
+        :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
+        violation in the converted artifacts. No report is returned.
+    """
+    return run_conversion(
+        lambda: _convert_newave_case_impl(
+            src, dst, on_phase, dry_run=dry_run, float_digits=float_digits
+        ),
+        dst,
+        NEWAVE_CLEARED_ARTIFACTS,
+        dry_run=dry_run,
+    )
+
+
+def _convert_newave_case_impl(
+    src: Path,
+    dst: Path,
+    on_phase: Callable[[str], None] | None = None,
+    *,
+    dry_run: bool = False,
+    float_digits: int | None = DEFAULT_FLOAT_DIGITS,
+) -> ConversionReport:
+    """Run the conversion pipeline (warning capture handled by the wrapper).
+
+    ``on_phase`` (when given) is called once at each boundary in
+    :data:`CONVERSION_PHASE_LABELS`, so the CLI can advance a progress bar without
+    the pipeline knowing anything about rendering.
+
+    When ``dry_run`` is ``True``, the build phases run exactly as for a real run,
+    but the write phase creates no directories and writes no files; the paths that
+    would have been written are still accumulated and recorded on the report.
+    """
+    step = on_phase if on_phase is not None else (lambda _label: None)
+
+    step("Discovering files")
+    case, id_map = _discover(src)
+
+    step("Converting entities")
+    entities = _convert_core_entities(case, id_map)
+
+    step("Converting temporal & stochastic")
+    temporal = _convert_temporal_and_stochastic(case, id_map)
+
+    step("Converting constraints")
+    constraints = _convert_constraints(case, id_map)
+    hydro_bounds_table = _resolve_hydro_bounds(entities.hydros, temporal)
+    _run_emission_checks(entities, temporal, constraints, hydro_bounds_table)
+
+    # Every output path is routed through one ``CaseWriter`` so the
+    # would-write listing, the byte format, and the dry-run gate live in
+    # exactly one place, rather than guarding ~30 individual write sites.
+    writer = CaseWriter(dst, dry_run=dry_run, float_digits=float_digits)
+
+    step("Writing JSON")
+    _write_json_outputs(writer, entities, temporal, constraints)
+
+    step("Writing Parquet")
+    _write_parquet_outputs(writer, entities, temporal, constraints, hydro_bounds_table)
+    _write_penalty_overrides(writer, case, id_map, entities)
+    _write_generic_constraints(writer, constraints)
+
+    return _build_report(entities, temporal, writer)
 
 
 NEWAVE_CLEARED_ARTIFACTS = ClearedArtifacts(

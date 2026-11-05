@@ -24,17 +24,16 @@ only the 60 Hz Itaipu group's generation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-
-    from idecomp.decomp import Dadger
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -43,8 +42,12 @@ if TYPE_CHECKING:
 _INVARIANT_RTOL = 1e-9
 
 
+class _DemandRegisters(Protocol):
+    def dp(self, *, df: bool) -> object: ...
+
+
 def _per_stage_block_loads(
-    dadger: Dadger,
+    dadger: _DemandRegisters,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
     *,
@@ -62,7 +65,7 @@ def _per_stage_block_loads(
     SE's real demand is never clobbered by the ANDE addition; a key absent
     from ``DP`` is inserted as-is.
     """
-    dp = dadger.dp(df=True)
+    dp = as_frame(dadger.dp(df=True))
     if dp is None or dp.empty:
         raise ValueError("the deck has no DP records; cannot convert load")
 

@@ -400,8 +400,9 @@ reads = [
   { file = "dadgnl", register = "GL" },
   { file = "dadgnl", register = "GS" },
   { file = "dadgnl", register = "NL" },
+  { file = "cortesh" },
 ]
-summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara despacho GNL comprometido, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
+summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara usinas GNL, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
 
   [[output.field]]
   path = "storage[].hydro_id"
@@ -450,28 +451,28 @@ summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em 
   path = "past_anticipated_commitments[].thermal_id"
   from = [ { file = "dadgnl", register = "TG", item = "codigo_usina" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "Id da térmica GNL criada em `system/thermals.json` (ids densos após a última térmica de `CT`, em ordem crescente de `codigo_usina` de `TG`)."
 
   [[output.field]]
   path = "past_anticipated_commitments[].start_date"
-  from = [ { file = "dadgnl", register = "GL", item = "data_inicio" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
+  from = [ { file = "dadgnl", register = "GL", item = "estagio, data_inicio" }, { file = "dadgnl", register = "GS", item = "mes, semanas" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
-  how = "Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead global (soma das semanas `GS` dos meses do estudo × 168 h). Janelas de classe 4 (já comandadas): a `data_inicio` de cada semana `GL` a partir do fim do horizonte, com um stub a 0 MW quando a primeira começa depois dele. Num estudo só de estágios mensais: a data de início de cada um dos `lag` (`NL`) primeiros estágios do estudo, decididos antes dele; um `GL` após o fim do horizonte é rejeitado."
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
+  how = "Janelas de classe 2 (dentro do estudo): a data de início de cada estágio do estudo coberto pelo lead `lead_time_hours` (até o corte já comandado), ou seja, todos os estágios do estudo. Janelas de classe 4 (já comandadas): uma por semana `GL` que o `GS` atribui a um mês após o estudo, pela posição (`estagio`) e não pela data; começa na `data_inicio` da semana, ou no fim do horizonte quando a semana começa antes dele (a primeira semana do mês 3 a partir da RV1), e há um stub a 0 MW do fim do horizonte até a primeira delas. Sem semana `GL` após o estudo (RV0), o mês seguinte começa na semana seguinte à última semana `GL`: se ela começa depois do fim do horizonte, os dias até ela são um stub a 0 MW (01 e 02/10 quando a última semana `GL` termina em 30/09); se começa antes, não há stub. Num estudo só de estágios mensais: a data de início de cada um dos `lag` (`NL`) primeiros estágios do estudo, decididos antes dele; um `GL` após o fim do horizonte é rejeitado."
 
   [[output.field]]
   path = "past_anticipated_commitments[].end_date"
   from = [ { file = "dadgnl", register = "GL", item = "data_inicio" }, { file = "dadger", register = "DP", item = "duracao" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "Classe 2: a data final do estágio do estudo. Classe 4: a `data_inicio` da semana `GL` seguinte, ou uma semana operativa (168 h) após o início na última janela. Nenhuma janela pode cruzar o fim do horizonte."
 
   [[output.field]]
   path = "past_anticipated_commitments[].value_mw"
-  from = [ { file = "dadgnl", register = "GL", item = "geracao" }, { file = "dadgnl", register = "GL", item = "duracao" }, { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" } ]
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula)"
-  how = "MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; nas janelas de classe 2, as semanas `GL` que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma). O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo."
+  from = [ { file = "dadgnl", register = "GL", item = "geracao" }, { file = "dadgnl", register = "GL", item = "duracao" }, { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" }, { file = "cortesh", item = "duracoes_patamares" } ]
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
+  how = "MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; uma semana após o horizonte, que vem sem `duracao`, usa as frações de patamar do mês em que o `GS` a coloca, lidas do `cortesh.dat` (com aviso, as horas de patamar do último estágio do estudo quando o arquivo falta ou não cobre o mês; com aviso também quando a `geracao` difere entre patamares). Nas janelas de classe 2, as semanas `GL` que o `GS` atribui ao estudo e que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma); a semana que o `GS` coloca no mês seguinte mas que começa antes do fim do horizonte entra no último estágio com as horas até o fim do horizonte. O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo."
 
 # ---------------------------------------------------------------------------
 # system/buses.json
@@ -639,28 +640,28 @@ summary = "Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1
   path = "thermals[].anticipated_config.lead_time_hours"
   from = [ { file = "dadgnl", register = "GL", item = "data_inicio" }, { file = "dadgnl", register = "GS", item = "mes, semanas" }, { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
   status = "derived"
-  when = "somente nas térmicas GNL de um estudo com semanas operativas, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula)"
-  how = "Lead físico por usina, em horas: da data de início do estudo até o fim da última semana já comandada da usina em `GL` (o corte de classe 4). Sem calendário `GS`, a duração do primeiro estágio."
+  when = "somente nas térmicas GNL de um estudo com semanas operativas, quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
+  how = "Lead físico por usina, em horas: da data de início do estudo até o fim da última semana já comandada da usina em `GL` (o corte de classe 4), ou, sem nenhuma, até o início da semana seguinte à última semana `GL` quando ela começa depois do fim do horizonte, senão até o fim do horizonte. Sem calendário `GS`, a duração do primeiro estágio."
 
   [[output.field]]
   path = "thermals[].anticipated_config.lead_stages"
   from = [ { file = "dadgnl", register = "NL", item = "lag" } ]
   status = "derived"
-  when = "somente nas térmicas GNL de um estudo só de estágios mensais, quando `dadgnl` declara despacho comprometido (algum `GL` com `geracao` não nula)"
+  when = "somente nas térmicas GNL de um estudo só de estágios mensais, quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "O `lag` da usina em `NL`, em estágios: o despacho entregue no estágio m é decidido no estágio m − lag. Cada mês `GS` precisa ter um único intervalo, e o `lag` fica entre 1 e o número de estágios do estudo."
 
   [[output.field]]
   path = "thermals[].entry_stage_id"
   from = []
   status = "null"
-  when = "somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido"
+  when = "somente nas térmicas GNL, quando `dadgnl` declara usinas GNL (registros `TG`)"
   how = "Sempre nulo: térmicas GNL estão ativas em todo o horizonte. Térmicas de `CT` omitem o campo."
 
   [[output.field]]
   path = "thermals[].exit_stage_id"
   from = []
   status = "null"
-  when = "somente nas térmicas GNL, quando `dadgnl` declara despacho comprometido"
+  when = "somente nas térmicas GNL, quando `dadgnl` declara usinas GNL (registros `TG`)"
   how = "Sempre nulo: térmicas GNL não saem dentro do horizonte. Térmicas de `CT` omitem o campo."
 
 # ---------------------------------------------------------------------------
@@ -798,6 +799,7 @@ reads = [
   { file = "dadger", register = "FU" },
   { file = "dadger", register = "FT" },
   { file = "dadger", register = "FI" },
+  { file = "dadger", register = "FE" },
   { file = "dadger", register = "CQ" },
   { file = "dadger", register = "CV" },
   { file = "hidr" },
@@ -845,6 +847,8 @@ summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novo
     { file = "dadger", register = "FT", item = "estagio" },
     { file = "dadger", register = "FI", item = "coeficiente" },
     { file = "dadger", register = "FI", item = "estagio" },
+    { file = "dadger", register = "FE", item = "coeficiente" },
+    { file = "dadger", register = "FE", item = "estagio" },
     { file = "dadger", register = "CQ", item = "coeficiente" },
     { file = "dadger", register = "CQ", item = "estagio" },
     { file = "dadger", register = "CV", item = "coeficiente" },
@@ -1030,7 +1034,7 @@ summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundo
 [[output]]
 path = "post_study_stages.json"
 kind = "json"
-when = "somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante), ou quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou sempre num estudo só de estágios mensais"
+when = "somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante), ou quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou sempre num estudo só de estágios mensais"
 module = "src/novomodelo_bridge/decomp/converters/anticipated.py"
 reads = [
   { file = "dadgnl", register = "TG" },
@@ -1051,46 +1055,46 @@ summary = "Calendários pós-estudo. Térmico (`thermal_stages` e `thermal_bound
   path = "thermal_stages[].start_date"
   from = [ { file = "dadger", register = "DT", item = "dia, mes, ano" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadgnl", register = "GL", item = "data_inicio" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou num estudo só de estágios mensais"
-  how = "Começa no fim do horizonte do estudo: um stub até o sábado seguinte (se necessário), semanas de 168 h até o corte já comandado comum a todas as usinas (`data_inicio` da última semana `GL` mais uma semana) e, a partir dele, um estágio espelhando cada estágio do estudo. Num estudo só de estágios mensais, o primeiro dia de cada mês civil após o horizonte."
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
+  how = "Começa no fim do horizonte do estudo: um stub até o sábado seguinte (se necessário), semanas de 168 h até o corte já comandado comum a todas as usinas (`data_inicio` da última semana `GL` mais uma semana, quando ela cai após o fim do horizonte; senão, o próprio fim do horizonte) e, a partir dele, um estágio espelhando cada estágio do estudo. Num estudo só de estágios mensais, o primeiro dia de cada mês civil após o horizonte."
 
   [[output.field]]
   path = "thermal_stages[].duration_hours"
   from = [ { file = "dadger", register = "DP", item = "duracao" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou num estudo só de estágios mensais"
-  how = "Horas até o próximo sábado no stub; `168` nas semanas; no espelho do estágio mensal do estudo, as horas até o último dia do mês civil do próprio estágio espelhado. Num estudo só de estágios mensais, as horas do mês civil inteiro."
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
+  how = "Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro."
 
   [[output.field]]
   path = "thermal_bounds[].thermal_id"
   from = [ { file = "dadgnl", register = "TG", item = "codigo_usina" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou num estudo só de estágios mensais"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "Id da térmica GNL em `system/thermals.json`."
 
   [[output.field]]
   path = "thermal_bounds[].post_study_stage_index"
   from = [ { file = "dadgnl", register = "GL", item = "data_inicio" } ]
   status = "derived"
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou num estudo só de estágios mensais"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "Índice 0-based do estágio pós-estudo; apenas os estágios cujo início é igual ou posterior ao corte já comandado da usina recebem uma linha. Num estudo só de estágios mensais, os `lag` (`NL`) primeiros meses pós-estudo, decididos dentro do estudo."
 
   [[output.field]]
   path = "thermal_bounds[].cost_per_mwh"
   from = [ { file = "dadgnl", register = "TG", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" } ]
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou num estudo só de estágios mensais"
-  how = "`cvu_1..3` do `TG` vigente no último estágio do estudo (o último declarado), ponderados pelas horas de patamar desse estágio. Num estudo só de estágios mensais, o `TG` do próprio mês pós-estudo (o eixo de estágios do `TG` continua após o estudo, um estágio por mês), ponderado pelas horas de patamar do último estágio do estudo."
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
+  how = "`cvu_1..3` dos `TG` dos meses civis que o estágio cobre, ponderados pelas horas do estágio em cada mês (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), e cada `TG` pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão."
 
   [[output.field]]
   path = "thermal_bounds[].min_mw"
   from = [ { file = "dadgnl", register = "TG", item = "inflexibilidade" }, { file = "dadger", register = "DP", item = "duracao" } ]
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou num estudo só de estágios mensais"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "`inflexibilidade_1..3` do mesmo `TG`, com a mesma ponderação."
 
   [[output.field]]
   path = "thermal_bounds[].max_mw"
   from = [ { file = "dadgnl", register = "TG", item = "disponibilidade" }, { file = "dadger", register = "DP", item = "duracao" } ]
-  when = "somente quando `dadgnl` declara despacho GNL comprometido (algum `GL` com `geracao` não nula) e um calendário `GS`, ou num estudo só de estágios mensais"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "`disponibilidade_1..3` do mesmo `TG`, com a mesma ponderação."
 
   [[output.field]]
@@ -1347,6 +1351,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "AC", item = "NUMMAQ" },
     { file = "dadger", register = "AC", item = "VAZEFE" },
     { file = "dadger", register = "AC", item = "POTEFE" },
+    { file = "dadger", register = "AC", item = "ALTEFE" },
     { file = "dadger", register = "AC", item = "COTVOL" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
     { file = "dadger", register = "AC", item = "VOLMAX" },
@@ -1372,7 +1377,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Maior valor, ao longo dos estágios, do engolimento máximo que o modelo de origem calcula antes da otimização: `min(qmaxT × MP × FD, Pdisp / ρ_eq)`. qmaxT é o ponto fixo `q = Σ máquinas × vazão nominal × ((h_mon − h_jus(q) − perdas) / h_ef)^k`, que parte do engolimento nominal e para quando dois passos diferem menos de 1 m³/s. h_mon é a cota do volume inicial (`UH`), limitado à faixa do estágio; h_jus vem das famílias do `polinjus` ou, sem o arquivo, dos polinômios de jusante do `hidr`, interpoladas pela cota da usina operada de jusante no seu volume mínimo (sem usina de jusante, a família de menor referência); h_ef é a média das `queda_nominal_conjunto_k` ponderada pelas máquinas (sem queda nominal em algum conjunto, qmaxT é o engolimento nominal); k = 0,5 (Francis/Pelton) ou 0,2 (Kaplan, `tipo_turbina` = 2). Quando a vazão que a usina não consegue reter no estágio (a incremental mais a das usinas a fio d'água a montante, menos o espaço livre do reservatório no estágio, nulo a fio d'água) passa do ponto fixo, qmaxT é o engolimento com essa vazão na curva de jusante. As vazões são as do modelo de origem, negativas incluídas; no estágio terminal, a média das aberturas ponderada pelas probabilidades. Pdisp é a potência instalada efetiva × `MP` × `FD`; ρ_eq é o da faixa inteira (reservatório) ou o do volume de referência (fio d'água). Para Itaipu (código 66) é a soma dos envelopes dos dois grupos. As vazões laterais (`VL`/`VU`) não entram na curva de jusante. `AC ALTEFE` não é consumido (o idecomp não expõe seu valor) e só gera aviso."
+  how = "Maior valor, ao longo dos estágios, do engolimento máximo que o modelo de origem calcula antes da otimização: `min(qmaxT × MP × FD, Pdisp / ρ_eq)`. qmaxT é o ponto fixo `q = Σ máquinas × vazão nominal × ((h_mon − h_jus(q) − perdas) / h_ef)^k`, que parte do engolimento nominal e para quando dois passos diferem menos de 1 m³/s. h_mon é a cota do volume inicial (`UH`), limitado à faixa do estágio; h_jus vem das famílias do `polinjus` ou, sem o arquivo, dos polinômios de jusante do `hidr`, interpoladas pela cota da usina operada de jusante no seu volume mínimo (sem usina de jusante, a família de menor referência); h_ef é a média das quedas efetivas dos conjuntos (`queda_nominal_conjunto_k`, com `AC ALTEFE` por estágio) ponderada pelas máquinas (sem queda efetiva positiva em algum conjunto, qmaxT é o engolimento nominal); k = 0,5 (Francis/Pelton) ou 0,2 (Kaplan, `tipo_turbina` = 2). Quando a vazão que a usina não consegue reter no estágio (a incremental mais a das usinas a fio d'água a montante, menos o espaço livre do reservatório no estágio, nulo a fio d'água) passa do ponto fixo, qmaxT é o engolimento com essa vazão na curva de jusante. As vazões são as do modelo de origem, negativas incluídas; no estágio terminal, a média das aberturas ponderada pelas probabilidades. Pdisp é a potência instalada efetiva × `MP` × `FD`; ρ_eq é o da faixa inteira (reservatório) ou o do volume de referência (fio d'água). Para Itaipu (código 66) é a soma dos envelopes dos dois grupos. As vazões laterais (`VL`/`VU`) não entram na curva de jusante."
 
   [[output.field]]
   path = "hydros[].generation.min_generation_mw"
@@ -1459,6 +1464,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "AC", item = "NUMMAQ" },
     { file = "dadger", register = "AC", item = "VAZEFE" },
     { file = "dadger", register = "AC", item = "POTEFE" },
+    { file = "dadger", register = "AC", item = "ALTEFE" },
     { file = "dadger", register = "AC", item = "COTVOL" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
     { file = "dadger", register = "AC", item = "VOLMAX" },
@@ -1740,6 +1746,7 @@ summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA co
     { file = "dadger", register = "AC", item = "NUMMAQ" },
     { file = "dadger", register = "AC", item = "VAZEFE" },
     { file = "dadger", register = "AC", item = "POTEFE" },
+    { file = "dadger", register = "AC", item = "ALTEFE" },
     { file = "dadger", register = "AC", item = "COTVOL" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
     { file = "dadger", register = "AC", item = "VOLMAX" },
@@ -1990,7 +1997,7 @@ summary = "Famílias de curvas de nível de jusante por usina (uma linha por seg
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base ou limite de turbinamento de Itaipu)"
+when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base, ou limite de turbinamento e potência disponível de Itaipu)"
 module = "src/novomodelo_bridge/decomp/converters/bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
@@ -2095,12 +2102,13 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "hidr", item = "vazao_nominal_conjunto_1..5" },
     { file = "hidr", item = "potencia_nominal_conjunto_1..5" },
     { file = "hidr", item = "queda_nominal_conjunto_1..5" },
+    { file = "dadger", register = "AC", item = "ALTEFE" },
     { file = "polinjus", item = "hidreletrica_curvajusante_polinomio_segmento · coeficiente_a0..coeficiente_a4" },
     { file = "vazoes", item = "previsoes · coluna do posto" },
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso. Para Itaipu (código 66), também o limite da usina por estágio, `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`: qmaxT como em `generation.max_turbined_m3s` de `system/hydros.json`, aqui sem o fator `MP` × `FD`, e Pdisp_g a potência de cada conjunto × `MP` × `FD` da sua frequência; emitido só nos estágios em que fica abaixo da soma dos tetos dos grupos além da tolerância numérica. Vale o menor dos tetos."
+  how = "Teto de turbinamento de uma RHQ de termo único sobre `QTUR`: `limite_superior` do `LQ` por patamar, truncado ao `generation.max_turbined_m3s` declarado da usina (o Novomodelo rejeita um teto acima da capacidade); um truncamento material gera aviso. Para Itaipu (código 66), também o limite da usina por estágio, `T = min(qmaxT, Σ Pdisp_g / ρ_eq)`: qmaxT como em `generation.max_turbined_m3s` de `system/hydros.json`, aqui sem o fator `MP` × `FD`, e Pdisp_g a potência de cada conjunto × `MP` × `FD` da sua frequência; emitido em todos os estágios, mesmo quando iguala a soma dos tetos dos grupos. Vale o menor dos tetos."
 
   [[output.field]]
   path = "min_generation_mw"
@@ -2123,8 +2131,11 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "LU", item = "limite_superior" },
     { file = "dadger", register = "FU", item = "codigo_usina" },
     { file = "dadger", register = "FU", item = "coeficiente" },
+    { file = "hidr", item = "potencia_nominal_conjunto_1..5" },
+    { file = "dadger", register = "MP", item = "manutencao" },
+    { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar, truncado ao `generation.max_generation_mw` declarado da usina (caso BELO MONTE, RE de 11000 MW acima da capacidade); um truncamento material gera aviso. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina."
+  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar, truncado ao `generation.max_generation_mw` declarado da usina (caso BELO MONTE, RE de 11000 MW acima da capacidade); um truncamento material gera aviso. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina. Para Itaipu (código 66), também a potência disponível da usina em todos os estágios: a soma, sobre os dois grupos, da potência do conjunto × `MP` × `FD` da sua frequência, a mesma Pdisp que o DECOMP reporta para a usina. Fica acima ou igual à soma dos tetos dos grupos em cada patamar e não limita além deles. Vale o menor dos tetos."
 
   [[output.field]]
   path = "min_storage_hm3"
@@ -2224,7 +2235,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
 [[output]]
 path = "constraints/hydro_unit_group_bounds.parquet"
 kind = "parquet"
-when = "somente quando algum grupo tem, em algum estágio, disponibilidade (MP × FD) ou engolimento corrigido pela queda abaixo do envelope declarado, ou quando Itaipu é operada com pisos `RI`"
+when = ""
 module = "src/novomodelo_bridge/decomp/group_bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
@@ -2243,7 +2254,7 @@ reads = [
   { file = "polinjus" },
   { file = "vazoes" },
 ]
-summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `unit_groups` de `system/hydros.json`, esparsas: só onde a disponibilidade por estágio (instalada × `MP` × `FD`) ou o engolimento corrigido pela queda do estágio fica abaixo do envelope do grupo, mais os pisos por frequência `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
+summary = "Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `system/hydros.json`: a potência disponível do estágio (instalada × `MP` × `FD`) e o engolimento máximo do estágio de cada grupo em todos os estágios, limitando ou não, mais os pisos e tetos por frequência do `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas."
 
   [[output.field]]
   path = "hydro_id"
@@ -2270,7 +2281,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
   path = "block_id"
   from = [ { file = "dadger", register = "DP", item = "numero_patamares" } ]
   status = "derived"
-  how = "Nulo na linha-base; 0..n−1 quando o piso `RI` de Itaipu difere entre patamares do estágio (a linha-base recebe então a média ponderada pelas horas) ou quando uma `RE` por frequência limita o grupo, por patamar. Disponibilidade e engolimento são valores de estágio."
+  how = "Nulo na linha-base; 0..n−1 quando um piso ou teto `RI` de Itaipu difere entre patamares do estágio (a linha-base recebe então a média ponderada pelas horas) ou quando uma `RE` por frequência limita o grupo, por patamar. Disponibilidade e engolimento são valores de estágio."
 
   [[output.field]]
   path = "min_turbined_m3s"
@@ -2298,6 +2309,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "AC", item = "NUMMAQ" },
     { file = "dadger", register = "AC", item = "VAZEFE" },
     { file = "dadger", register = "AC", item = "POTEFE" },
+    { file = "dadger", register = "AC", item = "ALTEFE" },
     { file = "dadger", register = "AC", item = "COTVOL" },
     { file = "dadger", register = "AC", item = "VOLMIN" },
     { file = "dadger", register = "AC", item = "VOLMAX" },
@@ -2323,7 +2335,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Engolimento máximo do estágio (o cálculo de `generation.max_turbined_m3s` em `system/hydros.json`, avaliado no estágio em vez do máximo), emitido só quando fica abaixo do envelope do grupo além da tolerância numérica. Para Itaipu, `min(T, Pdisp_g / ρ_eq)` por conjunto, como no envelope do grupo."
+  how = "Engolimento máximo do estágio (o cálculo de `generation.max_turbined_m3s` em `system/hydros.json`, avaliado no estágio em vez do máximo), emitido em todos os estágios. Para Itaipu, `min(T, Pdisp_g / ρ_eq)` por conjunto, como no envelope do grupo."
 
   [[output.field]]
   path = "min_generation_mw"
@@ -2335,7 +2347,7 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "LU", item = "limite_inferior" },
     { file = "dadger", register = "FU", item = "frequencia" },
   ]
-  how = "Piso de geração por frequência de Itaipu: `geracao_minima_50_hz` no grupo 0 e `geracao_minima_60_hz` no grupo 1, por patamar (colunas `_1`..`_5`), com estágios não declarados herdando o anterior (o `RI` precisa declarar o estágio 1). Os campos `geracao_maxima_*` do `RI` não são consumidos. Uma `RE` de termo único cujo `FU` traz `frequencia` 50 ou 60 limita o grupo dessa frequência com o `limite_inferior` do `LU`; vale o maior dos pisos. `frequencia` em outra usina interrompe a conversão."
+  how = "Piso de geração por frequência de Itaipu: `geracao_minima_50_hz` no grupo 0 e `geracao_minima_60_hz` no grupo 1, por patamar (colunas `_1`..`_5`), com estágios não declarados herdando o anterior (o `RI` precisa declarar o estágio 1). Uma `RE` de termo único cujo `FU` traz `frequencia` 50 ou 60 limita o grupo dessa frequência com o `limite_inferior` do `LU`; vale o maior dos pisos. `frequencia` em outra usina interrompe a conversão."
 
   [[output.field]]
   path = "max_generation_mw"
@@ -2350,8 +2362,10 @@ summary = "Sobrescritas por (usina, grupo, estágio, patamar) dos limites dos `u
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "codigo_usina" },
     { file = "dadger", register = "FD", item = "fator" },
+    { file = "dadger", register = "RI", item = "geracao_maxima_50_hz" },
+    { file = "dadger", register = "RI", item = "geracao_maxima_60_hz" },
   ]
-  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida só quando fica abaixo do envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória), e o `limite_superior` do `LU` de uma `RE` por frequência também limita o grupo, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
+  how = "Potência disponível do estágio: instalada efetiva do estágio × `manutencao_k` (`MP`) × `fator_k` (`FD`), fator 1.0 quando a usina não tem o registro, emitida em todos os estágios e limitada ao envelope do grupo. Para Itaipu o cálculo é por grupo, com a linha `MP`/`FD` da frequência correspondente (obrigatória); limitam também o grupo a geração máxima do `RI` (`geracao_maxima_50_hz` no grupo 0 e `geracao_maxima_60_hz` no grupo 1, por patamar, com a mesma herança de estágios do piso) e o `limite_superior` do `LU` de uma `RE` por frequência, truncado à potência declarada do grupo (com aviso); vale o menor dos tetos. O teto hidráulico ρ_eq × engolimento não é duplicado aqui: age pelo `max_turbined_m3s`."
 
 # ===== frag_F_dc_scenarios_constraints_fcf =====
 # Fragment F — DECOMP: cenários, restrições genéricas e função de custo futuro de fronteira.
@@ -2747,7 +2761,7 @@ summary = "Carga determinística replicada nas colunas de cenário da biblioteca
 [[output]]
 path = "constraints/generic_constraints.json"
 kind = "json"
-when = "somente quando ao menos uma restrição especial (RE com vários termos, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
+when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
 module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
   { file = "dadger", register = "SB" },
@@ -2760,6 +2774,9 @@ reads = [
   { file = "dadger", register = "FU" },
   { file = "dadger", register = "FT" },
   { file = "dadger", register = "FI" },
+  { file = "dadger", register = "FE" },
+  { file = "dadger", register = "CI" },
+  { file = "dadger", register = "CE" },
   { file = "dadger", register = "HQ" },
   { file = "dadger", register = "LQ" },
   { file = "dadger", register = "CQ" },
@@ -2781,7 +2798,7 @@ reads = [
   { file = "libs_restricao_eletrica" },
   { file = "renovaveis" },
 ]
-summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `QBOM` sem estação `UE`, `VDEF`/`VDES`/`VBOM`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
+summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`/`FE`) ou com termo de contrato (`FE`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `FE` sem um único contrato `CI`/`CE` com o seu número no seu submercado, `QBOM` sem estação `UE`, `VDEF`/`VDES`/`VBOM`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
 
   [[output.field]]
   path = "constraints[].id"
@@ -2833,6 +2850,11 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "FI", item = "codigo_submercado_de" },
     { file = "dadger", register = "FI", item = "codigo_submercado_para" },
     { file = "dadger", register = "FI", item = "coeficiente" },
+    { file = "dadger", register = "FE", item = "numero_contrato" },
+    { file = "dadger", register = "FE", item = "codigo_submercado" },
+    { file = "dadger", register = "FE", item = "coeficiente" },
+    { file = "dadger", register = "CI", item = "numero_contrato" },
+    { file = "dadger", register = "CE", item = "numero_contrato" },
     { file = "dadger", register = "CQ", item = "codigo_usina" },
     { file = "dadger", register = "CQ", item = "tipo" },
     { file = "dadger", register = "CQ", item = "coeficiente" },
@@ -2842,6 +2864,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "FU", item = "estagio" },
     { file = "dadger", register = "FT", item = "estagio" },
     { file = "dadger", register = "FI", item = "estagio" },
+    { file = "dadger", register = "FE", item = "estagio" },
     { file = "dadger", register = "CQ", item = "estagio" },
     { file = "dadger", register = "CV", item = "estagio" },
     { file = "dadger", register = "CM", item = "codigo_ree" },
@@ -2863,7 +2886,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
     { file = "renovaveis", item = "PEE-CAD · codigo_pee" },
   ]
-  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)` (um `FU` com `frequencia` numa restrição de vários termos descarta a restrição com `decomp-re-frequency-split-deferred`), `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`. Cada linha `FU`/`FT`/`FI`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`), com o sinal do `CM`, na energia armazenada útil em MWh (a base do `%EAMAX`) dos reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, cada um valorado pela produtibilidade da sua cadeia energética, como o modelo de origem calcula: a cadeia segue o `AC JUSENA` onde declarado e, nas demais usinas, a jusante operada; uma usina fora da configuração nomeada pelo `AC JUSENA` (como COMP PAF-MOX) entra com a sua própria produtibilidade. Quando a cadeia é a rota hídrica do `hydros.json`, o termo é `@rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>)`; senão, `@rho_chain_mwh_h<id> * hydro_useful_volume_final(<id>)`. Acoplamento entre REEs: um reservatório com registro `EZ` próprio tem a cadeia cortada onde a jusante operada está em outro REE (como TRES MARIAS → SOBRADINHO); o REE da usina conta só o trecho até o corte, e o REE da primeira usina abaixo do corte recebe o volume do reservatório valorado pela cadeia dessa usina, com energia máxima de `EZ`% do volume útil (`@earm_max_ez_mwh_h<id>`). Sem `EZ` próprio, a cadeia inteira conta no REE do reservatório. O limite `min(V, EZ · Vu)` da parcela de jusante não é representável: o termo conta o volume inteiro, e o aviso `decomp-rhe-ez-cap-unmodeled` nomeia os estágios em que isso pode afrouxar o piso (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`). Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `peq_`, `disp_usih` e o `ger_usit` de uma térmica GNL, cuja geração é comandada pelo `GL`) são dobrados no limite."
+  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)` (um `FU` com `frequencia` numa restrição de vários termos descarta a restrição com `decomp-re-frequency-split-deferred`), `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `FE` → `contract_import(id)`/`contract_export(id)` do contrato `CI`/`CE` com o `numero_contrato` do termo no seu submercado (o id de `system/energy_contracts.json`), `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`. Cada linha `FU`/`FT`/`FI`/`FE`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`), com o sinal do `CM`, na energia armazenada útil em MWh (a base do `%EAMAX`) dos reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, cada um valorado pela produtibilidade da sua cadeia energética, como o modelo de origem calcula: a cadeia segue o `AC JUSENA` onde declarado e, nas demais usinas, a jusante operada; uma usina fora da configuração nomeada pelo `AC JUSENA` (como COMP PAF-MOX) entra com a sua própria produtibilidade. Quando a cadeia é a rota hídrica do `hydros.json`, o termo é `@rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>)`; senão, `@rho_chain_mwh_h<id> * hydro_useful_volume_final(<id>)`. Acoplamento entre REEs: um reservatório com registro `EZ` próprio tem a cadeia cortada onde a jusante operada está em outro REE (como TRES MARIAS → SOBRADINHO); o REE da usina conta só o trecho até o corte, e o REE da primeira usina abaixo do corte recebe o volume do reservatório valorado pela cadeia dessa usina, com energia máxima de `EZ`% do volume útil (`@earm_max_ez_mwh_h<id>`). Sem `EZ` próprio, a cadeia inteira conta no REE do reservatório. O limite `min(V, EZ · Vu)` da parcela de jusante não é representável: o termo conta o volume inteiro, e o aviso `decomp-rhe-ez-cap-unmodeled` nomeia os estágios em que isso pode afrouxar o piso (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`). Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `peq_`, `disp_usih` e o `ger_usit` de uma térmica GNL, cuja geração é comandada pelo `GL`) são dobrados no limite."
 
   [[output.field]]
   path = "constraints[].slack.enabled"
@@ -2892,7 +2915,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
 [[output]]
 path = "constraints/generic_constraint_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma restrição especial (RE com vários termos, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
+when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
 module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
   { file = "dadger", register = "SB" },
@@ -2905,6 +2928,9 @@ reads = [
   { file = "dadger", register = "FU" },
   { file = "dadger", register = "FT" },
   { file = "dadger", register = "FI" },
+  { file = "dadger", register = "FE" },
+  { file = "dadger", register = "CI" },
+  { file = "dadger", register = "CE" },
   { file = "dadger", register = "HQ" },
   { file = "dadger", register = "LQ" },
   { file = "dadger", register = "CQ" },
@@ -3070,14 +3096,9 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   # --- deferred: read, reported, not emitted ---------------------------------
 
   [[source.item]]
-  register = "FE"
-  status = "deferred"
-  note = "Coeficientes de participação elétrica de uma restrição `RE`. O idecomp não expõe leitor para este registro; o bridge detecta sua presença por varredura textual e emite `decomp-fe-participation-unreadable`, pois uma `RE` com termo `FE` fica sub-lida. Converter exige um leitor próprio e o descarte, por restrição, das `RE` que carregam `FE`."
-
-  [[source.item]]
   register = "HA"
   status = "deferred"
-  note = "Cadastro da família de restrições `HA`/`LA`/`CA` (declaração, limites e coeficientes), sem leitor no idecomp. Detectada por varredura textual; diagnóstico `decomp-rha-family-unconverted`. Converter exige leitor próprio e um emissor equivalente ao das famílias `RE`/`HQ`/`HV`."
+  note = "Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Cada RHA limita a afluência total da usina (incremental mais a defluência de montante e a água em trânsito) na média do estágio, ponderada pelas horas dos patamares, e não em cada patamar; as restrições genéricas do Novomodelo ainda não têm uma variável de afluência no nível do estágio."
 
   [[source.item]]
   register = "LA"
@@ -3088,12 +3109,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "CA"
   status = "deferred"
   note = "Coeficientes da família `HA`/`LA`/`CA`; ver `HA`."
-
-  [[source.item]]
-  register = "AC"
-  item = "ALTEFE"
-  status = "deferred"
-  note = "Alteração da altura efetiva de queda de um conjunto de máquinas. O leitor idecomp expõe só as colunas de identificação e data, sem a coluna de valor, logo o conversor não consegue ingerir a alteração: o `check decomp` emite `decomp-ac-altefe-uningestable` e a queda nominal de `hidr.dat` é mantida. Depende de o idecomp expor o valor."
 
   [[source.item]]
   register = "AC"
@@ -3168,12 +3183,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   item = "estagio_inicio_producao"
   status = "unread"
   note = "Estágio em que a usina começa a produzir. Não lido: o conversor não emite `entry_stage_id` para hidrelétricas (fica no padrão nulo do esquema). Converter exige mapear este estágio para `entry_stage_id`."
-
-  [[source.item]]
-  register = "RI"
-  item = "geracao_maxima_50_hz_1..5"
-  status = "unread"
-  note = "Geração máxima do setor de 50 Hz de Itaipu por patamar. Não lida: o conversor usa a geração máxima de 60 Hz e as mínimas de 50 e 60 Hz. Converter exige emiti-la como teto do grupo de unidades de 50 Hz."
 
   [[source.item]]
   register = "CD"
@@ -3462,7 +3471,7 @@ note = "Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro
 # ---------------------------------------------------------------------------
 [[source]]
 file = "libs_restricao_eletrica"
-note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de forma longa indexados por período; as variantes abaixo ficam de fora. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período que não se aplicam ao formato da restrição geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo."
+note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de forma longa indexados por período; as variantes abaixo ficam de fora. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período que não se aplicam ao formato da restrição geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo. Os nomes dos cards só são reconhecidos em maiúsculas, como o manual os escreve, e cada linha que não é um card conhecido é ignorada e listada no aviso `libs-unread-lines`."
 
   [[source.item]]
   item = "cards de forma curta (RE, RE-*, ALIAS-ELET*)"
@@ -3490,7 +3499,7 @@ note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os ca
 [[source]]
 file = "libs_index"
 status = "index"
-note = "Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada cujo arquivo não existe na pasta é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso."
+note = "Índice das LIBs do deck, nomeado pelo registro `FA` do `dadger`. Cada arquivo LIBs convertido é o que o índice aponta para a sua chave: a família `PARQUE-EOLICO-EQUIVALENTE-*` (renováveis, todas no mesmo arquivo), `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` e `RESTRICAO-ELETRICA-ESPECIAL`. Linhas iniciadas por `&` são comentários. Sem `FA`, nenhum arquivo LIBs é lido; uma chave listada sem nome de arquivo, ou cujo arquivo não existe na pasta, é erro, e um arquivo com nome de LIBs que o índice não lista é ignorado, com aviso."
 
   [[source.item]]
   item = "demais entradas (inclusive as irmãs -ATIVACAO e -VIOLACAO)"

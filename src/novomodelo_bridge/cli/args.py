@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS
 from novomodelo_bridge.ui.console import get_console
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ class ConvertArgs(CommonArgs):
     diagnostics_json: Path | None
     dry_run: bool
     no_fcf: bool = False
+    json_float_digits: int = DEFAULT_FLOAT_DIGITS
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,13 @@ class CompareArgs(CommonArgs):
     tolerance: float | None
     format: list[str] | None
     out_dir: Path | None
+
+
+@dataclass(frozen=True)
+class ResolvedCompareArgs(CompareArgs):
+    """``CompareArgs`` after config and built-in defaults: ``tolerance`` is always set."""
+
+    tolerance: float
 
 
 @dataclass(frozen=True)

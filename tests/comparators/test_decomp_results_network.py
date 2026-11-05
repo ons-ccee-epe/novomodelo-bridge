@@ -33,6 +33,7 @@ from tests.comparators.conftest import (
     _aligned_fixture,
     _patch_aligned_frames,
     _patch_shared_case,
+    _unmapped_codes,
 )
 
 
@@ -66,7 +67,9 @@ def _write_lines_json(case_dir: Path, lines: list[dict[str, Any]]) -> Path:
     *case_dir* from."""
     system_dir = case_dir / "system"
     system_dir.mkdir(parents=True, exist_ok=True)
-    (system_dir / "lines.json").write_text(json.dumps({"lines": lines}))
+    (system_dir / "lines.json").write_text(
+        json.dumps({"lines": lines}), encoding="utf-8"
+    )
     output_dir = case_dir / "output"
     output_dir.mkdir(exist_ok=True)
     return output_dir
@@ -545,6 +548,30 @@ class TestLineBoundsAndMeta:
         assert line_bounds.is_empty()
         assert line_meta == []
 
+    def test_unparseable_lines_json_keeps_the_bounds_and_empties_meta(
+        self, tmp_path: Path
+    ) -> None:
+        case_dir = tmp_path / "case"
+        output_dir = _write_lines_json(case_dir, [])
+        (case_dir / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+        _write_line_bounds_parquet(
+            case_dir,
+            [
+                {
+                    "line_id": 0,
+                    "stage_id": 0,
+                    "block_id": None,
+                    "direct_mw": 1200.0,
+                    "reverse_mw": 800.0,
+                }
+            ],
+        )
+
+        line_bounds, line_meta = _line_bounds_and_meta(output_dir)
+
+        assert line_meta == []
+        assert line_bounds.row(0, named=True)["direct_mw"] == 1200.0
+
 
 def _patch_network(
     monkeypatch: pytest.MonkeyPatch,
@@ -761,6 +788,6 @@ class TestBuildDecompDatasetNetwork:
 
         dataset = build_decomp_dataset(decomp_dir, novomodelo_output_dir)
 
-        assert dataset.metadata["unmapped"]["line"] == [[1, 3]]
+        assert _unmapped_codes(dataset, "line") == [[1, 3]]
         line_rows = dataset.tidy.filter(pl.col("entity_type") == "line")
         assert line_rows.is_empty()

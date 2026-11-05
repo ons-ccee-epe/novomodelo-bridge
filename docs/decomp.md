@@ -24,11 +24,14 @@ renewable plants, which must all be in one file),
 `RESTRICAO-ELETRICA-ESPECIAL` (the electrical constraints). Lines starting with
 `&` are comments. The `FJ` register can name the tailrace-curve file too, with
 or without an index; when both name one, they must agree. Apart from that file,
-a deck without `FA` has no LIBS records. A declared file that is not in the
-deck directory makes the deck fail to convert. A
-file with a usual LIBS name, such as `renovaveis.csv`, that nothing declares is
-ignored, and `check decomp` and `convert decomp` warn about it. The index is
-read as UTF-8 when it is valid UTF-8 and as Latin-1 otherwise.
+a deck without `FA` has no LIBS records. An index key listed without a file
+name, or a declared file that is not in the deck directory, makes the deck fail
+to convert. A file with a usual LIBS name, such as `renovaveis.csv`, that
+nothing declares is ignored, and `check decomp` and `convert decomp` warn about
+it. The index is read as UTF-8 when it is valid UTF-8 and as Latin-1 otherwise.
+In the electrical-constraint file a card name is recognized only in upper case,
+as the manual writes it, and `convert decomp` warns about every line that is
+not a card it reads (`libs-unread-lines`).
 
 `check decomp` validates the deck without writing anything and also lists what
 the conversion will leave behind for this particular deck. Exit 0 means ready,
@@ -54,6 +57,17 @@ non-controllable sources, the explicit scenario tree (inflow, load, and
 non-controllable generation per node), pumping stations, energy contracts,
 generic constraints from the deck's restriction registers, and head-dependent
 production planes where the deck uses them.
+
+The committed weeks of a fuel-constrained thermal (the `GL` register) belong
+to the study or to a month after it by their position in the `GS` register, not
+by their dates. From the second revision of a month on, the first committed
+week of the month after the study starts a few days before the study ends; it
+is held from the end of the study, and its days before that count in the last
+study stage, weighted by their hours. The weeks after the study declare no patamar durations, so their
+patamares are weighted by their month's shares in `cortesh.dat`. When that file
+is absent or does not cover the month, the last study stage's patamar hours are
+used instead, with a warning; a week that commits different MW per patamar is
+also reported.
 
 A plant's diverted flow (`QDES`) reaches its diversion target, the plant named
 by `AC DESVIO` or else by the `desvio` field of `hidr.dat`, through a Novomodelo
@@ -82,8 +96,9 @@ A plant's turbined flow is capped stage by stage at the limit DECOMP computes
 before the optimization. The rule:
 
 - The units' rated flow is corrected for the head at the stage's initial
-  storage. The tailrace level rises with the flow, so the flow is iterated
-  until head and flow agree.
+  storage, relative to the machine sets' effective heads (`hidr.dat`, with
+  `AC ALTEFE` overrides from their stage on). The tailrace level rises with
+  the flow, so the flow is iterated until head and flow agree.
 - The result is scaled by the `MP` maintenance and `FD` availability factors.
   It never exceeds the flow that produces the plant's available power.
 - A plant that cannot hold back its stage inflow turbines up to that inflow
@@ -100,8 +115,6 @@ before the optimization. The rule:
   registers; the conversion leaves them out. A plant with such a register,
   such as Itaipu or Belo Monte, may therefore turbine slightly more than
   DECOMP allows.
-- `AC ALTEFE` overrides of the rated head are not applied; the conversion
-  warns about them.
 
 Novomodelo fits the planes of the hydro production function (FPHA) itself. These
 inputs follow DECOMP:
@@ -147,8 +160,8 @@ Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and
 the same diagnostics land in `--diagnostics-json` and the `--json` verdict.
-Examples at the time of writing are the unreadable special-constraint
-families (`FE`, `RHA`) and a few restriction-register term types; the
+Examples at the time of writing are the `RHA` inflow constraints
+(`HA`/`LA`/`CA`) and a few restriction-register term types; the
 [DECOMP data map](decomp-data-map.md)
 lists every register and field the converter leaves out. Each warning's
 remediation line states whether any action is needed; usually none, and the

@@ -229,6 +229,6 @@ def productivity_split(
         )
         .with_columns(pl.lit(None, dtype=pl.Utf8).alias("plant_name"))
         .select(list(FPHA_SPLIT_SCHEMA))
-        .cast(FPHA_SPLIT_SCHEMA)
+        .cast(pl.Schema(FPHA_SPLIT_SCHEMA))
         .sort(keys)
     )

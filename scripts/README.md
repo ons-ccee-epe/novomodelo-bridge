@@ -37,7 +37,6 @@ doc-integrity, testing, bridge contracts).
 | `check_no_plan_leaks.py` | No plan-structure vocabulary in shipped docs (hard) + src/ prose burndown count (advisory). `--all` lists it.                |
 | `check_comment_refs.py`  | No `file.py:NNN` / `MEMORY.md` / private-tooling refs in src/ prose (hard); machine-local + gitignored path refs (advisory). |
 | `check_doc_paths.py`     | Repo-relative paths cited in README/CONTRIBUTING/docs resolve against the tree (hard); CLAUDE.md (hard).                     |
-| `novomodelo_free_requirements.py` | Prints the declared dependencies other than `novomodelo-python`, for the CI test install.                                |
 | `check_comment_bloat.py` | _Advisory_: long comment blocks + repeated clauses, candidates for a comment-skeptic pass.                                   |
 | `quality_report.py`      | _Advisory_: churn/size/long-fn/suppression/plan-token hotspot ranking.                                                       |
 | `_scan.py`               | Shared comment/docstring extraction (tokenize + ast), imported by the gates.                                                 |

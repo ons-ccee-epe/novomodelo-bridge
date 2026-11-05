@@ -10,7 +10,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -29,7 +28,6 @@ from novomodelo_bridge.decomp.converters.libs_electrical import (
     ActivationRule,
     AssembledBound,
     AvailablePower,
-    AvailablePowerSource,
     Bucket,
     Comparison,
     DataContext,
@@ -74,14 +72,48 @@ class _StubRestricoes:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
-        if name.startswith("_"):
-            raise AttributeError(name)
+    def expressao_eletrica(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("expressao_eletrica")
 
-        def accessor(df: bool = True) -> pd.DataFrame | None:
-            return self._frames.get(name)
+    def alias_eletrico_valor_periodo_patamar(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("alias_eletrico_valor_periodo_patamar")
 
-        return accessor
+    def alias_eletrico(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("alias_eletrico")
+
+    def restricao_eletrica_horizonte_periodo(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_horizonte_periodo")
+
+    def restricao_eletrica_limite_formula_periodo_patamar(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_limite_formula_periodo_patamar")
+
+    def restricao_eletrica_inequacao_periodo_patamar(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_inequacao_periodo_patamar")
+
+    def restricao_eletrica_habilita(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_habilita")
+
+    def restricao_eletrica_regra_ativacao(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_regra_ativacao")
+
+    def restricao_eletrica_tratamento_violacao(
+        self, df: bool = True
+    ) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_tratamento_violacao")
+
+    def restricao_eletrica_formula(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_formula")
+
+    def restricao_eletrica_inequacao(self, df: bool = True) -> pd.DataFrame | None:
+        return self._frames.get("restricao_eletrica_inequacao")
 
 
 def _stage(index: int) -> OperativeStage:
@@ -912,7 +944,7 @@ class _StubElectricalDadger:
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames
 
-    def __getattr__(self, name: str):  # noqa: ANN204 - test double
+    def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -1026,7 +1058,7 @@ def _pq(*rows: tuple, n_patamares: int) -> pd.DataFrame:
 _PEQ_ID_MAP = DecompIdMap(bus_codes=(1, 2, 3, 4), bus_names=("SE", "S", "NE", "N"))
 
 
-def _peq_factory(n_stages: int = 2):  # noqa: ANN202 - test helper
+def _peq_factory(n_stages: int = 2):
     calendar = _ri_calendar(n_stages, n_blocks=2)
     dadger = _StubElectricalDadger(
         dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2),
@@ -1127,7 +1159,7 @@ def _gnl_model() -> GnlCommitmentModel:
     )
 
 
-def _gnl_factory():  # noqa: ANN202 - test helper
+def _gnl_factory():
     calendar = [
         OperativeStage(
             index=i,
@@ -1272,7 +1304,7 @@ def test_assemble_bound_reserve_single_plant_sign_proof() -> None:
     # R = 300 -> ger_usih(1) <= 700, with a POSITIVE surviving coefficient --
     # a generation cap, never an inverted lower bound.
     restriction = _inequacao(407, "disp_usih(1) - ger_usih(1)", ">=", "300")
-    a_h = AvailablePower(overlay={(1, 0): 1000.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(1, 0): 1000.0})
     result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
     assert result == AssembledBound(
         terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
@@ -1386,6 +1418,7 @@ def test_assemble_bound_empty_overrides_matches_pre_ticket_base_fold() -> None:
     restriction = _inequacao(505, "ger_usih(9)", "<=", "1000 - 0.02*val_demanda(1)")
     ctx = _dict_context({"val_demanda(1)": 400.0})
     model = _model()
+    assert restriction.lhs is not None
     lhs_partition = classify_terms(parse_linear_expression(restriction.lhs, model))
     assert restriction.rhs is not None
     rhs_partition = classify_terms(parse_linear_expression(restriction.rhs, model))
@@ -1556,50 +1589,39 @@ def test_active_cells_dangling_habilita_raises_value_error_naming_both() -> None
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_disp_usih_returns_overlay_sum_when_present() -> None:
-    a_h = AvailablePower(overlay={(261, 0): 1000.0}, rated_envelope={261: 500.0})
+def test_resolve_disp_usih_returns_the_plants_available_power() -> None:
+    a_h = AvailablePower(overlay={(261, 0): 1000.0})
     term = ParsedTerm(coefficient=1.0, token="disp_usih", args=(261,))
     assert resolve_disp_usih(term, 0, a_h) == 1000.0
 
 
-def test_resolve_disp_usih_returns_rated_envelope_fallback_when_absent() -> None:
-    a_h = AvailablePower(overlay={}, rated_envelope={261: 1500.0})
-    term = ParsedTerm(coefficient=1.0, token="disp_usih", args=(261,))
-    assert resolve_disp_usih(term, 0, a_h) == 1500.0
-
-
-def test_available_power_resolve_raises_disp_usih_unresolvable_from_both_tiers() -> (
+def test_available_power_resolve_raises_disp_usih_unresolvable_for_absent_plant() -> (
     None
 ):
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={(261, 0): 1000.0})
     with pytest.raises(_UnresolvableDispUsih, match="999"):
         a_h.resolve(999, 0)
 
 
-def test_build_available_power_for_disp_usih_sums_overlay_and_falls_back() -> None:
-    # code 261 -> hydro_id 0 (two unit-groups summed at stage 0); code 262 ->
-    # hydro_id 1, with only a max_turbined_m3s overlay entry (no generation
-    # override) -- it must fall back to the (mocked) rated envelope, never
-    # read the un-derated envelope as the primary source.
+def test_build_available_power_sums_each_plants_groups_per_stage_by_deck_code() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(261, 262))
     overlay = {
-        (0, 0, 0): GroupBoundEntry(max_generation_mw=900.0),
-        (0, 1, 0): GroupBoundEntry(max_generation_mw=100.0),
-        (1, 0, 0): GroupBoundEntry(max_turbined_m3s=50.0),
+        (0, 0, 0): GroupBoundEntry(max_generation_mw=900.0, max_turbined_m3s=10.0),
+        (0, 1, 0): GroupBoundEntry(max_generation_mw=100.0, max_turbined_m3s=10.0),
+        (0, 0, 1): GroupBoundEntry(max_generation_mw=800.0, max_turbined_m3s=10.0),
+        (0, 1, 1): GroupBoundEntry(max_generation_mw=50.0, max_turbined_m3s=10.0),
+        (1, 0, 0): GroupBoundEntry(max_generation_mw=300.0, max_turbined_m3s=5.0),
+        (1, 0, 1): GroupBoundEntry(max_generation_mw=300.0, max_turbined_m3s=5.0),
     }
-    hidr = pd.DataFrame(index=[261, 262])
 
-    case = make_decomp_case(Path("unused"), hidr=hidr)
-    with patch(
-        "novomodelo_bridge.decomp.converters.libs_electrical._rated_envelope",
-        return_value=(0.0, 1500.0),
-    ):
-        a_h = build_available_power(case, id_map, overlay=overlay, effective=object())
+    a_h = build_available_power(id_map, overlay=overlay)
 
-    assert a_h.overlay == {(261, 0): 1000.0}
-    assert a_h.rated_envelope == {261: 1500.0, 262: 1500.0}
-    assert a_h.resolve(261, 0) == (1000.0, AvailablePowerSource.OVERLAY)
-    assert a_h.resolve(262, 0) == (1500.0, AvailablePowerSource.RATED_ENVELOPE)
+    assert a_h.overlay == {
+        (261, 0): 1000.0,
+        (261, 1): 850.0,
+        (262, 0): 300.0,
+        (262, 1): 300.0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1615,7 +1637,7 @@ def test_assemble_bound_disp_usih_reserve_rewrites_to_gen_cap() -> None:
     # both surviving ger_usih terms carrying a POSITIVE coefficient (the sign
     # fix: restriction.lhs itself carries them negative).
     restriction = _inequacao(402, _RESERVE_LHS, ">=", "500")
-    a_h = AvailablePower(overlay={(261, 0): 1000.0, (262, 0): 800.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(261, 0): 1000.0, (262, 0): 800.0})
     result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
     assert result == AssembledBound(
         terms=(
@@ -1631,7 +1653,7 @@ def test_assemble_bound_disp_usih_emits_one_fidelity_diagnostic_per_substitution
     None
 ):
     restriction = _inequacao(402, _RESERVE_LHS, ">=", "500")
-    a_h = AvailablePower(overlay={(261, 0): 1000.0, (262, 0): 800.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(261, 0): 1000.0, (262, 0): 800.0})
 
     with dx.collect() as sink:
         result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
@@ -1652,24 +1674,9 @@ def test_assemble_bound_disp_usih_emits_one_fidelity_diagnostic_per_substitution
     assert "stage 0" in second.summary
 
 
-def test_assemble_bound_disp_usih_uses_warning_severity_for_rated_envelope_fallback() -> (
-    None
-):
-    restriction = _inequacao(285, "disp_usih(285) - ger_usih(285)", ">=", "0")
-    a_h = AvailablePower(overlay={}, rated_envelope={285: 400.0})
-
-    with dx.collect() as sink:
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
-    assert "285" in sink[0].summary
-    assert "400" in sink[0].summary
-
-
 def test_assemble_bound_disp_usih_unresolvable_plant_drops_and_warns() -> None:
     restriction = _inequacao(403, "disp_usih(999) - ger_usih(999)", ">=", "100")
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
 
     with dx.collect() as sink:
         result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
@@ -1691,7 +1698,7 @@ def test_assemble_bound_disp_usih_on_rhs_raises_value_error() -> None:
     # CRITICAL pitfall guard: the reserve pattern requires disp_usih paired
     # with ger_usih on the LHS -- a disp_usih on the RHS is outside it.
     restriction = _inequacao(405, "ger_usih(1)", ">=", "disp_usih(1)")
-    a_h = AvailablePower(overlay={(1, 0): 100.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(1, 0): 100.0})
     with pytest.raises(ValueError, match="RHS"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
 
@@ -1700,7 +1707,7 @@ def test_assemble_bound_disp_usih_unpaired_ger_usih_raises_value_error() -> None
     # CRITICAL pitfall guard: a ger_usih term with no matching disp_usih is
     # outside the documented reserve pattern.
     restriction = _inequacao(406, "disp_usih(1) - ger_usih(1) + ger_usih(2)", ">=", "0")
-    a_h = AvailablePower(overlay={(1, 0): 500.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(1, 0): 500.0})
     with pytest.raises(ValueError, match="ger_usih\\(2\\)"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
 
@@ -1710,7 +1717,7 @@ def test_assemble_bound_disp_usih_mismatched_coefficient_raises_value_error() ->
     # exact opposite of disp_usih's -- a magnitude mismatch is outside the
     # documented sign structure, not silently rewritten.
     restriction = _inequacao(410, "disp_usih(1) - 2*ger_usih(1)", ">=", "0")
-    a_h = AvailablePower(overlay={}, rated_envelope={})
+    a_h = AvailablePower(overlay={})
     with pytest.raises(ValueError, match="disp_usih\\(1\\)"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
 
@@ -1722,7 +1729,7 @@ def test_assemble_bound_disp_usih_non_ger_usih_decision_term_raises_value_error(
     # with ger_usih -- a different bucket-A token alongside it is outside
     # the pattern, not silently folded.
     restriction = _inequacao(411, "disp_usih(1) - ger_usit(5)", ">=", "0")
-    a_h = AvailablePower(overlay={(1, 0): 100.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(1, 0): 100.0})
     with pytest.raises(ValueError, match="ger_usit"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
 
@@ -1781,7 +1788,7 @@ def test_fold_reserve_disp_usih_takes_precomputed_partitions() -> None:
         parse_linear_expression("disp_usih(1) - ger_usih(1)", _model())
     )
     rhs_partition = classify_terms(parse_linear_expression("300", _model()))
-    a_h = AvailablePower(overlay={(1, 0): 1000.0}, rated_envelope={})
+    a_h = AvailablePower(overlay={(1, 0): 1000.0})
     result = _fold_reserve_disp_usih(
         restriction, 0, a_h, _dict_context({}), lhs_partition, rhs_partition
     )

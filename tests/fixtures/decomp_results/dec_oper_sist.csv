@@ -1,0 +1,59 @@
+***********************************************************************
+*                                                                     *
+*            CEPEL - CENTRO DE PESQUISAS DE ENERGIA ELETRICA          *
+*  CEPEL: DECOMP     - Versao 32.15.1_coin - Jul/2026(L)              *
+*                                                                     *
+***********************************************************************
+
+
+   PROGRAMA LICENCIADO PARA Operador Nacional do Sistema Eletrico                                                                                                                 
+
+
+____________________________________________________________________
+
+ PMO - OUTUBRO/26 - NOVEMBRO/26 - REV 0 - FCF COM CVAR - 12 REE - VALOR ESPER    
+____________________________________________________________________
+
+--------------------------------------
+Resultado de operacao dos subsistemas.                                          
+--------------------------------------
+------------------------------------------------------------------
+IPER;      Indice do periodo                                                                                                                                                                            
+INO;       Indice do no                                                                                                                                                                                 
+ICEN;      Indice do cenario                                                                                                                                                                            
+IPAT;      Patamar de Carga                                                                                                                                                                             
+Dur;       Duracao                                                                                                                                                                                      
+SIST;      Numero do subsistema                                                                                                                                                                         
+Nome Sist; Nome do subsistema                                                                                                                                                                           
+Demanda;   Demanda                                                                                                                                                                                      
+GerPeq;    Geracao das pequenas usinas                                                                                                                                                                  
+Gter;      Geracao Termoeletrica                                                                                                                                                                        
+GterAT;    Geracao termica antecipada                                                                                                                                                                   
+Ghid;      Geração hidroeletrica                                                                                                                                                                        
+Geol;      Geracao eolica                                                                                                                                                                               
+Cbomb;     Energia Consumida para bombeamento                                                                                                                                                           
+Compra;    Energia importada                                                                                                                                                                            
+Venda;     Energia exportada                                                                                                                                                                            
+IntercLiq; Saldo da energia de intercambio                                                                                                                                                              
+ANDE;      Carga ANDE                                                                                                                                                                                   
+Itaipu50;  Geracao 50Hz de Itaipu                                                                                                                                                                       
+Itaipu60;  Geracao 60Hz de Itaipu                                                                                                                                                                       
+Deficit;   Deficit no Subsistema                                                                                                                                                                        
+ENA;       Energia Natural Afluente calculada no ponto de operacao                                                                                                                                      
+EarmInic;  Energia Armazenada Inicial                                                                                                                                                                   
+EarmInic%; Energia Armazenada Inicial em percentual                                                                                                                                                     
+EarmFim;   Energia Armazenada Final                                                                                                                                                                     
+EarmFim%;  Energia Armazenada Final em percentual                                                                                                                                                       
+CMO;       Custo Marginal de Operacao                                                                                                                                                                   
+------------------------------------------------------------------
+
+@Tabela
+-----;------;------;-----;--------;----;---------------;------------;----------;----------;----------;----------;----------;----------;----------;----------;------------;----------;----------;----------;----------;----------;---------------;----------;---------------;----------;---------;
+IPER ; INO  ; ICEN ;IPAT ;  Dur   ;SIST;   Nome Sist   ;  Demanda   ;  GerPeq  ;   Gter   ;  GterAT  ;   Ghid   ;   Geol   ;  Cbomb   ;  Compra  ;  Venda   ; IntercLiq  ;   ANDE   ; Itaipu50 ; Itaipu60 ; Deficit  ;   ENA    ;   EarmInic    ;EarmInic% ;    EarmFim    ; EarmFim% ;   CMO   ;
+  -  ;  -   ;  -   ;  -  ;  (h)   ; -  ;       -       ;    (MW)    ;   (MW)   ;   (MW)   ;   (MW)   ;   (MW)   ;   (MW)   ;   (MW)   ;   (MW)   ;   (MW)   ;    (MW)    ;   (MW)   ;   (MW)   ;   (MW)   ;   (MW)   ; (MWmes)  ;    (MWmes)    ;   (%)    ;    (MWmes)    ;   (%)    ; ($/MWh) ;
+-----;------;------;-----;--------;----;---------------;------------;----------;----------;----------;----------;----------;----------;----------;----------;------------;----------;----------;----------;----------;----------;---------------;----------;---------------;----------;---------;
+   1 ;    1 ;    1 ;   1 ;  30.00 ;  1 ; SE            ;    49929.0 ;   1155.6 ;  4124.10 ;     0.00 ; 31278.38 ;  5871.25 ;     0.00 ;     0.00 ;     0.00 ;   11341.69 ;  3842.00 ;  6992.00 ;  6102.55 ;     0.00 ;   5648.9 ;     118033.54 ;    57.42 ;     117684.14 ;    57.25 ;   46.68 ;
+   1 ;    1 ;    1 ;   2 ;  69.00 ;  1 ; SE            ;    50009.0 ;   6930.6 ;  3601.40 ;     0.00 ; 24012.36 ;  8275.71 ;     0.00 ;     0.00 ;     0.00 ;   10841.94 ;  3653.00 ;  6803.00 ;  3287.18 ;     0.00 ;   5648.9 ;     118033.54 ;    57.42 ;     117684.14 ;    57.25 ;   44.40 ;
+   1 ;    1 ;    1 ;   3 ;  69.00 ;  1 ; SE            ;    39477.0 ;   3445.6 ;  3394.30 ;     0.00 ; 14906.31 ;  6736.34 ;    58.05 ;     0.00 ;     0.00 ;   14141.01 ;  3088.50 ;  6031.30 ;  2102.41 ;     0.00 ;   5648.9 ;     118033.54 ;    57.42 ;     117684.14 ;    57.25 ;   38.69 ;
+   1 ;    1 ;    1 ;  -  ;   -    ;  1 ; SE            ;    45669.1 ;   4468.0 ;  3609.68 ;     0.00 ; 21569.88 ;  7214.10 ;    23.84 ;     0.00 ;     0.00 ;   12286.16 ;  3454.90 ;  6519.80 ;  3303.32 ;     0.00 ;   5648.9 ;     118033.54 ;    57.42 ;     117684.14 ;    57.25 ;   42.46 ;
+   1 ;    1 ;    1 ;   1 ;  30.00 ;  2 ; S             ;    15179.0 ;    709.2 ;  1308.30 ;     0.00 ; 13929.49 ;  2574.48 ;     0.00 ;     0.00 ;     0.00 ;   -3342.45 ;     0.00 ;    -     ;    -     ;     0.00 ;   5892.1 ;      16960.19 ;    82.90 ;      16700.20 ;    81.63 ;   46.68 ;

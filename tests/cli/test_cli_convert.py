@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,10 +24,10 @@ def _make_fake_decomp_dir(tmp_path: Path) -> Path:
     stats/globs these, never parses them."""
     decomp_dir = tmp_path / "decomp_case"
     decomp_dir.mkdir()
-    (decomp_dir / "caso.dat").write_text("rv0\n")
-    (decomp_dir / "dadger.rv0").write_text("stub")
-    (decomp_dir / "vazoes.rv0").write_text("stub")
-    (decomp_dir / "hidr.dat").write_text("stub")
+    (decomp_dir / "caso.dat").write_text("rv0\n", encoding="utf-8")
+    (decomp_dir / "dadger.rv0").write_text("stub", encoding="utf-8")
+    (decomp_dir / "vazoes.rv0").write_text("stub", encoding="utf-8")
+    (decomp_dir / "hidr.dat").write_text("stub", encoding="utf-8")
     return decomp_dir
 
 
@@ -36,8 +37,8 @@ def _make_fake_decomp_dir_with_cuts(tmp_path: Path) -> Path:
     its glob fallback — the boundary-FCF gating path only globs/stats these,
     never parses their contents."""
     decomp_dir = _make_fake_decomp_dir(tmp_path)
-    (decomp_dir / "cortesh.rv0").write_text("stub")
-    (decomp_dir / "cortes.rv0").write_text("stub")
+    (decomp_dir / "cortesh.rv0").write_text("stub", encoding="utf-8")
+    (decomp_dir / "cortes.rv0").write_text("stub", encoding="utf-8")
     return decomp_dir
 
 
@@ -91,7 +92,7 @@ class TestCliInProcess:
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
         dst.mkdir()
-        (dst / "existing.txt").write_text("hello")
+        (dst / "existing.txt").write_text("hello", encoding="utf-8")
 
         fake_report = ConversionReport(
             hydro_count=1,
@@ -531,7 +532,7 @@ class TestCliInProcess:
         """The manifest's ``min_novomodelo_version`` tracks the CLI constant, pinned.
 
         A manifest written after the bump must record the real
-        floor (``"0.19.1"``), not a stale value — the manifest is provenance,
+        floor (``"0.20.0"``), not a stale value — the manifest is provenance,
         and a wrong floor there is false provenance. Pinning the literal (not
         just equality with the constant) catches an accidental revert of the
         constant itself.
@@ -540,7 +541,7 @@ class TestCliInProcess:
         from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
         from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_NOVOMODELO_VERSION == "0.19.1"
+        assert MIN_NOVOMODELO_VERSION == "0.20.0"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -559,7 +560,7 @@ class TestCliInProcess:
 
         assert code == 0
         manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")
-        assert manifest.min_novomodelo_version == "0.19.1"
+        assert manifest.min_novomodelo_version == "0.20.0"
         assert manifest.min_novomodelo_version == MIN_NOVOMODELO_VERSION
 
     def test_manifest_not_in_json_verdict(
@@ -639,12 +640,12 @@ class TestCliInProcess:
         # warning and two errors; the real ``novomodelo`` package is not installed.
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = lambda _dst: {  # type: ignore[attr-defined]
-            "valid": False,
-            "warnings": ["w"],
-            "errors": ["e1", "e2"],
-        }
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(
+            novomodelo_io,
+            "validate",
+            lambda _dst: {"valid": False, "warnings": ["w"], "errors": ["e1", "e2"]},
+        )
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
@@ -710,12 +711,12 @@ class TestCliInProcess:
         )
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = lambda _dst: {  # type: ignore[attr-defined]
-            "valid": False,
-            "warnings": [],
-            "errors": ["e1"],
-        }
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(
+            novomodelo_io,
+            "validate",
+            lambda _dst: {"valid": False, "warnings": [], "errors": ["e1"]},
+        )
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
@@ -769,8 +770,8 @@ class TestCliInProcess:
         )
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = _raise  # type: ignore[attr-defined]
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(novomodelo_io, "validate", _raise)
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
 
@@ -1094,13 +1095,19 @@ class TestCliInProcess:
 
         real_import = builtins.__import__
 
-        def _guard_import(name: str, *args: object, **kwargs: object) -> object:
+        def _guard_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] = (),
+            level: int = 0,
+        ) -> ModuleType:
             # No novomodelo validation import may be attempted under --dry-run.
             if name.startswith("novomodelo.io"):
                 raise AssertionError(
                     "validation must not import novomodelo under --dry-run"
                 )
-            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+            return real_import(name, globals, locals, fromlist, level)
 
         with (
             patch(
@@ -1133,8 +1140,8 @@ class TestCliInProcess:
 
         novomodelo_pkg = types.ModuleType("novomodelo")
         novomodelo_io = types.ModuleType("novomodelo.io")
-        novomodelo_io.validate = validate  # type: ignore[attr-defined]
-        novomodelo_pkg.io = novomodelo_io  # type: ignore[attr-defined]
+        setattr(novomodelo_io, "validate", validate)
+        setattr(novomodelo_pkg, "io", novomodelo_io)
         monkeypatch.setitem(sys.modules, "novomodelo", novomodelo_pkg)
         monkeypatch.setitem(sys.modules, "novomodelo.io", novomodelo_io)
         return validate
@@ -1261,7 +1268,7 @@ class TestCliInProcess:
         from novomodelo_bridge.cli import MIN_NOVOMODELO_VERSION
         from novomodelo_bridge.core.conversion import ConversionReport
 
-        assert MIN_NOVOMODELO_VERSION == "0.19.1"
+        assert MIN_NOVOMODELO_VERSION == "0.20.0"
 
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "dst"
@@ -1291,7 +1298,7 @@ class TestCliInProcess:
         # validation did not run (not that it ran and passed).
         assert "skipping novomodelo-python validation" in stderr
         assert "0.12.0" in stderr
-        assert "0.19.1" in stderr
+        assert "0.20.0" in stderr
         assert MIN_NOVOMODELO_VERSION in stderr
         doc = json.loads(stdout)
         assert doc["status"] == "ok"
@@ -1663,7 +1670,7 @@ class TestCliInProcess:
 
         assert code == 0
         assert json_path.exists()
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert set(payload) == {"summary", "diagnostics"}
         assert payload["summary"]["hydros"] == 3
         assert [d["code"] for d in payload["diagnostics"]] == ["decomp-some-warning"]
@@ -1705,7 +1712,10 @@ class TestCliInProcess:
         assert doc["command"] == "convert decomp"
         # … and the sidecar was written all the same.
         assert json_path.exists()
-        assert set(json.loads(json_path.read_text())) == {"summary", "diagnostics"}
+        assert set(json.loads(json_path.read_text(encoding="utf-8"))) == {
+            "summary",
+            "diagnostics",
+        }
 
     def test_convert_decomp_no_diagnostics_json_writes_no_sidecar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1928,13 +1938,19 @@ class TestCliInProcess:
 
         real_import = builtins.__import__
 
-        def _guard_import(name: str, *args: object, **kwargs: object) -> object:
+        def _guard_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] = (),
+            level: int = 0,
+        ) -> ModuleType:
             # No novomodelo validation import may be attempted under --dry-run.
             if name.startswith("novomodelo.io"):
                 raise AssertionError(
                     "validation must not import novomodelo under --dry-run"
                 )
-            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+            return real_import(name, globals, locals, fromlist, level)
 
         with (
             patch(
@@ -2525,7 +2541,7 @@ class TestCliInProcess:
 
         assert code == 0
         assert json_path.exists()
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         codes = {d["code"] for d in payload["diagnostics"]}
         assert "boundary-fcf-gnl-anticipated-deviation" in codes
 
@@ -2577,7 +2593,7 @@ class TestCliInProcess:
             )
 
         assert code == 0
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert set(payload) == {"summary", "diagnostics"}
         assert [d["code"] for d in payload["diagnostics"]] == ["decomp-some-warning"]
 
@@ -2684,7 +2700,93 @@ class TestConversionDiagnosticsRendering:
             )
         assert code == 0
         assert json_path.exists()
-        payload = json.loads(json_path.read_text())
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert payload["summary"]["hydros"] == 1
         codes = [d["code"] for d in payload["diagnostics"]]
         assert "thermal-gtmin-above-capacity" in codes
+
+
+class TestJsonFloatDigits:
+    """``--json-float-digits`` reaches every writer on both conversion tracks."""
+
+    @staticmethod
+    def _invoke(argv: list[str]):
+        from typer.testing import CliRunner
+
+        from novomodelo_bridge.cli import app
+
+        return CliRunner().invoke(app, argv)
+
+    @staticmethod
+    def _report():
+        from novomodelo_bridge.core.conversion import ConversionReport
+
+        return ConversionReport(
+            hydro_count=1, thermal_count=1, bus_count=1, line_count=0, stage_count=4
+        )
+
+    def test_newave_passes_float_digits_to_the_pipeline(self, tmp_path: Path) -> None:
+        src = _make_fake_newave_dir(tmp_path)
+        with patch(
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
+            return_value=self._report(),
+        ) as mock_convert:
+            result = self._invoke(
+                ["convert", "newave", str(src), str(tmp_path / "dst")]
+                + ["--json-float-digits", "9"]
+            )
+
+        assert result.exit_code == 0
+        assert mock_convert.call_args.kwargs["float_digits"] == 9
+
+    def test_newave_uses_15_digits_without_the_flag(self, tmp_path: Path) -> None:
+        src = _make_fake_newave_dir(tmp_path)
+        with patch(
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
+            return_value=self._report(),
+        ) as mock_convert:
+            result = self._invoke(
+                ["convert", "newave", str(src), str(tmp_path / "dst")]
+            )
+
+        assert result.exit_code == 0
+        assert mock_convert.call_args.kwargs["float_digits"] == 15
+
+    def test_decomp_passes_float_digits_to_pipeline_and_fcf_import(
+        self, tmp_path: Path
+    ) -> None:
+        src = _make_fake_decomp_dir_with_cuts(tmp_path)
+        dst = tmp_path / "dst"
+        with (
+            patch(
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
+                return_value=self._report(),
+            ) as mock_convert,
+            patch(
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
+                return_value=dst / "boundary",
+            ) as mock_import,
+        ):
+            result = self._invoke(
+                ["convert", "decomp", str(src), str(dst), "--json-float-digits", "9"]
+            )
+
+        assert result.exit_code == 0
+        assert mock_convert.call_args.kwargs["float_digits"] == 9
+        assert mock_import.call_args.kwargs["float_digits"] == 9
+
+    @pytest.mark.parametrize("track", ["newave", "decomp"])
+    @pytest.mark.parametrize("digits", ["0", "18"])
+    def test_out_of_range_digits_is_a_usage_error(
+        self, tmp_path: Path, track: str, digits: str
+    ) -> None:
+        result = self._invoke(
+            ["convert", track, str(tmp_path / "src"), str(tmp_path / "dst")]
+            + ["--json-float-digits", digits]
+        )
+
+        assert result.exit_code == 2
+        assert "1<=x<=17" in result.output

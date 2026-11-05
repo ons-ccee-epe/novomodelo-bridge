@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 from inewave.newave import Modif
 
+from novomodelo_bridge.core.conversion import ConversionReport
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import _all_converter_patches, make_case, make_nw_files
 
@@ -197,6 +198,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 1,
             "submercado_para": 2,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 3000.0,
@@ -205,6 +207,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 2,
             "submercado_para": 1,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 2500.0,
@@ -213,6 +216,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 1,
             "submercado_para": 99,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 4000.0,
@@ -221,6 +225,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 99,
             "submercado_para": 1,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 2000.0,
@@ -229,6 +234,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 2,
             "submercado_para": 99,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 1500.0,
@@ -237,6 +243,7 @@ def _make_intercambio_df() -> pd.DataFrame:
         {
             "submercado_de": 99,
             "submercado_para": 2,
+            "flag": 0,
             "sentido": 0,
             "data": d,
             "valor": 1200.0,
@@ -442,7 +449,7 @@ def _read_modif(tmp_path: Path, *lines: str) -> Modif:
     """inewave's reader over a ``modif.dat`` holding *lines* below its header."""
     path = tmp_path / "modif.dat"
     header = [" P.CHAVE  MODIFICACOES E INDICES", " XXXXXXXX XXXXXXXXXXXXXXXXXXXXX"]
-    path.write_text("\n".join([*header, *lines]) + "\n")
+    path.write_text("\n".join([*header, *lines]) + "\n", encoding="utf-8")
     return Modif.read(str(path))
 
 
@@ -626,7 +633,7 @@ def _make_dger_mock(start_year: int, start_month: int, num_anos: int) -> MagicMo
     return mock
 
 
-def _run_with_all_mocks(src: Path, dst: Path) -> object:
+def _run_with_all_mocks(src: Path, dst: Path) -> ConversionReport:
     """Run convert_newave_case with all converters replaced by canned fakes."""
     import contextlib
 

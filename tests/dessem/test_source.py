@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.core.errors import SourceFileError
+from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlCommitmentModel,
     GnlThermal,
@@ -26,7 +27,10 @@ from novomodelo_bridge.dessem.exporters.fcf.source import read_source_deck
 def test_revision_comes_from_caso_dat(decomp_mini_deck: Path) -> None:
     deck = read_source_deck(decomp_mini_deck)
 
-    assert deck.revision == (decomp_mini_deck / "caso.dat").read_text().split()[0]
+    assert (
+        deck.revision
+        == (decomp_mini_deck / "caso.dat").read_text(encoding="utf-8").split()[0]
+    )
 
 
 def test_hydros_are_keyed_by_dense_id_in_ascending_code_order(
@@ -101,9 +105,12 @@ def test_gnl_plants_carry_their_nl_lag_in_code_order(decomp_mini_deck: Path) -> 
         nl_lag_months={86: 2},
         tg=pd.DataFrame(),
     )
-    with patch(
-        "novomodelo_bridge.decomp.converters.anticipated.read_gnl_model",
-        return_value=model,
+    with (
+        patch.object(DecompCase, "dadgnl", new=object()),
+        patch(
+            "novomodelo_bridge.decomp.converters.anticipated.read_gnl_model",
+            return_value=model,
+        ),
     ):
         deck = read_source_deck(decomp_mini_deck)
 

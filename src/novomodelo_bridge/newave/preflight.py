@@ -89,7 +89,7 @@ def run_preflight(src: Path) -> PreflightResult:
     """
     try:
         files = NewaveFiles.from_directory(src)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # Any discovery failure — a missing required input (SourceFileError, a
         # FileNotFoundError subclass) or an unexpected parse error — is non-
         # recoverable for preflight; surface it as a blocking verdict.
@@ -143,7 +143,7 @@ def _switch_advisory(
     ``dger.dat``; a ``dger.dat`` that does not parse is a failed check."""
     try:
         switches = _read_switches(files)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # Any parse failure means the conversion would fail on the same read.
         return (
             [CheckItem(label="dger.dat readable", passed=False, detail=str(exc))],

@@ -148,10 +148,12 @@ def test_manifest_records_source_dir_input_files_and_diagnostics(
     dataset = _make_decomp_dataset()
     decomp_dir = tmp_path / "decomp"
     out = tmp_path / "artifacts"
-    input_files = [
+    input_files: list[dict[str, object]] = [
         {"field": "dadger", "path": "dadger.rv0", "sha256": "cafe", "size_bytes": 8}
     ]
-    diagnostics = [{"code": "y", "severity": "info", "category": "Test"}]
+    diagnostics: list[dict[str, object]] = [
+        {"code": "y", "severity": "info", "category": "Test"}
+    ]
 
     write_artifacts(
         dataset,
