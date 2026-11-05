@@ -14,6 +14,16 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`convert decomp` writes the post-study calendars under the keys novomodelo
+  now reads.** `post_study_stages.json` holds the thermal calendar as
+  `thermal_stages` instead of `stages`, and a deck with `VI` travel times also
+  gets a `water_bucket_stages` stage from the end of the last operative stage
+  to the end of that month. A travel time longer than that stage fails the
+  conversion, naming the plant. The converted cases need the paired novomodelo
+  revision; convert a deck again to update it.
+
 ## [0.19.1] - 2026-10-26
 
 Pairs the bridge with the **novomodelo 0.19.1** release and pins

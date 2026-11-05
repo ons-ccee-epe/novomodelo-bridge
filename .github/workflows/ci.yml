@@ -42,10 +42,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      # novomodelo-python is a core runtime dependency, so `.[dev]` pulls it on
-      # every Python in the matrix — the tier-2 (`requires_novomodelo_python`)
-      # boundary-FCF tests now run on all jobs, not just the primary one.
-      - run: pip install -e ".[dev]"
+      # CI installs the bridge without novomodelo-python, a private git
+      # dependency until a release, so `requires_novomodelo_python` skips the
+      # tests that need it; they run locally with the pinned revision.
+      - run: pip install --no-deps -e .
+      - run: python3 scripts/ci/novomodelo_free_requirements.py > "$RUNNER_TEMP/requirements-ci.txt"
+      - run: pip install -r "$RUNNER_TEMP/requirements-ci.txt"
       - run: pytest --tb=short
 
   coverage:
@@ -57,5 +59,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
+      # Same novomodelo-free install as the `test` job.
+      - run: pip install --no-deps -e .
+      - run: python3 scripts/ci/novomodelo_free_requirements.py > "$RUNNER_TEMP/requirements-ci.txt"
+      - run: pip install -r "$RUNNER_TEMP/requirements-ci.txt"
       - run: pytest --cov --cov-report=term-missing

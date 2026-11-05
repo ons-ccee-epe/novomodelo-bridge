@@ -666,7 +666,22 @@ def test_convert_gnl_post_study_stages_carry_grid_calendar() -> None:
     assert pss is not None
     # post_study_stages carries the calendar verbatim (cross-checked against
     # the helper directly, anchored at both plants' shared class4_end).
-    assert pss["stages"] == _build_post_study_calendar(_STUDY_SPANS, date(2026, 5, 16))
+    assert pss["thermal_stages"] == _build_post_study_calendar(
+        _STUDY_SPANS, date(2026, 5, 16)
+    )
+
+
+def test_convert_gnl_emits_thermal_stages_not_stages() -> None:
+    e = convert_gnl(
+        _emit_model(), first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
+    )
+    payload = e.post_study_stages
+    assert payload is not None
+    assert "thermal_stages" in payload
+    assert "stages" not in payload
+    assert payload["thermal_stages"] == _build_post_study_calendar(
+        _STUDY_SPANS, date(2026, 5, 16)
+    )
 
 
 def _calendar_stage_span(stage: Mapping) -> tuple[date, date]:
@@ -687,8 +702,8 @@ def test_convert_gnl_thermal_bounds_cover_only_class3_stages() -> None:
     )
     pss = e.post_study_stages
     assert pss is not None
-    stage_spans = {_calendar_stage_span(s) for s in pss["stages"]}
-    assert len(stage_spans) == len(pss["stages"])  # every stage distinct
+    stage_spans = {_calendar_stage_span(s) for s in pss["thermal_stages"]}
+    assert len(stage_spans) == len(pss["thermal_stages"])  # every stage distinct
 
     for tid in (94, 95):
         indices = sorted(
@@ -725,7 +740,7 @@ def test_convert_gnl_thermal_bounds_cover_every_stage_when_no_class4_run() -> No
 
     pss = e.post_study_stages
     assert pss is not None
-    assert [(s["start_date"], s["duration_hours"]) for s in pss["stages"]] == [
+    assert [(s["start_date"], s["duration_hours"]) for s in pss["thermal_stages"]] == [
         ("2026-05-01", 168.0),
         ("2026-05-08", 168.0),
         ("2026-05-15", 168.0),
@@ -1109,7 +1124,7 @@ def test_convert_gnl_monthly_post_study_is_whole_months_priced_from_tg() -> None
     e = _convert_monthly(_monthly_model())
 
     assert e.post_study_stages is not None
-    assert e.post_study_stages["stages"] == [
+    assert e.post_study_stages["thermal_stages"] == [
         {"start_date": "2026-03-01", "duration_hours": 744.0},
         {"start_date": "2026-04-01", "duration_hours": 720.0},
     ]
@@ -1117,6 +1132,13 @@ def test_convert_gnl_monthly_post_study_is_whole_months_priced_from_tg() -> None
         (b["thermal_id"], b["post_study_stage_index"], b["cost_per_mwh"])
         for b in e.post_study_stages["thermal_bounds"]
     ] == [(94, 0, 298.0), (94, 1, 299.0), (95, 0, 312.0), (95, 1, 313.0)]
+
+
+def test_convert_gnl_monthly_emits_thermal_stages_not_stages() -> None:
+    payload = _convert_monthly(_monthly_model()).post_study_stages
+    assert payload is not None
+    assert "thermal_stages" in payload
+    assert "stages" not in payload
 
 
 def test_convert_gnl_monthly_shorter_lag_prices_only_its_reach() -> None:
@@ -1127,7 +1149,7 @@ def test_convert_gnl_monthly_shorter_lag_prices_only_its_reach() -> None:
         p["start_date"] for p in e.past_anticipated_commitments if p["thermal_id"] == 95
     ] == ["2026-01-01"]
     assert e.post_study_stages is not None
-    assert len(e.post_study_stages["stages"]) == 2
+    assert len(e.post_study_stages["thermal_stages"]) == 2
     assert [
         b["post_study_stage_index"]
         for b in e.post_study_stages["thermal_bounds"]

@@ -13,6 +13,8 @@ the ruff CI installs on the version `uv.lock` pins. Tier-1: reads `pyproject.tom
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -107,6 +109,24 @@ def test_uv_lock_novomodelo_python_is_pinned_exactly_to_min_novomodelo_version()
         f"uv.lock novomodelo-python specifier {specifier!r} must be exactly "
         f"=={MIN_NOVOMODELO_VERSION}"
     )
+
+
+def test_novomodelo_free_requirements_list_every_other_declared_dependency() -> None:
+    """CI installs the bridge with `--no-deps` plus this list: it must be every
+    core dependency but novomodelo-python, then the `dev` extra, in file order."""
+    script = _PYPROJECT.parent / "scripts" / "ci" / "novomodelo_free_requirements.py"
+    result = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, check=True
+    )
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    core = _core_dependencies()
+    pin = _novomodelo_python_pin(core)
+    expected = [dep for dep in core if dep != pin] + data["project"][
+        "optional-dependencies"
+    ]["dev"]
+    lines = result.stdout.splitlines()
+    assert lines == expected
+    assert not any(line.startswith("novomodelo-python") for line in lines)
 
 
 _CI_WORKFLOW = (

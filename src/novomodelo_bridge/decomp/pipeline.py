@@ -11,9 +11,11 @@ emitter that detects it, never dropped silently.
 from __future__ import annotations
 
 import logging
+from calendar import monthrange
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -863,6 +865,34 @@ def _gnl_thermal_codes(
     return codes
 
 
+def _water_bucket_stages(
+    horizon_end: date, travel_time_hours: Mapping[int, float]
+) -> list[dict] | None:
+    """The post-study water delivery calendar of a deck with a travel-time arc.
+
+    One stage starts at the study horizon end and lasts the days left in that
+    month (its day included). ``None`` when the deck declares no travel time.
+
+    Raises
+    ------
+    ValueError
+        If the largest travel time exceeds the stage's hours: Novomodelo
+        refuses a water calendar shorter than the deepest travel time.
+    """
+    if not travel_time_hours:
+        return None
+    days_left = monthrange(horizon_end.year, horizon_end.month)[1] - horizon_end.day + 1
+    stage_hours = days_left * 24.0
+    code = max(travel_time_hours, key=travel_time_hours.__getitem__)
+    if travel_time_hours[code] > stage_hours:
+        raise ValueError(
+            f"plant {code} has a travel time of {travel_time_hours[code]:g} h, longer "
+            f"than the {stage_hours:g} h left in the month of the study horizon end "
+            f"{horizon_end.isoformat()}, the only post-study water stage"
+        )
+    return [{"start_date": horizon_end.isoformat(), "duration_hours": stage_hours}]
+
+
 def _discover(src: Path) -> DecompCaseArtifacts:
     """The ``step("Discovering deck")`` phase: parse *src* via one
     :class:`DecompCase`, resolve the cadastro override view (emitting its
@@ -1127,12 +1157,14 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # the created thermals plus their anticipated ring: the mandatory left
     # boundary (past_anticipated_commitments, including any já-comandada
     # post-horizon run) and, when the deck declares a GS calendar, the
-    # post-study thermal_bounds carrier (post_study_stages.json).
+    # post-study thermal_bounds carrier (post_study_stages.json, which also
+    # carries the water calendar of a deck with a travel-time arc).
     gnl_model = (
         anticipated_conv.read_gnl_model(case.dadgnl)
         if case.dadgnl is not None
         else None
     )
+    post_study_stages: dict = {}
     if gnl_model is not None:
         gnl = anticipated_conv.convert_gnl(
             gnl_model,
@@ -1146,12 +1178,16 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
             initial_conditions_doc["past_anticipated_commitments"] = (
                 gnl.past_anticipated_commitments
             )
-        if gnl.post_study_stages is not None:
-            writer.write_json("post_study_stages.json", gnl.post_study_stages)
+        post_study_stages = dict(gnl.post_study_stages or {})
         _LOG.info(
             "emitted %d GNL anticipated thermal(s) from dadgnl",
             len(gnl.thermals),
         )
+    water_bucket_stages = _water_bucket_stages(calendar[-1].end_date, travel_time_hours)
+    if water_bucket_stages is not None:
+        post_study_stages["water_bucket_stages"] = water_bucket_stages
+    if post_study_stages:
+        writer.write_json("post_study_stages.json", post_study_stages)
     artifacts.thermals_dict = thermals_dict
     artifacts.gnl_model = gnl_model
     writer.write_json("system/thermals.json", thermals_dict)
