@@ -1138,8 +1138,7 @@ def _convert_thermals_with_gnl(
     # the created thermals plus their anticipated ring: the mandatory left
     # boundary (past_anticipated_commitments, including any já-comandada
     # post-horizon run) and, when the deck declares a GS calendar, the
-    # post-study thermal_bounds carrier (post_study_stages.json, which also
-    # carries the water calendar of a deck with a travel-time arc).
+    # post-study thermal_bounds carrier (post_study_stages.json).
     gnl_model = (
         anticipated_conv.read_gnl_model(case.dadgnl)
         if case.dadgnl is not None
