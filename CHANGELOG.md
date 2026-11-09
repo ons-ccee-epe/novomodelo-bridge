@@ -14,6 +14,15 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`convert newave` and `convert decomp` write
+  `non_controllable_source.curtailment_cost` as 0** in `penalties.json`, so
+  curtailing a park is free. Only DECOMP `centralizado` parks can be curtailed,
+  so only their results change.
+- **`novomodelo-python` is pinned to 0.21.0**, and `MIN_NOVOMODELO_VERSION`
+  follows it; earlier novomodelo releases refuse the zero curtailment cost.
+
 ## [0.20.0] - 2026-11-03
 
 Pairs the bridge with the **novomodelo 0.20.0** release and pins
