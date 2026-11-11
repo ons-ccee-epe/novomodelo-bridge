@@ -13,13 +13,15 @@ slot-enumeration helper, ``emit_re_generics``'s per-record
 resolve-or-skip-whole-constraint behaviour (mixed hydro+interchange,
 hydro+contract, GNL/unknown-thermal, frequency-split, no-line ``FI``, and an all-skipped
 census), and ``emit_rhq_rhv_generics``'s RHQ flow-mix/``QBOM``-station and
-RHV multi-``VARM`` stage-floor-shift/volume-tipo-deferral behaviour. The
+RHV multi-``VARM`` stage-floor-shift/volume-tipo stage-volume behaviour. The
 ``GenericConstraintBuilder`` itself is covered by
 ``tests/core/test_generic_constraint_builder.py``.
 """
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 
@@ -35,6 +37,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
+    read_constraints,
 )
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.constraints import (
@@ -53,7 +56,7 @@ from novomodelo_bridge.decomp.converters.constraints import (
 from novomodelo_bridge.decomp.converters.contracts import Contract
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
-from tests.conftest import make_decomp_case
+from tests.conftest import _FakeDadger, make_decomp_case
 
 
 def _stage(index: int, n_blocks: int) -> OperativeStage:
@@ -139,21 +142,26 @@ def test_variable_token_interchange_raises(id_map: DecompIdMap) -> None:
         _variable_token(term, id_map, {})
 
 
-def test_variable_token_vdef_raises(id_map: DecompIdMap) -> None:
+def test_variable_token_vdef(id_map: DecompIdMap) -> None:
     term = ConstraintTerm(code=5, coefficient=1.0, variable="VDEF")
-    with pytest.raises(ValueError, match="VDEF"):
-        _variable_token(term, id_map, {})
+    assert _variable_token(term, id_map, {}) == "hydro_outflow_volume(0)"
 
 
-def test_variable_token_vdes_raises(id_map: DecompIdMap) -> None:
+def test_variable_token_vdes(id_map: DecompIdMap) -> None:
     term = ConstraintTerm(code=5, coefficient=1.0, variable="VDES")
-    with pytest.raises(ValueError, match="VDES"):
-        _variable_token(term, id_map, {})
+    assert _variable_token(term, id_map, {}) == "hydro_diversion_volume(0)"
 
 
-def test_variable_token_vbom_raises(id_map: DecompIdMap) -> None:
-    term = ConstraintTerm(code=5, coefficient=1.0, variable="VBOM")
-    with pytest.raises(ValueError, match="VBOM"):
+def test_variable_token_vbom(id_map: DecompIdMap) -> None:
+    term = ConstraintTerm(code=42, coefficient=1.0, variable="VBOM")
+    assert _variable_token(term, id_map, {42: 2}) == "pumping_volume(2)"
+
+
+def test_variable_token_vbom_without_station_raises_key_error(
+    id_map: DecompIdMap,
+) -> None:
+    term = ConstraintTerm(code=42, coefficient=1.0, variable="VBOM")
+    with pytest.raises(KeyError):
         _variable_token(term, id_map, {})
 
 
@@ -799,6 +807,7 @@ def test_emit_rhq_rhv_generics_rhq_multi_term_round_trip(
         effective=unused_effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None
@@ -837,6 +846,7 @@ def test_emit_rhq_rhv_generics_rhq_single_qbom_via_pumping_map(
         effective=unused_effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None
@@ -869,12 +879,22 @@ def test_emit_rhq_rhv_generics_rhq_qbom_no_station_skips_and_warns(
             effective=unused_effective,
             big_m=45000.0,
             hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
         )
 
     assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhq-qbom-no-station"
+    assert warnings[0].title == "RHQ QBOM term has no matching pumping station"
+    assert warnings[0].summary == (
+        "HQ constraint 10 carries a QBOM term for plant code 2, which has no "
+        "matching pumping station; the constraint is skipped."
+    )
+    assert warnings[0].remediation == (
+        "HQ constraint 10 is skipped; check that plant code 2 is declared as "
+        "a pumping station."
+    )
 
 
 def test_emit_rhq_rhv_generics_rhv_multi_varm_additive_floor() -> None:
@@ -905,6 +925,7 @@ def test_emit_rhq_rhv_generics_rhv_multi_varm_additive_floor() -> None:
         effective=effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None
@@ -958,6 +979,7 @@ def test_emit_rhq_rhv_generics_hv_slack_is_per_unit_at_hv_penalty() -> None:
         effective=effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None
@@ -982,6 +1004,7 @@ def test_emit_rhq_rhv_generics_rhv_varm_uncadastred_skips_and_warns() -> None:
             effective=effective,
             big_m=45000.0,
             hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
         )
 
     assert result is None
@@ -1014,6 +1037,76 @@ def _two_varm_hv_scenario(
     return record, id_map, effective
 
 
+def _vbom_hv_scenario() -> tuple[ConstraintRecord, DecompIdMap, EffectiveCadastro]:
+    """A lone ``VBOM`` HV whose UE code 4 is no pumping station (the map is empty)."""
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=4, coefficient=1.0, variable="VBOM"),),
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        per_block=False,
+    )
+    return record, id_map, effective
+
+
+def _vdes_hv_scenario(
+    diversions: Mapping[int, tuple[None, ...]] | None = None,
+) -> tuple[ConstraintRecord, DecompIdMap, EffectiveCadastro]:
+    """A lone ``VDES`` HV on operated plant 5 (hydro id 1, so code and id differ)."""
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(3, 5))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({3: 50.0, 5: 100.0}),
+        n_stages=1,
+        stage_varying={},
+        diversions=diversions or {},
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=5, coefficient=1.0, variable="VDES"),),
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        per_block=False,
+    )
+    return record, id_map, effective
+
+
+def _zero_coefficient_hv_scenario() -> tuple[
+    ConstraintRecord, DecompIdMap, EffectiveCadastro
+]:
+    """Two operated ``VARM`` terms, both with coefficient ``0.0``."""
+    record, id_map, effective = _two_varm_hv_scenario(cadastred=(5, 6), operated=(5, 6))
+    zeroed = tuple(dataclasses.replace(t, coefficient=0.0) for t in record.terms)
+    return dataclasses.replace(record, terms=zeroed), id_map, effective
+
+
+def _zero_coefficient_hq_scenario() -> tuple[
+    ConstraintRecord, DecompIdMap, EffectiveCadastro
+]:
+    """A lone ``QDEF`` term on operated plant 182 with coefficient ``0.0``."""
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(182,))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({182: 100.0}), n_stages=1, stage_varying={}
+    )
+    record = ConstraintRecord(
+        family="HQ",
+        constraint_id=164,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=182, coefficient=0.0, variable="QDEF"),),
+        bounds={0: StageBounds(lower=(50.0,), upper=(200.0,))},
+        per_block=True,
+    )
+    return record, id_map, effective
+
+
 def test_emit_rhq_rhv_generics_rhv_non_operated_plant_skips_and_warns() -> None:
     record, id_map, effective = _two_varm_hv_scenario(cadastred=(5, 6), operated=(5,))
 
@@ -1026,6 +1119,7 @@ def test_emit_rhq_rhv_generics_rhv_non_operated_plant_skips_and_warns() -> None:
             effective=effective,
             big_m=45000.0,
             hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
         )
 
     assert result is None
@@ -1057,9 +1151,13 @@ _REPO_INTERNAL_LEAKS = (
         pytest.param(
             _two_varm_hv_scenario(cadastred=(5, 6), operated=(5,)), id="not-operated"
         ),
+        pytest.param(_vbom_hv_scenario(), id="vbom-no-station"),
+        pytest.param(_vdes_hv_scenario(), id="vdes-no-diversion"),
+        pytest.param(_zero_coefficient_hv_scenario(), id="hv-zero-coefficients"),
+        pytest.param(_zero_coefficient_hq_scenario(), id="hq-zero-coefficients"),
     ],
 )
-def test_rhv_refusal_diagnostics_have_no_repo_internal_references(
+def test_rhq_rhv_refusal_diagnostics_have_no_repo_internal_references(
     scenario: tuple[ConstraintRecord, DecompIdMap, EffectiveCadastro],
 ) -> None:
     record, id_map, effective = scenario
@@ -1073,6 +1171,7 @@ def test_rhv_refusal_diagnostics_have_no_repo_internal_references(
             effective=effective,
             big_m=45000.0,
             hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
         )
 
     warnings = [d for d in collected if d.severity is Severity.WARNING]
@@ -1089,37 +1188,348 @@ def test_rhv_refusal_diagnostics_have_no_repo_internal_references(
                 )
 
 
-def test_emit_rhq_rhv_generics_rhv_volume_tipo_deferred_skips_and_warns(
-    unused_effective: EffectiveCadastro,
-) -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    record = ConstraintRecord(
-        family="HV",
-        constraint_id=9,
-        stage_start=0,
-        stage_end=0,
-        terms=(ConstraintTerm(code=182, coefficient=1.0, variable="VDEF"),),
-        bounds={0: StageBounds(lower=(5.0,), upper=(None,))},
-        per_block=False,
-    )
-    census = _census(record)
-    calendar = [_stage(0, 1)]
+def test_emit_rhq_rhv_generics_all_zero_hv_skips_and_warns() -> None:
+    record, id_map, effective = _zero_coefficient_hv_scenario()
 
     with dx.collect() as collected:
         result = emit_rhq_rhv_generics(
-            _case(calendar),
+            _case([_stage(0, 1)]),
             id_map,
-            census=census,
+            census=_census(record),
             pumping_station_ids={},
-            effective=unused_effective,
+            effective=effective,
             big_m=45000.0,
             hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
         )
 
     assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
-    assert warnings[0].code == "decomp-rhv-volume-tipo-deferred"
+    assert warnings[0].code == "decomp-rhq-rhv-zero-coefficients"
+    assert warnings[0].category == "Special constraints"
+    assert warnings[0].title == "RHV constraint has only zero coefficients"
+    assert warnings[0].summary == (
+        "HV constraint 7 has a zero coefficient on every term at every stage, "
+        "so it bounds nothing; the constraint is skipped."
+    )
+    assert warnings[0].remediation == (
+        "HV constraint 7 is skipped; give at least one term a non-zero "
+        "coefficient to keep it."
+    )
+
+
+def test_emit_rhq_rhv_generics_all_zero_hq_skips_and_warns() -> None:
+    record, id_map, effective = _zero_coefficient_hq_scenario()
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
+        )
+
+    assert result is None
+    warnings = [d for d in collected if d.severity is Severity.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].code == "decomp-rhq-rhv-zero-coefficients"
+    assert warnings[0].title == "RHQ constraint has only zero coefficients"
+    assert warnings[0].summary.startswith("HQ constraint 164 ")
+
+
+def test_emit_rhq_rhv_generics_one_zero_term_among_non_zero_is_not_skipped() -> None:
+    record, id_map, effective = _two_varm_hv_scenario(cadastred=(5, 6), operated=(5, 6))
+    first, second = record.terms
+    record = dataclasses.replace(
+        record, terms=(dataclasses.replace(first, coefficient=0.0), second)
+    )
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
+        )
+
+    assert result is not None
+    assert [c["name"] for c in result.constraints] == ["HV_7"]
+    assert not [d for d in collected if d.code == "decomp-rhq-rhv-zero-coefficients"]
+
+
+def test_rhv_explicit_zero_first_stage_coefficient_is_not_skipped() -> None:
+    dadger = _FakeDadger(
+        hv=pd.DataFrame(
+            [(9, 1, 2)],
+            columns=["codigo_restricao", "estagio_inicial", "estagio_final"],
+        ),
+        cv=pd.DataFrame(
+            [(9, 40, 0.0, 1, "VARM"), (9, 40, 1.0, 2, "VARM")],
+            columns=[
+                "codigo_restricao",
+                "codigo_usina",
+                "coeficiente",
+                "estagio",
+                "tipo",
+            ],
+        ),
+        lv=pd.DataFrame(
+            [(9, 1, 100.0, 900.0)],
+            columns=[
+                "codigo_restricao",
+                "estagio",
+                "limite_inferior",
+                "limite_superior",
+            ],
+        ),
+    )
+    census = read_constraints(dadger)
+    [record] = census.to_generic
+    [term] = record.terms
+    assert term.schedule == ((0, 0.0), (1, 1.0))
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case([_stage(0, 1), _stage(1, 1)]),
+            DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(40,)),
+            census=census,
+            pumping_station_ids={},
+            effective=EffectiveCadastro(
+                base=_hv_floor_frame({40: 100.0}), n_stages=2, stage_varying={}
+            ),
+            big_m=45000.0,
+            hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
+        )
+
+    assert result is not None
+    assert [c["name"] for c in result.constraints] == ["HV_9"]
+    assert not [d for d in collected if d.code == "decomp-rhq-rhv-zero-coefficients"]
+
+
+@pytest.mark.parametrize(
+    ("variable", "code", "expression", "diversion_ids"),
+    [
+        pytest.param("VDEF", 5, "hydro_outflow_volume(1)", frozenset(), id="vdef"),
+        pytest.param("VDES", 5, "hydro_diversion_volume(1)", frozenset({1}), id="vdes"),
+        pytest.param("VBOM", 4, "pumping_volume(2)", frozenset(), id="vbom"),
+    ],
+)
+def test_emit_rhq_rhv_generics_rhv_volume_tipo_is_an_unshifted_stage_row(
+    variable: str, code: int, expression: str, diversion_ids: frozenset[int]
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(3, 5))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({3: 50.0, 5: 100.0}),
+        n_stages=2,
+        stage_varying={(5, "volume_minimo"): (100.0, 160.0)},
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=9,
+        stage_start=0,
+        stage_end=1,
+        terms=(ConstraintTerm(code=code, coefficient=1.0, variable=variable),),
+        bounds={s: StageBounds(lower=(10.0,), upper=(40.0,)) for s in range(2)},
+        per_block=False,
+    )
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(s, 1) for s in range(2)]),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={4: 2},
+        effective=effective,
+        big_m=45000.0,
+        hv_penalty=123.0,
+        diversion_hydro_ids=diversion_ids,
+    )
+
+    assert result is not None
+    assert [c["expression"] for c in result.constraints] == [expression]
+    rows = result.bounds.to_pylist()
+    assert [(row["bound_lower"], row["bound_upper"]) for row in rows] == [
+        (10.0, 40.0),
+        (10.0, 40.0),
+    ]
+    assert all(row["block_id"] is None for row in rows)
+
+
+def test_emit_rhq_rhv_generics_rhv_mixed_varm_and_volume_tipo_shifts_only_varm() -> (
+    None
+):
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({5: 100.0, 6: 200.0}),
+        n_stages=2,
+        stage_varying={
+            (5, "volume_minimo"): (100.0, 140.0),
+            (6, "volume_minimo"): (200.0, 250.0),
+        },
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=1,
+        terms=(
+            ConstraintTerm(code=6, coefficient=1.0, variable="VARM"),
+            ConstraintTerm(code=5, coefficient=0.5, variable="VDEF"),
+        ),
+        bounds={s: StageBounds(lower=(10.0,), upper=(None,)) for s in range(2)},
+        per_block=False,
+    )
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(s, 1) for s in range(2)]),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=effective,
+        big_m=45000.0,
+        hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
+    )
+
+    assert result is not None
+    assert [c["name"] for c in result.constraints] == ["HV_7"]
+    assert result.constraints[0]["expression"] == (
+        "hydro_useful_volume_final(1) + 0.5 * hydro_outflow_volume(0)"
+    )
+    assert [row["bound_lower"] for row in result.bounds.to_pylist()] == [10.0, 60.0]
+
+
+def test_emit_rhq_rhv_generics_rhv_vbom_no_station_skips_and_warns() -> None:
+    record, id_map, effective = _vbom_hv_scenario()
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
+        )
+
+    assert result is None
+    warnings = [d for d in collected if d.severity is Severity.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].code == "decomp-rhv-vbom-no-station"
+    assert warnings[0].title == "RHV VBOM term has no matching pumping station"
+    assert warnings[0].summary == (
+        "HV constraint 7 carries a VBOM term for plant code 4, which has no "
+        "matching pumping station; the constraint is skipped."
+    )
+
+
+@pytest.mark.parametrize("variable", ["VDEF", "VDES"])
+def test_emit_rhq_rhv_generics_rhv_hydro_volume_tipo_on_non_operated_plant_skips(
+    variable: str,
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=6, coefficient=1.0, variable=variable),),
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        per_block=False,
+    )
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
+        )
+
+    assert result is None
+    warnings = [d for d in collected if d.severity is Severity.WARNING]
+    assert [d.code for d in warnings] == ["decomp-rhv-varm-plant-uncadastred"]
+    assert "plant code 6" in warnings[0].summary
+
+
+@pytest.mark.parametrize(
+    "diversions",
+    [
+        pytest.param({}, id="no-diversion"),
+        pytest.param({5: (None,)}, id="closed-channel"),
+    ],
+)
+def test_emit_rhq_rhv_generics_rhv_vdes_without_a_converted_channel_skips_and_warns(
+    diversions: Mapping[int, tuple[None, ...]],
+) -> None:
+    record, id_map, effective = _vdes_hv_scenario(diversions)
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+            diversion_hydro_ids=frozenset(),
+        )
+
+    assert result is None
+    warnings = [d for d in collected if d.severity is Severity.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].code == "decomp-rhv-vdes-no-diversion"
+    assert warnings[0].title == "RHV VDES term on a plant without a diversion channel"
+    assert warnings[0].summary == (
+        "HV constraint 7 carries a VDES term for plant code 5, which has no "
+        "diversion channel in the converted case; the constraint is skipped."
+    )
+    assert warnings[0].remediation == (
+        "HV constraint 7 is skipped; give plant code 5 a diversion channel to "
+        "an operated plant, through the cadastro or an AC DESVIO record with a "
+        "positive limit, to keep it."
+    )
+
+
+def test_emit_rhq_rhv_generics_rhv_vdes_with_a_converted_channel_converts() -> None:
+    record, id_map, effective = _vdes_hv_scenario()
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+            diversion_hydro_ids=frozenset({id_map.hydro_id(5)}),
+        )
+
+    assert result is not None
+    assert [(c["name"], c["expression"]) for c in result.constraints] == [
+        ("HV_7", "hydro_diversion_volume(1)")
+    ]
+    assert not [d for d in collected if d.severity is Severity.WARNING]
 
 
 def test_format_expression_parameter_weight() -> None:
@@ -1160,6 +1570,7 @@ def test_emit_rhq_rhv_generics_late_term_reads_a_per_stage_parameter(
         effective=unused_effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None
@@ -1200,6 +1611,7 @@ def test_emit_rhq_rhv_generics_rhv_varm_floor_uses_the_stage_coefficient() -> No
         effective=effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None
@@ -1241,6 +1653,7 @@ def _emit_two_stage_varm_bounds(
         effective=effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None
@@ -1291,6 +1704,7 @@ def test_emit_rhq_rhv_generics_constant_coefficients_declare_no_parameter(
         effective=unused_effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None

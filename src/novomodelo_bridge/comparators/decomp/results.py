@@ -2501,9 +2501,12 @@ class _DecompConstraintLookups:
 #: resolution `decomp.converters.constraints.resolve_fi_term` does at conversion time;
 #: ``contract`` (RE ``FE``) has no contract lookup here; ``QBOM`` (HQ pumping) names
 #: a pumping-station code (not a hydro code), and no ``dec_oper_*`` table reports a
-#: pumping station's flow. A constraint carrying any of them is skipped whole
-#: (skip-not-partial), never a partial sum.
-_UNSUPPORTED_TERM_VARIABLES = frozenset({"interchange", "contract", "QBOM"})
+#: pumping station's flow; the RHV volume tipos ``VDEF``/``VDES``/``VBOM`` are
+#: stage volumes this comparator does not evaluate. A constraint carrying any of
+#: them is skipped whole (skip-not-partial), never a partial sum.
+_UNSUPPORTED_TERM_VARIABLES = frozenset(
+    {"interchange", "contract", "QBOM", "VDEF", "VDES", "VBOM"}
+)
 
 #: Matches a novomodelo generic constraint's ``name`` field as authored by the
 #: conversion-time emitters (``decomp.converters.constraints.emit_re_generics`` ->
@@ -2621,11 +2624,11 @@ def _generic_constraint_lhs_decomp(
       of novomodelo's RHE row.
 
     Deferred (novomodelo-only render, logged, never fabricated): RE
-    ``interchange`` (FI) and HQ ``QBOM`` (pumping) terms -- see
-    :data:`_UNSUPPORTED_TERM_VARIABLES`. A constraint whose name does not
-    match a known family/id (:data:`_CONSTRAINT_NAME_RE`), or whose id has
-    no matching register record (deck unavailable, or the record was not
-    found), is likewise skipped whole.
+    ``interchange`` (FI), HQ ``QBOM`` (pumping) and RHV ``VDEF``/``VDES``/
+    ``VBOM`` terms -- see :data:`_UNSUPPORTED_TERM_VARIABLES`. A constraint
+    whose name does not match a known family/id (:data:`_CONSTRAINT_NAME_RE`),
+    or whose id has no matching register record (deck unavailable, or the
+    record was not found), is likewise skipped whole.
     """
     if not gc_constraints:
         return pl.DataFrame(schema=_GC_LHS_SCHEMA)

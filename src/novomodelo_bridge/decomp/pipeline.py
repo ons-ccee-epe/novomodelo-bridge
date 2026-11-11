@@ -1923,6 +1923,8 @@ def _emit_special_constraint_generics(
     assert contracts is not None
     hv_penalty = artifacts.hv_slack_penalty
     assert hv_penalty is not None
+    hydros_dict = artifacts.hydros_dict
+    assert hydros_dict is not None
     re_generics = constraints_conv.emit_re_generics(
         case,
         id_map,
@@ -1940,6 +1942,11 @@ def _emit_special_constraint_generics(
         effective=artifacts.effective,
         big_m=shared.big_m,
         hv_penalty=hv_penalty,
+        diversion_hydro_ids=frozenset(
+            hydro["id"]
+            for hydro in hydros_dict["hydros"]
+            if hydro.get("diversion") is not None
+        ),
         allocator=shared.allocator,
     )
     rhe_generics = constraints_conv.emit_rhe_generics(

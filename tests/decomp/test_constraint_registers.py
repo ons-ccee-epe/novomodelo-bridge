@@ -368,6 +368,7 @@ def test_hq_qbom_no_double_emission() -> None:
         effective=effective,
         big_m=0.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is None
@@ -884,6 +885,7 @@ def test_conflicting_flow_restrictions_emit_two_soft_generic_constraints() -> No
         effective=effective,
         big_m=45000.0,
         hv_penalty=123.0,
+        diversion_hydro_ids=frozenset(),
     )
 
     assert result is not None

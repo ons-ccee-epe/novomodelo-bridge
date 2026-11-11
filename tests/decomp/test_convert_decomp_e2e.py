@@ -10,16 +10,21 @@ instead of passing silently.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.constraint_registers import read_constraints
 from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
     requires_novomodelo_python,
+    requires_stage_volume_tokens,
 )
 
 #: A ``CI`` import contract 7 in submarket 1, and an ``FE`` line putting it into
@@ -28,6 +33,36 @@ _CONTRACT_LINES = (
     "CI    7  1 IMPTEST       1       0  300     10.00"
     "    0  300     10.00    0  300     10.00",
     "FE   21   1     7   1       -0.500",
+)
+
+#: Two single-term ``VDES`` ``HV`` registers over stages 1 to 4, each with lower
+#: limit 0.0 (fixed-width columns as in the ``HV`` 117 block): ``HV`` 911 on plant
+#: 43, a base cadastro ``desvio`` the conversion models no channel for, and ``HV``
+#: 912 on plant 118, which carries a converted channel.
+_VDES_HV_LINES = (
+    "HV  911   1    4",
+    "LV  911   1          0.0",
+    "CV  911   1    43         1.0     VDES",
+    "HV  912   1    4",
+    "LV  912   1          0.0",
+    "CV  912   1   118         1.0     VDES",
+)
+
+#: ``HV`` 901-904 over stages 1 to 4: ``VDEF``, ``VDES``, ``VBOM``, ``VARM`` + ``VDEF``.
+_RHV_VOLUME_LINES = (
+    "HV  901   1    4",
+    "LV  901   1        100.0",
+    "CV  901   1   118         1.0     VDEF",
+    "HV  902   1    4",
+    "LV  902   1          0.0      50.0",
+    "CV  902   1   118         1.0     VDES",
+    "HV  903   1    4",
+    "LV  903   1                   20.0",
+    "CV  903   1     4         1.0     VBOM",
+    "HV  904   1    4",
+    "LV  904   1        100.0",
+    "CV  904   1    34         1.0     VARM",
+    "CV  904   1   118         0.5     VDEF",
 )
 
 
@@ -101,6 +136,137 @@ def test_decomp_mini_deck_hv_slack_matches_storage_violation_cost(
     for slack in hv_slacks:
         assert slack["penalty_basis"] == "per_unit"
         assert slack["penalty"] == penalties["hydro"]["storage_violation_below_cost"]
+
+
+def test_rhv_vdes_is_refused_without_a_converted_diversion_channel(
+    decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _VDES_HV_LINES,
+    )
+    injected = {
+        record.constraint_id: [(term.code, term.variable) for term in record.terms]
+        for record in read_constraints(
+            DecompCase.from_directory(deck).dadger
+        ).by_family["HV"]
+        if record.constraint_id in (911, 912)
+    }
+    assert injected == {911: [(43, "VDES")], 912: [(118, "VDES")]}
+
+    dst = tmp_path / "converted"
+    report = convert_decomp_case(deck, dst, force=True)
+
+    constraints = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text()
+    )["constraints"]
+    expressions = {c["name"]: c["expression"] for c in constraints}
+    assert "HV_911" not in expressions
+    assert expressions["HV_912"] == (
+        f"hydro_diversion_volume({decomp_mini_case.id_map.hydro_id(118)})"
+    )
+    (refusal,) = [
+        d for d in report.diagnostics if d.code == "decomp-rhv-vdes-no-diversion"
+    ]
+    assert "HV constraint 911" in refusal.summary
+    assert "plant code 43" in refusal.summary
+
+
+def test_hv_rows_meet_the_stage_volume_wire_contract(
+    decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _RHV_VOLUME_LINES,
+    )
+    injected = {
+        record.constraint_id: [(term.code, term.variable) for term in record.terms]
+        for record in read_constraints(
+            DecompCase.from_directory(deck).dadger
+        ).by_family["HV"]
+        if record.constraint_id in range(901, 905)
+    }
+    assert injected == {
+        901: [(118, "VDEF")],
+        902: [(118, "VDES")],
+        903: [(4, "VBOM")],
+        904: [(34, "VARM"), (118, "VDEF")],
+    }
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+    constraints = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text()
+    )["constraints"]
+    penalties = json.loads((dst / "penalties.json").read_text())
+    bounds = pq.read_table(
+        dst / "constraints" / "generic_constraint_bounds.parquet"
+    ).to_pylist()
+    hydro_bounds = pq.read_table(
+        dst / "constraints" / "hydro_bounds.parquet"
+    ).to_pylist()
+    hydro_id = decomp_mini_case.id_map.hydro_id
+    hv = {c["name"]: c for c in constraints if c["name"].startswith("HV_")}
+
+    assert hv["HV_901"]["expression"] == f"hydro_outflow_volume({hydro_id(118)})"
+    assert hv["HV_902"]["expression"] == f"hydro_diversion_volume({hydro_id(118)})"
+    assert re.fullmatch(r"pumping_volume\(\d+\)", hv["HV_903"]["expression"])
+    assert hv["HV_904"]["expression"] == (
+        f"hydro_useful_volume_final({hydro_id(34)})"
+        f" + 0.5 * hydro_outflow_volume({hydro_id(118)})"
+    )
+
+    hv_ids = {c["id"] for c in hv.values()}
+    hv_rows = [row for row in bounds if row["constraint_id"] in hv_ids]
+    assert {row["constraint_id"] for row in hv_rows} == hv_ids
+    assert all(row["block_id"] is None for row in hv_rows)
+    endpoints = [
+        row[side]
+        for row in hv_rows
+        for side in ("bound_lower", "bound_upper")
+        if row[side] is not None
+    ]
+    assert endpoints
+    assert all(abs(endpoint) < 1e20 for endpoint in endpoints)
+    assert all("block" not in c["expression"] for c in hv.values())
+    for c in hv.values():
+        assert c["slack"]["penalty_basis"] == "per_unit"
+        assert (
+            c["slack"]["penalty"] == penalties["hydro"]["storage_violation_below_cost"]
+        )
+
+    # Plants whose only storage limit is one VARM HV: no AC VOLMIN/VOLMAX, no VE.
+    for code in (121, 120, 124, 117, 73, 115, 275, 227):
+        stored = [row for row in hydro_bounds if row["hydro_id"] == hydro_id(code)]
+        assert all(
+            row["min_storage_hm3"] is None and row["max_storage_hm3"] is None
+            for row in stored
+        )
+
+
+@requires_novomodelo_python
+@requires_stage_volume_tokens
+def test_rhv_volume_tipos_pass_novomodelo_validation(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _RHV_VOLUME_LINES,
+    )
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+
+    result = novomodelo.io.validate(str(dst))
+    assert result["valid"] is True
+    assert result["errors"] == []
 
 
 @pytest.mark.parametrize(

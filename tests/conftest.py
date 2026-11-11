@@ -20,6 +20,7 @@ make_case``.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import json
 import logging
@@ -91,6 +92,36 @@ requires_writer_binding = pytest.mark.skipif(
     reason=(
         "requires a novomodelo-python wheel exposing the write_policy_checkpoint "
         "writer binding"
+    ),
+)
+
+_STAGE_VOLUME_CASE = Path(__file__).parent / "fixtures" / "novomodelo_d60"
+
+
+@functools.cache
+def has_stage_volume_tokens() -> bool:
+    """Whether the installed novomodelo wheel accepts the stage-volume tokens.
+
+    Validates ``tests/fixtures/novomodelo_d60/``, a copy of novomodelo's
+    ``examples/deterministic/d60-stage-outflow-volume-cap`` case on its
+    ``feat/generic-constraint-stage-volume`` branch, whose one generic
+    constraint uses ``hydro_outflow_volume``. Cached, because the marker below
+    evaluates at import. The pairing change that moves the ``novomodelo-python``
+    pin deletes this probe and the fixture.
+    """
+    if importlib.util.find_spec("novomodelo") is None:
+        return False
+    import novomodelo.io
+
+    return bool(novomodelo.io.validate(str(_STAGE_VOLUME_CASE))["valid"])
+
+
+# Stack this on ``requires_novomodelo_python`` for a test that needs the tokens.
+requires_stage_volume_tokens = pytest.mark.skipif(
+    condition=not has_stage_volume_tokens(),
+    reason=(
+        "requires a novomodelo-python wheel with the stage-volume "
+        "generic-constraint tokens"
     ),
 )
 

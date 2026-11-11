@@ -8,6 +8,7 @@ derivation (``_generic_constraint_lhs_decomp``), and the Constraints tab's
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import polars as pl
@@ -232,9 +233,9 @@ class TestTermLookupValue:
 
 
 class TestUnsupportedTermVariables:
-    def test_contains_interchange_contract_and_qbom(self) -> None:
+    def test_contains_interchange_contract_qbom_and_the_rhv_volume_tipos(self) -> None:
         assert _UNSUPPORTED_TERM_VARIABLES == frozenset(
-            {"interchange", "contract", "QBOM"}
+            {"interchange", "contract", "QBOM", "VDEF", "VDES", "VBOM"}
         )
 
 
@@ -581,6 +582,77 @@ class TestGenericConstraintLhsDecomp:
         result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(2, "RE_405")])
 
         assert result.is_empty()
+
+    @pytest.mark.parametrize(
+        ("variables", "unsupported"),
+        [
+            pytest.param(("VDEF",), "VDEF", id="vdef"),
+            pytest.param(("VDES",), "VDES", id="vdes"),
+            pytest.param(("VBOM",), "VBOM", id="vbom"),
+            pytest.param(("VARM", "VDEF"), "VDEF", id="mixed"),
+        ],
+    )
+    def test_hv_volume_tipo_constraint_renders_novomodelo_only(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        variables: tuple[str, ...],
+        unsupported: str,
+    ) -> None:
+        """An HV record carrying a ``VDEF``/``VDES``/``VBOM`` term renders
+        novomodelo-only, and a ``VARM`` term beside it never yields a
+        ``VARM``-only partial sum. The skip, not a term that happens to
+        resolve to nothing, is what empties the result: the log names the
+        unsupported tipo."""
+        record = _re_record(
+            9002,
+            tuple(
+                ConstraintTerm(code=10, coefficient=1.0, variable=variable)
+                for variable in variables
+            ),
+            family="HV",
+            stage_start=0,
+            stage_end=0,
+        )
+        census = ConstraintCensus(
+            by_family={"RE": (), "HQ": (), "HV": (record,), "HE": ()}
+        )
+        id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
+        case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
+        monkeypatch.setattr(
+            "novomodelo_bridge.decomp.constraint_registers.read_constraints",
+            lambda *_a, **_k: census,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
+            lambda *_a, **_k: _usih_frame(
+                [{"codigo_usina": 10, "estagio": 1, "volume_util_final_hm3": 50.0}]
+            ),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usit",
+            _no_dec_oper,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_rhesoft",
+            lambda *_a, **_k: pl.DataFrame(),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_hydro_metadata",
+            lambda *_a, **_k: {0: {"min_storage_hm3": 30.0}},
+        )
+
+        with caplog.at_level(
+            logging.INFO, logger="novomodelo_bridge.comparators.decomp.results"
+        ):
+            result = _generic_constraint_lhs_decomp(
+                case, tmp_path / "output", [_gc(4, "HV_9002")]
+            )
+
+        assert result.is_empty()
+        assert f"cannot re-derive from dec_oper_* output ({unsupported})" in caplog.text
 
     def test_unrecognized_name_skips_constraint(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
