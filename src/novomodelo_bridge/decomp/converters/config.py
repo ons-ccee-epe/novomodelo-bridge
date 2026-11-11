@@ -35,6 +35,7 @@ from novomodelo_bridge.core.penalties import (
     PEXC,
     PINT,
     hydro_penalty_costs,
+    storage_violation_cost,
 )
 from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
@@ -79,11 +80,7 @@ def convert_config(case: DecompCase) -> dict:
     constant placeholder is emitted rather than a study-varying value that would
     misleadingly imply a meaningful random draw.
 
-    No ``state_space`` block is emitted: the inflow-lag depth is a property of
-    the boundary policy, not the case inputs. With the boundary FCF deferred the
-    external inflow model needs no lag state, so novomodelo resolves a zero depth; the
-    boundary-FCF importer reserves the cut-derived depth when a boundary is
-    actually imported (see the module docstring).
+    No ``state_space`` block is emitted (see the module docstring).
     """
     dadger = case.dadger
     ni_register, gp_register = dadger.ni, dadger.gp
@@ -127,8 +124,9 @@ def convert_config(case: DecompCase) -> dict:
         "modeling": {
             # `penalty`, not the other track's `truncation_with_penalty`: the
             # unbounded priced inflow keeps a cut-less forward pass feasible
-            # against a later stage's hard storage floor (an HV volume target),
-            # which the boundary-FCF bootstrap run would otherwise die on.
+            # against a later stage's hard storage floor (the dead volume or a
+            # per-stage AC VOLMIN floor), which the boundary-FCF bootstrap run
+            # would otherwise die on.
             "inflow_non_negativity": {"method": "penalty"},
         },
         "simulation": {
@@ -137,6 +135,19 @@ def convert_config(case: DecompCase) -> dict:
             "cut_set": SIMULATION_CUT_SET,
         },
     }
+
+
+def _productivity_pair(productivities: Sequence[float]) -> tuple[float, float]:
+    values = list(productivities)
+    rho_avg = sum(values) / len(values) if values else 1.0
+    rho_max = max(values) if values else rho_avg
+    return rho_avg, rho_max
+
+
+def rhv_slack_penalty(deficit_cost: float, productivities: Sequence[float]) -> float:
+    """Price an RHV slack in R$/hm³, equal to ``penalties.json``'s storage violation cost."""
+    _, rho_max = _productivity_pair(productivities)
+    return storage_violation_cost(max_deficit_cost=deficit_cost, rho_max_acum=rho_max)
 
 
 def convert_penalties(
@@ -150,9 +161,7 @@ def convert_penalties(
     shared hydro-penalty construction expects; there is no per-deck
     penalty file, so every hydro slot takes its deficit-derived default.
     """
-    values = list(productivities)
-    rho_avg = sum(values) / len(values) if values else 1.0
-    rho_max = max(values) if values else rho_avg
+    rho_avg, rho_max = _productivity_pair(productivities)
     hydro_costs = hydro_penalty_costs(
         rho_avg=rho_avg,
         rho_max_acum=rho_max,

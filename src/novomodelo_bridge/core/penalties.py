@@ -83,6 +83,19 @@ INFLOW_NON_NEGATIVITY_METHOD = "truncation_with_penalty"
 _INFLOW_NN_OFFSET_R_PER_M3S = 1.0
 
 
+def storage_violation_cost(*, max_deficit_cost: float, rho_max_acum: float) -> float:
+    """Price the storage-floor violation slack in R$/hm³.
+
+    ``max_deficit_cost`` is in R$/MWh and ``rho_max_acum`` in MW/(m³/s).
+    """
+    return (
+        _STORAGE_VIOLATION_DEFICIT_MULT
+        * max_deficit_cost
+        * rho_max_acum
+        * HM3_TO_MWH_PER_RHO
+    )
+
+
 def hydro_penalty_costs(
     *,
     rho_avg: float,
@@ -140,19 +153,15 @@ def hydro_penalty_costs(
     # need per-stage hours, exactly like the VminOP per-stage penalty in
     # `convert_vminop_constraints`. Keep these two facts in lockstep.
     #
-    # storage_violation_below_cost is priced at the evaporation tier
-    # (10 × MAX_CUSTO_DEFICIT) — the greatest hydro penalty. With no PENALID
-    # VOLMIN the default equals evaporation_cost × HM3_TO_MWH_PER_RHO; a PENALID
-    # VOLMIN rate overrides the 10× multiplier but keeps the same ρ_max_acum
-    # treatment.
+    # A PENALID VOLMIN rate replaces the `storage_violation_cost` default but keeps
+    # the same ρ_max_acum treatment.
     volmin_mwh = penalid_costs.get("VOLMIN")
     storage_below_cost = (
         volmin_mwh * rho_max_acum * HM3_TO_MWH_PER_RHO
         if volmin_mwh is not None
-        else _STORAGE_VIOLATION_DEFICIT_MULT
-        * max_deficit_cost
-        * rho_max_acum
-        * HM3_TO_MWH_PER_RHO
+        else storage_violation_cost(
+            max_deficit_cost=max_deficit_cost, rho_max_acum=rho_max_acum
+        )
     )
 
     # Evaporation violation: no PENALID variable. The source model manual p.87

@@ -1,4 +1,4 @@
-"""Tier-1 tests for the RE/RHQ/RHV single-term bound producers.
+"""Tier-1 tests for the RE/RHQ single-term bound producers.
 
 Synthetic ``ConstraintCensus``/``ConstraintRecord``/``StageBounds`` only — no
 deck, no ``example/`` read, no ``import novomodelo``. Covers the coefficient-sign
@@ -6,9 +6,8 @@ side map, the per-block emission loop's block-count clamp, the "both sides
 absent" skip, the RHQ ``QDEF``/``QTUR``/``QDES``/``QVER`` axis lowering
 (including their coexistence on one plant and, for ``QDES``/``QVER``, the
 ``lowers_to_bound`` single-unit-term vs multi-term/non-unit-coefficient
-classification), the RHV ``VARM`` additive floor
-conversion (including the per-stage effective floor and the no-cadastro
-warning-skip), and the fail-loud dispatcher on an unhandled family.
+classification), and the fail-loud dispatcher on an unhandled family
+(including an ``HV`` record, which never lowers to a bound).
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ import dataclasses
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
@@ -30,7 +28,6 @@ from novomodelo_bridge.decomp.constraint_registers import (
     StageBounds,
     lowers_to_bound,
 )
-from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.single_term_bounds import (
     HydroCapacities,
     single_term_bound_contributions,
@@ -67,14 +64,6 @@ def id_map() -> DecompIdMap:
     return DecompIdMap(
         bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,), thermal_codes=(5,)
     )
-
-
-@pytest.fixture
-def effective() -> EffectiveCadastro:
-    """Minimal placeholder — the RE path never reads it."""
-    df = pd.DataFrame({5: {}}).T
-    df.index.name = "codigo_usina"
-    return EffectiveCadastro(base=df, n_stages=1, stage_varying={})
 
 
 def _capacities(
@@ -114,9 +103,7 @@ def _re_record(
     )
 
 
-def test_re_single_block_generation_bound(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_re_single_block_generation_bound(id_map: DecompIdMap) -> None:
     record = _re_record(
         constraint_id=12,
         coefficient=1.0,
@@ -129,7 +116,6 @@ def test_re_single_block_generation_bound(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_generation_mw=1_000.0),
     )
 
@@ -145,9 +131,7 @@ def test_re_single_block_generation_bound(
     assert contribution.contributor == "RE_12"
 
 
-def test_re_negative_coefficient_flips_sides(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_re_negative_coefficient_flips_sides(id_map: DecompIdMap) -> None:
     record = _re_record(
         constraint_id=12,
         coefficient=-1.0,
@@ -160,7 +144,6 @@ def test_re_negative_coefficient_flips_sides(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_generation_mw=1_000.0),
     )
 
@@ -170,7 +153,7 @@ def test_re_negative_coefficient_flips_sides(
 
 
 def test_re_sign_change_between_stages_flips_that_stage_only(
-    id_map: DecompIdMap, effective: EffectiveCadastro
+    id_map: DecompIdMap,
 ) -> None:
     bounds = {s: StageBounds(lower=(50.0,), upper=(212.0,)) for s in range(2)}
     record = dataclasses.replace(
@@ -191,7 +174,6 @@ def test_re_sign_change_between_stages_flips_that_stage_only(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_generation_mw=1_000.0),
     )
 
@@ -201,9 +183,7 @@ def test_re_sign_change_between_stages_flips_that_stage_only(
     ]
 
 
-def test_re_two_block_emits_per_block_contributions(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_re_two_block_emits_per_block_contributions(id_map: DecompIdMap) -> None:
     record = _re_record(
         constraint_id=12,
         coefficient=1.0,
@@ -216,7 +196,6 @@ def test_re_two_block_emits_per_block_contributions(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_generation_mw=1_000.0),
     )
 
@@ -250,9 +229,7 @@ def _ft_record(
     )
 
 
-def test_ft_thermal_single_block_generation_bound(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_ft_thermal_single_block_generation_bound(id_map: DecompIdMap) -> None:
     """A single-term ``FT`` RE lowers to a ``family="thermal"`` contribution
     on the novomodelo ``generation`` axis, resolved via ``id_map.thermal_id``."""
     record = _ft_record(
@@ -266,7 +243,6 @@ def test_ft_thermal_single_block_generation_bound(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -283,7 +259,7 @@ def test_ft_thermal_single_block_generation_bound(
 
 
 def test_ft_thermal_two_block_emits_per_block_contributions(
-    id_map: DecompIdMap, effective: EffectiveCadastro
+    id_map: DecompIdMap,
 ) -> None:
     record = _ft_record(
         constraint_id=31,
@@ -296,7 +272,6 @@ def test_ft_thermal_two_block_emits_per_block_contributions(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -310,9 +285,7 @@ def test_ft_thermal_two_block_emits_per_block_contributions(
     assert by_block[1].upper == 200.0
 
 
-def test_re_hydro_regression_still_family_hydro(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_re_hydro_regression_still_family_hydro(id_map: DecompIdMap) -> None:
     """Regression: a single-hydro-generation RE (the pre-existing ``FU``
     path) still lowers to a ``family="hydro"`` contribution now that the RE
     branch discriminates on the term variable rather than assuming hydro."""
@@ -328,7 +301,6 @@ def test_re_hydro_regression_still_family_hydro(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_generation_mw=1_000.0),
     )
 
@@ -337,9 +309,7 @@ def test_re_hydro_regression_still_family_hydro(
     assert contributions[0].axis == "generation"
 
 
-def test_absent_both_sides_emits_no_contribution(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_absent_both_sides_emits_no_contribution(id_map: DecompIdMap) -> None:
     record = _re_record(
         constraint_id=12,
         coefficient=1.0,
@@ -352,19 +322,16 @@ def test_absent_both_sides_emits_no_contribution(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_generation_mw=1_000.0),
     )
 
     assert contributions == []
 
 
-def test_unhandled_family_raises(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_unhandled_family_raises(id_map: DecompIdMap) -> None:
     # "RHA" (HA/LA/CA) is read into the census but never lowered by this
     # module — neither to bounds nor generic — so it stands in for a
-    # genuinely unhandled family now that "RE"/"HQ"/"HV" are all wired.
+    # genuinely unhandled family beside the handled "RE" and "HQ".
     record = ConstraintRecord(
         family="RHA",
         constraint_id=164,
@@ -382,14 +349,32 @@ def test_unhandled_family_raises(
             id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities={},
         )
 
 
-def test_re_unexpected_bounded_variable_raises(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hv_record_in_to_bounds_raises_unhandled_family(id_map: DecompIdMap) -> None:
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),),
+        bounds={0: StageBounds(lower=(5.0,), upper=(30.0,))},
+        per_block=False,
+    )
+
+    with pytest.raises(ValueError, match="unhandled family 'HV'"):
+        single_term_bound_contributions(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            hydro_capacities={},
+        )
+
+
+def test_re_unexpected_bounded_variable_raises(id_map: DecompIdMap) -> None:
     """An RE ``to_bounds`` record whose single term is neither
     ``"generation"`` nor ``"thermal_generation"`` fails loud instead of
     silently dropping the bound — this shape is not produced by the reader
@@ -412,14 +397,11 @@ def test_re_unexpected_bounded_variable_raises(
             id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities={},
         )
 
 
-def test_re_ceiling_above_capacity_clamps_upper(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_re_ceiling_above_capacity_clamps_upper(id_map: DecompIdMap) -> None:
     """An RE ceiling above the plant's declared capacity is clamped
     down to that capacity — mirroring the real cross-source mismatch
     (a plant's RE ceiling above its own declared, head-derated
@@ -437,7 +419,6 @@ def test_re_ceiling_above_capacity_clamps_upper(
         id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_generation_mw=9_777.776),
     )
 
@@ -447,7 +428,7 @@ def test_re_ceiling_above_capacity_clamps_upper(
 
 
 def test_re_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
-    id_map: DecompIdMap, effective: EffectiveCadastro
+    id_map: DecompIdMap,
 ) -> None:
     """A ceiling at (or below) capacity passes through unchanged —
     including the boundary case where the ceiling exactly equals the
@@ -465,7 +446,6 @@ def test_re_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
             id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities=_capacities(max_generation_mw=212.0),
         )
 
@@ -475,7 +455,7 @@ def test_re_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
 
 
 def test_re_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
-    id_map: DecompIdMap, effective: EffectiveCadastro
+    id_map: DecompIdMap,
 ) -> None:
     """A firing clamp is captured, inside ``dx.collect()``, as a
     ``decomp-re-generation-clamped`` Diagnostic naming the plant, the RE
@@ -493,7 +473,6 @@ def test_re_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
             id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities=_capacities(max_generation_mw=9_777.776),
         )
 
@@ -505,9 +484,7 @@ def test_re_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
     assert "9777.776" in clamped[0].summary  # the declared capacity
 
 
-def test_re_missing_capacity_entry_raises(
-    id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_re_missing_capacity_entry_raises(id_map: DecompIdMap) -> None:
     """A hydro id absent from ``hydro_capacities`` is a wiring bug — the map
     is required, not defaulted, so the lookup fails loud with ``KeyError``
     rather than silently skipping the clamp."""
@@ -524,7 +501,6 @@ def test_re_missing_capacity_entry_raises(
             id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities={},
         )
 
@@ -555,7 +531,7 @@ def _itaipu_group_capacities(cap: float = 7_000.0) -> dict[tuple[int, int], floa
 
 
 def test_frequency_tagged_re_bounds_its_unit_group_not_the_plant(
-    itaipu_id_map: DecompIdMap, effective: EffectiveCadastro
+    itaipu_id_map: DecompIdMap,
 ) -> None:
     records = (
         _frequency_record(
@@ -573,7 +549,6 @@ def test_frequency_tagged_re_bounds_its_unit_group_not_the_plant(
         itaipu_id_map,
         census=_census(*records),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
     groups = split_plant_group_contributions(
@@ -662,9 +637,7 @@ def _hq_record(
     )
 
 
-def test_hq_qdef_lowers_to_outflow(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qdef_lowers_to_outflow(hq_id_map: DecompIdMap) -> None:
     record = _hq_record(
         constraint_id=164,
         variable="QDEF",
@@ -677,7 +650,6 @@ def test_hq_qdef_lowers_to_outflow(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -693,9 +665,7 @@ def test_hq_qdef_lowers_to_outflow(
     assert contribution.contributor == "HQ_164"
 
 
-def test_hq_qtur_lowers_to_turbined(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qtur_lowers_to_turbined(hq_id_map: DecompIdMap) -> None:
     record = _hq_record(
         constraint_id=164,
         variable="QTUR",
@@ -708,7 +678,6 @@ def test_hq_qtur_lowers_to_turbined(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_turbined_m3s=150.0),
     )
 
@@ -719,9 +688,7 @@ def test_hq_qtur_lowers_to_turbined(
     assert contribution.upper == 150.0
 
 
-def test_hq_qtur_ceiling_above_capacity_clamps_upper(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qtur_ceiling_above_capacity_clamps_upper(hq_id_map: DecompIdMap) -> None:
     """Boundary-review fix 1: a QTUR ceiling above the plant's declared
     ``max_turbined_m3s`` is clamped down to that capacity — mirroring the RE
     ``generation`` clamp for the identical rule-43 exposure (``QTUR`` ceiling
@@ -739,7 +706,6 @@ def test_hq_qtur_ceiling_above_capacity_clamps_upper(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_turbined_m3s=972.0),
     )
 
@@ -749,7 +715,7 @@ def test_hq_qtur_ceiling_above_capacity_clamps_upper(
 
 
 def test_hq_qtur_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
+    hq_id_map: DecompIdMap,
 ) -> None:
     """A QTUR ceiling at (or below) capacity passes through unchanged —
     including the boundary case where the ceiling exactly equals the
@@ -767,7 +733,6 @@ def test_hq_qtur_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
             hq_id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities=_capacities(max_turbined_m3s=150.0),
         )
 
@@ -777,7 +742,7 @@ def test_hq_qtur_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
 
 
 def test_hq_qtur_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
+    hq_id_map: DecompIdMap,
 ) -> None:
     """A firing QTUR clamp is captured, inside ``dx.collect()``, as a
     ``decomp-qtur-turbined-clamped`` Diagnostic naming the plant, the QTUR
@@ -795,7 +760,6 @@ def test_hq_qtur_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
             hq_id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities=_capacities(max_turbined_m3s=972.0),
         )
 
@@ -807,9 +771,7 @@ def test_hq_qtur_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
     assert "972.0" in clamped[0].summary  # the declared capacity
 
 
-def test_hq_qtur_missing_capacity_entry_raises(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qtur_missing_capacity_entry_raises(hq_id_map: DecompIdMap) -> None:
     """A hydro id absent from ``hydro_capacities`` is a wiring bug — the map
     is required, not defaulted, so the ``QTUR``/``turbined`` clamp lookup
     fails loud with ``KeyError`` rather than silently skipping the clamp."""
@@ -826,14 +788,11 @@ def test_hq_qtur_missing_capacity_entry_raises(
             hq_id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities={},
         )
 
 
-def test_hq_qdef_does_not_read_hydro_capacities(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qdef_does_not_read_hydro_capacities(hq_id_map: DecompIdMap) -> None:
     """QDEF is not a rule-43 axis, so it never indexes ``hydro_capacities`` —
     an empty map (which would ``KeyError`` on the QTUR path) is fine here."""
     record = _hq_record(
@@ -848,7 +807,6 @@ def test_hq_qdef_does_not_read_hydro_capacities(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -856,9 +814,7 @@ def test_hq_qdef_does_not_read_hydro_capacities(
     assert contributions[0].axis == "outflow"
 
 
-def test_hq_per_block_outflow_contributions(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_per_block_outflow_contributions(hq_id_map: DecompIdMap) -> None:
     record = _hq_record(
         constraint_id=164,
         variable="QDEF",
@@ -871,7 +827,6 @@ def test_hq_per_block_outflow_contributions(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -885,9 +840,7 @@ def test_hq_per_block_outflow_contributions(
     assert by_block[1].upper == 90.0
 
 
-def test_hq_qdef_and_qtur_coexist_on_one_plant(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qdef_and_qtur_coexist_on_one_plant(hq_id_map: DecompIdMap) -> None:
     qdef = _hq_record(
         constraint_id=164,
         variable="QDEF",
@@ -905,7 +858,6 @@ def test_hq_qdef_and_qtur_coexist_on_one_plant(
         hq_id_map,
         census=_census(qdef, qtur),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities=_capacities(max_turbined_m3s=150.0),
     )
 
@@ -919,9 +871,7 @@ def test_hq_qdef_and_qtur_coexist_on_one_plant(
     assert by_axis["turbined"].contributor == "HQ_165"
 
 
-def test_hq_qdes_lowers_to_diversion(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qdes_lowers_to_diversion(hq_id_map: DecompIdMap) -> None:
     """A single ``±1`` ``QDES`` record with ``L <= QDES <=
     U`` emits a hydro ``diversion`` contribution with the sign-mapped
     ``(lower, upper)`` — here the identity map, since the coefficient is
@@ -938,7 +888,6 @@ def test_hq_qdes_lowers_to_diversion(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -954,9 +903,7 @@ def test_hq_qdes_lowers_to_diversion(
     assert contribution.contributor == "HQ_200"
 
 
-def test_hq_qdes_negative_coefficient_flips_sides(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qdes_negative_coefficient_flips_sides(hq_id_map: DecompIdMap) -> None:
     """Sign-mapped: ``-1*QDES in [L, U]`` becomes
     ``QDES in [-U, -L]`` on the diversion axis."""
     record = _hq_record(
@@ -972,7 +919,6 @@ def test_hq_qdes_negative_coefficient_flips_sides(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -982,9 +928,7 @@ def test_hq_qdes_negative_coefficient_flips_sides(
     assert contributions[0].upper == -10.0
 
 
-def test_hq_qver_lowers_to_spillage(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qver_lowers_to_spillage(hq_id_map: DecompIdMap) -> None:
     """A single ``±1`` ``QVER`` record lowers to a hydro
     ``spillage`` contribution with the sign-mapped ``(lower, upper)``."""
     record = _hq_record(
@@ -999,7 +943,6 @@ def test_hq_qver_lowers_to_spillage(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -1015,9 +958,7 @@ def test_hq_qver_lowers_to_spillage(
     assert contribution.contributor == "HQ_201"
 
 
-def test_hq_qver_negative_coefficient_flips_sides(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qver_negative_coefficient_flips_sides(hq_id_map: DecompIdMap) -> None:
     """Sign-mapped, mirroring the QDES case above."""
     record = _hq_record(
         constraint_id=201,
@@ -1032,7 +973,6 @@ def test_hq_qver_negative_coefficient_flips_sides(
         hq_id_map,
         census=_census(record),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -1042,9 +982,7 @@ def test_hq_qver_negative_coefficient_flips_sides(
     assert contributions[0].upper == -5.0
 
 
-def test_hq_qdef_qdes_qver_all_coexist_on_one_plant(
-    hq_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qdef_qdes_qver_all_coexist_on_one_plant(hq_id_map: DecompIdMap) -> None:
     """The four ``HQ`` flow tipos routed through the same
     ``_hq_flow_contributions``/``_HQ_AXIS_BY_VARIABLE`` lookup all land on
     distinct axes for the same plant and all survive."""
@@ -1070,7 +1008,6 @@ def test_hq_qdef_qdes_qver_all_coexist_on_one_plant(
         hq_id_map,
         census=_census(qdef, qdes, qver),
         pumping_station_ids={},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -1186,9 +1123,7 @@ def _qbom_record(
     )
 
 
-def test_hq_qbom_lowers_to_pumping_flow_bound(
-    qbom_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qbom_lowers_to_pumping_flow_bound(qbom_id_map: DecompIdMap) -> None:
     """A single-term ``QBOM`` RHQ lowers to a pumping ``flow`` bound resolved
     through ``pumping_station_ids``."""
     record = _qbom_record(
@@ -1202,7 +1137,6 @@ def test_hq_qbom_lowers_to_pumping_flow_bound(
         qbom_id_map,
         census=_census(record),
         pumping_station_ids={30: 0},
-        effective=effective,
         hydro_capacities={},
     )
 
@@ -1218,9 +1152,7 @@ def test_hq_qbom_lowers_to_pumping_flow_bound(
     assert contribution.contributor == "HQ_166"
 
 
-def test_hq_qbom_no_station_warns_and_skips(
-    qbom_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
+def test_hq_qbom_no_station_warns_and_skips(qbom_id_map: DecompIdMap) -> None:
     """A QBOM term whose code has no matching pumping station is dropped —
     skip-not-partial, never a raw ``KeyError`` and never a fall-back to a
     generic constraint."""
@@ -1236,7 +1168,6 @@ def test_hq_qbom_no_station_warns_and_skips(
             qbom_id_map,
             census=_census(record),
             pumping_station_ids={},
-            effective=effective,
             hydro_capacities={},
         )
 
@@ -1244,151 +1175,3 @@ def test_hq_qbom_no_station_warns_and_skips(
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhq-qbom-no-station"
-
-
-def _hv_hidr_frame(
-    *, code: int = 1, volume_minimo: float = 20.0, volume_maximo: float = 100.0
-) -> pd.DataFrame:
-    df = pd.DataFrame(
-        {code: {"volume_minimo": volume_minimo, "volume_maximo": volume_maximo}}
-    ).T
-    df.index.name = "codigo_usina"
-    return df
-
-
-@pytest.fixture
-def hv_id_map() -> DecompIdMap:
-    return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
-
-
-def _hv_record(
-    *,
-    constraint_id: int,
-    coefficient: float,
-    bounds: dict[int, StageBounds],
-    code: int = 1,
-) -> ConstraintRecord:
-    return ConstraintRecord(
-        family="HV",
-        constraint_id=constraint_id,
-        stage_start=min(bounds),
-        stage_end=max(bounds),
-        terms=(ConstraintTerm(code=code, coefficient=coefficient, variable="VARM"),),
-        bounds=bounds,
-        per_block=False,
-    )
-
-
-def test_hv_varm_additive_floor_plus_lv(hv_id_map: DecompIdMap) -> None:
-    effective = EffectiveCadastro(base=_hv_hidr_frame(), n_stages=1, stage_varying={})
-    record = _hv_record(
-        constraint_id=7,
-        coefficient=1.0,
-        bounds={0: StageBounds(lower=(5.0,), upper=(30.0,))},
-    )
-    calendar = [_stage(0, 1)]
-
-    contributions = single_term_bound_contributions(
-        _case(calendar),
-        hv_id_map,
-        census=_census(record),
-        pumping_station_ids={},
-        effective=effective,
-        hydro_capacities={},
-    )
-
-    assert len(contributions) == 1
-    contribution = contributions[0]
-    assert contribution.family == "hydro"
-    assert contribution.entity_id == 0
-    assert contribution.stage_id == 0
-    assert contribution.block_id is None
-    assert contribution.axis == "storage"
-    assert contribution.lower == 25.0
-    assert contribution.upper == 50.0
-    assert contribution.contributor == "HV_7"
-
-
-def test_hv_varm_uses_per_stage_effective_floor(hv_id_map: DecompIdMap) -> None:
-    effective = EffectiveCadastro(
-        base=_hv_hidr_frame(),
-        n_stages=2,
-        stage_varying={(1, "volume_minimo"): (20.0, 40.0)},
-    )
-    record = _hv_record(
-        constraint_id=7,
-        coefficient=1.0,
-        bounds={
-            0: StageBounds(lower=(5.0,), upper=(None,)),
-            1: StageBounds(lower=(5.0,), upper=(None,)),
-        },
-    )
-    calendar = [_stage(0, 1), _stage(1, 1)]
-
-    contributions = single_term_bound_contributions(
-        _case(calendar),
-        hv_id_map,
-        census=_census(record),
-        pumping_station_ids={},
-        effective=effective,
-        hydro_capacities={},
-    )
-
-    by_stage = {c.stage_id: c for c in contributions}
-    assert set(by_stage) == {0, 1}
-    assert by_stage[0].lower == 25.0
-    assert by_stage[1].lower == 45.0
-    for contribution in contributions:
-        assert contribution.block_id is None
-        assert contribution.upper is None
-
-
-def test_hv_varm_negative_coefficient_flips_then_adds_floor(
-    hv_id_map: DecompIdMap,
-) -> None:
-    effective = EffectiveCadastro(base=_hv_hidr_frame(), n_stages=1, stage_varying={})
-    record = _hv_record(
-        constraint_id=7,
-        coefficient=-1.0,
-        bounds={0: StageBounds(lower=(5.0,), upper=(30.0,))},
-    )
-    calendar = [_stage(0, 1)]
-
-    contributions = single_term_bound_contributions(
-        _case(calendar),
-        hv_id_map,
-        census=_census(record),
-        pumping_station_ids={},
-        effective=effective,
-        hydro_capacities={},
-    )
-
-    assert len(contributions) == 1
-    assert contributions[0].lower == -10.0
-    assert contributions[0].upper == 15.0
-
-
-def test_hv_varm_uncadastred_plant_warns_and_skips(hv_id_map: DecompIdMap) -> None:
-    effective = EffectiveCadastro(base=_hv_hidr_frame(), n_stages=1, stage_varying={})
-    record = _hv_record(
-        constraint_id=7,
-        coefficient=1.0,
-        bounds={0: StageBounds(lower=(5.0,), upper=(30.0,))},
-        code=99,
-    )
-    calendar = [_stage(0, 1)]
-
-    with dx.collect() as collected:
-        contributions = single_term_bound_contributions(
-            _case(calendar),
-            hv_id_map,
-            census=_census(record),
-            pumping_station_ids={},
-            effective=effective,
-            hydro_capacities={},
-        )
-
-    assert contributions == []
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-rhv-varm-plant-uncadastred"

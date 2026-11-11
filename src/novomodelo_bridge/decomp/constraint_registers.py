@@ -8,7 +8,7 @@ register, and a coefficient/participation register naming the entities:
     ----    ----  -----        -----        -----------                       ----------
     RE      RE    LU (1..5)    FU/FT/FI/FE  gen, interchange, contract        per-block
     HQ      HQ    LQ (1..5)    CQ           flow, per-term CQ.tipo            per-block
-    HV      HV    LV           CV           hydro storage (hm3)               per-stage
+    HV      HV    LV           CV           hydro useful volume (hm3)         per-stage
     HE      HE    (inline)     CM           energy over a REE cascade         per-stage
 
 RE spreads its participation over up to four coefficient registers — ``FU``
@@ -80,7 +80,6 @@ _BOUNDS_AXIS: dict[str, str] = {
     "QDES": "diversion",  # HQ desvio       -> min/max_diversion_m3s
     "QVER": "spillage",  # HQ vertimento   -> min/max_spillage_m3s
     "QBOM": "flow",  # HQ pumped flow  -> pumping_bounds min/max_m3s
-    "VARM": "storage",  # HV volume       -> min/max_storage_hm3
 }
 
 
@@ -320,6 +319,8 @@ class _FamilyConfig:
     #: path (:func:`_read_terms` against ``coeff_attr``); RE sets this to
     #: :func:`_read_re_terms` to merge its three coefficient registers.
     term_reader: Callable[[ConstraintRegisters], _DeclaredTerms] | None = None
+    #: Variable a blank ``tipo`` reads as, or ``None`` to keep it verbatim.
+    default_variable: str | None = None
 
 
 def _df(dadger: ConstraintRegisters, attr: str) -> pd.DataFrame | None:
@@ -417,6 +418,13 @@ def _row_stage(row: pd.Series) -> int:
     return int(row["estagio"]) - 1
 
 
+def _tipo_variable(raw: object, config: _FamilyConfig) -> str:
+    """A coefficient row's variable from its ``tipo`` cell, blank reading as the family default."""
+    if config.default_variable is not None and (pd.isna(raw) or not str(raw).strip()):
+        return config.default_variable
+    return str(raw).strip()
+
+
 def _read_terms(coeff: pd.DataFrame, config: _FamilyConfig) -> _DeclaredTerms:
     """Group a coefficient register into its declared terms per constraint."""
     collector = _TermCollector()
@@ -424,7 +432,7 @@ def _read_terms(coeff: pd.DataFrame, config: _FamilyConfig) -> _DeclaredTerms:
         variable = (
             config.fixed_variable
             if config.fixed_variable is not None
-            else str(row["tipo"]).strip()
+            else _tipo_variable(row["tipo"], config)
         )
         frequency = (
             _opt_float(row["frequencia"])
@@ -554,7 +562,7 @@ _TRIPLE_FAMILIES: tuple[_FamilyConfig, ...] = (
         "RE", "re", "lu", "fu", True, "generation", True, term_reader=_read_re_terms
     ),
     _FamilyConfig("HQ", "hq", "lq", "cq", True, None, False),
-    _FamilyConfig("HV", "hv", "lv", "cv", False, None, False),
+    _FamilyConfig("HV", "hv", "lv", "cv", False, None, False, default_variable="VARM"),
 )
 
 

@@ -144,6 +144,7 @@ class DecompCaseArtifacts:
     line_bounds: pa.Table | None = None
     initial_conditions: dict | None = None
     deficit_cost: float | None = None
+    hv_slack_penalty: float | None = None
     fpha_codes: set[int] | None = None
     turbine_limits: hydro_conv.TurbineLimits | None = None
     # Populated by `_resolve_bounds`.
@@ -1218,12 +1219,13 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     deficit_costs = network_conv.bus_deficit_costs(dadger)
     deficit_cost = max(deficit_costs.values()) if deficit_costs else 0.0
     artifacts.deficit_cost = deficit_cost
+    productivities = productivity["equivalent_productivity_mw_per_m3s"].to_pylist()
+    artifacts.hv_slack_penalty = config_conv.rhv_slack_penalty(
+        deficit_cost, productivities
+    )
     writer.write_json(
         "penalties.json",
-        config_conv.convert_penalties(
-            deficit_cost,
-            productivity["equivalent_productivity_mw_per_m3s"].to_pylist(),
-        ),
+        config_conv.convert_penalties(deficit_cost, productivities),
     )
     # week_hours is stage 0's own duration, never a hardcoded 168: a deck whose
     # first stage is not a full operative week still tiles past_defluences exactly.
@@ -1581,7 +1583,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
     # storage envelope, a split plant's turbined-flow limit and available
     # power, the CT thermal
-    # generation bounds, and the RE/RHQ/RHV single-term special-constraint
+    # generation bounds, and the RE/RHQ single-term special-constraint
     # bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
     # exactly ONE resolve() + build_bound_tables() pass, so a new special
@@ -1603,7 +1605,6 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             id_map,
             census=census,
             pumping_station_ids=pumping_ids,
-            effective=effective,
             hydro_capacities=hydro_capacities,
         ),
     ]
@@ -1920,6 +1921,8 @@ def _emit_special_constraint_generics(
     id_map = artifacts.id_map
     contracts = artifacts.contracts
     assert contracts is not None
+    hv_penalty = artifacts.hv_slack_penalty
+    assert hv_penalty is not None
     re_generics = constraints_conv.emit_re_generics(
         case,
         id_map,
@@ -1936,6 +1939,7 @@ def _emit_special_constraint_generics(
         pumping_station_ids=pumping_ids,
         effective=artifacts.effective,
         big_m=shared.big_m,
+        hv_penalty=hv_penalty,
         allocator=shared.allocator,
     )
     rhe_generics = constraints_conv.emit_rhe_generics(

@@ -13,7 +13,7 @@ slot-enumeration helper, ``emit_re_generics``'s per-record
 resolve-or-skip-whole-constraint behaviour (mixed hydro+interchange,
 hydro+contract, GNL/unknown-thermal, frequency-split, no-line ``FI``, and an all-skipped
 census), and ``emit_rhq_rhv_generics``'s RHQ flow-mix/``QBOM``-station and
-RHV multi-``VARM`` additive-floor/volume-tipo-deferral behaviour. The
+RHV multi-``VARM`` stage-floor-shift/volume-tipo-deferral behaviour. The
 ``GenericConstraintBuilder`` itself is covered by
 ``tests/core/test_generic_constraint_builder.py``.
 """
@@ -130,7 +130,7 @@ def test_variable_token_qbom(id_map: DecompIdMap) -> None:
 
 def test_variable_token_varm(id_map: DecompIdMap) -> None:
     term = ConstraintTerm(code=5, coefficient=1.0, variable="VARM")
-    assert _variable_token(term, id_map, {}) == "hydro_storage(0)"
+    assert _variable_token(term, id_map, {}) == "hydro_useful_volume_final(0)"
 
 
 def test_variable_token_interchange_raises(id_map: DecompIdMap) -> None:
@@ -798,6 +798,7 @@ def test_emit_rhq_rhv_generics_rhq_multi_term_round_trip(
         pumping_station_ids={},
         effective=unused_effective,
         big_m=45000.0,
+        hv_penalty=123.0,
     )
 
     assert result is not None
@@ -835,6 +836,7 @@ def test_emit_rhq_rhv_generics_rhq_single_qbom_via_pumping_map(
         pumping_station_ids={2: 1},
         effective=unused_effective,
         big_m=45000.0,
+        hv_penalty=123.0,
     )
 
     assert result is not None
@@ -866,6 +868,7 @@ def test_emit_rhq_rhv_generics_rhq_qbom_no_station_skips_and_warns(
             pumping_station_ids={},
             effective=unused_effective,
             big_m=45000.0,
+            hv_penalty=123.0,
         )
 
     assert result is None
@@ -901,26 +904,100 @@ def test_emit_rhq_rhv_generics_rhv_multi_varm_additive_floor() -> None:
         pumping_station_ids={},
         effective=effective,
         big_m=45000.0,
+        hv_penalty=123.0,
     )
 
     assert result is not None
     assert len(result.constraints) == 1
     constraint = result.constraints[0]
-    assert constraint["expression"] == "hydro_storage(0) + hydro_storage(1)"
+    assert constraint["expression"] == (
+        "hydro_useful_volume_final(0) + hydro_useful_volume_final(1)"
+    )
     assert set(constraint) == {"id", "name", "description", "expression", "slack"}
 
     rows = result.bounds.to_pylist()
     assert len(rows) == 1
-    assert rows[0]["bound_lower"] == 310.0
+    assert rows[0]["bound_lower"] == 10.0
     assert rows[0]["bound_upper"] is None
     assert rows[0]["block_id"] is None
     assert rows[0]["stage_id"] == 0
 
 
-def test_emit_rhq_rhv_generics_rhv_varm_uncadastred_skips_and_warns() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
+def test_emit_rhq_rhv_generics_hv_slack_is_per_unit_at_hv_penalty() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6, 182))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
+        base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
+    )
+    hv_record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),
+            ConstraintTerm(code=6, coefficient=1.0, variable="VARM"),
+        ),
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        per_block=False,
+    )
+    hq_record = ConstraintRecord(
+        family="HQ",
+        constraint_id=164,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=182, coefficient=1.0, variable="QDEF"),),
+        bounds={0: StageBounds(lower=(50.0,), upper=(200.0,))},
+        per_block=True,
+    )
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(0, 1)]),
+        id_map,
+        census=_census(hv_record, hq_record),
+        pumping_station_ids={},
+        effective=effective,
+        big_m=45000.0,
+        hv_penalty=123.0,
+    )
+
+    assert result is not None
+    slacks = {c["name"]: c["slack"] for c in result.constraints}
+    assert slacks == {
+        "HQ_164": {"enabled": True, "penalty": 45000.0, "penalty_basis": "per_hour"},
+        "HV_7": {"enabled": True, "penalty": 123.0, "penalty_basis": "per_unit"},
+    }
+
+
+def test_emit_rhq_rhv_generics_rhv_varm_uncadastred_skips_and_warns() -> None:
+    record, id_map, effective = _two_varm_hv_scenario(cadastred=(5,), operated=(5, 6))
+    census = _census(record)
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        result = emit_rhq_rhv_generics(
+            _case(calendar),
+            id_map,
+            census=census,
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+        )
+
+    assert result is None
+    warnings = [d for d in collected if d.severity is Severity.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].code == "decomp-rhv-varm-plant-uncadastred"
+
+
+def _two_varm_hv_scenario(
+    *, cadastred: tuple[int, ...], operated: tuple[int, ...]
+) -> tuple[ConstraintRecord, DecompIdMap, EffectiveCadastro]:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=operated)
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({code: 100.0 for code in cadastred}),
+        n_stages=1,
+        stage_varying={},
     )
     record = ConstraintRecord(
         family="HV",
@@ -934,23 +1011,82 @@ def test_emit_rhq_rhv_generics_rhv_varm_uncadastred_skips_and_warns() -> None:
         bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
         per_block=False,
     )
-    census = _census(record)
-    calendar = [_stage(0, 1)]
+    return record, id_map, effective
+
+
+def test_emit_rhq_rhv_generics_rhv_non_operated_plant_skips_and_warns() -> None:
+    record, id_map, effective = _two_varm_hv_scenario(cadastred=(5, 6), operated=(5,))
 
     with dx.collect() as collected:
         result = emit_rhq_rhv_generics(
-            _case(calendar),
+            _case([_stage(0, 1)]),
             id_map,
-            census=census,
+            census=_census(record),
             pumping_station_ids={},
             effective=effective,
             big_m=45000.0,
+            hv_penalty=123.0,
         )
 
     assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhv-varm-plant-uncadastred"
+    assert "plant code 6" in warnings[0].summary
+    assert "plant code 5" not in warnings[0].summary
+
+
+_REPO_INTERNAL_LEAKS = (
+    "docs/",
+    "plans/",
+    "~/git",
+    "ticket-",
+    "epic-",
+    "_",
+    ".py",
+    "TRACKED",
+)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        pytest.param(
+            _two_varm_hv_scenario(cadastred=(5,), operated=(5, 6)), id="uncadastred"
+        ),
+        pytest.param(
+            _two_varm_hv_scenario(cadastred=(5, 6), operated=(5,)), id="not-operated"
+        ),
+    ],
+)
+def test_rhv_refusal_diagnostics_have_no_repo_internal_references(
+    scenario: tuple[ConstraintRecord, DecompIdMap, EffectiveCadastro],
+) -> None:
+    record, id_map, effective = scenario
+
+    with dx.collect() as collected:
+        emit_rhq_rhv_generics(
+            _case([_stage(0, 1)]),
+            id_map,
+            census=_census(record),
+            pumping_station_ids={},
+            effective=effective,
+            big_m=45000.0,
+            hv_penalty=123.0,
+        )
+
+    warnings = [d for d in collected if d.severity is Severity.WARNING]
+    assert warnings
+    for diagnostic in warnings:
+        for text in (
+            diagnostic.title,
+            diagnostic.summary,
+            diagnostic.remediation or "",
+        ):
+            for leak in _REPO_INTERNAL_LEAKS:
+                assert leak not in text, (
+                    f"{diagnostic.code} leaks repo-internal reference {leak!r}: {text!r}"
+                )
 
 
 def test_emit_rhq_rhv_generics_rhv_volume_tipo_deferred_skips_and_warns(
@@ -977,6 +1113,7 @@ def test_emit_rhq_rhv_generics_rhv_volume_tipo_deferred_skips_and_warns(
             pumping_station_ids={},
             effective=unused_effective,
             big_m=45000.0,
+            hv_penalty=123.0,
         )
 
     assert result is None
@@ -1022,6 +1159,7 @@ def test_emit_rhq_rhv_generics_late_term_reads_a_per_stage_parameter(
         pumping_station_ids={},
         effective=unused_effective,
         big_m=45000.0,
+        hv_penalty=123.0,
     )
 
     assert result is not None
@@ -1034,7 +1172,9 @@ def test_emit_rhq_rhv_generics_late_term_reads_a_per_stage_parameter(
 def test_emit_rhq_rhv_generics_rhv_varm_floor_uses_the_stage_coefficient() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=2, stage_varying={}
+        base=_hv_floor_frame({5: 100.0, 6: 200.0}),
+        n_stages=2,
+        stage_varying={(6, "volume_minimo"): (200.0, 250.0)},
     )
     record = ConstraintRecord(
         family="HV",
@@ -1059,15 +1199,71 @@ def test_emit_rhq_rhv_generics_rhv_varm_floor_uses_the_stage_coefficient() -> No
         pumping_station_ids={},
         effective=effective,
         big_m=45000.0,
+        hv_penalty=123.0,
     )
 
     assert result is not None
     assert result.constraints[0]["expression"] == (
-        "hydro_storage(0) + @coef_hv7_t1 * hydro_storage(1)"
+        "hydro_useful_volume_final(0) + @coef_hv7_t1 * hydro_useful_volume_final(1)"
     )
     assert result.per_stage_parameters == {"coef_hv7_t1": [1.0, 2.0]}
     lowers = [row["bound_lower"] for row in result.bounds.to_pylist()]
-    assert lowers == [10.0 + 100.0 + 200.0, 10.0 + 100.0 + 2.0 * 200.0]
+    assert lowers == [10.0, 10.0 + 2.0 * (250.0 - 200.0)]
+
+
+def _emit_two_stage_varm_bounds(
+    plant_six_coefficient: float, bounds: StageBounds
+) -> dict[int, tuple[float | None, float | None]]:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({5: 100.0, 6: 200.0}),
+        n_stages=2,
+        stage_varying={(6, "volume_minimo"): (200.0, 250.0)},
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=1,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),
+            ConstraintTerm(code=6, coefficient=plant_six_coefficient, variable="VARM"),
+        ),
+        bounds={s: bounds for s in range(2)},
+        per_block=False,
+    )
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(s, 1) for s in range(2)]),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=effective,
+        big_m=45000.0,
+        hv_penalty=123.0,
+    )
+
+    assert result is not None
+    return {
+        row["stage_id"]: (row["bound_lower"], row["bound_upper"])
+        for row in result.bounds.to_pylist()
+    }
+
+
+def test_emit_rhq_rhv_generics_rhv_bound_shifts_by_stage_floor_minus_static_floor() -> (
+    None
+):
+    bounds = _emit_two_stage_varm_bounds(2.0, StageBounds(lower=(10.0,), upper=(None,)))
+
+    assert bounds == {0: (10.0, None), 1: (110.0, None)}
+
+
+def test_emit_rhq_rhv_generics_rhv_negative_coefficient_shifts_both_sides() -> None:
+    bounds = _emit_two_stage_varm_bounds(
+        -1.0, StageBounds(lower=(10.0,), upper=(40.0,))
+    )
+
+    assert bounds == {0: (10.0, 40.0), 1: (-40.0, -10.0)}
 
 
 def test_emit_rhq_rhv_generics_constant_coefficients_declare_no_parameter(
@@ -1094,6 +1290,7 @@ def test_emit_rhq_rhv_generics_constant_coefficients_declare_no_parameter(
         pumping_station_ids={},
         effective=unused_effective,
         big_m=45000.0,
+        hv_penalty=123.0,
     )
 
     assert result is not None

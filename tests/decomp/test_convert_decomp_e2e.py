@@ -85,6 +85,24 @@ def test_fe_contract_term_reaches_the_re_generic_constraint(
     assert re_21["expression"].endswith("- 0.5 * contract_import(0)")
 
 
+def test_decomp_mini_deck_hv_slack_matches_storage_violation_cost(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    constraints = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text()
+    )["constraints"]
+    penalties = json.loads((dst / "penalties.json").read_text())
+    hv_slacks = [c["slack"] for c in constraints if c["name"].startswith("HV_")]
+
+    assert hv_slacks
+    for slack in hv_slacks:
+        assert slack["penalty_basis"] == "per_unit"
+        assert slack["penalty"] == penalties["hydro"]["storage_violation_below_cost"]
+
+
 @pytest.mark.parametrize(
     ("kwargs", "digits"), [({"float_digits": 4}, 4), ({}, 15)], ids=["4", "default"]
 )

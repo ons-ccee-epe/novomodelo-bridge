@@ -20,9 +20,10 @@ from novomodelo_bridge.comparators.decomp.results import (
     _DecompConstraintLookups,
     _generic_constraint_lhs_decomp,
     _rhe_lhs_lookup,
+    _stage_floor_by_id_stage,
     _stage_frame_to_lookup,
-    _storage_lookup,
     _term_lookup_value,
+    _useful_volume_lookup,
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
@@ -102,30 +103,96 @@ class TestStageFrameToLookup:
         assert _stage_frame_to_lookup(frame, "geracao_MW") == {(10, 0): 100.0}
 
 
-class TestStorageLookup:
-    """`_storage_lookup`: absolute storage = useful volume + Vmin, Vmin
-    resolved via the id map onto the novomodelo-side `min_storage_hm3` registry."""
+class TestUsefulVolumeLookup:
+    """`_useful_volume_lookup`: useful volume + (stage floor - static floor),
+    the id map resolving a source code onto the novomodelo hydro id both floors
+    are keyed by."""
 
-    def test_adds_min_storage_floor_via_id_map(self) -> None:
+    def test_without_stage_floor_term_is_the_useful_volume(self) -> None:
         hydro_frame = pl.DataFrame(
             {"codigo_usina": [10], "estagio": [1], "volume_util_final_hm3": [120.0]}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _storage_lookup(hydro_frame, id_map, {0: 30.0}) == {(10, 0): 150.0}
+        assert _useful_volume_lookup(hydro_frame, id_map, {0: 30.0}, {}) == {
+            (10, 0): 120.0
+        }
+
+    def test_stage_floor_shifts_the_term_by_its_excess_over_the_static_floor(
+        self,
+    ) -> None:
+        hydro_frame = pl.DataFrame(
+            {
+                "codigo_usina": [10, 10],
+                "estagio": [1, 2],
+                "volume_util_final_hm3": [120.0, 120.0],
+            }
+        )
+        id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
+        assert _useful_volume_lookup(
+            hydro_frame, id_map, {0: 30.0}, {(0, 0): 50.0}
+        ) == {
+            (10, 0): 140.0,
+            (10, 1): 120.0,
+        }
 
     def test_unmapped_code_is_excluded(self) -> None:
         hydro_frame = pl.DataFrame(
             {"codigo_usina": [99], "estagio": [1], "volume_util_final_hm3": [120.0]}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _storage_lookup(hydro_frame, id_map, {0: 30.0}) == {}
+        assert _useful_volume_lookup(hydro_frame, id_map, {0: 30.0}, {}) == {}
 
-    def test_missing_min_storage_entry_is_excluded(self) -> None:
+    def test_missing_static_floor_is_excluded(self) -> None:
         hydro_frame = pl.DataFrame(
             {"codigo_usina": [10], "estagio": [1], "volume_util_final_hm3": [120.0]}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _storage_lookup(hydro_frame, id_map, {}) == {}
+        assert _useful_volume_lookup(hydro_frame, id_map, {}, {(0, 0): 50.0}) == {}
+
+
+class TestStageFloorByIdStage:
+    """`_stage_floor_by_id_stage`: the first non-null per-stage storage floor per
+    (novomodelo hydro id, stage); empty without a storage-floor column."""
+
+    @staticmethod
+    def _write_bounds(
+        case_dir: Path, rows: dict[str, list[float | int | None]]
+    ) -> None:
+        (case_dir / "constraints").mkdir()
+        pl.DataFrame(rows).write_parquet(
+            case_dir / "constraints" / "hydro_bounds.parquet"
+        )
+
+    def test_parquet_without_a_storage_column_gives_no_floor(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_bounds(
+            tmp_path,
+            {
+                "hydro_id": [0],
+                "stage_id": [0],
+                "block_id": [0],
+                "min_turbined_m3s": [5.0],
+            },
+        )
+        assert _stage_floor_by_id_stage(tmp_path / "output") == {}
+
+    def test_takes_the_first_non_null_floor_per_hydro_and_stage(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_bounds(
+            tmp_path,
+            {
+                "hydro_id": [0, 0, 0, 1],
+                "stage_id": [0, 0, 0, 1],
+                "block_id": [0, 1, 2, 0],
+                "min_storage_hm3": [None, 130.0, 140.0, 40.0],
+            },
+        )
+        assert _stage_floor_by_id_stage(tmp_path / "output") == {
+            (0, 0): 130.0,
+            (1, 1): 40.0,
+        }
 
 
 class TestTermLookupValue:
@@ -337,9 +404,39 @@ class TestGenericConstraintLhsDecomp:
 
         assert [r["lhs_value"] for r in result.to_dicts()] == [300.0, 400.0]
 
-    def test_hv_varm_term_uses_absolute_storage_floor(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("bound_rows", "expected"),
+        [
+            pytest.param([], 50.0, id="no-per-stage-floor"),
+            pytest.param([(0, 130.0)], 80.0, id="stage-floor-above-static"),
+            pytest.param(
+                [(0, None), (1, 130.0)], 80.0, id="null-row-does-not-mask-floor"
+            ),
+        ],
+    )
+    def test_hv_varm_term_pairs_on_useful_volume(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        bound_rows: list[tuple[int, float | None]],
+        expected: float,
     ) -> None:
+        if bound_rows:
+            (tmp_path / "constraints").mkdir()
+            pl.DataFrame(
+                {
+                    "hydro_id": [0] * len(bound_rows),
+                    "stage_id": [0] * len(bound_rows),
+                    "block_id": [block for block, _ in bound_rows],
+                    "min_storage_hm3": [floor for _, floor in bound_rows],
+                },
+                schema={
+                    "hydro_id": pl.Int64,
+                    "stage_id": pl.Int64,
+                    "block_id": pl.Int64,
+                    "min_storage_hm3": pl.Float64,
+                },
+            ).write_parquet(tmp_path / "constraints" / "hydro_bounds.parquet")
         record = _re_record(
             9001,
             (ConstraintTerm(code=10, coefficient=1.0, variable="VARM"),),
@@ -359,7 +456,7 @@ class TestGenericConstraintLhsDecomp:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             lambda *_a, **_k: _usih_frame(
-                [{"codigo_usina": 10, "estagio": 1, "volume_util_final_hm3": 120.0}]
+                [{"codigo_usina": 10, "estagio": 1, "volume_util_final_hm3": 50.0}]
             ),
         )
         monkeypatch.setattr(
@@ -373,13 +470,15 @@ class TestGenericConstraintLhsDecomp:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
             "read_novomodelo_hydro_metadata",
-            lambda *_a, **_k: {0: {"min_storage_hm3": 30.0}},
+            lambda *_a, **_k: {0: {"min_storage_hm3": 100.0}},
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(3, "HV_9001")])
+        result = _generic_constraint_lhs_decomp(
+            case, tmp_path / "output", [_gc(3, "HV_9001")]
+        )
 
         assert result.to_dicts() == [
-            {"constraint_id": 3, "stage_id": 0, "lhs_value": 150.0}
+            {"constraint_id": 3, "stage_id": 0, "lhs_value": expected}
         ]
 
     def test_rhe_soft_constraint_lhs_is_the_achieved_valor(

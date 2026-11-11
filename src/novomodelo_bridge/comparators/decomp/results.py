@@ -2433,25 +2433,42 @@ def _stage_frame_to_lookup(
     }
 
 
-def _storage_lookup(
+def _stage_floor_by_id_stage(
+    novomodelo_output_dir: Path,
+) -> dict[tuple[int, int], float]:
+    """``{(novomodelo hydro id, stage_0based): per-stage storage floor hm3}``.
+
+    Empty when the case has no per-stage storage bound. Null rows are dropped
+    before the first value per key, so a row bounding another column cannot
+    mask the storage row.
+    """
+    bounds = novomodelo_readers.read_novomodelo_hydro_per_stage_bounds(
+        novomodelo_output_dir
+    )
+    if "min_storage_hm3" not in bounds.columns:
+        return {}
+    return {
+        (int(hydro_id), int(stage)): float(floor)
+        for hydro_id, stage, floor in bounds.filter(
+            pl.col("min_storage_hm3").is_not_null()
+        )
+        .unique(subset=["entity_id", "stage_id"], keep="first", maintain_order=True)
+        .select("entity_id", "stage_id", "min_storage_hm3")
+        .iter_rows()
+    }
+
+
+def _useful_volume_lookup(
     hydro_frame: pl.DataFrame,
     id_map: DecompIdMap,
-    min_storage_by_novomodelo_id: dict[int, float],
+    static_floor_by_id: dict[int, float],
+    stage_floor_by_id_stage: dict[tuple[int, int], float],
 ) -> dict[tuple[int, int], float]:
-    """``{(source code, stage_0based): absolute storage hm3}`` = useful + Vmin.
+    """``{(source code, stage_0based): S - V_lo hm3}`` for an HV ``VARM`` term.
 
-    The source model's own operation export (``volume_util_final_hm3``)
-    reports *useful* volume (above the plant's minimum operative storage);
-    novomodelo's ``hydro_storage(id)`` -- what an ``HV``/``VARM`` generic
-    constraint's expression is built from -- is absolute. This reuses the
-    ``min_storage_hm3`` the converter already wrote to the case's own
-    ``system/hydros.json`` (via `novomodelo_readers.read_novomodelo_hydro_metadata`) --
-    the same floor `_novomodelo_hydro` subtracts in the other direction for the
-    Hydro Operation tab's own storage row -- rather than rebuilding
-    ``EffectiveCadastro`` from the deck a second time. A single static value
-    per plant, not per-stage: the same simplification the shared generic
-    constraint view (`novomodelo.constraint_expr.resolve_generic_constraints`)
-    accepts for its useful-volume terms.
+    Both sides measure S - V_lo, V_lo being the static ``min_storage_hm3``.
+    The source model's ``volume_util_final_hm3`` is measured from the stage
+    floor f, so it gains ``f - V_lo``; f is V_lo where no per-stage row exists.
     """
     useful = _stage_frame_to_lookup(hydro_frame, "volume_util_final_hm3")
     out: dict[tuple[int, int], float] = {}
@@ -2460,10 +2477,11 @@ def _storage_lookup(
             novomodelo_id = id_map.hydro_id(code)
         except KeyError:
             continue
-        vmin = min_storage_by_novomodelo_id.get(novomodelo_id)
-        if vmin is None:
+        v_lo = static_floor_by_id.get(novomodelo_id)
+        if v_lo is None:
             continue
-        out[(code, stage)] = value + vmin
+        floor = stage_floor_by_id_stage.get((novomodelo_id, stage), v_lo)
+        out[(code, stage)] = value + (floor - v_lo)
     return out
 
 
@@ -2595,8 +2613,8 @@ def _generic_constraint_lhs_decomp(
     - **HQ** (flow): ``QDEF``/``QTUR``/``QDES``/``QVER`` register terms
       resolve against the matching ``dec_oper_usih`` flow column.
     - **HV** (storage): ``VARM`` register terms resolve against
-      ``dec_oper_usih``'s *useful* stage-final volume, floor-adjusted to
-      novomodelo's absolute basis (see `_storage_lookup`).
+      ``dec_oper_usih``'s useful stage-final volume, shifted onto the S - V_lo
+      volume novomodelo reports (see `_useful_volume_lookup`).
     - **RHE** (soft stored-energy): read directly from ``DecOperRheSoft``
       (see `_rhe_lhs_lookup`) -- no register/census lookup needed -- and
       converted from stage-average MW to MWh with the stage's hours, the unit
@@ -2628,7 +2646,12 @@ def _generic_constraint_lhs_decomp(
             novomodelo_output_dir
         ).items()
     }
-    storage_lookup = _storage_lookup(hydro_frame, case.id_map, min_storage)
+    storage_lookup = _useful_volume_lookup(
+        hydro_frame,
+        case.id_map,
+        min_storage,
+        _stage_floor_by_id_stage(novomodelo_output_dir),
+    )
 
     thermal_frame = _dec_oper_thermal_stage_frame(
         decomp_dir, probabilities=probabilities

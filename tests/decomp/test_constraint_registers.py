@@ -15,6 +15,7 @@ import pytest
 
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     BoundConflict,
     ConstraintRecord,
@@ -366,6 +367,7 @@ def test_hq_qbom_no_double_emission() -> None:
         pumping_station_ids={},
         effective=effective,
         big_m=0.0,
+        hv_penalty=123.0,
     )
 
     assert result is None
@@ -453,7 +455,7 @@ def test_non_unit_single_term_qver_is_generic() -> None:
     assert not lowers_to_bound(record)
 
 
-def test_hv_varm_single_lowers_to_storage_bound() -> None:
+def test_hv_varm_single_unit_term_stays_generic() -> None:
     dadger = _FakeDadger(
         hv=_decl((7, 1, 2)),
         cv=_coeff((7, 40, 1.0, 1, "VARM"), tipo=True),
@@ -463,10 +465,57 @@ def test_hv_varm_single_lowers_to_storage_bound() -> None:
     rec = _only(census.by_family["HV"], 7)
     assert not rec.per_block
     assert rec.terms[0].variable == "VARM"
-    assert lowers_to_bound(rec)
+    assert not lowers_to_bound(rec)
+    assert rec in census.to_generic
+    assert rec not in census.to_bounds
     # Stage-level bounds carry a single slot.
     assert rec.bounds[0].lower == (100.0,)
     assert rec.bounds[0].upper == (900.0,)
+
+
+def test_mini_deck_every_hv_is_generic(decomp_mini_case: DecompCase) -> None:
+    census = read_constraints(decomp_mini_case.dadger)
+    hv = census.by_family["HV"]
+    assert 13 in {rec.constraint_id for rec in hv}
+    assert all(rec in census.to_generic for rec in hv)
+    assert not any(rec.family == "HV" for rec in census.to_bounds)
+
+
+@pytest.mark.parametrize(
+    "blank",
+    [None, float("nan"), "", "   "],
+    ids=["none", "nan", "empty", "spaces"],
+)
+def test_hv_blank_tipo_reads_as_varm(blank: object) -> None:
+    dadger = _FakeDadger(
+        hv=_decl((7, 1, 2)),
+        cv=_coeff((7, 40, 1.0, 1, blank), tipo=True),
+        lv=_lv((7, 1, 100.0, 900.0)),
+    )
+    rec = _only(read_constraints(dadger).by_family["HV"], 7)
+    (term,) = rec.terms
+    assert term.variable == "VARM"
+
+
+def test_hv_explicit_tipos_are_kept() -> None:
+    dadger = _FakeDadger(
+        hv=_decl((7, 1, 2), (8, 1, 2)),
+        cv=_coeff((7, 40, 1.0, 1, "VARM"), (8, 40, 1.0, 1, "VDEF"), tipo=True),
+        lv=_lv((7, 1, 100.0, 900.0), (8, 1, 0.0, 50.0)),
+    )
+    by_family = read_constraints(dadger).by_family["HV"]
+    assert _only(by_family, 7).terms[0].variable == "VARM"
+    assert _only(by_family, 8).terms[0].variable == "VDEF"
+
+
+def test_hq_blank_tipo_gets_no_default() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((5, 1, 1)),
+        cq=_coeff((5, 30, 1.0, 1, None), tipo=True),
+        lq=_lu((5, 1, 10.0, 100.0, 10.0, 100.0, 10.0, 100.0)),
+    )
+    rec = _only(read_constraints(dadger).by_family["HQ"], 5)
+    assert rec.terms[0].variable != "VARM"
 
 
 def test_he_percentage_is_lower_bound() -> None:
@@ -834,6 +883,7 @@ def test_conflicting_flow_restrictions_emit_two_soft_generic_constraints() -> No
         pumping_station_ids={},
         effective=effective,
         big_m=45000.0,
+        hv_penalty=123.0,
     )
 
     assert result is not None

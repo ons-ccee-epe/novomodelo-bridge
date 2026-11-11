@@ -9,7 +9,7 @@ novomodelo bound parquet rows. It produces contributions only — it does not wr
 parquet, call ``resolve``/``build_bound_tables``, or touch the pipeline.
 
 ``single_term_bound_contributions`` is the stable public seam: it dispatches
-each record on its ``family`` (``"RE"``, ``"HQ"``, and ``"HV"``) and raises
+each record on its ``family`` (``"RE"`` and ``"HQ"``) and raises
 on anything else, so an unhandled family fails loud instead of silently
 dropping a bound.
 """
@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import sided_bounds
-from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
 from novomodelo_bridge.decomp.converters.hydro import split_plant_group_id
 
 if TYPE_CHECKING:
@@ -33,7 +32,6 @@ if TYPE_CHECKING:
         ConstraintCensus,
         ConstraintRecord,
     )
-    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -451,88 +449,12 @@ def _qbom_pumping_contributions(
     )
 
 
-def _hv_storage_contributions(
-    record: ConstraintRecord,
-    id_map: DecompIdMap,
-    calendar: Sequence[OperativeStage],
-    effective: EffectiveCadastro,
-) -> list[BoundContribution]:
-    """One RHV single ``VARM`` constraint -> hydro ``storage`` bounds.
-
-    Storage is a stage-level axis (unlike RE/RHQ's per-block axes), so every
-    contribution carries ``block_id=None`` — the accumulator raises on a
-    ``block_id`` reaching the ``storage`` axis, so this does not route through
-    :func:`_per_block_contributions`.
-
-    The source model's ``LV`` limits are relative to the plant's useful
-    volume; novomodelo's ``min/max_storage_hm3`` are absolute. The sign map
-    (:func:`sided_bounds`) runs first, then each surviving side is added to
-    the per-stage effective floor (:func:`~novomodelo_bridge.decomp.converters.
-    cadastro.effective.effective_storage_range`'s floor element, which
-    honours per-stage ``AC VOLMIN``/``VOLMAX`` overrides and the
-    run-of-river ``D`` collapse) to reach the absolute bound.
-
-    A ``code`` absent from the cadastro (``effective.base.index``) emits a
-    ``WARNING`` diagnostic and is skipped entirely rather than crashing or
-    silently dropping the constraint.
-    """
-    code = record.terms[0].code
-    if code not in effective.base.index:
-        emit(
-            Diagnostic(
-                code="decomp-rhv-varm-plant-uncadastred",
-                severity=Severity.WARNING,
-                category="Special constraints",
-                title="RHV VARM constraint references an uncadastred plant",
-                summary=(
-                    f"HV constraint {record.constraint_id} bounds the stored "
-                    f"volume of plant code {code}, which has no cadastro row; "
-                    "the constraint cannot be lowered to a storage bound."
-                ),
-                remediation=(
-                    f"HV constraint {record.constraint_id} is skipped; check "
-                    f"that plant code {code} is cadastred and operated."
-                ),
-            )
-        )
-        return []
-
-    hydro_id = id_map.hydro_id(code)
-    term = record.terms[0]
-    contributions: list[BoundContribution] = []
-    for stage_index, stage_bounds in record.bounds.items():
-        rel_lower, rel_upper = sided_bounds(
-            stage_bounds.lower[0],
-            stage_bounds.upper[0],
-            term.coefficient_at(stage_index),
-        )
-        floor = effective_storage_range(effective, code, stage_index)[0]
-        abs_lower = None if rel_lower is None else floor + rel_lower
-        abs_upper = None if rel_upper is None else floor + rel_upper
-        if abs_lower is None and abs_upper is None:
-            continue
-        contributions.append(
-            BoundContribution(
-                family="hydro",
-                entity_id=hydro_id,
-                stage_id=stage_index,
-                block_id=None,
-                axis="storage",
-                lower=abs_lower,
-                upper=abs_upper,
-                contributor=f"HV_{record.constraint_id}",
-            )
-        )
-    return contributions
-
-
 def single_term_bound_contributions(
     case: DecompCase,
     id_map: DecompIdMap,
     *,
     census: ConstraintCensus,
     pumping_station_ids: Mapping[int, int],
-    effective: EffectiveCadastro,
     hydro_capacities: Mapping[int, HydroCapacities],
 ) -> list[BoundContribution]:
     """Lower every ``census.to_bounds`` record to its entity bound contributions.
@@ -549,12 +471,10 @@ def single_term_bound_contributions(
     is a pumping-station code, not a hydro one); everything else
     (``QDEF``/``QTUR``/``QDES``/``QVER``) lowers to a hydro
     ``outflow``/``turbined``/``diversion``/``spillage`` bound via
-    :func:`_hq_flow_contributions`. ``"HV"`` lowers to hydro ``storage``
-    bounds. Any other family raises ``ValueError`` naming it.
-    *pumping_station_ids* feeds only the ``HQ`` ``QBOM`` path — required, not
-    defaulted, so a forgotten wiring fails loud instead of silently dropping
-    every QBOM bound; *effective* feeds only the ``HV`` handler's per-stage
-    floor and cadastro guard; *hydro_capacities* feeds the ``FU``/
+    :func:`_hq_flow_contributions`. Any other family raises ``ValueError``
+    naming it. *pumping_station_ids* feeds only the ``HQ`` ``QBOM`` path —
+    required, not defaulted, so a forgotten wiring fails loud instead of
+    silently dropping every QBOM bound; *hydro_capacities* feeds the ``FU``/
     ``generation`` RE path's ``max_generation_mw`` clamp (see
     :func:`_re_generation_contributions`) and the ``HQ``/``QTUR``/
     ``turbined`` path's ``max_turbined_m3s`` clamp (see
@@ -568,13 +488,13 @@ def single_term_bound_contributions(
     ------
     KeyError
         Propagated from ``id_map.hydro_id``/``id_map.thermal_id`` when an
-        RE/HQ/HV term names a code the id map does not know (a real
+        RE/HQ term names a code the id map does not know (a real
         reader/id-map mismatch), or from *hydro_capacities* when it has no
         entry for a hydro id the id map just resolved (a wiring mismatch
         between the two maps' sources).
     ValueError
         When a ``to_bounds`` record carries a family other than ``"RE"``/
-        ``"HQ"``/``"HV"``, or an ``"RE"`` record whose single term's variable
+        ``"HQ"``, or an ``"RE"`` record whose single term's variable
         is neither ``"generation"`` nor ``"thermal_generation"``.
     """
     calendar = case.calendar
@@ -608,10 +528,6 @@ def single_term_bound_contributions(
                 contributions.extend(
                     _hq_flow_contributions(record, id_map, calendar, hydro_capacities)
                 )
-        elif record.family == "HV":
-            contributions.extend(
-                _hv_storage_contributions(record, id_map, calendar, effective)
-            )
         else:
             raise ValueError(
                 f"single_term_bound_contributions: unhandled family {record.family!r}"
