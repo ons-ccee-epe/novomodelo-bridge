@@ -14,6 +14,13 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`convert decomp` writes each load block's own `CT` unit cost (CVU) in
+  `constraints/thermal_bounds.parquet`** when a plant's CVUs differ between
+  the load blocks of a stage, instead of only their hours-weighted mean.
+  Results change for such decks; reconvert them.
+
 ## [0.20.0] - 2026-11-03
 
 Pairs the bridge with the **novomodelo 0.20.0** release and pins
