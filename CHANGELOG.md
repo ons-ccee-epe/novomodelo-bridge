@@ -14,6 +14,14 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`convert decomp` writes DECOMP's own spillage, turbining, diversion and
+  exchange penalties** instead of NEWAVE's: the same cost for every plant
+  whatever its productivity, and half the exchange cost on lines that touch
+  a fictitious subsystem or the `IV` node. Results change; convert DECOMP
+  cases again and rerun novomodelo.
+
 ## [0.20.0] - 2026-11-03
 
 Pairs the bridge with the **novomodelo 0.20.0** release and pins
