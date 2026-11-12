@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from novomodelo_bridge.core.units import HM3_TO_MWH_PER_RHO
 
@@ -13,9 +14,9 @@ from novomodelo_bridge.core.units import HM3_TO_MWH_PER_RHO
 # These are the source model's v30 values verbatim: tiny (~1e-4 R$/MWh) regularization
 # costs whose only role is to break LP ties in a fixed merit order (exchange < spillage
 # < … < excess), well below any operational or deterrent cost. PCORTEOL is the one
-# exception: lowered from v30's 0.000344 below every other micro-penalty, so curtailing
-# a park is the cheapest surplus outlet. It must stay > 0 (novomodelo rejects a zero
-# penalty).
+# exception: lowered from v30's 0.000344 so it sits below every other micro-penalty in
+# this block; the DECOMP track's exchange micro-costs (`decomp/converters/penalties.py`)
+# are not above it. It must stay > 0 (novomodelo rejects a zero penalty).
 PINT = 0.000273  # intercâmbio  → line.exchange_cost
 PCORTEOL = 0.0001  # corte geração eólica → ncs.curtailment_cost
 PEXC = 0.000355  # excesso de energia → bus.excess_cost
@@ -83,12 +84,22 @@ INFLOW_NON_NEGATIVITY_METHOD = "truncation_with_penalty"
 _INFLOW_NN_OFFSET_R_PER_M3S = 1.0
 
 
+@dataclass(frozen=True)
+class FlowMicroCosts:
+    """Flow-domain micro-penalties in R$/(m³/s·h), emitted without a productivity factor."""
+
+    spillage_cost: float
+    turbined_cost: float
+    diversion_cost: float
+
+
 def hydro_penalty_costs(
     *,
     rho_avg: float,
     rho_max_acum: float,
     penalid_costs: Mapping[str, float],
     max_deficit_cost: float,
+    flow_micro_costs: FlowMicroCosts | None = None,
 ) -> dict[str, float]:
     """Compute the ρ-scaled hydro penalty block for one (ρ_avg, ρ_max_acum).
 
@@ -104,7 +115,8 @@ def hydro_penalty_costs(
       storage floor — the agreed criterion, matching evaporation).
     - ``VAZMIN`` / ``TURBMN`` / ``TURBMX`` → ``× PROD_MEDIA_SIN``.
     - ``GHMIN`` → energy-domain slack, no productivity multiplier.
-    - Micro-penalties ``pEVERT`` / ``pTURB`` / ``pCDESV`` → ``× PROD_MEDIA_SIN``.
+    - Micro-penalties ``pEVERT`` / ``pTURB`` / ``pCDESV`` → ``× PROD_MEDIA_SIN``
+      unless ``flow_micro_costs`` supplies flat values.
 
     The returned dict preserves the exact key order of ``penalties.json:hydro``.
     """
@@ -174,9 +186,14 @@ def hydro_penalty_costs(
     )
 
     # Flow-domain micro-penalties (× ρ_avg per source-model individualized conversion).
-    spillage_cost = _PEVERT * rho_avg
-    turbined_cost = _PTURB * rho_avg
-    diversion_cost = _PCDESV * rho_avg
+    if flow_micro_costs is None:
+        spillage_cost = _PEVERT * rho_avg
+        turbined_cost = _PTURB * rho_avg
+        diversion_cost = _PCDESV * rho_avg
+    else:
+        spillage_cost = flow_micro_costs.spillage_cost
+        turbined_cost = flow_micro_costs.turbined_cost
+        diversion_cost = flow_micro_costs.diversion_cost
 
     # The source model has no PENALID entry for inflow non-negativity; the price is
     # anchored to withdrawal (see ``_INFLOW_NN_OFFSET_R_PER_M3S``).

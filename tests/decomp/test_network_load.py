@@ -8,7 +8,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from novomodelo_bridge.decomp.converters.network import convert_buses, convert_lines
+from novomodelo_bridge.decomp.converters.network import (
+    convert_buses,
+    convert_lines,
+    fictitious_bus_ids,
+)
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.load import convert_load_factors, convert_load_stats
 from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
@@ -177,6 +181,24 @@ class TestConvertBuses:
         )
         with pytest.raises(ValueError, match="multi-segment"):
             convert_buses(case, _ID_MAP)
+
+
+class TestFictitiousBusIds:
+    def test_fictitious_buses_are_cd_less_subsystems_and_the_transhipment_bus(
+        self,
+    ) -> None:
+        costs = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
+        assert fictitious_bus_ids(costs, _ID_MAP) == frozenset({4, 5})
+
+    def test_cd_code_outside_sb_is_ignored(self) -> None:
+        costs = {code: 1.0 for code in _ID_MAP.bus_codes} | {99: 1.0}
+        assert fictitious_bus_ids(costs, _ID_MAP) == frozenset(
+            {_ID_MAP.transhipment_bus_id}
+        )
+
+    def test_no_cd_marks_every_bus_fictitious(self) -> None:
+        id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
+        assert fictitious_bus_ids({}, id_map) == frozenset({0, 1, 2})
 
 
 class TestConvertLoad:
