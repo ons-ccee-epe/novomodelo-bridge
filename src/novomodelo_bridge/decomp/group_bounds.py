@@ -22,8 +22,7 @@ Column                  Arrow type Required?
 
 All four bound columns are block-eligible (see the reader module docstring) —
 unlike the plant-axis ``hydro_bounds``, this family has no block-ineligible
-column (contrast ``thermal_bounds.cost_per_mwh``), so novomodelo rule 37 never
-touches it.
+column.
 
 **The overlay is id-addressed, not position-addressed.** novomodelo matches an
 override row to a group by the group's own declared ``id`` (novomodelo builds
@@ -47,11 +46,12 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from novomodelo_bridge.decomp.temporal import hours_weighted
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from novomodelo_bridge.decomp.case import DecompCase
-    from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _HYDRO_UNIT_GROUP_BOUNDS_SCHEMA = pa.schema(
     [
@@ -102,8 +102,8 @@ class GroupBoundEntry:
     - a bare ``float`` — a stage-level value, emitted on the base row only
       (no per-block override rows for this column), or
     - a ``Sequence[float]``, one entry per the stage's declared block count
-      — folded into the base row as the hours-weighted stage mean (the same
-      fold ``convert_thermal_bounds``/``convert_hydro_bounds`` use), plus
+      — folded into the base row as the hours-weighted stage mean
+      (:func:`~novomodelo_bridge.decomp.temporal.hours_weighted`), plus
       sparse per-block override rows wherever the stage's per-block values
       are not all equal.
     """
@@ -114,49 +114,30 @@ class GroupBoundEntry:
     max_generation_mw: float | Sequence[float] | None = None
 
 
-def _hours_weighted(values: Sequence[float], stage: OperativeStage) -> float:
-    """Hours-weighted stage mean of a per-block value list — the same fold
-    ``convert_thermal_bounds``/``convert_hydro_bounds`` use for their own
-    base row (``decomp/converters/thermal.py``, ``decomp/converters/bounds.py``).
-
-    Raises
-    ------
-    ValueError
-        Via ``zip(..., strict=True)``, if *values* has more or fewer
-        entries than the stage's declared block count — the same
-        length-mismatch contract the sibling emitters enforce.
-    """
-    return (
-        sum(v * h for v, h in zip(values, stage.block_hours, strict=True))
-        / stage.total_hours
-    )
-
-
 def convert_hydro_unit_group_bounds(
     case: DecompCase,
     *,
     values: Mapping[tuple[int, int, int], GroupBoundEntry],
 ) -> pa.Table:
-    """Build ``hydro_unit_group_bounds`` from a hand-fed value mapping.
+    """Build ``hydro_unit_group_bounds`` from a caller-supplied value mapping.
 
     *values* keys the four-column overlay by ``(hydro_id,
     hydro_unit_group_id, stage_id)``; *calendar* supplies each stage's
     declared block count for the block-sparsity fold. This function computes
-    no availability, maintenance, or Itaipu-specific values itself — 026 (or
-    a test) is responsible for what goes into *values*. An empty mapping
-    returns :func:`_empty`, which is what the pipeline calls until 026 is
-    wired.
+    no availability, maintenance, or Itaipu-specific values itself — the
+    caller is responsible for what goes into *values* (the pipeline passes
+    the Itaipu frequency-group values, ``itaipu_frequency_group_values``).
+    An empty mapping returns :func:`_empty`.
 
-    Emission follows the base-plus-sparse-per-block convention verbatim
-    (``convert_thermal_bounds``, ``convert_hydro_bounds``, ``convert_lines``):
-    every populated ``(hydro, group, stage)`` gets one base row (``block_id
-    = None``); if any of its columns supplied a per-block breakdown and that
-    breakdown is not block-uniform, one additional override row per declared
-    block follows, carrying each per-block-supplied column's exact value at
-    that block (a ``0.0`` value is a real bound and is emitted; a column
-    with no per-block breakdown stays ``None`` on the override rows). Row
-    order (base before its overrides, keys sorted) is a source-code
-    convention for readability only — novomodelo re-sorts on load, so it is never
+    Emission is a base row plus sparse per-block overrides: every populated
+    ``(hydro, group, stage)`` gets one base row (``block_id = None``); if
+    any of its columns supplied a per-block breakdown and that breakdown is
+    not block-uniform, one additional override row per declared block
+    follows, carrying each per-block-supplied column's exact value at that
+    block (a ``0.0`` value is a real bound and is emitted; a column with no
+    per-block breakdown stays ``None`` on the override rows). Row order
+    (base before its overrides, keys sorted) is a source-code convention for
+    readability only — novomodelo re-sorts on load, so it is never
     load-bearing (see the module docstring's id-addressed note).
 
     Raises
@@ -164,7 +145,8 @@ def convert_hydro_unit_group_bounds(
     ValueError
         If an entry's *stage_id* is not in *calendar*, or a per-block
         breakdown's length disagrees with that stage's declared block count
-        (via :func:`_hours_weighted`'s ``zip(..., strict=True)``).
+        (via :func:`~novomodelo_bridge.decomp.temporal.hours_weighted`'s
+        ``zip(..., strict=True)``).
     """
     if not values:
         return _empty()
@@ -195,7 +177,7 @@ def convert_hydro_unit_group_bounds(
                 base[column] = float(raw)
             else:
                 block_values = [float(v) for v in raw]
-                base[column] = _hours_weighted(block_values, stage)
+                base[column] = hours_weighted(block_values, stage)
                 block_breakdowns[column] = block_values
 
         if all(value is None for value in base.values()):
