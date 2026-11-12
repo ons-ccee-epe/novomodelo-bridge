@@ -14,6 +14,36 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` converts `HV` volume restrictions whose `CV` terms are
+  `VDEF`, `VDES` or `VBOM`**; it dropped them with a
+  `decomp-rhv-volume-tipo-deferred` warning. An `HV` is skipped with a
+  warning when a `VBOM` term has no `UE` pumping station
+  (`decomp-rhv-vbom-no-station`) or a `VDES` term's plant has no diversion
+  channel in the converted case (`decomp-rhv-vdes-no-diversion`), and an `HQ`
+  or `HV` whose coefficients are all zero is skipped with
+  `decomp-rhq-rhv-zero-coefficients`.
+
+### Changed
+
+- **`convert decomp` writes every `HV` volume restriction as a soft constraint
+  in `constraints/generic_constraints.json` and
+  `constraints/generic_constraint_bounds.parquet`**, a single-plant one
+  included, which it wrote as a storage bound in
+  `constraints/hydro_bounds.parquet`. Results change; reconvert DECOMP cases.
+
+### Removed
+
+- **The `decomp-rhv-volume-tipo-deferred` warning**: `convert decomp` converts
+  the restrictions it reported.
+
+### Fixed
+
+- **`convert decomp` reads a `CV` term with a blank type as `VARM`, and skips
+  an `HV` on a plant that is not operated with a
+  `decomp-rhv-varm-plant-uncadastred` warning**; both stopped the conversion.
+
 ## [0.20.0] - 2026-11-03
 
 Pairs the bridge with the **novomodelo 0.20.0** release and pins

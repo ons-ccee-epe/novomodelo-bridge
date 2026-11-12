@@ -90,6 +90,12 @@ anywhere any more; treat each as "a deck with these properties".
 | --- | --- |
 | Convert a deck with at least one operated `VI` arc, then `novomodelo run` the case to convergence | The transit-bucket cut generation produces a valid policy: training converges on a non-negative gap (no lower bound driven past the upper bound), and the solved case prices the in-transit water. `novomodelo validate` alone does not exercise this — it checks the `past_defluences` coverage rule at config time but not the cut arithmetic — so this needs the solver binary, not just the validator. The emission shape is unit-tested in `test_travel_time.py` and the loadability in `test_convert_decomp_e2e.py` (tier-2, `novomodelo validate`); this whole-deck run is what closed the former novomodelo cut-generation defect (`C-travel-time`). |
 
+### A DECOMP deck with `VDEF`, `VDES` or `VBOM` volume restrictions, plus a novomodelo binary
+
+| Check | Verifies |
+| --- | --- |
+| Convert a deck whose `HV` restrictions carry `VDEF`, `VDES` or `VBOM` terms into a fresh directory with `convert decomp`, `novomodelo validate` and `novomodelo run` the case to convergence, then `compare decomp` against DECOMP's own run of the deck | The case loads in a novomodelo release that accepts the stage-volume expression terms: `novomodelo validate` exits 0. Training converges on a non-negative gap; record the iteration count and whether any `HV` row's slack is non-zero, because a binding `HV` carries its per-hm³ violation price into the storage cuts and can slow convergence. For each `HV` row with a volume term, the left-hand side evaluated from the solved case lies within the row's bounds, or its slack makes up the difference. `compare decomp` lists those rows as novomodelo-only, because it does not evaluate DECOMP's stage volumes; the `HV` rows' total slack cost is set beside the `VIOLACAO RHV` parcel of DECOMP's cost report, with no match expected. The loadability on the mini deck is `test_rhv_volume_tipos_pass_novomodelo_validation` in `tests/decomp/test_convert_decomp_e2e.py` (tier-2, `novomodelo validate`). |
+
 ### Sibling novomodelo checkout (replaced, not removed)
 
 Four tests in `tests/decomp/test_contracts.py` read novomodelo's

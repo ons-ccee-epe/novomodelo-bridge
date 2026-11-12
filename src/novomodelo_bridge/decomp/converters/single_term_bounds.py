@@ -415,7 +415,7 @@ def _qbom_pumping_contributions(
     hydro code, so it resolves through *pumping_station_ids* rather than
     ``id_map.hydro_id``. A code absent from *pumping_station_ids* emits a
     ``WARNING`` diagnostic and is skipped entirely — skip-not-partial,
-    mirroring ``constraints.py::_emit_rhq_qbom_no_station`` — rather than
+    mirroring ``constraints.py::_emit_pumping_term_no_station`` — rather than
     raising a raw ``KeyError`` or falling back to a generic constraint.
     """
     code = record.terms[0].code
