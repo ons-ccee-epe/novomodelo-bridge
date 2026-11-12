@@ -161,11 +161,6 @@ def _only(census_records: Iterable[ConstraintRecord], cid: int) -> ConstraintRec
     return records[0]
 
 
-def _term(coefficient: float, variable: str = "QDEF") -> ConstraintTerm:
-    """A single flow term on one plant, for classifier-only tests."""
-    return ConstraintTerm(code=30, coefficient=coefficient, variable=variable)
-
-
 def _single_term_record(coefficient: float, variable: str = "QDEF") -> ConstraintRecord:
     """A minimal single-term HQ record built directly, no ``Dadger`` fixture —
     only ``lowers_to_bound``'s classification is under test."""
@@ -174,7 +169,7 @@ def _single_term_record(coefficient: float, variable: str = "QDEF") -> Constrain
         constraint_id=1,
         stage_start=0,
         stage_end=0,
-        terms=(_term(coefficient, variable),),
+        terms=(ConstraintTerm(code=30, coefficient=coefficient, variable=variable),),
         bounds={},
         per_block=True,
     )
@@ -376,8 +371,7 @@ def test_hq_qbom_no_double_emission() -> None:
 
 def test_hq_qdes_single_lowers_to_diversion_bound() -> None:
     """A single-term ``QDES`` RHQ lowers to a two-sided hydro ``diversion``
-    bound, now that novomodelo's
-    generic-constraint-authoring landed ``min_diversion_m3s``."""
+    bound."""
     dadger = _FakeDadger(
         hq=_decl((6, 1, 1)),
         cq=_coeff((6, 31, 1.0, 1, "QDES"), tipo=True),
@@ -394,8 +388,7 @@ def test_hq_qdes_single_lowers_to_diversion_bound() -> None:
 
 def test_hq_qver_single_lowers_to_spillage_bound() -> None:
     """A single-term ``QVER`` RHQ lowers to a two-sided hydro ``spillage``
-    bound, now that novomodelo's
-    generic-constraint-authoring landed ``min/max_spillage_m3s``."""
+    bound."""
     dadger = _FakeDadger(
         hq=_decl((9, 1, 1)),
         cq=_coeff((9, 31, 1.0, 1, "QVER"), tipo=True),

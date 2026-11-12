@@ -128,10 +128,8 @@ def _per_block_contributions(
     term = record.terms[0]
     for stage_index, stage_bounds in record.bounds.items():
         coefficient = term.coefficient_at(stage_index)
-        n_blocks = len(calendar[stage_index].block_hours)
+        n_blocks = min(len(calendar[stage_index].block_hours), len(stage_bounds.lower))
         for block_id in range(n_blocks):
-            if block_id >= len(stage_bounds.lower):
-                continue
             entity_lower, entity_upper = sided_bounds(
                 stage_bounds.lower[block_id],
                 stage_bounds.upper[block_id],

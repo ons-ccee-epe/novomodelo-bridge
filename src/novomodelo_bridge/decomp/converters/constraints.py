@@ -641,8 +641,8 @@ def emit_re_generics(
     :func:`_resolve_re_terms`). Single-hydro-generation RE records never
     reach here — they lower to a plant bound in ``single_term_bounds.py``
     (``lowers_to_bound``). ``HQ``/``HV`` records also present in
-    ``census.to_generic`` are :func:`emit_rhq_rhv_generics`'s, not this
-    function's; ``HE`` records are unhandled (deferred).
+    ``census.to_generic`` are :func:`emit_rhq_rhv_generics`'s and ``HE``
+    records :func:`emit_rhe_generics`'s, not this function's.
 
     Reads no ``dadger``; *big_m*, *line_map* and *contract_tokens*
     (:func:`build_contract_token_map`) arrive from the caller.

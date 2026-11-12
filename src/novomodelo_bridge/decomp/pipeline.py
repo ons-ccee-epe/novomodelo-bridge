@@ -1512,14 +1512,11 @@ def _resolve_line_bounds(
     line_bounds: pa.Table, block_counts: dict[int, int]
 ) -> pa.Table:
     """*line_bounds* resolved to one row per ``(line, stage, block)`` cell."""
-    # Line bounds now route through the same BoundContribution -> resolve()
-    # primitive as hydro/thermal/pumping in `_resolve_bounds`: a colliding
-    # pair of contributions on the direct/reverse axis intersects (or
-    # loud-fails on a genuine conflict) instead of one silently overwriting
-    # the other.
-    # bounds_accumulator.build_bound_tables only fans into its own three
-    # built-in tables, so line bounds fan out through _fan_resolved_rows
-    # instead (see its docstring).
+    # Routed through the same BoundContribution -> resolve() primitive as
+    # hydro/thermal/pumping, so a colliding pair on the direct/reverse axis
+    # intersects (or loud-fails on a genuine conflict) instead of one silently
+    # overwriting the other. build_bound_tables only fans into its own three
+    # tables, so line bounds fan out through _fan_resolved_rows.
     line_contribs = _row_group_contributions(
         line_bounds.to_pylist(),
         family="line",
@@ -1752,11 +1749,10 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     contract_bounds_table = contracts_conv.convert_contract_bounds(
         case, contracts=contracts
     )
-    # Contract power bounds now route through the same BoundContribution ->
-    # resolve() primitive as the hydro/thermal/pumping/line bounds in
-    # `_resolve_bounds`; price_per_mwh is not a bound axis (it rides its own
-    # side-table, per bounds_accumulator's own AXES docstring), so it is
-    # rejoined afterward.
+    # Contract power bounds route through the same BoundContribution ->
+    # resolve() primitive as the other bounds; price_per_mwh is not a bound
+    # axis (it rides its own side-table, per bounds_accumulator's own AXES
+    # docstring), so it is rejoined afterward.
     contract_power_contribs = _row_group_contributions(
         contract_bounds_table.to_pylist(),
         family="contract",
@@ -2169,11 +2165,8 @@ def _emit_and_write(
         artifacts, shared, census=census, pumping_ids=pumping_ids
     )
 
-    # The 4th generic-constraint emitter link -- every
-    # LIBs-era long-form electrical restriction that resolved
-    # (`libs_electrical_model`, read once above), spliced after RHE so the
-    # unconditional write block below picks it up automatically, identical in
-    # shape to the three links above. Built only when the deck actually
+    # Every LIBs-era long-form electrical restriction that resolved
+    # (`libs_electrical_model`, read once above). Built only when the deck
     # carries a long-form model, since none of these inputs are otherwise
     # needed.
     libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None = None

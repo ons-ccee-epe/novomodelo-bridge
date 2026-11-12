@@ -897,7 +897,7 @@ def test_emit_rhq_rhv_generics_rhq_qbom_no_station_skips_and_warns(
     )
 
 
-def test_emit_rhq_rhv_generics_rhv_multi_varm_additive_floor() -> None:
+def test_emit_rhq_rhv_generics_rhv_multi_varm_bound_is_lv_at_the_static_floor() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
     effective = EffectiveCadastro(
         base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
