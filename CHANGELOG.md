@@ -14,6 +14,18 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`convert newave` and `convert decomp` omit `system/lines.json` and
+  `system/thermals.json` when the deck has no lines or no thermal plants.** A
+  script that reads converted cases must treat a missing file as an empty list;
+  `export dessem` already does.
+
+### Fixed
+
+- **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
+  Such a deck now converts.
+
 ## [0.20.0] - 2026-11-03
 
 Pairs the bridge with the **novomodelo 0.20.0** release and pins

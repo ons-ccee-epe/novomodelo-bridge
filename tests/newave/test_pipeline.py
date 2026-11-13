@@ -271,6 +271,47 @@ class TestConvertNewaweCasePipeline:
         assert str(dst / "system" / "hydros.json") in report.would_write_paths
 
 
+class TestOptionalLinesAndThermals:
+    @staticmethod
+    def _run(tmp_path: Path, *, thermals: list, lines: list) -> Path:
+        import contextlib
+
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
+
+        src = _make_fake_newave_dir(tmp_path)
+        dst = tmp_path / "cobre_case"
+        with contextlib.ExitStack() as stack:
+            for p in _all_converter_patches(MagicMock()):
+                stack.enter_context(p)
+            stack.enter_context(
+                patch(
+                    "novomodelo_bridge.newave.pipeline.thermal_conv.convert_thermals",
+                    return_value={"thermals": thermals},
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "novomodelo_bridge.newave.pipeline.network_conv.convert_lines",
+                    return_value={"lines": lines},
+                )
+            )
+            convert_newave_case(src, dst)
+        return dst
+
+    def test_no_lines_and_no_thermals_omits_both_files(self, tmp_path: Path) -> None:
+        dst = self._run(tmp_path, thermals=[], lines=[])
+
+        assert (dst / "system" / "buses.json").is_file()
+        assert not (dst / "system" / "lines.json").exists()
+        assert not (dst / "system" / "thermals.json").exists()
+
+    def test_no_lines_keeps_thermals_file(self, tmp_path: Path) -> None:
+        dst = self._run(tmp_path, thermals=[{"id": 0}], lines=[])
+
+        assert not (dst / "system" / "lines.json").exists()
+        assert (dst / "system" / "thermals.json").is_file()
+
+
 class TestEmissionCheckWiring:
     """The post-emission self-checks run inside the real
     pipeline body, before the writes, and their findings flip the convert
