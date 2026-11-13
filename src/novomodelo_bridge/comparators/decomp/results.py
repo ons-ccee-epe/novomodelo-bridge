@@ -75,6 +75,7 @@ from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.pandas_utils import as_int
+from novomodelo_bridge.core.units import HM3_PER_M3S_HOUR
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
 from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
@@ -2153,22 +2154,15 @@ def _novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:
     }
 
 
-#: hm³ -> m³/s conversion factor per hour of stage duration -- the inverse of
-#: `core.units.C_M3S2HM3` (``hours * 3600 / 1e6``), generalized to the
-#: stage's own ``hours`` instead of the fixed mean month
-#: (`core.units.MEAN_MONTH_HOURS`) that constant assumes.
-_HM3_TO_M3S_HOUR_FACTOR: float = 3600.0 / 1e6
-
-
 def _hm3_to_m3s(volume_hm3: float, stage_hours: float) -> float:
     """Convert a stage's evaporated volume (hm³) into a mean flow (m³/s).
 
     ``m3s = hm3 * 1e6 / (stage_hours * 3600)`` -- volume/time with the hm³ ->
     m³ and hour -> second unit changes folded into
-    :data:`_HM3_TO_M3S_HOUR_FACTOR`, the same physical relationship
+    :data:`HM3_PER_M3S_HOUR`, the same physical relationship
     `core.units.C_M3S2HM3` expresses in the opposite direction.
     """
-    return volume_hm3 / (stage_hours * _HM3_TO_M3S_HOUR_FACTOR)
+    return volume_hm3 / (stage_hours * HM3_PER_M3S_HOUR)
 
 
 def _evap_side(

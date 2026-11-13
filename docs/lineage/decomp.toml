@@ -276,7 +276,7 @@ reads = [
   { file = "dadger", register = "DT" },
   { file = "hidr" },
 ]
-summary = "Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco hidráulico é escalado pela produtibilidade equivalente média (ρ_avg) e máxima (ρ_max) das usinas operadas, calculadas do cadastro `hidr.dat` ancorado no volume inicial de `UH`."
+summary = "Custo de déficit de `CD`, micro-penalidades fixas do DECOMP (vertimento, turbinamento, desvio e intercâmbio, valores padrão sem registro `PE`) e penalidades de folga hidráulicas escaladas pela produtibilidade equivalente média (ρ_avg) e máxima (ρ_max) das usinas operadas, calculadas do cadastro `hidr.dat` ancorado no volume inicial de `UH`."
 
   [[output.field]]
   path = "bus.deficit_segments[].cost"
@@ -297,21 +297,21 @@ summary = "Custo de déficit de `CD` e micro-penalidades fixas do modelo de orig
 
   [[output.field]]
   path = "hydro.spillage_cost"
-  from = [ { file = "hidr", item = "produtibilidade_especifica" }, { file = "hidr", item = "a0_volume_cota … a4_volume_cota" }, { file = "hidr", item = "canal_fuga_medio" }, { file = "hidr", item = "perdas, tipo_perda" }, { file = "dadger", register = "UH", item = "volume_inicial" } ]
-  status = "derived"
-  how = "`0.000300 × ρ_avg`, com ρ_avg a média (zeros incluídos) da produtibilidade equivalente `ρ_esp · h_líquida` de cada usina operada, altura calculada com o polinômio cota-volume no volume inicial, descontados canal de fuga e perdas."
+  from = []
+  status = "constant"
+  how = "Sempre 0.1 R$/hm³ × 0.0036 = 0.00036 R$/(m³/s·h): vertimento padrão do DECOMP, igual para todas as usinas, com e sem reservatório, sem fator de produtibilidade."
 
   [[output.field]]
   path = "hydro.turbined_cost"
-  from = [ { file = "hidr", item = "produtibilidade_especifica" }, { file = "hidr", item = "a0_volume_cota … a4_volume_cota" }, { file = "hidr", item = "canal_fuga_medio" }, { file = "hidr", item = "perdas, tipo_perda" }, { file = "dadger", register = "UH", item = "volume_inicial" } ]
-  status = "derived"
-  how = "`0.000333 × ρ_avg` (micro-penalidade de turbinamento escalada pela produtibilidade média do sistema)."
+  from = []
+  status = "constant"
+  how = "Sempre 0.11 R$/hm³ × 0.0036 = 0.000396 R$/(m³/s·h): turbinamento padrão do DECOMP, igual para todas as usinas, sem fator de produtibilidade."
 
   [[output.field]]
   path = "hydro.diversion_cost"
-  from = [ { file = "hidr", item = "produtibilidade_especifica" }, { file = "hidr", item = "a0_volume_cota … a4_volume_cota" }, { file = "hidr", item = "canal_fuga_medio" }, { file = "hidr", item = "perdas, tipo_perda" }, { file = "dadger", register = "UH", item = "volume_inicial" } ]
-  status = "derived"
-  how = "`0.000300 × ρ_avg` (micro-penalidade de volume desviado)."
+  from = []
+  status = "constant"
+  how = "Igual ao vertimento: 0.1 R$/hm³ × 0.0036 = 0.00036 R$/(m³/s·h), sem fator de produtibilidade."
 
   [[output.field]]
   path = "hydro.storage_violation_below_cost"
@@ -371,13 +371,13 @@ summary = "Custo de déficit de `CD` e micro-penalidades fixas do modelo de orig
   path = "line.exchange_cost"
   from = []
   status = "constant"
-  how = "Micro-penalidade fixa `0.000273` R$/MWh (intercâmbio)."
+  how = "Sempre 0.0001 R$/MWh, o intercâmbio padrão do DECOMP entre submercados reais. Linhas que tocam uma barra fictícia levam a metade em `system/lines.json`."
 
   [[output.field]]
   path = "non_controllable_source.curtailment_cost"
   from = []
   status = "constant"
-  how = "Micro-penalidade fixa `0.0001` R$/MWh (corte de geração não controlável), abaixo do `0.000344` do modelo de origem, para o corte ser a saída de sobra mais barata."
+  how = "Fixo em `0` R$/MWh (corte de geração não controlável), no lugar do `0.000344` do modelo de origem, para o corte ser a saída de sobra mais barata."
 
 # ---------------------------------------------------------------------------
 # initial_conditions.json
@@ -536,9 +536,10 @@ reads = [
   { file = "dadger", register = "CT" },
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
+  { file = "dadger", register = "CD" },
   { file = "hidr" },
 ]
-summary = "Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Um deck sem `IA` ainda gera o arquivo com lista vazia (TRACKED NOVOMODELO-GAP C4)."
+summary = "Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Sem nenhuma linha (sem `IA` e sem a linha `IV-SE` de Itaipu), o arquivo não é escrito. Linhas que tocam uma barra fictícia recebem metade do custo de intercâmbio global."
 
   [[output.field]]
   path = "lines[].id"
@@ -557,6 +558,12 @@ summary = "Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) 
   from = [ { file = "dadger", register = "DT", item = "dia, mes, ano" } ]
   status = "derived"
   how = "Data de início do estudo."
+
+  [[output.field]]
+  path = "lines[].exchange_cost"
+  from = [ { file = "dadger", register = "SB", item = "codigo_submercado" }, { file = "dadger", register = "CD", item = "codigo_submercado" } ]
+  status = "derived"
+  how = "Presente só nas linhas cuja barra de origem ou de destino é fictícia: um submercado de `SB` sem registro `CD`, ou a barra de transbordo `IV` criada pela conversão (inclusive a linha `IV-SE` criada pela conversão). Vale 0.0001 × 0.5 = 0.00005 R$/MWh, metade do intercâmbio global, para que uma rota real→fictício→real custe o mesmo que o intercâmbio direto. As demais linhas usam o valor global de `penalties.json`."
 
   [[output.field]]
   path = "lines[].source_bus_id"
@@ -3245,7 +3252,7 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   [[source.item]]
   register = "PE"
   status = "unread"
-  note = "Alteração das penalidades de vertimento, intercâmbio e desvio por submercado. Não lido: `penalties.json` usa os valores padrão do conversor. Converter exige mapear cada `tipo` para o campo de penalidade correspondente."
+  note = "Alteração das penalidades de vertimento, intercâmbio e desvio por submercado. Não lido: `penalties.json` usa os valores padrão do conversor. Converter exige mapear cada `tipo` para o campo de penalidade correspondente. O campo do Novomodelo que o `tipo` 2 sobrepõe (custo de desvio ou folga de retirada de água) não está confirmado."
 
   [[source.item]]
   register = "PV"
@@ -3505,6 +3512,12 @@ file = "postos"
 label = "postos.dat"
 status = "unread"
 note = "Cadastro de postos fluviométricos. Não lido: a ligação usina-posto vem da coluna `posto` de `hidr.dat` (com a alteração `AC NUMPOS`)."
+
+[[source]]
+file = "perdas"
+label = "perdas.dat"
+status = "unread"
+note = "Perdas de transmissão nos intercâmbios, arquivo nomeado no índice `arquivos.rvN`. Não lido: as linhas não levam `losses_percent` e a parcela vertimento × perdas da penalidade de intercâmbio não é convertida. Converter exige ler as perdas de cada intercâmbio, emiti-las como `losses_percent` e somar essa parcela ao custo de intercâmbio da linha."
 
 [[source]]
 file = "cortdeco_mapcut"

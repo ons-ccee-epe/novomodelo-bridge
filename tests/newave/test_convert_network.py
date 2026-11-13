@@ -717,6 +717,13 @@ class TestConvertPenalties:
         }
         assert required == set(result["hydro"].keys())
 
+    def test_ncs_curtailment_is_free(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.network import convert_penalties
+
+        case = make_case(tmp_path, sistema=_make_sistema_mock())
+        result = convert_penalties(case, {"hydros": []})
+        assert result["non_controllable_source"] == {"curtailment_cost": 0.0}
+
 
 class TestHydroPenaltyCosts:
     """The pure ρ-scaling helper shared by the base and per-stage paths."""

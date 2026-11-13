@@ -116,9 +116,9 @@ _LOG = logging.getLogger(__name__)
 #
 # Merit order from the source model micro-penalty values ("the source model
 # individualizado"
-# column, manual §3.24 p.88, v30 defaults):
-#   p_INT (0.000273) < p_PFIO = p_EVERT (0.000300)
-#   < p_TURB (0.000333) < p_CORTEOL (0.000344) < p_EXC (0.000355)
+# column, manual §3.24 p.88, v30 defaults), with p_CORTEOL lowered to zero:
+#   p_CORTEOL (0) < p_INT (0.000273) < p_PFIO = p_EVERT (0.000300)
+#   < p_TURB (0.000333) < p_EXC (0.000355)
 
 # The source model halves the intercâmbio penalty on lines that touch a fictitious
 # submercado (e.g. NOFICT1). Rationale: a fictitious node is a routing-only hop with no
@@ -624,10 +624,11 @@ def convert_penalties(
     - PENALID-sourced flow-domain penalties are converted to novomodelo's
       coefficient slot via ``× ρ`` (where ρ is ``PROD_MEDIA_SIN`` or
       ``MAX_PRODTACUM_SIN`` per source-model conversion table on page 87).
-    - The micro-penalties (``pINT``, ``pEVERT``, ``pTURB``, ``pCORTEOL``,
-      ``pEXC``, ``pCDESV``) are the source model's hard-coded internal defaults (page
-      88, current v30 values). They are written directly to novomodelo and preserve the
-      source model's merit order: exchange < spillage < FPHA < curtailment < excess.
+    - The micro-penalties (``pINT``, ``pEVERT``, ``pTURB``, ``pEXC``, ``pCDESV``)
+      are the source model's hard-coded internal defaults (page 88, current v30
+      values). They are written directly to novomodelo and preserve the source
+      model's merit order: exchange < spillage < FPHA < excess. ``pCORTEOL`` is
+      zero instead, so curtailment comes first.
     - Evaporation, storage-floor and filling-target slots without a PENALID
       source are DERIVED from the deficit cost via ``ρ_max_acum``: evaporation and
       storage at ``10 × MAX_CUSTO_DEFICIT × ρ_max_acum`` (the manual p.87 level;

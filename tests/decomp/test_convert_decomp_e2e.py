@@ -17,6 +17,7 @@ import pyarrow.parquet as pq
 import pytest
 from idecomp.decomp import Dadger
 
+from novomodelo_bridge.decomp.converters.penalties import FICTITIOUS_EXCHANGE_FACTOR
 from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 from tests.conftest import (
     FloatDigitsKwargs,
@@ -192,3 +193,55 @@ def test_differing_ct_cvus_write_exact_block_cost_rows(
     assert (dst / "system" / "thermals.json").read_bytes() == (
         base_dst / "system" / "thermals.json"
     ).read_bytes()
+
+
+def test_decomp_mini_micro_tier_keeps_its_order(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    penalties = json.loads((dst / "penalties.json").read_text())
+    lines = json.loads((dst / "system" / "lines.json").read_text())["lines"]
+    h = penalties["hydro"]
+    assert h["turbined_cost"] > h["spillage_cost"] > 0
+    assert h["diversion_cost"] == h["spillage_cost"] > 0
+
+    carrying = [line for line in lines if "exchange_cost" in line]
+    (fictitious,) = {line["exchange_cost"] for line in carrying}
+    assert penalties["line"]["exchange_cost"] > fictitious > 0
+    assert all(
+        line["exchange_cost"]
+        == penalties["line"]["exchange_cost"] * FICTITIOUS_EXCHANGE_FACTOR
+        for line in carrying
+    )
+
+    violation_floor = min(
+        h[k]
+        for k in (
+            "turbined_violation_below_cost",
+            "outflow_violation_below_cost",
+            "outflow_violation_above_cost",
+            "evaporation_violation_cost",
+            "water_withdrawal_violation_cost",
+        )
+    )
+    assert max(h["spillage_cost"], h["diversion_cost"]) < violation_floor
+
+
+def test_decomp_mini_halves_exchange_only_on_lines_touching_marketless_buses(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    buses = json.loads((dst / "system" / "buses.json").read_text())["buses"]
+    lines = json.loads((dst / "system" / "lines.json").read_text())["lines"]
+    marketless = {b["id"] for b in buses if "deficit_segments" not in b}
+    assert all(
+        ("exchange_cost" in line)
+        == (line["source_bus_id"] in marketless or line["target_bus_id"] in marketless)
+        for line in lines
+    )
+    assert any("exchange_cost" in line for line in lines)
+    assert any("exchange_cost" not in line for line in lines)
