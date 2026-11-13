@@ -39,6 +39,7 @@ from novomodelo_bridge.core.diagnostics import (
 )
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -155,13 +156,6 @@ def _pq_series(
     ]
 
 
-def _stage_mean_mw(blocks: Sequence[float], stage: OperativeStage) -> float:
-    energy = sum(
-        mw * hours for mw, hours in zip(blocks, stage.block_hours, strict=True)
-    )
-    return energy / stage.total_hours
-
-
 def convert_non_controllable_sources(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -200,7 +194,7 @@ def convert_ncs_stats(
     for s in _all_series(case.dadger, id_map, calendar, case.renovaveis):
         max_gen = s.max_generation_mw
         for stage in calendar:
-            mean_mw = _stage_mean_mw(s.per_stage_blocks[stage.index], stage)
+            mean_mw = hours_weighted(s.per_stage_blocks[stage.index], stage)
             ncs_ids.append(s.ncs_id)
             stage_ids.append(stage.index)
             # TRACKED NOVOMODELO-GAP WORKAROUND (C2): the [0, 1] bound rejects
@@ -237,7 +231,7 @@ def convert_ncs_factors(
     for s in _all_series(case.dadger, id_map, calendar, case.renovaveis):
         for stage in calendar:
             blocks = s.per_stage_blocks[stage.index]
-            mean_mw = _stage_mean_mw(blocks, stage)
+            mean_mw = hours_weighted(blocks, stage)
             if mean_mw == 0.0:
                 continue
             raw_factors = [mw / mean_mw for mw in blocks]

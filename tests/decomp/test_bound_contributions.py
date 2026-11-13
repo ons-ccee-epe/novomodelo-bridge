@@ -27,10 +27,13 @@ style). Covers:
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from novomodelo_bridge.decomp.bounds_accumulator import (
@@ -62,7 +65,10 @@ from novomodelo_bridge.decomp.converters.thermal import (
     convert_thermal_bounds,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.pipeline import _row_group_contributions
+from novomodelo_bridge.decomp.pipeline import (
+    _rejoin_thermal_cost,
+    _row_group_contributions,
+)
 from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
 
@@ -132,7 +138,7 @@ def _ct_dadger(
     inflex_blocks: list[float],
     *,
     code: int = 1,
-    cvu: float = 10.0,
+    cvu: float | Sequence[float] = 10.0,
 ) -> _StubDadger:
     row: dict[str, object] = {
         "codigo_usina": code,
@@ -144,8 +150,9 @@ def _ct_dadger(
         row[f"disponibilidade_{i}"] = value
     for i, value in enumerate(inflex_blocks, start=1):
         row[f"inflexibilidade_{i}"] = value
-    for i in range(1, len(disp_blocks) + 1):
-        row[f"cvu_{i}"] = cvu
+    cvu_blocks = list(cvu) if isinstance(cvu, Sequence) else [cvu] * len(disp_blocks)
+    for i, value in enumerate(cvu_blocks, start=1):
+        row[f"cvu_{i}"] = value
     return _StubDadger(ct=pd.DataFrame([row]))
 
 
@@ -274,8 +281,7 @@ class TestReplaceVsIntersectDiscipline:
         assert contribution.axis == "generation"
         assert contribution.lower == 0.0
         assert contribution.upper == 100.0
-        # The cost side-table is unaffected by the generation split — always
-        # one base-row-only entry per (thermal, stage).
+        # Equal CVUs: the cost side-table holds the stage row alone.
         assert bounds.cost.num_rows == 1
         assert bounds.cost["cost_per_mwh"].to_pylist() == [10.0]
 
@@ -291,9 +297,149 @@ class TestReplaceVsIntersectDiscipline:
         assert all(c.block_id is not None for c in bounds.generation)
         by_block = {c.block_id: c.upper for c in bounds.generation}
         assert by_block == {0: 100.0, 1: 50.0}
-        # cost still rides its own base-row-only side table, independent of
-        # the generation axis's own base-vs-per-block split.
+        # Equal CVUs: the cost side-table holds the stage row alone, whatever
+        # the generation split.
         assert bounds.cost.num_rows == 1
+
+
+class TestThermalBlockCost:
+    """Per-block ``CT`` CVUs: a stage whose CVUs are not all exactly equal
+    gets one cost row per block beside its hours-weighted stage row, decided
+    apart from the generation split."""
+
+    _CALENDAR = [_stage(0, (10.0, 20.0))]
+    _ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), thermal_codes=(1,))
+
+    def _bounds(self, disp: list[float], cvu: float | Sequence[float]) -> ThermalBounds:
+        return convert_thermal_bounds(
+            _case(_ct_dadger(disp, [0.0, 0.0], cvu=cvu), self._CALENDAR),
+            self._ID_MAP,
+        )
+
+    @staticmethod
+    def _cost_rows(bounds: ThermalBounds) -> dict[tuple[int, int, int | None], float]:
+        cost = bounds.cost.to_pylist()
+        return {
+            (row["thermal_id"], row["stage_id"], row["block_id"]): row["cost_per_mwh"]
+            for row in cost
+        }
+
+    def test_differing_cvus_with_uniform_bounds_add_block_rows(self) -> None:
+        bounds = self._bounds([100.0, 100.0], [10.0, 40.0])
+
+        assert self._cost_rows(bounds) == {
+            (0, 0, None): pytest.approx(30.0),
+            (0, 0, 0): 10.0,
+            (0, 0, 1): 40.0,
+        }
+        assert bounds.generation == self._bounds([100.0, 100.0], 10.0).generation
+
+    def test_differing_cvus_with_per_block_bounds_add_block_rows(self) -> None:
+        bounds = self._bounds([100.0, 50.0], [10.0, 40.0])
+
+        assert self._cost_rows(bounds) == {
+            (0, 0, None): pytest.approx(30.0),
+            (0, 0, 0): 10.0,
+            (0, 0, 1): 40.0,
+        }
+        assert bounds.generation == self._bounds([100.0, 50.0], 10.0).generation
+
+    def test_exact_equality_is_the_block_row_boundary(self) -> None:
+        nearly = self._bounds([100.0, 100.0], [10.0, math.nextafter(10.0, math.inf)])
+        equal = self._bounds([100.0, 100.0], [10.0, 10.0])
+
+        assert nearly.cost.num_rows == 3
+        assert equal.cost.num_rows == 1
+
+    def test_blank_cvu_is_a_zero_cost_block_row_not_null(self) -> None:
+        bounds = self._bounds([100.0, 100.0], [float("nan"), 20.0])
+
+        assert self._cost_rows(bounds) == {
+            (0, 0, None): pytest.approx(400.0 / 30.0),
+            (0, 0, 0): 0.0,
+            (0, 0, 1): 20.0,
+        }
+
+
+class TestRejoinThermalCost:
+    """``_rejoin_thermal_cost`` lands a stage's per-block cost rows on the
+    resolved bound rows, whatever made the bounds block rows: non-uniform
+    ``CT`` (origin 1), a per-block single-term ``RE`` over a uniform ``CT``
+    stage (origin 2), or nothing, the bound staying a stage row (origin 3)."""
+
+    _CALENDAR = [_stage(0, (10.0, 20.0))]
+    _ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), thermal_codes=(1,))
+
+    def _rejoined(
+        self, disp: list[float], extra: Sequence[BoundContribution] = ()
+    ) -> pa.Table:
+        bounds = convert_thermal_bounds(
+            _case(_ct_dadger(disp, [0.0, 0.0], cvu=[10.0, 40.0]), self._CALENDAR),
+            self._ID_MAP,
+        )
+        table = build_bound_tables(
+            resolve([*bounds.generation, *extra], {0: 2})
+        ).thermal
+        return _rejoin_thermal_cost(table, bounds.cost)
+
+    @staticmethod
+    def _rows(
+        table: pa.Table,
+    ) -> dict[tuple[int, int, int | None], tuple[float | None, ...]]:
+        return {
+            (row["thermal_id"], row["stage_id"], row["block_id"]): (
+                row["min_generation_mw"],
+                row["max_generation_mw"],
+                row["cost_per_mwh"],
+            )
+            for row in table.to_pylist()
+        }
+
+    def test_per_block_single_term_bound_on_uniform_ct_shares_the_block_rows(
+        self,
+    ) -> None:
+        re_uppers = [
+            BoundContribution(
+                family="thermal",
+                entity_id=0,
+                stage_id=0,
+                block_id=block,
+                axis="generation",
+                lower=None,
+                upper=upper,
+                contributor="RE_1",
+            )
+            for block, upper in ((0, 80.0), (1, 60.0))
+        ]
+
+        table = self._rejoined([100.0, 100.0], re_uppers)
+
+        assert table.num_rows == 3
+        assert self._rows(table) == {
+            (0, 0, None): (None, None, 30.0),
+            (0, 0, 0): (0.0, 80.0, 10.0),
+            (0, 0, 1): (0.0, 60.0, 40.0),
+        }
+
+    def test_stage_only_bound_gets_cost_only_block_rows(self) -> None:
+        table = self._rejoined([100.0, 100.0])
+
+        assert table.num_rows == 3
+        assert self._rows(table) == {
+            (0, 0, None): (0.0, 100.0, 30.0),
+            (0, 0, 0): (None, None, 10.0),
+            (0, 0, 1): (None, None, 40.0),
+        }
+
+    def test_non_uniform_ct_bounds_share_the_block_rows(self) -> None:
+        table = self._rejoined([100.0, 50.0])
+
+        assert table.num_rows == 3
+        assert self._rows(table) == {
+            (0, 0, None): (None, None, 30.0),
+            (0, 0, 0): (0.0, 100.0, 10.0),
+            (0, 0, 1): (0.0, 50.0, 40.0),
+        }
 
 
 class TestCollisionIntersection:
@@ -498,8 +644,6 @@ class TestWaterWithdrawalBaseOnlyAxis:
     def test_no_withdrawal_rows_is_a_noop(self) -> None:
         """No accumulator resolution happens when the deck declares no
         irrigation withdrawal -- ``hydro_bounds`` returns unchanged."""
-        import pyarrow as pa
-
         from novomodelo_bridge.decomp.pipeline import _attach_water_withdrawal
 
         hydro_bounds = pa.table(

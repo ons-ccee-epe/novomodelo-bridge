@@ -631,7 +631,7 @@ summary = "Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1
   [[output.field]]
   path = "thermals[].cost_per_mwh"
   from = [ { file = "dadger", register = "CT", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadgnl", register = "TG", item = "cvu" } ]
-  how = "CVU do estágio 1 por patamar (`cvu_k`, em branco lido como 0), ponderado pelas horas de patamar de `DP`; estágios seguintes vão para `constraints/thermal_bounds.parquet`. GNL: o mesmo com o `TG` do estágio 1."
+  how = "CVU do estágio 1 por patamar (`cvu_k`, em branco lido como 0), ponderado pelas horas de patamar de `DP`. GNL: o mesmo com o `TG` do estágio 1. Nas térmicas de `CT`, todo estágio, o 1 inclusive, tem linha em `constraints/thermal_bounds.parquet`, por patamar quando os `cvu_k` diferem."
 
   [[output.field]]
   path = "thermals[].generation.min_mw"
@@ -967,24 +967,24 @@ summary = "Limites de geração e CVU de cada térmica de `CT` em cada estágio 
 
   [[output.field]]
   path = "block_id"
-  from = [ { file = "dadger", register = "DP", item = "numero_patamares" } ]
+  from = [ { file = "dadger", register = "DP", item = "numero_patamares" }, { file = "dadger", register = "CT", item = "cvu" } ]
   status = "derived"
-  how = "Nulo quando `disponibilidade` e `inflexibilidade` são uniformes entre patamares e nenhuma `RE` por patamar atinge a térmica; senão `0..n-1`, uma linha por patamar com os limites exatos do patamar, mais uma linha de `block_id` nulo carregando apenas o custo do estágio."
+  how = "Todo estágio tem uma linha de `block_id` nulo, que leva o CVU ponderado pelas horas de patamar. Há também uma linha por patamar (`0..n-1`) quando ocorre ao menos um destes casos: `disponibilidade` ou `inflexibilidade` variam entre patamares; uma `RE` por patamar atinge a térmica; os `cvu_k` do estágio não são todos iguais. A linha de patamar traz as colunas que tem (limites exatos do patamar, `cvu_k` do patamar, ou ambos) e o Novomodelo resolve coluna a coluna: patamar, depois estágio, depois registro."
 
   [[output.field]]
   path = "min_generation_mw"
   from = [ { file = "dadger", register = "CT", item = "inflexibilidade" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "LU", item = "limite_inferior" }, { file = "dadger", register = "FT", item = "coeficiente" } ]
-  how = "Inflexibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); quando uma `RE` de termo único `FT` limita a térmica, o maior entre os limites inferiores (coeficiente −1 troca e inverte os lados). Nulo na linha que só carrega custo."
+  how = "Inflexibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); quando uma `RE` de termo único `FT` limita a térmica, o maior entre os limites inferiores (coeficiente −1 troca e inverte os lados). Nulo nas linhas que só carregam custo: a linha de estágio quando os limites são por patamar e as linhas de patamar quando só o CVU varia."
 
   [[output.field]]
   path = "max_generation_mw"
   from = [ { file = "dadger", register = "CT", item = "disponibilidade" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "LU", item = "limite_superior" }, { file = "dadger", register = "FT", item = "coeficiente" } ]
-  how = "Disponibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); com `RE`/`FT`, o menor entre os limites superiores. Nulo na linha que só carrega custo."
+  how = "Disponibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); com `RE`/`FT`, o menor entre os limites superiores. Nulo nas linhas que só carregam custo: a linha de estágio quando os limites são por patamar e as linhas de patamar quando só o CVU varia."
 
   [[output.field]]
   path = "cost_per_mwh"
   from = [ { file = "dadger", register = "CT", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" } ]
-  how = "CVU do estágio ponderado pelas horas de patamar (`cvu_k`, em branco lido como 0), sempre em uma linha de `block_id` nulo; nulo nas linhas por patamar, pois o custo não é elegível a patamar no Novomodelo."
+  how = "Linha de estágio (`block_id` nulo): CVU do estágio ponderado pelas horas de patamar (`cvu_k`, em branco lido como 0). Quando os `cvu_k` do estágio não são todos iguais, cada linha de patamar traz o `cvu_k` exato do patamar, que prevalece sobre a média; senão as linhas de patamar têm custo nulo e vale o da linha de estágio."
 
 # ---------------------------------------------------------------------------
 # constraints/pumping_bounds.parquet

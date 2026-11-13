@@ -30,6 +30,7 @@ import pandas as pd
 import pyarrow as pa
 
 from novomodelo_bridge.core.pandas_utils import as_frame
+from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -108,14 +109,6 @@ def _per_stage_block_loads(
     return loads
 
 
-def _stage_mean_mw(block_loads: Sequence[float], stage: OperativeStage) -> float:
-    """Energy-weighted stage mean: ``Σ_b MW_b·h_b / H``."""
-    energy = sum(
-        mw * hours for mw, hours in zip(block_loads, stage.block_hours, strict=True)
-    )
-    return energy / stage.total_hours
-
-
 def convert_load_stats(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -141,7 +134,7 @@ def convert_load_stats(
     for bus in range(id_map.n_buses):
         for stage in calendar:
             block_loads = loads.get((bus, stage.index))
-            mean = 0.0 if block_loads is None else _stage_mean_mw(block_loads, stage)
+            mean = 0.0 if block_loads is None else hours_weighted(block_loads, stage)
             bus_ids.append(bus)
             stage_ids.append(stage.index)
             means.append(mean)
@@ -178,7 +171,7 @@ def convert_load_factors(
     entries: list[dict] = []
     for (bus, stage_index), block_loads in sorted(loads.items()):
         stage = calendar[stage_index]
-        mean = _stage_mean_mw(block_loads, stage)
+        mean = hours_weighted(block_loads, stage)
         if mean == 0.0:
             continue
         factors = [mw / mean for mw in block_loads]

@@ -722,6 +722,41 @@ class TestConvertThermals:
         assert {c.upper for c in spread_overrides} == {400.0, 300.0, 200.0}
         assert {c.lower for c in spread_overrides} == {0.0}
 
+    def test_differing_cvus_write_block_rows_and_keep_the_stage_one_registry_mean(
+        self,
+    ) -> None:
+        ct = _ct_frame()
+        ct.loc[ct["codigo_usina"] == 20, ["cvu_1", "cvu_2", "cvu_3"]] = [
+            [40.0, 50.0, 60.0]
+        ]
+        case = _case(_StubDadger(ct=ct))
+        plant_10 = _ID_MAP.thermal_id(10)
+        plant_20 = _ID_MAP.thermal_id(20)
+
+        cost_rows = convert_thermal_bounds(case, _ID_MAP).cost.to_pylist()
+        cost = {
+            (row["thermal_id"], row["stage_id"], row["block_id"]): row["cost_per_mwh"]
+            for row in cost_rows
+        }
+        for stage in case.calendar:
+            hours = stage.block_hours
+            assert [cost[(plant_20, stage.index, b)] for b in range(3)] == [
+                40.0,
+                50.0,
+                60.0,
+            ]
+            assert cost[(plant_20, stage.index, None)] == pytest.approx(
+                (40.0 * hours[0] + 50.0 * hours[1] + 60.0 * hours[2]) / sum(hours)
+            )
+        assert all(
+            row["block_id"] is None
+            for row in cost_rows
+            if row["thermal_id"] == plant_10
+        )
+
+        thermals = {t["id"]: t for t in convert_thermals(case, _ID_MAP)["thermals"]}
+        assert thermals[plant_20]["cost_per_mwh"] == pytest.approx(9140.0 / 168.0)
+
     def test_missing_stage_one_raises(self) -> None:
         ct = _ct_frame()
         ct.loc[ct["codigo_usina"] == 20, "estagio"] = 2

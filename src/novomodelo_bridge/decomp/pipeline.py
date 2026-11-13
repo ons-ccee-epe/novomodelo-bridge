@@ -229,9 +229,11 @@ def _rejoin_thermal_cost(thermal_bounds: pa.Table, cost_table: pa.Table) -> pa.T
     discipline) still needs a row to carry that stage's cost: a strict left
     join would have nothing in *thermal_bounds* to attach it to and silently
     drop the value. The outer merge instead adds a ``block_id = None`` row
-    with every bound column ``null`` for exactly that case. Per-block rows
-    always get ``null`` cost, since the cost table never carries a
-    non-``None`` ``block_id``.
+    with every bound column ``null`` for exactly that case. A per-block cost
+    row lands on the block's existing bound row (non-uniform ``CT``, or a
+    per-block single-term ``RE``) or else becomes a cost-only block row; the
+    stage row likewise. The column-by-column contract is in
+    :mod:`novomodelo_bridge.decomp.converters.thermal`'s module docstring.
     """
     key = ["thermal_id", "stage_id", "block_id"]
     bounds_df = thermal_bounds.to_pandas()

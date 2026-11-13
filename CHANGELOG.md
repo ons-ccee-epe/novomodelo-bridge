@@ -29,6 +29,10 @@ links are cobre-bridge's.
   `system/thermals.json` when the deck has no lines or no thermal plants.** A
   script that reads converted cases must treat a missing file as an empty list;
   `export dessem` already does.
+- **`convert decomp` writes each load block's own `CT` unit cost (CVU) in
+  `constraints/thermal_bounds.parquet`** when a plant's CVUs differ between
+  the load blocks of a stage, instead of only their hours-weighted mean.
+  Results change for such decks; reconvert them.
 
 ### Fixed
 
