@@ -44,7 +44,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | Arquivo do deck | `buses.json` | `lines.json` | `thermals.json` | `hydros.json` | `hydro_production_models.json` | `hydro_geometry.parquet` | `hydro_energy_productivity.parquet` | `tailrace_curves.parquet` | `non_controllable_sources.json` | `pumping_stations.json` | `energy_contracts.json` |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | `dadger.rvN` › `AC` |  |  |  | ● | ● | ● | ● |  |  |  |  |
-| `dadger.rvN` › `CD` | ● |  |  |  |  |  |  |  |  |  |  |
+| `dadger.rvN` › `CD` | ● | ● |  |  |  |  |  |  |  |  |  |
 | `dadger.rvN` › `CE` |  |  |  |  |  |  |  |  |  |  | ● |
 | `dadger.rvN` › `CI` |  |  |  |  |  |  |  |  |  |  | ● |
 | `dadger.rvN` › `CQ` |  |  |  | ● |  |  |  |  |  |  |  |
@@ -220,16 +220,16 @@ Calendário operativo (semanas no 1º mês, estágios mensais nos meses seguinte
 **Quando:** sempre.  
 **Esquema:** [penalties.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/penalties.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/config.py`
 
-Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco hidráulico é escalado pela produtibilidade equivalente média (ρ_avg) e máxima (ρ_max) das usinas operadas, calculadas do cadastro `hidr.dat` ancorado no volume inicial de `UH`.
+Custo de déficit de `CD`, micro-penalidades fixas do DECOMP (vertimento, turbinamento, desvio e intercâmbio, valores padrão sem registro `PE`) e penalidades de folga hidráulicas escaladas pela produtibilidade equivalente média (ρ_avg) e máxima (ρ_max) das usinas operadas, calculadas do cadastro `hidr.dat` ancorado no volume inicial de `UH`.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
 | `bus.deficit_segments[].cost` | `dadger.rvN` › `CD` › `custo` | O maior custo de déficit entre os submercados de `CD` (cada submercado deve ter um único custo, uniforme entre patamares e estágios). É o `MAX_CUSTO_DEFICIT` que ancora as penalidades hidráulicas abaixo. |
 | `bus.deficit_segments[].depth_mw` | — *(sempre nulo)* | Sempre nulo: segmento único de profundidade total (`CD` deve declarar `limite_superior` = 100 %). |
 | `bus.excess_cost` | — *(constante)* | Micro-penalidade fixa `0.000355` R$/MWh (excesso de energia, manual do modelo de origem). |
-| `hydro.spillage_cost` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `0.000300 × ρ_avg`, com ρ_avg a média (zeros incluídos) da produtibilidade equivalente `ρ_esp · h_líquida` de cada usina operada, altura calculada com o polinômio cota-volume no volume inicial, descontados canal de fuga e perdas. |
-| `hydro.turbined_cost` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `0.000333 × ρ_avg` (micro-penalidade de turbinamento escalada pela produtibilidade média do sistema). |
-| `hydro.diversion_cost` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `0.000300 × ρ_avg` (micro-penalidade de volume desviado). |
+| `hydro.spillage_cost` | — *(constante)* | Sempre 0.1 R$/hm³ × 0.0036 = 0.00036 R$/(m³/s·h): vertimento padrão do DECOMP, igual para todas as usinas, com e sem reservatório, sem fator de produtibilidade. |
+| `hydro.turbined_cost` | — *(constante)* | Sempre 0.11 R$/hm³ × 0.0036 = 0.000396 R$/(m³/s·h): turbinamento padrão do DECOMP, igual para todas as usinas, sem fator de produtibilidade. |
+| `hydro.diversion_cost` | — *(constante)* | Igual ao vertimento: 0.1 R$/hm³ × 0.0036 = 0.00036 R$/(m³/s·h), sem fator de produtibilidade. |
 | `hydro.storage_violation_below_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_max × (1e6/3600)`, em R$/hm³: patamar de evaporação convertido a energia equivalente, com ρ_max a maior produtibilidade equivalente entre as usinas operadas. Não há `PENALID` no DECOMP; o valor é sempre derivado. |
 | `hydro.filling_target_violation_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `0.9 × custo_déficit × ρ_max × (1e6/3600)`, em R$/hm³. |
 | `hydro.turbined_violation_below_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_avg` (folga de turbinamento mínimo, sem `PENALID` no DECOMP). |
@@ -239,7 +239,7 @@ Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco
 | `hydro.evaporation_violation_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_max` (folga de evaporação, patamar mais alto da ordem de mérito). |
 | `hydro.water_withdrawal_violation_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_max` (folga de retirada de água para irrigação `TI`). |
 | `hydro.inflow_nonnegativity_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `water_withdrawal_violation_cost + 1` R$/(m³/s): a folga de vazão natural negativa nunca pode ser mais barata que a folga de retirada de água. |
-| `line.exchange_cost` | — *(constante)* | Micro-penalidade fixa `0.000273` R$/MWh (intercâmbio). |
+| `line.exchange_cost` | — *(constante)* | Sempre 0.0001 R$/MWh, o intercâmbio padrão do DECOMP entre submercados reais. Linhas que tocam uma barra fictícia levam a metade em `system/lines.json`. |
 | `non_controllable_source.curtailment_cost` | — *(constante)* | Fixo em `0` R$/MWh (corte de geração não controlável), no lugar do `0.000344` do modelo de origem, para o corte ser a saída de sobra mais barata. |
 
 ### `initial_conditions.json`
@@ -300,17 +300,18 @@ Uma barra por submercado de `SB` (inclusive o fictício), mais uma barra de tran
 
 ### `system/lines.json`
 
-**Lê:** `dadger.rvN` (`IA`, `RI`, `SB`, `UH`, `CT`, `DP`, `DT`), `hidr.dat`  
+**Lê:** `dadger.rvN` (`IA`, `RI`, `SB`, `UH`, `CT`, `DP`, `DT`, `CD`), `hidr.dat`  
 **Quando:** sempre.  
 **Esquema:** [lines.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/lines.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/network.py`
 
-Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Um deck sem `IA` ainda gera o arquivo com lista vazia (TRACKED NOVOMODELO-GAP C4).
+Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Um deck sem `IA` ainda gera o arquivo com lista vazia (TRACKED NOVOMODELO-GAP C4). Linhas que tocam uma barra fictícia recebem metade do custo de intercâmbio global.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
 | `lines[].id` | `dadger.rvN` › `IA` › `nome_submercado_de, nome_submercado_para` *(derivado)* | Pares ordenados por (id da barra de origem, id da barra de destino); a linha `IV-SE` criada pela conversão recebe o id seguinte ao último par de `IA`. |
 | `lines[].name` | `dadger.rvN` › `IA` › `nome_submercado_de, nome_submercado_para` *(derivado)* | `{de}-{para}` com os nomes de `IA`; `IV-SE` para a linha criada pela conversão. |
 | `lines[].operational_start_date` | `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado)* | Data de início do estudo. |
+| `lines[].exchange_cost` | `dadger.rvN` › `SB` › `codigo_submercado`, `dadger.rvN` › `CD` › `codigo_submercado` *(derivado)* | Presente só nas linhas cuja barra de origem ou de destino é fictícia: um submercado de `SB` sem registro `CD`, ou a barra de transbordo `IV` criada pela conversão (inclusive a linha `IV-SE` criada pela conversão). Vale 0.0001 × 0.5 = 0.00005 R$/MWh, metade do intercâmbio global, para que uma rota real→fictício→real custe o mesmo que o intercâmbio direto. As demais linhas usam o valor global de `penalties.json`. |
 | `lines[].source_bus_id` | `dadger.rvN` › `IA` › `nome_submercado_de` | Barra resolvida pelo nome de origem (`IV` resolve para a barra de transbordo). Na linha `IV-SE` criada, a barra de transbordo. |
 | `lines[].target_bus_id` | `dadger.rvN` › `IA` › `nome_submercado_para`, `hidr.dat` › `submercado (usina 66)` | Barra resolvida pelo nome de destino. Na linha `IV-SE` criada, a barra do `submercado` de Itaipu no cadastro. |
 | `lines[].capacity.direct_mw` | `dadger.rvN` › `IA` › `limite_de_para`, `dadger.rvN` › `RI` › `geracao_maxima_60_hz` | Maior limite de→para entre os patamares do estágio 1 (`limite_de_para_k`); o sentinela 99999 passa como capacidade grande. Na linha `IV-SE` criada, o maior `geracao_maxima_60_hz` de `RI` em todos os estágios e patamares (99999 sem `RI`). |
@@ -955,7 +956,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `CD`
 
-**Estado:** convertido em parte. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `penalties.json`, `system/buses.json`.
+**Estado:** convertido em parte. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `constraints/generic_constraints.json`, `penalties.json`, `system/buses.json`, `system/lines.json`.
 
 - `custo` → `penalties.json` › `bus.deficit_segments[].cost`
 - `custo` → `penalties.json` › `hydro.storage_violation_below_cost`
@@ -968,6 +969,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `custo` → `penalties.json` › `hydro.water_withdrawal_violation_cost`
 - `custo` → `penalties.json` › `hydro.inflow_nonnegativity_cost`
 - `custo` → `system/buses.json` › `buses[].deficit_segments[].cost`
+- `codigo_submercado` → `system/lines.json` › `lines[].exchange_cost`
 - `custo` → `constraints/generic_constraints.json` › `constraints[].slack.penalty`
 - `nome_curva` — *não lido.* Nome da curva de déficit. Não lido; apenas identificação.
 
@@ -1505,7 +1507,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 **Estado:** não lido.
 
-- todo o registro — *não lido.* Alteração das penalidades de vertimento, intercâmbio e desvio por submercado. Não lido: `penalties.json` usa os valores padrão do conversor. Converter exige mapear cada `tipo` para o campo de penalidade correspondente.
+- todo o registro — *não lido.* Alteração das penalidades de vertimento, intercâmbio e desvio por submercado. Não lido: `penalties.json` usa os valores padrão do conversor. Converter exige mapear cada `tipo` para o campo de penalidade correspondente. O campo do Novomodelo que o `tipo` 2 sobrepõe (custo de desvio ou folga de retirada de água) não está confirmado.
 
 ### `dadger.rvN` › `PQ`
 
@@ -1608,6 +1610,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 - `codigo_submercado` → `system/buses.json` › `buses[].id`
 - `nome_submercado` → `system/buses.json` › `buses[].name`
+- `codigo_submercado` → `system/lines.json` › `lines[].exchange_cost`
 - `codigo_submercado` → `system/hydros.json` › `hydros[].unit_groups[].bus_id`
 - `codigo_submercado` → `scenarios/load_seasonal_stats.parquet` › `bus_id`
 - `codigo_submercado` → `scenarios/load_factors.json` › `load_factors[].bus_id`
@@ -1659,9 +1662,6 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 **Estado:** convertido em parte. **Lido por:** 32 arquivos gerados; ver a visão geral.
 
-- `volume_inicial` → `penalties.json` › `hydro.spillage_cost`
-- `volume_inicial` → `penalties.json` › `hydro.turbined_cost`
-- `volume_inicial` → `penalties.json` › `hydro.diversion_cost`
 - `volume_inicial` → `penalties.json` › `hydro.storage_violation_below_cost`
 - `volume_inicial` → `penalties.json` › `hydro.filling_target_violation_cost`
 - `volume_inicial` → `penalties.json` › `hydro.turbined_violation_below_cost`
@@ -1783,18 +1783,6 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas abaixo não são lidas pela via DECOMP.
 
-- `produtibilidade_especifica` → `penalties.json` › `hydro.spillage_cost`
-- `a0_volume_cota … a4_volume_cota` → `penalties.json` › `hydro.spillage_cost`
-- `canal_fuga_medio` → `penalties.json` › `hydro.spillage_cost`
-- `perdas, tipo_perda` → `penalties.json` › `hydro.spillage_cost`
-- `produtibilidade_especifica` → `penalties.json` › `hydro.turbined_cost`
-- `a0_volume_cota … a4_volume_cota` → `penalties.json` › `hydro.turbined_cost`
-- `canal_fuga_medio` → `penalties.json` › `hydro.turbined_cost`
-- `perdas, tipo_perda` → `penalties.json` › `hydro.turbined_cost`
-- `produtibilidade_especifica` → `penalties.json` › `hydro.diversion_cost`
-- `a0_volume_cota … a4_volume_cota` → `penalties.json` › `hydro.diversion_cost`
-- `canal_fuga_medio` → `penalties.json` › `hydro.diversion_cost`
-- `perdas, tipo_perda` → `penalties.json` › `hydro.diversion_cost`
 - `produtibilidade_especifica` → `penalties.json` › `hydro.storage_violation_below_cost`
 - `a0_volume_cota … a4_volume_cota` → `penalties.json` › `hydro.storage_violation_below_cost`
 - `canal_fuga_medio` → `penalties.json` › `hydro.storage_violation_below_cost`
@@ -2216,6 +2204,12 @@ Previsões de vazão semanais por posto, entrada do GEVAZP. Não lido: o convers
 
 Cadastro de postos fluviométricos. Não lido: a ligação usina-posto vem da coluna `posto` de `hidr.dat` (com a alteração `AC NUMPOS`).
 
+### `perdas.dat`
+
+**Estado:** não lido.
+
+Perdas de transmissão nos intercâmbios, arquivo nomeado no índice `arquivos.rvN`. Não lido: as linhas não levam `losses_percent` e a parcela vertimento × perdas da penalidade de intercâmbio não é convertida. Converter exige ler as perdas de cada intercâmbio, emiti-las como `losses_percent` e somar essa parcela ao custo de intercâmbio da linha.
+
 ### `cortdeco.rvN / mapcut.rvN`
 
 **Estado:** não lido.
@@ -2236,6 +2230,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 
 - `prevs.rvN` — *não lido.* Previsões de vazão semanais por posto, entrada do GEVAZP. Não lido: o conversor usa as previsões já consolidadas na seção de previsões de `vazoes.rvN`.
 - `postos.dat` — *não lido.* Cadastro de postos fluviométricos. Não lido: a ligação usina-posto vem da coluna `posto` de `hidr.dat` (com a alteração `AC NUMPOS`).
+- `perdas.dat` — *não lido.* Perdas de transmissão nos intercâmbios, arquivo nomeado no índice `arquivos.rvN`. Não lido: as linhas não levam `losses_percent` e a parcela vertimento × perdas da penalidade de intercâmbio não é convertida. Converter exige ler as perdas de cada intercâmbio, emiti-las como `losses_percent` e somar essa parcela ao custo de intercâmbio da linha.
 - `cortdeco.rvN / mapcut.rvN` — *não lido.* Cortes e mapa de cortes da própria FCF do DECOMP, gravados por uma execução anterior. Não lidos: o bridge importa apenas a FCF de fronteira do NEWAVE (`cortesh.dat` e `cortes*.dat`) para o checkpoint `boundary/`.
 - `arquivos de saída do DECOMP` — *não lido.* Resultados de uma execução do DECOMP (`relato.rvN`, `dec_oper_*.csv`, `dec_estatfpha.csv`, `sumario.rvN`, `inviab_unic.rvN`, entre outros). Não são entrada da conversão; `compare decomp` lê `relato.rvN`, as tabelas `dec_oper_*.csv` e `dec_estatfpha.csv` para confrontar com a saída do Novomodelo.
 
@@ -2270,7 +2265,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `IR` — *não lido.* Opções de geração de relatórios de saída do DECOMP. Sem contrapartida no caso Novomodelo.
 - `dadger.rvN` › `MT` — *não lido.* Manutenções programadas das UTEs (fator por estágio). Não lido: a disponibilidade térmica vem só de `CT`. Converter exige multiplicar `disponibilidade` pelo fator ao emitir `thermal_bounds.parquet`.
 - `dadger.rvN` › `PD` — *não lido.* Escolha do algoritmo de solução do PL. Parâmetro do solver do DECOMP; sem contrapartida.
-- `dadger.rvN` › `PE` — *não lido.* Alteração das penalidades de vertimento, intercâmbio e desvio por submercado. Não lido: `penalties.json` usa os valores padrão do conversor. Converter exige mapear cada `tipo` para o campo de penalidade correspondente.
+- `dadger.rvN` › `PE` — *não lido.* Alteração das penalidades de vertimento, intercâmbio e desvio por submercado. Não lido: `penalties.json` usa os valores padrão do conversor. Converter exige mapear cada `tipo` para o campo de penalidade correspondente. O campo do Novomodelo que o `tipo` 2 sobrepõe (custo de desvio ou folga de retirada de água) não está confirmado.
 - `dadger.rvN` › `PV` — *não lido.* Penalidades das variáveis de folga e tolerâncias de viabilidade das restrições. Parâmetros internos do solver do DECOMP; sem contrapartida.
 - `dadger.rvN` › `QI` — *não lido.* Tempo de viagem por usina usado no cálculo da ENA. Não lido: só afeta a agregação em energia, que o Novomodelo não faz.
 - `dadger.rvN` › `RT` — *não lido.* Retirada das restrições de soleira de vertedouro e de canal de desvio. Não lido; converter exige suprimir o limite correspondente em `hydro_bounds.parquet`.

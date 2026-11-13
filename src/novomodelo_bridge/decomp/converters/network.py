@@ -25,7 +25,7 @@ from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from idecomp.decomp import Dadger
 
@@ -122,6 +122,15 @@ def convert_buses(
         "$schema": novomodelo_schemas.schema_url_for("system/buses.json"),
         "buses": buses,
     }
+
+
+def fictitious_bus_ids(
+    deficit_costs: Mapping[int, float], id_map: DecompIdMap
+) -> frozenset[int]:
+    """Bus ids that carry no market: SB subsystems without a CD record, plus the transhipment bus."""
+    return frozenset(
+        id_map.bus_id(code) for code in id_map.bus_codes if code not in deficit_costs
+    ) | {id_map.transhipment_bus_id}
 
 
 def _ia_dense(
