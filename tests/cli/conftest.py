@@ -1,4 +1,4 @@
-"""CLI subprocess runner used only by tests/cli/."""
+"""CLI subprocess runner and output helpers used only by tests/cli/."""
 
 from __future__ import annotations
 
@@ -19,3 +19,14 @@ def _run_cli_subprocess(
         encoding="utf-8",
         env={**os.environ, **(env or {})},
     )
+
+
+def _panel_text(rendered: str) -> str:
+    """*rendered* with Rich's vertical panel borders dropped and every run of
+    whitespace collapsed to one space.
+
+    Non-TTY output renders at a fixed width, so where a message wraps inside a
+    panel moves with the length of the temp path it names; match phrases
+    against this text, not the raw lines.
+    """
+    return " ".join(rendered.replace("│", " ").split())

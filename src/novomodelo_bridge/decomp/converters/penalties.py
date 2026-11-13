@@ -12,21 +12,17 @@ if TYPE_CHECKING:
 
 SPILLAGE_COST_PER_HM3 = 0.1  # R$/hm³
 TURBINED_COST_PER_HM3 = 0.11  # R$/hm³
+DIVERSION_COST_PER_HM3 = SPILLAGE_COST_PER_HM3  # R$/hm³
 EXCHANGE_COST = 1e-4  # R$/MWh
 FICTITIOUS_EXCHANGE_FACTOR = 0.5
 
 
-def flow_micro_costs(
-    *,
-    spillage_per_hm3: float = SPILLAGE_COST_PER_HM3,
-    turbined_per_hm3: float = TURBINED_COST_PER_HM3,
-    diversion_per_hm3: float = SPILLAGE_COST_PER_HM3,
-) -> FlowMicroCosts:
-    """Convert per-hm³ costs (R$/hm³) to Novomodelo's R$/(m³/s·h) flow micro-penalties."""
+def flow_micro_costs() -> FlowMicroCosts:
+    """The per-hm³ costs (R$/hm³) as Novomodelo's R$/(m³/s·h) flow micro-penalties."""
     return FlowMicroCosts(
-        spillage_cost=spillage_per_hm3 * HM3_PER_M3S_HOUR,
-        turbined_cost=turbined_per_hm3 * HM3_PER_M3S_HOUR,
-        diversion_cost=diversion_per_hm3 * HM3_PER_M3S_HOUR,
+        spillage_cost=SPILLAGE_COST_PER_HM3 * HM3_PER_M3S_HOUR,
+        turbined_cost=TURBINED_COST_PER_HM3 * HM3_PER_M3S_HOUR,
+        diversion_cost=DIVERSION_COST_PER_HM3 * HM3_PER_M3S_HOUR,
     )
 
 
