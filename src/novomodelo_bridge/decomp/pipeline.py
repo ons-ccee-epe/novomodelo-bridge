@@ -11,9 +11,11 @@ emitter that detects it, never dropped silently.
 from __future__ import annotations
 
 import logging
+from calendar import monthrange
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import NamedTuple
 
@@ -891,6 +893,34 @@ def _gnl_thermal_codes(
     return codes
 
 
+def _water_bucket_stages(
+    horizon_end: date, travel_time_hours: Mapping[int, float]
+) -> list[dict] | None:
+    """The post-study water delivery calendar of a deck with a travel-time arc.
+
+    One stage starts at the study horizon end and lasts the days left in that
+    month (its day included). ``None`` when the deck declares no travel time.
+
+    Raises
+    ------
+    ValueError
+        If the largest travel time exceeds the stage's hours: Novomodelo
+        refuses a water calendar shorter than the deepest travel time.
+    """
+    if not travel_time_hours:
+        return None
+    days_left = monthrange(horizon_end.year, horizon_end.month)[1] - horizon_end.day + 1
+    stage_hours = days_left * 24.0
+    code = max(travel_time_hours, key=travel_time_hours.__getitem__)
+    if travel_time_hours[code] > stage_hours:
+        raise ValueError(
+            f"plant {code} has a travel time of {travel_time_hours[code]:g} h, longer "
+            f"than the {stage_hours:g} h left in the month of the study horizon end "
+            f"{horizon_end.isoformat()}, the only post-study water stage"
+        )
+    return [{"start_date": horizon_end.isoformat(), "duration_hours": stage_hours}]
+
+
 def _discover(src: Path) -> DecompCaseArtifacts:
     """The ``step("Discovering deck")`` phase: parse *src* via one
     :class:`DecompCase`, resolve the cadastro override view (emitting its
@@ -1090,13 +1120,18 @@ def _convert_lines_with_itaipu_link(
 
 
 def _convert_thermals_with_gnl(
-    artifacts: DecompCaseArtifacts, writer: CaseWriter, initial_conditions_doc: dict
+    artifacts: DecompCaseArtifacts,
+    writer: CaseWriter,
+    initial_conditions_doc: dict,
+    travel_time_hours: Mapping[int, float],
 ) -> tuple[dict, anticipated_conv.GnlCommitmentModel | None]:
     """The thermal registry with the dadgnl GNL fleet spliced in, and the GNL
     commitment model (``None`` when the deck has no dadgnl file).
 
     Extends *initial_conditions_doc* with the GNL left boundary and writes
-    ``post_study_stages.json`` when the deck declares a GS calendar.
+    ``post_study_stages.json`` once: the GNL thermal calendar when the deck
+    declares a GS calendar, plus the water calendar of a deck with a
+    travel-time arc.
     """
     case = artifacts.case
     id_map = artifacts.id_map
@@ -1112,6 +1147,7 @@ def _convert_thermals_with_gnl(
         if case.dadgnl is not None
         else None
     )
+    post_study_stages: dict = {}
     if gnl_model is not None:
         gnl_model = anticipated_conv.fill_undeclared_block_hours(
             gnl_model,
@@ -1135,12 +1171,18 @@ def _convert_thermals_with_gnl(
             initial_conditions_doc["past_anticipated_commitments"] = (
                 gnl.past_anticipated_commitments
             )
-        if gnl.post_study_stages is not None:
-            writer.write_json("post_study_stages.json", gnl.post_study_stages)
+        post_study_stages = dict(gnl.post_study_stages or {})
         _LOG.info(
             "emitted %d GNL anticipated thermal(s) from dadgnl",
             len(gnl.thermals),
         )
+    water_bucket_stages = _water_bucket_stages(
+        case.calendar[-1].end_date, travel_time_hours
+    )
+    if water_bucket_stages is not None:
+        post_study_stages["water_bucket_stages"] = water_bucket_stages
+    if post_study_stages:
+        writer.write_json("post_study_stages.json", post_study_stages)
     return thermals_dict, gnl_model
 
 
@@ -1277,7 +1319,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         network_conv.convert_pumping_stations(case, id_map),
     )
     thermals_dict, gnl_model = _convert_thermals_with_gnl(
-        artifacts, writer, initial_conditions_doc
+        artifacts, writer, initial_conditions_doc, travel_time_hours
     )
     artifacts.thermals_dict = thermals_dict
     artifacts.gnl_model = gnl_model

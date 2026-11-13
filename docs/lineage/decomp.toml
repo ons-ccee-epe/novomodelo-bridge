@@ -1041,7 +1041,7 @@ summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundo
 [[output]]
 path = "post_study_stages.json"
 kind = "json"
-when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou sempre num estudo só de estágios mensais"
+when = "somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante), ou quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou sempre num estudo só de estágios mensais"
 module = "src/novomodelo_bridge/decomp/converters/anticipated.py"
 reads = [
   { file = "dadgnl", register = "TG" },
@@ -1054,47 +1054,69 @@ reads = [
   { file = "dadger", register = "CT" },
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "UH" },
+  { file = "dadger", register = "VI" },
 ]
-summary = "Calendário pós-estudo na grade semanal (sábados): preenche as semanas já comandadas de `GL` após o fim do horizonte e depois espelha os estágios do estudo; cada térmica GNL recebe limites de preço apenas nos estágios sinalizados (classe 3), nunca nos já comandados. Num estudo só de estágios mensais, o calendário são os meses civis seguintes ao horizonte, tantos quanto o maior `lag` de `NL`, e cada térmica recebe limites de preço nos seus `lag` primeiros meses."
+summary = "Calendários pós-estudo. Térmico (`thermal_stages` e `thermal_bounds`, só com GNL), na grade semanal (sábados): preenche as semanas já comandadas de `GL` após o fim do horizonte e depois espelha os estágios do estudo; cada térmica GNL recebe limites de preço apenas nos estágios sinalizados (classe 3), nunca nos já comandados. Num estudo só de estágios mensais, o calendário são os meses civis seguintes ao horizonte, tantos quanto o maior `lag` de `NL`, e cada térmica recebe limites de preço nos seus `lag` primeiros meses. Hídrico (`water_bucket_stages`): quando o deck declara um tempo de viagem `VI`, um único estágio do fim do horizonte do estudo ao fim desse mês civil, sem enchimento; um tempo de viagem maior que ele aborta a conversão, citando a usina."
 
   [[output.field]]
-  path = "stages[].start_date"
+  path = "thermal_stages[].start_date"
   from = [ { file = "dadger", register = "DT", item = "dia, mes, ano" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadgnl", register = "GL", item = "data_inicio" } ]
   status = "derived"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "Começa no fim do horizonte do estudo: um stub até o sábado seguinte (se necessário), semanas de 168 h até o corte já comandado comum a todas as usinas (`data_inicio` da última semana `GL` mais uma semana, quando ela cai após o fim do horizonte; senão, o próprio fim do horizonte) e, a partir dele, um estágio espelhando cada estágio do estudo. Num estudo só de estágios mensais, o primeiro dia de cada mês civil após o horizonte."
 
   [[output.field]]
-  path = "stages[].duration_hours"
+  path = "thermal_stages[].duration_hours"
   from = [ { file = "dadger", register = "DP", item = "duracao" } ]
   status = "derived"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro."
 
   [[output.field]]
   path = "thermal_bounds[].thermal_id"
   from = [ { file = "dadgnl", register = "TG", item = "codigo_usina" } ]
   status = "derived"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "Id da térmica GNL em `system/thermals.json`."
 
   [[output.field]]
   path = "thermal_bounds[].post_study_stage_index"
   from = [ { file = "dadgnl", register = "GL", item = "data_inicio" } ]
   status = "derived"
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "Índice 0-based do estágio pós-estudo; apenas os estágios cujo início é igual ou posterior ao corte já comandado da usina recebem uma linha. Num estudo só de estágios mensais, os `lag` (`NL`) primeiros meses pós-estudo, decididos dentro do estudo."
 
   [[output.field]]
   path = "thermal_bounds[].cost_per_mwh"
   from = [ { file = "dadgnl", register = "TG", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" } ]
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "`cvu_1..3` dos `TG` dos meses civis que o estágio cobre, ponderados pelas horas do estágio em cada mês (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), e cada `TG` pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão."
 
   [[output.field]]
   path = "thermal_bounds[].min_mw"
   from = [ { file = "dadgnl", register = "TG", item = "inflexibilidade" }, { file = "dadger", register = "DP", item = "duracao" } ]
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "`inflexibilidade_1..3` do mesmo `TG`, com a mesma ponderação."
 
   [[output.field]]
   path = "thermal_bounds[].max_mw"
   from = [ { file = "dadgnl", register = "TG", item = "disponibilidade" }, { file = "dadger", register = "DP", item = "duracao" } ]
+  when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
   how = "`disponibilidade_1..3` do mesmo `TG`, com a mesma ponderação."
+
+  [[output.field]]
+  path = "water_bucket_stages[].start_date"
+  from = [ { file = "dadger", register = "DT", item = "dia, mes, ano" }, { file = "dadger", register = "DP", item = "duracao" } ]
+  status = "derived"
+  when = "somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante)"
+  how = "Fim do horizonte do estudo `H`: a data final (exclusiva) do último estágio operativo, a partir de `DT` e das durações de patamar de `DP`. É o início do único estágio hídrico."
+
+  [[output.field]]
+  path = "water_bucket_stages[].duration_hours"
+  from = [ { file = "dadger", register = "VI", item = "duracao" }, { file = "dadger", register = "DT", item = "dia, mes, ano" }, { file = "dadger", register = "DP", item = "duracao" } ]
+  status = "derived"
+  when = "somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante)"
+  how = "Os dias que restam no mês civil do fim do horizonte `H`, o dia de `H` incluso, vezes 24 h; um horizonte que termina no dia 1º dá o mês inteiro, o mês de acoplamento do NEWAVE. Se o maior `VI.duracao` excede essas horas, a conversão falha citando a usina e as duas durações: o Novomodelo recusa um calendário hídrico mais curto que o maior tempo de viagem."
 
 # ---------------------------------------------------------------------------
 # system/energy_contracts.json (conditional)

@@ -33,6 +33,13 @@ links are cobre-bridge's.
   `constraints/thermal_bounds.parquet`** when a plant's CVUs differ between
   the load blocks of a stage, instead of only their hours-weighted mean.
   Results change for such decks; reconvert them.
+- **`convert decomp` writes the post-study calendars under the keys novomodelo
+  now reads.** `post_study_stages.json` holds the thermal calendar as
+  `thermal_stages` instead of `stages`, and a deck with `VI` travel times also
+  gets a `water_bucket_stages` stage from the end of the last operative stage
+  to the end of that month. A travel time longer than that stage fails the
+  conversion, naming the plant. The converted cases need the paired novomodelo
+  revision; convert a deck again to update it.
 
 ### Fixed
 

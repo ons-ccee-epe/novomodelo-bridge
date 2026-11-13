@@ -146,6 +146,16 @@ inputs follow DECOMP:
   machine under maintenance, gets a zero constant productivity in place of
   the production function. DECOMP builds no planes for such a stage.
 
+The calendars Novomodelo keeps past the study horizon go to
+`post_study_stages.json`. A deck with `GS` deliveries in `dadgnl` gets the
+thermal calendar there (`thermal_stages` and `thermal_bounds`). A deck with
+`VI` travel times gets `water_bucket_stages`: one stage from the end of the
+last operative stage to the end of that month, so a horizon that ends on the
+first of a month gives the whole month. A `VI` travel time longer than that
+stage fails the conversion, naming the plant, because Novomodelo refuses a
+water calendar shorter than its deepest travel time. A deck with neither
+writes no `post_study_stages.json`.
+
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each as a warning naming the affected records, and

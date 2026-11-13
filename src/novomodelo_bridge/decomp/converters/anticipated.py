@@ -1359,7 +1359,7 @@ def _convert_monthly_gnl(
         thermals=thermals,
         past_anticipated_commitments=past,
         post_study_stages=(
-            {"stages": post_calendar, "thermal_bounds": bounds}
+            {"thermal_stages": post_calendar, "thermal_bounds": bounds}
             if post_calendar
             else None
         ),
@@ -1528,7 +1528,9 @@ def convert_gnl(
     past.sort(key=lambda w: (w["thermal_id"], w["start_date"]))
     bounds.sort(key=lambda b: (b["thermal_id"], b["post_study_stage_index"]))
     post_study = (
-        {"stages": post_calendar, "thermal_bounds": bounds} if post_calendar else None
+        {"thermal_stages": post_calendar, "thermal_bounds": bounds}
+        if post_calendar
+        else None
     )
 
     return GnlEmission(

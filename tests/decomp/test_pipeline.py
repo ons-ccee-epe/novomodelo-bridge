@@ -1060,7 +1060,7 @@ _POPULATED_GNL_EMISSION = GnlEmission(
         {"thermal_id": 2, "stage_id": 0, "mw": 30.0},
     ],
     post_study_stages={
-        "stages": [{"id": 12, "start_date": "2027-07-06"}],
+        "thermal_stages": [{"id": 12, "start_date": "2027-07-06"}],
         "thermal_bounds": [{"thermal_id": 1, "stage_id": 12, "max_mw": 50.0}],
     },
 )
@@ -1071,7 +1071,7 @@ _EMPTY_THERMAL_BOUNDS_GNL_EMISSION = GnlEmission(
     ],
     past_anticipated_commitments=[{"thermal_id": 1, "stage_id": 0, "mw": 20.0}],
     post_study_stages={
-        "stages": [{"id": 12, "start_date": "2027-07-06"}],
+        "thermal_stages": [{"id": 12, "start_date": "2027-07-06"}],
         "thermal_bounds": [],
     },
 )
@@ -1170,7 +1170,7 @@ class TestGnlWiring:
         assert post_study["thermal_bounds"] == []
         expected_post_study = _EMPTY_THERMAL_BOUNDS_GNL_EMISSION.post_study_stages
         assert expected_post_study is not None
-        assert post_study["stages"] == expected_post_study["stages"]
+        assert post_study["thermal_stages"] == expected_post_study["thermal_stages"]
 
         initial_conditions = json.loads(
             (dst / "initial_conditions.json").read_text(encoding="utf-8")

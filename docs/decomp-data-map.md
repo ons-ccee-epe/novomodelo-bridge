@@ -30,7 +30,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `SB` |  |  | ● | ● | ● |
 | `dadger.rvN` › `TX` |  | ● |  |  |  |
 | `dadger.rvN` › `UH` |  |  | ● | ● | ● |
-| `dadger.rvN` › `VI` |  |  |  | ● |  |
+| `dadger.rvN` › `VI` |  |  |  | ● | ● |
 | `vazoes.rvN` |  | ● |  |  |  |
 | `hidr.dat` |  |  | ● | ● |  |
 | `dadgnl.rvN` › `GL` (opcional) |  |  |  | ● | ● |
@@ -266,21 +266,23 @@ Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quand
 
 ### `post_study_stages.json`
 
-**Lê:** `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`), `dadger.rvN` (`DT`, `DP`, `AR`, `CT`, `SB`, `UH`)  
-**Quando:** somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou sempre num estudo só de estágios mensais  
+**Lê:** `dadgnl.rvN` (opcional) (`TG`, `GL`, `GS`, `NL`), `dadger.rvN` (`DT`, `DP`, `AR`, `CT`, `SB`, `UH`, `VI`)  
+**Quando:** somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante), ou quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou sempre num estudo só de estágios mensais  
 **Código:** `src/novomodelo_bridge/decomp/converters/anticipated.py`
 
-Calendário pós-estudo na grade semanal (sábados): preenche as semanas já comandadas de `GL` após o fim do horizonte e depois espelha os estágios do estudo; cada térmica GNL recebe limites de preço apenas nos estágios sinalizados (classe 3), nunca nos já comandados. Num estudo só de estágios mensais, o calendário são os meses civis seguintes ao horizonte, tantos quanto o maior `lag` de `NL`, e cada térmica recebe limites de preço nos seus `lag` primeiros meses.
+Calendários pós-estudo. Térmico (`thermal_stages` e `thermal_bounds`, só com GNL), na grade semanal (sábados): preenche as semanas já comandadas de `GL` após o fim do horizonte e depois espelha os estágios do estudo; cada térmica GNL recebe limites de preço apenas nos estágios sinalizados (classe 3), nunca nos já comandados. Num estudo só de estágios mensais, o calendário são os meses civis seguintes ao horizonte, tantos quanto o maior `lag` de `NL`, e cada térmica recebe limites de preço nos seus `lag` primeiros meses. Hídrico (`water_bucket_stages`): quando o deck declara um tempo de viagem `VI`, um único estágio do fim do horizonte do estudo ao fim desse mês civil, sem enchimento; um tempo de viagem maior que ele aborta a conversão, citando a usina.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `stages[].start_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `GL` › `data_inicio` *(derivado)* | Começa no fim do horizonte do estudo: um stub até o sábado seguinte (se necessário), semanas de 168 h até o corte já comandado comum a todas as usinas (`data_inicio` da última semana `GL` mais uma semana, quando ela cai após o fim do horizonte; senão, o próprio fim do horizonte) e, a partir dele, um estágio espelhando cada estágio do estudo. Num estudo só de estágios mensais, o primeiro dia de cada mês civil após o horizonte. |
-| `stages[].duration_hours` | `dadger.rvN` › `DP` › `duracao` *(derivado)* | Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro. |
-| `thermal_bounds[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado)* | Id da térmica GNL em `system/thermals.json`. |
-| `thermal_bounds[].post_study_stage_index` | `dadgnl.rvN` › `GL` › `data_inicio` *(derivado)* | Índice 0-based do estágio pós-estudo; apenas os estágios cujo início é igual ou posterior ao corte já comandado da usina recebem uma linha. Num estudo só de estágios mensais, os `lag` (`NL`) primeiros meses pós-estudo, decididos dentro do estudo. |
-| `thermal_bounds[].cost_per_mwh` | `dadgnl.rvN` › `TG` › `cvu`, `dadger.rvN` › `DP` › `duracao` | `cvu_1..3` dos `TG` dos meses civis que o estágio cobre, ponderados pelas horas do estágio em cada mês (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), e cada `TG` pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão. |
-| `thermal_bounds[].min_mw` | `dadgnl.rvN` › `TG` › `inflexibilidade`, `dadger.rvN` › `DP` › `duracao` | `inflexibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
-| `thermal_bounds[].max_mw` | `dadgnl.rvN` › `TG` › `disponibilidade`, `dadger.rvN` › `DP` › `duracao` | `disponibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
+| `thermal_stages[].start_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao`, `dadgnl.rvN` › `GL` › `data_inicio` *(derivado; condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais)* | Começa no fim do horizonte do estudo: um stub até o sábado seguinte (se necessário), semanas de 168 h até o corte já comandado comum a todas as usinas (`data_inicio` da última semana `GL` mais uma semana, quando ela cai após o fim do horizonte; senão, o próprio fim do horizonte) e, a partir dele, um estágio espelhando cada estágio do estudo. Num estudo só de estágios mensais, o primeiro dia de cada mês civil após o horizonte. |
+| `thermal_stages[].duration_hours` | `dadger.rvN` › `DP` › `duracao` *(derivado; condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais)* | Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro. |
+| `thermal_bounds[].thermal_id` | `dadgnl.rvN` › `TG` › `codigo_usina` *(derivado; condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais)* | Id da térmica GNL em `system/thermals.json`. |
+| `thermal_bounds[].post_study_stage_index` | `dadgnl.rvN` › `GL` › `data_inicio` *(derivado; condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais)* | Índice 0-based do estágio pós-estudo; apenas os estágios cujo início é igual ou posterior ao corte já comandado da usina recebem uma linha. Num estudo só de estágios mensais, os `lag` (`NL`) primeiros meses pós-estudo, decididos dentro do estudo. |
+| `thermal_bounds[].cost_per_mwh` | `dadgnl.rvN` › `TG` › `cvu`, `dadger.rvN` › `DP` › `duracao` *(condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais)* | `cvu_1..3` dos `TG` dos meses civis que o estágio cobre, ponderados pelas horas do estágio em cada mês (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), e cada `TG` pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão. |
+| `thermal_bounds[].min_mw` | `dadgnl.rvN` › `TG` › `inflexibilidade`, `dadger.rvN` › `DP` › `duracao` *(condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais)* | `inflexibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
+| `thermal_bounds[].max_mw` | `dadgnl.rvN` › `TG` › `disponibilidade`, `dadger.rvN` › `DP` › `duracao` *(condicional: somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais)* | `disponibilidade_1..3` do mesmo `TG`, com a mesma ponderação. |
+| `water_bucket_stages[].start_date` | `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado; condicional: somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante))* | Fim do horizonte do estudo `H`: a data final (exclusiva) do último estágio operativo, a partir de `DT` e das durações de patamar de `DP`. É o início do único estágio hídrico. |
+| `water_bucket_stages[].duration_hours` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano`, `dadger.rvN` › `DP` › `duracao` *(derivado; condicional: somente quando o deck declara um tempo de viagem (uma usina operada com `VI` e arco de jusante))* | Os dias que restam no mês civil do fim do horizonte `H`, o dia de `H` incluso, vezes 24 h; um horizonte que termina no dia 1º dá o mês inteiro, o mês de acoplamento do NEWAVE. Se o maior `VI.duracao` excede essas horas, a conversão falha citando a usina e as duas durações: o Novomodelo recusa um calendário hídrico mais curto que o maior tempo de viagem. |
 
 ### `system/buses.json`
 
@@ -1133,11 +1135,13 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `duracao` → `constraints/thermal_bounds.parquet` › `max_generation_mw`
 - `duracao` → `constraints/thermal_bounds.parquet` › `cost_per_mwh`
 - `numero_patamares` → `constraints/pumping_bounds.parquet` › `block_id`
-- `duracao` → `post_study_stages.json` › `stages[].start_date`
-- `duracao` → `post_study_stages.json` › `stages[].duration_hours`
+- `duracao` → `post_study_stages.json` › `thermal_stages[].start_date`
+- `duracao` → `post_study_stages.json` › `thermal_stages[].duration_hours`
 - `duracao` → `post_study_stages.json` › `thermal_bounds[].cost_per_mwh`
 - `duracao` → `post_study_stages.json` › `thermal_bounds[].min_mw`
 - `duracao` → `post_study_stages.json` › `thermal_bounds[].max_mw`
+- `duracao` → `post_study_stages.json` › `water_bucket_stages[].start_date`
+- `duracao` → `post_study_stages.json` › `water_bucket_stages[].duration_hours`
 - `duracao` → `system/energy_contracts.json` › `contracts[].price_per_mwh`
 - `duracao` → `system/energy_contracts.json` › `contracts[].limits.min_mw`
 - `duracao` → `system/energy_contracts.json` › `contracts[].limits.max_mw`
@@ -1191,7 +1195,9 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `dia, mes, ano` → `system/thermals.json` › `thermals[].anticipated_config.lead_time_hours`
 - `dia, mes, ano` → `system/pumping_stations.json` › `pumping_stations[].operational_start_date`
 - `dia, mes, ano` → `system/non_controllable_sources.json` › `non_controllable_sources[].operational_start_date`
-- `dia, mes, ano` → `post_study_stages.json` › `stages[].start_date`
+- `dia, mes, ano` → `post_study_stages.json` › `thermal_stages[].start_date`
+- `dia, mes, ano` → `post_study_stages.json` › `water_bucket_stages[].start_date`
+- `dia, mes, ano` → `post_study_stages.json` › `water_bucket_stages[].duration_hours`
 - `dia, mes, ano` → `system/energy_contracts.json` › `contracts[].operational_start_date`
 - `dia` → `system/hydros.json` › `hydros[].operational_start_date`
 - `mes` → `system/hydros.json` › `hydros[].operational_start_date`
@@ -1719,12 +1725,13 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `VI`
 
-**Estado:** convertido. **Lido por:** `initial_conditions.json`, `system/hydros.json`.
+**Estado:** convertido. **Lido por:** `initial_conditions.json`, `post_study_stages.json`, `system/hydros.json`.
 
 - `codigo_usina` → `initial_conditions.json` › `past_defluences[].hydro_id`
 - `duracao` → `initial_conditions.json` › `past_defluences[].start_date`
 - `duracao` → `initial_conditions.json` › `past_defluences[].end_date`
 - `vazao_1..vazao_5` → `initial_conditions.json` › `past_defluences[].value_m3s`
+- `duracao` → `post_study_stages.json` › `water_bucket_stages[].duration_hours`
 - `duracao` → `system/hydros.json` › `hydros[].travel_time_hours`
 
 ### `dadger.rvN` › `VL`
@@ -2022,7 +2029,7 @@ Médias de longo termo mensais das vazões naturais por posto, lidas só para a 
 - `geracao` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
 - `duracao` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
 - `data_inicio` → `system/thermals.json` › `thermals[].anticipated_config.lead_time_hours`
-- `data_inicio` → `post_study_stages.json` › `stages[].start_date`
+- `data_inicio` → `post_study_stages.json` › `thermal_stages[].start_date`
 - `data_inicio` → `post_study_stages.json` › `thermal_bounds[].post_study_stage_index`
 - `geracao` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
 - `duracao` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`

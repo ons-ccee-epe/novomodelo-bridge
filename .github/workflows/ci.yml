@@ -63,12 +63,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # novomodelo-python is a core runtime dependency, so the sync pulls it on
-      # every job: the tier-2 (`requires_novomodelo_python`) tests run on all of them.
+      # novomodelo-python is not installed here until the novomodelo release
+      # this branch converts for is on PyPI: the locked one refuses the cases
+      # main now writes. `requires_novomodelo_python` skips the tests that need
+      # it; --no-sync keeps `uv run` from installing it back.
       - name: Sync dependencies
-        run: uv sync --locked
+        run: uv sync --locked --no-install-package novomodelo-python
 
-      - run: uv run pytest --tb=short
+      - run: uv run --no-sync pytest --tb=short
 
   coverage:
     name: coverage (reader/align layer floor)
@@ -85,6 +87,6 @@ jobs:
           python-version: "3.13"
 
       - name: Sync dependencies
-        run: uv sync --locked
+        run: uv sync --locked --no-install-package novomodelo-python
 
-      - run: uv run pytest --cov --cov-report=term-missing
+      - run: uv run --no-sync pytest --cov --cov-report=term-missing

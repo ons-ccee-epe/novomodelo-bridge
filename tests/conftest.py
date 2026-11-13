@@ -46,12 +46,12 @@ from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.files import NewaveFiles
 
 # Shared skip marker for tier-2 tests that need `novomodelo-python` (`import
-# novomodelo`). It is a core runtime dependency, so it is
-# present on every CI job; this ``skipif`` guards only a deliberately
-# novomodelo-free environment (e.g. a partial dev checkout). Use ``find_spec``
-# (import-free) so this module stays importable there too. ``condition`` is
-# passed by keyword (rather than positionally) so ``.kwargs["condition"]`` is
-# introspectable.
+# novomodelo`). CI installs the bridge without `novomodelo-python`, and this
+# marker skips the tests that need it there. A test that imports `novomodelo`
+# (directly or through a bridge function that does) carries it. Use
+# ``find_spec`` (import-free) so this module stays importable without it.
+# ``condition`` is passed by keyword (rather than positionally) so
+# ``.kwargs["condition"]`` is introspectable.
 # Import via ``from tests.conftest import requires_novomodelo_python``.
 requires_novomodelo_python = pytest.mark.skipif(
     condition=importlib.util.find_spec("novomodelo") is None,
