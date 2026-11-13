@@ -817,6 +817,7 @@ def _run_cadastro_pipeline(
     gnl_emission: GnlEmission | None = None,
     convert_gnl_mock_out: list[MagicMock] | None = None,
     turbine_limits: TurbineLimits | None = None,
+    gnl_ct_thermals: list[dict] | None = None,
 ) -> Path:
     """Run ``convert_decomp_case`` against the fully synthetic mock deck
     above, patching every converter not under test to a canned
@@ -857,6 +858,8 @@ def _run_cadastro_pipeline(
     *convert_gnl_mock_out*, mirroring *diagnostics_out*'s out-param shape, lets
     a caller recover the ``convert_gnl`` mock (and thus its call args) after
     the patched run — populated only alongside *gnl_emission*.
+    *gnl_ct_thermals* replaces that single CT thermal alongside
+    *gnl_emission* (``[]`` drives a deck whose only thermals are GNL).
 
     *turbine_limits* replaces the default flat turbined-flow limits.
     """
@@ -1019,7 +1022,7 @@ def _run_cadastro_pipeline(
             gnl_emission
         )
         patches["novomodelo_bridge.decomp.pipeline.thermal_conv.convert_thermals"] = {
-            "thermals": [{"id": 0}]
+            "thermals": [{"id": 0}] if gnl_ct_thermals is None else gnl_ct_thermals
         }
     with ExitStack() as stack:
         entered: dict[str, MagicMock] = {}
@@ -1195,6 +1198,42 @@ class TestGnlWiring:
             "future anticipated deliver" in r.message for r in caplog.records
         )
         assert not any("post-horizon deliver" in r.message for r in caplog.records)
+
+
+class TestOptionalLinesAndThermals:
+    def test_no_lines_and_no_thermals_omits_both_files(self, tmp_path: Path) -> None:
+        dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
+
+        assert (dst / "system" / "buses.json").is_file()
+        assert not (dst / "system" / "lines.json").exists()
+        assert not (dst / "system" / "thermals.json").exists()
+
+    def test_dry_run_does_not_list_the_omitted_files(self, tmp_path: Path) -> None:
+        report_out: list[ConversionReport] = []
+        _run_cadastro_pipeline(
+            tmp_path, ac_volmax_frame=None, dry_run=True, report_out=report_out
+        )
+
+        [report] = report_out
+        names = {Path(p).as_posix() for p in report.would_write_paths}
+        assert any(n.endswith("system/buses.json") for n in names)
+        assert not any(n.endswith("system/lines.json") for n in names)
+        assert not any(n.endswith("system/thermals.json") for n in names)
+
+    def test_gnl_only_deck_numbers_gnl_thermals_from_zero(self, tmp_path: Path) -> None:
+        convert_gnl_mock_out: list[MagicMock] = []
+        dst = _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            gnl_emission=_EMPTY_THERMAL_BOUNDS_GNL_EMISSION,
+            convert_gnl_mock_out=convert_gnl_mock_out,
+            gnl_ct_thermals=[],
+        )
+
+        [convert_gnl_mock] = convert_gnl_mock_out
+        assert convert_gnl_mock.call_args.kwargs["first_thermal_id"] == 0
+        thermals = json.loads((dst / "system" / "thermals.json").read_text())
+        assert thermals["thermals"] == _EMPTY_THERMAL_BOUNDS_GNL_EMISSION.thermals
 
 
 class TestCadastroPipelineWiring:

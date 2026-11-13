@@ -19,10 +19,9 @@ only when a boundary policy is actually imported. novomodelo's own inflow-lag-de
 inference (sized from PAR(p) plus the boundary policy) is slated to derive that
 depth from the checkpoint itself, retiring even the importer's patch.
 
-``penalties.json`` reuses the shared ρ-scaled hydro penalty construction
-with the deck's deficit cost and the converted productivities — the same
-formulas the other converter family applies, so the two case families
-share one penalty convention.
+``penalties.json`` takes DECOMP's flat micro-penalties from
+``decomp/converters/penalties.py`` and the shared hydro penalty construction
+only for the productivity-scaled hard tier.
 """
 
 from __future__ import annotations
@@ -33,10 +32,10 @@ from typing import TYPE_CHECKING
 from novomodelo_bridge.core.penalties import (
     PCORTEOL,
     PEXC,
-    PINT,
     hydro_penalty_costs,
 )
 from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
+from novomodelo_bridge.decomp.converters import penalties
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -146,9 +145,9 @@ def convert_penalties(
     """Build ``penalties.json`` from the deck's deficit cost.
 
     ``ρ_avg`` is the mean converted productivity over every operated plant
-    (zeros included) and ``ρ_max`` the maximum — the same convention the
-    shared hydro-penalty construction expects; there is no per-deck
-    penalty file, so every hydro slot takes its deficit-derived default.
+    (zeros included) and ``ρ_max`` the maximum; they scale only the hard
+    tier. The micro tier is flat; there is no per-deck penalty file, so every
+    hydro slot takes its deficit-derived default.
     """
     values = list(productivities)
     rho_avg = sum(values) / len(values) if values else 1.0
@@ -158,6 +157,7 @@ def convert_penalties(
         rho_max_acum=rho_max,
         penalid_costs={},
         max_deficit_cost=deficit_cost,
+        flow_micro_costs=penalties.flow_micro_costs(),
     )
     return {
         "$schema": novomodelo_schemas.schema_url_for("penalties.json"),
@@ -166,6 +166,6 @@ def convert_penalties(
             "excess_cost": PEXC,
         },
         "hydro": hydro_costs,
-        "line": {"exchange_cost": PINT},
+        "line": {"exchange_cost": penalties.EXCHANGE_COST},
         "non_controllable_source": {"curtailment_cost": PCORTEOL},
     }

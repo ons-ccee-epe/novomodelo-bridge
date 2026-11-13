@@ -61,6 +61,16 @@ class TestReadCaseInputs:
         with pytest.raises(InputReadError, match="must be non-negative"):
             read_case_inputs(synthetic_case_dir)
 
+    def test_absent_thermals_file_reads_as_no_thermals(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        (synthetic_case_dir / "system" / "thermals.json").unlink()
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert inputs.thermals == ()
+        assert anticipated_thermals(inputs) == ()
+
     def test_missing_stages_file(self, tmp_path: Path) -> None:
         case_dir = tmp_path / "empty_case"
         case_dir.mkdir()

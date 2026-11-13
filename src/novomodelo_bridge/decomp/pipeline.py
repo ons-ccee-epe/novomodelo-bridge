@@ -69,6 +69,7 @@ from novomodelo_bridge.decomp.converters import (
 )
 from novomodelo_bridge.decomp.converters import ncs as ncs_conv
 from novomodelo_bridge.decomp.converters import network as network_conv
+from novomodelo_bridge.decomp.converters import penalties as penalties_conv
 from novomodelo_bridge.decomp.converters import rhe_shares as rhe_shares_conv
 from novomodelo_bridge.decomp.converters import thermal as thermal_conv
 from novomodelo_bridge.decomp.converters import travel_time as travel_time_conv
@@ -230,9 +231,11 @@ def _rejoin_thermal_cost(thermal_bounds: pa.Table, cost_table: pa.Table) -> pa.T
     discipline) still needs a row to carry that stage's cost: a strict left
     join would have nothing in *thermal_bounds* to attach it to and silently
     drop the value. The outer merge instead adds a ``block_id = None`` row
-    with every bound column ``null`` for exactly that case. Per-block rows
-    always get ``null`` cost, since the cost table never carries a
-    non-``None`` ``block_id``.
+    with every bound column ``null`` for exactly that case. A per-block cost
+    row lands on the block's existing bound row (non-uniform ``CT``, or a
+    per-block single-term ``RE``) or else becomes a cost-only block row; the
+    stage row likewise. The column-by-column contract is in
+    :mod:`novomodelo_bridge.decomp.converters.thermal`'s module docstring.
     """
     key = ["thermal_id", "stage_id", "block_id"]
     bounds_df = thermal_bounds.to_pandas()
@@ -1155,7 +1158,10 @@ def _convert_thermals_with_gnl(
         )
         gnl = anticipated_conv.convert_gnl(
             gnl_model,
-            first_thermal_id=max(t["id"] for t in thermals_dict["thermals"]) + 1,
+            first_thermal_id=max(
+                (t["id"] for t in thermals_dict["thermals"]), default=-1
+            )
+            + 1,
             bus_id_of=id_map.bus_id,
             calendar=case.calendar,
         )
@@ -1301,9 +1307,13 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # hydros.json is written after the bound tables are resolved (below): its
     # diversion channels follow the resolved diversion bounds.
     lines_doc, line_bounds = _convert_lines_with_itaipu_link(artifacts)
+    lines_doc = penalties_conv.with_fictitious_exchange_cost(
+        lines_doc, network_conv.fictitious_bus_ids(deficit_costs, id_map)
+    )
     artifacts.lines_doc = lines_doc
     artifacts.line_bounds = line_bounds
-    writer.write_json("system/lines.json", lines_doc)
+    if lines_doc["lines"]:
+        writer.write_json("system/lines.json", lines_doc)
     writer.write_json(
         "system/pumping_stations.json",
         network_conv.convert_pumping_stations(case, id_map),
@@ -1313,7 +1323,8 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     )
     artifacts.thermals_dict = thermals_dict
     artifacts.gnl_model = gnl_model
-    writer.write_json("system/thermals.json", thermals_dict)
+    if thermals_dict["thermals"]:
+        writer.write_json("system/thermals.json", thermals_dict)
     # The PAR inflow-lag seed (initial_conditions.recent_observations) is
     # written by `fcf/importer.py::import_boundary_fcf`, not here: it is read on
     # the boundary cut's coupling postos and feeds only that cut's inflow-lag

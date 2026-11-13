@@ -7,9 +7,17 @@ declared record). ``convert_thermal_bounds`` returns a pair: the
 ``min``/``max_generation_mw`` bound contributions (:class:`~novomodelo_bridge.
 decomp.bounds_accumulator.BoundContribution`) the accumulator later resolves,
 and a ``cost_per_mwh`` side-table — cost is not a registered bound axis (it
-has no column in ``bounds_accumulator.THERMAL_BOUNDS_SCHEMA``) and is not
-block-eligible (novomodelo rule 37), so it never travels as a contribution and
-rides alongside for the pipeline to rejoin after ``build_bound_tables``.
+has no column in ``bounds_accumulator.THERMAL_BOUNDS_SCHEMA``), so it never
+travels as a contribution and rides alongside for the pipeline to rejoin
+after ``build_bound_tables``.
+
+The side-table is decided apart from the generation split below. Every
+``(thermal, stage)`` has one ``block_id = None`` row carrying the
+hours-weighted CVU and, when the stage's CVUs are not all exactly equal, one
+row per block carrying that block's exact CVU. novomodelo resolves
+``thermal_bounds`` block rows column by column (block, then stage, then
+registry), so a block row may carry only a cost or only bounds, and the stage
+mean is shadowed wherever every block has its own cost.
 
 Per ``(thermal, stage)``, the generation bound contributes **either** one
 stage-level (``block_id = None``) contribution carrying the hours-weighted
@@ -19,10 +27,7 @@ block (``block_id = 0..n-1``, no base) carrying each block's own exact
 ``min``/``max`` — when they are not. Never both: the accumulator's
 ``resolve()`` does not replicate novomodelo's replace-not-merge column semantics,
 so a base contribution left alongside per-block ones would be folded into
-every block's intersection instead of being shadowed by them. The cost
-side-table is unaffected by this split — it always carries one
-``block_id = None`` row per ``(thermal, stage)``, independent of whether that
-stage's generation bound materialized a base contribution.
+every block's intersection instead of being shadowed by them.
 
 GNL plants live in the anticipated-dispatch file and are converted by the
 anticipation track, not here.
@@ -37,7 +42,7 @@ import pyarrow as pa
 
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
-from novomodelo_bridge.decomp.temporal import hours_weighted as _hours_weighted
+from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -146,10 +151,10 @@ def convert_thermals(
                 "name": plant["name"],
                 "operational_start_date": op_date,
                 "bus_id": id_map.bus_id(plant["bus_code"]),
-                "cost_per_mwh": _hours_weighted(base["cvu"], first),
+                "cost_per_mwh": hours_weighted(base["cvu"], first),
                 "generation": {
-                    "min_mw": _hours_weighted(base["inflex"], first),
-                    "max_mw": _hours_weighted(base["disp"], first),
+                    "min_mw": hours_weighted(base["inflex"], first),
+                    "max_mw": hours_weighted(base["disp"], first),
                 },
             }
         )
@@ -178,9 +183,10 @@ class ThermalBounds(NamedTuple):
 
     ``generation`` is the ``min``/``max_generation_mw`` contribution list the
     pipeline feeds into ``bounds_accumulator.resolve`` alongside every other
-    family's contributions; ``cost`` is the stage-level ``cost_per_mwh``
-    side-table (schema :data:`_THERMAL_COST_SCHEMA`) the pipeline rejoins onto
-    the resolved ``thermal_bounds`` table afterwards.
+    family's contributions; ``cost`` is the ``cost_per_mwh`` side-table
+    (schema :data:`_THERMAL_COST_SCHEMA`) the pipeline rejoins onto the
+    resolved ``thermal_bounds`` table afterwards: the stage row plus the block
+    rows where CVUs differ (see the module docstring).
     """
 
     generation: list[BoundContribution]
@@ -194,9 +200,9 @@ def convert_thermal_bounds(
     """Thermal generation-bound contributions plus the ``cost_per_mwh`` side-table.
 
     Every ``(thermal, stage)`` contributes one ``cost`` row (``block_id =
-    None``) carrying the hours-weighted ``cost_per_mwh`` — unchanged from the
-    pre-block-axis fold, so any stage-level consumer sees the same number as
-    before. The ``generation`` bound contributes, per ``(thermal, stage)``,
+    None``) carrying the hours-weighted ``cost_per_mwh``, plus one row per
+    block when the stage's CVUs differ (see the module docstring). The
+    ``generation`` bound contributes, per ``(thermal, stage)``,
     **either** one stage-level (``block_id = None``) contribution carrying
     the hours-weighted ``min``/``max_generation_mw`` — when the stage's
     ``disponibilidade``/``inflexibilidade`` are block-uniform — **or** one
@@ -212,6 +218,7 @@ def convert_thermal_bounds(
     contributions: list[BoundContribution] = []
     cost_thermal_ids: list[int] = []
     cost_stage_ids: list[int] = []
+    cost_block_ids: list[int | None] = []
     cost_values: list[float] = []
     for code in id_map.thermal_codes:
         plant = plants.get(code)
@@ -222,10 +229,19 @@ def convert_thermal_bounds(
             values = plant["stages"][stage.index]
             disp = values["disp"]
             inflex = values["inflex"]
+            cvu = values["cvu"]
 
             cost_thermal_ids.append(thermal_id)
             cost_stage_ids.append(stage.index)
-            cost_values.append(_hours_weighted(values["cvu"], stage))
+            cost_block_ids.append(None)
+            cost_values.append(hours_weighted(cvu, stage))
+
+            if not all(c == cvu[0] for c in cvu):
+                for b, c in enumerate(cvu):
+                    cost_thermal_ids.append(thermal_id)
+                    cost_stage_ids.append(stage.index)
+                    cost_block_ids.append(b)
+                    cost_values.append(c)
 
             uniform = all(d == disp[0] for d in disp) and all(
                 m == inflex[0] for m in inflex
@@ -238,8 +254,8 @@ def convert_thermal_bounds(
                         stage_id=stage.index,
                         block_id=None,
                         axis="generation",
-                        lower=_hours_weighted(inflex, stage),
-                        upper=_hours_weighted(disp, stage),
+                        lower=hours_weighted(inflex, stage),
+                        upper=hours_weighted(disp, stage),
                         contributor="CT",
                     )
                 )
@@ -258,12 +274,11 @@ def convert_thermal_bounds(
                         )
                     )
 
-    n = len(cost_thermal_ids)
     cost_table = pa.table(
         {
             "thermal_id": pa.array(cost_thermal_ids, type=pa.int32()),
             "stage_id": pa.array(cost_stage_ids, type=pa.int32()),
-            "block_id": pa.array([None] * n, type=pa.int32()),
+            "block_id": pa.array(cost_block_ids, type=pa.int32()),
             "cost_per_mwh": pa.array(cost_values, type=pa.float64()),
         },
         schema=_THERMAL_COST_SCHEMA,

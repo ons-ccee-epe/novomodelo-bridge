@@ -25,7 +25,7 @@ from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from idecomp.decomp import Dadger
 
@@ -124,6 +124,15 @@ def convert_buses(
     }
 
 
+def fictitious_bus_ids(
+    deficit_costs: Mapping[int, float], id_map: DecompIdMap
+) -> frozenset[int]:
+    """Bus ids that carry no market: SB subsystems without a CD record, plus the transhipment bus."""
+    return frozenset(
+        id_map.bus_id(code) for code in id_map.bus_codes if code not in deficit_costs
+    ) | {id_map.transhipment_bus_id}
+
+
 def _ia_dense(
     dadger: Dadger,
     calendar: Sequence[OperativeStage],
@@ -213,12 +222,6 @@ def convert_lines(
     (novomodelo rule 36). Block rows carry the ``IA`` record's own per-block
     limit as an absolute MW value, read directly with no factor round-trip.
     The unbounded sentinel (99999) passes through as a plain large capacity.
-
-    TRACKED NOVOMODELO-GAP WORKAROUND (C4, the novomodelo repository's
-    conversion-found-improvements registry): a deck that declares no ``IA``
-    pairs still emits ``system/lines.json`` with an empty ``lines`` list,
-    because novomodelo requires the file structurally even for a lineless study.
-    Remove this note when the registry's C4 entry closes.
     """
     calendar = case.calendar
     dense = _ia_dense(case.dadger, calendar)

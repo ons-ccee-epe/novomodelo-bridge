@@ -21,7 +21,7 @@ import pyarrow as pa
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.pandas_utils import as_frame
-from novomodelo_bridge.decomp.converters.thermal import _hours_weighted
+from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
@@ -273,11 +273,11 @@ def convert_energy_contracts(
                 "bus_id": id_map.bus_id(c.bus_code),
                 "type": c.kind,
                 "price_per_mwh": _signed_price(
-                    _hours_weighted(base.custo, first), c.kind
+                    hours_weighted(base.custo, first), c.kind
                 ),
                 "limits": {
-                    "min_mw": _hours_weighted(base.min_mw, first),
-                    "max_mw": _hours_weighted(base.max_mw, first),
+                    "min_mw": hours_weighted(base.min_mw, first),
+                    "max_mw": hours_weighted(base.max_mw, first),
                 },
             }
         )
@@ -308,15 +308,13 @@ def convert_contract_bounds(
 
     Every ``(contract, stage)`` gets a base row (``block_id = None``) carrying
     the hours-weighted ``min_mw``/``max_mw`` and the signed hours-weighted
-    ``price_per_mwh``. Unlike ``convert_thermal_bounds`` — whose
-    ``cost_per_mwh`` stays stage-level only (novomodelo rule 37) — all three value
-    columns here are block-eligible (contract price legitimately
-    varies per block), so the uniformity test spans ``min_mw``, ``max_mw``,
-    *and* the signed per-block price. Where the stage is not uniform across
-    all three, one override row per block is emitted carrying that block's
-    exact ``min_mw``/``max_mw`` and signed ``price_per_mwh``. This mirrors
-    ``convert_thermal_bounds``' and ``convert_lines``' sparse
-    base-plus-override convention exactly.
+    ``price_per_mwh``. All three value columns are block-eligible (contract
+    price legitimately varies per block), and the uniformity test spans
+    ``min_mw``, ``max_mw`` *and* the signed per-block price jointly — whereas
+    ``convert_thermal_bounds`` tests thermal cost apart from the generation
+    bounds. Where the stage is not uniform across all three, one override row
+    per block is emitted carrying that block's exact ``min_mw``/``max_mw`` and
+    signed ``price_per_mwh``.
     """
     calendar = case.calendar
     contract_ids: list[int] = []
@@ -333,9 +331,9 @@ def convert_contract_bounds(
 
             contract_ids.append(c.id)
             stage_ids.append(stage.index)
-            mins.append(_hours_weighted(sv.min_mw, stage))
-            maxs.append(_hours_weighted(sv.max_mw, stage))
-            prices.append(_signed_price(_hours_weighted(sv.custo, stage), c.kind))
+            mins.append(hours_weighted(sv.min_mw, stage))
+            maxs.append(hours_weighted(sv.max_mw, stage))
+            prices.append(_signed_price(hours_weighted(sv.custo, stage), c.kind))
             block_ids.append(None)
 
             uniform = (

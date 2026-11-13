@@ -16,6 +16,23 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **`convert decomp` writes DECOMP's own spillage, turbining, diversion and
+  exchange penalties** instead of NEWAVE's: the same cost for every plant
+  whatever its productivity, and half the exchange cost on lines that touch
+  a fictitious subsystem or the `IV` node. Results change; convert DECOMP
+  cases again and rerun novomodelo.
+- **`convert newave` and `convert decomp` write
+  `non_controllable_source.curtailment_cost` as 0** in `penalties.json`, so
+  curtailing a park is free. Only DECOMP `centralizado` parks can be curtailed,
+  so only their results change.
+- **BREAKING: `convert newave` and `convert decomp` omit `system/lines.json` and
+  `system/thermals.json` when the deck has no lines or no thermal plants.** A
+  script that reads converted cases must treat a missing file as an empty list;
+  `export dessem` already does.
+- **`convert decomp` writes each load block's own `CT` unit cost (CVU) in
+  `constraints/thermal_bounds.parquet`** when a plant's CVUs differ between
+  the load blocks of a stage, instead of only their hours-weighted mean.
+  Results change for such decks; reconvert them.
 - **`convert decomp` writes the post-study calendars under the keys novomodelo
   now reads.** `post_study_stages.json` holds the thermal calendar as
   `thermal_stages` instead of `stages`, and a deck with `VI` travel times also
@@ -23,6 +40,11 @@ links are cobre-bridge's.
   to the end of that month. A travel time longer than that stage fails the
   conversion, naming the plant. The converted cases need the paired novomodelo
   revision; convert a deck again to update it.
+
+### Fixed
+
+- **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
+  Such a deck now converts.
 
 ## [0.20.0] - 2026-11-03
 
