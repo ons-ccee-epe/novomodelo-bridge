@@ -13,7 +13,7 @@ slot-enumeration helper, ``emit_re_generics``'s per-record
 resolve-or-skip-whole-constraint behaviour (mixed hydro+interchange,
 hydro+contract, GNL/unknown-thermal, frequency-split, no-line ``FI``, and an all-skipped
 census), and ``emit_rhq_rhv_generics``'s RHQ flow-mix/``QBOM``-station and
-RHV multi-``VARM`` additive-floor/volume-tipo-deferral behaviour. The
+RHV ``VARM`` additive-floor and ``VDEF``/``VBOM`` stage-volume behaviour. The
 ``GenericConstraintBuilder`` itself is covered by
 ``tests/core/test_generic_constraint_builder.py``.
 """
@@ -139,22 +139,19 @@ def test_variable_token_interchange_raises(id_map: DecompIdMap) -> None:
         _variable_token(term, id_map, {})
 
 
-def test_variable_token_vdef_raises(id_map: DecompIdMap) -> None:
+def test_variable_token_vdef(id_map: DecompIdMap) -> None:
     term = ConstraintTerm(code=5, coefficient=1.0, variable="VDEF")
-    with pytest.raises(ValueError, match="VDEF"):
-        _variable_token(term, id_map, {})
+    assert _variable_token(term, id_map, {}) == "hydro_outflow_volume(0)"
 
 
-def test_variable_token_vdes_raises(id_map: DecompIdMap) -> None:
+def test_variable_token_vdes(id_map: DecompIdMap) -> None:
     term = ConstraintTerm(code=5, coefficient=1.0, variable="VDES")
-    with pytest.raises(ValueError, match="VDES"):
-        _variable_token(term, id_map, {})
+    assert _variable_token(term, id_map, {}) == "hydro_diversion_volume(0)"
 
 
-def test_variable_token_vbom_raises(id_map: DecompIdMap) -> None:
-    term = ConstraintTerm(code=5, coefficient=1.0, variable="VBOM")
-    with pytest.raises(ValueError, match="VBOM"):
-        _variable_token(term, id_map, {})
+def test_variable_token_vbom(id_map: DecompIdMap) -> None:
+    term = ConstraintTerm(code=42, coefficient=1.0, variable="VBOM")
+    assert _variable_token(term, id_map, {42: 2}) == "pumping_volume(2)"
 
 
 def test_variable_token_unknown_raises(id_map: DecompIdMap) -> None:
@@ -953,10 +950,10 @@ def test_emit_rhq_rhv_generics_rhv_varm_uncadastred_skips_and_warns() -> None:
     assert warnings[0].code == "decomp-rhv-varm-plant-uncadastred"
 
 
-def test_emit_rhq_rhv_generics_rhv_volume_tipo_deferred_skips_and_warns(
+def test_emit_rhq_rhv_generics_rhv_vdef_is_one_stage_volume_row(
     unused_effective: EffectiveCadastro,
 ) -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(182,))
     record = ConstraintRecord(
         family="HV",
         constraint_id=9,
@@ -966,14 +963,106 @@ def test_emit_rhq_rhv_generics_rhv_volume_tipo_deferred_skips_and_warns(
         bounds={0: StageBounds(lower=(5.0,), upper=(None,))},
         per_block=False,
     )
-    census = _census(record)
-    calendar = [_stage(0, 1)]
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(0, 3)]),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=unused_effective,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    constraint = result.constraints[0]
+    assert constraint["expression"] == "hydro_outflow_volume(0)"
+    assert constraint["slack"] == soft_slack(45000.0, "per_hour")
+    rows = result.bounds.to_pylist()
+    assert len(rows) == 1
+    assert rows[0]["block_id"] is None
+    assert rows[0]["bound_lower"] == 5.0
+    assert rows[0]["bound_upper"] is None
+
+
+def test_emit_rhq_rhv_generics_rhv_floor_offsets_only_the_varm_terms() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
+    effective = EffectiveCadastro(
+        base=_hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
+    )
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),
+            ConstraintTerm(code=6, coefficient=-1.0, variable="VDEF"),
+        ),
+        bounds={0: StageBounds(lower=(10.0,), upper=(50.0,))},
+        per_block=False,
+    )
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(0, 1)]),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        effective=effective,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    assert result.constraints[0]["expression"] == (
+        "hydro_storage(0) - hydro_outflow_volume(1)"
+    )
+    rows = result.bounds.to_pylist()
+    assert (rows[0]["bound_lower"], rows[0]["bound_upper"]) == (110.0, 150.0)
+
+
+def test_emit_rhq_rhv_generics_rhv_vbom_via_pumping_map(
+    unused_effective: EffectiveCadastro,
+) -> None:
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=11,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=2, coefficient=1.0, variable="VBOM"),),
+        bounds={0: StageBounds(lower=(None,), upper=(40.0,))},
+        per_block=False,
+    )
+
+    result = emit_rhq_rhv_generics(
+        _case([_stage(0, 1)]),
+        DecompIdMap(bus_codes=(1,), bus_names=("SE",)),
+        census=_census(record),
+        pumping_station_ids={2: 1},
+        effective=unused_effective,
+        big_m=45000.0,
+    )
+
+    assert result is not None
+    assert result.constraints[0]["expression"] == "pumping_volume(1)"
+
+
+def test_emit_rhq_rhv_generics_rhv_vbom_no_station_skips_and_warns(
+    unused_effective: EffectiveCadastro,
+) -> None:
+    record = ConstraintRecord(
+        family="HV",
+        constraint_id=11,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=2, coefficient=1.0, variable="VBOM"),),
+        bounds={0: StageBounds(lower=(None,), upper=(40.0,))},
+        per_block=False,
+    )
 
     with dx.collect() as collected:
         result = emit_rhq_rhv_generics(
-            _case(calendar),
-            id_map,
-            census=census,
+            _case([_stage(0, 1)]),
+            DecompIdMap(bus_codes=(1,), bus_names=("SE",)),
+            census=_census(record),
             pumping_station_ids={},
             effective=unused_effective,
             big_m=45000.0,
@@ -981,8 +1070,7 @@ def test_emit_rhq_rhv_generics_rhv_volume_tipo_deferred_skips_and_warns(
 
     assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-rhv-volume-tipo-deferred"
+    assert [w.code for w in warnings] == ["decomp-rhv-vbom-no-station"]
 
 
 def test_format_expression_parameter_weight() -> None:

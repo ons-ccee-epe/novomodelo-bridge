@@ -14,6 +14,14 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` converts `RHV` constraints on stage volumes** (`CV`
+  tipos `VDEF`, `VDES` and `VBOM`) instead of skipping them with
+  `decomp-rhv-volume-tipo-deferred`; results change for decks that have them,
+  so reconvert those. A `VBOM` term without a `UE` pumping station drops the
+  constraint, with a `decomp-rhv-vbom-no-station` warning.
+
 ### Changed
 
 - **`convert decomp` writes DECOMP's own spillage, turbining, diversion and
