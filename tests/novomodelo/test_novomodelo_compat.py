@@ -13,24 +13,24 @@ from novomodelo_bridge.novomodelo.compat import (
 
 
 def test_min_novomodelo_version_value() -> None:
-    assert MIN_NOVOMODELO_VERSION == "0.21.0"
+    assert MIN_NOVOMODELO_VERSION == "0.20.0"
     assert isinstance(MIN_NOVOMODELO_VERSION, str)
 
 
 def test_supports_output_at_the_floor() -> None:
-    assert _novomodelo_python_supports_output("0.21.0") is True
+    assert _novomodelo_python_supports_output("0.20.0") is True
 
 
 def test_supports_output_above_the_floor() -> None:
-    assert _novomodelo_python_supports_output("0.21.1") is True
+    assert _novomodelo_python_supports_output("0.20.1") is True
 
 
 def test_supports_output_below_the_floor() -> None:
-    assert _novomodelo_python_supports_output("0.20.0") is False
+    assert _novomodelo_python_supports_output("0.19.1") is False
 
 
 def test_supports_output_pre_release_suffix_is_lenient() -> None:
-    assert _novomodelo_python_supports_output("0.21.0rc1") is True
+    assert _novomodelo_python_supports_output("0.20.0rc1") is True
 
 
 def test_installed_version_returns_the_distribution_version(
