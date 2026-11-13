@@ -94,8 +94,9 @@ class ConstraintTerm:
     (RE hydro, ``FU``), ``thermal_generation`` (RE thermal, ``FT``),
     ``interchange`` (RE submarket pair, ``FI``), ``contract`` (RE ``CI``/``CE``
     contract, ``FE``), the ``CQ.tipo`` flow
-    (``QDEF``/``QTUR``/``QDES``/``QBOM``) for HQ, ``VARM`` for HV, or ``energy``
-    for HE. ``frequency`` is the 50/60 Hz tag carried only by RE ``FU`` terms
+    (``QDEF``/``QTUR``/``QDES``/``QBOM``) for HQ, the ``CV.tipo`` volume
+    (``VARM``/``VDEF``/``VDES``/``VBOM``) for HV, or ``energy`` for HE.
+    ``frequency`` is the 50/60 Hz tag carried only by RE ``FU`` terms
     (``None`` elsewhere); a plant split across both frequencies contributes two
     distinct terms. ``submarket`` is the ``FT`` thermal's or the ``FE``
     contract's submarket code (``codigo_submercado``); a contract number is

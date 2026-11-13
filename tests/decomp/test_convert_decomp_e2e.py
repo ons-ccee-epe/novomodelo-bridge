@@ -41,6 +41,20 @@ _DIFFERING_CVU_LINES = (
     "CT   13   1   ANGRA 2    2   1350.1350.     20.001350.1350.     21.001350.1350.     22.00",
 )
 
+#: After ``HV 117``: ``HV 118`` floors plant 18's (A. VERMELHA) stage outflow
+#: volume plus half its stored volume, ``HV 119`` caps pumping station 1's
+#: stage pumped volume (fixed-width columns per the DECOMP manual).
+_RHV_VOLUME_ANCHOR = "CV  117   1    43  -1.5866762     VARM"
+_RHV_VOLUME_LINES = (
+    "HV  118   1    4",
+    "LV  118   1         10.0",
+    "CV  118   1    18         1.0     VDEF",
+    "CV  118   1    18         0.5     VARM",
+    "HV  119   1    4",
+    "LV  119   1                  500.0",
+    "CV  119   1     1         1.0     VBOM",
+)
+
 
 def _deck_with_lines(
     deck: Path, tmp_path: Path, anchor: str, lines: tuple[str, ...]
@@ -126,6 +140,58 @@ def test_fe_contract_term_reaches_the_re_generic_constraint(
     )
     (re_21,) = [c for c in document["constraints"] if c["name"] == "RE_21"]
     assert re_21["expression"].endswith("- 0.5 * contract_import(0)")
+
+
+@requires_novomodelo_python
+def test_rhv_volume_tipo_case_validates(decomp_mini_deck: Path, tmp_path: Path) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+
+    deck = _deck_with_lines(
+        decomp_mini_deck, tmp_path, _RHV_VOLUME_ANCHOR, _RHV_VOLUME_LINES
+    )
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+
+    result = novomodelo.io.validate(str(dst))
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_rhv_volume_tipos_write_stage_level_generic_rows(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck, tmp_path, _RHV_VOLUME_ANCHOR, _RHV_VOLUME_LINES
+    )
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+
+    hydros = json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+    (vermelha,) = [h for h in hydros if h["name"] == "A. VERMELHA"]
+    document = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text()
+    )
+    by_name = {c["name"]: c for c in document["constraints"]}
+    hv_118, hv_119 = by_name["HV_118"], by_name["HV_119"]
+    hydro_id = vermelha["id"]
+    assert hv_118["expression"] == (
+        f"hydro_outflow_volume({hydro_id}) + 0.5 * hydro_storage({hydro_id})"
+    )
+    assert hv_119["expression"] == "pumping_volume(0)"
+
+    rows = pq.read_table(
+        dst / "constraints" / "generic_constraint_bounds.parquet"
+    ).to_pylist()
+    floor = 10.0 + 0.5 * vermelha["reservoir"]["min_storage_hm3"]
+    expected = {
+        hv_118["id"]: (floor, None),
+        hv_119["id"]: (None, 500.0),
+    }
+    for constraint_id, sides in expected.items():
+        own = [r for r in rows if r["constraint_id"] == constraint_id]
+        assert [r["stage_id"] for r in own] == [0, 1, 2, 3]
+        assert all(r["block_id"] is None for r in own)
+        assert {(r["bound_lower"], r["bound_upper"]) for r in own} == {sides}
 
 
 @pytest.mark.parametrize(

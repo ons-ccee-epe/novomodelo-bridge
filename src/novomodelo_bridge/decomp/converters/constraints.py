@@ -39,10 +39,8 @@ after its first stage, reads a ``per_stage`` parameter
 
 ``RHV``'s volume tipos (``VDEF``/``VDES``/``VBOM``) bound a volume over the
 whole stage in hm³ (each block's flow times its duration, summed), not a
-per-block flow. TRACKED NOVOMODELO-GAP (C19): novomodelo's generic constraints have no
-stage-volume variable, and block-pinned flow terms would repeat the stage row
-once per block, so ``emit_rhq_rhv_generics`` skips such a constraint with a
-``WARNING``.
+per-block flow. They map to novomodelo's stage-volume variables, which admit
+only stage-level amounts beside them, so every ``HV`` row stays stage-level.
 
 ``HE`` (RHE stored-energy) constraints are emitted by
 ``emit_rhe_generics``: the LHS weights each reservoir's useful volume by its
@@ -149,14 +147,18 @@ _HYDRO_TOKEN_FN: dict[str, str] = {
     "VARM": "hydro_storage",
 }
 
+#: RHV stage-volume tipos (hm³ over the stage); they have no entity-bound
+#: axis, so they stay out of :data:`_HYDRO_TOKEN_FN`.
+_HYDRO_VOLUME_TOKEN_FN: dict[str, str] = {
+    "VDEF": "hydro_outflow_volume",
+    "VDES": "hydro_diversion_volume",
+}
+
 #: Variables ``_variable_token`` refuses to resolve itself, mapped to the
 #: mechanism that resolves them instead.
 _DEFERRED_VARIABLES: dict[str, str] = {
     "interchange": "the interchange (FI line) resolution path",
     "contract": "the FE contract resolution path",
-    "VDEF": "the RHV volume-tipo skip",
-    "VDES": "the RHV volume-tipo skip",
-    "VBOM": "the RHV volume-tipo skip",
 }
 
 
@@ -169,22 +171,23 @@ def _variable_token(
 
     Dispatches on ``term.variable``: ``generation``/``thermal_generation``
     map to the whole-plant generation tokens; ``QDEF``/``QTUR``/``QVER``/
-    ``QDES``/``VARM`` map through :data:`_HYDRO_TOKEN_FN` and
-    ``id_map.hydro_id``; ``QBOM`` maps through *pumping_station_ids*.
+    ``QDES``/``VARM`` map through :data:`_HYDRO_TOKEN_FN` and ``VDEF``/
+    ``VDES`` through :data:`_HYDRO_VOLUME_TOKEN_FN`, both via
+    ``id_map.hydro_id``; ``QBOM`` and ``VBOM`` map through
+    *pumping_station_ids*.
 
     Raises
     ------
     ValueError
         For ``interchange`` (resolved by ``resolve_fi_term``, which needs
         the line map), ``contract`` (resolved by ``resolve_fe_term``, which
-        needs the contract list), the volume tipos ``VDEF``/``VDES``/``VBOM``
-        (skipped by ``emit_rhq_rhv_generics``), or any other
-        unrecognised variable — fail-loud, never a silent skip
-        that would build a malformed expression.
+        needs the contract list), or any other unrecognised variable —
+        fail-loud, never a silent skip that would build a malformed
+        expression.
     KeyError
         Propagated from ``id_map.hydro_id``/``id_map.thermal_id`` for an
         unknown plant/thermal code, or from *pumping_station_ids* for an
-        unknown ``QBOM`` code.
+        unknown ``QBOM``/``VBOM`` code.
     """
     variable = term.variable
     if variable == "generation":
@@ -193,7 +196,9 @@ def _variable_token(
         return f"thermal_generation({id_map.thermal_id(term.code)})"
     if variable == "QBOM":
         return f"pumping_flow({pumping_station_ids[term.code]})"
-    token_fn = _HYDRO_TOKEN_FN.get(variable)
+    if variable == "VBOM":
+        return f"pumping_volume({pumping_station_ids[term.code]})"
+    token_fn = _HYDRO_TOKEN_FN.get(variable) or _HYDRO_VOLUME_TOKEN_FN.get(variable)
     if token_fn is not None:
         return f"{token_fn}({id_map.hydro_id(term.code)})"
     owner = _DEFERRED_VARIABLES.get(variable)
@@ -674,10 +679,6 @@ def emit_re_generics(
     return _with_parameters(builder.result(), per_stage_parameters)
 
 
-#: RHV ``CV.tipo`` stage-volume variables (hm³), skipped under C19.
-_RHV_VOLUME_TIPOS = frozenset({"VDEF", "VDES", "VBOM"})
-
-
 def _emit_rhq_qbom_no_station(record: ConstraintRecord, code: int) -> None:
     """Emit the shared ``decomp-rhq-qbom-no-station`` WARNING, naming the code."""
     emit(
@@ -748,24 +749,23 @@ def _emit_rhv_varm_uncadastred(record: ConstraintRecord, code: int) -> None:
     )
 
 
-def _emit_rhv_volume_tipo_deferred(record: ConstraintRecord, tipo: str) -> None:
-    """Emit the shared ``decomp-rhv-volume-tipo-deferred`` WARNING, naming the tipo."""
+def _emit_rhv_vbom_no_station(record: ConstraintRecord, code: int) -> None:
+    """Emit the ``decomp-rhv-vbom-no-station`` WARNING, naming the code."""
     emit(
         Diagnostic(
-            code="decomp-rhv-volume-tipo-deferred",
+            code="decomp-rhv-vbom-no-station",
             severity=Severity.WARNING,
             category="Special constraints",
-            title="RHV volume tipo term deferred",
+            title="RHV VBOM term has no matching pumping station",
             summary=(
-                f"HV constraint {record.constraint_id} carries a {tipo} "
-                "term, a volume over the whole stage in hm3; novomodelo generic "
-                "constraints have no stage-volume variable yet, so the "
-                "constraint is skipped."
+                f"HV constraint {record.constraint_id} carries a VBOM term "
+                f"for plant code {code}, which has no matching pumping "
+                "station; the constraint is skipped."
             ),
             remediation=(
-                "This volume-based RHV limit is not converted until novomodelo "
-                "supports stage volumes in generic constraints; no action "
-                "needed to convert."
+                f"HV constraint {record.constraint_id} is skipped; check "
+                f"that plant code {code} is declared as a pumping station "
+                "(UE record)."
             ),
         )
     )
@@ -783,48 +783,51 @@ def _offset_if_bounded(value: float | None, offset: float) -> float | None:
     return value + offset
 
 
-def _resolve_hv_varm(
+def _resolve_hv_terms(
     record: ConstraintRecord,
     id_map: DecompIdMap,
     effective: EffectiveCadastro,
-    calendar: Sequence[OperativeStage],
+    pumping_station_ids: Mapping[int, int],
 ) -> tuple[list[str], Mapping[int, StageBounds]] | None:
-    """Resolve one generic multi-``VARM`` RHV record's expression and floor-adjusted
-    bounds.
+    """Resolve one generic RHV record's expression and floor-adjusted bounds.
 
-    Every term resolves via :func:`_variable_token` to a ``hydro_storage``
-    token; a term whose ``code`` is absent from ``effective.base.index``
-    emits :func:`_emit_rhv_varm_uncadastred` and drops the whole record
+    Every term resolves via :func:`_variable_token`. A ``VARM`` term whose
+    ``code`` is absent from ``effective.base.index`` emits
+    :func:`_emit_rhv_varm_uncadastred`, and a ``VBOM`` term whose ``code``
+    has no entry in *pumping_station_ids* emits
+    :func:`_emit_rhv_vbom_no_station`; either drops the whole record
     (skip-not-partial) before any bounds are adjusted.
 
-    The source model's ``LV`` limits are relative to each plant's own useful
-    volume, so the absolute RHS is the **per-term additive floor**: for each
-    declared stage, ``offset = sum(cᵢ(stage) * effective_storage_range(
-    effective, codeᵢ, stage)[0] for term i)``, added to whichever side of the
-    record's
-    stage-level ``StageBounds`` is actually bounded
+    The source model's ``LV`` limits are relative to each ``VARM`` plant's
+    own useful volume, so the absolute RHS is the **per-term additive
+    floor**: for each declared stage, ``offset = sum(cᵢ(stage) *
+    effective_storage_range(effective, codeᵢ, stage)[0] for VARM term i)``,
+    added to whichever side of the record's stage-level ``StageBounds`` is
+    actually bounded
     (:func:`~novomodelo_bridge.core.generic_constraint_builder.is_bounded`) —
-    a ``±1e21``/``None`` side is left untouched, never offset. *calendar* is
-    accepted for signature symmetry with the per-block resolvers (mirroring
-    ``single_term_bounds._hv_storage_contributions``); ``VARM`` is
-    stage-level, so it is not read here.
+    a ``±1e21``/``None`` side is left untouched, never offset. The volume
+    tipos ``VDEF``/``VDES``/``VBOM`` carry no floor.
 
     Returns the tokens in term order and the floor-adjusted
     ``{stage_index: StageBounds}`` map when every term resolves.
     """
     resolved: list[str] = []
     for term in record.terms:
-        if term.code not in effective.base.index:
+        if term.variable == "VARM" and term.code not in effective.base.index:
             _emit_rhv_varm_uncadastred(record, term.code)
             return None
-        resolved.append(_variable_token(term, id_map, {}))
+        if term.variable == "VBOM" and term.code not in pumping_station_ids:
+            _emit_rhv_vbom_no_station(record, term.code)
+            return None
+        resolved.append(_variable_token(term, id_map, pumping_station_ids))
 
+    storage_terms = [term for term in record.terms if term.variable == "VARM"]
     adjusted: dict[int, StageBounds] = {}
     for stage_index, stage_bounds in record.bounds.items():
         offset = sum(
             term.coefficient_at(stage_index)
             * effective_storage_range(effective, term.code, stage_index)[0]
-            for term in record.terms
+            for term in storage_terms
         )
         adjusted[stage_index] = StageBounds(
             lower=(_offset_if_bounded(stage_bounds.lower[0], offset),),
@@ -843,18 +846,15 @@ def emit_rhq_rhv_generics(
     big_m: float,
     allocator: ConstraintIdAllocator | None = None,
 ) -> DecompGenericResult | None:
-    """Emit every generic ``RHQ``/``RHV`` constraint (flow mixes and multi-``VARM``).
+    """Emit every generic ``RHQ``/``RHV`` constraint (flow and volume mixes).
 
     Iterates ``census.to_generic`` filtered to ``record.family in ("HQ",
     "HV")``:
 
     - ``"HQ"`` (per-block flow terms) resolves via :func:`_resolve_rhq_terms`
       and feeds a two-sided ``HQ_<id>`` constraint.
-    - ``"HV"`` carrying any volume-tipo term (``VDEF``/``VDES``/``VBOM``)
-      emits :func:`_emit_rhv_volume_tipo_deferred` and is skipped (see the
-      module docstring).
-    - ``"HV"`` all-``VARM`` (stage-level) resolves via
-      :func:`_resolve_hv_varm` and feeds a two-sided ``HV_<id>`` constraint
+    - ``"HV"`` (stage-level ``VARM`` and volume-tipo terms) resolves via
+      :func:`_resolve_hv_terms` and feeds a two-sided ``HV_<id>`` constraint
       on ``dataclasses.replace(record, bounds=adjusted)`` — the floor-
       adjusted bounds, never the reader's original record (a frozen
       dataclass is never mutated in place).
@@ -897,15 +897,7 @@ def emit_rhq_rhv_generics(
                 per_stage_parameters.update(parameters)
             continue
 
-        volume_tipo = next(
-            (t.variable for t in record.terms if t.variable in _RHV_VOLUME_TIPOS),
-            None,
-        )
-        if volume_tipo is not None:
-            _emit_rhv_volume_tipo_deferred(record, volume_tipo)
-            continue
-
-        hv_resolved = _resolve_hv_varm(record, id_map, effective, calendar)
+        hv_resolved = _resolve_hv_terms(record, id_map, effective, pumping_station_ids)
         if hv_resolved is None:
             continue
         hv_tokens, adjusted_bounds = hv_resolved
