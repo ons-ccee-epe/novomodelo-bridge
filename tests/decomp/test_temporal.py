@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from novomodelo_bridge.decomp.converters.config import convert_config
+from novomodelo_bridge.decomp.converters.config import convert_config, convert_penalties
 from novomodelo_bridge.decomp.temporal import (
     CVaRConfig,
     OperativeStage,
@@ -423,3 +423,8 @@ def test_convert_config_pins_penalty_inflow_non_negativity() -> None:
     dadger.gp.data = [0.001]
     cfg = convert_config(make_decomp_case(Path("unused"), dadger=dadger))
     assert cfg["modeling"]["inflow_non_negativity"] == {"method": "penalty"}
+
+
+def test_convert_penalties_ncs_curtailment_is_free() -> None:
+    penalties = convert_penalties(deficit_cost=1000.0, productivities=[1.0])
+    assert penalties["non_controllable_source"] == {"curtailment_cost": 0.0}
