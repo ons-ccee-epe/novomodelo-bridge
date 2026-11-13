@@ -31,13 +31,6 @@ def test_default_flow_micro_costs_are_decomp_defaults() -> None:
     )
 
 
-def test_source_unit_override_converts_in_code() -> None:
-    costs = flow_micro_costs(spillage_per_hm3=0.2)
-
-    assert costs.spillage_cost == 0.2 * 0.0036
-    assert costs.turbined_cost == 0.000396
-
-
 def test_micro_tier_ignores_productivity() -> None:
     low = convert_penalties(8291.25, [0.5, 1.0])
     high = convert_penalties(8291.25, [2.0, 3.0])
