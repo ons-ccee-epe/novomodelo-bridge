@@ -304,7 +304,7 @@ Uma barra por submercado de `SB` (inclusive o fictício), mais uma barra de tran
 **Quando:** sempre.  
 **Esquema:** [lines.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/lines.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/network.py`
 
-Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Um deck sem `IA` ainda gera o arquivo com lista vazia (TRACKED NOVOMODELO-GAP C4). Linhas que tocam uma barra fictícia recebem metade do custo de intercâmbio global.
+Uma linha por par de submercados de `IA`. Quando Itaipu (código 66) é operada e `IA` não liga `IV` ao submercado dela, a conversão acrescenta a linha `IV-SE` com a capacidade de 60 Hz de `RI`. Sem nenhuma linha (sem `IA` e sem a linha `IV-SE` de Itaipu), o arquivo não é escrito. Linhas que tocam uma barra fictícia recebem metade do custo de intercâmbio global.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |

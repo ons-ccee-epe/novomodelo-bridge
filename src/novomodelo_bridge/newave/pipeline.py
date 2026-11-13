@@ -531,9 +531,11 @@ def _write_json_outputs(
     writer.write_json("penalties.json", entities.penalties)
     writer.write_json("initial_conditions.json", temporal.initial_conditions)
     writer.write_json("system/hydros.json", entities.hydros)
-    writer.write_json("system/thermals.json", entities.thermals)
+    if entities.thermals["thermals"]:
+        writer.write_json("system/thermals.json", entities.thermals)
     writer.write_json("system/buses.json", entities.buses)
-    writer.write_json("system/lines.json", entities.lines)
+    if entities.lines["lines"]:
+        writer.write_json("system/lines.json", entities.lines)
     writer.write_json("system/pumping_stations.json", entities.pumping)
     writer.write_json("system/non_controllable_sources.json", constraints.ncs)
     writer.write_json("scenarios/load_factors.json", constraints.load_factors)

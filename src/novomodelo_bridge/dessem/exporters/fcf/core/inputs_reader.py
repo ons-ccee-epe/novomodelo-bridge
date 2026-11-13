@@ -285,6 +285,8 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
 
 def _read_thermals(path: Path) -> tuple[ThermalInfo, ...]:
     """Read thermals.json."""
+    if not path.exists():
+        return ()
     raw = _load_json(path)
     thermals = []
     for pos, entry in enumerate(_require_list(raw, "thermals", "thermals")):

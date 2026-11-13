@@ -25,6 +25,15 @@ links are cobre-bridge's.
   `non_controllable_source.curtailment_cost` as 0** in `penalties.json`, so
   curtailing a park is free. Only DECOMP `centralizado` parks can be curtailed,
   so only their results change.
+- **BREAKING: `convert newave` and `convert decomp` omit `system/lines.json` and
+  `system/thermals.json` when the deck has no lines or no thermal plants.** A
+  script that reads converted cases must treat a missing file as an empty list;
+  `export dessem` already does.
+
+### Fixed
+
+- **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
+  Such a deck now converts.
 
 ## [0.20.0] - 2026-11-03
 

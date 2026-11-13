@@ -1120,7 +1120,10 @@ def _convert_thermals_with_gnl(
         )
         gnl = anticipated_conv.convert_gnl(
             gnl_model,
-            first_thermal_id=max(t["id"] for t in thermals_dict["thermals"]) + 1,
+            first_thermal_id=max(
+                (t["id"] for t in thermals_dict["thermals"]), default=-1
+            )
+            + 1,
             bus_id_of=id_map.bus_id,
             calendar=case.calendar,
         )
@@ -1265,7 +1268,8 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     )
     artifacts.lines_doc = lines_doc
     artifacts.line_bounds = line_bounds
-    writer.write_json("system/lines.json", lines_doc)
+    if lines_doc["lines"]:
+        writer.write_json("system/lines.json", lines_doc)
     writer.write_json(
         "system/pumping_stations.json",
         network_conv.convert_pumping_stations(case, id_map),
@@ -1275,7 +1279,8 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     )
     artifacts.thermals_dict = thermals_dict
     artifacts.gnl_model = gnl_model
-    writer.write_json("system/thermals.json", thermals_dict)
+    if thermals_dict["thermals"]:
+        writer.write_json("system/thermals.json", thermals_dict)
     # The PAR inflow-lag seed (initial_conditions.recent_observations) is
     # written by `fcf/importer.py::import_boundary_fcf`, not here: it is read on
     # the boundary cut's coupling postos and feeds only that cut's inflow-lag
