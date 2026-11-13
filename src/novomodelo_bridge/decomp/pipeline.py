@@ -67,6 +67,7 @@ from novomodelo_bridge.decomp.converters import (
 )
 from novomodelo_bridge.decomp.converters import ncs as ncs_conv
 from novomodelo_bridge.decomp.converters import network as network_conv
+from novomodelo_bridge.decomp.converters import penalties as penalties_conv
 from novomodelo_bridge.decomp.converters import rhe_shares as rhe_shares_conv
 from novomodelo_bridge.decomp.converters import thermal as thermal_conv
 from novomodelo_bridge.decomp.converters import travel_time as travel_time_conv
@@ -1262,6 +1263,9 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # hydros.json is written after the bound tables are resolved (below): its
     # diversion channels follow the resolved diversion bounds.
     lines_doc, line_bounds = _convert_lines_with_itaipu_link(artifacts)
+    lines_doc = penalties_conv.with_fictitious_exchange_cost(
+        lines_doc, network_conv.fictitious_bus_ids(deficit_costs, id_map)
+    )
     artifacts.lines_doc = lines_doc
     artifacts.line_bounds = line_bounds
     if lines_doc["lines"]:

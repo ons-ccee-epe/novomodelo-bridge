@@ -16,7 +16,16 @@ links are cobre-bridge's.
 
 ### Changed
 
-- **`convert newave` and `convert decomp` omit `system/lines.json` and
+- **`convert decomp` writes DECOMP's own spillage, turbining, diversion and
+  exchange penalties** instead of NEWAVE's: the same cost for every plant
+  whatever its productivity, and half the exchange cost on lines that touch
+  a fictitious subsystem or the `IV` node. Results change; convert DECOMP
+  cases again and rerun novomodelo.
+- **`convert newave` and `convert decomp` write
+  `non_controllable_source.curtailment_cost` as 0** in `penalties.json`, so
+  curtailing a park is free. Only DECOMP `centralizado` parks can be curtailed,
+  so only their results change.
+- **BREAKING: `convert newave` and `convert decomp` omit `system/lines.json` and
   `system/thermals.json` when the deck has no lines or no thermal plants.** A
   script that reads converted cases must treat a missing file as an empty list;
   `export dessem` already does.
