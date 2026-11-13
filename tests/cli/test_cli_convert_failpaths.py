@@ -19,7 +19,7 @@ import pytest
 
 from novomodelo_bridge.cli.args import ConvertArgs
 from novomodelo_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
-from tests.cli.conftest import _run_cli_subprocess
+from tests.cli.conftest import _panel_text, _run_cli_subprocess
 from tests.conftest import _make_fake_newave_dir
 
 _ZEROED_CONVERT_SUMMARY = {
@@ -63,7 +63,7 @@ class TestConvertNewaveSourceMissingFailpath:
 
         assert result.returncode == 1
         assert result.stdout == ""
-        assert "does not exist" in result.stderr
+        assert "does not exist" in _panel_text(result.stderr)
 
 
 class TestConvertNewaveDestNotEmptyFailpath:
@@ -100,7 +100,7 @@ class TestConvertNewaveDestNotEmptyFailpath:
 
         assert result.returncode == 1
         assert result.stdout == ""
-        assert "Use --force" in result.stderr
+        assert "Use --force" in _panel_text(result.stderr)
 
 
 class TestConvertHandlerSignatures:
@@ -132,7 +132,7 @@ class TestCliExitCodes:
             str(dst),
         )
         assert result.returncode == 1
-        assert "does not exist" in result.stderr
+        assert "does not exist" in _panel_text(result.stderr)
 
     def test_exit_code_1_when_dst_nonempty_no_force(self, tmp_path: Path) -> None:
         src = _make_fake_newave_dir(tmp_path)
@@ -142,7 +142,7 @@ class TestCliExitCodes:
 
         result = _run_cli_subprocess("convert", "newave", str(src), str(dst))
         assert result.returncode == 1
-        assert "not empty" in result.stderr
+        assert "not empty" in _panel_text(result.stderr)
 
     def test_exit_code_1_when_required_file_missing(self, tmp_path: Path) -> None:
         src = _make_fake_newave_dir(tmp_path)
