@@ -63,9 +63,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # novomodelo-python is not installed here until a novomodelo release
-      # carries delivery calendars; `requires_novomodelo_python` skips the tests
-      # that need it. --no-sync keeps `uv run` from installing it back.
+      # novomodelo-python is not installed here until the novomodelo release
+      # this branch converts for is on PyPI: the locked one refuses the cases
+      # main now writes. `requires_novomodelo_python` skips the tests that need
+      # it; --no-sync keeps `uv run` from installing it back.
       - name: Sync dependencies
         run: uv sync --locked --no-install-package novomodelo-python
 
