@@ -29,6 +29,7 @@ from novomodelo_bridge.comparators.decomp.results import (
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import _balance_fixture, _patch_aligned_frames
 
@@ -108,6 +109,7 @@ def _dec_oper_sist_frame(
             "cenario": list(cenario),
             "patamar": list(patamar),
             "codigo_submercado": list(codigo),
+            "nome_submercado": [f"SUB{c}" for c in codigo],
             "duracao": list(duracao),
             "deficit_MW": list(deficit),
         },
@@ -274,21 +276,22 @@ class TestCostFrames:
         assert nw_costs["DEFICIT"] == pytest.approx(35_000.0)
         assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(703_000.0)
 
-    def test_deficit_without_a_cd_cost_is_logged_and_stays_in_the_slack(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
+    def test_deficit_without_a_cd_cost_is_reported_and_stays_in_the_slack(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        sist = _dec_oper_sist_frame([(1, 1, 1, 3, 5.0, 10.0)])
+        sist = _dec_oper_sist_frame([(1, 1, 1, 3, 5.0, 10.0), (1, 1, 2, 3, 5.0, 4.0)])
         self._patch(monkeypatch, sist=sist)
 
-        with caplog.at_level("WARNING"):
+        with dx.collect() as collected:
             nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0})
 
         assert "DEFICIT" not in nw_costs
         assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
-        assert "no CD deficit cost (3)" in caplog.text
+        [diag] = [d for d in collected if d.code == "decomp-deficit-unpriced"]
+        assert diag.severity is dx.Severity.WARNING
+        assert diag.title == "Deficit in subsystems without a CD cost (1)"
+        assert diag.table is not None
+        assert diag.table.rows == [[3, "SUB3"]]
 
     @pytest.mark.parametrize(
         ("importacao", "exportacao_minimo", "exportacao", "term", "warned"),
@@ -303,7 +306,6 @@ class TestCostFrames:
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
         importacao: float,
         exportacao_minimo: float,
         exportacao: float,
@@ -333,12 +335,18 @@ class TestCostFrames:
         )
         self._patch(monkeypatch, relato=relato)
 
-        with caplog.at_level("WARNING"):
+        with dx.collect() as collected:
             nw_costs, _nw_sin = _cost_frames(tmp_path, {})
 
         assert nw_costs["CONTRATOS"] == pytest.approx(term * 1e3)
         assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
-        assert ("take-or-pay" in caplog.text) is warned
+        convention = [
+            d for d in collected if d.code == "decomp-export-contract-cost-convention"
+        ]
+        assert bool(convention) is warned
+        if warned:
+            assert convention[0].severity is dx.Severity.WARNING
+            assert f"2 × {exportacao_minimo * 1e3:,.0f} R$" in convention[0].summary
 
     def test_negative_remainder_reads_as_zero_slack(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

@@ -190,29 +190,15 @@ def select_submarket_buses(buses: Sequence[BusInfo]) -> tuple[BusInfo, ...]:
 # ---------------------------------------------------------------------------
 
 
-def cut_building_pools(
-    pools: Mapping[int, StageCutPool], expected_count: int | None = None
-) -> tuple[int, ...]:
-    """Return pools that actually built cuts, ascending (finding F8)."""
-    if not pools:
-        return ()
-    selected = tuple(
+def cut_building_pools(pools: Mapping[int, StageCutPool]) -> tuple[int, ...]:
+    """Return the pools holding cuts past their warm-start slots, ascending."""
+    return tuple(
         sorted(
             pool_id
             for pool_id, pool in pools.items()
             if pool.populated_count > pool.warm_start_count
         )
     )
-    expected = len(pools) - 1 if expected_count is None else expected_count
-    if len(selected) != expected:
-        _LOG.warning(
-            "cut-building pools by populated_count > warm_start_count are %s "
-            "(count %d), but n_pools - 1 is %d",
-            list(selected),
-            len(selected),
-            expected,
-        )
-    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +216,7 @@ def inflow_lag_drop_audit(pools: Mapping[int, StageCutPool]) -> InflowLagAudit:
 
     total = sum(count for _, count in per_pool)
     if total:
-        _LOG.warning(
+        _LOG.info(
             "premise P8 drops %d inflow-lag coefficients: %s",
             total,
             ", ".join(
@@ -266,7 +252,7 @@ def gnl_drop_audit(
 
     total = sum(count for _, count in per_pool)
     if total:
-        _LOG.warning(
+        _LOG.info(
             "premise P14 drops %d anticipated-thermal coefficients: %s",
             total,
             ", ".join(

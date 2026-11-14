@@ -10,7 +10,6 @@ loader, the bound-resolution helpers and both ``evaluate_lhs_*`` entry points.
 from __future__ import annotations
 
 import json
-import logging
 import shutil
 from pathlib import Path
 
@@ -29,6 +28,7 @@ from novomodelo_bridge.comparators.constraints import (
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
 from novomodelo_bridge.comparators.newave.constraints import evaluate_lhs_newave
 from novomodelo_bridge.comparators.newave.readers import read_medias_hydro
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import write_generic_constraint_echo
 
@@ -180,17 +180,23 @@ class TestLoadGenericConstraints:
         assert load_generic_constraints(tmp_path) == []
 
     def test_degrades_to_empty_list_and_warns_on_malformed_json(
-        self, tmp_path: Path, caplog
+        self, tmp_path: Path
     ) -> None:
         path = tmp_path / "constraints" / "generic_constraints.json"
         path.parent.mkdir(parents=True)
         path.write_text("{not valid json", encoding="utf-8")
 
-        with caplog.at_level(logging.WARNING):
+        with dx.collect() as collected:
             constraints = load_generic_constraints(tmp_path)
 
         assert constraints == []
-        assert "could not be parsed" in caplog.text
+        assert [(d.code, d.severity, d.title) for d in collected] == [
+            (
+                "report-file-unreadable",
+                dx.Severity.WARNING,
+                "constraints/generic_constraints.json could not be read",
+            )
+        ]
 
 
 class TestLoadResolvedGenericConstraints:
@@ -338,15 +344,15 @@ class TestEvaluateLhsNovomodelo:
         assert rows[(_VMINOP_ID, 0)] == 2.0 * (500.0 - 100.0)
         assert rows[(_VMINOP_ID, 1)] == 2.5 * (480.0 - 100.0)
 
-    def test_degrades_to_empty_frame_when_no_hydro_simulation(
-        self, tmp_path: Path, caplog
+    def test_a_run_without_simulation_is_empty_and_reports_nothing(
+        self, tmp_path: Path
     ) -> None:
         case_dir, output_dir = _write_case(tmp_path)
         resolved = load_resolved_generic_constraints(case_dir, output_dir)
         shutil.rmtree(output_dir / "simulation")
 
-        with caplog.at_level(logging.WARNING):
+        with dx.collect() as collected:
             lhs = evaluate_lhs_novomodelo(resolved, output_dir)
 
         assert lhs.is_empty()
-        assert "Simulation directory not found" in caplog.text
+        assert collected == []

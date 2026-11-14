@@ -11,7 +11,7 @@ import pyarrow as pa
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
@@ -2193,34 +2193,6 @@ class TestVminopReeCoupling:
             "pct_vminop_ree1",
             "pct_vminop_ree2",
         }
-
-
-class TestConstraintsNoLongerBridgesLegacyWarning:
-    """After the migration, constraints.py has no ``_LOG.warning(...)`` call
-    left to be swept into a generic ``legacy-warning`` panel (OQ3); the
-    residual bridge in :func:`finalize_diagnostics` still wraps an unrelated
-    captured legacy string, so that fallback path stays intact for any
-    not-yet-migrated module."""
-
-    def test_vminop_skip_under_collect_carries_no_legacy_warning(
-        self, tmp_path: Path
-    ) -> None:
-        case, id_map = _make_vminop_no_hydro_case(tmp_path)
-
-        with dx.collect() as collected:
-            convert_vminop_constraints(case, id_map)
-
-        assert not any(d.code == "legacy-warning" for d in collected)
-
-    def test_finalize_diagnostics_still_wraps_an_unrelated_legacy_string(
-        self,
-    ) -> None:
-        legacy_messages = ["some other warning"]
-        result = finalize_diagnostics([], legacy_messages)
-
-        assert len(result) == 1
-        assert result[0].code == "legacy-warning"
-        assert result[0].summary == "some other warning"
 
 
 # ---------------------------------------------------------------------------

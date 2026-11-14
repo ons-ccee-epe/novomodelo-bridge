@@ -2,7 +2,7 @@
 
 Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
 corridor/line alignment, the DECOMP interchange side, line entity
-names and result comparisons, line bounds/metadata, and the Network tab's
+names and result comparisons, and the Network tab's
 ``build_decomp_dataset`` rows. The remaining concern bands (energy balance,
 costs, performance, hydro/thermal detail, productivity, FPHA, REE,
 evaporation, constraints, CLI) stay in the mega file pending their own carve.
@@ -21,13 +21,13 @@ import pytest
 from novomodelo_bridge.comparators.decomp.results import (
     _corridor_line_alignment,
     _interc_side,
-    _line_bounds_and_meta,
     _line_entity_names,
     _line_result_comparisons,
     _read_novomodelo_lines_index,
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
@@ -153,8 +153,16 @@ class TestCorridorLineAlignment:
             tmp_path, [_line_entry(0, 0, 1), _line_entry(1, 0, 1)]
         )
 
-        assert (0, 1) not in _read_novomodelo_lines_index(output_dir)
+        with dx.collect() as collected:
+            assert (0, 1) not in _read_novomodelo_lines_index(output_dir)
         assert (0, 1) not in _corridor_line_alignment(output_dir, id_map)
+
+        [diag] = collected
+        assert diag.code == "line-bus-pair-ambiguous"
+        assert diag.severity is dx.Severity.WARNING
+        assert diag.title == "Bus pairs joined by several lines (1)"
+        assert diag.table is not None
+        assert diag.table.rows == [[0, 1]]
 
 
 def _dec_oper_interc_frame(
@@ -505,74 +513,6 @@ class TestLineResultComparisons:
         assert unresolved == [[1, 3]]
 
 
-class TestLineBoundsAndMeta:
-    """Novomodelo-side line capacity bounds + metadata, read straight
-    from the converted case (mirrors ``results.compare_results``)."""
-
-    def test_reads_line_bounds_parquet_and_lines_json(self, tmp_path: Path) -> None:
-        case_dir = tmp_path / "case"
-        line_meta_in = [_line_entry(0, 0, 1, name="SE-S")]
-        output_dir = _write_lines_json(case_dir, line_meta_in)
-        _write_line_bounds_parquet(
-            case_dir,
-            [
-                {
-                    "line_id": 0,
-                    "stage_id": 0,
-                    "block_id": None,
-                    "direct_mw": 1200.0,
-                    "reverse_mw": 800.0,
-                }
-            ],
-        )
-
-        line_bounds, line_meta = _line_bounds_and_meta(output_dir)
-
-        assert isinstance(line_bounds, pl.DataFrame)
-        assert {"line_id", "stage_id", "direct_mw", "reverse_mw"}.issubset(
-            set(line_bounds.columns)
-        )
-        row = line_bounds.row(0, named=True)
-        assert row["direct_mw"] == 1200.0
-        assert row["reverse_mw"] == 800.0
-        assert line_meta == line_meta_in
-        assert line_meta[0]["capacity"]["direct_mw"] == 1000.0
-
-    def test_missing_files_degrade_to_empty(self, tmp_path: Path) -> None:
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        line_bounds, line_meta = _line_bounds_and_meta(output_dir)
-
-        assert isinstance(line_bounds, pl.DataFrame)
-        assert line_bounds.is_empty()
-        assert line_meta == []
-
-    def test_unparseable_lines_json_keeps_the_bounds_and_empties_meta(
-        self, tmp_path: Path
-    ) -> None:
-        case_dir = tmp_path / "case"
-        output_dir = _write_lines_json(case_dir, [])
-        (case_dir / "system" / "lines.json").write_text("{not json", encoding="utf-8")
-        _write_line_bounds_parquet(
-            case_dir,
-            [
-                {
-                    "line_id": 0,
-                    "stage_id": 0,
-                    "block_id": None,
-                    "direct_mw": 1200.0,
-                    "reverse_mw": 800.0,
-                }
-            ],
-        )
-
-        line_bounds, line_meta = _line_bounds_and_meta(output_dir)
-
-        assert line_meta == []
-        assert line_bounds.row(0, named=True)["direct_mw"] == 1200.0
-
-
 def _patch_network(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -609,7 +549,7 @@ class TestBuildDecompDatasetNetwork:
         """A deck dir and a converted-case ``output/`` dir, isolated under
         *tmp_path* -- unlike ``build_decomp_dataset(tmp_path, tmp_path)``,
         ``case_dir_for(novomodelo_output_dir)`` must resolve to a real directory
-        this test controls, since ``_line_bounds_and_meta`` reads
+        this test controls, since ``read_novomodelo_network_lines`` reads
         ``system/``/``constraints/`` from it."""
         case_dir = tmp_path / "case"
         output_dir = _write_lines_json(case_dir, [_line_entry(0, 0, 1, name="SE-S")])

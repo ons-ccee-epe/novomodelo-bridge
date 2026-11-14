@@ -677,8 +677,18 @@ def test_get_renderable_tabs_shows_placeholder_when_render_raises() -> None:
 
     fake_data = MagicMock()
 
-    with patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_bad, mock_good]):
+    with (
+        patch("novomodelo_bridge.dashboard.tabs.TAB_MODULES", [mock_bad, mock_good]),
+        dx.collect() as collected,
+    ):
         result = get_renderable_tabs(fake_data)
+
+    [diag] = collected
+    assert diag.code == "dashboard-tab-failed"
+    assert diag.severity is dx.Severity.WARNING
+    assert diag.title == "Dashboard tabs that could not be built (1)"
+    assert diag.table is not None
+    assert diag.table.rows == [["Bad", "rendering <failed>"]]
 
     by_id = {tab_id: html for tab_id, _label, html in result}
     assert "tab-bad" in by_id  # not dropped

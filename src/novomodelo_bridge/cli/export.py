@@ -145,10 +145,12 @@ def _export_dessem(
     for the delivery of the case's second stage, in R$/MWh and the same on
     every load block, and mapcut record 9 carries that stage's load-block
     hours. The policy's other GNL coefficients are left out and counted in the
-    log. A plant with no coefficient for that delivery, or a coefficient of
-    exactly zero, gets 0.0 and a warning. Each stage's mapcut record 10 also
-    carries the cost of the GNL generation committed before the study, from
-    the case's initial_conditions.json, in 10³ R$.
+    export notes. A plant with no coefficient for that delivery, or a
+    coefficient of exactly zero, gets 0.0 and a warning. Each stage's mapcut
+    record 10 also carries the cost of the GNL generation committed before the
+    study, from the case's initial_conditions.json, in 10³ R$. Every export
+    warns that mapcut's physical records and record 10's other cost parcels
+    are written as zeros.
     """
     _configure_logging(verbose, log_file)
 
@@ -238,6 +240,7 @@ def _export_dessem(
     # reach the user as one rendered diagnostic or `--json` envelope, exit 1.
     except Exception as exc:
         _fail(command, args, exc, 1)
+    export_diags = dx.finalize_diagnostics(export_diags)
 
     status = "ok" if exit_code == 0 else "error"
     if json_output:

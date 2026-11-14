@@ -80,6 +80,8 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    report_file_missing_diagnostic,
+    report_file_unreadable_diagnostic,
 )
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.units import HM3_PER_M3S_HOUR, MEAN_MONTH_HOURS
@@ -172,9 +174,8 @@ def _stage_rows(frame: pl.DataFrame) -> pl.DataFrame:
     aggregate = frame.filter(pl.col("patamar").is_null())
     if not aggregate.is_empty():
         return aggregate.drop("patamar")
-    _LOG.warning(
-        "No stage-aggregate rows (patamar null) found; folding per-block rows "
-        "by duration instead"
+    _LOG.info(
+        "no stage-aggregate rows (patamar null); folding per-block rows by duration"
     )
     return frame
 
@@ -534,10 +535,20 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
     this same canonical schema instead of aborting
     :func:`build_decomp_dataset` -- the chart then renders Novomodelo-only.
     """
+    effect = "the report shows Novomodelo's convergence alone."
     try:
         source = read_relato_convergence(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.warning("No source-model convergence table: %s", exc)
+    except FileNotFoundError:
+        emit(
+            report_file_missing_diagnostic("relato.rvN", decomp_dir, effect),
+            logger=_LOG,
+        )
+        return pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
+    except ValueError as exc:
+        emit(
+            report_file_unreadable_diagnostic("relato.rvN", decomp_dir, effect, exc),
+            logger=_LOG,
+        )
         return pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
 
     columns = {c.lower(): c for c in source.columns}
@@ -665,10 +676,26 @@ def _read_novomodelo_lines_index(
         index[key] = int(line["id"])
     for key in ambiguous:
         index.pop(key, None)
-        _LOG.warning(
-            "Multiple novomodelo lines declared for bus pair %s; excluding it from "
-            "the corridor alignment instead of guessing which line applies",
-            key,
+    if ambiguous:
+        emit(
+            Diagnostic(
+                code="line-bus-pair-ambiguous",
+                severity=Severity.WARNING,
+                category="Compare data",
+                title=f"Bus pairs joined by several lines ({len(ambiguous)})",
+                summary=(
+                    "The case declares more than one line from the source "
+                    "bus to the target bus of each listed pair, so the "
+                    "comparison leaves DECOMP's interchange through them "
+                    "unresolved instead of guessing which line carries it."
+                ),
+                table=DiagnosticTable(
+                    columns=["Source bus ID", "Target bus ID"],
+                    rows=[list(key) for key in sorted(ambiguous)],
+                    justify=["right", "right"],
+                ),
+            ),
+            logger=_LOG,
         )
     return index
 
@@ -982,41 +1009,6 @@ def _line_result_comparisons(
             )
         )
     return results, unresolved_lists
-
-
-def _line_bounds_and_meta(
-    novomodelo_output_dir: Path,
-) -> tuple[pl.DataFrame, list[dict]]:
-    """Novomodelo-side line capacity bounds + metadata for the Network tab.
-
-    Both are pure Novomodelo-case artifacts, not DECOMP-derived, so this reads
-    them exactly the way ``results.compare_results`` does for the source
-    model's own Network tab, via the shared ``novomodelo_readers`` readers:
-
-    - ``line_bounds``: :func:`novomodelo_readers.read_novomodelo_stage_line_bounds`,
-      one capacity per ``(line, stage)`` weighted over the blocks as the
-      plotted stage-mean flow is.
-    - ``line_meta``: :func:`novomodelo_readers.read_novomodelo_lines`'s ``"lines"``
-      list verbatim -- each entry's own nested ``capacity.direct_mw``/
-      ``capacity.reverse_mw`` is exactly the shape ``line_summary_chart``
-      reads.
-
-    The Network tab is optional: a missing ``line_bounds.parquet`` degrades
-    to an empty frame via the reader's own typed-empty contract; a missing
-    or unparseable ``lines.json`` degrades to an empty ``line_meta`` (with a
-    warning) rather than raising, unchanged from before this module routed
-    through the shared readers.
-    """
-    try:
-        line_meta = novomodelo_readers.read_novomodelo_lines(novomodelo_output_dir)
-    except novomodelo_readers.NovomodeloReadError as exc:
-        _LOG.warning("Failed to read lines.json for network tab: %s", exc)
-        line_meta = []
-
-    line_bounds = novomodelo_readers.read_novomodelo_stage_line_bounds(
-        novomodelo_output_dir, line_meta
-    )
-    return line_bounds, line_meta
 
 
 #: ``dec_oper_sist`` columns the Energy Balance tab's reference-model overlay
@@ -1337,15 +1329,34 @@ def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataF
     """
     sist = read_dec_oper_sist(decomp_dir)
     blocks = sist.filter(pl.col("patamar").is_not_null() & (pl.col("deficit_MW") > 0.0))
-    unpriced = sorted(
-        set(blocks["codigo_submercado"].cast(pl.Int64).to_list()) - set(deficit_costs)
+    unpriced = (
+        blocks.select(
+            pl.col("codigo_submercado").cast(pl.Int64), pl.col("nome_submercado")
+        )
+        .unique("codigo_submercado")
+        .filter(~pl.col("codigo_submercado").is_in(list(deficit_costs)))
+        .sort("codigo_submercado")
     )
-    if unpriced:
-        _LOG.warning(
-            "The source model reports deficit in subsystems with no CD deficit "
-            "cost (%s); that deficit stays in the unitemized constraint slack "
-            "of the cost breakdown.",
-            ", ".join(str(code) for code in unpriced),
+    if not unpriced.is_empty():
+        emit(
+            Diagnostic(
+                code="decomp-deficit-unpriced",
+                severity=Severity.WARNING,
+                category="Compare data",
+                title=f"Deficit in subsystems without a CD cost ({unpriced.height})",
+                summary=(
+                    "DECOMP reports deficit in the listed subsystems, which "
+                    "have no CD record in dadger.rvN, so the cost breakdown "
+                    "leaves their deficit cost in the unitemized constraint "
+                    "slack."
+                ),
+                table=DiagnosticTable(
+                    columns=["Code", "Name"],
+                    rows=[list(row) for row in unpriced.iter_rows()],
+                    justify=["right", "left"],
+                ),
+            ),
+            logger=_LOG,
         )
     cost = (
         pl.col("codigo_submercado")
@@ -1461,13 +1472,22 @@ def _cost_frames(
 
     export_minimum = reconcile_kdollars_to_reais(totals["contrato_exportacao_minimo"])
     if export_minimum > 0.01:
-        _LOG.warning(
-            "The source model counts the take-or-pay minimum of its export "
-            "contracts as a cost and the energy above it as revenue, while Novomodelo "
-            "counts every exported MWh as revenue. For the same exports, its "
-            "contract cost in the cost breakdown is 2 x %.6g R$ (present value) "
-            "above Novomodelo's.",
-            export_minimum,
+        emit(
+            Diagnostic(
+                code="decomp-export-contract-cost-convention",
+                severity=Severity.WARNING,
+                category="Compare data",
+                title="Export contract cost higher in DECOMP",
+                summary=(
+                    "DECOMP counts the take-or-pay minimum of its export "
+                    "contracts as a cost and the energy above it as revenue, "
+                    "while Novomodelo counts every exported MWh as revenue. "
+                    "For the same exports, DECOMP's contract cost in the cost "
+                    f"breakdown is 2 × {export_minimum:,.0f} R$ (present "
+                    "value) above Novomodelo's."
+                ),
+            ),
+            logger=_LOG,
         )
 
     per_stage = _probability_weighted_stage_cost(
@@ -3004,7 +3024,7 @@ def build_decomp_dataset(
     - The Energy Balance tab's DECOMP-side frames ``nw_market``/
       ``nw_net_load``/``nw_sin`` (`_energy_balance_frames`) plus the novomodelo-side
       ``bus_aggregates``/``novomodelo_bus_meta``/``novomodelo_hydro_means``.
-    - The Network tab's ``line_bounds``/``line_meta`` (`_line_bounds_and_meta`).
+    - The Network tab's ``line_bounds``/``line_meta`` (`read_novomodelo_network_lines`).
     - The Overview tab's ``nw_costs`` (`_cost_frames`), ``novomodelo_costs``/
       ``novomodelo_stage_costs``, and the Convergence overlay ``nw_convergence``/
       ``novomodelo_convergence`` (`_decomp_convergence_frame`). The per-stage
@@ -3088,9 +3108,10 @@ def build_decomp_dataset(
     )
     results = _aligned_result_comparisons(aligned)
 
-    line_bounds, line_meta = _line_bounds_and_meta(novomodelo_output_dir)
-    # The Network/Productivity/REE/evaporation sections below all reuse the
-    # shared case's id map rather than each re-parsing the deck.
+    line_bounds, line_meta = novomodelo_readers.read_novomodelo_network_lines(
+        novomodelo_output_dir
+    )
+    # Every section below reuses the shared case's id map; none re-parses the deck.
     line_id_map = case.id_map
     line_results, unresolved_lines = _line_result_comparisons(
         decomp_dir,

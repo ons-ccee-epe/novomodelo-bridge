@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -82,9 +81,6 @@ def run_conversion(
     warning such as a tab in a fixed-column file often explains the failure,
     and a failed self-check details it), and the exception propagates.
     """
-    collector = dx.WarningCollector()
-    pkg_logger = logging.getLogger("novomodelo_bridge")
-    pkg_logger.addHandler(collector)
     try:
         with dx.collect() as collected:
             report = convert()
@@ -95,12 +91,10 @@ def run_conversion(
         # asked to clear.
         if not dry_run:
             clear_dst_contents(dst, artifacts)
-        for diagnostic in dx.finalize_diagnostics(collected, collector.messages):
+        for diagnostic in dx.finalize_diagnostics(collected):
             dx.emit(diagnostic)
         raise
-    finally:
-        pkg_logger.removeHandler(collector)
-    report.diagnostics = dx.finalize_diagnostics(collected, collector.messages)
+    report.diagnostics = dx.finalize_diagnostics(collected)
     report.warnings = [
         d.summary for d in report.diagnostics if d.severity is dx.Severity.WARNING
     ]

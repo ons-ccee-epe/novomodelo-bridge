@@ -165,7 +165,7 @@ def emit_eco_csvs(
     for pool_id in selected:
         pool = pools[pool_id]
         if pool_id == terminal_pool_id:
-            _LOG.warning(
+            _LOG.info(
                 "writing terminal pool ECO CSV for pool %d: %d pieces x %d "
                 "coefficients, gzipped",
                 pool_id,

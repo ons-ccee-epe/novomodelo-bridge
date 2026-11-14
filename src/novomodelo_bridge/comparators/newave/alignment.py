@@ -11,6 +11,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+
 if TYPE_CHECKING:
     from novomodelo_bridge.newave.case import NewaveCase
     from novomodelo_bridge.newave.id_map import NewaveIdMap
@@ -154,6 +161,7 @@ def build_entity_alignment(
     for nw_code in id_map.all_bus_ids:
         bus_id_to_nw[id_map.bus_id(nw_code)] = nw_code
 
+    unmapped: list[list[object]] = []
     for line in lines_json:
         line_id = int(line["id"])
         src_bus = int(line["source_bus_id"])
@@ -163,9 +171,7 @@ def build_entity_alignment(
         nw_de = bus_id_to_nw.get(src_bus)
         nw_para = bus_id_to_nw.get(tgt_bus)
         if nw_de is None or nw_para is None:
-            _LOG.warning(
-                "Line %d (%s) has unmapped buses; skipping.", line_id, line_name
-            )
+            unmapped.append([line_id, line_name, src_bus, tgt_bus])
             continue
 
         alignment.lines.append(
@@ -177,6 +183,27 @@ def build_entity_alignment(
                 newave_de=nw_de,
                 newave_para=nw_para,
             )
+        )
+
+    if unmapped:
+        emit(
+            Diagnostic(
+                code="line-bus-unmapped",
+                severity=Severity.WARNING,
+                category="Compare data",
+                title=f"Lines to buses with no NEWAVE submarket ({len(unmapped)})",
+                summary=(
+                    "Each listed line of the case ends at a bus that matches "
+                    "no NEWAVE submarket, so the comparison leaves the line "
+                    "out."
+                ),
+                table=DiagnosticTable(
+                    columns=["Line ID", "Name", "Source bus ID", "Target bus ID"],
+                    rows=unmapped,
+                    justify=["right", "left", "right", "right"],
+                ),
+            ),
+            logger=_LOG,
         )
 
     _LOG.debug(

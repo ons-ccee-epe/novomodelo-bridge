@@ -26,7 +26,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _MODULE_LOGGER = logging.getLogger(__name__)
 _COUNT_SUFFIX = re.compile(r" \(\d+\)$")
@@ -169,8 +172,7 @@ def emit(diagnostic: Diagnostic, *, logger: logging.Logger | None = None) -> Non
     """Record *diagnostic* on the active sink, or log it when none is active.
 
     Inside a :func:`collect` block the diagnostic is appended to the sink for rich
-    rendering and is **not** logged (so it is not also captured by the pipeline's
-    legacy-warning bridge). Outside a block it degrades to a single ``logging``
+    rendering and is **not** logged. Outside a block it degrades to a single ``logging``
     record at the matching level on *logger* (default: this module's logger) so a
     converter called on its own — or an existing log-assertion test — still surfaces
     the finding. Pass the caller's module logger to keep the record's logger name.
@@ -184,55 +186,16 @@ def emit(diagnostic: Diagnostic, *, logger: logging.Logger | None = None) -> Non
     )
 
 
-class WarningCollector(logging.Handler):
-    """Capture ``WARNING``+ records emitted under ``novomodelo_bridge`` during a run.
+def finalize_diagnostics(collected: Iterable[Diagnostic]) -> list[Diagnostic]:
+    """*collected* with each ``(code, summary)`` kept once, in first-met order.
 
-    Converters log every degraded-input substitution (vazpast → empty, c_adic →
-    no load, EXPT/RE skipped, REE.DAT cutoff fallback, …) at ``WARNING`` level.
-    Attaching this to the package logger for the duration of a conversion lets
-    the pipeline report those degradations through :func:`finalize_diagnostics`
-    instead of letting them pass silently.
+    A converter run twice, or a file that several report tabs read, reports
+    its finding once.
     """
-
-    def __init__(self) -> None:
-        super().__init__(level=logging.WARNING)
-        self.messages: list[str] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if record.levelno >= logging.WARNING:
-            self.messages.append(record.getMessage())
-
-
-def finalize_diagnostics(
-    collected: list[Diagnostic], legacy_messages: list[str]
-) -> list[Diagnostic]:
-    """Combine structured diagnostics with bridged legacy ``logger.warning`` strings.
-
-    Structured diagnostics are de-duplicated by ``(code, summary)`` (a converter run
-    more than once should surface a finding only once). Each remaining captured
-    warning string — emitted by a site not yet migrated to :func:`emit` — is
-    wrapped in a generic WARNING diagnostic so it still renders through the same
-    pipeline, with first-occurrence order preserved.
-    """
-    result: list[Diagnostic] = []
-    seen: set[tuple[str, str]] = set()
-    for diag in collected:
-        key = (diag.code, diag.summary)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(diag)
-    for message in dict.fromkeys(legacy_messages):
-        result.append(
-            Diagnostic(
-                code="legacy-warning",
-                severity=Severity.WARNING,
-                category="Other warnings",
-                title="Conversion warning",
-                summary=message,
-            )
-        )
-    return result
+    first: dict[tuple[str, str], Diagnostic] = {}
+    for diagnostic in collected:
+        first.setdefault((diagnostic.code, diagnostic.summary), diagnostic)
+    return list(first.values())
 
 
 def merge_tables(diagnostics: Iterable[Diagnostic]) -> list[Diagnostic]:
@@ -316,4 +279,75 @@ def unreadable_file_diagnostic(
         summary=f"{file_name} could not be read, so {effect}",
         notes=[str(exc)] if str(exc) else [],
         remediation=f"Check {file_name} for a malformed record.",
+    )
+
+
+#: The category of every finding about a file that compare, dashboard or
+#: export reads: the converted case, its run output, or the source model's
+#: own results.
+REPORT_FILES_CATEGORY = "Case and result files"
+
+
+def report_file_missing_diagnostic(
+    file_name: str, path: Path, effect: str
+) -> Diagnostic:
+    """INFO for a file a report reads that is not there.
+
+    *file_name* is the file's path in the case (``system/hydros.json``,
+    ``output/training/convergence.parquet``) or a source-model file's name
+    (``pmo.dat``); *effect* completes ``"<file>
+    was not found, so ..."``: what the report leaves out. A reader whose file
+    is absent by design, as for a run without that phase, emits nothing.
+    """
+    return Diagnostic(
+        code="report-file-missing",
+        severity=Severity.INFO,
+        category=REPORT_FILES_CATEGORY,
+        title=f"{file_name} not found",
+        summary=f"{file_name} was not found, so {effect}",
+        notes=[f"Path: {path}"],
+    )
+
+
+def report_file_unreadable_diagnostic(
+    file_name: str, path: Path, effect: str, reason: Exception | str
+) -> Diagnostic:
+    """WARNING for a file a report reads but cannot use.
+
+    *effect* completes ``"<file> could not be read, so ..."``: what the
+    report leaves out of what the run computed. *reason* is the exception,
+    or what the file lacks.
+    """
+    notes = [f"Path: {path}"]
+    if str(reason):
+        notes.append(f"Reason: {reason}")
+    return Diagnostic(
+        code="report-file-unreadable",
+        severity=Severity.WARNING,
+        category=REPORT_FILES_CATEGORY,
+        title=f"{file_name} could not be read",
+        summary=f"{file_name} could not be read, so {effect}",
+        notes=notes,
+    )
+
+
+def report_files_unreadable_diagnostic(
+    kind: str, failures: Sequence[tuple[str, Exception]], effect: str
+) -> Diagnostic:
+    """WARNING for the files of one *kind* a report reads but cannot parse.
+
+    *kind* starts the title (``"Interchange tables"``); *failures* holds each
+    file's name and exception, one table row each; *effect* completes
+    ``"The listed files could not be read, so ..."``.
+    """
+    return Diagnostic(
+        code="report-file-unreadable",
+        severity=Severity.WARNING,
+        category=REPORT_FILES_CATEGORY,
+        title=f"{kind} that could not be read ({len(failures)})",
+        summary=f"The listed files could not be read, so {effect}",
+        table=DiagnosticTable(
+            columns=["File", "Reason"],
+            rows=[[name, str(exc)] for name, exc in failures],
+        ),
     )

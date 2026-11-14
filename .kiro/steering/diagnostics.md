@@ -33,18 +33,27 @@ nor the `--json` status; moving it to or from ERROR changes both.
 ## 2. A finding is a Diagnostic, never a log line
 
 - Report a degraded input, a dropped record or a changed value with
-  `emit(Diagnostic(...))` inside the command's `collect()` sink. A
-  `logger.warning` reaches the user only as a generic "Conversion warning"
-  panel, or as a bare log line outside `convert`.
+  `emit(Diagnostic(...))` inside the command's `collect()` sink, which
+  `finalize_diagnostics` reduces to one copy of each `(code, summary)`. A
+  `logger.warning` would reach the user only as a bare log line.
 - One diagnostic per kind of finding. Each affected entity is a row of its
   table; never emit one diagnostic, or one log line, per plant. A helper
   called once per plant or per stage stays silent and hands its finding back
   (a row field, a return value); the caller that sees every entity emits.
 - Log at INFO or DEBUG only what a maintainer tracing a run needs. The guard
-  rejects a `logger.warning` or `logger.error` outside the modules on its
-  allowlist, and a `(s)` plural marker in any log message.
+  rejects any `logger.warning` or `logger.error`, and a `(s)` plural marker
+  in any log message.
 - An unreadable optional deck file is `unreadable_file_diagnostic(...)`,
   whose summary says what the case lacks and how that changes the results.
+- A file compare, dashboard or export reads (the converted case, its run
+  output, the source model's results) is `report_file_missing_diagnostic`
+  (INFO) when absent, `report_file_unreadable_diagnostic` (WARNING) when it
+  does not parse or lacks what the report reads, and
+  `report_files_unreadable_diagnostic` for several files of one kind. Its
+  effect says what the report leaves out; give every reader of one file the
+  same effect, so the finding is one. A file absent by design, such as a
+  partition novomodelo writes only for an entity type the case has, is no
+  finding.
 
 ## 3. Title
 

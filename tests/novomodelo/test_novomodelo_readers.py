@@ -45,6 +45,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_lines,
     read_novomodelo_load_bus_ids,
     read_novomodelo_lp_max_generation,
+    read_novomodelo_network_lines,
     read_novomodelo_scenario_weights,
     read_novomodelo_stage_line_bounds,
     read_novomodelo_thermal_means,
@@ -1892,6 +1893,62 @@ class TestReadNovomodeloStageLineBounds:
         assert df.columns == ["line_id", "stage_id", "direct_mw", "reverse_mw"]
 
 
+class TestReadNovomodeloNetworkLines:
+    def _write_case(self, case_dir: Path, lines_json: str) -> Path:
+        (case_dir / "system").mkdir(parents=True)
+        (case_dir / "system" / "lines.json").write_text(lines_json, encoding="utf-8")
+        _write_line_case(case_dir, [(0, 0, None, 1200.0, 800.0)], {})
+        return case_dir / "output"
+
+    def test_reads_the_stage_bounds_and_the_lines_verbatim(
+        self, tmp_path: Path
+    ) -> None:
+        lines = [{"id": 0, "name": "SE-S", "capacity": {"direct_mw": 1000.0}}]
+        output_dir = self._write_case(tmp_path, json.dumps({"lines": lines}))
+
+        with dx.collect() as collected:
+            line_bounds, line_meta = read_novomodelo_network_lines(output_dir)
+
+        assert line_meta == lines
+        row = line_bounds.row(0, named=True)
+        assert (row["direct_mw"], row["reverse_mw"]) == (1200.0, 800.0)
+        assert collected == []
+
+    def test_a_case_without_the_files_is_empty_and_notes_the_bounds(
+        self, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        with dx.collect() as collected:
+            line_bounds, line_meta = read_novomodelo_network_lines(output_dir)
+
+        assert line_bounds.is_empty()
+        assert line_meta == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-missing", "constraints/line_bounds.parquet not found")
+        ]
+
+    def test_unparseable_lines_json_keeps_the_bounds_and_warns_once(
+        self, tmp_path: Path
+    ) -> None:
+        output_dir = self._write_case(tmp_path, "{not json")
+
+        with dx.collect() as collected:
+            line_bounds, line_meta = read_novomodelo_network_lines(output_dir)
+
+        assert line_meta == []
+        assert line_bounds.row(0, named=True)["direct_mw"] == 1200.0
+        assert [(d.code, d.severity, d.title) for d in collected] == [
+            (
+                "report-file-unreadable",
+                Severity.WARNING,
+                "system/lines.json could not be read",
+            )
+        ]
+        assert "Network tab shows no line" in collected[0].summary
+
+
 class TestReadNovomodeloTrainingMetadata:
     def test_present_returns_dict(self, tmp_path: Path) -> None:
         out = tmp_path / "case" / "output"
@@ -1937,7 +1994,14 @@ class TestReadNovomodeloTrainingMetadata:
         training_dir.mkdir(parents=True)
         (training_dir / "metadata.json").write_text("not valid json{", encoding="utf-8")
 
-        assert read_novomodelo_training_metadata(out) == {}
+        with dx.collect() as collected:
+            assert read_novomodelo_training_metadata(out) == {}
+        assert [(d.code, d.title) for d in collected] == [
+            (
+                "report-file-unreadable",
+                "output/training/metadata.json could not be read",
+            )
+        ]
 
 
 class TestNovomodeloSoftwareVersion:
@@ -2006,23 +2070,24 @@ class TestReadNovomodeloScenarioWeights:
 
         assert read_novomodelo_scenario_weights(out).uniform
 
-    def test_training_only_run_weighs_scenarios_the_same(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_training_only_run_weighs_scenarios_the_same(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir()
 
-        assert read_novomodelo_scenario_weights(out).uniform
-        assert not caplog.records
+        with dx.collect() as collected:
+            assert read_novomodelo_scenario_weights(out).uniform
+        assert collected == []
 
-    def test_simulation_without_a_summary_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_simulation_without_a_summary_warns(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         (out / "simulation").mkdir(parents=True)
 
-        assert read_novomodelo_scenario_weights(out).uniform
-        assert "equal weights" in caplog.text
+        with dx.collect() as collected:
+            assert read_novomodelo_scenario_weights(out).uniform
+        [diag] = collected
+        assert diag.code == "scenario-probabilities-missing"
+        assert diag.severity is Severity.WARNING
+        assert "equal weights" in diag.summary
 
     def test_some_scenarios_without_a_probability_raise(self, tmp_path: Path) -> None:
         out = tmp_path / "output"

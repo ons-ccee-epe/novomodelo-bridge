@@ -30,19 +30,30 @@ def _write_outputs(dst: Path) -> None:
     (dst / "config.json").write_text("{}", encoding="utf-8")
 
 
-def test_run_conversion_folds_findings_and_legacy_warnings_into_the_report(
+def test_run_conversion_folds_findings_into_the_report_once_each(
     tmp_path: Path,
 ) -> None:
     def convert() -> ConversionReport:
         dx.emit(_diagnostic("early", dx.Severity.WARNING))
         dx.emit(_diagnostic("note", dx.Severity.INFO))
-        logging.getLogger("novomodelo_bridge.test").warning("legacy text")
+        dx.emit(_diagnostic("early", dx.Severity.WARNING))
         return ConversionReport()
 
     report = run_conversion(convert, tmp_path, _ARTIFACTS, dry_run=False)
 
-    assert [d.code for d in report.diagnostics] == ["early", "note", "legacy-warning"]
-    assert report.warnings == ["early", "legacy text"]
+    assert [d.code for d in report.diagnostics] == ["early", "note"]
+    assert report.warnings == ["early"]
+
+
+def test_a_log_warning_is_not_a_finding(tmp_path: Path) -> None:
+    def convert() -> ConversionReport:
+        logging.getLogger("novomodelo_bridge.test").warning("log text")
+        return ConversionReport()
+
+    report = run_conversion(convert, tmp_path, _ARTIFACTS, dry_run=False)
+
+    assert report.diagnostics == []
+    assert report.warnings == []
 
 
 def test_failed_emission_check_reaches_the_caller_with_its_findings(
@@ -51,7 +62,7 @@ def test_failed_emission_check_reaches_the_caller_with_its_findings(
     def convert() -> ConversionReport:
         _write_outputs(tmp_path)
         dx.emit(_diagnostic("early", dx.Severity.WARNING))
-        logging.getLogger("novomodelo_bridge.test").warning("legacy text")
+        dx.emit(_diagnostic("early", dx.Severity.WARNING))
         emission_checks.run_and_gate(
             lambda: dx.emit(_diagnostic("check-failed", dx.Severity.ERROR))
         )
@@ -63,7 +74,7 @@ def test_failed_emission_check_reaches_the_caller_with_its_findings(
     ):
         run_conversion(convert, tmp_path, _ARTIFACTS, dry_run=False)
 
-    assert [d.code for d in outer] == ["early", "check-failed", "legacy-warning"]
+    assert [d.code for d in outer] == ["early", "check-failed"]
     assert not (tmp_path / "system").exists()
     assert not (tmp_path / "config.json").exists()
 

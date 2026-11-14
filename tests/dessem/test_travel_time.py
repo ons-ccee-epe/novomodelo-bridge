@@ -334,7 +334,7 @@ class TestUndatedBucketAudit:
         pools = {0: _pool(_PADDED, (1, 1, 1, 1, 1, 0), (1, 1, 1, 1, 1, 2.5))}
 
         with caplog.at_level(
-            logging.WARNING,
+            logging.INFO,
             logger="novomodelo_bridge.dessem.exporters.fcf.core.travel_time",
         ):
             audit = undated_bucket_audit(pools)

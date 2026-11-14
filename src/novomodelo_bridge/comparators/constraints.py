@@ -10,8 +10,10 @@ from typing import NamedTuple
 import pandas as pd
 import polars as pl
 
+from novomodelo_bridge.core.diagnostics import emit, report_file_unreadable_diagnostic
 from novomodelo_bridge.core.generic_constraint_format import shape_from_bounds
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
+from novomodelo_bridge.novomodelo.case_io import case_dir_for
 from novomodelo_bridge.novomodelo.constraint_expr import (
     ResolvedGenericConstraints,
     evaluate_lhs,
@@ -41,7 +43,15 @@ def load_generic_constraints(novomodelo_input_dir: Path) -> list[dict]:
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        _LOG.warning("generic_constraints.json could not be parsed: %s", exc)
+        emit(
+            report_file_unreadable_diagnostic(
+                "constraints/generic_constraints.json",
+                path,
+                "the report leaves out the generic constraints.",
+                exc,
+            ),
+            logger=_LOG,
+        )
         return []
     return list(data.get("constraints", []))
 
@@ -53,7 +63,8 @@ def load_resolved_generic_constraints(
 
     See :func:`novomodelo_bridge.novomodelo.constraint_expr.resolve_generic_constraints`;
     terms and bounds are empty when the run wrote no
-    ``generic_constraints/resolved_echo.parquet``.
+    ``generic_constraints/resolved_echo.parquet``, which is read only when
+    the case has generic constraints.
     """
     min_storage = {
         hid: float(meta.get("min_storage_hm3") or 0.0)
@@ -61,11 +72,14 @@ def load_resolved_generic_constraints(
             novomodelo_output_dir
         ).items()
     }
+    constraints = load_generic_constraints(novomodelo_case_dir)
     return resolve_generic_constraints(
-        load_generic_constraints(novomodelo_case_dir),
+        constraints,
         novomodelo_readers.read_novomodelo_generic_constraint_echo(
             novomodelo_output_dir
-        ),
+        )
+        if constraints
+        else None,
         min_storage,
     )
 
@@ -110,10 +124,14 @@ def evaluate_lhs_novomodelo(
     }
     block_hours = novomodelo_readers.read_novomodelo_block_hours(novomodelo_output_dir)
     if block_hours.is_empty():
-        _LOG.warning(
-            "No block hours in %s; generic-constraint LHS cannot be "
-            "hours-weighted and is not compared.",
-            novomodelo_output_dir,
+        emit(
+            report_file_unreadable_diagnostic(
+                "stages.json",
+                case_dir_for(novomodelo_output_dir) / "stages.json",
+                "the report leaves out the generic constraints' values in the run.",
+                "no stage with block hours",
+            ),
+            logger=_LOG,
         )
         return empty
     lhs_pd: pd.DataFrame = evaluate_lhs(resolved, frames, block_hours)

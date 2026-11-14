@@ -364,7 +364,7 @@ def undated_bucket_audit(pools: Mapping[int, StageCutPool]) -> UndatedBucketAudi
     else:
         _LOG.info("premise P3: every transit bucket is dated on this case")
     if audit.total_priced:
-        _LOG.warning(
+        _LOG.info(
             "premise P3: non-zero coefficients dropped on undated transit "
             "buckets: %d (%s)",
             audit.total_priced,

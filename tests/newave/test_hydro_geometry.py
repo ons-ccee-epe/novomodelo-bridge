@@ -410,19 +410,6 @@ class TestGenerateHydroGeometryDiagnostics:
 
         assert collected == []
 
-    def test_skips_carry_no_legacy_warning_under_collect(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
-
-        cadastro = _make_geometry_cadastro().copy()
-        for i in range(5):
-            cadastro.loc[1, f"a{i}_volume_cota"] = 0.0
-        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
-
-        with dx.collect() as collected:
-            generate_hydro_geometry(cadastro, id_map)
-
-        assert not any(d.code == "legacy-warning" for d in collected)
-
     def test_no_sink_fallback_logs_one_warning(self, caplog) -> None:
         """With no active collect() sink, emit() degrades to a single logging
         record — the pre-migration caplog contract keeps working."""

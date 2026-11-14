@@ -46,6 +46,8 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     COST_FIELDS,
     GNL_EXPORT_MIDDLE_OFFSET,
+    PHYSICAL_RECORD_FIRST,
+    PHYSICAL_RECORD_LAST,
     CutBlockOffsets,
     LayoutError,
     assert_uniform_blocks,
@@ -60,6 +62,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapcut_writer import (
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     GnlCommittedCost,
     GnlDeliveries,
+    InflowLagAudit,
     MappingError,
     SourceGnlThermal,
     cut_building_pools,
@@ -178,6 +181,94 @@ def _emit_undated_bucket_warning(undated: UndatedBucketAudit) -> None:
                 "function prices water that arrives after the study ends.",
             ],
         )
+    )
+
+
+def _emit_cut_pool_mismatch(trunk_pool_ids: tuple[int, ...], expected: int) -> None:
+    """Warn when the pools holding cuts are not the policy's cut-building stages."""
+    if len(trunk_pool_ids) == expected:
+        return
+    emit(
+        Diagnostic(
+            code="dessem-fcf-cut-pools-unexpected",
+            severity=Severity.WARNING,
+            category="FCF export",
+            title="Cut pools that do not match the policy's stages",
+            summary=(
+                f"The policy builds cuts on {counted(expected, 'stage')}, but "
+                f"{counted(len(trunk_pool_ids), 'pool')} hold cuts past their "
+                "warm-start slots, so the exported pair holds the cuts of those "
+                "pools only and its stages differ from the policy's."
+            ),
+            notes=[
+                "Pools holding cuts: "
+                f"{', '.join(str(pool_id) for pool_id in trunk_pool_ids) or 'none'}."
+            ],
+        )
+    )
+
+
+def _emit_inflow_lag_drop_warning(audit: InflowLagAudit) -> None:
+    """Warn when premise P8 drops non-zero-count inflow-lag coefficients."""
+    if not audit.total:
+        return
+    emit(
+        Diagnostic(
+            code="dessem-fcf-inflow-lag-coefficients-dropped",
+            severity=Severity.WARNING,
+            category="FCF export",
+            title=f"Inflow-lag coefficients dropped ({audit.total})",
+            summary=(
+                "The policy's cuts carry coefficients on past inflows, which "
+                "the export leaves out, so the exported cuts ignore how the "
+                "future cost depends on recent inflows and differ from the "
+                "policy's."
+            ),
+            notes=[
+                f"Pool {pool_id}: {counted(count, 'coefficient')}."
+                for pool_id, count in audit.per_pool
+                if count
+            ]
+            + ["Premise P8: inflow-lag coefficients are dropped and counted."],
+        )
+    )
+
+
+#: mapcut record 10's cost parcels other than the committed GNL cost, with
+#: the names docs/dessem.md gives them.
+_ZERO_COST_PARCELS = {
+    "parcela_custo_geracao_termica_minima": "thermal minimum-generation cost",
+    "parcela_custo_contrato_importacao_minimo": "import contract minimum cost",
+    "parcela_custo_contrato_exportacao_minimo": "export contract minimum cost",
+    "geracao_termica_minima_sinalizada_gnl": "signalled GNL generation",
+}
+
+
+def _mapcut_zero_fields_diagnostic(mapcut_name: str) -> Diagnostic:
+    """The WARNING listing the mapcut fields premises P1 and P11 write as zeros."""
+    return Diagnostic(
+        code="dessem-fcf-mapcut-fields-zero",
+        severity=Severity.WARNING,
+        category="FCF export",
+        title=f"{mapcut_name} fields written as zeros",
+        summary=(
+            f"{mapcut_name} holds zeros in the listed fields, where DECOMP's own "
+            "file holds the deck's values, because a Novomodelo policy does not "
+            "hold them. How DESSEM uses these fields is not documented, so the "
+            "effect on its results is not known."
+        ),
+        table=DiagnosticTable(
+            columns=["Record", "Field", "Premise"],
+            rows=[
+                [
+                    f"{PHYSICAL_RECORD_FIRST}-{PHYSICAL_RECORD_LAST}",
+                    "physical hydro data",
+                    "P1",
+                ],
+                *(["10", name, "P11"] for name in _ZERO_COST_PARCELS.values()),
+            ],
+            caption="Record indices are 0-based.",
+        ),
     )
 
 
@@ -563,7 +654,20 @@ def _write_failure_manifest(
         )
         write_export_manifest(manifest, paths.manifest)
     except OSError as exc:
-        _LOG.warning("failed to write failure manifest: %s", exc)
+        emit(
+            Diagnostic(
+                code="dessem-fcf-failure-manifest-unwritten",
+                severity=Severity.WARNING,
+                category="Export failure",
+                title=f"{paths.manifest.name} could not be written",
+                summary=(
+                    f"The export failed, and {paths.manifest.name} could not "
+                    "record the failure either, so the file is missing or still "
+                    "describes an earlier export."
+                ),
+                notes=[f"Reason: {exc}"],
+            )
+        )
 
 
 def _assemble_mapcut_header(
@@ -739,7 +843,8 @@ def _plan_export(
         pools = select_pools(
             checkpoint, pool_ids, include_terminal=settings.include_terminal_pool
         )
-        trunk_pool_ids = cut_building_pools(pools, len(pool_ids) - 1)
+        trunk_pool_ids = cut_building_pools(pools)
+        _emit_cut_pool_mismatch(trunk_pool_ids, len(pool_ids) - 1)
         terminal_pool_id = pool_ids[-1]
 
     with progress.step("validate premises", 3):
@@ -752,8 +857,7 @@ def _plan_export(
         _emit_travel_time_info(travel_time, undated)
         _emit_undated_bucket_warning(undated)
 
-        # P8: Audit inflow lag drops
-        inflow_lag_drop_audit(pools)
+        _emit_inflow_lag_drop_warning(inflow_lag_drop_audit(pools))
 
         gnl_thermals = anticipated_thermals(inputs)
         gnl_lags = gnl_lag_months(gnl_thermals, source.gnl_thermals)
@@ -962,6 +1066,7 @@ def run_export(
         mapcut_contents, cortdeco_contents = _write_validated_pair(
             plan, paths, progress
         )
+        emit(_mapcut_zero_fields_diagnostic(paths.mapcut.name))
         _emit_gnl_reports(plan, source.gnl_thermals, mapcut_contents, cortdeco_contents)
 
         with progress.step("write content CSVs", 11):
@@ -975,7 +1080,11 @@ def run_export(
         return 0
 
     except (InputReadError, LayoutError, MappingError, PolicyFormatError) as exc:
-        _LOG.error("export failed at step '%s': %s", progress.current_step, exc)
+        rejected = (
+            reject_pair(paths.mapcut, paths.cortdeco)
+            if progress.unvalidated_pair_published
+            else []
+        )
         emit(
             Diagnostic(
                 code="dessem-fcf-export-failed",
@@ -983,18 +1092,21 @@ def run_export(
                 category="Export failure",
                 title="Export failed",
                 summary=str(exc),
-                notes=[f"Failed step: {progress.current_step}"],
+                notes=[f"Failed step: {progress.current_step}"]
+                + [
+                    f"{path.name} is kept as {path.name}.rejected, so DESSEM "
+                    "cannot read it by mistake."
+                    for path in rejected
+                ],
             )
         )
-        if progress.unvalidated_pair_published:
-            reject_pair(paths.mapcut, paths.cortdeco)
         _write_failure_manifest(
             case_dir, source, settings, paths, progress.current_step
         )
         return 1
 
-    except BaseException as exc:
-        _LOG.error("export failed at step '%s': %s", progress.current_step, exc)
+    except BaseException:
+        _LOG.info("export stopped at step '%s'", progress.current_step)
         if progress.unvalidated_pair_published:
             reject_pair(paths.mapcut, paths.cortdeco)
         _write_failure_manifest(

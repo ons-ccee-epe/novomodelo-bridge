@@ -14,7 +14,6 @@ historical final simulation.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import polars as pl
@@ -40,7 +39,13 @@ from novomodelo_bridge.comparators.newave.readers import (
     read_pmo_cost_breakdown,
     read_pmo_productivity_detail,
 )
+from novomodelo_bridge.core import diagnostics as dx
 from tests.conftest import make_nw_files
+
+
+def _codes_and_titles(collected: list[dx.Diagnostic]) -> list[tuple[str, str]]:
+    return [(d.code, d.title) for d in collected]
+
 
 _FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "newave_results"
 _PLANT_TABLES = _FIXTURE_DIR / "nwlistop_plants"
@@ -92,13 +97,13 @@ class TestMediasHydro:
             "stage", "value"
         ).rows() == [(10, 2.5)]
 
-    def test_degrades_to_empty_frame_on_missing_file(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
+    def test_degrades_to_empty_frame_on_missing_file(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
             df = read_medias_hydro(tmp_path)
         assert df.is_empty()
-        assert "MEDIAS-USIH.CSV" in caplog.text
+        assert _codes_and_titles(collected) == [
+            ("report-file-missing", "medias-usih.csv not found")
+        ]
 
 
 class TestMediasThermal:
@@ -107,13 +112,13 @@ class TestMediasThermal:
         assert df["newave_code"].unique().to_list() == [1]
         assert set(df["variable"].unique().to_list()) == {"GTMIN", "GTERM", "GTERMTOT"}
 
-    def test_degrades_to_empty_frame_on_missing_file(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
+    def test_degrades_to_empty_frame_on_missing_file(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
             df = read_medias_thermal(tmp_path)
         assert df.is_empty()
-        assert "MEDIAS-USIT.CSV" in caplog.text
+        assert _codes_and_titles(collected) == [
+            ("report-file-missing", "medias-usit.csv not found")
+        ]
 
 
 class TestMediasMarket:
@@ -134,13 +139,13 @@ class TestMediasMarket:
 
         assert df["newave_code"].unique().to_list() == [1]
 
-    def test_degrades_to_empty_frame_on_missing_file(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
+    def test_degrades_to_empty_frame_on_missing_file(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
             df = read_medias_market(tmp_path)
         assert df.is_empty()
-        assert "MEDIAS-MERC.CSV" in caplog.text
+        assert _codes_and_titles(collected) == [
+            ("report-file-missing", "medias-merc.csv not found")
+        ]
 
 
 class TestMediasSin:
@@ -247,24 +252,26 @@ class TestPmoConvergence:
 
         assert read_pmo_convergence(tmp_path)["iteration"].to_list() == [1]
 
-    def test_degrades_to_empty_frame_on_missing_pmo(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
+    def test_degrades_to_empty_frame_on_missing_pmo(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
             df = read_pmo_convergence(tmp_path)
         assert df.is_empty()
-        assert "pmo.dat not found" in caplog.text
+        assert _codes_and_titles(collected) == [
+            ("report-file-missing", "pmo.dat not found")
+        ]
 
     def test_degrades_to_empty_frame_without_a_convergence_table(
-        self, tmp_path: Path, caplog
+        self, tmp_path: Path
     ) -> None:
         (tmp_path / "pmo.dat").write_text(
             " CEPEL   MODELO ESTRATEGICO DE GERACAO HIDROTERMICA\n", encoding="latin-1"
         )
-        with caplog.at_level(logging.WARNING):
+        with dx.collect() as collected:
             df = read_pmo_convergence(tmp_path)
         assert df.is_empty()
-        assert "No convergence table" in caplog.text
+        assert _codes_and_titles(collected) == [
+            ("report-file-unreadable", "pmo.dat could not be read")
+        ]
 
 
 def test_one_comparison_parses_pmo_once(
@@ -365,13 +372,13 @@ class TestNewaveNetLoad:
         july = df.filter(pl.col("stage") == 7)
         assert july["value"].item() == 38124.0 + 18.0 - 1503.0
 
-    def test_degrades_to_empty_frame_on_missing_sistema(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
+    def test_degrades_to_empty_frame_on_missing_sistema(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
             df = read_newave_net_load(make_nw_files(tmp_path))
         assert df.is_empty()
-        assert "sistema.dat not found" in caplog.text
+        assert _codes_and_titles(collected) == [
+            ("report-file-missing", "sistema.dat not found")
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -397,13 +404,13 @@ class TestNewaveTimIterations:
             },
         ]
 
-    def test_degrades_to_empty_frame_on_missing_tim(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
+    def test_degrades_to_empty_frame_on_missing_tim(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
             df = read_newave_tim_iterations(tmp_path)
         assert df.is_empty()
-        assert "newave.tim not found" in caplog.text
+        assert _codes_and_titles(collected) == [
+            ("report-file-missing", "newave.tim not found")
+        ]
 
 
 class TestNewaveTimStages:
@@ -519,3 +526,27 @@ class TestNwlistopBlockCmo:
 
     def test_degrades_to_empty_without_tables(self, tmp_path: Path) -> None:
         assert read_nwlistop_block_cmo(tmp_path, 2024, 9).is_empty()
+
+    def test_tables_that_do_not_parse_are_one_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from inewave.nwlistop import Cmarg
+
+        def _raise(_path: str) -> None:
+            raise ValueError("bad table")
+
+        monkeypatch.setattr(Cmarg, "read", _raise)
+        for name in ("cmarg001.out", "CMARG002.out"):
+            (tmp_path / name).write_text("", encoding="latin-1")
+
+        with dx.collect() as collected:
+            assert read_nwlistop_block_cmo(tmp_path, 2024, 9).is_empty()
+
+        [diag] = collected
+        assert diag.code == "report-file-unreadable"
+        assert diag.title == "Marginal cost tables that could not be read (2)"
+        assert diag.table is not None
+        assert diag.table.rows == [
+            ["cmarg002.out", "bad table"],
+            ["cmarg001.out", "bad table"],
+        ]

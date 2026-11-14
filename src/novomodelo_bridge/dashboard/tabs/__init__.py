@@ -5,6 +5,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Final, Protocol
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
+
 if TYPE_CHECKING:
     from novomodelo_bridge.dashboard.data import DashboardData
 
@@ -94,6 +101,7 @@ def get_renderable_tabs(data: DashboardData) -> list[tuple[str, str, str]]:
         List of ``(tab_id, tab_label, rendered_html)`` tuples.
     """
     result: list[tuple[str, str, str]] = []
+    failed: list[list[object]] = []
     ordered = sorted(TAB_MODULES, key=lambda m: m.TAB_ORDER)
     for module in ordered:
         if not module.can_render(data):
@@ -101,14 +109,25 @@ def get_renderable_tabs(data: DashboardData) -> list[tuple[str, str, str]]:
         try:
             html = module.render(data)
         except Exception as exc:
-            logger.warning(
-                "Tab %r raised an exception during render; showing an error "
-                "placeholder instead of dropping it: %s",
-                module.TAB_ID,
-                exc,
-            )
+            logger.debug("tab %r failed to render", module.TAB_ID, exc_info=True)
+            failed.append([module.TAB_LABEL, str(exc)])
             html = _render_error_placeholder(module.TAB_LABEL, exc)
         result.append((module.TAB_ID, module.TAB_LABEL, html))
+    if failed:
+        emit(
+            Diagnostic(
+                code="dashboard-tab-failed",
+                severity=Severity.WARNING,
+                category="Dashboard data",
+                title=f"Dashboard tabs that could not be built ({len(failed)})",
+                summary=(
+                    "Building each listed tab raised an error, so the dashboard "
+                    "shows the error in the tab's place."
+                ),
+                table=DiagnosticTable(columns=["Tab", "Reason"], rows=failed),
+            ),
+            logger=logger,
+        )
     return result
 
 

@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
+from novomodelo_bridge.core.diagnostics import Severity
 from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import _make_hidr_cadastro, _read_modif
 
@@ -941,35 +941,6 @@ class TestExtractTemporalOverridesDiagnostics:
 
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert len(warnings) == 1
-
-
-class TestOverridesResidualLegacyWarning:
-    """OQ3: none of the four codes this module now emits leaks through the
-    generic ``legacy-warning`` bridge, and the residual bridge itself (shared
-    by every not-yet-migrated module) still works for an unrelated string."""
-
-    def test_hydro_finding_carries_no_legacy_warning(self, tmp_path) -> None:
-        from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
-
-        mock_modif = modif_mock((999, []))  # 999 is not in the cadastro
-
-        with dx.collect() as collected:
-            _apply_permanent_overrides(
-                _make_hidr_cadastro(),
-                make_case(
-                    make_nw_files(tmp_path, modif=tmp_path / "modif.dat"),
-                    modif=mock_modif,
-                ),
-            )
-
-        assert not any(d.code == "legacy-warning" for d in collected)
-
-    def test_finalize_diagnostics_still_wraps_an_unrelated_legacy_string(self) -> None:
-        result = finalize_diagnostics([], ["some other warning"])
-
-        assert len(result) == 1
-        assert result[0].code == "legacy-warning"
-        assert result[0].summary == "some other warning"
 
 
 class TestReadDiversionRecords:

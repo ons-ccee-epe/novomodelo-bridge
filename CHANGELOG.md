@@ -55,10 +55,10 @@ links are cobre-bridge's.
   no limit on any stage are listed in a new `electric-constraint-unbounded`
   note instead of `electric-constraint-skipped`, and `check` lists the absent
   optional inputs in one `optional-file-absent` note.
-- **`convert newave` and `convert decomp` report as notes and warnings the
-  findings they only logged**, so these now reach the conversion notes,
-  `conversion_manifest.json` and the `--json` output, each with a table of
-  the plants, records or stages it concerns. NEWAVE gains
+- **Every command reports as notes and warnings the findings it only
+  logged**, so these now reach the console, `conversion_manifest.json` and
+  the `--json` output, each with a table of the plants, records or stages it
+  concerns. NEWAVE gains
   `vazpast-unreadable`, `c-adic-unreadable`, `expt-unreadable`,
   `manutt-unreadable` and `penalid-unreadable` for an optional file it cannot
   read; `patamar-duration-missing`, `patamar-load-factors-missing`,
@@ -76,6 +76,17 @@ links are cobre-bridge's.
   `anticipated-commitment-clamped`, `fpha-efficiency-capped` and
   `hydro-forebay-curve-missing`, and DECOMP's `cadastro-topology-relinked`
   also lists the plants relinked through a plant left out of the case.
+  `compare` and `dashboard` report a case, result or deck file they read but
+  cannot find as a `report-file-missing` note, and one they cannot read as a
+  `report-file-unreadable` warning saying what the report leaves out; they
+  gain `scenario-probabilities-missing`, `line-bus-unmapped`,
+  `line-bus-pair-ambiguous`, `productivity-accumulated-unavailable`,
+  `decomp-deficit-unpriced`, `decomp-export-contract-cost-convention` and
+  `dashboard-tab-failed`. `export dessem` gains
+  `dessem-fcf-cut-pools-unexpected`,
+  `dessem-fcf-inflow-lag-coefficients-dropped`,
+  `dessem-fcf-failure-manifest-unwritten` and a
+  `dessem-fcf-mapcut-fields-zero` warning on every export.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.
@@ -123,6 +134,11 @@ links are cobre-bridge's.
   to the end of that month. A travel time longer than that stage fails the
   conversion, naming the plant. The converted cases need the paired novomodelo
   revision; convert a deck again to update it.
+
+### Removed
+
+- **`convert newave` and `convert decomp` no longer report `legacy-warning`**:
+  each finding it stood for has its own id; update scripts that filter on it.
 
 ### Fixed
 

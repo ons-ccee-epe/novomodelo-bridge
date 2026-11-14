@@ -125,20 +125,20 @@ and every export copies it into `export_manifest.json`. In brief:
 
 | Premise | Effect |
 |---------|--------|
-| P1 | `mapcut` physical records (indices 4–17) are written as zeros. |
+| P1 | `mapcut` physical records (indices 4–17) are written as zeros, which every export reports in its `dessem-fcf-mapcut-fields-zero` warning. |
 | P2 | Intercepts and the storage and in-transit water coefficients are divided by 1000 (R$ to 10³ R$); GNL coefficients stay in R$/MWh. |
 | P3 | Travel-time plants follow the deck's `VI` records; each release's in-transit water is valued from the transit buckets it arrives in. A bucket with no arrival window (water that would arrive after the study ends) takes no weight; a coefficient found on one is dropped with a warning. |
 | P4 | GNL coefficients change sign (Novomodelo negative, DECOMP positive). |
 | P5 | A delivery's GNL value is written unchanged on every load block, never split by block hours. |
 | P6 | Submarket is `bus_id + 1`; the `IV` transhipment bus is excluded. |
 | P7 | Only trunk pools are converted; the terminal pool is excluded. |
-| P8 | Inflow-lag coefficients are dropped, with a counted audit log. |
+| P8 | Inflow-lag coefficients are dropped; a policy that has any gets a `dessem-fcf-inflow-lag-coefficients-dropped` warning counting them per pool. |
 | P9 | Discount factors are `(1+r)^(-days/365.25)` from the stage dates. |
 | P10 | Every populated cut past the warm-start slots is written; `is_active` is recorded, not used as a filter. |
 | P11 | `mapcut` record 10 holds the committed GNL cost from the case's commitment windows, load-block hours and plant costs, in 10³ R$ and not discounted; its other four cost parcels are written as zeros. |
 | P12 | `mapcut` record 9's trailing GNL hours block holds the delivery stage's load-block hours from `stages.json`. |
 | P13 | `cortdeco` holds one extra record duplicating the last cut. |
-| P14 | The first cut-building node's cuts carry each GNL plant's coefficient for the delivery of the case's second stage, divided by that stage's hours; the other GNL coefficients are dropped, with a counted audit log. |
+| P14 | The first cut-building node's cuts carry each GNL plant's coefficient for the delivery of the case's second stage, divided by that stage's hours; the other GNL coefficients are dropped and counted in the `dessem-fcf-gnl-coefficients-exported` note. |
 | P15 | GNL lag months are read from the deck's `NL` records; a GNL plant with no `NL` record is refused. |
 
 ## Exit codes
@@ -155,15 +155,16 @@ and every export copies it into `export_manifest.json`. In brief:
    cut-building node's cuts carry GNL coefficients, and only for the
    delivery of the case's second stage. The policy's other GNL coefficients
    are not folded into the cut intercept, so the cuts price those
-   commitments as zero. Each run logs their count per pool, which `-v`
-   shows and `--log-file` records.
+   commitments as zero. The export notes give their count, and the log,
+   which `-v` shows and `--log-file` records, their count per pool.
 2. **One GNL value per delivery (P5).** Novomodelo prices one value per GNL
    delivery, so the file holds the same value on every load block, where
    DECOMP prices each load block separately.
 3. **`mapcut` record 10's other cost parcels are zeros (P11).** The
    thermal minimum-generation cost, the import and export contract minimum
    costs and the signalled GNL generation are DECOMP quantities that a
-   Novomodelo policy does not hold.
+   Novomodelo policy does not hold. Every export lists them, with the
+   physical records of P1, in its `dessem-fcf-mapcut-fields-zero` warning.
 4. **The committed GNL cost is priced from the case's values (P11).** The
    export prices every committed stage at the plant's `cost_per_mwh` in
    `system/thermals.json` and does not read the stage-level costs in
@@ -174,9 +175,10 @@ and every export copies it into `export_manifest.json`. In brief:
    committed MW the case holds: when a deck's `GL` record commits a GNL
    plant outside the range between the inflexibility and the availability
    of its `TG` record, `convert decomp` clamps the committed MW into that
-   range and logs a warning, and the value then differs from DECOMP's on
-   those stages. How DESSEM uses this field is not documented, so matching
-   DECOMP's value does not show an effect on dispatch.
+   range with an `anticipated-commitment-clamped` warning, and the value
+   then differs from DECOMP's on those stages. How DESSEM uses this field is
+   not documented, so matching DECOMP's value does not show an effect on
+   dispatch.
 5. **The GNL hours basis is not confirmed (P12).** `mapcut` record 9
    carries the load-block hours of the delivery stage, where a `mapcut`
    written by DECOMP carries those of an average month. How DESSEM combines

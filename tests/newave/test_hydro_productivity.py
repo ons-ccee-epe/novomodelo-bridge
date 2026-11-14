@@ -1518,18 +1518,6 @@ class TestParseFphaPlaneReductionDiagnostics:
 
         assert collected == []
 
-    def test_multiple_methods_carries_no_legacy_warning(self, tmp_path: Path) -> None:
-        from novomodelo_bridge.newave.converters.hydro import (
-            _parse_fpha_plane_reduction,
-        )
-
-        case = self._case_with_text(tmp_path, self._MULTI_METHOD_TEXT)
-
-        with dx.collect() as collected:
-            _parse_fpha_plane_reduction(case)
-
-        assert not any(d.code == "legacy-warning" for d in collected)
-
     def test_no_sink_fallback_logs_one_warning(self, tmp_path: Path, caplog) -> None:
         """With no active collect() sink, emit() degrades to a single logging
         record — the pre-migration caplog contract keeps working."""

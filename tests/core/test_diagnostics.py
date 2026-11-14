@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
-    WarningCollector,
     collect,
     counted,
     emit,
     finalize_diagnostics,
     format_stage_ranges,
     merge_tables,
+    report_file_missing_diagnostic,
+    report_file_unreadable_diagnostic,
+    report_files_unreadable_diagnostic,
     unreadable_file_diagnostic,
 )
 
@@ -126,31 +129,6 @@ class TestToDict:
         assert diag.to_dict()["table"] is None
 
 
-class TestWarningCollector:
-    def test_captures_warning_and_above(self) -> None:
-        logger = logging.getLogger("novomodelo_bridge.core.diagnostics.fake")
-        collector = WarningCollector()
-        logger.addHandler(collector)
-        try:
-            logger.warning("degraded input A")
-            logger.error("degraded input B")
-        finally:
-            logger.removeHandler(collector)
-        assert collector.messages == ["degraded input A", "degraded input B"]
-
-    def test_ignores_info_and_below(self) -> None:
-        logger = logging.getLogger("novomodelo_bridge.core.diagnostics.fake2")
-        logger.setLevel(logging.DEBUG)
-        collector = WarningCollector()
-        logger.addHandler(collector)
-        try:
-            logger.info("not a degradation")
-            logger.debug("also not a degradation")
-        finally:
-            logger.removeHandler(collector)
-        assert collector.messages == []
-
-
 class TestFinalizeDiagnostics:
     def _diag(self, code: str = "x", summary: str = "something happened") -> Diagnostic:
         return Diagnostic(
@@ -161,34 +139,22 @@ class TestFinalizeDiagnostics:
             summary=summary,
         )
 
-    def test_dedups_structured_diagnostics_by_code_and_summary(self) -> None:
-        result = finalize_diagnostics([self._diag(), self._diag()], [])
-        assert len(result) == 1
+    def test_dedups_diagnostics_by_code_and_summary(self) -> None:
+        assert len(finalize_diagnostics([self._diag(), self._diag()])) == 1
 
     def test_keeps_diagnostics_that_differ_in_code_or_summary(self) -> None:
         result = finalize_diagnostics(
-            [self._diag(code="a"), self._diag(code="b"), self._diag(summary="other")],
-            [],
+            [self._diag(code="a"), self._diag(code="b"), self._diag(summary="other")]
         )
         assert len(result) == 3
 
-    def test_wraps_legacy_strings_as_warning_diagnostics(self) -> None:
-        result = finalize_diagnostics([], ["legacy warning one"])
-        assert len(result) == 1
-        assert result[0].code == "legacy-warning"
-        assert result[0].severity is Severity.WARNING
-        assert result[0].summary == "legacy warning one"
-
-    def test_dedups_legacy_strings_and_preserves_first_occurrence_order(self) -> None:
+    def test_keeps_the_first_occurrence_in_first_met_order(self) -> None:
+        first = self._diag(code="a")
         result = finalize_diagnostics(
-            [], ["first", "second", "first", "third", "second"]
+            [first, self._diag(code="b"), self._diag(code="a"), self._diag(code="c")]
         )
-        assert [d.summary for d in result] == ["first", "second", "third"]
-
-    def test_structured_diagnostics_precede_legacy_strings(self) -> None:
-        result = finalize_diagnostics([self._diag()], ["legacy"])
-        assert result[0].code == "x"
-        assert result[1].code == "legacy-warning"
+        assert [d.code for d in result] == ["a", "b", "c"]
+        assert result[0] is first
 
 
 class TestCounted:
@@ -269,3 +235,60 @@ class TestUnreadableFileDiagnostic:
             exc=ValueError(),
         )
         assert diagnostic.notes == []
+
+
+class TestReportFileDiagnostics:
+    def test_a_missing_file_is_a_note_naming_what_the_report_leaves_out(self) -> None:
+        diagnostic = report_file_missing_diagnostic(
+            "pmo.dat", Path("/deck/pmo.dat"), "the report has no convergence."
+        )
+        assert diagnostic.code == "report-file-missing"
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.category == "Case and result files"
+        assert diagnostic.title == "pmo.dat not found"
+        assert diagnostic.summary == (
+            "pmo.dat was not found, so the report has no convergence."
+        )
+        assert diagnostic.notes == ["Path: /deck/pmo.dat"]
+
+    def test_an_unreadable_file_is_a_warning_with_its_reason(self) -> None:
+        diagnostic = report_file_unreadable_diagnostic(
+            "system/hydros.json",
+            Path("/case/system/hydros.json"),
+            "the report names no plant.",
+            ValueError("Expecting value"),
+        )
+        assert diagnostic.code == "report-file-unreadable"
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.title == "system/hydros.json could not be read"
+        assert diagnostic.summary == (
+            "system/hydros.json could not be read, so the report names no plant."
+        )
+        assert diagnostic.notes == [
+            "Path: /case/system/hydros.json",
+            "Reason: Expecting value",
+        ]
+
+    def test_a_reason_without_text_adds_no_reason_note(self) -> None:
+        diagnostic = report_file_unreadable_diagnostic(
+            "a.json", Path("/a.json"), "nothing.", ValueError()
+        )
+        assert diagnostic.notes == ["Path: /a.json"]
+
+    def test_unreadable_files_of_one_kind_are_one_warning_with_a_row_each(
+        self,
+    ) -> None:
+        diagnostic = report_files_unreadable_diagnostic(
+            "Interchange tables",
+            [("int001.out", ValueError("bad")), ("int002.out", OSError("gone"))],
+            "the report has no interchange.",
+        )
+        assert diagnostic.code == "report-file-unreadable"
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.title == "Interchange tables that could not be read (2)"
+        assert diagnostic.summary == (
+            "The listed files could not be read, so the report has no interchange."
+        )
+        assert diagnostic.table is not None
+        assert diagnostic.table.columns == ["File", "Reason"]
+        assert diagnostic.table.rows == [["int001.out", "bad"], ["int002.out", "gone"]]

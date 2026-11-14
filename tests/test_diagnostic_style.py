@@ -32,27 +32,6 @@ _PLURAL_MARKER = re.compile(r"\w\((s|es|ies)\)")
 _LOGGERS = frozenset({"_LOG", "logger", "logging"})
 _LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 _FINDING_LEVELS = frozenset({"warning", "error", "exception", "critical"})
-#: Modules whose log warnings still await conversion to diagnostics. Shrink
-#: it as each is converted; the stale-entry test fails on a module left here.
-_LOG_WARNING_MODULES = frozenset(
-    {
-        "comparators/constraints.py",
-        "comparators/decomp/results.py",
-        "comparators/newave/alignment.py",
-        "comparators/newave/readers.py",
-        "comparators/newave/results.py",
-        "dashboard/data.py",
-        "dashboard/tabs/__init__.py",
-        "dessem/exporters/fcf/core/cross_check.py",
-        "dessem/exporters/fcf/core/mapcut_writer.py",
-        "dessem/exporters/fcf/core/mapper.py",
-        "dessem/exporters/fcf/core/travel_time.py",
-        "dessem/exporters/fcf/eco/audit_raw_cuts.py",
-        "dessem/exporters/fcf/pipeline.py",
-        "novomodelo/case_io.py",
-        "novomodelo/readers.py",
-    }
-)
 
 
 def _texts(node: ast.expr) -> list[str]:
@@ -213,21 +192,13 @@ def _log_calls() -> Iterator[tuple[str, str, str, ast.Call]]:
             yield rel, f"{rel}:{node.lineno}", node.func.attr, node
 
 
-def _log_warning_modules() -> set[str]:
-    return {module for module, _, level, _ in _log_calls() if level in _FINDING_LEVELS}
-
-
 def test_no_finding_is_a_log_warning() -> None:
     found = sorted(
         f"{where}: log {level} reports a finding; emit a Diagnostic"
-        for module, where, level, _ in _log_calls()
-        if level in _FINDING_LEVELS and module not in _LOG_WARNING_MODULES
+        for _, where, level, _ in _log_calls()
+        if level in _FINDING_LEVELS
     )
     assert found == []
-
-
-def test_log_warning_allowlist_has_no_stale_module() -> None:
-    assert sorted(_LOG_WARNING_MODULES - _log_warning_modules()) == []
 
 
 def test_no_log_message_has_a_plural_marker() -> None:

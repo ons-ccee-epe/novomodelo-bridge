@@ -299,7 +299,8 @@ with Novomodelo's turbined cost. DECOMP's stage total counts the take-or-pay
 minimum of an export contract at its price as a cost, and only the energy
 above it as revenue. Novomodelo counts every exported MWh as revenue, so on a deck
 with an export minimum the two contract costs differ by twice the minimum's
-value; the comparison logs that amount.
+value; the comparison reports that amount as the
+`decomp-export-contract-cost-convention` warning.
 
 DECOMP's `Zsup` is the lowest upper bound reached so far, and the relato
 prints no upper bound per iteration, so the convergence chart sets it against
