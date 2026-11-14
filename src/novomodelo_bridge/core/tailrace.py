@@ -95,7 +95,7 @@ def build_tailrace_table(
             skipped.add(code)
     if skipped:
         _LOG.debug(
-            "Skipped %d polinjus plant code(s) absent from the id map: %s",
+            "Polinjus plant codes absent from the id map, skipped: %d (%s)",
             len(skipped),
             sorted(skipped),
         )

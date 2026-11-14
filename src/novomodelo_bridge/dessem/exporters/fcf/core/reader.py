@@ -305,7 +305,7 @@ def select_pools(
         )
     pools = {pool_id: checkpoint.pools[pool_id] for pool_id in wanted}
     _LOG.info(
-        "selected %d pool(s): %s",
+        "selected pools: %d (%s)",
         len(pools),
         {pid: len(p.pieces) for pid, p in pools.items()},
     )

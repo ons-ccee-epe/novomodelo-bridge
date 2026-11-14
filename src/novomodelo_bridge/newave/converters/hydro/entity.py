@@ -18,6 +18,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    format_stage_ranges,
 )
 from novomodelo_bridge.core.diversion import (
     channel_flow_limit,
@@ -26,7 +27,13 @@ from novomodelo_bridge.core.diversion import (
 )
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group, rated_capacity
 from novomodelo_bridge.core.pandas_utils import is_na
-from novomodelo_bridge.core.productivity import fpha_efficiency
+from novomodelo_bridge.core.productivity import (
+    forebay_curve_missing_diagnostic,
+    fpha_efficiency,
+    fpha_efficiency_capped_diagnostic,
+    fpha_efficiency_capped_row,
+    has_forebay_curve,
+)
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.bounds import (
     _operational_caps,
@@ -556,11 +563,13 @@ def _tailrace(hreg: pd.Series) -> dict | None:
 
 
 class _PlantEntry(NamedTuple):
-    """A plant's ``hydros.json`` entry and its filling/expansion report rows."""
+    """A plant's ``hydros.json`` entry and its filling, expansion and capped
+    FPHA efficiency report rows."""
 
     entry: dict
     filling_row: list[object] | None
     expansion_row: list[object] | None
+    efficiency_row: list[object] | None
 
 
 def _hydro_entry(
@@ -633,11 +642,10 @@ def _hydro_entry(
     # non-FPHA cases) keep the constant-productivity path with no efficiency.
     is_fpha = newave_code in context.fpha_codes
     efficiency: dict | None = None
+    efficiency_row: list[object] | None = None
     if is_fpha and rho_esp is not None:
-        efficiency = {
-            "type": "constant",
-            "value": fpha_efficiency(rho_esp, name),
-        }
+        efficiency = {"type": "constant", "value": fpha_efficiency(rho_esp)}
+        efficiency_row = fpha_efficiency_capped_row(newave_code, name, rho_esp)
 
     tailrace = _tailrace(hreg)
 
@@ -682,7 +690,7 @@ def _hydro_entry(
         "entry_stage_id": filling.entry_stage_id,
         "exit_stage_id": None,
     }
-    return _PlantEntry(entry, filling.report_row, caps.expansion_row)
+    return _PlantEntry(entry, filling.report_row, caps.expansion_row, efficiency_row)
 
 
 def _report_filling_plants(rows: list[list[object]]) -> None:
@@ -781,6 +789,9 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     hydros: list[dict] = []
     filling_rows: list[list[object]] = []
     expansion_rows: list[list[object]] = []
+    efficiency_rows: list[list[object]] = []
+    no_curve_rows: list[list[object]] = []
+    all_stages = format_stage_ranges(range(case.horizon.total_stages))
     for _, row in context.active_hydros.iterrows():
         plant = _hydro_entry(row, context, id_map)
         hydros.append(plant.entry)
@@ -788,6 +799,12 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             filling_rows.append(plant.filling_row)
         if plant.expansion_row is not None:
             expansion_rows.append(plant.expansion_row)
+        if plant.efficiency_row is not None:
+            efficiency_rows.append(plant.efficiency_row)
+        code = int(row["codigo_usina"])
+        hreg = context.cadastro.loc[code]
+        if not has_forebay_curve([float(hreg[f"a{i}_volume_cota"]) for i in range(5)]):
+            no_curve_rows.append([code, str(row["nome_usina"]).strip(), all_stages])
 
     hydros.sort(key=lambda h: h["id"])
 
@@ -797,6 +814,10 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # separate diagnostics.
     _report_filling_plants(filling_rows)
     _report_expansion_plants(expansion_rows)
+    if efficiency_rows:
+        emit(fpha_efficiency_capped_diagnostic(efficiency_rows), logger=_LOG)
+    if no_curve_rows:
+        emit(forebay_curve_missing_diagnostic(no_curve_rows), logger=_LOG)
     _report_outage_overshoots(
         context.cadastro, (int(code) for code in context.active_hydros["codigo_usina"])
     )

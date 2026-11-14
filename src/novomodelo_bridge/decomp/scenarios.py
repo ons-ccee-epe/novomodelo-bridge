@@ -107,22 +107,12 @@ def _incremental_context(
     EffectiveCadastro.inflow_gauge`/
     :func:`~novomodelo_bridge.decomp.converters.hydro.entity.
     _downstream_operated`'s own default).
-    A plant whose effective gauge varies across stages (a temporal ``AC
-    NUMPOS``) gets a tracked-gap warning here; the downstream sibling gap is
-    logged inside ``_downstream_operated`` itself, which this function also
-    walks per plant.
+    The pipeline reports a gauge or link that changes on later stages
+    (:func:`novomodelo_bridge.decomp.pipeline._topology_varies_diagnostic`).
     """
     operated = set(id_map.hydro_codes)
     station_by_code: dict[int, str] = {}
     for code in id_map.hydro_codes:
-        if effective.inflow_gauge_varies(code):
-            _LOG.warning(
-                "plant %d's inflow gauge (AC NUMPOS) varies across stages; "
-                "per-stage gauge attribution is not modeled (deferred "
-                "fidelity) -- using the stage-0 effective gauge for the "
-                "whole horizon",
-                code,
-            )
         station_by_code[code] = str(effective.inflow_gauge(code, 0))
     parents: dict[int, list[int]] = {code: [] for code in id_map.hydro_codes}
     for code in id_map.hydro_codes:

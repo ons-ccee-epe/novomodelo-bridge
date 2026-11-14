@@ -825,3 +825,43 @@ def test_emit_rhe_generics_energy_link_through_a_plant_outside_the_configuration
     assert result.per_stage_parameters["rho_eq_mwh_plant9"] == [
         pytest.approx(2.0 * 1e6 / 3600.0)
     ]
+
+
+def test_emit_rhe_generics_energy_chain_that_loops_back_is_reported_once() -> None:
+    # UP's AC JUSENA names AGG, outside the configuration, whose water returns
+    # to UP: the chain ends at AGG.
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 5))
+    effective = EffectiveCadastro(
+        base=_hidr_frame(
+            {
+                1: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=5),
+                9: _hydro_row(tipo_regulacao="D", codigo_usina_jusante=1),
+                5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
+            }
+        ),
+        n_stages=1,
+        stage_varying={},
+        energy_links={1: (9,)},
+    )
+    record = _he_record(
+        constraint_id=300,
+        ree_code=1,
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        tipo_limite=2,
+        valor_penalidade=250.0,
+    )
+
+    with dx.collect() as collected:
+        emit_rhe_generics(
+            _case([_stage(0, 730.0)]),
+            id_map,
+            census=_census(record),
+            effective=effective,
+            hydro_to_ree={1: 1, 5: 1},
+            ez_fractions={},
+        )
+
+    [loop] = [d for d in collected if d.code == "decomp-energy-chain-loop"]
+    assert loop.table is not None
+    assert [(row[0], row[2], row[3]) for row in loop.table.rows] == [(1, 1, 9)]

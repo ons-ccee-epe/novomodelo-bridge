@@ -11,8 +11,12 @@ import pytest
 
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-from tests.conftest import make_case
-from tests.newave.conftest import _make_deficit_df, _make_sistema_mock
+from tests.conftest import make_case, make_nw_files
+from tests.newave.conftest import (
+    _make_deficit_df,
+    _make_dger_mock,
+    _make_sistema_mock,
+)
 
 _BUS_LOAD_MW = {0: 2000.0, 1: 1000.0, 2: 0.0}
 
@@ -941,3 +945,60 @@ class TestConvertHydroPenaltyOverrides:
             per_stage_rho_max_acum=[2.0, 2.0],
         )
         assert table is None
+
+
+class TestNetworkInputFindings:
+    """Deck inputs the network converters cannot place are reported, not logged."""
+
+    _ID_MAP = NewaveIdMap(subsystem_ids=[1], hydro_codes=[], thermal_codes=[])
+
+    def test_non_simulated_generation_of_an_undeclared_subsystem(
+        self, tmp_path
+    ) -> None:
+        import datetime
+
+        from novomodelo_bridge.core.diagnostics import collect
+        from novomodelo_bridge.newave.converters.network import (
+            convert_non_controllable_sources,
+        )
+
+        sistema = _make_sistema_mock()
+        sistema.geracao_usinas_nao_simuladas = pd.DataFrame(
+            [
+                {
+                    "codigo_submercado": sub,
+                    "indice_bloco": 1,
+                    "fonte": "PCH",
+                    "data": datetime.datetime(2024, 1, 1),
+                    "valor": 100.0,
+                }
+                for sub in (1, 9)
+            ]
+        )
+        dger = _make_dger_mock(2024, 1, 1)
+        dger.num_anos_pos_estudo = 0
+        dger.ano_inicial_historico = 1931
+        case = make_case(tmp_path, sistema=sistema, dger=dger)
+
+        with collect() as found:
+            result = convert_non_controllable_sources(case, self._ID_MAP)
+
+        assert [n["bus_id"] for n in result["non_controllable_sources"]] == [0]
+        [undeclared] = found
+        assert undeclared.code == "ncs-subsystem-undeclared"
+        assert undeclared.table is not None
+        assert undeclared.table.rows == [[9, 1]]
+
+    def test_unreadable_penalty_file_falls_back_to_defaults(self, tmp_path) -> None:
+        from novomodelo_bridge.core.diagnostics import collect
+        from novomodelo_bridge.newave.converters.network import _read_penalid_costs
+
+        case = make_case(make_nw_files(tmp_path, penalid=tmp_path / "penalid.dat"))
+
+        with (
+            patch("novomodelo_bridge.newave.case.Penalid.read", side_effect=ValueError),
+            collect() as found,
+        ):
+            assert _read_penalid_costs(case) == {}
+
+        assert [d.code for d in found] == ["penalid-unreadable"]

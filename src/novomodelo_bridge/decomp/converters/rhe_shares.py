@@ -32,6 +32,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.stored_energy import (
     StoredEnergyShare,
@@ -192,6 +198,7 @@ class _EnergyCascade:
         self._operated = set(id_map.hydro_codes)
         self._water: dict[int, int | None] = {}
         self._chains: dict[int, _Chain] = {}
+        self.loop_rows: list[list[object]] = []
 
     def water_next(self, code: int) -> int | None:
         """The next operated plant on *code*'s ``hydros.json`` water route."""
@@ -202,12 +209,6 @@ class _EnergyCascade:
         return self._water[code]
 
     def _energy_next(self, code: int) -> int | None:
-        if self._effective.energy_link_varies(code):
-            _LOG.warning(
-                "plant %d's energy link (AC JUSENA) varies across stages; the "
-                "stage-0 link is used for the whole horizon",
-                code,
-            )
         link = self._effective.energy_link(code, 0)
         if link is None:
             return self.water_next(code)
@@ -230,13 +231,8 @@ class _EnergyCascade:
         crossing: int | None = None
         while (below := self._energy_next(members[-1])) is not None:
             if below in members:
-                _LOG.warning(
-                    "energy chain from plant %d loops back to plant %d; treating "
-                    "plant %d as the end of the chain",
-                    start,
-                    below,
-                    members[-1],
-                )
+                name = str(self._effective.base.loc[start, "nome_usina"]).strip()
+                self.loop_rows.append([start, name, below, members[-1]])
                 break
             if cut and below in self._operated and self._ree.get(below) != ree:
                 crossing = below
@@ -438,7 +434,34 @@ def build_rhe_shares(
                 downstream_code=chain.crossing,
             )
         )
+    if cascade.loop_rows:
+        emit(_energy_chain_loop_diagnostic(cascade.loop_rows), logger=_LOG)
     return RheShares(dict(by_ree), couplings)
+
+
+def _energy_chain_loop_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-energy-chain-loop",
+        severity=Severity.WARNING,
+        category="Special constraints",
+        title=f"Stored-energy chains that loop back ({len(rows)})",
+        summary=(
+            "Following AC JUSENA and the downstream links from the listed "
+            "reservoirs returns to a plant already on the chain, so the "
+            "conversion ends each chain at the listed plant, and the RHE "
+            "stored energy of these reservoirs counts only the plants down to "
+            "it."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Loops back to", "Chain ends at"],
+            rows=rows,
+            justify=["right", "left", "right", "right"],
+        ),
+        remediation=(
+            "Correct the AC JUSENA registers in dadger.rvN so each listed "
+            "chain reaches the sink."
+        ),
+    )
 
 
 def ez_cap_unmodeled_stages(

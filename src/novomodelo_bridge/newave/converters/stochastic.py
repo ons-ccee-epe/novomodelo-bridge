@@ -19,7 +19,13 @@ import pandas as pd
 import pyarrow as pa
 from inewave.newave import Cadic, Dger, Vazoes
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+    unreadable_file_diagnostic,
+)
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.incremental_inflow import (
     ARTIFICIAL_GAUGE,
@@ -309,8 +315,21 @@ def _vazpast_incremental(
 
     try:
         vazpast_obj = case.vazpast
-    except Exception:
-        logger.warning("vazpast.dat could not be parsed; skipping recent lags.")
+    except Exception as exc:
+        emit(
+            unreadable_file_diagnostic(
+                code="vazpast-unreadable",
+                file_name="vazpast.dat",
+                category="Inflow scenarios",
+                effect=(
+                    "the case has none of the recent inflows its inflow model "
+                    "starts from, and the first stages' inflow scenarios differ "
+                    "from NEWAVE's."
+                ),
+                exc=exc,
+            ),
+            logger=logger,
+        )
         return {}
 
     df_tend: pd.DataFrame | None = (
@@ -565,11 +584,22 @@ def convert_load_factors(
         # already gives; only a multi-block deck is missing data.
         num_blocks = patamar.numero_patamares or 1
         if num_blocks > 1:
-            logger.warning(
-                "%s declares %d load blocks but no block load factors; "
-                "load_factors.json will be empty.",
-                case.files.patamar.name,
-                num_blocks,
+            patamar_name = case.files.patamar.name.lower()
+            emit(
+                Diagnostic(
+                    code="patamar-load-factors-missing",
+                    severity=Severity.WARNING,
+                    category="Load blocks",
+                    title="Load blocks without load factors",
+                    summary=(
+                        f"{patamar_name} declares {num_blocks} load blocks but "
+                        "no load-block factors, so the case gives every block "
+                        "the stage's mean load, and the load of each block "
+                        "differs from NEWAVE's wherever the blocks should differ."
+                    ),
+                    remediation=f"Declare the load-block factors in {patamar_name}.",
+                ),
+                logger=logger,
             )
         return {
             "$schema": novomodelo_schemas.schema_url_for("scenarios/load_factors.json"),
@@ -615,15 +645,13 @@ def convert_load_factors(
     subsystem_codes = sorted(df_carga["codigo_submercado"].unique())
 
     load_factors: list[dict] = []
+    undeclared: list[int] = []
 
     for sub_code in subsystem_codes:
         try:
             bus_id = id_map.bus_id(int(sub_code))
         except KeyError:
-            logger.warning(
-                "Subsystem code %d from carga_patamares not in id_map; skipping",
-                sub_code,
-            )
+            undeclared.append(int(sub_code))
             continue
 
         y, m = start_year, start_month
@@ -658,6 +686,29 @@ def convert_load_factors(
                 m = 1
                 y += 1
 
+    if undeclared:
+        emit(
+            Diagnostic(
+                code="load-factor-subsystem-undeclared",
+                severity=Severity.INFO,
+                category="Network",
+                title=f"Load-block factors of undeclared subsystems ({len(undeclared)})",
+                summary=(
+                    f"{case.files.patamar.name.lower()} gives load-block factors "
+                    "for the listed subsystems, which sistema.dat does not "
+                    "declare, so neither model has a bus for them and the case "
+                    "leaves those factors out."
+                ),
+                table=DiagnosticTable(
+                    columns=["Subsystem code"], rows=[[c] for c in undeclared]
+                ),
+                remediation=(
+                    "Declare each listed subsystem in sistema.dat, or remove its "
+                    "load-block factors."
+                ),
+            ),
+            logger=logger,
+        )
     return {
         "$schema": novomodelo_schemas.schema_url_for("scenarios/load_factors.json"),
         "load_factors": load_factors,
@@ -781,10 +832,19 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
                 len(cadical_lookup),
                 case.files.c_adic,
             )
-        except Exception:
-            logger.warning(
-                "c_adic.dat could not be parsed; no additional load will be added.",
-                exc_info=True,
+        except Exception as exc:
+            emit(
+                unreadable_file_diagnostic(
+                    code="c-adic-unreadable",
+                    file_name="c_adic.dat",
+                    category="Load",
+                    effect=(
+                        "the case has none of the additional loads it gives, and "
+                        "the load is lower than NEWAVE's."
+                    ),
+                    exc=exc,
+                ),
+                logger=logger,
             )
 
     rows_bus_id: list[int] = []
@@ -793,16 +853,14 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
     rows_std: list[float] = []
 
     subsystem_codes_processed: set[int] = set()
+    undeclared: list[int] = []
 
     for subsystem_code, group in df_load.groupby("codigo_submercado", sort=True):
         sub_int = as_int(subsystem_code)
         try:
             bus_id = id_map.bus_id(sub_int)
         except KeyError:
-            logger.warning(
-                "Subsystem code %d from mercado_energia not in id_map; skipping",
-                subsystem_code,
-            )
+            undeclared.append(sub_int)
             continue
         subsystem_codes_processed.add(sub_int)
 
@@ -846,6 +904,29 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
             if m > 12:
                 m = 1
                 y += 1
+
+    if undeclared:
+        emit(
+            Diagnostic(
+                code="load-subsystem-undeclared",
+                severity=Severity.INFO,
+                category="Network",
+                title=f"Energy market of undeclared subsystems ({len(undeclared)})",
+                summary=(
+                    "sistema.dat gives an energy market for the listed "
+                    "subsystems but declares no such subsystem, so neither "
+                    "model has a bus for them and the case leaves that load out."
+                ),
+                table=DiagnosticTable(
+                    columns=["Subsystem code"], rows=[[c] for c in undeclared]
+                ),
+                remediation=(
+                    "Declare each listed subsystem in sistema.dat, or remove its "
+                    "energy market."
+                ),
+            ),
+            logger=logger,
+        )
 
     # Emit zero-load rows for buses that exist in id_map but have no
     # mercado_energia data (e.g., fictitious subsystems like NOFICT1).

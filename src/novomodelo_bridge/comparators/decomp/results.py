@@ -1342,8 +1342,8 @@ def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataF
     )
     if unpriced:
         _LOG.warning(
-            "The source model reports deficit in subsystem(s) %s, which have no CD "
-            "deficit cost; that deficit stays in the unitemized constraint slack "
+            "The source model reports deficit in subsystems with no CD deficit "
+            "cost (%s); that deficit stays in the unitemized constraint slack "
             "of the cost breakdown.",
             ", ".join(str(code) for code in unpriced),
         )
@@ -2754,8 +2754,8 @@ def _generic_constraint_lhs_decomp(
 
     if n_skipped:
         _LOG.info(
-            "DECOMP-side generic-constraint LHS: %d of %d constraint(s) "
-            "rendered novomodelo-only (no source-model LHS derivable).",
+            "DECOMP-side generic-constraint LHS: constraints rendered "
+            "novomodelo-only (no source-model LHS derivable): %d of %d.",
             n_skipped,
             len(gc_constraints),
         )

@@ -288,7 +288,7 @@ class TestCostFrames:
 
         assert "DEFICIT" not in nw_costs
         assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
-        assert "subsystem(s) 3" in caplog.text
+        assert "no CD deficit cost (3)" in caplog.text
 
     @pytest.mark.parametrize(
         ("importacao", "exportacao_minimo", "exportacao", "term", "warned"),

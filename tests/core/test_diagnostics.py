@@ -15,6 +15,7 @@ from novomodelo_bridge.core.diagnostics import (
     finalize_diagnostics,
     format_stage_ranges,
     merge_tables,
+    unreadable_file_diagnostic,
 )
 
 
@@ -234,3 +235,37 @@ class TestMergeTables:
         assert merged[1] is plain
         assert merged[0].table is not None
         assert merged[0].table.rows == [[1], [2]]
+
+    def test_a_title_that_already_counts_its_rows_is_recounted(self) -> None:
+        merged = merge_tables(
+            [self._row("a", [1], "Finding (1)"), self._row("a", [2], "Finding (1)")]
+        )
+        assert merged[0].title == "Finding (2)"
+
+
+class TestUnreadableFileDiagnostic:
+    def test_names_the_file_and_keeps_the_parser_error_in_the_notes(self) -> None:
+        diagnostic = unreadable_file_diagnostic(
+            code="x-unreadable",
+            file_name="x.dat",
+            category="c",
+            effect="the case has none of its records.",
+            exc=ValueError("bad line 3"),
+        )
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.title == "x.dat could not be read"
+        assert diagnostic.summary == (
+            "x.dat could not be read, so the case has none of its records."
+        )
+        assert diagnostic.notes == ["bad line 3"]
+        assert diagnostic.remediation == "Check x.dat for a malformed record."
+
+    def test_an_exception_without_text_adds_no_note(self) -> None:
+        diagnostic = unreadable_file_diagnostic(
+            code="x-unreadable",
+            file_name="x.dat",
+            category="c",
+            effect="nothing.",
+            exc=ValueError(),
+        )
+        assert diagnostic.notes == []

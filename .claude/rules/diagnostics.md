@@ -8,7 +8,8 @@ paths:
 Every finding a command reports reaches a NEWAVE or DECOMP modeller as a
 console panel, a one-line note, or a `--json` entry. These rules give those
 messages one voice. `tests/test_diagnostic_style.py` enforces the mechanical
-ones over every `Diagnostic(...)` and `DiagnosticTable(...)` call in `src/`.
+ones over every `Diagnostic(...)` and `DiagnosticTable(...)` call in `src/`,
+and over every log call.
 
 ## 1. Severity follows the effect on results
 
@@ -32,8 +33,14 @@ nor the `--json` status; moving it to or from ERROR changes both.
   `logger.warning` reaches the user only as a generic "Conversion warning"
   panel, or as a bare log line outside `convert`.
 - One diagnostic per kind of finding. Each affected entity is a row of its
-  table; never emit one diagnostic, or one log line, per plant.
-- Log at INFO or DEBUG only what a maintainer tracing a run needs.
+  table; never emit one diagnostic, or one log line, per plant. A helper
+  called once per plant or per stage stays silent and hands its finding back
+  (a row field, a return value); the caller that sees every entity emits.
+- Log at INFO or DEBUG only what a maintainer tracing a run needs. The guard
+  rejects a `logger.warning` or `logger.error` outside the modules on its
+  allowlist, and a `(s)` plural marker in any log message.
+- An unreadable optional deck file is `unreadable_file_diagnostic(...)`,
+  whose summary says what the case lacks and how that changes the results.
 
 ## 3. Title
 
@@ -70,7 +77,8 @@ nor the `--json` status; moving it to or from ERROR changes both.
   code is not at hand, leads with the case's id (`Hydro ID`, `Thermal ID`).
 - An emitter that meets its entities one at a time emits one-row tables
   inside a local `collect()` and re-emits them through `merge_tables`, which
-  gives one table per code and the ` (N)` count.
+  gives one table per code and replaces the title's ` (N)` count with the
+  merged row count.
 - Put units in the header: `Max gap (m³/s)`, `Capacity (MW)`.
 - Stage and block ids are 0-based in every table, DECOMP's included, and the
   table carries the caption `Stage ids are 0-based.` (or `Stage and block

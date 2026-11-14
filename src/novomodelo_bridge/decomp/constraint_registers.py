@@ -630,8 +630,8 @@ def _read_triple_family(
         )
     if skipped_no_terms:
         _LOG.info(
-            "%s: %d declared constraint(s) carry no participation rows and were "
-            "skipped (inactive / defined elsewhere)",
+            "%s: declared constraints with no participation rows, skipped "
+            "(inactive / defined elsewhere): %d",
             config.family,
             skipped_no_terms,
         )
@@ -717,8 +717,8 @@ def _read_energy_constraints(dadger: ConstraintRegisters) -> list[ConstraintReco
     skipped_no_terms = sum(1 for cid in per_stage if cid not in terms_by_cid)
     if skipped_no_limits or skipped_no_terms:
         _LOG.info(
-            "HE: %d constraint(s) with a productivity (CM) term but no limit (HE) "
-            "rows, and %d with limit rows but no CM productivity term, were skipped "
+            "HE: skipped constraints with a productivity (CM) term but no limit "
+            "(HE) rows: %d; with limit rows but no CM productivity term: %d "
             "(incomplete join / defined elsewhere)",
             skipped_no_limits,
             skipped_no_terms,

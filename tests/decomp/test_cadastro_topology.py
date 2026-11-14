@@ -16,7 +16,6 @@ and a synthetic ``build_operative_calendar``, no real deck.
 
 from __future__ import annotations
 
-import logging
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,9 +29,15 @@ from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
 )
-from novomodelo_bridge.decomp.converters.hydro import convert_hydros
+from novomodelo_bridge.decomp.converters.hydro import (
+    convert_hydros,
+    convert_initial_storage,
+)
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.pipeline import _topology_relink_diagnostic
+from novomodelo_bridge.decomp.pipeline import (
+    _topology_relink_diagnostic,
+    _topology_varies_diagnostic,
+)
 from novomodelo_bridge.decomp.scenarios import (
     _incremental_context,
     convert_external_inflows,
@@ -44,6 +49,8 @@ from tests.decomp.conftest import flat_turbine_limits
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from novomodelo_bridge.core.diagnostics import Diagnostic
+    from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
@@ -399,13 +406,35 @@ def test_relink_diagnostic_lists_operated_plants() -> None:
     )
 
 
+def test_relink_through_a_plant_left_out_is_itemized() -> None:
+    """An ``AC NUMJUS`` on a plant outside the configuration changes the next
+    operated plant below an operated one whose own link is unchanged."""
+    hidr = _hidr_frame(
+        {
+            1: _plant_row(jusante=4, posto=11, name="A"),
+            2: _plant_row(jusante=3, posto=12, name="B"),
+            3: _plant_row(jusante=0, posto=13, name="C"),
+            4: _plant_row(jusante=2, posto=14, name="D"),
+        }
+    )
+    dadger = _FakeDadger({ACNUMJUS: _numjus_override(4, 3)})
+    effective, _ = build_effective_cadastro(dadger, hidr, _calendar())
+
+    diagnostic = _topology_relink_diagnostic(effective, _ABC_ID_MAP)
+
+    assert diagnostic is not None
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "A", "next operated plant", 2, 3]]
+    assert diagnostic.title.endswith("(1)")
+
+
 # ---------------------------------------------------------------------------
-# A temporal ACNUMJUS/ACNUMPOS is a tracked gap, not a silent per-stage
-# cascade -- warn and use the stage-0 effective value.
+# A cascade register that changes between stages is reported; every walk uses
+# the stage-0 effective value.
 # ---------------------------------------------------------------------------
 
 
-def test_temporal_topology_warns_uses_stage0(caplog: pytest.LogCaptureFixture) -> None:
+def test_temporal_topology_is_reported_and_uses_stage0() -> None:
     hidr = _abc_hidr()
     # Dated AGO (the 3-stage calendar's index-2 stage): stages 0/1 still read
     # the base downstream (B); stage 2 onward reads the override (C).
@@ -417,19 +446,22 @@ def test_temporal_topology_warns_uses_stage0(caplog: pytest.LogCaptureFixture) -
     assert effective.downstream_plant(1, 2) == 3
     assert effective.downstream_plant_varies(1) is True
 
-    with caplog.at_level(logging.WARNING):
-        _, parents = _incremental_context(effective, _ABC_ID_MAP)
+    _, parents = _incremental_context(effective, _ABC_ID_MAP)
+    diagnostic = _topology_varies_diagnostic(effective)
 
-    assert any("varies across stages" in record.message for record in caplog.records)
+    assert diagnostic is not None
+    assert diagnostic.code == "decomp-ac-topology-varies"
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "A", "AC NUMJUS", 2, "2"]]
     # The stage-0 (base) link is used for the whole horizon: A still feeds
     # B, not C, despite the override.
     assert parents[2] == [1]
     assert parents[3] == [2]
 
 
-def test_temporal_gauge_warns_uses_stage0(caplog: pytest.LogCaptureFixture) -> None:
-    """A temporal ``ACNUMPOS`` triggers the same tracked-gap
-    warning, and the stage-0 gauge is used for the whole horizon.
+def test_temporal_gauge_is_reported_and_uses_stage0() -> None:
+    """A temporal ``ACNUMPOS`` is reported the same way, and the stage-0
+    gauge is used for the whole horizon.
     """
     hidr = _abc_hidr()
     numpos = pd.DataFrame(
@@ -450,11 +482,101 @@ def test_temporal_gauge_warns_uses_stage0(caplog: pytest.LogCaptureFixture) -> N
     assert effective.inflow_gauge(1, 2) == 99
     assert effective.inflow_gauge_varies(1) is True
 
-    with caplog.at_level(logging.WARNING):
-        station_by_code, _ = _incremental_context(effective, _ABC_ID_MAP)
+    station_by_code, _ = _incremental_context(effective, _ABC_ID_MAP)
+    diagnostic = _topology_varies_diagnostic(effective)
 
-    assert any("varies across stages" in record.message for record in caplog.records)
     assert station_by_code[1] == "11"
+    assert diagnostic is not None
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "A", "AC NUMPOS", 11, "2"]]
+
+
+def test_temporal_jusena_is_reported_with_no_first_stage_link() -> None:
+    dadger = _FakeDadger({ACJUSENA: _numjus_override(1, 3, mes="AGO", semana=1.0)})
+    effective, _ = build_effective_cadastro(dadger, _abc_hidr(), _calendar())
+
+    diagnostic = _topology_varies_diagnostic(effective)
+
+    assert diagnostic is not None
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "A", "AC JUSENA", "none", "2"]]
+
+
+def test_a_register_constant_over_the_horizon_is_not_reported() -> None:
+    dadger = _FakeDadger({ACNUMJUS: _numjus_override(1, 3)})
+    effective, _ = build_effective_cadastro(dadger, _abc_hidr(), _calendar())
+
+    assert _topology_varies_diagnostic(effective) is None
+
+
+# ---------------------------------------------------------------------------
+# Findings convert_hydros and convert_initial_storage report once per kind.
+# ---------------------------------------------------------------------------
+
+
+def _two_plant_case(
+    hidr: pd.DataFrame, uh: pd.DataFrame | None = None
+) -> tuple[DecompCase, DecompIdMap, EffectiveCadastro]:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 2))
+    dadger = _FakeDadger({}, uh=_uh_frame((1, 2)) if uh is None else uh)
+    calendar = _calendar()
+    effective, _ = build_effective_cadastro(dadger, hidr, calendar)
+    case = make_decomp_case(Path("unused"), dadger=dadger, hidr=hidr, calendar=calendar)
+    return case, id_map, effective
+
+
+def _hydro_findings(hidr: pd.DataFrame) -> dict[str, Diagnostic]:
+    case, id_map, effective = _two_plant_case(hidr)
+    with collect() as found:
+        convert_hydros(
+            case,
+            id_map,
+            effective=effective,
+            turbine_limits=flat_turbine_limits(id_map, len(_calendar())),
+        )
+    return {diagnostic.code: diagnostic for diagnostic in found}
+
+
+def test_a_link_to_a_plant_missing_from_hidr_is_reported_once() -> None:
+    hidr = _hidr_frame(
+        {
+            1: _plant_row(jusante=9, posto=11, name="A"),
+            2: _plant_row(jusante=0, posto=12, name="B"),
+        }
+    )
+
+    found = _hydro_findings(hidr)
+
+    diagnostic = found["decomp-cascade-link-invalid"]
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, "A", 9]]
+
+
+def test_a_plant_without_a_forebay_curve_is_reported_with_its_stages() -> None:
+    flat = _plant_row(jusante=0, posto=12, name="B")
+    for i in range(5):
+        flat[f"a{i}_volume_cota"] = 0.0
+    hidr = _hidr_frame({1: _plant_row(jusante=2, posto=11, name="A"), 2: flat})
+
+    found = _hydro_findings(hidr)
+
+    diagnostic = found["hydro-forebay-curve-missing"]
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[2, "B", "0-2"]]
+
+
+def test_a_declared_initial_dead_volume_is_reported() -> None:
+    uh = _uh_frame((1, 2))
+    uh.loc[uh["codigo_usina"] == 2, "volume_morto_inicial"] = 4.5
+    case, id_map, effective = _two_plant_case(_abc_hidr().loc[[1, 2]], uh)
+
+    with collect() as found:
+        convert_initial_storage(case, id_map, effective=effective)
+
+    [diagnostic] = found
+    assert diagnostic.code == "decomp-dead-volume-filling-unconverted"
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[2, "B", 4.5]]
 
 
 def test_plants_on_the_artificial_gauge_are_reported() -> None:

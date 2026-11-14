@@ -321,7 +321,10 @@ def test_collapse_diagnostic_counts_d_plants(caplog: pytest.LogCaptureFixture) -
             turbine_limits=flat_turbine_limits(id_map, 1),
         )
 
-    assert "collapsed 2 run-of-river" in caplog.text
+    assert (
+        "storage range collapsed to their reference volume (volume_referencia): 2"
+        in (caplog.text)
+    )
 
 
 # ---------------------------------------------------------------------------

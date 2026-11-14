@@ -115,13 +115,13 @@ class TestIsFphaEligible:
 
 class TestFphaEfficiency:
     def test_realistic_rho_esp_maps_to_fraction(self) -> None:
-        eta = fpha_efficiency(_REALISTIC_RHO_ESP, "USINA")
+        eta = fpha_efficiency(_REALISTIC_RHO_ESP)
         assert eta == pytest.approx(_REALISTIC_RHO_ESP / _K)
         assert 0.0 < eta <= 1.0
 
     def test_unphysical_rho_esp_clamped_to_one(self) -> None:
         # rho_esp >> K would imply eta > 1; novomodelo requires (0, 1].
-        assert fpha_efficiency(0.9, "USINA") == 1.0
+        assert fpha_efficiency(0.9) == 1.0
 
 
 class TestFphaComputedConfig:

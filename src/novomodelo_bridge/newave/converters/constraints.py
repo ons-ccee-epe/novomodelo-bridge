@@ -31,6 +31,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    unreadable_file_diagnostic,
 )
 from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
@@ -1230,18 +1231,14 @@ def _parse_re_dat(
 
     try:
         re_file = case.re_dat
-    except Exception:
+    except Exception as exc:
         emit(
-            Diagnostic(
+            unreadable_file_diagnostic(
                 code="re-dat-unreadable",
-                severity=Severity.WARNING,
+                file_name="re.dat",
                 category=_CATEGORY,
-                title="re.dat could not be read",
-                summary=(
-                    "re.dat could not be read, so the case has none of its "
-                    "generation limits on plant sets."
-                ),
-                remediation="Check re.dat for a malformed record.",
+                effect="the case has none of its generation limits on plant sets.",
+                exc=exc,
             ),
             logger=_LOG,
         )

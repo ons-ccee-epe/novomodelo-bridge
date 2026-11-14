@@ -172,6 +172,31 @@ class TestFactors:
             )
             assert weighted == pytest.approx(stage.total_hours, rel=1e-12)
 
+    def test_an_idle_block_under_a_positive_mean_is_reported_per_source(self) -> None:
+        from novomodelo_bridge.core.diagnostics import collect
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "codigo_submercado": 1,
+                    "estagio": 1,
+                    "nome": "SOLAR",
+                    "geracao_1": 0.0,
+                    "geracao_2": 100.0,
+                    "geracao_3": 100.0,
+                }
+            ]
+        )
+        with collect() as found:
+            doc = convert_ncs_factors(_case(_StubDadger(frame)), _ID_MAP)
+
+        first = doc["non_controllable_factors"][0]["block_factors"][0]["factor"]
+        assert 0.0 < first < 1e-6
+        [diagnostic] = found
+        assert diagnostic.code == "decomp-ncs-zero-block-factor"
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [["SOLAR_1", "0-2"]]
+
 
 class _StubRenovaveis:
     def __init__(
@@ -223,14 +248,10 @@ def _config_frame(states: dict[int, str]) -> pd.DataFrame:
     )
 
 
-def test_pee_series_deterministic_typo_uses_modal_value(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """DECOMP renewables are deterministic: a lone per-scenario outlier (deck
-    typo) is collapsed to the majority (modal) value and warned, not crashed
-    on, and never resolved to the outlier."""
-    import logging
-
+def test_pee_series_deterministic_typo_uses_modal_value() -> None:
+    """A lone per-scenario outlier is collapsed to the majority (modal)
+    value and reported, not crashed on, and never resolved to the outlier."""
+    from novomodelo_bridge.core.diagnostics import collect
     from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad = pd.DataFrame([{"codigo_pee": 9, "nome_pee": "PARK9"}])
@@ -252,15 +273,15 @@ def test_pee_series_deterministic_typo_uses_modal_value(
             )
     renov = _StubRenovaveis(cad, subm, pd.DataFrame(ger_rows))
 
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.ncs"
-    ):
+    with collect() as found:
         series = _pee_series(renov, _ID_MAP, _calendar(), 0)
 
     assert len(series) == 1
     # block 0 (patamar 1) resolves to the modal 77.07, NOT the 77.9 outlier.
     assert series[0].per_stage_blocks[0] == (77.07, 50.0, 60.0)
-    assert any("modal value" in r.message for r in caplog.records)
+    [spread] = [d for d in found if d.code == "decomp-pee-generation-spread"]
+    assert spread.table is not None
+    assert spread.table.rows == [[9, "PARK9", 0, 0, 77.07, 77.9, 77.07]]
 
 
 def _pee_registry(*codes: int) -> tuple[pd.DataFrame, pd.DataFrame]:

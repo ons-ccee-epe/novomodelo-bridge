@@ -55,6 +55,27 @@ links are cobre-bridge's.
   no limit on any stage are listed in a new `electric-constraint-unbounded`
   note instead of `electric-constraint-skipped`, and `check` lists the absent
   optional inputs in one `optional-file-absent` note.
+- **`convert newave` and `convert decomp` report as notes and warnings the
+  findings they only logged**, so these now reach the conversion notes,
+  `conversion_manifest.json` and the `--json` output, each with a table of
+  the plants, records or stages it concerns. NEWAVE gains
+  `vazpast-unreadable`, `c-adic-unreadable`, `expt-unreadable`,
+  `manutt-unreadable` and `penalid-unreadable` for an optional file it cannot
+  read; `patamar-duration-missing`, `patamar-load-factors-missing`,
+  `cvar-file-absent`, `shist-start-years-empty`, `shist-range-collapsed`,
+  `par-annual-option-unknown`, `par-annual-variant-approximated` and
+  `cut-window-not-converted` for settings the case cannot follow;
+  `load-subsystem-undeclared`, `load-factor-subsystem-undeclared` and
+  `ncs-subsystem-undeclared` for data of a subsystem `sistema.dat` does not
+  declare; and `initial-storage-clamped`, `adterm-thermal-undeclared` and
+  `adterm-lag-beyond-horizon`. DECOMP gains `decomp-ac-topology-varies`,
+  `decomp-cascade-link-invalid`, `decomp-vi-travel-time-unused`,
+  `decomp-energy-chain-loop`, `decomp-ncs-zero-block-factor`,
+  `decomp-pee-generation-spread`, `decomp-gnl-lag-nonuniform` and
+  `decomp-dead-volume-filling-unconverted`. Both tracks gain
+  `anticipated-commitment-clamped`, `fpha-efficiency-capped` and
+  `hydro-forebay-curve-missing`, and DECOMP's `cadastro-topology-relinked`
+  also lists the plants relinked through a plant left out of the case.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.

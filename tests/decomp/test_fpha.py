@@ -26,7 +26,6 @@ from novomodelo_bridge.decomp.converters.fpha import (
     mlt_absent_diagnostic,
     spill_outside_tailrace,
     spillage_fit_max,
-    turbine_efficiency,
     unconverted_fp_fields_diagnostic,
     volume_window_rule,
 )
@@ -518,17 +517,6 @@ def test_fpha_eligible_codes_filters_operated() -> None:
         }
     )
     assert fpha_eligible_codes(eff, _id_map((1, 2))) == {1}
-
-
-# ---------------------------------------------------------------------------
-# efficiency
-# ---------------------------------------------------------------------------
-
-
-def test_turbine_efficiency_is_rho_esp_over_k() -> None:
-    eff = _effective({1: _plant_row(rho_esp=0.009)})
-    # eta = 0.009 / 9.81e-3 ≈ 0.917
-    assert abs(turbine_efficiency(eff, 1, "PLANT") - 0.009 / 9.81e-3) < 1e-9
 
 
 # ---------------------------------------------------------------------------

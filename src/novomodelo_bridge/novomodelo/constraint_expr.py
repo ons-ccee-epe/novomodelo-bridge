@@ -276,8 +276,8 @@ def evaluate_lhs(
     skipped = unsupported_constraint_ids(terms) | no_output
     if skipped:
         _LOG.info(
-            "%d generic constraint(s) carry a term the simulation output cannot "
-            "value; their LHS is not evaluated.",
+            "Generic constraints with a term the simulation output cannot "
+            "value, whose LHS is not evaluated: %d.",
             len(skipped),
         )
         terms = terms.filter(~pl.col("constraint_id").is_in(list(skipped)))
@@ -339,8 +339,8 @@ def evaluate_lhs(
     incomplete = lhs.filter(pl.col("n_found") < pl.col("n_terms"))
     if not incomplete.is_empty():
         _LOG.info(
-            "%d generic constraint(s) reference an entity missing from the "
-            "simulation output; those rows are not evaluated.",
+            "Generic constraints referencing an entity missing from the "
+            "simulation output, whose rows are not evaluated: %d.",
             incomplete["constraint_id"].n_unique(),
         )
     out = (

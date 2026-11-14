@@ -340,7 +340,10 @@ class TestUndatedBucketAudit:
             audit = undated_bucket_audit(pools)
 
         assert audit.per_pool == (UndatedBucketCount(0, 1, 1),)
-        assert any("1 non-zero coefficient" in r.message for r in caplog.records)
+        assert any(
+            "non-zero coefficients dropped on undated transit buckets: 1" in r.message
+            for r in caplog.records
+        )
 
     def test_warm_start_pieces_are_not_counted(self) -> None:
         pools = {

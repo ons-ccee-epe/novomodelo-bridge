@@ -16,8 +16,8 @@ gap and none future-dated (rule 5b), so this module tiles exactly that span
 with the ``VI`` weekly flows, most-recent window first.
 
 Only operated plants with a downstream cascade arc get a travel-time arc; a
-``VI`` row for a plant that is unoperated or has no downstream is dropped with a
-warning (there is no arc to delay).
+``VI`` row for a plant that is unoperated or has no downstream is dropped and
+reported (there is no arc to delay).
 """
 
 from __future__ import annotations
@@ -29,6 +29,12 @@ from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
 
@@ -148,20 +154,14 @@ def convert_travel_time(
     operated = set(id_map.hydro_codes)
     hours_by_code: dict[int, float] = {}
     past_defluences: list[dict] = []
+    unused: list[list[object]] = []
     for code in sorted(travel_times):
         travel_time = travel_times[code]
         if code not in operated:
-            _LOG.warning(
-                "VI travel-time plant %d is not in the operated set; skipped",
-                code,
-            )
+            unused.append([code, _plant_name(effective, code), "not in the case"])
             continue
         if _downstream_operated(effective, code, operated) is None:
-            _LOG.warning(
-                "VI travel-time plant %d has no downstream cascade arc; "
-                "travel time and in-transit water skipped",
-                code,
-            )
+            unused.append([code, _plant_name(effective, code), "no plant downstream"])
             continue
         hours_by_code[code] = travel_time.travel_time_hours
         past_defluences.extend(
@@ -169,4 +169,30 @@ def convert_travel_time(
                 travel_time, id_map.hydro_id(code), start_date, week_hours
             )
         )
+    if unused:
+        emit(_travel_time_unused_diagnostic(unused), logger=_LOG)
     return hours_by_code, past_defluences
+
+
+def _plant_name(effective: CascadeLinks, code: int) -> str:
+    base = effective.base
+    return str(base.loc[code, "nome_usina"]).strip() if code in base.index else ""
+
+
+def _travel_time_unused_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-vi-travel-time-unused",
+        severity=Severity.INFO,
+        category="Travel time",
+        title=f"Travel times with no outflow to delay ({len(rows)})",
+        summary=(
+            "The listed plants carry a VI register but are left out of the case "
+            "or have no plant downstream, so there is no outflow for the travel "
+            "time to delay and the record has no effect, as in DECOMP."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Reason"],
+            rows=rows,
+            justify=["right", "left", "left"],
+        ),
+    )

@@ -206,8 +206,8 @@ def cut_building_pools(
     expected = len(pools) - 1 if expected_count is None else expected_count
     if len(selected) != expected:
         _LOG.warning(
-            "cut-building pools by populated_count > warm_start_count is %s "
-            "(%d pool(s)), but n_pools - 1 is %d",
+            "cut-building pools by populated_count > warm_start_count are %s "
+            "(count %d), but n_pools - 1 is %d",
             list(selected),
             len(selected),
             expected,

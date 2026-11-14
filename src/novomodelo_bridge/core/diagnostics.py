@@ -20,6 +20,7 @@ standalone use and existing log-based tests keep working unchanged.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -28,6 +29,7 @@ from enum import Enum
 from typing import Literal
 
 _MODULE_LOGGER = logging.getLogger(__name__)
+_COUNT_SUFFIX = re.compile(r" \(\d+\)$")
 
 ColumnJustify = Literal["left", "right", "center"]
 
@@ -236,7 +238,8 @@ def finalize_diagnostics(
 def merge_tables(diagnostics: Iterable[Diagnostic]) -> list[Diagnostic]:
     """One diagnostic per code, for an emitter that reports each entity as it
     meets it: the distinct rows of every same-code diagnostic's table in one
-    table, in the order met, with their count after the first one's title.
+    table, in the order met, with their count after the first one's title,
+    in place of any count that title already ends with.
 
     A diagnostic without a table passes through unchanged.
     """
@@ -263,7 +266,7 @@ def merge_tables(diagnostics: Iterable[Diagnostic]) -> list[Diagnostic]:
         result.append(
             replace(
                 first,
-                title=f"{first.title} ({len(rows)})",
+                title=f"{_COUNT_SUFFIX.sub('', first.title)} ({len(rows)})",
                 table=replace(table, rows=rows),
             )
         )
@@ -295,3 +298,22 @@ def format_stage_ranges(stages: Iterable[int]) -> str:
         start = prev = value
     groups.append((start, prev))
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in groups)
+
+
+def unreadable_file_diagnostic(
+    *, code: str, file_name: str, category: str, effect: str, exc: Exception
+) -> Diagnostic:
+    """WARNING for an optional deck file the conversion could not parse.
+
+    *effect* completes ``"<file> could not be read, so ..."``: what the case
+    lacks and how the results differ. The exception text goes to the notes.
+    """
+    return Diagnostic(
+        code=code,
+        severity=Severity.WARNING,
+        category=category,
+        title=f"{file_name} could not be read",
+        summary=f"{file_name} could not be read, so {effect}",
+        notes=[str(exc)] if str(exc) else [],
+        remediation=f"Check {file_name} for a malformed record.",
+    )

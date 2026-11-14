@@ -6,8 +6,7 @@ specific productivity ``ρ_esp`` and turbine efficiency, and a volume fitting
 window, novomodelo fits the production-function hyperplanes itself. This module
 builds the DECOMP-side inputs, mirroring :mod:`novomodelo_bridge.newave.converters.hydro`
 and :mod:`novomodelo_bridge.newave.converters.tailrace` on the source-model side and reusing
-their shared cores (:func:`~novomodelo_bridge.core.tailrace.build_tailrace_table`,
-:func:`~novomodelo_bridge.core.productivity.fpha_efficiency`).
+their shared core (:func:`~novomodelo_bridge.core.tailrace.build_tailrace_table`).
 
 Eligibility mirrors the source-model rule: a plant with a non-degenerate
 volume→cota polynomial (the forebay curve), a positive ``ρ_esp``, and a positive
@@ -44,7 +43,6 @@ from novomodelo_bridge.core.hydro_units import fpha_zero_capacity_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.productivity import (
     evaluate_cota,
-    fpha_efficiency,
     fpha_spillage_fit_max_m3s,
 )
 from novomodelo_bridge.core.tailrace import (
@@ -472,16 +470,6 @@ def mlt_absent_diagnostic(plant_count: int) -> Diagnostic:
         ),
         remediation="Add the deck's mlt.dat to the deck directory.",
     )
-
-
-def turbine_efficiency(effective: EffectiveCadastro, code: int, name: str) -> float:
-    """Dimensionless turbine efficiency ``η = ρ_esp / K`` for plant *code*.
-
-    Reuses the source-model helper (clamps to 1.0 with a warning if the input
-    ``ρ_esp`` implies an unphysical ``η > 1``).
-    """
-    rho_esp = effective.value(code, "produtibilidade_especifica", 0)
-    return fpha_efficiency(rho_esp, name)
 
 
 def convert_hydro_geometry(

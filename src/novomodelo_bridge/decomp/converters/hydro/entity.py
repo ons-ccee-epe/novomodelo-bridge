@@ -31,10 +31,17 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    format_stage_ranges,
 )
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 from novomodelo_bridge.core.pandas_utils import as_frame
-from novomodelo_bridge.core.productivity import fpha_efficiency
+from novomodelo_bridge.core.productivity import (
+    forebay_curve_missing_diagnostic,
+    fpha_efficiency,
+    fpha_efficiency_capped_diagnostic,
+    fpha_efficiency_capped_row,
+    has_forebay_curve,
+)
 from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
     storage_envelope,
@@ -133,9 +140,26 @@ class CascadeLinks(Protocol):
     @property
     def base(self) -> pd.DataFrame: ...
 
-    def downstream_plant_varies(self, code: int) -> bool: ...
-
     def downstream_plant(self, code: int, stage_index: int) -> int: ...
+
+
+def _cascade_walk(
+    effective: CascadeLinks, code: int, operated: set[int], stage_index: int
+) -> tuple[int | None, int | None]:
+    """``(next operated plant, invalid link)`` below *code* at *stage_index*.
+
+    Non-operated intermediates are skipped through and code 0 is the sink. A
+    link that loops back or names a plant missing from ``hidr.dat`` ends the
+    walk as a sink and is returned as the invalid link.
+    """
+    visited = {code}
+    current = effective.downstream_plant(code, stage_index)
+    while current != 0 and current not in operated:
+        if current in visited or current not in effective.base.index:
+            return None, current
+        visited.add(current)
+        current = effective.downstream_plant(current, stage_index)
+    return (current if current != 0 else None), None
 
 
 def _downstream_operated(
@@ -145,47 +169,39 @@ def _downstream_operated(
     *,
     stage_index: int = 0,
 ) -> int | None:
-    """Walk the *effective* (post-``AC NUMJUS``) cascade to the next
-    *operated* plant downstream, at *stage_index* (default the initial
-    stage — the single stage-representative topology every caller uses).
+    """The next *operated* plant below *code* on the effective (post-``AC
+    NUMJUS``) cascade at *stage_index*, or ``None`` at the sink.
 
-    Non-operated intermediates are skipped through (their routing is
-    instantaneous absence — the water continues down the declared chain);
-    code 0 is the sink. If *code*'s own effective downstream link varies
-    across stages (a temporal ``AC NUMJUS``), a tracked-gap warning is
-    logged and the *stage_index* link is used for the whole horizon
-    regardless — per-stage cascade topology is not modeled
-    (:meth:`~novomodelo_bridge.decomp.converters.cadastro.effective.
-    EffectiveCadastro.downstream_plant_varies`). A temporal override on a
-    non-operated intermediate encountered mid-walk is not separately checked
-    here (no rv3 row exercises it — see the module docstring); the
-    pipeline's own relink diagnostic
-    (:func:`novomodelo_bridge.decomp.pipeline._topology_relink_diagnostic`) still
-    surfaces a resulting cascade change via a fallback warning rather than
-    dropping it silently.
+    Every caller reads the first stage: the case has one cascade for the
+    whole horizon, and the pipeline reports the plants whose ``AC NUMJUS``
+    changes it on later stages
+    (:func:`novomodelo_bridge.decomp.pipeline._topology_varies_diagnostic`).
     """
-    if effective.downstream_plant_varies(code):
-        _LOG.warning(
-            "plant %d's downstream link (AC NUMJUS) varies across stages; "
-            "per-stage cascade topology is not modeled (deferred fidelity) "
-            "-- using the stage-%d effective link for the whole horizon",
-            code,
-            stage_index,
-        )
-    visited = {code}
-    current = effective.downstream_plant(code, stage_index)
-    while current != 0 and current not in operated:
-        if current in visited or current not in effective.base.index:
-            _LOG.warning(
-                "cascade walk from plant %d hit an invalid link at %d; "
-                "treating as a sink",
-                code,
-                current,
-            )
-            return None
-        visited.add(current)
-        current = effective.downstream_plant(current, stage_index)
-    return current if current != 0 else None
+    return _cascade_walk(effective, code, operated, stage_index)[0]
+
+
+def _cascade_link_invalid_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-cascade-link-invalid",
+        severity=Severity.WARNING,
+        category="Cadastro overrides",
+        title=f"Cascade links that loop or leave hidr.dat ({len(rows)})",
+        summary=(
+            "Following the downstream links of the listed plants reaches a "
+            "plant already passed, or one missing from hidr.dat, so the "
+            "conversion ends their cascade at that link and their outflow "
+            "leaves the system there."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Invalid link"],
+            rows=rows,
+            justify=["right", "left", "right"],
+        ),
+        remediation=(
+            "Correct the downstream plant of each listed link in hidr.dat or "
+            "its AC NUMJUS register in dadger.rvN."
+        ),
+    )
 
 
 #: ``hidr.dat``'s 12 monthly reservoir-evaporation columns in calendar order
@@ -372,13 +388,13 @@ def _hydraulic_losses(effective: EffectiveCadastro, code: int) -> dict:
     return {"type": "factor", "value": 0.0}
 
 
-def _fpha_fields(code: int, name: str, effective: EffectiveCadastro) -> dict:
+def _fpha_fields(code: int, effective: EffectiveCadastro) -> dict:
     """The computed-FPHA entry fields: specific productivity, turbine
     efficiency, the inline constant tailrace, and hydraulic losses."""
     rho_esp = effective.value(code, "produtibilidade_especifica", 0)
     fields: dict = {
         "specific_productivity_mw_per_m3s_per_m": rho_esp,
-        "efficiency": {"type": "constant", "value": fpha_efficiency(rho_esp, name)},
+        "efficiency": {"type": "constant", "value": fpha_efficiency(rho_esp)},
     }
     # Inline constant tailrace = mean canal de fuga: novomodelo's FPHA
     # fallback for a plant whose tailrace_curves.parquet family is
@@ -392,11 +408,14 @@ def _fpha_fields(code: int, name: str, effective: EffectiveCadastro) -> dict:
 
 
 class _PlantEntry(NamedTuple):
-    """A plant's ``hydros.json`` entry, and whether ``storage_envelope``
-    collapsed its run-of-river registry band to the reference volume."""
+    """A plant's ``hydros.json`` entry, whether ``storage_envelope``
+    collapsed its run-of-river registry band to the reference volume, and its
+    capped FPHA efficiency report row."""
 
     entry: dict
     runofriver_collapsed: bool
+    efficiency_row: list[object] | None
+    invalid_link_row: list[object] | None
 
 
 def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _PlantEntry:
@@ -408,7 +427,7 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
     hreg = hidr.loc[code]
     name = str(hreg["nome_usina"]).strip()
     is_fpha = context.fpha_codes is not None and code in context.fpha_codes
-    downstream = _downstream_operated(effective, code, context.operated_codes)
+    downstream, invalid_link = _cascade_walk(effective, code, context.operated_codes, 0)
     min_storage_hm3, max_storage_hm3 = storage_envelope(effective, code)
     runofriver_collapsed = str(hreg.get("tipo_regulacao", "")).strip() == "D" and float(
         hreg["volume_minimo"]
@@ -438,8 +457,12 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
         },
         "unit_groups": unit_groups,
     }
+    efficiency_row: list[object] | None = None
     if is_fpha:
-        entry.update(_fpha_fields(code, name, effective))
+        entry.update(_fpha_fields(code, effective))
+        efficiency_row = fpha_efficiency_capped_row(
+            code, name, entry["specific_productivity_mw_per_m3s_per_m"]
+        )
     travel_time_hours = context.travel_time_hours
     if travel_time_hours and code in travel_time_hours and downstream is not None:
         entry["travel_time_hours"] = travel_time_hours[code]
@@ -447,7 +470,10 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
         evaporation_mm = _evaporation_coefficients_mm(hidr, code)
         if evaporation_mm is not None:
             entry["evaporation"] = {"coefficients_mm": evaporation_mm}
-    return _PlantEntry(entry, runofriver_collapsed)
+    invalid_link_row: list[object] | None = (
+        None if invalid_link is None else [code, name, invalid_link]
+    )
+    return _PlantEntry(entry, runofriver_collapsed, efficiency_row, invalid_link_row)
 
 
 def _report_machine_set_overrides(
@@ -461,8 +487,8 @@ def _report_machine_set_overrides(
     n_ac_affected = len(affected_codes & operated_codes)
     if n_ac_affected:
         _LOG.info(
-            "applied AC NUMCON/NUMMAQ/POTEFE/VAZEFE/ALTEFE machine-configuration "
-            "overrides for %d plant(s)",
+            "plants with AC NUMCON/NUMMAQ/POTEFE/VAZEFE/ALTEFE "
+            "machine-configuration overrides applied: %d",
             n_ac_affected,
         )
 
@@ -471,8 +497,8 @@ def _report_runofriver_collapse(n_runofriver_collapsed: int) -> None:
     """Log how many run-of-river storage ranges collapsed to a single volume."""
     if n_runofriver_collapsed:
         _LOG.info(
-            "collapsed %d run-of-river ('D') plant(s) storage range to their "
-            "reference volume (volume_referencia): the hidr registry's "
+            "run-of-river ('D') plants whose storage range collapsed to their "
+            "reference volume (volume_referencia): %d; the hidr registry's "
             "(volume_minimo, volume_maximo) band would otherwise emit a "
             "phantom weekly storage buffer the plant does not have",
             n_runofriver_collapsed,
@@ -555,14 +581,36 @@ def convert_hydros(
     )
     hydros: list[dict] = []
     n_runofriver_collapsed = 0
+    efficiency_rows: list[list[object]] = []
+    no_curve_rows: list[list[object]] = []
+    invalid_link_rows: list[list[object]] = []
     for code in id_map.hydro_codes:
         plant = _hydro_entry(code, context, id_map)
         hydros.append(plant.entry)
         if plant.runofriver_collapsed:
             n_runofriver_collapsed += 1
+        if plant.efficiency_row is not None:
+            efficiency_rows.append(plant.efficiency_row)
+        if plant.invalid_link_row is not None:
+            invalid_link_rows.append(plant.invalid_link_row)
+        no_curve = [
+            stage.index
+            for stage in case.calendar
+            if not has_forebay_curve(effective.cota_polynomial(code, stage.index))
+        ]
+        if no_curve:
+            no_curve_rows.append(
+                [code, plant.entry["name"], format_stage_ranges(no_curve)]
+            )
 
     _report_machine_set_overrides(effective, context.operated_codes)
     _report_runofriver_collapse(n_runofriver_collapsed)
+    if efficiency_rows:
+        emit(fpha_efficiency_capped_diagnostic(efficiency_rows), logger=_LOG)
+    if no_curve_rows:
+        emit(forebay_curve_missing_diagnostic(no_curve_rows), logger=_LOG)
+    if invalid_link_rows:
+        emit(_cascade_link_invalid_diagnostic(invalid_link_rows), logger=_LOG)
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),
@@ -617,17 +665,36 @@ def convert_initial_storage(
     """
     operated = _operated_uh(case.dadger)
     storage: list[dict] = []
+    filling: list[list[object]] = []
     for _, row in operated.iterrows():
         code = int(row["codigo_usina"])
         value = _initial_volume_hm3(effective, code, float(row["volume_inicial"]))
         storage.append({"hydro_id": id_map.hydro_id(code), "value_hm3": value})
         dead = row.get("volume_morto_inicial")
         if not pd.isna(dead):
-            _LOG.warning(
-                "plant %d declares an initial dead volume (%s); "
-                "dead-volume filling is not converted yet",
-                code,
-                dead,
-            )
+            filling.append([code, _registry_name(case.hidr, code), float(dead)])
     storage.sort(key=lambda e: e["hydro_id"])
+    if filling:
+        emit(_dead_volume_filling_diagnostic(filling), logger=_LOG)
     return storage
+
+
+def _dead_volume_filling_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-dead-volume-filling-unconverted",
+        severity=Severity.WARNING,
+        category="Initial conditions",
+        title=f"Dead-volume filling not converted ({len(rows)})",
+        summary=(
+            "The listed plants declare an initial dead volume in UH, which "
+            "DECOMP fills before the plant generates. The conversion does not "
+            "model the filling and starts each plant with its dead volume "
+            "full, so its storage and generation in the first stages differ "
+            "from DECOMP's."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Initial dead volume (hm³)"],
+            rows=rows,
+            justify=["right", "left", "right"],
+        ),
+    )

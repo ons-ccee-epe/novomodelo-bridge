@@ -69,6 +69,7 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.anticipated import commitment_clamped_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, require_frame
 from novomodelo_bridge.core.policy_dates import hours_between
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
@@ -174,8 +175,8 @@ class GnlCommitmentModel:
     (``{codigo_usina: months}``): the number of months by which a GNL plant's
     dispatch is decided ahead of its delivery (the LNG supply lead time).
     Every anticipated plant shares one lead, so on a study with operative
-    weeks this drives only the uniform-lag consistency check
-    (:func:`_warn_on_nonuniform_lag`) — a deck mixing lags is surfaced, not
+    weeks this drives only the uniform-lag check
+    (:func:`_report_nonuniform_lag`) — a deck mixing lags is reported, not
     silently averaged.
 
     ``tg`` is every declared ``tg`` record, one per ``(codigo_usina, estagio)``.
@@ -840,22 +841,41 @@ class GnlEmission:
     post_study_stages: dict | None
 
 
-def _warn_on_nonuniform_lag(nl_lag_months: Mapping[int, int]) -> None:
-    """Warn when GNL plants declare differing anticipation lags.
+def _report_nonuniform_lag(model: GnlCommitmentModel) -> None:
+    """Report GNL plants that declare differing anticipation lags.
 
     Every anticipated plant shares one lead, the já-comandada cutoff
     (:func:`_shared_class4_end`). A deck mixing ``nl`` lags would need per-plant
-    windows — out of scope — so a non-uniform ``nl`` is surfaced (not silently
-    averaged into one shift).
+    windows, so a non-uniform ``nl`` is reported, not averaged into one shift.
     """
-    distinct = set(nl_lag_months.values())
-    if len(distinct) > 1:
-        _LOG.warning(
-            "GNL plants declare differing anticipation lags %s; the lags are "
-            "not used: every plant's anticipated_config.lead_time_hours runs "
-            "to the shared já-comandada cutoff",
-            sorted(distinct),
-        )
+    lags = model.nl_lag_months
+    if len(set(lags.values())) <= 1:
+        return
+    rows = [
+        [thermal.code, thermal.name, lags[thermal.code]]
+        for thermal in model.thermals
+        if thermal.code in lags
+    ]
+    dx.emit(
+        dx.Diagnostic(
+            code="decomp-gnl-lag-nonuniform",
+            severity=dx.Severity.WARNING,
+            category="GNL",
+            title=f"GNL plants with differing anticipation lags ({len(rows)})",
+            summary=(
+                "The listed GNL plants declare different NL anticipation lags, "
+                "but on a study of operative weeks the case anticipates every "
+                "plant up to the same já-comandada cutoff, so the dispatch "
+                "decided ahead for these plants can differ from DECOMP's."
+            ),
+            table=dx.DiagnosticTable(
+                columns=["Code", "Name", "Lag (months)"],
+                rows=rows,
+                justify=["right", "left", "right"],
+            ),
+        ),
+        logger=_LOG,
+    )
 
 
 def _reject_straddling_windows(
@@ -907,41 +927,29 @@ def _stage_capabilities(
 
 
 def _clamp_committed(
-    value: float, name: str, lo: float, hi: float, context: str
+    value: float, thermal: GnlThermal, lo: float, hi: float, delivery: str
 ) -> float:
     """Clamp a committed MW into the plant's ``[lo, hi]`` capability at its
-    delivery stage.
+    delivery stage, reporting the move.
 
-    The emission site owns bounds policy (the reader returns the true committed
-    values): the source model's ``gl`` geração and ``tg`` disponibilidade are
-    independent fields, so a commitment can exceed capability, and a
-    ``past_anticipated_commitment`` whose ``value_mw`` falls outside the plant's
-    static generation bounds is rejected by novomodelo's semantic validator
-    (``initial_conditions.rs`` requires every ``value_mw`` in ``[min, max]``). It
-    is clamped into range with a warning instead — mirroring the sibling NEWAVE
-    path (``converters/initial_conditions.py``).
+    The source model's ``gl`` geração and ``tg`` disponibilidade are
+    independent fields, so a commitment can exceed capability, and novomodelo
+    rejects a ``past_anticipated_commitment`` outside the plant's generation
+    bounds. An inflexibility above the availability (``lo > hi``) clamps to
+    the availability.
     """
-    if lo > hi:
-        _LOG.warning(
-            "GNL %s: inflexibility %.4g > availability %.4g (degenerate bounds); "
-            "clamping commitments to <= %.4g",
-            name,
-            lo,
-            hi,
-            hi,
-        )
-        lo = hi
-    clamped = min(max(value, lo), hi)
+    clamped = min(max(value, min(lo, hi)), hi)
     if abs(clamped - value) > _NONZERO_TOLERANCE:
-        _LOG.warning(
-            "GNL %s: committed %.4g MW (%s) outside [%.4g, %.4g]; clamped to %.4g",
-            name,
-            value,
-            context,
-            lo,
-            hi,
-            clamped,
-        )
+        row = [
+            thermal.code,
+            thermal.name,
+            delivery,
+            round(value, 4),
+            round(lo, 4),
+            round(hi, 4),
+            round(clamped, 4),
+        ]
+        dx.emit(commitment_clamped_diagnostic([row], source="dadgnl.rvN"), logger=_LOG)
     return clamped
 
 
@@ -1160,10 +1168,10 @@ def _study_tiles(
             "end_date": calendar[j].end_date.isoformat(),
             "value_mw": _clamp_committed(
                 folded[j],
-                thermal.name,
+                thermal,
                 study_capability[j].min_mw,
                 study_capability[j].max_mw,
-                f"in-horizon study stage {j}",
+                f"stage {j}",
             ),
         }
         for j in range(count)
@@ -1429,6 +1437,25 @@ def convert_gnl(
     ``calendar`` is the operative calendar the case's ``stages.json`` is built
     from.
     """
+    with dx.collect() as found:
+        emission = _convert_gnl(
+            model,
+            first_thermal_id=first_thermal_id,
+            bus_id_of=bus_id_of,
+            calendar=calendar,
+        )
+    for diagnostic in dx.merge_tables(found):
+        dx.emit(diagnostic, logger=_LOG)
+    return emission
+
+
+def _convert_gnl(
+    model: GnlCommitmentModel,
+    *,
+    first_thermal_id: int,
+    bus_id_of: Callable[[int], int],
+    calendar: Sequence[OperativeStage],
+) -> GnlEmission:
     gnl_id = {t.code: first_thermal_id + i for i, t in enumerate(model.thermals)}
     if weekly_stage_count(calendar) == 0:
         return _convert_monthly_gnl(model, gnl_id, bus_id_of, calendar)
@@ -1443,7 +1470,7 @@ def convert_gnl(
     for h in stage_hours:
         cumulative_hours.append(cumulative_hours[-1] + h)
 
-    _warn_on_nonuniform_lag(model.nl_lag_months)
+    _report_nonuniform_lag(model)
 
     horizon_end = stage_spans[-1][1]
     classification = classify_gnl_windows(model, calendar)
@@ -1510,10 +1537,10 @@ def convert_gnl(
                     "end_date": window.end_date.isoformat(),
                     "value_mw": _clamp_committed(
                         window.committed_mw,
-                        thermal.name,
+                        thermal,
                         last_capability.min_mw,
                         last_capability.max_mw,
-                        f"post-horizon class-4 window {window.start_date.isoformat()}",
+                        f"window from {window.start_date.isoformat()}",
                     ),
                 }
             )

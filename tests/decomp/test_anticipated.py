@@ -21,6 +21,7 @@ import pandas as pd
 import pytest
 from idecomp.decomp import Dadgnl
 
+from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlClass4Window,
@@ -839,10 +840,8 @@ def test_convert_gnl_thermal_bounds_match_capability_and_cost() -> None:
         assert bound["max_mw"] == hi
 
 
-def test_convert_gnl_warns_on_nonuniform_nl_lag(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # A deck mixing NL lags is surfaced; the emitted lead is unaffected by
+def test_convert_gnl_reports_a_nonuniform_nl_lag() -> None:
+    # A deck mixing NL lags is reported; the emitted lead is unaffected by
     # nl_lag_months either way.
     santa = _SANTA
     pserg = _PSERG
@@ -860,14 +859,14 @@ def test_convert_gnl_warns_on_nonuniform_nl_lag(
         weeks_per_month=_EMIT_WEEKS_PER_MONTH,
         nl_lag_months={86: 2, 224: 3},  # differing lags
     )
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
-    ):
+    with collect() as found:
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
         )
 
-    assert any("differing anticipation lags" in r.message for r in caplog.records)
+    [lag] = [d for d in found if d.code == "decomp-gnl-lag-nonuniform"]
+    assert lag.table is not None
+    assert lag.table.rows == [[86, santa.name, 2], [224, pserg.name, 3]]
     # Neither plant declares a já-comandada window and their gl weeks end well
     # before the horizon, so class4_end defaults to horizon_end: the emitted
     # lead reaches exactly the study horizon (1152 h = 48 days).
@@ -901,11 +900,9 @@ def test_convert_gnl_empty_gs_yields_no_post_study() -> None:
     assert e.thermals[0]["anticipated_config"] == {"lead_time_hours": 168.0}
 
 
-def test_convert_gnl_clamps_past_commitment_above_capability(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_convert_gnl_clamps_past_commitment_above_capability() -> None:
     # gl geracao and tg disponibilidade are independent; an in-study commitment
-    # above the plant's max_mw is clamped into [min_mw, max_mw] (+ warned) so
+    # above the plant's max_mw is clamped into [min_mw, max_mw] (+ reported) so
     # novomodelo's semantic validator (value_mw in [min, max]) never rejects it.
     santa = _SANTA
     model = GnlCommitmentModel(
@@ -919,20 +916,25 @@ def test_convert_gnl_clamps_past_commitment_above_capability(
         weeks_per_month={},
         nl_lag_months={86: 2},
     )
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
-    ):
+    with collect() as found:
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
         )
 
     assert e.past_anticipated_commitments[0]["value_mw"] == 500.0  # 900 -> max 500
-    assert any("clamped" in r.message for r in caplog.records)
+    [clamped] = [d for d in found if d.code == "anticipated-commitment-clamped"]
+    assert clamped.table is not None
+    [row] = clamped.table.rows
+    assert (row[0], row[2], row[3], row[5], row[6]) == (
+        86,
+        "stage 0",
+        900.0,
+        500.0,
+        500.0,
+    )
 
 
-def test_convert_gnl_reads_tg_per_stage_like_ct(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_convert_gnl_reads_tg_per_stage_like_ct() -> None:
     # TG declares stages 1, 2 and 4; stage 3 inherits stage 2. A 0 MW
     # commitment is clamped only where its own stage requires a minimum.
     tg = pd.DataFrame(
@@ -953,20 +955,16 @@ def test_convert_gnl_reads_tg_per_stage_like_ct(
         weeks_per_month=_EMIT_WEEKS_PER_MONTH,
         nl_lag_months={86: 2},
     )
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
-    ):
+    with collect() as found:
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
         )
 
     tiles = [p["value_mw"] for p in e.past_anticipated_commitments][:4]
     assert tiles == [50.0, 0.0, 0.0, 0.0]
-    clamps = [r.message for r in caplog.records if "clamped" in r.message]
-    assert clamps == [
-        "GNL SANTA CRUZ: committed 0 MW (in-horizon study stage 0) outside "
-        "[50, 350]; clamped to 50"
-    ]
+    [clamped] = [d for d in found if d.code == "anticipated-commitment-clamped"]
+    assert clamped.table is not None
+    assert clamped.table.rows == [[86, "SANTA CRUZ", "stage 0", 0.0, 50.0, 350.0, 50.0]]
     [thermal] = e.thermals
     assert thermal["cost_per_mwh"] == 181.0
     assert thermal["generation"] == {"min_mw": 0.0, "max_mw": 400.0}
@@ -1154,9 +1152,7 @@ def test_convert_gnl_straddling_class4_window_raises(
         )
 
 
-def test_convert_gnl_clamps_class4_commitment_above_capability(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_convert_gnl_clamps_class4_commitment_above_capability() -> None:
     # gl geracao and tg disponibilidade are independent for a class-4 week too;
     # a já-comandada commitment above max_mw is clamped the same as class-2.
     santa = _SANTA
@@ -1175,9 +1171,7 @@ def test_convert_gnl_clamps_class4_commitment_above_capability(
         weeks_per_month=_EMIT_WEEKS_PER_MONTH,
         nl_lag_months={86: 2},
     )
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.anticipated"
-    ):
+    with collect() as found:
         e = convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
         )
@@ -1188,7 +1182,12 @@ def test_convert_gnl_clamps_class4_commitment_above_capability(
         if p["thermal_id"] == 94 and date.fromisoformat(p["start_date"]) >= _HORIZON_END
     ]
     assert any(p["value_mw"] == 500.0 for p in class4)  # 900 -> max 500
-    assert any("clamped" in r.message for r in caplog.records)
+    [clamped] = [d for d in found if d.code == "anticipated-commitment-clamped"]
+    assert clamped.table is not None
+    assert any(
+        str(row[2]).startswith("window from") and row[-1] == 500.0
+        for row in clamped.table.rows
+    )
 
 
 # --------------------------------------------------------------------------

@@ -470,34 +470,21 @@ def _topology_relink_diagnostic(
     effective: cadastro_conv.EffectiveCadastro,
     id_map: DecompIdMap,
 ) -> dx.Diagnostic | None:
-    """The ``cadastro-topology-relinked`` INFO diagnostic,
-    or ``None`` when no operated plant's effective downstream link/inflow
-    gauge differs from the base registry (the byte-identical no-override
-    case).
+    """The ``cadastro-topology-relinked`` INFO, or ``None`` when no operated
+    plant's first-stage cascade differs from ``hidr.dat``.
 
-    Lists every operated plant whose stage-0 effective downstream link
-    (``AC NUMJUS``) or inflow gauge (``AC NUMPOS``) differs from the base
-    ``hidr`` value — the direct, human-readable relink; rv3's own 5
-    ``AC NUMJUS`` rows all take this form (34/43 -> 45, 127/181 -> 129,
-    117 -> 108).
-
-    As a defensive backstop — a precise relink check — also walks the
-    incremental-inflow cascade
-    (:func:`~novomodelo_bridge.decomp.scenarios._incremental_context`) under
-    both *effective* and a base-only cadastro (same registry, no override
-    maps) and compares the resolved ``parents`` maps: an ``AC NUMJUS`` on a
-    non-operated intermediate can change which operated plant receives an
-    upstream plant's water without any operated plant's own link differing,
-    so the direct per-code diff above would miss it. No rv3 row exercises
-    that case, so it is not itemized by name here, but it is never silently
-    dropped either — a tracked-gap warning fires instead of a
-    diagnostic-less, byte-different conversion.
+    Lists each operated plant whose own ``AC NUMJUS`` or ``NUMPOS`` changes
+    its downstream plant or gauge, and each whose next operated plant
+    downstream changes only through an ``AC NUMJUS`` on a plant left out of
+    the case, which the per-plant comparison cannot see.
     """
     base = cadastro_conv.EffectiveCadastro(
         base=effective.base, n_stages=effective.n_stages, stage_varying={}
     )
     _, base_parents = scenarios_conv._incremental_context(base, id_map)
     _, effective_parents = scenarios_conv._incremental_context(effective, id_map)
+    base_next = _next_operated(base_parents)
+    effective_next = _next_operated(effective_parents)
 
     rows: list[list[object]] = []
     affected_codes: set[int] = set()
@@ -510,6 +497,17 @@ def _topology_relink_diagnostic(
                 [code, name, "downstream plant", base_downstream, eff_downstream]
             )
             affected_codes.add(code)
+        elif base_next.get(code, 0) != effective_next.get(code, 0):
+            rows.append(
+                [
+                    code,
+                    name,
+                    "next operated plant",
+                    base_next.get(code, 0),
+                    effective_next.get(code, 0),
+                ]
+            )
+            affected_codes.add(code)
         base_gauge = int(effective.base.loc[code, "posto"])
         eff_gauge = effective.inflow_gauge(code, 0)
         if eff_gauge != base_gauge:
@@ -517,14 +515,6 @@ def _topology_relink_diagnostic(
             affected_codes.add(code)
 
     if not rows:
-        if base_parents != effective_parents:
-            _LOG.warning(
-                "the effective and base incremental-inflow cascades differ, "
-                "but no operated plant's own downstream link or inflow "
-                "gauge changed directly; likely an AC NUMJUS relink on a "
-                "non-operated intermediate -- not itemized by the "
-                "cadastro-topology-relinked diagnostic"
-            )
         return None
 
     return dx.Diagnostic(
@@ -536,15 +526,72 @@ def _topology_relink_diagnostic(
             f"({len(affected_codes)})"
         ),
         summary=(
-            "The listed plants take an AC NUMJUS or NUMPOS register that "
-            "changes their downstream plant or inflow gauge from hidr.dat, as "
-            "in DECOMP."
+            "AC NUMJUS and NUMPOS registers change the downstream plant or "
+            "inflow gauge of the listed plants from hidr.dat, directly or "
+            "through a plant left out of the case, and the conversion follows "
+            "them, as in DECOMP."
         ),
         table=dx.DiagnosticTable(
             columns=["Code", "Name", "Changes", "hidr.dat", "Effective"],
             rows=rows,
             justify=["right", "left", "left", "right", "right"],
             caption="Effective values are those of the first stage.",
+        ),
+    )
+
+
+def _next_operated(parents: Mapping[int, Sequence[int]]) -> dict[int, int]:
+    return {child: parent for parent, children in parents.items() for child in children}
+
+
+def _topology_varies_diagnostic(
+    effective: cadastro_conv.EffectiveCadastro,
+) -> dx.Diagnostic | None:
+    """The ``decomp-ac-topology-varies`` WARNING, or ``None`` when no ``AC
+    NUMJUS``, ``NUMPOS`` or ``JUSENA`` register changes value between stages.
+
+    The case carries one cascade for the whole horizon, so every cascade walk
+    reads these registers at the first stage.
+    """
+    registers: tuple[tuple[str, Mapping[int, Sequence[int | None]]], ...] = (
+        ("AC NUMJUS", effective.downstream_links),
+        ("AC NUMPOS", effective.inflow_gauges),
+        ("AC JUSENA", effective.energy_links),
+    )
+    rows: list[list[object]] = []
+    for register, series_by_code in registers:
+        for code in sorted(series_by_code):
+            series = series_by_code[code]
+            changed = [
+                stage for stage, value in enumerate(series) if value != series[0]
+            ]
+            if not changed:
+                continue
+            name = (
+                str(effective.base.loc[code, "nome_usina"]).strip()
+                if code in effective.base.index
+                else ""
+            )
+            used = "none" if series[0] is None else series[0]
+            rows.append([code, name, register, used, dx.format_stage_ranges(changed)])
+    if not rows:
+        return None
+    return dx.Diagnostic(
+        code="decomp-ac-topology-varies",
+        severity=dx.Severity.WARNING,
+        category="Cadastro overrides",
+        title=f"Cascade registers that change between stages ({len(rows)})",
+        summary=(
+            "The listed AC registers take a different value on later stages, "
+            "but the converted case has one cascade for the whole horizon and "
+            "uses the first stage's value throughout, so on the listed stages "
+            "the water, inflow or stored-energy routing differs from DECOMP's."
+        ),
+        table=dx.DiagnosticTable(
+            columns=["Code", "Name", "Register", "Used", "Differs on stages"],
+            rows=rows,
+            justify=["right", "left", "left", "right", "left"],
+            caption="Stage ids are 0-based.",
         ),
     )
 
@@ -980,6 +1027,9 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     relink_diagnostic = _topology_relink_diagnostic(effective, id_map)
     if relink_diagnostic is not None:
         dx.emit(relink_diagnostic, logger=_LOG)
+    varies_diagnostic = _topology_varies_diagnostic(effective)
+    if varies_diagnostic is not None:
+        dx.emit(varies_diagnostic, logger=_LOG)
     fan_probabilities = scenarios_conv.terminal_fan_probabilities(vazoes, calendar)
 
     tx_register = dadger.tx
@@ -1216,7 +1266,7 @@ def _convert_thermals_with_gnl(
             )
         post_study_stages = dict(gnl.post_study_stages or {})
         _LOG.info(
-            "emitted %d GNL anticipated thermal(s) from dadgnl",
+            "GNL anticipated thermals emitted from dadgnl: %d",
             len(gnl.thermals),
         )
     water_bucket_stages = _water_bucket_stages(
@@ -1514,14 +1564,6 @@ def _released_runofriver_codes(
     unregulated_codes = cadastro_conv.unregulated_runofriver_codes(
         effective, id_map.hydro_codes
     )
-    for code in sorted(unregulated_codes):
-        if effective.downstream_plant_varies(code):
-            _LOG.warning(
-                "plant %d's downstream link (AC NUMJUS) varies across stages; "
-                "the run-of-river minimum-outflow relaxation uses the stage-0 "
-                "effective link for the whole horizon",
-                code,
-            )
     if unregulated_codes:
         dx.emit(
             dx.Diagnostic(

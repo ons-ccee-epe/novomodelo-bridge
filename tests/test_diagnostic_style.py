@@ -4,6 +4,8 @@ Checks the mechanical rules of `.claude/rules/diagnostics.md` on the text of
 each `Diagnostic(...)` and `DiagnosticTable(...)` call that the source spells
 out: literal strings, f-strings, concatenations and conditional expressions.
 A field built at run time (`summary=str(exc)`) is out of reach and skipped.
+Log calls are checked too: a finding is a diagnostic, never a log warning,
+and no log message carries a `(s)` plural marker.
 
 Tier-1: pure ``ast`` and ``pathlib`` -- no ``novomodelo`` import.
 """
@@ -27,6 +29,30 @@ _LOG_PHRASING = re.compile(
 _BOILERPLATE = re.compile(r"no action (needed|required)|informational", re.I)
 _UPPER_FILE = re.compile(r"\b[A-Z][A-Z0-9_]*\.(DAT|RV\d|RVN)\b")
 _PLURAL_MARKER = re.compile(r"\w\((s|es|ies)\)")
+_LOGGERS = frozenset({"_LOG", "logger", "logging"})
+_LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
+_FINDING_LEVELS = frozenset({"warning", "error", "exception", "critical"})
+#: Modules whose log warnings still await conversion to diagnostics. Shrink
+#: it as each is converted; the stale-entry test fails on a module left here.
+_LOG_WARNING_MODULES = frozenset(
+    {
+        "comparators/constraints.py",
+        "comparators/decomp/results.py",
+        "comparators/newave/alignment.py",
+        "comparators/newave/readers.py",
+        "comparators/newave/results.py",
+        "dashboard/data.py",
+        "dashboard/tabs/__init__.py",
+        "dessem/exporters/fcf/core/cross_check.py",
+        "dessem/exporters/fcf/core/mapcut_writer.py",
+        "dessem/exporters/fcf/core/mapper.py",
+        "dessem/exporters/fcf/core/travel_time.py",
+        "dessem/exporters/fcf/eco/audit_raw_cuts.py",
+        "dessem/exporters/fcf/pipeline.py",
+        "novomodelo/case_io.py",
+        "novomodelo/readers.py",
+    }
+)
 
 
 def _texts(node: ast.expr) -> list[str]:
@@ -168,6 +194,50 @@ def _table_violations() -> list[str]:
             if "m3/s" in column
         )
     return sorted(found)
+
+
+def _log_calls() -> Iterator[tuple[str, str, str, ast.Call]]:
+    """``(module, where, level, call)`` for each ``_LOG``/``logger`` call."""
+    for path in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        rel = path.relative_to(_SRC).as_posix()
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _LOG_LEVELS
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in _LOGGERS
+            ):
+                continue
+            yield rel, f"{rel}:{node.lineno}", node.func.attr, node
+
+
+def _log_warning_modules() -> set[str]:
+    return {module for module, _, level, _ in _log_calls() if level in _FINDING_LEVELS}
+
+
+def test_no_finding_is_a_log_warning() -> None:
+    found = sorted(
+        f"{where}: log {level} reports a finding; emit a Diagnostic"
+        for module, where, level, _ in _log_calls()
+        if level in _FINDING_LEVELS and module not in _LOG_WARNING_MODULES
+    )
+    assert found == []
+
+
+def test_log_warning_allowlist_has_no_stale_module() -> None:
+    assert sorted(_LOG_WARNING_MODULES - _log_warning_modules()) == []
+
+
+def test_no_log_message_has_a_plural_marker() -> None:
+    found = sorted(
+        f"{where}: log message has a '(s)' plural marker"
+        for _, where, _, call in _log_calls()
+        if call.args
+        and any(_PLURAL_MARKER.search(text) for text in _texts(call.args[0]))
+    )
+    assert found == []
 
 
 def test_every_diagnostic_follows_the_wording_rules() -> None:

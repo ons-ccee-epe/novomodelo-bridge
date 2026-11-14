@@ -259,12 +259,11 @@ def _log_bypassed_absent_plants(
         absent_name = str(row_by_code[absent_code]["nome_usina"]).strip()
         upstream_names = [str(row_by_code[u]["nome_usina"]).strip() for u in upstreams]
         logger.info(
-            "Bypassing %s plant '%s' (code %d): rewired %d upstream(s) %s "
+            "Bypassing %s plant '%s' (code %d): rewired its upstream plants %s "
             "to its downstream in the cascade.",
             status,
             absent_name,
             absent_code,
-            len(upstreams),
             upstream_names,
         )
 

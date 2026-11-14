@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import calendar
 import datetime
-import logging
 import struct
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -317,10 +316,11 @@ class TestConvertStagesSingleBlock:
 
         from novomodelo_bridge.newave.converters.temporal import convert_stages
 
-        # cvar absent => fallback expectation
-        result = convert_stages(case, _make_id_map_hydros([]))
+        with dx.collect() as found:
+            result = convert_stages(case, _make_id_map_hydros([]))
         for stage in result["stages"]:
             assert stage["risk_measure"] == "expectation"
+        assert [d.code for d in found] == ["cvar-file-absent"]
 
     def test_zero_study_years_raises_value_error(self, tmp_path) -> None:
         dger = _make_dger_mock(num_anos=0)
@@ -385,9 +385,7 @@ class TestBlockFractions:
         assert len(fractions) == 24
         assert fractions[13] == (0.3, 0.4, 0.3)
 
-    def test_a_block_without_a_duration_takes_an_equal_share(
-        self, tmp_path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_a_block_without_a_duration_takes_an_equal_share(self, tmp_path) -> None:
         dger = _make_dger_mock(mes_inicio=1, ano_inicio=2020, num_anos=1)
         patamar = _make_patamar_mock_three_blocks()
         durations = patamar.duracao_mensal_patamares
@@ -396,11 +394,11 @@ class TestBlockFractions:
 
         from novomodelo_bridge.newave.converters.temporal import block_fractions
 
-        with caplog.at_level(logging.WARNING):
+        with dx.collect() as found:
             fractions = block_fractions(case)
         assert fractions[0] == pytest.approx((1 / 3, 1 / 3, 1 / 3))
         assert fractions[1] == (0.3, 0.4, 0.3)
-        assert "No patamar duration" in caplog.text
+        assert [d.code for d in found] == ["patamar-duration-missing"]
 
 
 class TestConvertStagesPreStudy:
@@ -541,20 +539,20 @@ class TestConvertConfig:
         assert result["simulation"]["cut_set"] == "active"
 
     @pytest.mark.parametrize(
-        ("janela", "warned"), [(1, True), (0, False), (None, False)]
+        ("janela", "reported"), [(1, True), (0, False), (None, False)]
     )
-    def test_the_cut_window_is_warned_about_and_changes_no_cut_setting(
-        self, tmp_path, caplog, janela: int | None, warned: bool
+    def test_the_cut_window_is_reported_and_changes_no_cut_setting(
+        self, tmp_path, janela: int | None, reported: bool
     ) -> None:
         dger = _make_dger_mock(janela_de_cortes=janela)
         case = make_case(tmp_path, dger=dger)
 
         from novomodelo_bridge.newave.converters.temporal import convert_config
 
-        with caplog.at_level(logging.WARNING, logger="novomodelo_bridge"):
+        with dx.collect() as found:
             result = convert_config(case)
 
-        assert ("janela_de_cortes=1" in caplog.text) is warned
+        assert ("cut-window-not-converted" in {d.code for d in found}) is reported
         assert result["simulation"]["cut_set"] == "active"
 
     def test_num_scenarios_from_num_series(self, tmp_path) -> None:
@@ -1017,9 +1015,32 @@ class TestConvertConfig:
 
         from novomodelo_bridge.newave.converters.temporal import convert_config
 
-        result = convert_config(case)
+        with dx.collect() as found:
+            result = convert_config(case)
         src = result["simulation"]["scenario_source"]
         assert src["historical_years"] == {"from": 1932, "to": 1932}
+        assert [d.code for d in found] == ["shist-range-collapsed"]
+
+    def test_shist_empty_start_year_list_simulates_the_year_before_the_study(
+        self, tmp_path
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=1,
+            tipo_simulacao_final=2,
+            ano_inicio=2026,
+        )
+        mock_shist = MagicMock()
+        mock_shist.varredura = 0
+        mock_shist.anos_inicio_simulacoes = []
+        case = make_case(tmp_path, dger=dger, shist=mock_shist)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+        src = result["simulation"]["scenario_source"]
+        assert src["historical_years"] == [2025]
+        assert [d.code for d in found] == ["shist-start-years-empty"]
 
     def test_shist_absent_falls_back_to_legacy_range(self, tmp_path) -> None:
         """When shist.dat is not in NewaveFiles, fall back to the pre-Shist
@@ -1179,8 +1200,21 @@ class TestConvertConfig:
         for value in (1, 2):
             dger = _make_dger_mock(consideracao_media_anual_afluencias=value)
             case = make_case(tmp_path, dger=dger)
-            result = convert_config(case)
+            with dx.collect() as found:
+                result = convert_config(case)
             assert result["estimation"]["order_selection"] == "pacf_annual"
+            assert [d.code for d in found] == ["par-annual-variant-approximated"]
+
+    def test_order_selection_unknown_option_fits_option_three(self, tmp_path) -> None:
+        dger = _make_dger_mock(consideracao_media_anual_afluencias=7)
+        case = make_case(tmp_path, dger=dger)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+        assert result["estimation"]["order_selection"] == "pacf_annual"
+        assert [d.code for d in found] == ["par-annual-option-unknown"]
 
 
 # ---------------------------------------------------------------------------
@@ -2047,24 +2081,119 @@ class TestLoadFactorsWithoutBlockFactors:
         )
         return convert_load_factors(case, self._ID_MAP)
 
-    def test_single_block_needs_no_factors_and_is_not_reported(
-        self, tmp_path, caplog
-    ) -> None:
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="novomodelo_bridge"):
+    def test_single_block_needs_no_factors_and_is_not_reported(self, tmp_path) -> None:
+        with dx.collect() as found:
             result = self._convert(tmp_path, 1)
 
         assert result["load_factors"] == []
-        assert caplog.text == ""
+        assert found == []
 
-    def test_multi_block_without_factors_names_the_deck_file(
-        self, tmp_path, caplog
-    ) -> None:
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="novomodelo_bridge"):
+    def test_multi_block_without_factors_names_the_deck_file(self, tmp_path) -> None:
+        with dx.collect() as found:
             result = self._convert(tmp_path, 3)
 
         assert result["load_factors"] == []
-        assert "patamar.eas declares 3 load blocks" in caplog.text
+        [diagnostic] = found
+        assert diagnostic.code == "patamar-load-factors-missing"
+        assert diagnostic.summary.startswith("patamar.eas declares 3 load blocks")
+
+    def test_factors_of_an_undeclared_subsystem_are_reported(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import convert_load_factors
+
+        patamar = MagicMock(
+            numero_patamares=2,
+            carga_patamares=pd.DataFrame(
+                [
+                    {
+                        "codigo_submercado": sub,
+                        "data": datetime.datetime(2020, 1, 1),
+                        "patamar": block,
+                        "valor": 1.0,
+                    }
+                    for sub in (1, 9)
+                    for block in (1, 2)
+                ]
+            ),
+        )
+        case = make_case(tmp_path, patamar=patamar, dger=_make_dger_mock(num_anos=1))
+
+        with dx.collect() as found:
+            result = convert_load_factors(case, self._ID_MAP)
+
+        assert {f["bus_id"] for f in result["load_factors"]} == {0}
+        [undeclared] = found
+        assert undeclared.code == "load-factor-subsystem-undeclared"
+        assert undeclared.table is not None
+        assert undeclared.table.rows == [[9]]
+
+
+class TestLoadInputFindings:
+    """Load and inflow inputs the converters cannot use are reported."""
+
+    _ID_MAP = NewaveIdMap(subsystem_ids=[1], hydro_codes=[], thermal_codes=[])
+
+    @staticmethod
+    def _sistema(*subsystems: int) -> MagicMock:
+        sistema = MagicMock()
+        sistema.mercado_energia = pd.DataFrame(
+            [
+                {
+                    "codigo_submercado": sub,
+                    "data": datetime.datetime(2024, month, 1),
+                    "valor": 1000.0,
+                }
+                for sub in subsystems
+                for month in (1, 2)
+            ]
+        )
+        return sistema
+
+    def test_energy_market_of_an_undeclared_subsystem(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import convert_load_stats
+
+        case = make_case(
+            tmp_path,
+            sistema=self._sistema(1, 9),
+            dger=_make_load_stats_dger_mock(ano_inicio=2024, num_anos=1),
+        )
+
+        with dx.collect() as found:
+            df = convert_load_stats(case, self._ID_MAP).to_pydict()
+
+        assert set(df["bus_id"]) == {0}
+        [undeclared] = found
+        assert undeclared.code == "load-subsystem-undeclared"
+        assert undeclared.table is not None
+        assert undeclared.table.rows == [[9]]
+
+    @patch("novomodelo_bridge.newave.converters.stochastic.Cadic")
+    def test_unreadable_additional_load_leaves_the_market_alone(
+        self, mock_cadic_cls, tmp_path
+    ) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import convert_load_stats
+
+        mock_cadic_cls.read.side_effect = ValueError("bad record")
+        case = make_case(
+            make_nw_files(tmp_path, c_adic=tmp_path / "c_adic.dat"),
+            sistema=self._sistema(1),
+            dger=_make_load_stats_dger_mock(ano_inicio=2024, num_anos=1),
+        )
+
+        with dx.collect() as found:
+            df = convert_load_stats(case, self._ID_MAP).to_pydict()
+
+        assert df["mean_mw"][:2] == [pytest.approx(1000.0), pytest.approx(1000.0)]
+        assert [d.code for d in found] == ["c-adic-unreadable"]
+
+    def test_unreadable_inflow_tendency_gives_no_recent_inflows(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.stochastic import _vazpast_incremental
+
+        case = make_case(make_nw_files(tmp_path, vazpast=tmp_path / "vazpast.dat"))
+
+        with (
+            patch("novomodelo_bridge.newave.case.Vazpast.read", side_effect=ValueError),
+            dx.collect() as found,
+        ):
+            assert _vazpast_incremental(case, self._ID_MAP) == {}
+
+        assert [d.code for d in found] == ["vazpast-unreadable"]

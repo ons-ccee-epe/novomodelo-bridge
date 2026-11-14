@@ -25,6 +25,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
     format_stage_ranges,
+    unreadable_file_diagnostic,
 )
 from novomodelo_bridge.core.pandas_utils import as_int, as_timestamp
 from novomodelo_bridge.newave.case import NewaveCase
@@ -497,8 +498,21 @@ class _StageBoundsModel:
                             "data_fim": row["data_fim"],
                         }
                     )
-        except Exception:
-            _LOG.warning("expt.dat could not be parsed; EXPT overrides skipped.")
+        except Exception as exc:
+            emit(
+                unreadable_file_diagnostic(
+                    code="expt-unreadable",
+                    file_name="expt.dat",
+                    category="Thermal bounds",
+                    effect=(
+                        "the case has none of the thermal capacity and "
+                        "minimum-generation changes it gives, and the thermal "
+                        "plants' limits differ from NEWAVE's."
+                    ),
+                    exc=exc,
+                ),
+                logger=_LOG,
+            )
 
         potef_windows: dict[int, list[tuple[date, date]]] = {}
         gtmin_windows: dict[int, list[tuple[date, date]]] = {}
@@ -530,10 +544,20 @@ class _StageBoundsModel:
             try:
                 manutt = case.manutt
                 manutt_df = manutt.manutencoes if manutt is not None else None
-            except Exception:
-                _LOG.warning(
-                    "%s could not be parsed; maintenance skipped.",
-                    case.files.manutt.name,
+            except Exception as exc:
+                emit(
+                    unreadable_file_diagnostic(
+                        code="manutt-unreadable",
+                        file_name=case.files.manutt.name.lower(),
+                        category="Thermal bounds",
+                        effect=(
+                            "the case has none of the thermal maintenance it "
+                            "schedules, and the thermal plants stay available "
+                            "where NEWAVE takes them out."
+                        ),
+                        exc=exc,
+                    ),
+                    logger=_LOG,
                 )
         # A file with no maintenance record reads as None: no maintenance.
         if manutt_df is not None:

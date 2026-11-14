@@ -1200,7 +1200,7 @@ class TestGnlWiring:
         thermal_matches = [
             r
             for r in caplog.records
-            if "emitted 2 GNL anticipated thermal(s) from dadgnl" in r.message
+            if "GNL anticipated thermals emitted from dadgnl: 2" in r.message
         ]
         assert len(thermal_matches) == 1
         assert not any(

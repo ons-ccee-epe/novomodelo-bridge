@@ -13,8 +13,12 @@ from novomodelo_bridge.core.productivity import (
     equivalent_productivity,
     equivalent_productivity_from_coeffs,
     evaluate_cota,
+    forebay_curve_missing_diagnostic,
     fpha_efficiency,
+    fpha_efficiency_capped_diagnostic,
+    fpha_efficiency_capped_row,
     fpha_spillage_fit_max_m3s,
+    has_forebay_curve,
     hydraulic_generation_mw,
     integrated_productivity,
     mean_cota,
@@ -85,7 +89,7 @@ def test_equivalent_vs_integrated_agree_on_linear_polynomial() -> None:
     assert equivalent_productivity(hreg) == pytest.approx(integrated_productivity(hreg))
 
 
-def test_equivalent_productivity_from_coeffs_all_zero_guard_warns(
+def test_equivalent_productivity_from_coeffs_all_zero_is_zero_without_a_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.WARNING, logger="novomodelo_bridge.core.productivity"):
@@ -97,13 +101,23 @@ def test_equivalent_productivity_from_coeffs_all_zero_guard_warns(
             canal_fuga_m=10.0,
             tipo_perda=0,
             perdas=0.0,
-            plant_name="Z",
         )
 
     assert result == 0.0
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warnings
-    assert any(getattr(record, "plant", None) == "Z" for record in warnings)
+    assert caplog.records == []
+
+
+def test_forebay_curve_is_missing_only_when_every_coefficient_is_zero() -> None:
+    assert has_forebay_curve([0.0, 0.0, 0.0, 0.0, 0.0]) is False
+    assert has_forebay_curve([0.0, 0.0, 1e-9, 0.0, 0.0]) is True
+
+
+def test_forebay_curve_missing_diagnostic_counts_the_listed_plants() -> None:
+    diagnostic = forebay_curve_missing_diagnostic([[1, "A", "0-3"], [2, "B", "5"]])
+    assert diagnostic.code == "hydro-forebay-curve-missing"
+    assert diagnostic.title == "Plants without a forebay curve (2)"
+    assert diagnostic.table is not None
+    assert diagnostic.table.columns == ["Code", "Name", "Stages"]
 
 
 def test_equivalent_productivity_from_coeffs_negative_head_clamped_to_zero() -> None:
@@ -117,7 +131,6 @@ def test_equivalent_productivity_from_coeffs_negative_head_clamped_to_zero() -> 
         canal_fuga_m=50.0,
         tipo_perda=0,
         perdas=0.0,
-        plant_name="NEG",
     )
     assert result == 0.0
     assert result >= 0.0
@@ -150,7 +163,6 @@ def test_equivalent_productivity_agrees_with_coeffs_core_on_positive_head() -> N
         canal_fuga_m=float(hreg["canal_fuga_medio"]),
         tipo_perda=int(hreg["tipo_perda"]),
         perdas=float(hreg["perdas"]),
-        plant_name=str(hreg["nome_usina"]),
     )
     assert core_value > 0.0
     assert equivalent_productivity(hreg) == pytest.approx(core_value)
@@ -159,22 +171,31 @@ def test_equivalent_productivity_agrees_with_coeffs_core_on_positive_head() -> N
 class TestFphaEfficiency:
     def test_realistic_rho_esp_round_trips_to_rho_esp_over_k(self) -> None:
         rho_esp = 0.00892
-        eta = fpha_efficiency(rho_esp, "USINA")
+        eta = fpha_efficiency(rho_esp)
         assert eta == pytest.approx(rho_esp / _K)
         assert 0.0 < eta <= 1.0
 
     def test_unphysical_rho_esp_clamped_to_one(self) -> None:
         # rho_esp >> K would imply eta > 1; novomodelo requires (0, 1].
-        assert fpha_efficiency(0.9, "USINA") == 1.0
+        assert fpha_efficiency(0.9) == 1.0
 
-    def test_clamp_warns_naming_the_plant(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with caplog.at_level(
-            logging.WARNING, logger="novomodelo_bridge.core.productivity"
-        ):
-            fpha_efficiency(0.9, "CLAMPED PLANT")
-        assert any("CLAMPED PLANT" in record.getMessage() for record in caplog.records)
+    def test_capped_row_names_the_plant_and_its_implied_efficiency(self) -> None:
+        assert fpha_efficiency_capped_row(7, "CAPPED", 0.9) == [
+            7,
+            "CAPPED",
+            round(0.9 / _K, 4),
+        ]
+
+    def test_realistic_rho_esp_has_no_capped_row(self) -> None:
+        assert fpha_efficiency_capped_row(7, "FINE", 0.00892) is None
+
+    def test_capped_diagnostic_is_a_warning_with_one_row_per_plant(self) -> None:
+        rows = [[7, "A", 91.7], [9, "B", 1.02]]
+        diagnostic = fpha_efficiency_capped_diagnostic(rows)
+        assert diagnostic.code == "fpha-efficiency-capped"
+        assert diagnostic.severity.name == "WARNING"
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == rows
 
 
 class TestFphaSpillageFitMax:

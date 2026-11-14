@@ -902,7 +902,7 @@ def import_boundary_fcf(
     _patch_policy_boundary(writer, config)
     _seed_recent_observations(writer, coupling.recent_observations, initial_conditions)
     _LOG.info(
-        "boundary FCF: seeded %d recent-observation window(s) on the coupling postos",
+        "boundary FCF: recent-observation windows seeded on the coupling postos: %d",
         len(coupling.recent_observations),
     )
 

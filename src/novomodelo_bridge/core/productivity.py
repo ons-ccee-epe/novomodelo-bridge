@@ -27,15 +27,13 @@ its own callers.
 
 from __future__ import annotations
 
-import logging
 import math
 from collections.abc import Sequence
 
 import pandas as pd
 
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.incremental_inflow import is_artificial_gauge
-
-_LOG = logging.getLogger(__name__)
 
 # --- FPHA turbine efficiency ------------------------------------------------
 #
@@ -47,22 +45,72 @@ _LOG = logging.getLogger(__name__)
 _GRAVITY_MW_FACTOR = 9.81e-3
 
 
-def fpha_efficiency(rho_esp: float, name: str) -> float:
-    """Dimensionless turbine efficiency ``eta = rho_esp / K`` for novomodelo's FPHA.
+def fpha_efficiency(rho_esp: float) -> float:
+    """Dimensionless turbine efficiency ``eta = rho_esp / K`` for novomodelo's FPHA,
+    capped at ``1.0`` where the source ``rho_esp`` implies an unphysical ``eta > 1``
+    (:func:`fpha_efficiency_capped_row` reports it)."""
+    return min(rho_esp / _GRAVITY_MW_FACTOR, 1.0)
 
-    Clamped to ``1.0`` if the source ``rho_esp`` implies ``eta > 1`` (unphysical
-    in the input data), with a warning.
-    """
+
+def fpha_efficiency_capped_row(
+    code: int, name: str, rho_esp: float
+) -> list[object] | None:
+    """The :func:`fpha_efficiency_capped_diagnostic` row of a plant whose
+    ``rho_esp`` implies an efficiency above 1, else ``None``."""
     eta = rho_esp / _GRAVITY_MW_FACTOR
-    if eta > 1.0:
-        _LOG.warning(
-            "FPHA turbine efficiency for plant %s implied by rho_esp is %.4f "
-            "(> 1.0); clamping to 1.0.",
-            name,
-            eta,
-        )
-        return 1.0
-    return eta
+    return [code, name, round(eta, 4)] if eta > 1.0 else None
+
+
+def fpha_efficiency_capped_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic:
+    """WARNING listing the FPHA plants whose efficiency :func:`fpha_efficiency` capped."""
+    return Diagnostic(
+        code="fpha-efficiency-capped",
+        severity=Severity.WARNING,
+        category="Hydro production model",
+        title=f"FPHA plants with a turbine efficiency above 1 capped ({len(rows)})",
+        summary=(
+            "The specific productivity of the listed FPHA plants implies a "
+            "turbine efficiency above 1, which Novomodelo's production function "
+            "cannot take, so the conversion caps it at 1, and these plants "
+            "generate less than in the source model for the same flow and head."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Implied efficiency"],
+            rows=rows,
+            justify=["right", "left", "right"],
+        ),
+        remediation="Correct the specific productivity of each listed plant.",
+    )
+
+
+def has_forebay_curve(coeffs: Sequence[float]) -> bool:
+    """Whether the volume-elevation polynomial ``a0..a4`` has a nonzero term;
+    an all-zero one is missing registry data, and every productivity built
+    on it is zero."""
+    return any(c != 0.0 for c in coeffs)
+
+
+def forebay_curve_missing_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic:
+    """WARNING listing the ``(code, name, stages)`` plants that fail
+    :func:`has_forebay_curve`."""
+    return Diagnostic(
+        code="hydro-forebay-curve-missing",
+        severity=Severity.WARNING,
+        category="Hydro production model",
+        title=f"Plants without a forebay curve ({len(rows)})",
+        summary=(
+            "Every coefficient of the listed plants' volume-elevation "
+            "polynomial is zero, so the case gives them zero productivity on "
+            "the listed stages, and they generate nothing there."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Stages"],
+            rows=rows,
+            justify=["right", "left", "left"],
+            caption="Stage ids are 0-based.",
+        ),
+        remediation="Give each listed plant its volume-elevation polynomial in hidr.dat.",
+    )
 
 
 def fpha_spillage_fit_max_m3s(
@@ -162,7 +210,6 @@ def equivalent_productivity_from_coeffs(
     tipo_perda: int,
     perdas: float,
     reference_volume_hm3: float | None = None,
-    plant_name: str = "unknown",
 ) -> float:
     """The settled equivalent-productivity physics: ``ρ_eq = ρ_esp · h_net``.
 
@@ -173,20 +220,14 @@ def equivalent_productivity_from_coeffs(
     (:func:`evaluate_cota`) when a caller supplies one (the point/generation
     anchor DECOMP passes as the plant's initial volume).
 
-    All-zero ``coeffs`` mean the plant has no forebay curve at all
-    (missing/degenerate registry data): logs a WARNING naming ``plant_name``
-    and returns ``0.0`` before any anchor is computed.
+    All-zero ``coeffs`` (no forebay curve, :func:`has_forebay_curve`) give
+    ``0.0`` before any anchor is computed.
 
     Net head cannot go negative — a tailrace at or above the forebay level
     means the plant physically cannot generate — so the result is clamped to
     ``0.0`` rather than returning a nonsense negative ``ρ_eq``.
     """
-    if all(c == 0.0 for c in coeffs):
-        _LOG.warning(
-            "All volume_cota coefficients are zero for plant; "
-            "returning zero equivalent productivity.",
-            extra={"plant": plant_name},
-        )
+    if not has_forebay_curve(coeffs):
         return 0.0
 
     if reference_volume_hm3 is None:
@@ -236,12 +277,7 @@ def compute_productivity(
     if cmont_override is not None:
         net_drop = cmont_override - canal_fuga
     else:
-        if all(c == 0.0 for c in coeffs):
-            _LOG.warning(
-                "All volume_cota coefficients are zero for plant; "
-                "returning zero productivity.",
-                extra={"plant": hreg.get("nome_usina", "unknown")},
-            )
+        if not has_forebay_curve(coeffs):
             return 0.0
 
         vol_min = float(hreg["volume_minimo"])
@@ -317,7 +353,6 @@ def equivalent_productivity(
         tipo_perda=tipo_perda,
         perdas=perdas,
         reference_volume_hm3=None,
-        plant_name=hreg.get("nome_usina", "unknown"),
     )
 
 
@@ -352,12 +387,7 @@ def integrated_productivity(
         net_drop = cmont_override - cf
     else:
         coeffs = [float(hreg[f"a{i}_volume_cota"]) for i in range(5)]
-        if all(c == 0.0 for c in coeffs):
-            _LOG.warning(
-                "All volume_cota coefficients are zero for plant; "
-                "returning zero integrated productivity.",
-                extra={"plant": hreg.get("nome_usina", "unknown")},
-            )
+        if not has_forebay_curve(coeffs):
             return 0.0
 
         vmin = float(hreg["volume_minimo"])
