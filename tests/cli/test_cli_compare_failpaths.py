@@ -1,16 +1,16 @@
 """``compare`` early-exit fail-paths routed through ``_fail``.
 
 Covers the three compare failures ``_load_compare_context`` (source-model case
-missing, exit 1), ``_export_compare_artifacts`` (bad ``--format``, exit 2), and
+missing, exit 1), ``_resolve_compare_formats`` (bad ``--format``, exit 2), and
 the two compare handlers' read-error ``except`` blocks (exit 2) now go
 through — each emits a valid ``--json`` error envelope on stdout instead of
 staying empty/stderr-only, and a plain run still renders the diagnostic to
-stderr. The missing-case and read-error conditions fail before any primary
-result is printed, so their plain-mode stdout is empty; the bad-``--format``
-condition fails only after the compare itself already ran, so its plain-mode
-stdout still carries the (untouched) results summary. Tier-1: no ``novomodelo``
-import at module scope; all inputs are synthetic/mocked, never a gitignored
-``example/`` deck.
+stderr. All three fail before any primary result is printed, so their
+plain-mode stdout is empty; a bad ``--format`` fails before the comparison
+runs at all. Also covers the diagnostics the HTML report emits while it is
+built, which must reach the run's notes, ``comparison.json`` manifest and
+``--json`` envelope. Tier-1: no ``novomodelo`` import at module scope; all inputs are
+synthetic/mocked, never a gitignored ``example/`` deck.
 """
 
 from __future__ import annotations
@@ -22,8 +22,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 if TYPE_CHECKING:
-    import pytest
+    from novomodelo_bridge.comparators.dataset import ComparisonDataset
 
 
 def _invoke_main(
@@ -72,7 +74,7 @@ def _patch_compare_context(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _fake_results_dataset() -> object:
+def _fake_results_dataset() -> ComparisonDataset:
     """A one-row within-tol dataset built through the shared assembly kernel."""
     from novomodelo_bridge.comparators.analyze import build_results_dataset
     from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
@@ -92,6 +94,14 @@ def _fake_results_dataset() -> object:
         ),
     ]
     return build_results_dataset(results, PercentileData(), 1e-2)
+
+
+def _fake_decomp_dataset() -> ComparisonDataset:
+    """:func:`_fake_results_dataset` plus the ``unmapped`` metadata the DECOMP
+    summary reads."""
+    dataset = _fake_results_dataset()
+    dataset.metadata["unmapped"] = {"hydro": [], "thermal": [], "bus": []}
+    return dataset
 
 
 class TestCompareNewaveMissingSourceCase:
@@ -144,8 +154,12 @@ class TestCompareNewaveMissingSourceCase:
         assert "caso.dat not found" in stderr
 
 
+def _never_compared(**_kwargs: object) -> object:
+    raise AssertionError("the comparison ran despite a bad --format")
+
+
 class TestCompareNewaveBadFormat:
-    """``_export_compare_artifacts``'s ``ValueError`` -> ``_fail(..., 2)``."""
+    """``_resolve_compare_formats``'s ``ValueError`` -> ``_fail(..., 2)``."""
 
     def test_json_emits_error_envelope_exit_2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -153,7 +167,7 @@ class TestCompareNewaveBadFormat:
         _patch_compare_context(monkeypatch)
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.newave.results.compare_results",
-            lambda **k: _fake_results_dataset(),
+            _never_compared,
         )
         novomodelo_dir = tmp_path / "novomodelo"
         novomodelo_dir.mkdir()
@@ -178,17 +192,15 @@ class TestCompareNewaveBadFormat:
         assert "bogus" in document["diagnostics"][0]["summary"]
         assert stderr == ""
 
-    def test_plain_stderr_diagnostic_exit_2(
+    def test_plain_fails_before_comparing_exit_2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Unlike the other two conditions, ``--format`` fails AFTER the compare
-        already ran, so the results summary (the untouched primary-render path)
-        still reaches stdout; only the diagnostic — not the whole result — moves
-        to stderr. Mirrors the pre-existing ``bogus`` stderr/exit-2 assertions."""
+        """A bad ``--format`` stops the run before the comparison, so nothing
+        reaches stdout and the diagnostic goes to stderr."""
         _patch_compare_context(monkeypatch)
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.newave.results.compare_results",
-            lambda **k: _fake_results_dataset(),
+            _never_compared,
         )
         novomodelo_dir = tmp_path / "novomodelo"
         novomodelo_dir.mkdir()
@@ -206,8 +218,41 @@ class TestCompareNewaveBadFormat:
         )
 
         assert code == 2
-        assert "variables close" in stdout
+        assert stdout == ""
         assert "bogus" in stderr
+
+
+class TestCompareDecompBadFormat:
+    """The DECOMP track rejects a bad ``--format`` the same way, before it
+    reads the deck: a deck directory that does not exist still exits 2."""
+
+    def test_json_emits_error_envelope_exit_2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
+            _never_compared,
+        )
+
+        code, stdout, stderr = _invoke_main(
+            [
+                "compare",
+                "decomp",
+                str(tmp_path / "no-deck"),
+                str(tmp_path),
+                "--format",
+                "bogus",
+                "--json",
+            ],
+            monkeypatch,
+        )
+
+        assert code == 2
+        document = json.loads(stdout)
+        assert document["command"] == "compare decomp"
+        assert document["status"] == "error"
+        assert "bogus" in document["diagnostics"][0]["summary"]
+        assert stderr == ""
 
 
 class TestCompareDecompReadError:
@@ -255,6 +300,110 @@ class TestCompareDecompReadError:
         assert code == 2
         assert stdout == ""
         assert "bad parquet partition" in stderr
+
+
+_REPORT_NOTE = "emitted while the HTML report is built"
+
+
+def _report_that_emits(_dataset: object, *, reference_label: str) -> str:
+    from novomodelo_bridge.core import diagnostics as dx
+
+    dx.emit(
+        dx.Diagnostic(
+            code="report-time-note",
+            severity=dx.Severity.WARNING,
+            category="Compare data",
+            title="Report note",
+            summary=_REPORT_NOTE,
+        )
+    )
+    return f"<html>{reference_label}</html>"
+
+
+class TestCompareReportDiagnosticsReachTheRun:
+    """A diagnostic the HTML report's charts emit while it is built (the
+    per-bus hydro lookup's, for one) lands in the ``--json`` envelope, the
+    ``comparison.json`` manifest and the plain-mode notes, on both tracks."""
+
+    @staticmethod
+    def _invoke(
+        track: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        decomp_deck: Path,
+        *extra: str,
+    ) -> tuple[int, str, str, Path]:
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.report_builder.build_comparison_report",
+            _report_that_emits,
+        )
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
+        if track == "newave":
+            _patch_compare_context(monkeypatch)
+            monkeypatch.setattr(
+                "novomodelo_bridge.comparators.newave.results.compare_results",
+                lambda **k: _fake_results_dataset(),
+            )
+            source = tmp_path / "nw"
+        else:
+            monkeypatch.setattr(
+                "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
+                lambda *a, **k: _fake_decomp_dataset(),
+            )
+            source = decomp_deck
+        out_dir = tmp_path / "artifacts"
+        code, stdout, stderr = _invoke_main(
+            [
+                "compare",
+                track,
+                str(source),
+                str(novomodelo_dir),
+                "--format",
+                "html,json",
+                "--out-dir",
+                str(out_dir),
+                *extra,
+            ],
+            monkeypatch,
+        )
+        return code, stdout, stderr, out_dir
+
+    @pytest.mark.parametrize("track", ["newave", "decomp"])
+    def test_json_envelope_and_manifest_carry_it(
+        self,
+        track: str,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, stdout, _stderr, out_dir = self._invoke(
+            track, tmp_path, monkeypatch, decomp_mini_deck, "--json"
+        )
+
+        assert code == 0
+        envelope_codes = [d["code"] for d in json.loads(stdout)["diagnostics"]]
+        assert "report-time-note" in envelope_codes
+        manifest = json.loads((out_dir / "comparison.json").read_text(encoding="utf-8"))
+        assert "report-time-note" in [d["code"] for d in manifest["diagnostics"]]
+        assert (out_dir / "report.html").read_text(encoding="utf-8") == (
+            f"<html>{track.upper()}</html>"
+        )
+
+    @pytest.mark.parametrize("track", ["newave", "decomp"])
+    def test_plain_notes_show_it(
+        self,
+        track: str,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, _stdout, stderr, _out_dir = self._invoke(
+            track, tmp_path, monkeypatch, decomp_mini_deck
+        )
+
+        assert code == 0
+        assert _REPORT_NOTE in stderr
 
 
 class TestCompareNewaveSuccessStillExitsZero:
