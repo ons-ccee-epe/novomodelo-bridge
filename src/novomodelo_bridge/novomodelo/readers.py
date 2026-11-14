@@ -37,6 +37,7 @@ from novomodelo_bridge.novomodelo.case_io import (
     case_dir_for,
     resolve_hydro_productivities,
 )
+from novomodelo_bridge.novomodelo.constraint_expr import BLOCK_HOURS_SCHEMA
 from novomodelo_bridge.novomodelo.cost_categories import (
     NOVOMODELO_COST_COMPONENT_COLUMNS,
 )
@@ -90,13 +91,7 @@ def _load_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame | None:
                 for block in stage.get("blocks", [])
             ]
             if rows:
-                return pl.DataFrame(rows).cast(
-                    {
-                        "stage_id": pl.Int32,
-                        "block_id": pl.Int32,
-                        "hours": pl.Float64,
-                    }
-                )
+                return pl.DataFrame(rows).cast(BLOCK_HOURS_SCHEMA)
         except Exception:
             continue
     return None
@@ -155,6 +150,14 @@ def _weighted_stage_mean(
     final_aggs = [pl.col(c).mean() for c in value_cols + stage_level_cols]
 
     return with_means.drop(drop_cols).group_by(id_col, "stage_id").agg(final_aggs)
+
+
+def read_novomodelo_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """``stage_id``/``block_id``/``hours`` from ``stages.json`` (empty when absent)."""
+    block_hours = _load_block_hours(novomodelo_output_dir)
+    if block_hours is None:
+        return pl.DataFrame(schema=BLOCK_HOURS_SCHEMA)
+    return block_hours
 
 
 def read_novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:

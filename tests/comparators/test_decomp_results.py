@@ -34,10 +34,10 @@ from novomodelo_bridge.comparators.decomp.results import (
     build_decomp_dataset,
 )
 from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
+from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
-    GC_STAGE_HOURS,
     _aligned_fixture,
     _no_dec_oper,
     _patch_aligned_frames,
@@ -817,6 +817,6 @@ class TestBuildDecompDatasetSingleParse:
         assert nw_row["constraint_id"] == 0
         assert nw_row["stage_id"] == 0
         # valor_MW (stage-average MW) over the stage's hours, in MWh.
-        assert nw_row["lhs_value"] == pytest.approx(2951.58 * GC_STAGE_HOURS)
+        assert nw_row["lhs_value"] == pytest.approx(2951.58 * MEAN_MONTH_HOURS)
         cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}

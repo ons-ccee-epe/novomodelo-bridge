@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -12,10 +13,17 @@ import plotly.graph_objects as go
 from novomodelo_bridge.ui.html.document import json_for_script
 from novomodelo_bridge.ui.theme import hex_to_rgba
 
+#: A horizontal legend anchored to the bottom of the figure: Plotly grows the
+#: bottom margin to fit however many rows it wraps into, so it never reaches
+#: the title. The rows take the whole margin, so the x-axis needs
+#: ``automargin`` to stack its tick labels and title above them instead of
+#: under them: the ``plotly_white`` template turns it on for a Python figure,
+#: and a layout plotly.js draws, which ignores a template name, sets it itself.
 LEGEND_DEFAULTS: dict = dict(
     orientation="h",
+    yref="container",
+    y=0,
     yanchor="bottom",
-    y=1.02,
     xanchor="center",
     x=0.5,
     font=dict(size=11),
@@ -115,22 +123,53 @@ def stage_x_dates(stage_ids: Sequence[int], stage_dates: dict[int, str]) -> list
     return [stage_dates.get(int(s), str(s)) for s in stage_ids]
 
 
+#: Most stage ticks an axis labels: eight "Mmm YYYY" labels fit a half-width
+#: chart card.
+MAX_STAGE_TICKS = 8
+
+#: Stage strides :func:`stage_axis_ticks` tries in turn; for monthly stages they
+#: are whole fractions of a year.
+_STAGE_TICK_STRIDES = (1, 2, 3, 6, 12, 24)
+
+
+def stage_axis_ticks(
+    x_dates: Sequence[str], x_labels: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    """Tick positions and texts for a stage axis: every stage from the first
+    at the smallest stride that labels at most :data:`MAX_STAGE_TICKS`."""
+    n = len(x_dates)
+    stride = next(
+        (s for s in _STAGE_TICK_STRIDES if math.ceil(n / s) <= MAX_STAGE_TICKS),
+        math.ceil(n / MAX_STAGE_TICKS),
+    )
+    return list(x_dates)[::stride], list(x_labels)[::stride]
+
+
+def stage_date_xaxis(x_dates: Sequence[str], x_labels: Sequence[str]) -> dict:
+    """A proportionally-spaced stage-date x-axis, as Plotly axis properties.
+
+    The axis is ``type="date"`` with its ticks pinned to the stage dates
+    (*x_dates*, the trace x-positions) and rendered with the compact
+    *x_labels* as tick text, thinned by :func:`stage_axis_ticks`. Stages thus
+    plot at their real calendar spacing while the axis keeps readable date
+    labels. A JavaScript layout embeds the dict as JSON.
+    """
+    tickvals, ticktext = stage_axis_ticks(x_dates, x_labels)
+    return dict(
+        type="date",
+        tickmode="array",
+        tickvals=tickvals,
+        ticktext=ticktext,
+        automargin=True,
+    )
+
+
 def apply_stage_date_axis(
     fig: go.Figure, x_dates: Sequence[str], x_labels: Sequence[str]
 ) -> go.Figure:
-    """Make *fig*'s x-axis a proportionally-spaced stage-date axis.
-
-    Sets ``type="date"`` and pins the ticks to the stage dates (*x_dates*, the
-    trace x-positions) rendered with the compact *x_labels* as tick text. Stages
-    thus plot at their real calendar spacing while the axis keeps the readable
-    date labels. Mutates *fig* in place and returns it.
-    """
-    fig.update_xaxes(
-        type="date",
-        tickmode="array",
-        tickvals=list(x_dates),
-        ticktext=list(x_labels),
-    )
+    """Give every x-axis of *fig* the :func:`stage_date_xaxis`; mutates *fig*
+    in place and returns it."""
+    fig.update_xaxes(**stage_date_xaxis(x_dates, x_labels))
     return fig
 
 
@@ -344,6 +383,7 @@ def plotly_div(
     layout.setdefault("height", height)
     layout.setdefault("margin", MARGIN_DEFAULTS)
     layout.setdefault("legend", LEGEND_DEFAULTS)
+    layout["xaxis"] = {"automargin": True, **layout.get("xaxis", {})}
     layout.setdefault("template", "plotly_white")
     layout.setdefault("hovermode", "x unified")
     _normalize_plotly_titles(layout)

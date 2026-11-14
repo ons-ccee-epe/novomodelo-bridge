@@ -37,6 +37,8 @@ from novomodelo_bridge.ui.html.plotly import (
     MARGIN_DEFAULTS,
     apply_stage_date_axis,
     apply_standard_layout,
+    stage_axis_ticks,
+    stage_date_xaxis,
     stage_x_dates,
     stage_x_labels,
 )
@@ -390,14 +392,7 @@ def _chart_system_inflow(
     fig.update_layout(
         xaxis_title="Stage",
         yaxis_title="Total Inflow (m³/s)",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11),
-        ),
+        legend=LEGEND_DEFAULTS,
         margin=MARGIN_DEFAULTS,
         template="plotly_white",
     )
@@ -966,6 +961,8 @@ def _chart_noise_boxplot_by_stage(
         margin=MARGIN_DEFAULTS,
         template="plotly_white",
     )
+    tickvals, ticktext = stage_axis_ticks(xlabels, xlabels)
+    fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext)
     return fig
 
 
@@ -1214,11 +1211,12 @@ def _render_per_hydro_inflow_explorer(data: DashboardData) -> str:
         if not h.empty:
             h = h.sort_values("stage_id")
             entry["hist_stages"] = h["stage_id"].tolist()
-            entry["hist_labels"] = stage_x_labels(
-                h["stage_id"].tolist(), data.stage_labels
-            )
             entry["hist_dates"] = stage_x_dates(
                 h["stage_id"].tolist(), data.stage_dates
+            )
+            entry["xaxis"] = stage_date_xaxis(
+                entry["hist_dates"],
+                stage_x_labels(h["stage_id"].tolist(), data.stage_labels),
             )
             entry["hist_mean"] = h["mean_m3s"].tolist()
             entry["hist_std"] = h["std_m3s"].fillna(0.0).tolist()
@@ -1227,11 +1225,15 @@ def _render_per_hydro_inflow_explorer(data: DashboardData) -> str:
         if not s.empty:
             s = s.sort_values("stage_id")
             entry["synth_stages"] = s["stage_id"].tolist()
-            entry["synth_labels"] = stage_x_labels(
-                s["stage_id"].tolist(), data.stage_labels
-            )
             entry["synth_dates"] = stage_x_dates(
                 s["stage_id"].tolist(), data.stage_dates
+            )
+            entry.setdefault(
+                "xaxis",
+                stage_date_xaxis(
+                    entry["synth_dates"],
+                    stage_x_labels(s["stage_id"].tolist(), data.stage_labels),
+                ),
             )
             entry["synth_mean"] = s["mean_m3s"].tolist()
             entry["synth_std"] = s["std_m3s"].fillna(0.0).tolist()
@@ -1323,14 +1325,11 @@ function _renderStochHydro(containerId, entry) {{
         height: chartHeight,
         title: {{text: 'Inflow — ' + entry.name, font:{{size:13}},
                  x:0.02, xanchor:'left'}},
-        xaxis: {{title:'Stage', type:'date', tickmode:'array',
-                 tickvals:(entry.hist_dates||entry.synth_dates),
-                 ticktext:(entry.hist_labels||entry.synth_labels)}},
+        xaxis: Object.assign({{title:'Stage'}}, entry.xaxis),
         yaxis: {{title:'Inflow (m³/s)'}},
-        legend: {{orientation:'h', yanchor:'bottom', y:1.02,
-                  xanchor:'center', x:0.5, font:{{size:11}}}},
+        legend: {json_for_script(LEGEND_DEFAULTS)},
         hovermode: 'x unified',
-        margin: {{l:60, r:30, t:60, b:60}},
+        margin: {{l:60, r:30, t:60, b:10}},
         template: 'plotly_white'
     }};
     Plotly.newPlot(chartDiv, traces, layout, {{responsive:true}});

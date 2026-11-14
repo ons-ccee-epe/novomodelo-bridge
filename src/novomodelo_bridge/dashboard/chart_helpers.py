@@ -11,13 +11,19 @@ by the Overview and Costs tabs.
 
 from __future__ import annotations
 
+import math
+from typing import Literal
+
 import pandas as pd
 import plotly.graph_objects as go
 import polars as pl
 
 from novomodelo_bridge.novomodelo.cost_categories import (
     AGGREGATE_COST_COLUMNS,
-    COST_PARTITION_COLUMNS,
+    COST_CATEGORIES,
+    COST_CATEGORY_OF_COMPONENT,
+    COST_COMPONENT_BY_LABEL,
+    COST_KEY_COLUMNS,
 )
 from novomodelo_bridge.ui.html.document import wrap_chart
 from novomodelo_bridge.ui.html.plotly import (
@@ -32,67 +38,11 @@ from novomodelo_bridge.ui.html.plotly import (
 from novomodelo_bridge.ui.html.plotly import (
     fig_to_html,
 )
-
-#: Mapping from logical cost group name to known Novomodelo cost component columns.
-#: The ``"Other"`` key is intentionally absent — it is computed dynamically in
-#: :func:`group_costs` as all columns not claimed by the explicit groups.
-COST_GROUPS: dict[str, list[str]] = {
-    # Generation costs (anticipated = GNL forward-committed fuel, grouped here)
-    "Thermal": ["thermal_cost", "anticipated_thermal_cost"],
-    "Deficit": ["deficit_cost"],
-    "Energy Excess": ["excess_cost"],
-    "Spillage": ["spillage_cost"],
-    "Turbined Reg.": ["turbined_cost"],
-    "NCS Curtailment": ["curtailment_cost"],
-    # Operational costs
-    "Exchange": ["exchange_cost"],
-    "Contract": ["contract_cost"],
-    "Pumping": ["pumping_cost"],
-    "Inflow Penalty": ["inflow_penalty_cost"],
-    # Hydro violation costs, each on its own. Their aggregate
-    # hydro_violation_cost (the sum of six of them) stays out via _NON_COST_COLS.
-    "Outflow Min": ["outflow_violation_below_cost"],
-    "Outflow Max": ["outflow_violation_above_cost"],
-    "Turbining Bounds": ["turbined_violation_cost"],
-    "Generation Bounds": ["generation_violation_cost"],
-    "Storage Bounds": ["storage_violation_cost"],
-    "Filling Target": ["filling_target_cost"],
-    "Evaporation": ["evaporation_violation_cost"],
-    "Water Withdrawal": ["withdrawal_violation_cost"],
-    # Generic constraints
-    "Generic Constraints": ["generic_violation_cost"],
-    # Catch-all
-    "Other": [],  # filled dynamically by group_costs
-}
-
-COST_GROUP_COLORS: dict[str, str] = {
-    # Generation — warm palette
-    "Thermal": "#D97706",
-    "Deficit": "#DC2626",
-    "Energy Excess": "#F59E0B",
-    "Spillage": "#2563EB",
-    # Regularisation — cool/teal palette to distinguish from violations
-    "Turbined Reg.": "#0EA5E9",
-    "NCS Curtailment": "#059669",
-    # Operational — cool/neutral tones
-    "Exchange": "#7C3AED",
-    "Contract": "#DB2777",
-    "Pumping": "#0891B2",
-    "Inflow Penalty": "#EA580C",
-    # Hydro violations — red-orange gradient (penalty costs)
-    "Outflow Min": "#E11D48",
-    "Outflow Max": "#F43F5E",
-    "Turbining Bounds": "#FB923C",
-    "Generation Bounds": "#F97316",
-    "Storage Bounds": "#C2410C",
-    "Filling Target": "#A16207",
-    "Evaporation": "#9333EA",
-    "Water Withdrawal": "#0284C7",
-    # Generic constraints
-    "Generic Constraints": "#6D28D9",
-    # Catch-all
-    "Other": "#6B7280",
-}
+from novomodelo_bridge.ui.theme import (
+    COST_CATEGORY_COLORS,
+    COST_COMPONENT_COLORS,
+    COST_OTHER_COLOR,
+)
 
 
 def compute_percentiles(
@@ -245,159 +195,120 @@ def make_chart_card(
     return wrap_chart(inner_html)
 
 
-#: Non-cost metadata columns that are never treated as cost components: the
-#: hive-partition/time keys plus the derived/aggregate cost roll-ups (the latter
-#: single-sourced with the comparator via cost_categories to avoid drift).
-_NON_COST_COLS: frozenset[str] = COST_PARTITION_COLUMNS | AGGREGATE_COST_COLUMNS
+#: A cost breakdown level: the taxonomy's categories or its components.
+CostLevel = Literal["category", "component"]
+
+#: The entry that sums every cost column the taxonomy does not classify.
+OTHER_COSTS = "Other"
+
+#: The cost columns behind each category and each component, in taxonomy order.
+COST_GROUPS: dict[CostLevel, dict[str, tuple[str, ...]]] = {
+    "category": {cat.label: cat.columns for cat in COST_CATEGORIES},
+    "component": {
+        label: comp.columns for label, comp in COST_COMPONENT_BY_LABEL.items()
+    },
+}
+
+_COST_COLORS: dict[CostLevel, dict[str, str]] = {
+    "category": COST_CATEGORY_COLORS,
+    "component": COST_COMPONENT_COLORS,
+}
+
+_NON_COST_COLS: frozenset[str] = COST_KEY_COLUMNS | AGGREGATE_COST_COLUMNS
 
 
-def compute_npv_costs(
-    costs_df: pd.DataFrame,
-    discount_rate: float,  # retained for API compat; unused
-    stage_start: int = 0,  # retained for API compat; unused
-) -> pd.DataFrame:
-    """Apply per-stage NPV discount factors to cost component columns.
+def cost_columns(costs_df: pd.DataFrame) -> list[str]:
+    """The cost component columns of *costs_df*: every column but the row keys
+    and the aggregates, so a column the taxonomy does not know still counts,
+    under :data:`OTHER_COSTS`.
+    """
+    return [c for c in costs_df.columns if c not in _NON_COST_COLS]
 
-    Uses the ``discount_factor`` column written by novomodelo in
-    ``simulation/costs/`` (the cumulative discount factor ``D_t`` that
-    maps undiscounted stage-*t* costs to present value at stage 0).
-    Novomodelo's simulation extraction stores raw per-stage component costs
-    (``thermal_cost``, ``deficit_cost``, …) in undiscounted units; this
-    helper multiplies each component by ``D_t`` to produce present-value
-    costs. The stage aggregates (``total_cost``, ``immediate_cost``,
-    ``future_cost``) carry LP-objective semantics and are left untouched.
 
-    Args:
-        costs_df: DataFrame containing a ``discount_factor`` column plus
-            one or more numeric cost component columns.
-        discount_rate: Unused. Retained so existing call sites do not break
-            while the helper transitions off ad-hoc rate-based discounting.
-        stage_start: Unused. Novomodelo's ``discount_factor`` column is already
-            anchored at ``D_0 = 1.0``.
+def cost_color(level: CostLevel, label: str) -> str:
+    """The colour of the *level* entry *label*; unclassified costs share one."""
+    return _COST_COLORS[level].get(label, COST_OTHER_COLOR)
+
+
+def compute_npv_costs(costs_df: pd.DataFrame) -> pd.DataFrame:
+    """Discount every cost component column to present value.
+
+    Multiplies each component by the row's ``discount_factor``, the cumulative
+    factor ``D_t`` Novomodelo writes in ``simulation/costs/`` (``D_0 = 1``); the
+    components themselves are undiscounted stage-*t* money. The aggregates and
+    row keys are left untouched.
 
     Returns:
-        A new :class:`pandas.DataFrame` with discounted cost values.  Input is
-        never mutated.  Returns a copy of *costs_df* when it is empty or
-        when ``discount_factor`` is missing (degrades to undiscounted).
+        A new :class:`pandas.DataFrame`; the input is never mutated. A copy of
+        *costs_df* when it is empty or has no ``discount_factor`` column
+        (undiscounted).
     """
-    if costs_df.empty:
-        return costs_df.copy()
-
     result = costs_df.copy()
-    if "discount_factor" not in result.columns:
-        return result
-
-    cost_cols = [c for c in result.columns if c not in _NON_COST_COLS]
-    if not cost_cols:
+    if costs_df.empty or "discount_factor" not in result.columns:
         return result
 
     factors = result["discount_factor"].astype(float)
-    for col in cost_cols:
+    for col in cost_columns(result):
         result[col] = result[col] * factors
-
     return result
 
 
 def group_costs(
     costs_df: pd.DataFrame,
-    cost_columns: list[str],
+    columns: list[str],
+    level: CostLevel,
 ) -> pd.DataFrame:
-    """Aggregate individual cost component columns into logical groups.
+    """Replace the cost *columns* of *costs_df* by one column per *level* entry.
 
-    Groups are defined by :data:`COST_GROUPS`.  Any column present in
-    *cost_columns* that is not claimed by a named group is placed in an
-    ``"Other"`` group.  Missing columns (present in :data:`COST_GROUPS` but
-    absent from *cost_columns*) are silently skipped.
-
-    Args:
-        costs_df: DataFrame containing the individual cost component columns
-            listed in *cost_columns*.
-        cost_columns: Complete list of cost column names in *costs_df*.  Used
-            to determine which columns fall into ``"Other"``.
-
-    Returns:
-        A new :class:`pandas.DataFrame` where the individual component columns
-        are replaced by one column per group.  Non-cost columns (``scenario_id``,
-        ``stage_id``, ``block_id``) are preserved unchanged.  Input is never
-        mutated.  Returns a copy of *costs_df* when it is empty.
+    Every entry of :data:`COST_GROUPS` gets a column (0.0 when none of its
+    columns is present), and the *columns* no entry claims sum into
+    :data:`OTHER_COSTS`. Other columns are kept; the input is never mutated.
     """
     if costs_df.empty:
         return costs_df.copy()
 
     result = costs_df.copy()
     assigned: set[str] = set()
-
-    for group_name, components in COST_GROUPS.items():
-        if group_name == "Other":
-            continue
-        present = [c for c in components if c in cost_columns]
+    for label, group_columns in COST_GROUPS[level].items():
+        present = [c for c in group_columns if c in columns]
         assigned.update(present)
-        result[group_name] = result[present].sum(axis=1) if present else 0.0
+        result[label] = result[present].sum(axis=1) if present else 0.0
 
-    other_cols = [c for c in cost_columns if c not in assigned]
-    result["Other"] = result[other_cols].sum(axis=1) if other_cols else 0.0
-
-    cols_to_drop = [c for c in cost_columns if c in result.columns]
-    return result.drop(columns=cols_to_drop)
+    other = [c for c in columns if c not in assigned]
+    result[OTHER_COSTS] = result[other].sum(axis=1) if other else 0.0
+    return result.drop(columns=[c for c in columns if c in result.columns])
 
 
-def compute_cost_summary(
-    costs_df: pd.DataFrame,
-    discount_rate: float,
-) -> pd.DataFrame:
-    """Compute a grouped NPV cost summary with statistics across scenarios.
+def compute_cost_summary(costs_df: pd.DataFrame, level: CostLevel) -> pd.DataFrame:
+    """The NPV of each *level* entry, with its spread across scenarios.
 
-    Chains three operations:
-
-    1. Apply NPV discount factors via :func:`compute_npv_costs`.
-    2. Sum discounted costs across all stages per scenario.
-    3. Group columns via :func:`group_costs`.
-    4. Aggregate across scenarios: mean, std, p5, p10, p90, p95.
-    5. Add a ``pct`` column (percentage of total mean cost).
-
-    Args:
-        costs_df: DataFrame with ``scenario_id``, ``stage_id``, and cost
-            component columns.
-        discount_rate: Per-stage discount rate (e.g. ``0.12`` for 12%).
+    Discounts the components, sums each scenario's over the stages, groups them
+    by *level*, then takes the mean, standard deviation, p10 and p90 across
+    scenarios, and each entry's share of the total mean.
 
     Returns:
-        A :class:`pandas.DataFrame` with columns
-        ``["group", "mean", "std", "p5", "p10", "p90", "p95", "pct"]``, one
-        row per cost group, sorted descending by ``mean``.  Returns an empty
-        DataFrame with those columns when *costs_df* is empty.
+        Columns ``["group", "mean", "std", "p10", "p90", "pct"]``, one row per
+        entry (:data:`OTHER_COSTS` included), sorted by descending ``mean``;
+        empty with those columns when *costs_df* is empty.
     """
-    summary_cols = ["group", "mean", "std", "p5", "p10", "p90", "p95", "pct"]
-
+    summary_cols = ["group", "mean", "std", "p10", "p90", "pct"]
     if costs_df.empty:
         return pd.DataFrame(columns=summary_cols)
 
-    cost_columns = [c for c in costs_df.columns if c not in _NON_COST_COLS]
-
-    discounted = compute_npv_costs(costs_df, discount_rate)
-
-    meta_cols_present = [c for c in ("scenario_id",) if c in discounted.columns]
+    columns = cost_columns(costs_df)
+    discounted = compute_npv_costs(costs_df)
     per_scenario = (
-        discounted.groupby(meta_cols_present)[cost_columns].sum()
-        if meta_cols_present
-        else discounted[cost_columns]
+        discounted.groupby("scenario_id")[columns].sum().reset_index()
+        if "scenario_id" in discounted.columns
+        else discounted[columns]
     )
-
-    grouped = group_costs(per_scenario.reset_index(), cost_columns)
-    group_cols = [
-        c for c in grouped.columns if c not in _NON_COST_COLS and c != "scenario_id"
-    ]
+    grouped = group_costs(per_scenario, columns, level)
+    group_cols = [*COST_GROUPS[level], OTHER_COSTS]
 
     agg = grouped[group_cols].agg(
-        [
-            "mean",
-            "std",
-            lambda q: q.quantile(0.05),
-            lambda q: q.quantile(0.1),
-            lambda q: q.quantile(0.9),
-            lambda q: q.quantile(0.95),
-        ]
+        ["mean", "std", lambda q: q.quantile(0.1), lambda q: q.quantile(0.9)]
     )
-    agg.index = ["mean", "std", "p5", "p10", "p90", "p95"]
+    agg.index = ["mean", "std", "p10", "p90"]
     agg = agg.T.reset_index().rename(columns={"index": "group"})
 
     total_mean = agg["mean"].sum()
@@ -407,99 +318,88 @@ def compute_cost_summary(
     return agg[summary_cols]
 
 
-def chart_cost_bar(summary_df: pd.DataFrame) -> go.Figure:
-    """Build a vertical bar chart of NPV cost by group with p5–p95 error bars.
+def chart_cost_bar(summary_df: pd.DataFrame, level: CostLevel) -> go.Figure:
+    """Bar chart of the NPV of each *level* entry, with p10–p90 error bars.
 
-    One bar per cost group, sorted descending by mean value.  Each bar has
-    asymmetric error bars showing the p5–p95 range across scenarios.  Groups
-    with zero mean are excluded.
-
-    Args:
-        summary_df: DataFrame with columns
-            ``["group", "mean", "p5", "p95", ...]`` as returned by
-            :func:`~novomodelo_bridge.dashboard.chart_helpers.compute_cost_summary`.
-
-    Returns:
-        A :class:`plotly.graph_objects.Figure`.
+    Bars follow *summary_df*'s order (descending mean, from
+    :func:`compute_cost_summary`) and skip zero-mean entries, unless every
+    entry is zero.
     """
-    import math
-
-    nz = summary_df[summary_df["mean"] > 0].copy()
+    nz = summary_df[summary_df["mean"] > 0]
     if nz.empty:
         nz = summary_df.head(1)
 
-    groups: list[str] = []
-    means: list[float] = []
-    colors: list[str] = []
+    groups = [str(g) for g in nz["group"]]
+    means = [float(m) for m in nz["mean"]]
     err_plus: list[float] = []
     err_minus: list[float] = []
     has_errors = False
-
-    for _, row in nz.iterrows():
-        group = str(row["group"])
-        mean_val = float(row["mean"])
-        groups.append(group)
-        means.append(mean_val)
-        colors.append(COST_GROUP_COLORS.get(group, "#6B7280"))
-
-        ep, em = 0.0, 0.0
-        if "p5" in row.index and "p95" in row.index:
-            p5 = float(row["p5"])
-            p95 = float(row["p95"])
-            if not (math.isnan(p5) or math.isnan(p95)):
-                ep = p95 - mean_val
-                em = mean_val - p5
-                has_errors = True
-        err_plus.append(ep)
-        err_minus.append(em)
-
-    error_y: dict | None = None
-    if has_errors:
-        error_y = dict(
-            type="data",
-            array=err_plus,
-            arrayminus=err_minus,
-            visible=True,
-        )
+    for mean_val, p10, p90 in zip(means, nz["p10"], nz["p90"], strict=True):
+        if math.isnan(p10) or math.isnan(p90):
+            err_plus.append(0.0)
+            err_minus.append(0.0)
+            continue
+        err_plus.append(max(0.0, float(p90) - mean_val))
+        err_minus.append(max(0.0, mean_val - float(p10)))
+        has_errors = True
 
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=groups,
             y=means,
-            marker_color=colors,
-            error_y=error_y,
+            marker_color=[cost_color(level, g) for g in groups],
+            error_y=(
+                dict(type="data", array=err_plus, arrayminus=err_minus, visible=True)
+                if has_errors
+                else None
+            ),
             showlegend=False,
+            hovertemplate="%{x}: R$ %{y:,.0f}<extra></extra>",
         )
     )
     fig.update_layout(
-        yaxis_title="NPV Cost",
+        yaxis_title="NPV Cost (R$)",
         xaxis_tickangle=-35,
         margin=_MARGIN,
     )
     return fig
 
 
-def build_cost_table(summary_df: pd.DataFrame) -> str:
-    """Return a ``<table class="data-table">`` HTML string from a cost summary.
+def build_cost_table(summary_df: pd.DataFrame, level: CostLevel) -> str:
+    """The cost summary as a ``<table class="data-table">``.
+
+    A component table also names each component's category.
 
     Args:
-        summary_df: DataFrame with columns
-            ``["group", "mean", "std", "p10", "p90", "pct"]`` as returned
-            by :func:`~novomodelo_bridge.dashboard.chart_helpers.compute_cost_summary`.
+        summary_df: A :func:`compute_cost_summary` frame of the same *level*.
+        level: The breakdown level *summary_df* was computed at.
 
     Returns:
-        An HTML string containing a complete ``<table>`` element, or a
-        fallback ``<p>`` when *summary_df* is empty.
+        The ``<table>`` HTML, or a ``<p>`` fallback when *summary_df* is empty.
     """
     if summary_df.empty:
         return "<p>No cost data available.</p>"
 
-    headers = ("Group", "Mean", "Std", "P10", "P90", "% of Total")
+    by_component = level == "component"
+    headers = (("Component", "Category") if by_component else ("Category",)) + (
+        "Mean (R$)",
+        "Std (R$)",
+        "P10 (R$)",
+        "P90 (R$)",
+        "% of Total",
+    )
     header_cells = "".join(f"<th>{h}</th>" for h in headers)
+
+    def _label_cells(group: str) -> str:
+        if not by_component:
+            return f"<td>{group}</td>"
+        category = COST_CATEGORY_OF_COMPONENT.get(group, OTHER_COSTS)
+        return f"<td>{group}</td><td>{category}</td>"
+
     rows = [
         f"<tr>"
-        f"<td>{row['group']}</td>"
+        f"{_label_cells(str(row['group']))}"
         f"<td>{row['mean']:,.0f}</td>"
         f"<td>{row['std']:,.0f}</td>"
         f"<td>{row['p10']:,.0f}</td>"

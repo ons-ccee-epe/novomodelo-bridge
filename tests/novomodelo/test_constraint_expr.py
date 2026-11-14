@@ -8,11 +8,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import polars as pl
+import pytest
 
 from novomodelo_bridge.novomodelo.constraint_expr import (
+    BLOCK_HOURS_SCHEMA,
+    BOUNDS_SCHEMA,
     evaluate_lhs,
     resolve_generic_constraints,
+    stage_weighted_bounds,
+    stage_weighted_lhs,
 )
 from novomodelo_bridge.novomodelo.readers import read_novomodelo_generic_constraint_echo
 from tests.conftest import EchoTerm, write_generic_constraint_echo
@@ -45,6 +51,20 @@ _HYDROS = pl.LazyFrame(
         "generation_mw": [95.0, 85.0, 97.0, 87.0],
     }
 )
+
+
+_HOURS = pl.DataFrame(
+    {
+        "stage_id": [0, 0, 1, 1],
+        "block_id": [0, 1, 0, 1],
+        "hours": [100.0, 300.0, 100.0, 300.0],
+    },
+    schema=BLOCK_HOURS_SCHEMA,
+)
+
+
+def _lhs(resolved, **frames: pl.LazyFrame):
+    return evaluate_lhs(resolved, {"hydros": _HYDROS, **frames}, _HOURS)
 
 
 class TestResolveGenericConstraints:
@@ -178,7 +198,7 @@ class TestEvaluateLhs:
         )
         resolved = resolve_generic_constraints([_vminop(0)], echo, {0: 100.0})
 
-        lhs = evaluate_lhs(resolved, _HYDROS, pl.LazyFrame())
+        lhs = _lhs(resolved)
 
         assert lhs[["stage_id", "block_id", "lhs_value"]].values.tolist() == [
             [0, 0, 2.0 * 400.0],
@@ -218,7 +238,7 @@ class TestEvaluateLhs:
             [{"id": 0, "name": "RE_1"}], echo, {0: 100.0}
         )
 
-        lhs = evaluate_lhs(resolved, _HYDROS, pl.LazyFrame())
+        lhs = _lhs(resolved)
 
         assert lhs[["block_id", "lhs_value"]].values.tolist() == [
             [0, 95.0 + 0.5 * 500.0],
@@ -231,19 +251,10 @@ class TestEvaluateLhs:
         echo = _echo(
             tmp_path,
             [
+                (0, "RE_1", 0, 0, "bus_deficit(id=0, block=0)", 1.0, None, 10.0),
                 (
                     0,
-                    "HQ_1",
-                    0,
-                    0,
-                    "hydro_turbined(id=0, bus=all, block=0)",
-                    1.0,
-                    None,
-                    10.0,
-                ),
-                (
-                    0,
-                    "HQ_1",
+                    "RE_1",
                     0,
                     0,
                     "hydro_generation(id=0, bus=all, block=0)",
@@ -253,6 +264,210 @@ class TestEvaluateLhs:
                 ),
             ],
         )
-        resolved = resolve_generic_constraints([{"id": 0, "name": "HQ_1"}], echo, {})
+        resolved = resolve_generic_constraints([{"id": 0, "name": "RE_1"}], echo, {})
 
-        assert evaluate_lhs(resolved, _HYDROS, pl.LazyFrame()).empty
+        assert _lhs(resolved).empty
+
+    def test_constraint_without_its_simulation_output_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        echo = _echo(
+            tmp_path,
+            [(0, "RE_1", 0, 0, "thermal_generation(id=4, block=0)", 1.0, None, 10.0)],
+        )
+        resolved = resolve_generic_constraints([{"id": 0, "name": "RE_1"}], echo, {})
+
+        assert _lhs(resolved, thermals=pl.LazyFrame()).empty
+
+    def test_row_with_a_term_missing_from_the_output_is_not_a_partial_sum(
+        self, tmp_path: Path
+    ) -> None:
+        echo = _echo(
+            tmp_path,
+            [
+                (
+                    0,
+                    "RE_1",
+                    0,
+                    0,
+                    "hydro_generation(id=0, bus=all, block=0)",
+                    1.0,
+                    None,
+                    10.0,
+                ),
+                (
+                    0,
+                    "RE_1",
+                    0,
+                    0,
+                    "hydro_generation(id=9, bus=all, block=0)",
+                    1.0,
+                    None,
+                    10.0,
+                ),
+            ],
+        )
+        resolved = resolve_generic_constraints([{"id": 0, "name": "RE_1"}], echo, {})
+
+        assert _lhs(resolved).empty
+
+    def test_thermal_and_flow_terms_read_their_block(self, tmp_path: Path) -> None:
+        echo = _echo(
+            tmp_path,
+            [
+                (0, "RE_1", 0, 1, "thermal_generation(id=4, block=1)", 2.0, None, 1.0),
+                (0, "RE_1", 0, 1, "hydro_outflow(id=0, block=1)", 1.0, None, 1.0),
+                (0, "RE_1", 0, 1, "hydro_diversion(id=0, block=1)", -1.0, None, 1.0),
+            ],
+        )
+        resolved = resolve_generic_constraints([{"id": 0, "name": "RE_1"}], echo, {})
+        hydros = _HYDROS.with_columns(
+            pl.Series("outflow_m3s", [10.0, 20.0, 30.0, 40.0]),
+            pl.Series("diverted_outflow_m3s", [1.0, 2.0, 3.0, 4.0]),
+        )
+        thermals = pl.LazyFrame(
+            {
+                "scenario_id": [0, 0],
+                "stage_id": [0, 0],
+                "block_id": [0, 1],
+                "thermal_id": [4, 4],
+                "generation_mw": [50.0, 60.0],
+            }
+        )
+
+        lhs = evaluate_lhs(resolved, {"hydros": hydros, "thermals": thermals}, _HOURS)
+
+        assert lhs[["block_id", "lhs_value"]].values.tolist() == [
+            [1, 2.0 * 60.0 + 20.0 - 2.0]
+        ]
+
+    def test_pinned_term_counts_on_its_rows_block(self, tmp_path: Path) -> None:
+        echo = _echo(
+            tmp_path,
+            [
+                (
+                    0,
+                    "RE_1",
+                    0,
+                    0,
+                    "hydro_generation(id=0, bus=all, block=1)",
+                    1.0,
+                    None,
+                    10.0,
+                ),
+                (
+                    0,
+                    "RE_1",
+                    0,
+                    0,
+                    "hydro_generation(id=0, bus=all, block=0)",
+                    -1.0,
+                    None,
+                    10.0,
+                ),
+            ],
+        )
+        resolved = resolve_generic_constraints([{"id": 0, "name": "RE_1"}], echo, {})
+
+        lhs = _lhs(resolved)
+
+        # Block 1's generation minus block 0's, on block 0's row.
+        assert lhs[["block_id", "lhs_value"]].values.tolist() == [[0, 85.0 - 95.0]]
+
+    def test_stage_volume_weights_each_block_by_its_hours(self, tmp_path: Path) -> None:
+        echo = _echo(
+            tmp_path,
+            [(0, "RHV_1", 0, None, "hydro_outflow_volume(id=0)", 1.0, None, 1.0)],
+        )
+        resolved = resolve_generic_constraints([{"id": 0, "name": "RHV_1"}], echo, {})
+        hydros = _HYDROS.with_columns(
+            pl.Series("outflow_m3s", [10.0, 20.0, 30.0, 40.0])
+        )
+
+        lhs = evaluate_lhs(resolved, {"hydros": hydros}, _HOURS)
+
+        assert lhs[["stage_id", "block_id"]].values.tolist() == [[0, 0]]
+        assert lhs["lhs_value"].iloc[0] == pytest.approx(
+            (10.0 * 100.0 + 20.0 * 300.0) * 3600.0 / 1e6
+        )
+
+    def test_bus_cell_term_reads_its_cell(self, tmp_path: Path) -> None:
+        echo = _echo(
+            tmp_path,
+            [
+                (
+                    0,
+                    "RE_1",
+                    0,
+                    0,
+                    "hydro_generation(id=0, bus=2, block=0)",
+                    1.0,
+                    None,
+                    10.0,
+                )
+            ],
+        )
+        resolved = resolve_generic_constraints([{"id": 0, "name": "RE_1"}], echo, {})
+        cells = pl.LazyFrame(
+            {
+                "scenario_id": [0, 0],
+                "stage_id": [0, 0],
+                "block_id": [0, 0],
+                "hydro_id": [0, 0],
+                "bus_id": [1, 2],
+                "turbined_m3s": [1.0, 1.0],
+                "generation_mw": [60.0, 35.0],
+            }
+        )
+
+        lhs = _lhs(resolved, hydro_bus_generation=cells)
+
+        assert lhs["lhs_value"].tolist() == [35.0]
+
+
+class TestStageWeighting:
+    def test_lhs_weights_blocks_by_their_hours(self) -> None:
+        lhs = pd.DataFrame(
+            {
+                "constraint_id": [0, 0],
+                "scenario_id": [0, 0],
+                "stage_id": [0, 0],
+                "block_id": [0, 1],
+                "lhs_value": [10.0, 30.0],
+            }
+        )
+
+        out = stage_weighted_lhs(lhs, _HOURS)
+
+        assert out["lhs_value"].to_list() == [(10.0 * 100.0 + 30.0 * 300.0) / 400.0]
+
+    def test_bounds_weight_blocks_and_keep_open_endpoints_open(self) -> None:
+        bounds = pl.DataFrame(
+            {
+                "constraint_id": [0, 0, 1],
+                "stage_id": [0, 0, 1],
+                "block_id": [0, 1, None],
+                "bound_lower": [None, 5.0, 2.0],
+                "bound_upper": [40.0, 20.0, None],
+            },
+            schema=BOUNDS_SCHEMA,
+        )
+
+        out = stage_weighted_bounds(bounds, _HOURS)
+
+        assert out.to_dicts() == [
+            {
+                "constraint_id": 0,
+                "stage_id": 0,
+                "block_id": None,
+                "bound_lower": None,
+                "bound_upper": (40.0 * 100.0 + 20.0 * 300.0) / 400.0,
+            },
+            {
+                "constraint_id": 1,
+                "stage_id": 1,
+                "block_id": None,
+                "bound_lower": 2.0,
+                "bound_upper": None,
+            },
+        ]

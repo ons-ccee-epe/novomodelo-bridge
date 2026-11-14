@@ -1,7 +1,8 @@
 """Unit tests for novomodelo_bridge.dashboard.chart_helpers.
 
 Covers compute_percentiles, stage_hours_weighted_mean, add_mean_p50_band,
-make_chart_card, compute_npv_costs, group_costs, and compute_cost_summary.
+make_chart_card and the cost helpers (compute_npv_costs, cost_columns,
+group_costs, compute_cost_summary, cost_color, build_cost_table, chart_cost_bar).
 """
 
 from __future__ import annotations
@@ -19,14 +20,17 @@ from novomodelo_bridge.comparators import charts as _cmp_charts
 from novomodelo_bridge.comparators import report_builder
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.dashboard.chart_helpers import (
-    COST_GROUP_COLORS,
     COST_GROUPS,
+    OTHER_COSTS,
+    CostLevel,
     add_mean_p50_band,
     build_cost_table,
     chart_cost_bar,
     compute_cost_summary,
     compute_npv_costs,
     compute_percentiles,
+    cost_color,
+    cost_columns,
     group_costs,
     make_chart_card,
     stage_hours_weighted_mean,
@@ -363,18 +367,14 @@ def test_compute_npv_costs_basic() -> None:
             "stage_id": [0, 1, 2],
             "scenario_id": [0, 0, 0],
             "discount_factor": [1.0, 1 / 1.1, 1 / 1.21],
-            "thermal_generation_cost": [100.0, 100.0, 100.0],
+            "thermal_cost": [100.0, 100.0, 100.0],
         }
     )
-    result = compute_npv_costs(df, discount_rate=0.10)
+    result = compute_npv_costs(df)
 
-    assert result["thermal_generation_cost"].iloc[0] == pytest.approx(100.0)
-    assert result["thermal_generation_cost"].iloc[1] == pytest.approx(
-        100.0 / 1.1, rel=1e-4
-    )
-    assert result["thermal_generation_cost"].iloc[2] == pytest.approx(
-        100.0 / (1.1**2), rel=1e-4
-    )
+    assert result["thermal_cost"].iloc[0] == pytest.approx(100.0)
+    assert result["thermal_cost"].iloc[1] == pytest.approx(100.0 / 1.1, rel=1e-4)
+    assert result["thermal_cost"].iloc[2] == pytest.approx(100.0 / (1.1**2), rel=1e-4)
 
 
 def test_compute_npv_costs_unit_discount_factor_leaves_values_unchanged() -> None:
@@ -384,15 +384,12 @@ def test_compute_npv_costs_unit_discount_factor_leaves_values_unchanged() -> Non
             "stage_id": [0, 1, 2],
             "scenario_id": [0, 0, 0],
             "discount_factor": [1.0, 1.0, 1.0],
-            "thermal_generation_cost": [50.0, 75.0, 100.0],
+            "thermal_cost": [50.0, 75.0, 100.0],
         }
     )
-    result = compute_npv_costs(df, discount_rate=0.0)
+    result = compute_npv_costs(df)
 
-    pd.testing.assert_series_equal(
-        result["thermal_generation_cost"],
-        df["thermal_generation_cost"],
-    )
+    pd.testing.assert_series_equal(result["thermal_cost"], df["thermal_cost"])
 
 
 def test_compute_npv_costs_missing_discount_factor_returns_unmodified_copy() -> None:
@@ -401,10 +398,10 @@ def test_compute_npv_costs_missing_discount_factor_returns_unmodified_copy() -> 
         {
             "stage_id": [0, 1, 2],
             "scenario_id": [0, 0, 0],
-            "thermal_generation_cost": [100.0, 100.0, 100.0],
+            "thermal_cost": [100.0, 100.0, 100.0],
         }
     )
-    result = compute_npv_costs(df, discount_rate=0.10)
+    result = compute_npv_costs(df)
 
     pd.testing.assert_frame_equal(result, df)
 
@@ -412,14 +409,9 @@ def test_compute_npv_costs_missing_discount_factor_returns_unmodified_copy() -> 
 def test_compute_npv_costs_empty() -> None:
     """Empty DataFrame input returns an empty DataFrame (no error)."""
     empty = pd.DataFrame(
-        columns=[
-            "stage_id",
-            "scenario_id",
-            "discount_factor",
-            "thermal_generation_cost",
-        ]
+        columns=["stage_id", "scenario_id", "discount_factor", "thermal_cost"]
     )
-    result = compute_npv_costs(empty, discount_rate=0.10)
+    result = compute_npv_costs(empty)
 
     assert result.empty
     assert list(result.columns) == list(empty.columns)
@@ -431,32 +423,63 @@ def test_compute_npv_costs_does_not_mutate() -> None:
         {
             "stage_id": [0, 1],
             "discount_factor": [1.0, 0.9],
-            "thermal_generation_cost": [100.0, 100.0],
+            "thermal_cost": [100.0, 100.0],
         }
     )
-    original_values = df["thermal_generation_cost"].tolist()
-    compute_npv_costs(df, discount_rate=0.10)
+    original_values = df["thermal_cost"].tolist()
+    compute_npv_costs(df)
 
-    assert df["thermal_generation_cost"].tolist() == original_values
+    assert df["thermal_cost"].tolist() == original_values
 
 
-def test_compute_npv_costs_metadata_cols_unchanged() -> None:
-    """scenario_id, stage_id, block_id, and discount_factor are never discounted."""
+def test_compute_npv_costs_keys_and_aggregates_unchanged() -> None:
+    """Row keys, ``discount_factor`` and the aggregate columns are never discounted."""
     df = pd.DataFrame(
         {
             "stage_id": [0, 1, 2],
             "scenario_id": [7, 7, 7],
+            "node_id": [3, 3, 3],
             "block_id": [1, 1, 1],
             "discount_factor": [1.0, 0.9, 0.8],
-            "thermal_generation_cost": [100.0, 100.0, 100.0],
+            "immediate_cost": [100.0, 100.0, 100.0],
+            "thermal_cost": [100.0, 100.0, 100.0],
         }
     )
-    result = compute_npv_costs(df, discount_rate=0.10)
+    result = compute_npv_costs(df)
 
     assert result["scenario_id"].tolist() == [7, 7, 7]
     assert result["stage_id"].tolist() == [0, 1, 2]
+    assert result["node_id"].tolist() == [3, 3, 3]
     assert result["block_id"].tolist() == [1, 1, 1]
     assert result["discount_factor"].tolist() == [1.0, 0.9, 0.8]
+    assert result["immediate_cost"].tolist() == [100.0, 100.0, 100.0]
+    assert result["thermal_cost"].tolist() == pytest.approx([100.0, 90.0, 80.0])
+
+
+# ---------------------------------------------------------------------------
+# cost_columns
+# ---------------------------------------------------------------------------
+
+
+def test_cost_columns_excludes_row_keys_and_aggregates() -> None:
+    """``node_id`` is a row key, not a cost, and the aggregates would double-count."""
+    df = pd.DataFrame(
+        columns=[
+            "scenario_id",
+            "stage_id",
+            "node_id",
+            "block_id",
+            "total_cost",
+            "immediate_cost",
+            "future_cost",
+            "discount_factor",
+            "hydro_violation_cost",
+            "thermal_cost",
+            "unknown_new_cost",
+        ]
+    )
+
+    assert cost_columns(df) == ["thermal_cost", "unknown_new_cost"]
 
 
 # ---------------------------------------------------------------------------
@@ -464,76 +487,73 @@ def test_compute_npv_costs_metadata_cols_unchanged() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_group_costs_known_groups() -> None:
-    """Thermal and Deficit columns (as named in COST_GROUPS) sum into their groups.
-
-    COST_GROUPS maps "Thermal" -> ["thermal_cost"] and "Deficit" ->
-    ["deficit_cost"].  The test therefore uses those exact column names.
-    """
+def test_group_costs_components_sum_their_columns() -> None:
+    """Thermal sums the generation and the anticipated (GNL) thermal columns."""
     df = pd.DataFrame(
         {
             "stage_id": [0],
             "scenario_id": [0],
             "thermal_cost": [60.0],
+            "anticipated_thermal_cost": [5.0],
             "deficit_cost": [20.0],
         }
     )
-    cost_cols = [
-        "thermal_cost",
-        "deficit_cost",
-    ]
-    result = group_costs(df, cost_cols)
+    cost_cols = ["thermal_cost", "anticipated_thermal_cost", "deficit_cost"]
+    result = group_costs(df, cost_cols, "component")
 
-    assert result["Thermal"].iloc[0] == pytest.approx(60.0)
+    assert result["Thermal"].iloc[0] == pytest.approx(65.0)
     assert result["Deficit"].iloc[0] == pytest.approx(20.0)
-    # Component columns should be gone
-    assert "thermal_cost" not in result.columns
-    assert "deficit_cost" not in result.columns
+    assert result["Contract"].iloc[0] == pytest.approx(0.0)
+    for col in cost_cols:
+        assert col not in result.columns
+
+
+def test_group_costs_categories_sum_their_components() -> None:
+    """A category sums the columns of all of its components."""
+    df = pd.DataFrame(
+        {
+            "scenario_id": [0],
+            "thermal_cost": [60.0],
+            "contract_cost": [4.0],
+            "deficit_cost": [20.0],
+            "excess_cost": [1.0],
+            "storage_violation_cost": [3.0],
+            "generic_violation_cost": [2.0],
+        }
+    )
+    cost_cols = [c for c in df.columns if c != "scenario_id"]
+    result = group_costs(df, cost_cols, "category")
+
+    assert result["Thermal & Contracts"].iloc[0] == pytest.approx(64.0)
+    assert result["Deficit & Excess"].iloc[0] == pytest.approx(21.0)
+    assert result["Violations"].iloc[0] == pytest.approx(5.0)
+    assert result["Regularization"].iloc[0] == pytest.approx(0.0)
+    assert result[OTHER_COSTS].iloc[0] == pytest.approx(0.0)
 
 
 def test_group_costs_other_column() -> None:
-    """Unrecognized cost columns are accumulated in the 'Other' group."""
-    df = pd.DataFrame(
-        {
-            "stage_id": [0],
-            "scenario_id": [0],
-            "future_cost": [999.0],
-        }
-    )
-    cost_cols = ["future_cost"]
-    result = group_costs(df, cost_cols)
+    """Cost columns no taxonomy entry claims are accumulated in 'Other'."""
+    df = pd.DataFrame({"stage_id": [0], "scenario_id": [0], "new_cost": [999.0]})
+    result = group_costs(df, ["new_cost"], "component")
 
-    assert result["Other"].iloc[0] == pytest.approx(999.0)
-    assert "future_cost" not in result.columns
+    assert result[OTHER_COSTS].iloc[0] == pytest.approx(999.0)
+    assert "new_cost" not in result.columns
 
 
-def test_group_costs_missing_columns() -> None:
-    """Missing columns in COST_GROUPS components do not raise an error.
-
-    COST_GROUPS["Thermal"] maps to ["thermal_cost"].  When only that column
-    is present the group is populated correctly.  No component of any other
-    group being absent must not raise an error.
-    """
-    df = pd.DataFrame(
-        {
-            "stage_id": [0],
-            "scenario_id": [0],
-            "thermal_cost": [80.0],
-        }
-    )
-    cost_cols = ["thermal_cost"]
-    result = group_costs(df, cost_cols)
-
-    # Thermal group contains only the present column.
-    assert result["Thermal"].iloc[0] == pytest.approx(80.0)
-    # Other should be 0.0 since nothing is unassigned.
-    assert result["Other"].iloc[0] == pytest.approx(0.0)
+def test_group_costs_every_entry_gets_a_column() -> None:
+    """Every entry of the level gets a column, zero when its columns are absent."""
+    df = pd.DataFrame({"stage_id": [0], "scenario_id": [0], "thermal_cost": [80.0]})
+    for level in ("category", "component"):
+        result = group_costs(df, ["thermal_cost"], level)
+        for label in [*COST_GROUPS[level], OTHER_COSTS]:
+            assert label in result.columns, f"{level} column {label!r} missing"
+        assert result[OTHER_COSTS].iloc[0] == pytest.approx(0.0)
 
 
 def test_group_costs_empty() -> None:
     """Empty DataFrame returns an empty DataFrame without error."""
-    empty = pd.DataFrame(columns=["stage_id", "scenario_id", "thermal_generation_cost"])
-    result = group_costs(empty, ["thermal_generation_cost"])
+    empty = pd.DataFrame(columns=["stage_id", "scenario_id", "thermal_cost"])
+    result = group_costs(empty, ["thermal_cost"], "component")
 
     assert result.empty
 
@@ -547,7 +567,7 @@ def test_group_costs_preserves_metadata() -> None:
             "spillage_cost": [5.0, 10.0],
         }
     )
-    result = group_costs(df, ["spillage_cost"])
+    result = group_costs(df, ["spillage_cost"], "component")
 
     assert "stage_id" in result.columns
     assert "scenario_id" in result.columns
@@ -557,6 +577,8 @@ def test_group_costs_preserves_metadata() -> None:
 # ---------------------------------------------------------------------------
 # compute_cost_summary
 # ---------------------------------------------------------------------------
+
+_SUMMARY_COLUMNS = ["group", "mean", "std", "p10", "p90", "pct"]
 
 
 def _make_costs_df(n_scenarios: int = 100, n_stages: int = 10) -> pd.DataFrame:
@@ -568,38 +590,33 @@ def _make_costs_df(n_scenarios: int = 100, n_stages: int = 10) -> pd.DataFrame:
                 {
                     "scenario_id": sc,
                     "stage_id": st,
+                    "node_id": 0,
+                    "block_id": None,
                     "discount_factor": 1 / (1.12**st),
-                    "thermal_generation_cost": 50.0 + sc * 0.1,
-                    "deficit_cost_depth_1": 20.0 + sc * 0.05,
+                    "immediate_cost": 75.0 + sc * 0.15,
+                    "thermal_cost": 50.0 + sc * 0.1,
+                    "deficit_cost": 20.0 + sc * 0.05,
                     "spillage_cost": 5.0,
                 }
             )
     return pd.DataFrame(rows)
 
 
-def test_cost_summary_shape() -> None:
-    """Output has exactly the expected columns and one row per cost group."""
+@pytest.mark.parametrize("level", ["category", "component"])
+def test_cost_summary_shape(level: CostLevel) -> None:
+    """Output has the summary columns and one row per entry plus Other."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, 0.12)
+    result = compute_cost_summary(df, level)
 
-    assert list(result.columns) == [
-        "group",
-        "mean",
-        "std",
-        "p5",
-        "p10",
-        "p90",
-        "p95",
-        "pct",
-    ]
-    # Groups present: Thermal, Deficit, Spillage, NCS, Violations, Other
-    assert len(result) == len(COST_GROUPS)
+    assert list(result.columns) == _SUMMARY_COLUMNS
+    assert set(result["group"]) == {*COST_GROUPS[level], OTHER_COSTS}
 
 
-def test_cost_summary_pct_sums_to_100() -> None:
+@pytest.mark.parametrize("level", ["category", "component"])
+def test_cost_summary_pct_sums_to_100(level: CostLevel) -> None:
     """The 'pct' column sums to approximately 100.0 across all groups."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, 0.12)
+    result = compute_cost_summary(df, level)
 
     assert result["pct"].sum() == pytest.approx(100.0, rel=1e-4)
 
@@ -607,69 +624,76 @@ def test_cost_summary_pct_sums_to_100() -> None:
 def test_cost_summary_sorted_descending() -> None:
     """Rows are sorted by mean in descending order."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, 0.12)
+    result = compute_cost_summary(df, "component")
 
     means = result["mean"].tolist()
     assert means == sorted(means, reverse=True)
 
 
+def test_cost_summary_mean_is_the_expected_npv() -> None:
+    """Each entry's mean is the scenario mean of its discounted stage sum."""
+    df = _make_costs_df(n_scenarios=4, n_stages=3)
+    result = compute_cost_summary(df, "component").set_index("group")
+
+    discounted = df["thermal_cost"] * df["discount_factor"]
+    expected = discounted.groupby(df["scenario_id"]).sum().mean()
+    assert result.loc["Thermal", "mean"] == pytest.approx(expected)
+
+
+def test_cost_summary_ignores_row_keys_and_aggregates() -> None:
+    """``node_id`` and ``immediate_cost`` add nothing to Other or the total."""
+    df = _make_costs_df(n_scenarios=4, n_stages=3)
+    df["node_id"] = 7
+    result = compute_cost_summary(df, "category").set_index("group")
+
+    assert result.loc[OTHER_COSTS, "mean"] == pytest.approx(0.0)
+    components = ["thermal_cost", "deficit_cost", "spillage_cost"]
+    discounted = df[components].mul(df["discount_factor"], axis=0).sum(axis=1)
+    expected_total = discounted.groupby(df["scenario_id"]).sum().mean()
+    assert result["mean"].sum() == pytest.approx(expected_total)
+
+
+def test_cost_summary_category_and_component_totals_agree() -> None:
+    """Both breakdowns split the same expected cost."""
+    df = _make_costs_df()
+    categories = compute_cost_summary(df, "category")
+    components = compute_cost_summary(df, "component")
+
+    assert categories["mean"].sum() == pytest.approx(components["mean"].sum())
+
+
 def test_cost_summary_empty() -> None:
     """Empty input returns an empty DataFrame with the expected columns."""
-    empty = pd.DataFrame(columns=["scenario_id", "stage_id", "thermal_generation_cost"])
-    result = compute_cost_summary(empty, 0.12)
+    empty = pd.DataFrame(columns=["scenario_id", "stage_id", "thermal_cost"])
+    result = compute_cost_summary(empty, "category")
 
     assert result.empty
-    assert list(result.columns) == [
-        "group",
-        "mean",
-        "std",
-        "p5",
-        "p10",
-        "p90",
-        "p95",
-        "pct",
-    ]
+    assert list(result.columns) == _SUMMARY_COLUMNS
 
 
-# ---------------------------------------------------------------------------
-# compute_cost_summary — p5 and p95 columns
-# ---------------------------------------------------------------------------
-
-
-def test_cost_summary_has_p5_and_p95_columns() -> None:
-    """compute_cost_summary must return columns 'p5' and 'p95'."""
+def test_cost_summary_p10_le_mean_le_p90() -> None:
+    """For every row with spread: p10 <= mean <= p90."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, 0.12)
+    result = compute_cost_summary(df, "component")
 
-    assert "p5" in result.columns
-    assert "p95" in result.columns
-
-
-def test_cost_summary_p5_le_p10_le_mean_le_p90_le_p95() -> None:
-    """For every row: p5 <= p10 <= mean <= p90 <= p95."""
-    df = _make_costs_df()
-    result = compute_cost_summary(df, 0.12)
-
-    # Only check rows with positive mean (zero-cost groups have equal percentiles)
     non_zero = result[result["mean"] > 0]
     for _, row in non_zero.iterrows():
-        assert row["p5"] <= row["p10"] + 1e-9, f"p5 > p10 for group {row['group']}"
         assert row["p10"] <= row["mean"] + 1e-9, f"p10 > mean for group {row['group']}"
         assert row["mean"] <= row["p90"] + 1e-9, f"mean > p90 for group {row['group']}"
-        assert row["p90"] <= row["p95"] + 1e-9, f"p90 > p95 for group {row['group']}"
 
 
 # ---------------------------------------------------------------------------
-# COST_GROUP_COLORS completeness
+# cost_color
 # ---------------------------------------------------------------------------
 
 
-def test_cost_group_colors_keys() -> None:
-    """Every key in COST_GROUPS has a corresponding colour in COST_GROUP_COLORS."""
-    for group_name in COST_GROUPS:
-        assert group_name in COST_GROUP_COLORS, (
-            f"COST_GROUP_COLORS is missing an entry for group '{group_name}'"
-        )
+@pytest.mark.parametrize("level", ["category", "component"])
+def test_cost_color_gives_every_entry_its_own_colour(level: CostLevel) -> None:
+    """No entry falls back to the Other colour, and no two entries share one."""
+    colours = [cost_color(level, label) for label in COST_GROUPS[level]]
+
+    assert cost_color(level, OTHER_COSTS) not in colours
+    assert len(set(colours)) == len(colours)
 
 
 # ---------------------------------------------------------------------------
@@ -677,36 +701,50 @@ def test_cost_group_colors_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_cost_table_contains_table_and_thermal() -> None:
-    """build_cost_table must return HTML containing <table and group names."""
-    df = _make_costs_df()
-    summary = compute_cost_summary(df, 0.12)
-    html = build_cost_table(summary)
+def test_build_cost_table_category_headers() -> None:
+    """A category table has one label column and the R$ statistics."""
+    summary = compute_cost_summary(_make_costs_df(), "category")
+    html = build_cost_table(summary, "category")
 
-    assert "<table" in html
-    assert "Thermal" in html
+    assert re.findall(r"<th>(.*?)</th>", html) == [
+        "Category",
+        "Mean (R$)",
+        "Std (R$)",
+        "P10 (R$)",
+        "P90 (R$)",
+        "% of Total",
+    ]
+    assert "<td>Thermal & Contracts</td>" in html
+
+
+def test_build_cost_table_component_names_its_category() -> None:
+    """A component table names each component's category beside it."""
+    summary = compute_cost_summary(_make_costs_df(), "component")
+    html = build_cost_table(summary, "component")
+
+    assert re.findall(r"<th>(.*?)</th>", html)[:2] == ["Component", "Category"]
+    assert "<td>Deficit</td><td>Deficit & Excess</td>" in html
+    assert "<td>Spillage</td><td>Regularization</td>" in html
 
 
 def test_build_cost_table_contains_data_table_class() -> None:
     """build_cost_table must return HTML with class 'data-table'."""
-    df = _make_costs_df()
-    summary = compute_cost_summary(df, 0.12)
-    html = build_cost_table(summary)
+    summary = compute_cost_summary(_make_costs_df(), "category")
+    html = build_cost_table(summary, "category")
     assert 'class="data-table"' in html
 
 
 def test_build_cost_table_has_tbody_with_rows() -> None:
     """build_cost_table must include a <tbody> with at least one <tr>."""
-    df = _make_costs_df()
-    summary = compute_cost_summary(df, 0.12)
-    html = build_cost_table(summary)
+    summary = compute_cost_summary(_make_costs_df(), "category")
+    html = build_cost_table(summary, "category")
     assert "<tbody>" in html
     assert "<tr>" in html
 
 
 def test_build_cost_table_empty_df_returns_placeholder() -> None:
     """build_cost_table on an empty DataFrame must return the <p> fallback."""
-    html = build_cost_table(pd.DataFrame())
+    html = build_cost_table(pd.DataFrame(), "category")
     assert "<table" not in html
     assert "No cost data" in html
 
@@ -716,70 +754,65 @@ def test_build_cost_table_empty_df_returns_placeholder() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_chart_cost_bar_returns_figure() -> None:
-    """chart_cost_bar must return a plotly Figure."""
-    df = _make_costs_df()
-    summary = compute_cost_summary(df, 0.12)
-    fig = chart_cost_bar(summary)
-    assert isinstance(fig, go.Figure)
+def _one_row_summary(**overrides: float) -> pd.DataFrame:
+    row = {
+        "group": "Thermal",
+        "mean": 1000.0,
+        "std": 100.0,
+        "p10": 850.0,
+        "p90": 1150.0,
+        "pct": 100.0,
+    }
+    row.update(overrides)
+    return pd.DataFrame([row])
 
 
-def test_chart_cost_bar_has_vertical_bar_traces() -> None:
-    """chart_cost_bar must produce at least one vertical Bar trace."""
-    df = _make_costs_df()
-    summary = compute_cost_summary(df, 0.12)
-    fig = chart_cost_bar(summary)
-    bar_traces = [t for t in fig.data if isinstance(t, go.Bar)]
-    assert len(bar_traces) >= 1
-    # Bars are vertical: orientation is None (default) or "v", never "h"
-    for trace in bar_traces:
-        assert trace.orientation != "h"
-
-
-def test_chart_cost_bar_error_bars_p5_p95() -> None:
-    """chart_cost_bar must set error_y with the p5-p95 range on each bar trace.
-
-    Given p5=800, mean=1000, p95=1200, the trace must have
-    error_y.array=[200] and error_y.arrayminus=[200].
-    """
-    summary = pd.DataFrame(
-        {
-            "group": ["Thermal"],
-            "mean": [1000.0],
-            "std": [100.0],
-            "p5": [800.0],
-            "p10": [850.0],
-            "p90": [1150.0],
-            "p95": [1200.0],
-            "pct": [100.0],
-        }
-    )
-    fig = chart_cost_bar(summary)
+def test_chart_cost_bar_vertical_bars_coloured_by_taxonomy() -> None:
+    """One vertical bar trace, each bar in its component's colour."""
+    summary = compute_cost_summary(_make_costs_df(), "component")
+    fig = chart_cost_bar(summary, "component")
 
     bar_traces = [t for t in fig.data if isinstance(t, go.Bar)]
     assert len(bar_traces) == 1
     trace = bar_traces[0]
+    assert trace.orientation != "h"
+    assert list(trace.marker.color) == [
+        cost_color("component", str(g)) for g in trace.x
+    ]
+    assert fig.layout.yaxis.title.text == "NPV Cost (R$)"
+
+
+def test_chart_cost_bar_skips_zero_entries() -> None:
+    """Entries with no cost get no bar."""
+    summary = compute_cost_summary(_make_costs_df(), "component")
+    fig = chart_cost_bar(summary, "component")
+
+    assert set(fig.data[0].x) == {"Thermal", "Deficit", "Spillage"}
+
+
+def test_chart_cost_bar_error_bars_p10_p90() -> None:
+    """The error bars span p10 to p90 around the mean."""
+    fig = chart_cost_bar(_one_row_summary(), "component")
+
+    trace = fig.data[0]
     assert trace.error_y is not None
     assert trace.error_y.visible is True
-    assert trace.error_y.array == (200.0,)
-    assert trace.error_y.arrayminus == (200.0,)
+    assert trace.error_y.array == (150.0,)
+    assert trace.error_y.arrayminus == (150.0,)
+
+
+def test_chart_cost_bar_error_bars_clamped_at_zero() -> None:
+    """A skewed spread with the mean outside [p10, p90] draws no negative bar."""
+    fig = chart_cost_bar(_one_row_summary(p10=0.0, p90=200.0), "component")
+
+    trace = fig.data[0]
+    assert trace.error_y.array == (0.0,)
+    assert trace.error_y.arrayminus == (1000.0,)
 
 
 def test_chart_cost_bar_error_bars_omitted_when_nan() -> None:
-    """chart_cost_bar must omit error_y when p5 or p95 is NaN."""
-    summary = pd.DataFrame(
-        {
-            "group": ["Thermal"],
-            "mean": [1000.0],
-            "std": [0.0],
-            "p5": [math.nan],
-            "p10": [math.nan],
-            "p90": [math.nan],
-            "p95": [math.nan],
-            "pct": [100.0],
-        }
-    )
-    fig = chart_cost_bar(summary)
+    """chart_cost_bar must omit error_y when p10 or p90 is NaN."""
+    fig = chart_cost_bar(_one_row_summary(p10=math.nan, p90=math.nan), "component")
 
     bar_traces = [t for t in fig.data if isinstance(t, go.Bar)]
     assert len(bar_traces) == 1

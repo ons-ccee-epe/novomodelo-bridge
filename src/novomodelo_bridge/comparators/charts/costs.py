@@ -1,8 +1,9 @@
 """Cost-breakdown chart/table and per-stage cost subplots.
 
 Self-contained: no dependency on ``charts._shared``. External deps only --
-``analyze`` for the per-category Δ/Δ% arithmetic and ``cost_categories`` for
-the aggregate-column exclusion set.
+``analyze`` for the per-row Δ/Δ% arithmetic, ``cost_categories`` for the
+component names and the aggregate-column exclusion set, and ``ui.theme`` for
+the component colours.
 """
 
 from __future__ import annotations
@@ -14,141 +15,94 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
     COLOR_NOVOMODELO,
 )
-from novomodelo_bridge.novomodelo.cost_categories import AGGREGATE_COST_COLUMNS
+from novomodelo_bridge.novomodelo.cost_categories import (
+    AGGREGATE_COST_COLUMNS,
+    COST_CATEGORIES,
+    VIOLATIONS,
+)
 from novomodelo_bridge.ui.html.document import escape_text
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
+from novomodelo_bridge.ui.theme import COST_COMPONENT_COLORS
 
-# Per-category mapping between the source model pmo.dat
-# `custo_operacao_series_simuladas` `parcela` labels and novomodelo simulation cost-record
-# columns.
-#
-# Tuple layout: (display_label, [newave_keys], [novomodelo_columns], hex_color).
-#
-# Ordering reflects logical grouping and drives the legend order in the
-# stacked bar.
-_COST_MAP: list[tuple[str, list[str], list[str], str]] = [
-    # Operational / generation costs. Novomodelo's anticipated_thermal_cost (GNL
-    # forward-committed fuel, booked on the decision column) is folded in here so the
-    # thermal category matches the source model GERACAO TERMICA / CTERM, which books GNL
-    # fuel at delivery. Absent in pre-anticipation Novomodelo runs (summed as 0).
-    (
-        "Thermal Generation",
-        ["GERACAO TERMICA"],
-        ["thermal_cost", "anticipated_thermal_cost"],
-        "#D97706",
-    ),
-    ("Deficit", ["DEFICIT"], ["deficit_cost"], "#DC2626"),
-    ("Energy Excess", ["EXCESSO ENERGIA"], ["excess_cost"], "#F59E0B"),
-    ("Exchange", ["INTERCAMBIO"], ["exchange_cost"], "#7C3AED"),
-    ("Pumping", [], ["pumping_cost"], "#0891B2"),
+#: The source-model ``parcela`` labels (pmo.dat ``custo_operacao_series_simuladas``
+#: or the DECOMP cost report) each Novomodelo cost component compares with, keyed
+#: by the component names of :data:`COST_CATEGORIES`.
+_SOURCE_PARCELS: dict[str, list[str]] = {
+    # Novomodelo's thermal component includes the anticipated (GNL forward-committed)
+    # fuel, so it compares with the source model's GERACAO TERMICA / CTERM, which
+    # books GNL fuel at delivery.
+    "Thermal": ["GERACAO TERMICA"],
     # DECOMP's import/export contract parcels; NEWAVE reports none.
-    ("Contract", ["CONTRATOS"], ["contract_cost"], "#0D9488"),
-    # Regularisation costs (per-unit-flow charges, not violations)
-    (
-        "Spillage",
-        ["VERTIMENTO", "VERTIMENTO UHE", "VERT. FIO N. TURB."],
-        ["spillage_cost"],
-        "#2563EB",
-    ),
-    ("Turbined Reg.", ["TURBINAMENTO UHE"], ["turbined_cost"], "#0EA5E9"),
-    ("NCS Curtailment", ["CORTE GER. EOLICA"], ["curtailment_cost"], "#059669"),
-    # Hydro operational-bound violations (slacks priced above regularisation)
-    (
-        "Outflow Min Viol.",
-        ["VIOLACAO VZMIN"],
-        ["outflow_violation_below_cost"],
-        "#E11D48",
-    ),
-    (
-        "Outflow Max Viol.",
-        ["VIOL. DEFL. MAXIMA"],
-        ["outflow_violation_above_cost"],
-        "#F43F5E",
-    ),
-    (
-        "Turbining Bounds Viol.",
-        ["VIOL. TURB. MINIMO", "VIOL. TURB. MAXIMO"],
-        ["turbined_violation_cost"],
-        "#FB923C",
-    ),
-    (
-        "Generation Bounds Viol.",
-        ["VIOLACAO GHMIN", "VIOLACAO GHMINU"],
-        ["generation_violation_cost"],
-        "#F97316",
-    ),
-    (
-        "Storage Bounds Viol.",
-        [],
-        ["storage_violation_cost"],
-        "#C2410C",
-    ),
-    ("Filling Target Viol.", ["VIOLACAO EVMIN"], ["filling_target_cost"], "#A16207"),
-    (
-        "Water Withdrawal Viol.",
-        ["VIOLACAO RETIRADA"],
-        ["withdrawal_violation_cost"],
-        "#0284C7",
-    ),
-    (
-        "Evaporation Viol.",
-        ["VIOL. EVAP. UHE"],
-        ["evaporation_violation_cost"],
-        "#9333EA",
-    ),
-    # FPHA folga slack (the source model) — novomodelo has no direct analogue; left as The
-    # source-model-only column so it shows up in the report rather than being hidden.
-    ("FPHA Slack", ["VIOLACAO FPHA"], [], "#DB2777"),
-    # DECOMP-only: its unmet water-diversion parcel, and the part of the stage cost
-    # its report does not itemize once deficit is priced (the RHQ/RHE/RHV,
-    # evaporation and irrigation slacks), which Novomodelo spreads over the violation
-    # columns above and below.
-    ("Diversion Viol.", ["VIOLACAO DESVIO"], [], "#BE185D"),
-    ("Unitemized Constr. Slack", ["FOLGA RESTRICOES"], [], "#831843"),
-    ("Inflow Non-Negativity", [], ["inflow_penalty_cost"], "#EA580C"),
-    # Generic constraint violations: The source model reports the risk-aversion curve
-    # and surface (CAR/SAR), electric (RESTELETRICA), interchange-group (INTERC. MIN.),
-    # hydraulic (RHQ/RHV) and piecewise-linear (RLPP) restriction violations as separate
-    # parcelas, but novomodelo-bridge converts them all into Novomodelo generic constraints, so
-    # Novomodelo aggregates their slacks into a single `generic_violation_cost`. Sum the
-    # source model parcelas to compare like-for-like.
-    (
-        "Generic Constr. Viol.",
-        [
-            "VIOLACAO CAR",
-            "VIOLACAO SAR",
-            "VIOL. RESTELETRICA",
-            "VIOL. INTERC. MIN.",
-            "VIOLACAO RHQ",
-            "VIOLACAO RHV",
-            "VIOL.RLPP DEFLMAX",
-            "VIOL.RLPP DEFLMAXU",
-            "VIOL.RLPP TURBMAX",
-            "VIOL.RLPP TURBMAXU",
-        ],
-        ["generic_violation_cost"],
-        "#6D28D9",
-    ),
+    "Contract": ["CONTRATOS"],
+    "Deficit": ["DEFICIT"],
+    "Energy Excess": ["EXCESSO ENERGIA"],
+    "Outflow Min": ["VIOLACAO VZMIN"],
+    "Outflow Max": ["VIOL. DEFL. MAXIMA"],
+    "Turbining Bounds": ["VIOL. TURB. MINIMO", "VIOL. TURB. MAXIMO"],
+    "Generation Bounds": ["VIOLACAO GHMIN", "VIOLACAO GHMINU"],
+    "Storage Bounds": [],
+    "Filling Target": ["VIOLACAO EVMIN"],
+    "Evaporation": ["VIOL. EVAP. UHE"],
+    "Water Withdrawal": ["VIOLACAO RETIRADA"],
+    "Inflow Penalty": [],
+    # The source model reports the risk-aversion curve and surface (CAR/SAR),
+    # electric (RESTELETRICA), interchange-group (INTERC. MIN.), hydraulic
+    # (RHQ/RHV) and piecewise-linear (RLPP) restriction violations as separate
+    # parcelas, but novomodelo-bridge converts them all into Novomodelo generic
+    # constraints, so Novomodelo aggregates their slacks into a single
+    # `generic_violation_cost`. Sum the source model parcelas to compare
+    # like-for-like.
+    "Generic Constraints": [
+        "VIOLACAO CAR",
+        "VIOLACAO SAR",
+        "VIOL. RESTELETRICA",
+        "VIOL. INTERC. MIN.",
+        "VIOLACAO RHQ",
+        "VIOLACAO RHV",
+        "VIOL.RLPP DEFLMAX",
+        "VIOL.RLPP DEFLMAXU",
+        "VIOL.RLPP TURBMAX",
+        "VIOL.RLPP TURBMAXU",
+    ],
+    "Spillage": ["VERTIMENTO", "VERTIMENTO UHE", "VERT. FIO N. TURB."],
+    "Turbined Reg.": ["TURBINAMENTO UHE"],
+    "NCS Curtailment": ["CORTE GER. EOLICA"],
+    "Exchange": ["INTERCAMBIO"],
+    "Pumping": [],
+}
+
+#: Source-model slack parcels with no Novomodelo component: ``(label, parcelas,
+#: colour)``, shown on the source side so they are not hidden. Their grays mark
+#: them as having no Novomodelo counterpart.
+_SOURCE_ONLY_SLACKS: list[tuple[str, list[str], str]] = [
+    # The source model's FPHA folga slack; Novomodelo has no direct analogue.
+    ("FPHA Slack", ["VIOLACAO FPHA"], "#b3b2ad"),
+    # DECOMP-only: its unmet water-diversion parcel, and the part of the stage
+    # cost its report does not itemize once deficit is priced (the RHQ/RHE/RHV,
+    # evaporation and irrigation slacks), which Novomodelo spreads over its
+    # violation components.
+    ("Diversion Viol.", ["VIOLACAO DESVIO"], "#8f8e89"),
+    ("Unitemized Constr. Slack", ["FOLGA RESTRICOES"], "#4a4945"),
 ]
 
-#: ``_COST_MAP`` categories that price a constraint violation (a slack), as
-#: opposed to a real cost or a per-unit-flow regularisation charge.
+#: Each breakdown row: ``(label, source parcelas, Novomodelo columns, colour)``,
+#: the Novomodelo components in taxonomy order, then the source-only slacks.
+_COST_MAP: list[tuple[str, list[str], list[str], str]] = [
+    (
+        comp.label,
+        _SOURCE_PARCELS[comp.label],
+        list(comp.columns),
+        COST_COMPONENT_COLORS[comp.label],
+    )
+    for cat in COST_CATEGORIES
+    for comp in cat.components
+] + [(label, parcels, [], color) for label, parcels, color in _SOURCE_ONLY_SLACKS]
+
+#: ``_COST_MAP`` rows that price a constraint violation (a slack), as opposed
+#: to a real cost or a per-unit-flow regularisation charge.
 _VIOLATION_CATEGORIES: frozenset[str] = frozenset(
-    {
-        "Outflow Min Viol.",
-        "Outflow Max Viol.",
-        "Turbining Bounds Viol.",
-        "Generation Bounds Viol.",
-        "Storage Bounds Viol.",
-        "Filling Target Viol.",
-        "Water Withdrawal Viol.",
-        "Evaporation Viol.",
-        "FPHA Slack",
-        "Diversion Viol.",
-        "Unitemized Constr. Slack",
-        "Inflow Non-Negativity",
-        "Generic Constr. Viol.",
-    }
+    {comp.label for comp in VIOLATIONS.components}
+    | {label for label, _, _ in _SOURCE_ONLY_SLACKS}
 )
 
 _COST_COLOR_DEFAULT = "#6B7280"  # for any unmapped residual category
@@ -240,9 +194,8 @@ def cost_breakdown_chart(
         "yaxis": {"title": "Cost (10⁹ R$)"},
         "barmode": "stack",
         "bargap": 0.4,
-        # Vertical legend on the right — the cost map has 15+ categories
-        # which wrap into 3+ rows when laid out horizontally above the
-        # plot and collide with the chart title.
+        # Vertical legend on the right — the cost map has 15+ categories,
+        # which a horizontal legend wraps into 3+ rows.
         "legend": {
             "orientation": "v",
             "yanchor": "top",
@@ -297,7 +250,7 @@ def cost_breakdown_table(
 
     head = (
         "<thead><tr>"
-        '<th class="cb-cat">Category</th>'
+        '<th class="cb-cat">Component</th>'
         f'<th class="cb-num">{reference_label}</th>'
         '<th class="cb-num">Novomodelo</th>'
         '<th class="cb-num">Δ</th>'
@@ -328,7 +281,7 @@ def cost_breakdown_table(
         "</tr>"
     )
     body = "<tbody>" + "".join(body_rows) + "</tbody>"
-    caption = "<caption>NPV by Category (10⁹ R$)</caption>"
+    caption = "<caption>NPV by Component (10⁹ R$)</caption>"
     return '<table class="cost-breakdown-table">' + caption + head + body + "</table>"
 
 
@@ -512,7 +465,6 @@ def _stage_cost_subplot(
         "title": title,
         "xaxis": {"title": "Stage (0-based)"},
         "yaxis": {"title": "Cost (10⁶ R$)"},
-        "legend": {"orientation": "h", "y": -0.2},
     }
     return _plotly_div(traces, layout)
 
@@ -660,6 +612,5 @@ def other_costs_chart(
         "title": "Other Costs — COPER − CTERM (non-thermal operation)",
         "xaxis": {"title": "Stage (0-based)"},
         "yaxis": {"title": "Cost (10⁶ R$)"},
-        "legend": {"orientation": "h", "y": -0.2},
     }
     return _plotly_div(traces, layout)

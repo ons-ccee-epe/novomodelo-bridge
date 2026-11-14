@@ -21,6 +21,11 @@ links are cobre-bridge's.
   `decomp-rhv-volume-tipo-deferred`; results change for decks that have them,
   so reconvert those. A `VBOM` term without a `UE` pumping station drops the
   constraint, with a `decomp-rhv-vbom-no-station` warning.
+- **`dashboard` draws each load block of a generic constraint against its own
+  bound** in a new "By block" view of the Constraints tab, and shades the
+  stages where the run used the constraint's slack. It and `compare decomp`
+  also evaluate constraints with thermal, outflow, diversion, pumping or
+  stage-volume terms, and the tab's type filter lists the families the case has.
 
 ### Changed
 
@@ -41,6 +46,12 @@ links are cobre-bridge's.
   `constraints/thermal_bounds.parquet`** when a plant's CVUs differ between
   the load blocks of a stage, instead of only their hours-weighted mean.
   Results change for such decks; reconvert them.
+- **`dashboard` and `compare` name and colour each cost the same way**: the
+  dashboard's Overview tab breaks the expected cost down by cost category, its
+  Costs tab by component in shades of the category's colour, with each
+  violation cost over time in a panel of its own, and the `compare` report's
+  cost breakdown uses the same component names and colours. Build the
+  dashboard and the report again to update them.
 - **`convert decomp` writes the post-study calendars under the keys novomodelo
   now reads.** `post_study_stages.json` holds the thermal calendar as
   `thermal_stages` instead of `stages`, and a deck with `VI` travel times also
@@ -53,10 +64,22 @@ links are cobre-bridge's.
 
 - **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
   Such a deck now converts.
-- **`dashboard` showed a `Hydro Violation` cost beside the violation costs it
-  sums** in the Costs tab's Violation Costs charts, so those costs appeared
-  twice. The charts now show only the individual violations; build the
-  dashboard again to update it.
+- **`dashboard` showed wrong costs**: the Costs tab listed `Hydro Violation`
+  beside the violation costs it sums and an undiscounted immediate cost as an
+  NPV, its Thermal card left out GNL thermal cost, both cost breakdowns showed
+  a spurious `Other` cost, and the Constraints tab's violation cost was the
+  sum over all scenarios instead of their mean. Build the dashboard again to
+  update it.
+- **`dashboard` and `compare` drew generic constraints far from their bounds.**
+  Both set an unweighted mean of a stage's load blocks against its first
+  block's bound, the dashboard drew a constraint it could not evaluate at zero,
+  and `compare` scaled a DECOMP `RHE` value by the stage's hours instead of the
+  730.5 h month of its MWmês unit; build the dashboard and the report again.
+- **`dashboard` and `compare` charts had overlapping labels.** Stage axes
+  labelled every stage, so a long study's dates ran into each other, and a
+  legend that wrapped into several rows covered the chart title or the axis
+  labels. Stage axes now label at most eight stages and legends sit below the
+  plot; build the dashboard and the report again.
 
 ## [0.20.0] - 2026-11-03
 

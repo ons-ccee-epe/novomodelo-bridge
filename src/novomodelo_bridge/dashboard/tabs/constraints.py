@@ -14,22 +14,37 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pandas as pd
+import polars as pl
 
+from novomodelo_bridge.dashboard.chart_helpers import (
+    compute_cost_summary,
+    cost_color,
+)
 from novomodelo_bridge.dashboard.tabs.constraints_utils import (
     build_constraints_summary_table,
     derive_constraint_shape,
 )
 from novomodelo_bridge.novomodelo.constraint_expr import (
+    BLOCK_HOURS_SCHEMA,
+    BOUNDS_SCHEMA,
     evaluate_lhs,
+    stage_weighted_bounds,
+    stage_weighted_lhs,
 )
 from novomodelo_bridge.ui.html.document import (
     escape_attr,
+    escape_text,
     json_for_script,
     metric_card,
     metrics_grid,
     section_title,
 )
-from novomodelo_bridge.ui.html.plotly import stage_x_dates, stage_x_labels
+from novomodelo_bridge.ui.html.plotly import (
+    LEGEND_DEFAULTS,
+    stage_date_xaxis,
+    stage_x_dates,
+    stage_x_labels,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -50,8 +65,32 @@ TAB_ORDER = 80
 
 _COLOR_TOTAL = "#4A90B8"
 _COLOR_VIOLATED = "#DC4C4C"
-_COLOR_COST = "#F5A623"
 _COLOR_TYPES = "#4A8B6F"
+
+#: A slack above this magnitude is a violation.
+_SLACK_TOL = 1e-6
+
+_LHS_QUANTILES = {"lhs_p10": 0.1, "lhs_p50": 0.5, "lhs_p90": 0.9}
+_LHS_SCHEMA = pl.Schema(
+    {
+        "constraint_id": pl.Int32,
+        "scenario_id": pl.Int64,
+        "stage_id": pl.Int32,
+        "block_id": pl.Int32,
+        "lhs_value": pl.Float64,
+    }
+)
+_LHS_COLUMNS = list(_LHS_SCHEMA)
+_VIOLATION_SCHEMA = pl.Schema(
+    {
+        "constraint_id": pl.Int32,
+        "scenario_id": pl.Int64,
+        "stage_id": pl.Int32,
+        "block_id": pl.Int32,
+        "slack_value": pl.Float64,
+    }
+)
+_VIOLATION_COLUMNS = list(_VIOLATION_SCHEMA)
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +104,7 @@ def _build_metrics_row(data: DashboardData) -> str:
     Cards:
     1. Total constraints count
     2. Constraints with violations count
-    3. Total violation cost (sum of generic_violation_cost across all scenarios/stages)
+    3. NPV of the Generic Constraints cost component, mean across scenarios
     4. Active constraint types (comma-joined unique type prefixes)
     """
     total_constraints = len(data.gc_constraints)
@@ -75,28 +114,17 @@ def _build_metrics_row(data: DashboardData) -> str:
     violations_df: pd.DataFrame = data.gc_violations
     if not violations_df.empty and "constraint_id" in violations_df.columns:
         viol_ids = set(
-            violations_df[violations_df["slack_value"].abs() > 1e-6][
+            violations_df[violations_df["slack_value"].abs() > _SLACK_TOL][
                 "constraint_id"
             ].unique()
         )
         violated_count = len(viol_ids)
 
-    # Total violation cost
-    costs_df: pd.DataFrame = data.costs
-    if "generic_violation_cost" in costs_df.columns:
-        total_viol_cost = float(costs_df["generic_violation_cost"].sum())
-    else:
-        total_viol_cost = 0.0
-    cost_str = f"R$ {total_viol_cost:,.0f}"
+    summary = compute_cost_summary(data.costs, "component")
+    generic = summary.loc[summary["group"] == "Generic Constraints", "mean"]
+    cost_str = f"R$ {float(generic.sum()):,.0f}"
 
-    # Active constraint types: unique first element after splitting name on "_"
-    type_prefixes: list[str] = []
-    seen: set[str] = set()
-    for c in data.gc_constraints:
-        prefix = c["name"].split("_")[0]
-        if prefix not in seen:
-            seen.add(prefix)
-            type_prefixes.append(prefix)
+    type_prefixes = _constraint_types(data.gc_constraints)
     active_types_str = ", ".join(type_prefixes) if type_prefixes else "—"
 
     cards = [
@@ -112,8 +140,8 @@ def _build_metrics_row(data: DashboardData) -> str:
         ),
         metric_card(
             value=cost_str,
-            label="Total Violation Cost",
-            color=_COLOR_COST,
+            label="Generic Constraints (NPV)",
+            color=cost_color("component", "Generic Constraints"),
         ),
         metric_card(
             value=active_types_str,
@@ -124,257 +152,249 @@ def _build_metrics_row(data: DashboardData) -> str:
     return metrics_grid(cards)
 
 
-def _compute_violation_zones(
-    p10: Sequence[float],
-    p90: Sequence[float],
-    bound_lower: Sequence[float | None],
-    bound_upper: Sequence[float | None],
-) -> list[dict[str, int]]:
-    """Compute contiguous stage index intervals where the band crosses either bound.
+def _constraint_type(constraint: dict) -> str:
+    """The family prefix of *constraint*'s name (``RE_12`` is ``RE``)."""
+    return constraint["name"].split("_")[0]
 
-    Two-sided per-(stage, block) test: a stage is violated when its floor is
-    breached (``bound_lower[i] is not None and p10[i] < bound_lower[i]``) OR
-    its ceiling is breached (``bound_upper[i] is not None and p90[i] >
-    bound_upper[i]``) — either condition alone flags the stage, and both may
-    fire simultaneously. This one test correctly covers every shape a
-    per-row bound can take: ``">="`` (lower-only — only the floor term can
-    fire), ``"<="`` (upper-only — only the ceiling term can fire), ``"=="``
-    (both populated and equal — either deviation direction is a violation),
-    and a genuine two-sided ``"range"`` (both populated and distinct — floor
-    and ceiling are independent breaches). A stage with neither endpoint
-    populated (both ``None``) carries no bound at that stage and is never a
-    violation; it closes any open zone the same way a gap used to.
 
-    Args:
-        p10: List of p10 LHS values per stage.
-        p90: List of p90 LHS values per stage.
-        bound_lower: Per-stage floor (``bound_lower``), ``None`` where unbounded.
-        bound_upper: Per-stage ceiling (``bound_upper``), ``None`` where unbounded.
+def _constraint_types(constraints: list[dict]) -> list[str]:
+    """Distinct family prefixes of *constraints*, in first-seen order."""
+    return list(dict.fromkeys(_constraint_type(c) for c in constraints))
 
-    Returns:
-        List of ``{"start": start_idx, "end": end_idx}`` dicts, one per
-        contiguous violated interval.  Empty list when no violations occur.
+
+def _violation_zones(violated: Sequence[int]) -> list[dict[str, int]]:
+    """Contiguous stage-index intervals where some scenario violates the row."""
+    zones: list[dict[str, int]] = []
+    start: int | None = None
+    for i, count in enumerate(violated):
+        if count and start is None:
+            start = i
+        elif not count and start is not None:
+            zones.append({"start": start, "end": i - 1})
+            start = None
+    if start is not None:
+        zones.append({"start": start, "end": len(violated) - 1})
+    return zones
+
+
+def _stage_series(
+    frame: pl.DataFrame, column: str, stages: list[int]
+) -> list[float | None]:
+    """*frame*'s *column* per stage of *stages*, ``None`` where it has none."""
+    by_stage = dict(zip(frame["stage_id"].to_list(), frame[column].to_list()))
+    return [
+        None if by_stage.get(s) is None else round(float(by_stage[s]), 4)
+        for s in stages
+    ]
+
+
+def _chart_view(
+    lhs: pl.DataFrame,
+    bounds: pl.DataFrame,
+    violated: pl.DataFrame,
+    stages: list[int],
+) -> dict:
+    """One LHS-vs-bound view: across-scenario LHS percentiles, bounds and
+    violation counts per stage.
+
+    *lhs* holds ``scenario_id``/``stage_id``/``lhs_value``; *bounds*
+    ``stage_id``/``bound_lower``/``bound_upper``; *violated* the
+    ``scenario_id``/``stage_id`` of every nonzero slack the view covers. A
+    stage with no evaluated LHS reads ``None``, never zero.
     """
-    n = len(p10)
-    if n == 0:
-        return []
-
-    violations: list[dict[str, int]] = []
-    in_zone = False
-    zone_start = 0
-
-    for i in range(n):
-        lo = bound_lower[i] if i < len(bound_lower) else None
-        hi = bound_upper[i] if i < len(bound_upper) else None
-        if lo is None and hi is None:
-            # No bound at this stage: close any open zone before this gap.
-            if in_zone:
-                violations.append({"start": zone_start, "end": i - 1})
-                in_zone = False
-            continue
-
-        violated = (lo is not None and p10[i] < lo) or (hi is not None and p90[i] > hi)
-
-        if violated and not in_zone:
-            in_zone = True
-            zone_start = i
-        elif not violated and in_zone:
-            violations.append({"start": zone_start, "end": i - 1})
-            in_zone = False
-
-    if in_zone:
-        violations.append({"start": zone_start, "end": n - 1})
-
-    return violations
+    pcts = lhs.group_by("stage_id").agg(
+        pl.col("lhs_value").quantile(q, interpolation="linear").alias(key)
+        for key, q in _LHS_QUANTILES.items()
+    )
+    counts = dict(
+        violated.group_by("stage_id")
+        .agg(pl.col("scenario_id").n_unique().alias("n"))
+        .iter_rows()
+    )
+    n_violated = [int(counts.get(s, 0)) for s in stages]
+    view: dict = {key: _stage_series(pcts, key, stages) for key in _LHS_QUANTILES}
+    view["bound_lower"] = _stage_series(bounds, "bound_lower", stages)
+    view["bound_upper"] = _stage_series(bounds, "bound_upper", stages)
+    view["violated"] = n_violated
+    view["violations"] = _violation_zones(n_violated)
+    return view
 
 
 def _build_constraint_lhs_data(
     constraints: list[dict],
     lhs_df: pd.DataFrame,
     gc_bounds: pd.DataFrame,
+    gc_violations: pd.DataFrame,
+    block_hours: pl.DataFrame,
+    block_names: dict[int, str],
     stage_labels: dict[int, str],
 ) -> dict:
-    """Build the JSON-serialisable LHS percentile data for all constraints.
+    """Build the JSON-serialisable LHS-vs-bound views of every constraint.
 
-    Precomputes p10/p50/p90 of LHS across scenarios per stage for every
-    constraint, resolves each stage's bound endpoint(s) directly from its
-    own ``gc_bounds`` row, and computes violation zone intervals.
+    Each constraint carries a ``stage`` view (the hours-weighted stage LHS
+    against the hours-weighted stage bound, see
+    :func:`~novomodelo_bridge.novomodelo.constraint_expr.stage_weighted_bounds`)
+    and one ``blocks`` view per block it is bounded at (each block's LHS
+    against its own bound; empty for a stage-level row). Violation counts
+    and zones come from the run's own nonzero slacks, not from the
+    percentile band.
 
     Args:
-        constraints: List of constraint dicts with keys ``id``, ``name``.
-            Constraints are sense-free; the displayed ``sense`` label is
-            derived from *gc_bounds* via :func:`derive_constraint_shape` for
-            the dropdown/legend only — it does not drive which endpoint(s)
-            are plotted or violation-tested (see ``bound_lower``/
-            ``bound_upper`` below).
-        lhs_df: DataFrame with columns ``constraint_id``, ``scenario_id``,
-            ``stage_id``, ``block_id``, ``lhs_value``.
-        gc_bounds: DataFrame with columns ``constraint_id``, ``stage_id``,
-            ``block_id``, ``bound_lower``, ``bound_upper`` (the sense-free
-            interval; see :mod:`novomodelo_bridge.core.generic_constraint_format`).
-        stage_labels: Stage id to human-readable label mapping.
+        constraints: Constraint dicts with keys ``id``, ``name``.
+        lhs_df: :func:`evaluate_lhs` output.
+        gc_bounds: Sense-free ``bound_lower``/``bound_upper`` per
+            ``constraint_id``/``stage_id``/``block_id`` (``block_id`` null
+            for a stage-level row).
+        gc_violations: The run's ``violations/generic`` slacks.
+        block_hours: ``stage_id``/``block_id``/``hours``.
+        block_names: Block id to block name.
+        stage_labels: Stage id to human-readable label.
 
     Returns:
-        Dict with keys ``stages`` (list[int]), ``xlabels`` (list[str]), and
-        ``constraints`` (dict mapping str(constraint_id) to per-constraint
-        entry dicts).  Each entry contains ``name``, ``sense``, ``lhs_p10``,
-        ``lhs_p50``, ``lhs_p90``, ``bound``, ``bound_lower``, ``bound_upper``,
-        ``violations``. ``bound`` is the legacy single-value series (the
-        ceiling when a stage has one, else the floor — unchanged for every
-        single-sided constraint); ``bound_lower``/``bound_upper`` are the raw
-        per-stage endpoints, both populated wherever a stage carries a
-        genuine two-sided ``"range"`` bound.
+        Dict with ``stages``, ``xlabels``, ``n_scenarios`` and
+        ``constraints`` (str id to an entry with ``name``, ``sense``,
+        ``evaluated``, ``stage`` and ``blocks``).
     """
-    # Derive a common sorted stage list
-    if not lhs_df.empty:
-        all_stages: list[int] = sorted(int(s) for s in lhs_df["stage_id"].unique())
-    elif not gc_bounds.empty:
-        all_stages = sorted(int(s) for s in gc_bounds["stage_id"].unique())
-    else:
-        all_stages = []
+    lhs = (
+        pl.from_pandas(lhs_df[_LHS_COLUMNS])
+        if not lhs_df.empty
+        else pl.DataFrame(schema=_LHS_SCHEMA)
+    ).cast(_LHS_SCHEMA)
+    bounds = (
+        pl.from_pandas(gc_bounds[list(BOUNDS_SCHEMA)])
+        if not gc_bounds.empty
+        else pl.DataFrame(schema=BOUNDS_SCHEMA)
+    ).cast(BOUNDS_SCHEMA)
+    violated = (
+        pl.from_pandas(gc_violations[_VIOLATION_COLUMNS])
+        if not gc_violations.empty
+        else pl.DataFrame(schema=_VIOLATION_SCHEMA)
+    ).cast(_VIOLATION_SCHEMA)
+    n_scenarios = (
+        pl.concat([lhs["scenario_id"], violated["scenario_id"]]).n_unique()
+        if not (lhs.is_empty() and violated.is_empty())
+        else 0
+    )
+    violated = violated.filter(pl.col("slack_value").abs() > _SLACK_TOL)
 
-    xlabels = stage_x_labels(all_stages, stage_labels)
-    n_stages = len(all_stages)
+    all_stages = sorted(
+        set(lhs["stage_id"].to_list()) | set(bounds["stage_id"].to_list())
+    )
+    stage_lhs = stage_weighted_lhs(lhs_df, block_hours)
+    stage_bounds = stage_weighted_bounds(bounds, block_hours)
 
     constraints_data: dict[str, dict] = {}
     for c in constraints:
-        cid = c["id"]
-        name = c["name"]
-
-        # --- LHS percentiles ---
-        sub = (
-            lhs_df[lhs_df["constraint_id"] == cid].copy()
-            if not lhs_df.empty
-            else pd.DataFrame()
+        cid = int(c["id"])
+        bounds_c = bounds.filter(pl.col("constraint_id") == cid)
+        lhs_c = lhs.filter(pl.col("constraint_id") == cid)
+        violated_c = violated.filter(pl.col("constraint_id") == cid)
+        blocks = sorted(
+            bounds_c.filter(pl.col("block_id").is_not_null())["block_id"]
+            .unique()
+            .to_list()
         )
-
-        if not sub.empty:
-            pcts = (
-                sub.groupby(["scenario_id", "stage_id"])["lhs_value"]
-                .mean()
-                .reset_index()
-                .groupby("stage_id")["lhs_value"]
-                .quantile([0.1, 0.5, 0.9])
-                .unstack(level=-1)
-                .rename(columns={0.1: "p10", 0.5: "p50", 0.9: "p90"})
-            )
-            p10 = [round(float(pcts["p10"].get(s, 0.0)), 4) for s in all_stages]
-            p50 = [round(float(pcts["p50"].get(s, 0.0)), 4) for s in all_stages]
-            p90 = [round(float(pcts["p90"].get(s, 0.0)), 4) for s in all_stages]
-        else:
-            p10 = [0.0] * n_stages
-            p50 = [0.0] * n_stages
-            p90 = [0.0] * n_stages
-
-        # --- Bound endpoints, resolved per (stage, block) row ---
-        bounds_c = (
-            gc_bounds[gc_bounds["constraint_id"] == cid]
-            if not gc_bounds.empty
-            else pd.DataFrame()
-        )
-        # `sense` is a per-constraint display label only (see
-        # `derive_constraint_shape`'s docstring) — it does not choose which
-        # endpoint(s) are read below. Each stage's own bound_lower/bound_upper
-        # are read directly, so a genuine two-sided "range" row (a live
-        # DECOMP RE/HQ/HV path) keeps both endpoints, and a stage whose own
-        # direction differs from the constraint's dominant one is never
-        # dropped.
-        sense = derive_constraint_shape(bounds_c)
-        bound_lower_vals: list[float | None] = []
-        bound_upper_vals: list[float | None] = []
-        if not bounds_c.empty:
-            if bounds_c["block_id"].isna().all():
-                by_stage = bounds_c.set_index("stage_id")
-            else:
-                by_stage = bounds_c[bounds_c["block_id"] == 0.0].set_index("stage_id")
-            lower_by_stage = by_stage["bound_lower"]
-            upper_by_stage = by_stage["bound_upper"]
-            for s in all_stages:
-                # `.get` on an all-null column (an unbounded side across
-                # every stage) can hand back a bare Python `None` rather
-                # than a float NaN, so the null check is `pd.isna` (which
-                # handles both) rather than `math.isnan(float(...))`.
-                lo_raw = lower_by_stage.get(s, float("nan"))
-                hi_raw = upper_by_stage.get(s, float("nan"))
-                lo = None if pd.isna(lo_raw) else round(float(lo_raw), 4)
-                hi = None if pd.isna(hi_raw) else round(float(hi_raw), 4)
-                bound_lower_vals.append(lo)
-                bound_upper_vals.append(hi)
-        else:
-            bound_lower_vals = [None] * n_stages
-            bound_upper_vals = [None] * n_stages
-
-        # Legacy single-value series: the ceiling when a stage has one, else
-        # the floor. Identical to today's values for every single-sided
-        # constraint (only one side is ever populated, so this always picks
-        # it); for a two-sided "range" stage it keeps the ceiling, matching
-        # the pre-fix value exactly — the floor is now additionally exposed
-        # via `bound_lower` rather than dropped.
-        bound_vals: list[float | None] = [
-            hi if hi is not None else lo
-            for lo, hi in zip(bound_lower_vals, bound_upper_vals, strict=True)
-        ]
-
-        # --- Violation zones: two-sided per-stage test (see
-        # `_compute_violation_zones`) — flags a floor breach, a ceiling
-        # breach, or both, independently at each stage.
-        violations = _compute_violation_zones(
-            p10, p90, bound_lower_vals, bound_upper_vals
-        )
-
         constraints_data[str(cid)] = {
-            "name": name,
-            "sense": sense,
-            "lhs_p10": p10,
-            "lhs_p50": p50,
-            "lhs_p90": p90,
-            "bound": bound_vals,
-            "bound_lower": bound_lower_vals,
-            "bound_upper": bound_upper_vals,
-            "violations": violations,
+            "name": c["name"],
+            "sense": derive_constraint_shape(bounds_c.to_pandas()),
+            "evaluated": not lhs_c.is_empty(),
+            "stage": _chart_view(
+                stage_lhs.filter(pl.col("constraint_id") == cid),
+                stage_bounds.filter(pl.col("constraint_id") == cid),
+                violated_c,
+                all_stages,
+            ),
+            "blocks": [
+                {
+                    "label": _block_label(b, block_names),
+                    **_chart_view(
+                        lhs_c.filter(pl.col("block_id") == b),
+                        bounds_c.filter(pl.col("block_id") == b),
+                        violated_c.filter(pl.col("block_id") == b),
+                        all_stages,
+                    ),
+                }
+                for b in blocks
+            ],
         }
 
     return {
         "stages": all_stages,
-        "xlabels": xlabels,
+        "xlabels": stage_x_labels(all_stages, stage_labels),
+        "n_scenarios": n_scenarios,
         "constraints": constraints_data,
     }
 
 
-def _build_lhs_section(data: DashboardData, lhs_df: pd.DataFrame) -> str:
+def _block_label(block_id: int, block_names: dict[int, str]) -> str:
+    name = block_names.get(block_id)
+    return f"Block {block_id} · {name}" if name else f"Block {block_id}"
+
+
+def _block_names(stages_data: dict) -> dict[int, str]:
+    """Block id to name, from the first stage that names it."""
+    names: dict[int, str] = {}
+    for stage in stages_data.get("stages", []):
+        for block in stage.get("blocks", []):
+            if block.get("name"):
+                names.setdefault(int(block["id"]), str(block["name"]))
+    return names
+
+
+def _build_lhs_section(
+    data: DashboardData, lhs_df: pd.DataFrame, block_hours: pl.DataFrame
+) -> str:
     """Build the interactive LHS vs Bound section HTML.
 
-    Embeds precomputed percentile data as a JSON blob and renders a
-    ``<select id="gc-constraint-sel">`` dropdown driving a single
-    ``<div id="gc-lhs-chart">`` chart via ``Plotly.react()``.
-
-    Args:
-        data: Dashboard data object.
-        lhs_df: Evaluated LHS DataFrame (may be empty).
-
-    Returns:
-        HTML string for the LHS section.
+    Embeds the per-constraint views as a JSON blob; ``gc-constraint-sel``
+    picks the constraint and ``gc-view-sel`` the stage or per-block view
+    drawn into ``gc-lhs-chart`` via ``Plotly.react()``.
     """
     lhs_data = _build_constraint_lhs_data(
-        data.gc_constraints, lhs_df, data.gc_bounds, data.stage_labels
+        data.gc_constraints,
+        lhs_df,
+        data.gc_bounds,
+        data.gc_violations,
+        block_hours,
+        _block_names(data.stages_data),
+        data.stage_labels,
     )
     data_json = json_for_script(lhs_data)
-    # ISO date x-positions (proportional date axis); xlabels stay the tick text.
-    dates_json = json_for_script(stage_x_dates(lhs_data["stages"], data.stage_dates))
+    xdates = stage_x_dates(lhs_data["stages"], data.stage_dates)
+    dates_json = json_for_script(xdates)
+    xaxis_json = json_for_script(stage_date_xaxis(xdates, lhs_data["xlabels"]))
 
     options_html = "\n".join(
-        f'<option value="{c["id"]}">{c["name"]}</option>' for c in data.gc_constraints
+        f'<option value="{c["id"]}">{escape_text(c["name"])}</option>'
+        for c in data.gc_constraints
+    )
+    select_style = (
+        ' style="padding:8px 12px;font-size:0.9rem;border-radius:4px;'
+        "border:1px solid #ccc;"
     )
 
     return (
-        '<div style="margin-bottom:16px;">'
+        '<div style="margin-bottom:16px;display:flex;flex-wrap:wrap;gap:16px;'
+        'align-items:center;">'
+        "<div>"
         '<label for="gc-constraint-sel"'
         ' style="font-weight:600;margin-right:8px;">Select Constraint:</label>'
         '<select id="gc-constraint-sel" onchange="updateConstraintChart()"'
-        ' style="padding:8px 12px;font-size:0.9rem;border-radius:4px;'
-        'border:1px solid #ccc;min-width:320px;">'
+        + select_style
+        + 'min-width:320px;">'
         + options_html
         + "</select>"
+        + "</div>"
+        + "<div>"
+        + '<label for="gc-view-sel"'
+        ' style="font-weight:600;margin-right:8px;">View:</label>'
+        + '<select id="gc-view-sel" onchange="updateConstraintChart()"'
+        + select_style
+        + '">'
+        + '<option value="stage">Stage (hours-weighted)</option>'
+        + '<option value="block">By block</option>'
+        + "</select>"
+        + "</div>"
         + "</div>"
         + '<div class="chart-grid-single">'
         + '<div class="chart-card">'
@@ -387,93 +407,142 @@ def _build_lhs_section(data: DashboardData, lhs_df: pd.DataFrame) -> str:
         + ";\n"
         + "const GC_LHS_DATES = "
         + dates_json
+        + ";\nconst GC_LHS_XAXIS = "
+        + xaxis_json
+        + ";\nconst GC_LHS_LEGEND = "
+        + json_for_script(LEGEND_DEFAULTS)
         + ";\n"
-        + r"""
+        + _LHS_CHART_JS
+        + "</script>"
+    )
+
+
+#: Draws the selected constraint's view. Zones span half a stage either side
+#: of their stages, so a one-stage zone is visible on the date axis.
+_LHS_CHART_JS = r"""
+function gcZoneEdge(xdates, i, side) {
+  var t = Date.parse(xdates[i]);
+  var j = i + side;
+  if (j >= 0 && j < xdates.length) {
+    return new Date((t + Date.parse(xdates[j])) / 2).toISOString();
+  }
+  var k = i - side;
+  if (k < 0 || k >= xdates.length) return xdates[i];
+  return new Date(t + (t - Date.parse(xdates[k])) / 2).toISOString();
+}
+
+function gcPanelTraces(view, xdates, yaxis, first) {
+  var n = GC_LHS_DATA.n_scenarios;
+  var traces = [
+    {
+      x: xdates.concat(xdates.slice().reverse()),
+      y: view.lhs_p90.concat(view.lhs_p10.slice().reverse()),
+      fill: 'toself', fillcolor: 'rgba(74,144,184,0.15)',
+      line: {color: 'rgba(0,0,0,0)'}, name: 'LHS P10–P90',
+      legendgroup: 'band', showlegend: first, hoverinfo: 'skip', yaxis: yaxis
+    },
+    {
+      x: xdates, y: view.lhs_p50, name: 'LHS Median (P50)',
+      line: {color: '#4A90B8', width: 2}, legendgroup: 'p50',
+      showlegend: first, yaxis: yaxis, customdata: view.violated,
+      hovertemplate: '%{y:,.1f}<extra>LHS P50 · violated in '
+        + '%{customdata} of ' + n + ' scenarios</extra>'
+    }
+  ];
+  var hasUpper = view.bound_upper.some(function(v) { return v !== null; });
+  var distinctLower = view.bound_lower.some(function(lo, i) {
+    return lo !== null && lo !== view.bound_upper[i];
+  });
+  if (hasUpper) {
+    traces.push({
+      x: xdates, y: view.bound_upper,
+      name: distinctLower ? 'Upper Bound' : 'Bound',
+      line: {color: '#DC4C4C', width: 1.5, dash: 'dash'},
+      legendgroup: 'upper', showlegend: first, yaxis: yaxis
+    });
+  }
+  if (distinctLower) {
+    traces.push({
+      x: xdates, y: view.bound_lower,
+      name: hasUpper ? 'Lower Bound' : 'Bound',
+      line: {color: hasUpper ? '#B8860B' : '#DC4C4C', width: 1.5, dash: 'dot'},
+      legendgroup: 'lower', showlegend: first, yaxis: yaxis
+    });
+  }
+  return traces;
+}
+
+function gcPanelShapes(view, xdates, yref) {
+  return view.violations.map(function(v) {
+    return {
+      type: 'rect', xref: 'x', yref: yref,
+      x0: gcZoneEdge(xdates, v.start, -1), x1: gcZoneEdge(xdates, v.end, 1),
+      y0: 0, y1: 1, fillcolor: 'rgba(220,76,76,0.12)', line: {width: 0},
+      layer: 'below'
+    };
+  });
+}
+
 function updateConstraintChart() {
   var cid = document.getElementById('gc-constraint-sel').value;
   var cdata = GC_LHS_DATA.constraints[cid];
   if (!cdata) return;
-  var xlabels = GC_LHS_DATA.xlabels;
   var xdates = GC_LHS_DATES;
+  var byBlock = document.getElementById('gc-view-sel').value === 'block'
+    && cdata.blocks.length > 0;
+  var panels = byBlock
+    ? cdata.blocks
+    : [Object.assign({label: ''}, cdata.stage)];
 
-  var traces = [
-    {
-      x: xdates.concat(xdates.slice().reverse()),
-      y: cdata.lhs_p90.concat(cdata.lhs_p10.slice().reverse()),
-      fill: 'toself',
-      fillcolor: 'rgba(74,144,184,0.15)',
-      line: {color: 'rgba(0,0,0,0)'},
-      name: 'P10\u2013P90',
-      showlegend: true,
-      hoverinfo: 'skip'
-    },
-    {
-      x: xdates,
-      y: cdata.lhs_p50,
-      name: 'LHS Median (P50)',
-      line: {color: '#4A90B8', width: 2}
-    },
-    {
-      x: xdates,
-      y: cdata.bound,
-      name: 'Bound (RHS)',
-      line: {color: '#DC4C4C', width: 1.5, dash: 'dash'}
+  var traces = [];
+  var shapes = [];
+  var annotations = [];
+  var layout = {
+    title: cdata.name + ' — LHS vs Bound'
+      + (byBlock ? ' by block' : ' (hours-weighted stage mean)'),
+    hovermode: 'x unified',
+    xaxis: GC_LHS_XAXIS,
+    margin: {l: 60, r: 20, t: 60, b: 10},
+    legend: GC_LHS_LEGEND
+  };
+  if (byBlock) {
+    layout.grid = {rows: panels.length, columns: 1, pattern: 'coupled',
+                   roworder: 'top to bottom', ygap: 0.3};
+  }
+  panels.forEach(function(view, i) {
+    var suffix = i === 0 ? '' : String(i + 1);
+    var yaxis = 'y' + suffix;
+    traces = traces.concat(gcPanelTraces(view, xdates, yaxis, i === 0));
+    shapes = shapes.concat(gcPanelShapes(view, xdates, yaxis + ' domain'));
+    if (i > 0) layout['yaxis' + suffix] = {matches: 'y'};
+    if (view.label) {
+      annotations.push({
+        text: view.label, showarrow: false, xref: 'paper',
+        yref: yaxis + ' domain', x: 0, y: 1, xanchor: 'left',
+        yanchor: 'bottom', font: {size: 12}
+      });
     }
-  ];
-
-  // `bound` already carries the ceiling wherever a stage has one, else the
-  // floor (see `_build_constraint_lhs_data`) -- identical to a single-sided
-  // constraint's only line. A genuine two-sided "range" stage additionally
-  // populates `bound_lower` with a value distinct from `bound`; only then
-  // is a second dashed floor line drawn, so single-sided constraints render
-  // exactly one bound line, unchanged.
-  var hasDistinctFloor = (cdata.bound_lower || []).some(function(lo, i) {
-    return lo !== null && lo !== cdata.bound[i];
   });
-  if (hasDistinctFloor) {
-    traces.push({
-      x: xdates,
-      y: cdata.bound_lower,
-      name: 'Bound Floor',
-      line: {color: '#B8860B', width: 1.5, dash: 'dot'}
+  if (!cdata.evaluated) {
+    annotations.push({
+      text: 'LHS not evaluated: a term has no simulation output to value it',
+      showarrow: false, xref: 'paper', yref: 'paper', x: 0.5, y: 0.5,
+      font: {size: 12, color: '#6B7280'}
     });
   }
-
-  var shapes = (cdata.violations || []).map(function(v) {
-    return {
-      type: 'rect',
-      xref: 'x',
-      yref: 'paper',
-      x0: xdates[v.start],
-      x1: xdates[v.end],
-      y0: 0,
-      y1: 1,
-      fillcolor: 'rgba(220,76,76,0.12)',
-      line: {width: 0}
-    };
-  });
-
-  var layout = {
-    title: cdata.name + ' \u2014 LHS vs Bound',
-    hovermode: 'x unified',
-    xaxis: {type: 'date', tickmode: 'array', tickvals: xdates, ticktext: xlabels},
-    shapes: shapes,
-    margin: {l: 60, r: 20, t: 60, b: 10},
-    legend: {
-      orientation: 'h', yanchor: 'top', y: -0.15,
-      xanchor: 'center', x: 0.5, font: {size: 11}
-    }
-  };
-
-  Plotly.react('gc-lhs-chart', traces, layout, {responsive: true});
+  layout.shapes = shapes;
+  layout.annotations = annotations;
+  var height = byBlock ? 120 + 200 * panels.length : 380;
+  var el = document.getElementById('gc-lhs-chart');
+  el.style.height = height + 'px';
+  layout.height = height;
+  Plotly.react(el, traces, layout, {responsive: true});
 }
 
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateConstraintChart, 100);
 });
 """
-        + "</script>"
-    )
 
 
 def _add_type_filter_and_row_attrs(
@@ -502,7 +571,7 @@ def _add_type_filter_and_row_attrs(
     modified = summary_html
     for c in constraints:
         cid = c["id"]
-        ctype = c["name"].split("_")[0]
+        ctype = _constraint_type(c)
         modified = modified.replace(
             '<tr style="background:',
             f'<tr data-cid="{cid}" data-type="{escape_attr(ctype)}"'
@@ -510,6 +579,10 @@ def _add_type_filter_and_row_attrs(
             1,
         )
 
+    type_options = "".join(
+        f'<option value="{escape_attr(t)}">{escape_text(t)}</option>'
+        for t in _constraint_types(constraints)
+    )
     type_filter_html = (
         '<div style="margin-bottom:12px;">'
         '<label for="gc-type-filter"'
@@ -517,11 +590,7 @@ def _add_type_filter_and_row_attrs(
         '<select id="gc-type-filter" onchange="filterConstraintTable()"'
         ' style="padding:6px 10px;font-size:0.9rem;border-radius:4px;'
         'border:1px solid #ccc;">'
-        '<option value="All">All</option>'
-        '<option value="VminOP">VminOP</option>'
-        '<option value="RE">RE</option>'
-        '<option value="AGRINT">AGRINT</option>'
-        "</select>"
+        '<option value="All">All</option>' + type_options + "</select>"
         "</div>"
         "<script>\n"
         "function filterConstraintTable() {\n"
@@ -556,9 +625,15 @@ def can_render(data: DashboardData) -> bool:
 
 def render(data: DashboardData) -> str:
     """Return the full HTML string for the v2 Constraints tab content area."""
-    # Evaluate the LHS once from novomodelo's own resolved coefficients; passed to
-    # the LHS vs Bound chart.
-    lhs_df = evaluate_lhs(data.gc_resolved, data.hydros_lf, data.exchanges_lf)
+    block_hours = pl.DataFrame(
+        {
+            "stage_id": [s for s, _ in data.block_hours],
+            "block_id": [b for _, b in data.block_hours],
+            "hours": list(data.block_hours.values()),
+        },
+        schema=BLOCK_HOURS_SCHEMA,
+    )
+    lhs_df = evaluate_lhs(data.gc_resolved, data.lhs_frames, block_hours)
 
     # --- Section A: metrics row ---
     section_a = _build_metrics_row(data)
@@ -573,6 +648,8 @@ def render(data: DashboardData) -> str:
     section_b = section_title("Constraint Summary") + summary_with_filter
 
     # --- Section C: Interactive LHS vs Bound chart (single, JS-driven) ---
-    section_c = section_title("LHS vs Bound") + _build_lhs_section(data, lhs_df)
+    section_c = section_title("LHS vs Bound") + _build_lhs_section(
+        data, lhs_df, block_hours
+    )
 
     return section_a + section_b + section_c

@@ -26,7 +26,7 @@ def overview_metrics(
 
     # Pull thermal-generation cost only (single-category NPV). The source model parcela
     # "GERACAO TERMICA" vs Novomodelo ``thermal_cost`` + the GNL ``anticipated_thermal_cost``
-    # (matching the "Thermal Generation" ``_COST_MAP`` category; anticipated is 0 /
+    # (matching the "Thermal" ``_COST_MAP`` row; anticipated is 0 /
     # absent on non-GNL runs).
     nw_thermal = (nw_costs or {}).get("GERACAO TERMICA", 0.0)
     _cb = novomodelo_costs or {}

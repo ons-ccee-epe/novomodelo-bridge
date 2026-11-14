@@ -320,7 +320,7 @@ def _build_interactive_detail_html(
             }}
             Plotly.react('{div_id}', traces, {{
                 title: d.name + ' \u2014 {var_label}',
-                xaxis: {{title: 'Stage'}},
+                xaxis: {{title: 'Stage', automargin: true}},
                 yaxis: {{title: '{var_label}'}},
                 legend: {json_for_script(_LEGEND)},
                 margin: {json_for_script(_MARGIN)},

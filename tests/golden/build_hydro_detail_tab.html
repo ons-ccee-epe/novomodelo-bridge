@@ -87,9 +87,9 @@
             }
             Plotly.react('hydro-chart-storage-final-hm3', traces, {
                 title: d.name + ' — Storage (hm³)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Storage (hm³)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -165,9 +165,9 @@
             }
             Plotly.react('hydro-chart-generation-mw', traces, {
                 title: d.name + ' — Generation (MW)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Generation (MW)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -243,9 +243,9 @@
             }
             Plotly.react('hydro-chart-turbined-m3s', traces, {
                 title: d.name + ' — Turbined (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Turbined (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -321,9 +321,9 @@
             }
             Plotly.react('hydro-chart-productivity-mw-per-m3s', traces, {
                 title: d.name + ' — Productivity = Gen / Turbined (MW per m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Productivity = Gen / Turbined (MW per m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -399,9 +399,9 @@
             }
             Plotly.react('hydro-chart-spillage-m3s', traces, {
                 title: d.name + ' — Spillage (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Spillage (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -477,9 +477,9 @@
             }
             Plotly.react('hydro-chart-outflow-m3s', traces, {
                 title: d.name + ' — Total Outflow (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Total Outflow (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -555,9 +555,9 @@
             }
             Plotly.react('hydro-chart-inflow-m3s', traces, {
                 title: d.name + ' — Incremental Inflow (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Incremental Inflow (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -633,9 +633,9 @@
             }
             Plotly.react('hydro-chart-total-inflow-m3s', traces, {
                 title: d.name + ' — Total Inflow / QAFLUH (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Total Inflow / QAFLUH (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -711,9 +711,9 @@
             }
             Plotly.react('hydro-chart-evaporation-m3s', traces, {
                 title: d.name + ' — Evaporation (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Evaporation (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -789,9 +789,9 @@
             }
             Plotly.react('hydro-chart-withdrawal-m3s', traces, {
                 title: d.name + ' — Water Withdrawal (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Water Withdrawal (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -867,9 +867,9 @@
             }
             Plotly.react('hydro-chart-water-value-per-hm3', traces, {
                 title: d.name + ' — Water Value (R$/hm³)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Water Value (R$/hm³)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -945,9 +945,9 @@
             }
             Plotly.react('hydro-chart-stored-energy-initial-mwh', traces, {
                 title: d.name + ' — Stored Energy Initial (MWh)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Stored Energy Initial (MWh)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -1023,9 +1023,9 @@
             }
             Plotly.react('hydro-chart-stored-energy-final-mwh', traces, {
                 title: d.name + ' — Stored Energy Final (MWh)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Stored Energy Final (MWh)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -1101,9 +1101,9 @@
             }
             Plotly.react('hydro-chart-incremental-inflow-energy-mw', traces, {
                 title: d.name + ' — Natural Inflow Energy (MW)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Natural Inflow Energy (MW)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -1179,9 +1179,9 @@
             }
             Plotly.react('hydro-chart-water-withdrawal-violation-neg-m3s', traces, {
                 title: d.name + ' — Withdrawal Slack Pos (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Withdrawal Slack Pos (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -1257,9 +1257,9 @@
             }
             Plotly.react('hydro-chart-water-withdrawal-violation-pos-m3s', traces, {
                 title: d.name + ' — Withdrawal Slack Neg (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Withdrawal Slack Neg (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',
@@ -1335,9 +1335,9 @@
             }
             Plotly.react('hydro-chart-inflow-nonnegativity-slack-m3s', traces, {
                 title: d.name + ' — Inflow Non-Negativity Slack (m³/s)',
-                xaxis: {title: 'Stage'},
+                xaxis: {title: 'Stage', automargin: true},
                 yaxis: {title: 'Inflow Non-Negativity Slack (m³/s)'},
-                legend: {"orientation":"h","yanchor":"bottom","y":1.02,"xanchor":"center","x":0.5,"font":{"size":11}},
+                legend: {"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},
                 margin: {"l":60,"r":30,"t":60,"b":50},
                 template: 'plotly_white',
                 hovermode: 'x unified',

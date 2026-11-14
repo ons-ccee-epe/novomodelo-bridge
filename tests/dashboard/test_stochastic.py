@@ -15,11 +15,14 @@ Covers:
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from novomodelo_bridge.dashboard.tabs.stochastic import (
@@ -31,6 +34,7 @@ from novomodelo_bridge.dashboard.tabs.stochastic import (
     _compute_empirical_correlation,
     _compute_historical_stats,
     _extract_fitted_correlation,
+    _render_per_hydro_inflow_explorer,
     can_render,
     render,
 )
@@ -1148,6 +1152,17 @@ class TestChartNoiseBoxplotByStage:
 
         assert list(fig.data[0].x) == ["Jan 2024", "Feb 2024", "Mar 2024"]
 
+    def test_long_axis_labels_a_thinned_subset_of_the_stages(self) -> None:
+        """Every stage keeps its box; the axis labels only every 12th of 72."""
+        df = self._make_noise_df_stages(72)
+        labels = [f"S{i}" for i in range(72)]
+
+        fig = _chart_noise_boxplot_by_stage(df, dict(enumerate(labels)))
+
+        assert len(fig.data[0].x) == 72
+        assert list(fig.layout.xaxis.tickvals) == labels[::12]
+        assert list(fig.layout.xaxis.ticktext) == labels[::12]
+
 
 # ---------------------------------------------------------------------------
 # render — integration tests for sections D, E, F
@@ -1284,3 +1299,33 @@ class TestRenderSectionsDEF:
 
         assert "No AR model was fitted for this case" in html
         assert "v2-stoch-ar-order" not in html
+
+
+def test_inflow_explorer_axis_falls_back_to_the_synthetic_stages() -> None:
+    """A hydro without history takes its axis from its synthetic stages."""
+    data = _make_data(
+        inflow_history=_make_inflow_history(
+            [(1, "2023-01-01", 100.0), (1, "2023-02-01", 120.0)]
+        ),
+        stages_data=_make_stages_data([(0, "2024-01-01"), (1, "2024-02-01")]),
+        hydro_meta={1: {"name": "H1"}, 2: {"name": "H2"}},
+        stage_labels={0: "Jan 2024", 1: "Feb 2024"},
+        stage_dates={0: "2024-01-01", 1: "2024-02-01"},
+    )
+    data.simulation_available = True
+    data.hydros_lf = pl.LazyFrame(
+        {
+            "hydro_id": [2, 2, 2, 2],
+            "stage_id": [0, 0, 1, 1],
+            "incremental_inflow_m3s": [50.0, 54.0, 60.0, 66.0],
+        }
+    )
+
+    html = _render_per_hydro_inflow_explorer(data)
+
+    match = re.search(r"window\._stochHydroData = (\{.*?\});\n", html)
+    assert match is not None
+    entry = json.loads(match.group(1))["2"]
+    assert "hist_dates" not in entry
+    assert entry["xaxis"]["tickvals"] == entry["synth_dates"]
+    assert entry["xaxis"]["ticktext"] == ["Jan 2024", "Feb 2024"]

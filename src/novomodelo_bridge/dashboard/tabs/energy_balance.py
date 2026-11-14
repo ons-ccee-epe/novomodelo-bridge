@@ -51,6 +51,7 @@ from novomodelo_bridge.ui.html.plotly import (
 from novomodelo_bridge.ui.html.plotly import (
     apply_stage_date_axis,
     apply_standard_layout,
+    stage_date_xaxis,
     stage_x_dates,
     stage_x_labels,
 )
@@ -300,14 +301,7 @@ def _chart_gen_mix_hero(data: DashboardData) -> go.Figure:
         xaxis_title="Stage",
         yaxis_title="MW",
         hovermode="x unified",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11),
-        ),
+        legend=_LEGEND,
         margin=_MARGIN,
     )
     apply_stage_date_axis(fig, xdates, xlabels)
@@ -558,14 +552,7 @@ def _chart_gen_by_bus(data: DashboardData) -> go.Figure:
 
     fig.update_layout(
         height=350 * n_rows,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11),
-        ),
+        legend=_LEGEND,
         margin=dict(l=60, r=30, t=80, b=50),
     )
     apply_stage_date_axis(fig, series.xdates, series.xlabels)
@@ -751,14 +738,7 @@ def _system_storage_pct_fig(data: DashboardData) -> go.Figure:
         yaxis_title="% Useful Volume",
         yaxis=dict(range=[0, 105]),
         hovermode="x unified",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11),
-        ),
+        legend=_LEGEND,
         margin=_MARGIN,
     )
     return sys_fig
@@ -849,14 +829,7 @@ def _bus_storage_pct_fig(
 
         bus_fig.update_layout(
             height=320 * n_rows_bus + 60,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=11),
-            ),
+            legend=_LEGEND,
             margin=dict(l=60, r=30, t=80, b=50),
         )
         apply_stage_date_axis(bus_fig, xdates, xlabels)
@@ -1035,14 +1008,7 @@ def _energy_quantiles_fig(
         xaxis_title="Stage",
         yaxis_title=y_title,
         hovermode="x unified",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11),
-        ),
+        legend=_LEGEND,
         margin=_MARGIN,
     )
     apply_stage_date_axis(fig, xdates, xlabels)
@@ -1124,14 +1090,7 @@ def _render_stored_energy(data: DashboardData) -> str:
 
         bus_fig.update_layout(
             height=320 * n_rows + 60,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=11),
-            ),
+            legend=_LEGEND,
             margin=dict(l=60, r=30, t=80, b=50),
         )
         apply_stage_date_axis(bus_fig, xdates, xlabels)
@@ -1387,14 +1346,7 @@ def _render_ncs_curtailment(data: DashboardData) -> str:
         xaxis_title="Stage",
         yaxis_title="MW",
         hovermode="x unified",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11),
-        ),
+        legend=_LEGEND,
         margin=_MARGIN,
     )
 
@@ -1638,8 +1590,8 @@ def _build_hero_section(data: DashboardData) -> str:
         )
 
     data_json = json_for_script(hero_data)
-    labels_json = json_for_script(xlabels)
     xdates = stage_x_dates(hero_data["stages"], data.stage_dates)
+    xaxis_json = json_for_script(stage_date_xaxis(xdates, xlabels))
     dates_json = json_for_script(xdates)
 
     hydro_color = GENERATION_COLORS["hydro"]
@@ -1675,19 +1627,19 @@ def _build_hero_section(data: DashboardData) -> str:
     script = (
         "<script>\n"
         "const EB_DATA = " + data_json + ";\n"
-        "const EB_LABELS = " + labels_json + ";\n"
+        "const EB_XAXIS = " + xaxis_json + ";\n"
         "const EB_DATES = " + dates_json + ";\n"
+        "const EB_LEGEND = " + json_for_script(_LEGEND) + ";\n"
         f"const _EB_HYDRO_COLOR = '{hydro_color}';\n"
         f"const _EB_THERMAL_COLOR = '{thermal_color}';\n"
         f"const _EB_NCS_COLOR = '{ncs_color}';\n"
         f"const _EB_LOAD_COLOR = '{load_color}';\n"
         + r"""
 var _EB_L = {hovermode:'x unified',
-             xaxis:{title:'Stage', type:'date', tickmode:'array', tickvals:EB_DATES, ticktext:EB_LABELS},
+             xaxis:Object.assign({title:'Stage'}, EB_XAXIS),
              yaxis:{title:'MW'},
              margin:{l:60,r:20,t:60,b:10},
-             legend:{orientation:'h',yanchor:'bottom',y:1.02,
-                     xanchor:'center',x:0.5,font:{size:11}}};
+             legend:EB_LEGEND};
 var _EB_C = {responsive:true};
 
 function _eb_area(nm, y, color, stack) {

@@ -23,8 +23,8 @@ def constraints_comparison_chart(
     """Per-constraint small-multiples comparing the source model vs Novomodelo LHS vs bound.
 
     One panel per constraint. Each panel shows the per-stage the source model LHS (mean
-    evaluated from MEDIAS-USIH / int*.out outputs), the Novomodelo LHS (mean across scenarios
-    and blocks from simulation parquet), and the constraint bound (dashed) overlaid as a
+    evaluated from MEDIAS-USIH / int*.out outputs), the Novomodelo LHS (hours-weighted stage
+    mean, averaged across scenarios), and the hours-weighted constraint bound (dashed) overlaid as a
     horizontal-step series for every stage where the bound is defined. Constraints with
     no LHS data on either side are skipped silently.
 

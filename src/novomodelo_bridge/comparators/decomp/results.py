@@ -75,7 +75,7 @@ from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.pandas_utils import as_int
-from novomodelo_bridge.core.units import HM3_PER_M3S_HOUR
+from novomodelo_bridge.core.units import HM3_PER_M3S_HOUR, MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
 from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
@@ -1143,7 +1143,7 @@ def _energy_balance_frames(
     # two DECOMP thermal-generation columns because Novomodelo's own
     # ``thermal_gen_mw`` (the counterpart this overlays) already includes
     # anticipated GNL generation — the same live+anticipated fold the cost
-    # breakdown applies (see charts._COST_MAP's "Thermal Generation" entry).
+    # breakdown applies (see charts._COST_MAP's "Thermal" row).
     market_exprs: list[tuple[str, pl.Expr]] = []
     if "geracao_hidroeletrica_MW" in present:
         market_exprs.append(("GHTOT", pl.col("geracao_hidroeletrica_MW")))
@@ -2511,9 +2511,9 @@ def _rhe_lhs_lookup(
 
     RHE constraints report their achieved LHS directly in
     ``DecOperRheSoft``: ``valor_MW`` is the achieved Σρ_acum·storage in the
-    operation, as a stage-average MW -- the stored energy novomodelo's own
-    (slack-free) expression evaluation produces in MWh, once the caller
-    multiplies it by the stage's hours. Read it directly rather than re-deriving the
+    operation, in MWmês -- the stored energy novomodelo's own (slack-free)
+    expression evaluation produces in MWh, once the caller multiplies it by
+    :data:`~novomodelo_bridge.core.units.MEAN_MONTH_HOURS`. Read it directly rather than re-deriving the
     ρ_acum-weighted cascade sum ``decomp.converters.constraints.emit_rhe_generics``
     computes at conversion time, which would duplicate a large, easily
     drifting piece of machinery.
@@ -2593,8 +2593,8 @@ def _generic_constraint_lhs_decomp(
       novomodelo's absolute basis (see `_storage_lookup`).
     - **RHE** (soft stored-energy): read directly from ``DecOperRheSoft``
       (see `_rhe_lhs_lookup`) -- no register/census lookup needed -- and
-      converted from stage-average MW to MWh with the stage's hours, the unit
-      of novomodelo's RHE row.
+      converted from MWmês to MWh with the mean month's hours, the unit of
+      novomodelo's RHE row.
 
     Deferred (novomodelo-only render, logged, never fabricated): RE
     ``interchange`` (FI) and HQ ``QBOM`` (pumping) terms -- see
@@ -2641,8 +2641,6 @@ def _generic_constraint_lhs_decomp(
     rhe_lhs = _rhe_lhs_lookup(
         _dec_oper_rhesoft_frame(decomp_dir), probabilities=probabilities
     )
-    stage_hours = novomodelo_readers.read_novomodelo_stage_hours(novomodelo_output_dir)
-
     rows: list[dict[str, object]] = []
     n_skipped = 0
     for c in gc_constraints:
@@ -2675,10 +2673,9 @@ def _generic_constraint_lhs_decomp(
                 {
                     "constraint_id": novomodelo_cid,
                     "stage_id": stage,
-                    "lhs_value": value * stage_hours[stage],
+                    "lhs_value": value * MEAN_MONTH_HOURS,
                 }
                 for stage, value in stage_values.items()
-                if stage in stage_hours
             )
             continue
 
@@ -2873,6 +2870,7 @@ def _generic_constraint_fields(
     from novomodelo_bridge.comparators.constraints import (
         evaluate_lhs_novomodelo,
         load_resolved_generic_constraints,
+        stage_bounds_novomodelo,
     )
 
     novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
@@ -2890,7 +2888,7 @@ def _generic_constraint_fields(
         gc_lhs_nw = pl.DataFrame()
     return {
         "gc_constraints": gc_constraints,
-        "gc_bounds": gc_resolved.bounds,
+        "gc_bounds": stage_bounds_novomodelo(gc_resolved, novomodelo_output_dir),
         "gc_lhs_newave": gc_lhs_nw,
         "gc_lhs_novomodelo": gc_lhs_cb,
     }

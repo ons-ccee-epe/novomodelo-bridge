@@ -6,16 +6,24 @@ import re
 
 import pandas as pd
 import plotly.graph_objects as go
+import pytest
+from plotly.subplots import make_subplots
 
+from novomodelo_bridge.ui.html.document import json_for_script
+from novomodelo_bridge.ui.html.js import PLANT_EXPLORER_JS
 from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS,
     MARGIN_DEFAULTS,
+    MAX_STAGE_TICKS,
     _normalize_plotly_titles,
     add_mean_p50_band,
+    apply_stage_date_axis,
     apply_standard_layout,
     fig_to_html,
     plotly_div,
     render_figure,
+    stage_axis_ticks,
+    stage_date_xaxis,
 )
 from novomodelo_bridge.ui.theme import BAND_FILL, BAND_LINE
 
@@ -242,3 +250,65 @@ def test_plotly_div_bare_title_layout_emits_object_form_no_bare_titles() -> None
     assert '"title":{"text":"Y"}' in result
     assert '"title":{"text":"Z"}' in result
     assert not re.search(r'"title":"[^{"][^"]*"', result)
+
+
+def _stage_axis(n: int) -> tuple[list[str], list[str]]:
+    dates = [f"{2026 + i // 12}-{i % 12 + 1:02d}-01" for i in range(n)]
+    return dates, [f"S{i}" for i in range(n)]
+
+
+@pytest.mark.parametrize(
+    ("n_stages", "stride"),
+    [(1, 1), (8, 1), (9, 2), (17, 3), (30, 6), (72, 12), (144, 24), (200, 25)],
+)
+def test_stage_axis_ticks_label_every_stride_th_stage_from_the_first(
+    n_stages: int, stride: int
+) -> None:
+    """The smallest of the 1/2/3/6/12/24 strides that fits the tick cap, or a
+    plain fraction of the axis beyond them."""
+    dates, labels = _stage_axis(n_stages)
+
+    tickvals, ticktext = stage_axis_ticks(dates, labels)
+
+    assert tickvals == dates[::stride]
+    assert ticktext == labels[::stride]
+    assert len(tickvals) <= MAX_STAGE_TICKS
+
+
+def test_stage_date_xaxis_is_a_date_axis_with_the_thinned_ticks() -> None:
+    dates, labels = _stage_axis(72)
+    tickvals, ticktext = stage_axis_ticks(dates, labels)
+
+    assert stage_date_xaxis(dates, labels) == {
+        "type": "date",
+        "tickmode": "array",
+        "tickvals": tickvals,
+        "ticktext": ticktext,
+        "automargin": True,
+    }
+
+
+def test_apply_stage_date_axis_sets_every_subplot_x_axis() -> None:
+    dates, labels = _stage_axis(72)
+    fig = make_subplots(rows=2, cols=1)
+
+    apply_stage_date_axis(fig, dates, labels)
+
+    expected = stage_date_xaxis(dates, labels)["tickvals"]
+    assert list(fig.layout.xaxis.tickvals) == expected
+    assert list(fig.layout.xaxis2.tickvals) == expected
+
+
+def test_plant_explorer_layout_embeds_the_shared_legend() -> None:
+    """The JavaScript plant-explorer charts place their legend like the
+    Python-built ones, from the same default."""
+    assert f"legend: {json_for_script(LEGEND_DEFAULTS)}," in PLANT_EXPLORER_JS
+    assert "__LEGEND_DEFAULTS__" not in PLANT_EXPLORER_JS
+
+
+def test_plotly_div_gives_the_x_axis_automargin_and_keeps_its_own_keys() -> None:
+    """plotly.js ignores the template name, so the layout itself must let the
+    x-axis labels clear the bottom legend."""
+    html = plotly_div([], {"xaxis": {"title": "Stage"}})
+
+    assert '"xaxis":{"automargin":true,"title":{"text":"Stage"}}' in html
