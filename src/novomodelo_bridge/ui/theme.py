@@ -2,14 +2,15 @@
 
 Canonical source for the **semantic** colours used across the dashboard and
 comparator Plotly charts: the per-entity generation palette (hydro/thermal/ncs),
-bounds/comparison/cost-component colours, and chart accents. Reference these
-constants from chart code instead of repeating the hex values.
+bounds/comparison colours, the cost category and component colours, and chart
+accents. Reference these constants from chart code instead of repeating the hex
+values.
 
 Two kinds of colour legitimately live elsewhere and are *not* governed here: the
 page **CSS** (``ui/css.py``) and **local categorical palettes** that map a fixed
-set of labels to distinct hues for a single chart (e.g. the cost-category and
-constraint-type maps, the plant-explorer scenario colours, the performance-phase
-palette). Those are intentionally independent of the semantic tokens.
+set of labels to distinct hues for a single chart (e.g. the constraint-type
+map, the plant-explorer scenario colours). Those are intentionally independent
+of the semantic tokens.
 """
 
 from __future__ import annotations
@@ -27,6 +28,47 @@ COLORS: dict[str, str] = {
     "upper_bound": "#DC4C4C",
     "future_cost": "#8B9298",
 }
+
+#: One colour per cost category and per cost component, keyed by the names in
+#: :data:`novomodelo_bridge.novomodelo.cost_categories.COST_CATEGORIES`, so a
+#: cost keeps its colour in every dashboard chart and in the compare report.
+#: Each category's components are an OKLCH lightness ramp of the category's
+#: hue, light to dark in taxonomy order, so a stack groups them by category.
+COST_CATEGORY_COLORS: dict[str, str] = {
+    "Thermal & Contracts": "#eda100",
+    "Deficit & Excess": "#e34948",
+    "Violations": "#6250d6",
+    "Regularization": "#1baf7a",
+    "Pumping": "#2a78d6",
+}
+
+COST_COMPONENT_COLORS: dict[str, str] = {
+    "Thermal": "#eda100",
+    "Contract": "#ab7305",
+    "Deficit": "#e34948",
+    "Energy Excess": "#ac031b",
+    "Outflow Min": "#aaaaff",
+    "Outflow Max": "#9591fe",
+    "Turbining Bounds": "#8277fe",
+    "Generation Bounds": "#7162ea",
+    "Storage Bounds": "#614ed4",
+    "Filling Target": "#513abf",
+    "Evaporation": "#4223aa",
+    "Water Withdrawal": "#350296",
+    "Inflow Penalty": "#260171",
+    "Generic Constraints": "#18004e",
+    "Spillage": "#1baf7a",
+    "Turbined Reg.": "#098d61",
+    "NCS Curtailment": "#006c49",
+    "Exchange": "#004d32",
+    "Pumping": "#2a78d6",
+}
+
+#: Colour of a cost the taxonomy does not classify.
+COST_OTHER_COLOR: str = "#6B7280"
+
+#: Colour of the expected total cost.
+COST_TOTAL_COLOR: str = "#374151"
 
 BUS_COLORS: list[str] = ["#4A90B8", "#F5A623", "#4A8B6F", "#DC4C4C", "#B87333"]
 

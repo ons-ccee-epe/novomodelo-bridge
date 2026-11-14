@@ -298,12 +298,13 @@ def test_build_metrics_row_no_violation_cost_column() -> None:
     data = _make_mock_data(costs=costs)
     html = _build_metrics_row(data)
     assert "R$ 0" in html
-    assert "Total Violation Cost" in html
+    assert "Generic Constraints (NPV)" in html
 
 
-def test_build_metrics_row_with_violation_cost() -> None:
-    """_build_metrics_row must display the summed violation cost when column present."""
-    # 2 scenarios x 2 stages x 100.0 = 400.0 total
+def test_build_metrics_row_violation_cost_is_mean_over_scenarios() -> None:
+    """The card is the expected cost per scenario, as on the Costs tab, not
+    the sum over every scenario."""
+    # 2 stages x 100.0 = 200.0 per scenario, in each of the 2 scenarios.
     costs = _make_costs(
         n_scenarios=2,
         n_stages=2,
@@ -312,7 +313,22 @@ def test_build_metrics_row_with_violation_cost() -> None:
     )
     data = _make_mock_data(costs=costs)
     html = _build_metrics_row(data)
-    assert "R$ 400" in html
+    assert "R$ 200" in html
+    assert "R$ 400" not in html
+
+
+def test_build_metrics_row_violation_cost_is_discounted() -> None:
+    """The card is a present value: stage 1 is weighted by its discount factor."""
+    costs = _make_costs(
+        n_scenarios=2,
+        n_stages=2,
+        include_violation_cost=True,
+        violation_cost=100.0,
+    )
+    costs["discount_factor"] = costs["stage_id"].map({0: 1.0, 1: 0.5})
+    data = _make_mock_data(costs=costs)
+    html = _build_metrics_row(data)
+    assert "R$ 150" in html
 
 
 def test_build_metrics_row_shows_active_types() -> None:

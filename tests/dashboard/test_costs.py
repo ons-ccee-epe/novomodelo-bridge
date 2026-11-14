@@ -1,14 +1,13 @@
 """Unit tests for novomodelo_bridge.dashboard.tabs.costs.
 
-Covers module constants, can_render, _compute_npv_metric, _build_metrics_row,
-and the full render() path including the empty-costs degradation branch.
-
-Also covers: _render_cost_composition, _render_category_evolution,
-_render_spot_price, _render_violations, and the extended render() output.
+Covers module constants, can_render, the NPV cards, the cost composition data,
+_render_spot_price, _render_violations, and the full render() path including
+the empty-costs degradation branch.
 """
 
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -16,19 +15,18 @@ import plotly.graph_objects as go
 import polars as pl
 
 import novomodelo_bridge.dashboard.tabs.costs as costs_mod
+from novomodelo_bridge.dashboard.chart_helpers import cost_color
 from novomodelo_bridge.dashboard.tabs.costs import (
     _build_composition_data,
     _build_composition_section,
     _build_metrics_row,
     _chart_violation_timeline,
-    _compute_npv_metric,
-    _render_category_evolution,
-    _render_cost_composition,
     _render_spot_price,
     _render_violations,
     can_render,
     render,
 )
+from novomodelo_bridge.ui.theme import COST_TOTAL_COLOR
 
 # ---------------------------------------------------------------------------
 # Helpers / data factories
@@ -129,90 +127,93 @@ def test_can_render_returns_false_when_simulation_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
-# test__compute_npv_metric
-# ---------------------------------------------------------------------------
-
-
-def test_compute_npv_metric_undiscounted_returns_mean_per_scenario() -> None:
-    """With discount_rate=0.0 and thermal_cost summing to 6000 across 2 scenarios,
-    _compute_npv_metric must return 3000.0 (mean across scenarios).
-
-    Each scenario has 3 stages, each with thermal_cost=1000.0, so the per-scenario
-    sum is 3000.0. With 2 scenarios the mean is also 3000.0.
-    """
-    costs = _make_costs_df(n_scenarios=2, n_stages=3, thermal_cost=1000.0)
-    data = _make_mock_data(costs=costs, discount_rate=0.0)
-    result = _compute_npv_metric(data, "thermal_cost")
-    assert abs(result - 3000.0) < 1e-6
-
-
-def test_compute_npv_metric_discounted_less_than_undiscounted() -> None:
-    """When novomodelo's ``discount_factor`` column is <1 on later stages the NPV
-    is lower than the undiscounted per-scenario sum."""
-    undiscounted = _compute_npv_metric(
-        _make_mock_data(
-            costs=_make_costs_df(n_scenarios=2, n_stages=3, thermal_cost=1000.0)
-        ),
-        "thermal_cost",
-    )
-    discounted = _compute_npv_metric(
-        _make_mock_data(
-            costs=_make_costs_df(
-                n_scenarios=2, n_stages=3, thermal_cost=1000.0, stage_discount=0.9
-            )
-        ),
-        "thermal_cost",
-    )
-    assert discounted < undiscounted
-
-
-def test_compute_npv_metric_missing_column_returns_zero() -> None:
-    """When the requested column is absent, _compute_npv_metric must return 0.0."""
-    costs = _make_costs_df()
-    data = _make_mock_data(costs=costs)
-    result = _compute_npv_metric(data, "nonexistent_column")
-    assert result == 0.0
-
-
-def test_compute_npv_metric_empty_dataframe_returns_zero() -> None:
-    """When costs is empty, _compute_npv_metric must return 0.0."""
-    data = _make_mock_data(costs=pd.DataFrame())
-    result = _compute_npv_metric(data, "thermal_cost")
-    assert result == 0.0
-
-
-# ---------------------------------------------------------------------------
 # test__build_metrics_row
 # ---------------------------------------------------------------------------
 
 
-def test_build_metrics_row_produces_four_metric_cards() -> None:
-    """_build_metrics_row must produce HTML with 'metric-card' at least 4 times."""
-    data = _make_mock_data()
-    html = _build_metrics_row(data)
-    assert html.count("metric-card") >= 4
+def _cards(html: str) -> dict[str, tuple[str, str]]:
+    """Each metric card's label mapped to its (value, border colour)."""
+    found = re.findall(
+        r'<div class="metric-card" style="border-top: 4px solid (#[0-9A-Fa-f]{6});">'
+        r'<div class="metric-value">(.*?)</div>'
+        r'<div class="metric-label">(.*?)</div>',
+        html,
+    )
+    return {label: (value, color) for color, value, label in found}
 
 
-def test_build_metrics_row_empty_costs_still_four_cards() -> None:
-    """_build_metrics_row with empty costs must still produce 4 metric-card elements."""
-    data = _make_mock_data(costs=pd.DataFrame())
-    html = _build_metrics_row(data)
-    assert html.count("metric-card") >= 4
+def test_build_metrics_row_cards_and_colours() -> None:
+    """The four NPV cards, each in its taxonomy colour."""
+    cards = _cards(_build_metrics_row(_make_mock_data()))
+
+    assert list(cards) == [
+        "Expected Cost (NPV)",
+        "Thermal (NPV)",
+        "Deficit (NPV)",
+        "Violations (NPV)",
+    ]
+    assert cards["Expected Cost (NPV)"][1] == COST_TOTAL_COLOR
+    assert cards["Thermal (NPV)"][1] == cost_color("component", "Thermal")
+    assert cards["Deficit (NPV)"][1] == cost_color("component", "Deficit")
+    assert cards["Violations (NPV)"][1] == cost_color("category", "Violations")
 
 
-def test_build_metrics_row_contains_expected_cost_label() -> None:
-    """_build_metrics_row must include the 'Expected Cost (NPV)' label."""
-    data = _make_mock_data()
-    html = _build_metrics_row(data)
-    assert "Expected Cost (NPV)" in html
+def test_build_metrics_row_values_are_mean_npv_per_scenario() -> None:
+    """Three stages of 1000 thermal and 50 deficit per scenario, undiscounted."""
+    cards = _cards(_build_metrics_row(_make_mock_data()))
+
+    assert cards["Expected Cost (NPV)"][0] == "R$ 3,150"
+    assert cards["Thermal (NPV)"][0] == "R$ 3,000"
+    assert cards["Deficit (NPV)"][0] == "R$ 150"
+    assert cards["Violations (NPV)"][0] == "R$ 0"
 
 
-def test_build_metrics_row_contains_thermal_and_deficit_labels() -> None:
-    """_build_metrics_row must include Thermal Cost and Deficit Cost labels."""
-    data = _make_mock_data()
-    html = _build_metrics_row(data)
-    assert "Thermal Cost (NPV)" in html
-    assert "Deficit Cost (NPV)" in html
+def test_build_metrics_row_discounts_with_the_parquet_factor() -> None:
+    """The cards are present values: stage t is weighted by ``0.5 ** t``."""
+    costs = _make_costs_df(n_scenarios=2, n_stages=3, stage_discount=0.5)
+    cards = _cards(_build_metrics_row(_make_mock_data(costs=costs)))
+
+    # (1000 + 50) * (1 + 0.5 + 0.25)
+    assert cards["Expected Cost (NPV)"][0] == "R$ 1,838"
+    assert cards["Thermal (NPV)"][0] == "R$ 1,750"
+
+
+def test_build_metrics_row_violations_card_sums_the_category() -> None:
+    """The Violations card adds every violation component, not one of them."""
+    costs = _make_costs_df(n_scenarios=2, n_stages=3)
+    costs["storage_violation_cost"] = 10.0
+    costs["generic_violation_cost"] = 5.0
+    costs["hydro_violation_cost"] = 999.0
+    cards = _cards(_build_metrics_row(_make_mock_data(costs=costs)))
+
+    assert cards["Violations (NPV)"][0] == "R$ 45"
+    assert cards["Expected Cost (NPV)"][0] == "R$ 3,195"
+
+
+def test_build_metrics_row_thermal_card_includes_anticipated_thermal() -> None:
+    """Anticipated (GNL) thermal cost is part of the Thermal card."""
+    costs = _make_costs_df(n_scenarios=2, n_stages=3)
+    costs["anticipated_thermal_cost"] = 100.0
+    cards = _cards(_build_metrics_row(_make_mock_data(costs=costs)))
+
+    assert cards["Thermal (NPV)"][0] == "R$ 3,300"
+
+
+def test_build_metrics_row_ignores_row_keys() -> None:
+    """A ``node_id`` column is a row key and never adds to the expected cost."""
+    costs = _make_costs_df(n_scenarios=2, n_stages=3)
+    costs["node_id"] = 4
+    cards = _cards(_build_metrics_row(_make_mock_data(costs=costs)))
+
+    assert cards["Expected Cost (NPV)"][0] == "R$ 3,150"
+
+
+def test_build_metrics_row_empty_costs_shows_four_na_cards() -> None:
+    """Without costs the four cards still render, each N/A."""
+    cards = _cards(_build_metrics_row(_make_mock_data(costs=pd.DataFrame())))
+
+    assert len(cards) == 4
+    assert {value for value, _ in cards.values()} == {"N/A"}
 
 
 # ---------------------------------------------------------------------------
@@ -344,94 +345,7 @@ def _make_mock_data_full(
 
 
 # ---------------------------------------------------------------------------
-# test__render_cost_composition (Section D)
-# ---------------------------------------------------------------------------
-
-
-def test_render_cost_composition_contains_collapsible_section() -> None:
-    """_render_cost_composition must return HTML with collapsible-section class."""
-    data = _make_mock_data_full()
-    html = _render_cost_composition(data)
-    assert "collapsible-section" in html
-
-
-def test_render_cost_composition_contains_section_title() -> None:
-    """_render_cost_composition must include the 'Cost Composition by Stage' title."""
-    data = _make_mock_data_full()
-    html = _render_cost_composition(data)
-    assert "Cost Composition by Stage" in html
-
-
-def test_render_cost_composition_with_empty_costs_returns_fallback() -> None:
-    """_render_cost_composition with empty costs must return fallback text."""
-    data = _make_mock_data_full(costs=pd.DataFrame())
-    html = _render_cost_composition(data)
-    assert "No cost data" in html
-
-
-def test_render_cost_composition_is_not_default_collapsed() -> None:
-    """_render_cost_composition must start expanded (no 'default-collapsed' class)."""
-    data = _make_mock_data_full()
-    html = _render_cost_composition(data)
-    # default_collapsed=False means the section_class is 'collapsible-section'
-    # (not 'collapsible-section default-collapsed')
-    assert "default-collapsed" not in html
-
-
-def test_render_cost_composition_contains_chart_card() -> None:
-    """_render_cost_composition must wrap the chart in a chart-card."""
-    data = _make_mock_data_full()
-    html = _render_cost_composition(data)
-    assert "chart-card" in html
-
-
-# ---------------------------------------------------------------------------
-# test__render_category_evolution (Section E)
-# ---------------------------------------------------------------------------
-
-
-def test_render_category_evolution_contains_collapsible_section() -> None:
-    """_render_category_evolution must return HTML with collapsible-section class."""
-    data = _make_mock_data_full()
-    html = _render_category_evolution(data)
-    assert "collapsible-section" in html
-
-
-def test_render_category_evolution_contains_section_title() -> None:
-    """_render_category_evolution must include the 'Cost Category Trends' title."""
-    data = _make_mock_data_full()
-    html = _render_category_evolution(data)
-    assert "Cost Category Trends" in html
-
-
-def test_render_category_evolution_with_empty_costs_returns_fallback() -> None:
-    """_render_category_evolution with empty costs must return fallback text."""
-    data = _make_mock_data_full(costs=pd.DataFrame())
-    html = _render_category_evolution(data)
-    assert "No cost data" in html
-
-
-def test_render_category_evolution_is_default_collapsed() -> None:
-    """_render_category_evolution must start collapsed.
-
-    The collapsible_section helper marks a collapsed section with the CSS
-    class 'collapsed-title' on the title div and 'collapsed' on the content
-    div — not the string 'default-collapsed'.
-    """
-    data = _make_mock_data_full()
-    html = _render_category_evolution(data)
-    assert "collapsed-title" in html
-
-
-def test_render_category_evolution_contains_chart_card() -> None:
-    """_render_category_evolution must wrap the chart in a chart-card."""
-    data = _make_mock_data_full()
-    html = _render_category_evolution(data)
-    assert "chart-card" in html
-
-
-# ---------------------------------------------------------------------------
-# test__render_spot_price (Section F)
+# test__render_spot_price
 # ---------------------------------------------------------------------------
 
 
@@ -531,7 +445,7 @@ def test_render_spot_price_is_default_collapsed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# test__render_violations (Section G)
+# test__render_violations
 # ---------------------------------------------------------------------------
 
 
@@ -610,11 +524,8 @@ def test_render_contains_cost_composition_section() -> None:
 
 
 def test_render_contains_at_least_three_collapsible_sections() -> None:
-    """render() must contain at least 3 collapsible-section elements.
-
-    Composition, category trends, and spot price sections are always present
-    (violation section may be absent).
-    """
+    """render() must contain at least 3 collapsible-section elements:
+    composition, spot price and violations."""
     costs = _make_costs_df(n_scenarios=2, n_stages=3, thermal_cost=1000.0)
     data = _make_mock_data_full(costs=costs)
     html = render(data)
@@ -629,13 +540,7 @@ def test_render_includes_npv_section() -> None:
 
 
 def test_render_includes_all_temporal_sections() -> None:
-    """render() with violation costs must include the three temporal sections.
-
-    render() renders: Cost Composition by Stage (via _build_composition_section),
-    Spot Price by Bus (via _render_spot_price), and Violation Costs (via
-    _render_violations). Cost Category Trends (_render_category_evolution) was
-    removed from render() and is only accessible as a standalone function.
-    """
+    """render() with violation costs must include the three temporal sections."""
     costs = _make_costs_df_with_violations(
         n_scenarios=2, n_stages=3, thermal_cost=1000.0, generic_violation_cost=50.0
     )
@@ -686,19 +591,35 @@ def test_chart_violation_timeline_returns_figure_with_nonzero_data() -> None:
 
 
 def test_chart_violation_timeline_has_scatter_trace_for_storage_violation() -> None:
-    """_chart_violation_timeline must include a Scatter trace for storage_violation.
-
-    Acceptance criterion: trace name contains 'Storage Violation' (cleaned label).
-    """
+    """_chart_violation_timeline draws storage_violation_cost as its
+    component, Storage Bounds, in that component's colour."""
     costs = _make_costs_df_with_storage_violation(storage_violation_cost=10.0)
     data = _make_mock_data_full(costs=costs)
     fig = _chart_violation_timeline(data)
     assert fig is not None
     scatter_traces = [t for t in fig.data if isinstance(t, go.Scatter)]
     assert len(scatter_traces) >= 1
-    trace_names = [t.name for t in scatter_traces]
-    # Cleaned label: "_cost" removed, "_" -> " ", then title-cased
-    assert any("Storage Violation" in name for name in trace_names)
+    (trace,) = scatter_traces
+    assert trace.name == "Storage Bounds"
+    assert trace.line.color == cost_color("component", "Storage Bounds")
+
+
+def test_chart_violation_timeline_draws_one_titled_panel_per_costly_component() -> None:
+    costs = _make_costs_df_with_storage_violation(storage_violation_cost=10.0)
+    costs["generic_violation_cost"] = 5.0
+    costs["evaporation_violation_cost"] = 0.0
+    data = _make_mock_data_full(costs=costs)
+
+    fig = _chart_violation_timeline(data)
+
+    assert fig is not None
+    assert [t.name for t in fig.data] == ["Storage Bounds", "Generic Constraints"]
+    assert [t.yaxis for t in fig.data] == ["y", "y2"]
+    assert [a.text for a in fig.layout.annotations] == [
+        "Storage Bounds",
+        "Generic Constraints",
+    ]
+    assert not any(t.showlegend for t in fig.data)
 
 
 def test_chart_violation_timeline_x_axis_uses_dates_with_label_ticks() -> None:
@@ -827,9 +748,9 @@ def test_chart_violation_timeline_omits_the_hydro_violation_aggregate() -> None:
     fig = _chart_violation_timeline(data)
     assert fig is not None
     assert {t.name for t in fig.data} == {
-        "Outflow Violation Below",
-        "Generation Violation",
-        "Storage Violation",
+        "Outflow Min",
+        "Generation Bounds",
+        "Storage Bounds",
     }
 
 
@@ -842,24 +763,25 @@ def _make_composition_costs_df(
     n_scenarios: int = 2,
     n_stages: int = 3,
 ) -> pd.DataFrame:
-    """Return a small costs DataFrame with 3 cost columns for composition tests.
-
-    Columns: thermal_generation_cost (non-zero), spillage_cost (non-zero),
-    ncs_generation_cost (all zero).
-    """
+    """Return a small costs DataFrame for the composition tests: thermal and
+    spillage costs that vary by scenario and stage, an all-zero curtailment
+    cost, and the row keys and aggregates the parquet carries beside them."""
     rows = []
     for scenario_id in range(n_scenarios):
         for stage_id in range(n_stages):
+            thermal = 1000.0 + scenario_id * 100 + stage_id * 50
+            spillage = 200.0 + scenario_id * 20 + stage_id * 10
             rows.append(
                 {
                     "scenario_id": scenario_id,
                     "stage_id": stage_id,
+                    "node_id": 0,
                     "block_id": 0,
-                    "thermal_generation_cost": 1000.0
-                    + scenario_id * 100
-                    + stage_id * 50,
-                    "spillage_cost": 200.0 + scenario_id * 20 + stage_id * 10,
-                    "ncs_generation_cost": 0.0,
+                    "discount_factor": 1.0,
+                    "immediate_cost": thermal + spillage,
+                    "thermal_cost": thermal,
+                    "spillage_cost": spillage,
+                    "curtailment_cost": 0.0,
                 }
             )
     return pd.DataFrame(rows)
@@ -910,19 +832,38 @@ def test_build_composition_data_empty() -> None:
     assert result is None
 
 
-def test_build_composition_data_zero_cols_excluded() -> None:
-    """Zero-valued columns must not appear in component.
-
-    ncs_generation_cost is all-zero and must be absent from component keys.
-    """
-    costs = _make_composition_costs_df()
-    data = _make_mock_data_full(costs=costs, n_scenarios=2, n_stages=3)
+def test_build_composition_data_zero_entries_excluded() -> None:
+    """Entries with no cost in any stage get no area in either view."""
+    data = _make_mock_data_full(costs=_make_composition_costs_df())
     result = _build_composition_data(data)
     assert result is not None
-    # The cleaned label for "ncs_generation_cost" -> "Ncs Generation"
-    assert "Ncs Generation" not in result["component"]
-    # Non-zero columns must be present
-    assert len(result["component"]) >= 1
+
+    assert list(result["component"]) == ["Thermal", "Spillage"]
+    assert list(result["category"]) == ["Thermal & Contracts", "Regularization"]
+
+
+def test_build_composition_data_excludes_row_keys_and_aggregates() -> None:
+    """``node_id`` and ``immediate_cost`` add no Other area and no total."""
+    data = _make_mock_data_full(costs=_make_composition_costs_df())
+    result = _build_composition_data(data)
+    assert result is not None
+
+    assert "Other" not in result["component"]
+    assert "Other" not in result["category"]
+    # Stage 0 mean across the two scenarios: thermal 1050 + spillage 210.
+    assert result["total"]["mean"][0] == 1260.0
+
+
+def test_build_composition_data_colours_follow_the_taxonomy() -> None:
+    """Each view colours its entries with that level's taxonomy colour."""
+    data = _make_mock_data_full(costs=_make_composition_costs_df())
+    result = _build_composition_data(data)
+    assert result is not None
+
+    for level in ("category", "component"):
+        assert result["colors"][level] == {
+            label: cost_color(level, label) for label in result[level]
+        }
 
 
 def test_build_composition_section_html() -> None:

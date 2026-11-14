@@ -17,6 +17,7 @@ from novomodelo_bridge.dashboard.tabs.overview import (
     _chart_training_mini,
     _compute_gen_gwh,
     _format_duration,
+    _render_cost_breakdown,
     _render_quick_look_charts,
     _run_identity_strip,
     _run_status_strip,
@@ -38,8 +39,10 @@ def _make_costs_df() -> pd.DataFrame:
                 {
                     "scenario_id": scenario_id,
                     "stage_id": stage_id,
-                    "thermal_generation_cost": float(1000 * (stage_id + 1)),
-                    "deficit_cost_depth_1": float(50 * (stage_id + 1)),
+                    "node_id": 0,
+                    "immediate_cost": float(1050 * (stage_id + 1)),
+                    "thermal_cost": float(1000 * (stage_id + 1)),
+                    "deficit_cost": float(50 * (stage_id + 1)),
                 }
             )
     return pd.DataFrame(rows)
@@ -493,6 +496,34 @@ def test_render_termination_reason_appears_in_output() -> None:
         html = render(data)
 
     assert "gap_tolerance" in html
+
+
+def test_render_expected_cost_card_is_the_mean_npv() -> None:
+    """The Expected Cost card adds the cost components only: 6000 thermal and
+    300 deficit per scenario, without the row keys or ``immediate_cost``."""
+    data = _make_mock_data()
+    with patch(
+        "novomodelo_bridge.dashboard.tabs.overview._stage_avg_mw",
+        return_value={0: 100.0},
+    ):
+        html = render(data)
+
+    assert (
+        '<div class="metric-value">R$ 6,300</div>'
+        '<div class="metric-label">Expected Cost (NPV)</div>'
+    ) in html
+
+
+def test_render_cost_breakdown_is_by_category() -> None:
+    """The Overview breakdown has one row per non-zero cost category."""
+    html = _render_cost_breakdown(_make_mock_data())
+
+    assert "NPV Cost by Category" in html
+    assert "<th>Category</th>" in html
+    assert "<th>Component</th>" not in html
+    assert "<td>Thermal & Contracts</td>" in html
+    assert "<td>Deficit & Excess</td>" in html
+    assert "<td>Other</td>" not in html
 
 
 # ---------------------------------------------------------------------------

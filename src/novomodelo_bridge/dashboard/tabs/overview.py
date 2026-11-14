@@ -1,8 +1,8 @@
 """v2 Overview tab — executive summary landing page for the Novomodelo dashboard.
 
-Displays run identity, run status, key metric cards, cost breakdown
-(horizontal stacked bar + summary table), and two quick-look mini charts
-(training convergence, generation mix).
+Displays run identity, run status, key metric cards, the NPV cost breakdown by
+category (bar chart + summary table), and two quick-look mini charts (training
+convergence, generation mix).
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import polars as pl
 
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.dashboard.chart_helpers import (
-    COST_GROUP_COLORS,
     build_cost_table,
     chart_cost_bar,
     compute_cost_summary,
@@ -38,7 +37,7 @@ from novomodelo_bridge.ui.html.plotly import (
     stage_x_dates,
     stage_x_labels,
 )
-from novomodelo_bridge.ui.theme import COLORS, GENERATION_COLORS
+from novomodelo_bridge.ui.theme import COLORS, COST_TOTAL_COLOR, GENERATION_COLORS
 
 if TYPE_CHECKING:
     from novomodelo_bridge.dashboard.data import DashboardData
@@ -340,12 +339,11 @@ def _render_metric_cards(data: DashboardData) -> str:
     if data.costs.empty:
         cost_value_str = "N/A"
     else:
-        summary = compute_cost_summary(data.costs, data.discount_rate)
+        summary = compute_cost_summary(data.costs, "category")
         if summary.empty:
             cost_value_str = "N/A"
         else:
-            total_npv = float(summary["mean"].sum())
-            cost_value_str = f"{total_npv:,.0f}"
+            cost_value_str = f"R$ {float(summary['mean'].sum()):,.0f}"
 
     hydro_gwh = _compute_gen_gwh(data.hydros_lf)
     thermal_gwh = _compute_gen_gwh(data.thermals_lf)
@@ -355,7 +353,7 @@ def _render_metric_cards(data: DashboardData) -> str:
         metric_card(
             cost_value_str,
             "Expected Cost (NPV)",
-            color=COST_GROUP_COLORS["Thermal"],
+            color=COST_TOTAL_COLOR,
         ),
         metric_card(
             f"{hydro_gwh:,.0f} GWh",
@@ -377,18 +375,18 @@ def _render_metric_cards(data: DashboardData) -> str:
 
 
 def _render_cost_breakdown(data: DashboardData) -> str:
-    """Render the cost breakdown bar chart and summary table."""
+    """Render the NPV cost bar chart and summary table, one entry per category."""
     if data.costs.empty:
         return section_title("Cost Breakdown") + "<p>No cost data available.</p>"
 
-    summary = compute_cost_summary(data.costs, data.discount_rate)
+    summary = compute_cost_summary(data.costs, "category")
     summary = summary[summary["mean"] > 0]
     if summary.empty:
         return section_title("Cost Breakdown") + "<p>No cost data available.</p>"
 
-    bar_fig = chart_cost_bar(summary)
-    bar_html = make_chart_card(bar_fig, "NPV Cost by Group", "v2-cost-bar-chart")
-    table_html = wrap_chart(build_cost_table(summary))
+    bar_fig = chart_cost_bar(summary, "category")
+    bar_html = make_chart_card(bar_fig, "NPV Cost by Category", "v2-cost-bar-chart")
+    table_html = wrap_chart(build_cost_table(summary, "category"))
     return section_title("Cost Breakdown") + chart_grid([bar_html, table_html])
 
 

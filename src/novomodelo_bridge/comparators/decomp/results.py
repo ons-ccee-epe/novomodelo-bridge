@@ -1143,7 +1143,7 @@ def _energy_balance_frames(
     # two DECOMP thermal-generation columns because Novomodelo's own
     # ``thermal_gen_mw`` (the counterpart this overlays) already includes
     # anticipated GNL generation — the same live+anticipated fold the cost
-    # breakdown applies (see charts._COST_MAP's "Thermal Generation" entry).
+    # breakdown applies (see charts._COST_MAP's "Thermal" row).
     market_exprs: list[tuple[str, pl.Expr]] = []
     if "geracao_hidroeletrica_MW" in present:
         market_exprs.append(("GHTOT", pl.col("geracao_hidroeletrica_MW")))

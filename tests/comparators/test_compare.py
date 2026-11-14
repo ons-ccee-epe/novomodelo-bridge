@@ -856,8 +856,9 @@ class TestOverviewCostCharts:
         # novomodelo-bridge converts the risk-aversion curve/surface (CAR/SAR), electric
         # (RESTELETRICA), interchange (INTERC. MIN.), hydraulic (RHQ/RHV) and
         # piecewise-linear (RLPP) restrictions ALL into generic constraints, so the
-        # source model's separate parcelas must sum into the single "Generic Constr.
-        # Viol." row to compare against Novomodelo's aggregated generic_violation_cost.
+        # source model's separate parcelas must sum into the single "Generic
+        # Constraints" row to compare against Novomodelo's aggregated
+        # generic_violation_cost.
         nw_costs = {
             "VIOLACAO CAR": 1.0e7,
             "VIOLACAO SAR": 2.0e7,
@@ -880,11 +881,11 @@ class TestOverviewCostCharts:
             for label, nw, cb, _ in _resolve_cost_categories(nw_costs, novomodelo_costs)
         }
         # All 10 the source model parcelas land in one row, equal to Novomodelo's aggregate.
-        assert cats["Generic Constr. Viol."] == pytest.approx((5.5e8, 5.5e8))
+        assert cats["Generic Constraints"] == pytest.approx((5.5e8, 5.5e8))
         # CAR/SAR no longer pollute the storage-bounds row (the source model side empty;
         # the row is now Novomodelo-only, carrying the individual-reservoir slack).
-        assert cats["Storage Bounds Viol."][0] == pytest.approx(0.0)
-        assert cats["Storage Bounds Viol."][1] == pytest.approx(1.0e7)
+        assert cats["Storage Bounds"][0] == pytest.approx(0.0)
+        assert cats["Storage Bounds"][1] == pytest.approx(1.0e7)
 
 
 class TestNetOfPenaltiesTable:
@@ -933,7 +934,7 @@ class TestNetOfPenaltiesTable:
         ]
         assert "DECOMP" in html
         assert "Unitemized Constr. Slack" in html
-        assert "Generic Constr. Viol." in html
+        assert "Generic Constraints" in html
         assert "Thermal" not in html
 
     def test_empty_when_neither_model_reports_a_lower_bound(self) -> None:

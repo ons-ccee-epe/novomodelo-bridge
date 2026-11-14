@@ -15,6 +15,10 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from novomodelo_bridge.dashboard.chart_helpers import (
+    compute_cost_summary,
+    cost_color,
+)
 from novomodelo_bridge.dashboard.tabs.constraints_utils import (
     build_constraints_summary_table,
     derive_constraint_shape,
@@ -50,7 +54,6 @@ TAB_ORDER = 80
 
 _COLOR_TOTAL = "#4A90B8"
 _COLOR_VIOLATED = "#DC4C4C"
-_COLOR_COST = "#F5A623"
 _COLOR_TYPES = "#4A8B6F"
 
 
@@ -65,7 +68,7 @@ def _build_metrics_row(data: DashboardData) -> str:
     Cards:
     1. Total constraints count
     2. Constraints with violations count
-    3. Total violation cost (sum of generic_violation_cost across all scenarios/stages)
+    3. NPV of the Generic Constraints cost component, mean across scenarios
     4. Active constraint types (comma-joined unique type prefixes)
     """
     total_constraints = len(data.gc_constraints)
@@ -81,13 +84,9 @@ def _build_metrics_row(data: DashboardData) -> str:
         )
         violated_count = len(viol_ids)
 
-    # Total violation cost
-    costs_df: pd.DataFrame = data.costs
-    if "generic_violation_cost" in costs_df.columns:
-        total_viol_cost = float(costs_df["generic_violation_cost"].sum())
-    else:
-        total_viol_cost = 0.0
-    cost_str = f"R$ {total_viol_cost:,.0f}"
+    summary = compute_cost_summary(data.costs, "component")
+    generic = summary.loc[summary["group"] == "Generic Constraints", "mean"]
+    cost_str = f"R$ {float(generic.sum()):,.0f}"
 
     # Active constraint types: unique first element after splitting name on "_"
     type_prefixes: list[str] = []
@@ -112,8 +111,8 @@ def _build_metrics_row(data: DashboardData) -> str:
         ),
         metric_card(
             value=cost_str,
-            label="Total Violation Cost",
-            color=_COLOR_COST,
+            label="Generic Constraints (NPV)",
+            color=cost_color("component", "Generic Constraints"),
         ),
         metric_card(
             value=active_types_str,

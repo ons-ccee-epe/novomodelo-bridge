@@ -41,6 +41,12 @@ links are cobre-bridge's.
   `constraints/thermal_bounds.parquet`** when a plant's CVUs differ between
   the load blocks of a stage, instead of only their hours-weighted mean.
   Results change for such decks; reconvert them.
+- **`dashboard` and `compare` name and colour each cost the same way**: the
+  dashboard's Overview tab breaks the expected cost down by cost category, its
+  Costs tab by component in shades of the category's colour, with each
+  violation cost over time in a panel of its own, and the `compare` report's
+  cost breakdown uses the same component names and colours. Build the
+  dashboard and the report again to update them.
 - **`convert decomp` writes the post-study calendars under the keys novomodelo
   now reads.** `post_study_stages.json` holds the thermal calendar as
   `thermal_stages` instead of `stages`, and a deck with `VI` travel times also
@@ -53,10 +59,12 @@ links are cobre-bridge's.
 
 - **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
   Such a deck now converts.
-- **`dashboard` showed a `Hydro Violation` cost beside the violation costs it
-  sums** in the Costs tab's Violation Costs charts, so those costs appeared
-  twice. The charts now show only the individual violations; build the
-  dashboard again to update it.
+- **`dashboard` showed wrong costs**: the Costs tab listed `Hydro Violation`
+  beside the violation costs it sums and an undiscounted immediate cost as an
+  NPV, its Thermal card left out GNL thermal cost, both cost breakdowns showed
+  a spurious `Other` cost, and the Constraints tab's violation cost was the
+  sum over all scenarios instead of their mean. Build the dashboard again to
+  update it.
 
 ## [0.20.0] - 2026-11-03
 
