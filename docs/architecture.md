@@ -26,7 +26,9 @@ cannot drift far from the tree without a failing build. All paths are under
    hierarchy, the conversion runner both tracks call (`run_conversion`, which
    refuses an occupied destination without `--force` and rolls back a failed
    run), hydro physics and productivity, calendar and stage weighting,
-   the generic-constraint builder, bound-table merging, and the emission
+   the generic-constraint builder, the electrical-constraint formula
+   language NEWAVE and DECOMP write their constraint files in, bound-table
+   merging, and the emission
    self-checks run on output tables before they are written.
 4. **`novomodelo/`** is the Novomodelo side: `CaseWriter`, the single funnel every JSON
    and Parquet file passes through (it owns `--dry-run`); the `$schema` URL

@@ -16,19 +16,21 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.electrical_expression import (
+    AssembledBound,
+    DataContext,
+    ParsedTerm,
+    UnrecognizedElectricalToken,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     soft_slack,
 )
 from novomodelo_bridge.decomp.converters.constraints import Unresolved
 from novomodelo_bridge.decomp.converters.libs_electrical import (
-    AssembledBound,
     AvailablePower,
-    DataContext,
     ElectricalRestriction,
     LibsElectricalModel,
-    ParsedTerm,
-    UnrecognizedElectricalToken,
     ViolationTreatment,
     _UnresolvableBucketBTerm,
 )

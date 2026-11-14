@@ -3,9 +3,9 @@ novomodelo expression string.
 
 ``libs_electrical.assemble_bound`` folds a restriction's bucket-B/-C terms
 into a numeric bound and returns its surviving bucket-A (novomodelo decision)
-terms as a sign-canonical :class:`~novomodelo_bridge.decomp.converters.libs_electrical.
-AssembledBound` — a source-model :class:`~novomodelo_bridge.decomp.
-libs_electrical.ParsedTerm` sequence, not yet a novomodelo token. This module
+terms as a sign-canonical :class:`~novomodelo_bridge.core.electrical_expression.
+AssembledBound` — a source-model :class:`~novomodelo_bridge.core.
+electrical_expression.ParsedTerm` sequence, not yet a novomodelo token. This module
 owns that last mile: :func:`_novomodelo_token` maps one such term to its novomodelo
 ``VariableRef`` string, and :func:`build_electrical_expression`
 joins a whole :class:`AssembledBound`'s terms into one expression via
@@ -46,6 +46,13 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     merge_tables,
 )
+from novomodelo_bridge.core.electrical_expression import (
+    AssembledBound,
+    DataContext,
+    ParsedTerm,
+    UnrecognizedElectricalToken,
+    term_text,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -59,7 +66,6 @@ from novomodelo_bridge.decomp.converters.constraints import (
     slots_from_record,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
-    UnrecognizedElectricalToken,
     active_cells,
     assemble_bound,
 )
@@ -69,12 +75,9 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.converters.constraints import GenericConstraintResult
     from novomodelo_bridge.decomp.converters.libs_electrical import (
-        AssembledBound,
         AvailablePower,
-        DataContext,
         ElectricalRestriction,
         LibsElectricalModel,
-        ParsedTerm,
     )
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -103,11 +106,7 @@ _TERM_FINDINGS: dict[str, tuple[str, str, list[str]]] = {
 
 
 def _outside_case(term: ParsedTerm, missing: str) -> Unresolved:
-    return Unresolved(_OUTSIDE_CASE, (_term_text(term), missing))
-
-
-def _term_text(term: ParsedTerm) -> str:
-    return f"{term.token}({', '.join(str(arg) for arg in term.args)})"
+    return Unresolved(_OUTSIDE_CASE, (term_text(term), missing))
 
 
 def _emit_unresolved_term(restriction: int, unresolved: Unresolved) -> None:
@@ -209,8 +208,8 @@ def _novomodelo_token(
     ------
     ValueError
         When ``term.token`` is not one of the six bucket-A tokens — a
-        caller-contract violation, since :class:`~novomodelo_bridge.decomp.
-        libs_electrical.AssembledBound.terms` only ever carries bucket-A
+        caller-contract violation, since :class:`~novomodelo_bridge.core.
+        electrical_expression.AssembledBound.terms` only ever carries bucket-A
         terms.
     """
     if term.token == "ger_usih":
@@ -260,7 +259,7 @@ def _novomodelo_token(
         return _outside_case(term, "line")
 
     if term.token == "ener_comerc":
-        return Unresolved(_ENER_COMERC, (_term_text(term),))
+        return Unresolved(_ENER_COMERC, (term_text(term),))
 
     raise ValueError(f"_novomodelo_token: unrecognized bucket-A token {term.token!r}")
 
@@ -317,7 +316,7 @@ class LibsElectricalResult:
     resolve a bucket-A decision term; already WARNED), and
     ``"unrecognized-token"`` (the restriction's formula references a
     well-formed but undeclared identifier —
-    :class:`~novomodelo_bridge.decomp.converters.libs_electrical.UnrecognizedElectricalToken`,
+    :class:`~novomodelo_bridge.core.electrical_expression.UnrecognizedElectricalToken`,
     already WARNED). All four keys are always present, empty
     when nothing was dropped for that reason — this is the census data
     the census diagnostic renders.
@@ -417,7 +416,7 @@ def emit_libs_electrical_generics(
       WARNED) drops the whole restriction — ``deferred["unresolved-bucket-a"]``.
     - A well-formed but undeclared identifier anywhere in the restriction's
       (expanded) formula OR its activation rule (:class:`~novomodelo_bridge.
-      decomp.converters.libs_electrical.UnrecognizedElectricalToken`, raised from
+      core.electrical_expression.UnrecognizedElectricalToken`, raised from
       inside ``active_cells``'s, ``assemble_bound``'s, or
       ``build_electrical_expression``'s own ``parse_linear_expression``
       call) drops **only this restriction** —
