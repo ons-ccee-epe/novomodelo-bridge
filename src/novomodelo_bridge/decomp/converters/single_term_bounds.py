@@ -276,8 +276,8 @@ def split_plant_group_contributions(
     half's limit. Each upper is clamped to the group's declared
     ``max_generation_mw`` in *group_capacities*, keyed ``(hydro_id,
     group_id)``, since novomodelo rejects a group bound above it; one
-    ``decomp-re-generation-clamped`` note names, by *plant_names*, every
-    group whose ceiling was capped.
+    ``decomp-re-unit-group-generation-clamped`` note names, by *plant_names*,
+    every group whose ceiling was capped.
 
     Returns the contributions keyed by hydro id, because a group id is scoped
     within its plant.
@@ -335,9 +335,9 @@ def split_plant_group_contributions(
         ]
         emit(
             _ceiling_clamp_diagnostic(
-                code="decomp-re-generation-clamped",
+                code="decomp-re-unit-group-generation-clamped",
                 title="RE ceilings above unit-group capacity capped",
-                constraint_kind="RE generation",
+                constraint_kind="RE unit-group generation",
                 unit="MW",
                 rows=rows,
             )

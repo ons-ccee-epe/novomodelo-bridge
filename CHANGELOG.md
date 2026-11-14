@@ -87,6 +87,9 @@ links are cobre-bridge's.
   `dessem-fcf-inflow-lag-coefficients-dropped`,
   `dessem-fcf-failure-manifest-unwritten` and a
   `dessem-fcf-mapcut-fields-zero` warning on every export.
+- **`convert decomp` reports RE ceilings capped at a unit group's capacity as
+  `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
+  that `decomp-re-generation-clamped` reports.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.
