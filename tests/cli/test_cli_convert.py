@@ -203,7 +203,7 @@ class TestCliInProcess:
             "summary",
             "diagnostics",
         ]
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert doc["command"] == "convert newave"
         # No ERROR diagnostic → status is "ok".
         assert doc["status"] == "ok"
@@ -237,7 +237,7 @@ class TestCliInProcess:
         status = _convert_status([error], success="ok")
         doc = build_verdict("convert newave", status, summary, [error])
 
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert doc["status"] == "error"
         # Failure path → zero counts.
         assert doc["summary"] == {
@@ -284,7 +284,7 @@ class TestCliInProcess:
             "summary",
             "diagnostics",
         ]
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert doc["command"] == "convert newave"
         assert doc["status"] == "ok"
         assert doc["summary"]["hydros"] == 10
@@ -315,7 +315,7 @@ class TestCliInProcess:
 
         assert code == 1
         doc = json.loads(stdout)
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert list(doc.keys()) == [
             "schema_version",
             "command",
@@ -443,7 +443,7 @@ class TestCliInProcess:
         assert code == 0
         # stdout is the JSON verdict (carries schema_version/command/status).
         verdict = json.loads(stdout)
-        assert verdict["schema_version"] == 1
+        assert verdict["schema_version"] == 2
         assert verdict["command"] == "convert newave"
         assert verdict["status"] == "ok"
         # The sidecar was also written (its payload has no command/status keys).
@@ -1022,7 +1022,7 @@ class TestCliInProcess:
             "diagnostics",
         ]
         assert "would_write" not in doc
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert doc["command"] == "convert newave"
         assert doc["status"] == "dry-run"
         assert doc["summary"] == {

@@ -15,7 +15,7 @@ adapter emits the sentinel ``bus = -1`` / ``block = -1`` for every row.
 from __future__ import annotations
 
 import logging
-import statistics
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -36,6 +36,7 @@ from novomodelo_bridge.comparators.fpha import (
     novomodelo_plane_arrays,
 )
 from novomodelo_bridge.comparators.model import ResultComparison, build_results_summary
+from novomodelo_bridge.core import agreement
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 
 if TYPE_CHECKING:
@@ -157,30 +158,33 @@ def summary_frame_from_results(
     results: Sequence[ResultComparison],
     tolerance: float,
 ) -> pl.DataFrame:
-    """Project the existing per-variable summary into a ``SUMMARY_SCHEMA`` frame.
+    """Project the existing summary into a ``SUMMARY_SCHEMA`` frame.
 
     Calls the canonical :func:`novomodelo_bridge.comparators.model.build_results_summary`
-    and turns its ``by_variable`` mapping into one row per variable. The numbers
-    are carried verbatim from that summary — no statistic is recomputed here, so
-    console and HTML aggregates derive from the same analysis.
+    and turns its ``by_variable`` mapping into one row per
+    ``(entity_type, variable)``. The numbers are carried verbatim from that
+    summary — no statistic is recomputed here, so console and HTML aggregates
+    derive from the same analysis.
 
     Args:
         results: The result comparisons to summarize; consumed verbatim.
-        tolerance: Relative tolerance forwarded to ``build_results_summary`` for
-            the per-variable within-tolerance match rate.
+        tolerance: Relative tolerance forwarded to ``build_results_summary``
+            for the within-tolerance match rate and the gap band.
 
     Returns:
         A frame conforming exactly (columns, order, dtypes) to
-        :data:`SUMMARY_SCHEMA`, one row per variable. Empty ``results`` yields a
-        0-row frame.
+        :data:`SUMMARY_SCHEMA`. Empty ``results`` yields a 0-row frame.
     """
     if not results:
         return pl.DataFrame(schema=SUMMARY_SCHEMA)
 
     summary = build_results_summary(list(results), tolerance)
 
+    entity_types: list[str] = []
     variables: list[str] = []
     counts: list[int] = []
+    gaps: list[float | None] = []
+    bands: list[str] = []
     mean_abs_diff: list[float] = []
     max_abs_diff: list[float] = []
     mean_smape: list[float] = []
@@ -188,9 +192,12 @@ def summary_frame_from_results(
     within_tol_rate: list[float] = []
     correlation: list[float | None] = []
 
-    for variable, stats in summary.by_variable.items():
+    for (entity_type, variable), stats in summary.by_variable.items():
+        entity_types.append(entity_type)
         variables.append(variable)
         counts.append(stats.count)
+        gaps.append(stats.gap)
+        bands.append(stats.band.value)
         mean_abs_diff.append(stats.mean_abs_diff)
         max_abs_diff.append(stats.max_abs_diff)
         mean_smape.append(stats.mean_smape)
@@ -200,8 +207,11 @@ def summary_frame_from_results(
 
     frame = pl.DataFrame(
         {
+            "entity_type": entity_types,
             "variable": variables,
             "count": counts,
+            "gap": gaps,
+            "band": bands,
             "mean_abs_diff": mean_abs_diff,
             "max_abs_diff": max_abs_diff,
             "mean_smape": mean_smape,
@@ -319,7 +329,8 @@ def build_results_dataset(
         A validated :class:`ComparisonDataset` whose ``metadata`` holds
         ``top_divergences`` and ``footer_counts`` (the ``total`` /
         ``by_entity_type`` needed to render the console footer
-        byte-identically) plus ``nw_hydro_names``, and whose ``render`` holds
+        byte-identically) plus ``nw_hydro_names`` and the ``tolerance`` the
+        summary bands were judged with, and whose ``render`` holds
         every report-facing input (``nw_costs``, ``novomodelo_costs``,
         ``nw_bus_names`` among them).
 
@@ -332,6 +343,7 @@ def build_results_dataset(
         "top_divergences": top_divergences_from_results(results),
         "footer_counts": results_footer_counts(results),
         "nw_hydro_names": pct.nw_hydro_names,
+        "tolerance": tolerance,
     }
     render = RenderInputs(
         # Raw comparison rows, threaded for the chart functions that still
@@ -1090,69 +1102,77 @@ def spillage_lookups(
     return nw_lookup, cb_lookup
 
 
-def plant_max_reldiff_ranking(
+@dataclass(frozen=True)
+class PlantGaps:
+    """The gap of each plant on each variable, over stages.
+
+    See :mod:`novomodelo_bridge.core.agreement` for the gap. A plant's
+    reference counts as at least the mean plant's on that variable, so a
+    plant whose reference is near zero is judged against a typical plant's
+    size; ``None`` is left only for a variable whose reference is zero for
+    every plant. A ``(name, code, variable)`` absent from :attr:`by_plant`
+    has no compared point.
+    """
+
+    #: ``(entity_name, newave_code, variable)`` → gap.
+    by_plant: dict[tuple[str, int, str], float | None]
+    #: ``(entity_name, newave_code)``, largest gap on any variable first.
+    plants: list[tuple[str, int]]
+    #: ``variable`` → gap over every plant's points pooled.
+    totals: dict[str, float | None]
+
+
+def plant_gaps(
     results: Sequence[ResultComparison],
     entity_type: str,
     variables: Sequence[tuple[str, str]],
-) -> tuple[
-    dict[tuple[str, int, str], float], list[tuple[str, int]], dict[str, float | None]
-]:
-    """Per-``(plant, code, variable)`` max relative-difference ranking.
+) -> PlantGaps:
+    """Per-plant gaps of *entity_type* on each of *variables* (``(var_key,
+    label)`` pairs, only ``var_key`` used).
 
-    Pure numeric core of ``charts._shared._plant_max_reldiff_table``. For each
-    row with a non-``None`` ``rel_diff`` in ``entity_type``, keeps the max
-    ``rel_diff`` per ``(entity_name, newave_code, variable)``. Plants are
-    ordered worst-overall-first (the per-row max across *variables*, falling
-    back to name), then a per-variable median is taken over that plant order.
-
-    Args:
-        results: The comparison rows; consumed verbatim (read-only).
-        entity_type: The ``entity_type`` to keep (``"hydro"`` or ``"thermal"``).
-        variables: ``(var_key, label)`` pairs; only ``var_key`` is used.
-
-    Returns:
-        ``(max_rd, plant_keys, medians)``: ``max_rd`` maps ``(name, code,
-        var_key)`` to the max ``rel_diff``; ``plant_keys`` is the ordered
-        ``(name, code)`` list (worst first); ``medians`` maps each ``var_key``
-        to ``statistics.median`` of its column values over ``plant_keys``, or
-        ``None`` when that column has no eligible plant.
+    Plants are ordered by their largest gap across the operation variables
+    of *variables* (a policy one, such as the water value, does not rank),
+    an undefined gap first, then by name.
     """
-    rows = [r for r in results if r.entity_type == entity_type]
+    keys = {var_key for var_key, _ in variables}
+    pairs: dict[tuple[str, int, str], list[tuple[float, float]]] = {}
+    for r in results:
+        if r.entity_type == entity_type and r.variable in keys:
+            pairs.setdefault((r.entity_name, r.newave_code, r.variable), []).append(
+                (r.newave_value, r.novomodelo_value)
+            )
+    plant_references: dict[str, list[float]] = {}
+    for (_, _, variable), points in pairs.items():
+        plant_references.setdefault(variable, []).append(
+            sum(abs(reference) for reference, _ in points)
+        )
+    typical = {v: sum(refs) / len(refs) for v, refs in plant_references.items()}
+    by_plant = {
+        key: agreement.gap(points, floor=typical[key[2]])
+        for key, points in pairs.items()
+    }
 
-    max_rd: dict[tuple[str, int, str], float] = {}
-    for r in rows:
-        if r.rel_diff is None:
-            continue
-        key = (r.entity_name, r.newave_code, r.variable)
-        cur = max_rd.get(key)
-        if cur is None or r.rel_diff > cur:
-            max_rd[key] = r.rel_diff
+    ranked = [v for v, _ in variables if not agreement.is_policy_row(entity_type, v)]
 
-    plant_keys = sorted(
-        {(name, code) for name, code, _ in max_rd},
-        key=lambda k: (
-            -max(
-                (
-                    max_rd[(k[0], k[1], v)]
-                    for v, _ in variables
-                    if (k[0], k[1], v) in max_rd
-                ),
-                default=0.0,
-            ),
-            k[0],
-        ),
+    def _worst(plant: tuple[str, int]) -> float:
+        found = [by_plant[(*plant, v)] for v in ranked if (*plant, v) in by_plant]
+        return max((math.inf if g is None else g for g in found), default=0.0)
+
+    plants = sorted(
+        {(name, code) for name, code, _ in by_plant},
+        key=lambda plant: (-_worst(plant), plant[0]),
     )
-
-    medians: dict[str, float | None] = {}
-    for var_key, _ in variables:
-        col_values = [
-            max_rd[(name, code, var_key)]
-            for name, code in plant_keys
-            if (name, code, var_key) in max_rd
-        ]
-        medians[var_key] = statistics.median(col_values) if col_values else None
-
-    return max_rd, plant_keys, medians
+    totals = {
+        var_key: agreement.gap(
+            point
+            for (_, _, variable), points in pairs.items()
+            if variable == var_key
+            for point in points
+        )
+        for var_key, _ in variables
+        if any(variable == var_key for _, _, variable in pairs)
+    }
+    return PlantGaps(by_plant=by_plant, plants=plants, totals=totals)
 
 
 def with_masked_hydro_rows(

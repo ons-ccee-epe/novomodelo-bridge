@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
+
 if TYPE_CHECKING:
     from novomodelo_bridge.comparators.model import ResultComparison
 
@@ -366,18 +368,17 @@ class TestCompareJson:
         return exit_code, stdout_buf.getvalue(), stderr_buf.getvalue()
 
     @staticmethod
-    def _results(*, within_tol: bool) -> list[ResultComparison]:
-        """Build result rows that are fully within tol (matched) or divergent.
+    def _results(*, close: bool) -> list[ResultComparison]:
+        """Build result rows that match exactly or diverge by a 10% gap.
 
-        With ``within_tol`` the novomodelo value equals the newave value, so the
-        derived ``within_tol_rate`` is ``1.0`` and ``all_within_tol`` is True.
-        Otherwise the novomodelo value diverges past the default ``1e-2`` tolerance.
+        With *close* the novomodelo value equals the newave value, so its band
+        is close; otherwise the 10% gap is past the 5% tolerance.
         """
         from novomodelo_bridge.comparators.model import ResultComparison
 
-        novomodelo_value = 100.0 if within_tol else 110.0
-        abs_diff = 0.0 if within_tol else 10.0
-        rel_diff = 0.0 if within_tol else 0.1
+        novomodelo_value = 100.0 if close else 110.0
+        abs_diff = 0.0 if close else 10.0
+        rel_diff = 0.0 if close else 0.1
         return [
             ResultComparison(
                 entity_type="hydro",
@@ -422,7 +423,7 @@ class TestCompareJson:
         self,
         monkeypatch: pytest.MonkeyPatch,
         *,
-        within_tol: bool,
+        close: bool,
     ) -> None:
         from novomodelo_bridge.comparators.analyze import build_results_dataset
         from novomodelo_bridge.comparators.model import PercentileData
@@ -431,7 +432,7 @@ class TestCompareJson:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.newave.results.compare_results",
             lambda **k: build_results_dataset(
-                self._results(within_tol=within_tol), PercentileData(), 1e-2
+                self._results(close=close), PercentileData(), 0.05
             ),
         )
 
@@ -445,7 +446,7 @@ class TestCompareJson:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Divergent results → ``status="mismatch"`` but always exit 0."""
-        self._patch_results(monkeypatch, within_tol=False)
+        self._patch_results(monkeypatch, close=False)
         novomodelo_dir = tmp_path / "novomodelo"
         novomodelo_dir.mkdir()
 
@@ -458,15 +459,14 @@ class TestCompareJson:
         doc = json.loads(stdout)
         assert doc["command"] == "compare newave"
         assert doc["status"] == "mismatch"
-        assert doc["summary"]["all_within_tol"] is False
-        assert doc["summary"]["within_tol"] < doc["summary"]["total"]
+        assert doc["summary"]["close"] < doc["summary"]["total"]
         self._assert_no_rich_stdout(stdout)
 
-    def test_compare_results_json_within_tol_status_ok_exit_0(
+    def test_compare_results_json_all_close_status_ok_exit_0(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Fully-within-tol results → ``status="ok"`` and exit 0."""
-        self._patch_results(monkeypatch, within_tol=True)
+        """Every variable close → ``status="ok"`` and exit 0."""
+        self._patch_results(monkeypatch, close=True)
         novomodelo_dir = tmp_path / "novomodelo"
         novomodelo_dir.mkdir()
 
@@ -478,7 +478,7 @@ class TestCompareJson:
         assert code == 0
         doc = json.loads(stdout)
         assert doc["status"] == "ok"
-        assert doc["summary"]["all_within_tol"] is True
+        assert doc["summary"]["close"] == doc["summary"]["total"] == 1
         self._assert_no_rich_stdout(stdout)
 
     def test_compare_results_json_novomodelo_read_error_exit_2_no_stdout(
@@ -782,6 +782,6 @@ class TestCompareConfigEnvPrecedence:
 
         # Not the config-error exit; the comparison still runs at the default.
         assert code == 0
-        assert captured["tolerance"] == 1e-2
+        assert captured["tolerance"] == DEFAULT_TOLERANCE
         assert "novomodelo-bridge.toml" in stderr
         assert "novomodelo-bridge.toml" not in stdout

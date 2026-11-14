@@ -19,7 +19,7 @@ from novomodelo_bridge.comparators.analyze import (
     per_bus_sums_from_results,
     per_stage_sum_from_frame,
     per_stage_sum_from_results,
-    plant_max_reldiff_ranking,
+    plant_gaps,
     plant_percentile_arrays,
     productivity_scatter_errors,
     results_footer_counts,
@@ -270,8 +270,10 @@ def test_summary_frame_matches_build_results_summary() -> None:
     assert frame.height == len(summary.by_variable)
 
     for row in frame.iter_rows(named=True):
-        stats = summary.by_variable[row["variable"]]
+        stats = summary.by_variable[(row["entity_type"], row["variable"])]
         assert row["count"] == stats.count
+        assert row["gap"] == stats.gap
+        assert row["band"] == stats.band.value
         assert row["mean_abs_diff"] == stats.mean_abs_diff
         assert row["max_abs_diff"] == stats.max_abs_diff
         assert row["mean_smape"] == stats.mean_smape
@@ -1234,16 +1236,32 @@ def test_spillage_lookups_empty_returns_empty() -> None:
 # -------------------------------------------------------------------
 
 
-def _summary_dataset(rows: list[dict[str, object]]) -> ComparisonDataset:
-    """A dataset with an empty tidy frame and a hand-built summary frame.
+def _summary_row(
+    entity_type: str, variable: str, gap: float | None, band: str
+) -> dict[str, object]:
+    return {
+        "entity_type": entity_type,
+        "variable": variable,
+        "count": 3,
+        "gap": gap,
+        "band": band,
+        "mean_abs_diff": 0.0,
+        "max_abs_diff": 0.0,
+        "mean_smape": 0.0,
+        "max_smape": 0.0,
+        "within_tol_rate": 1.0,
+        "correlation": None,
+    }
 
-    The summary frame conforms to ``SUMMARY_SCHEMA``; ``tidy`` is empty so the
-    dataset validates while exercising only the summary-driven verdict path.
-    """
-    summary = pl.DataFrame(rows, schema=SUMMARY_SCHEMA)
+
+def _summary_dataset(
+    rows: list[dict[str, object]], tolerance: float = 0.05
+) -> ComparisonDataset:
+    """A dataset with an empty tidy frame and a hand-built summary frame."""
     dataset = ComparisonDataset(
         tidy=pl.DataFrame(schema=TIDY_SCHEMA),
-        summary=summary,
+        summary=pl.DataFrame(rows, schema=SUMMARY_SCHEMA),
+        metadata={"tolerance": tolerance},
     )
     dataset.validate()
     return dataset
@@ -1252,161 +1270,183 @@ def _summary_dataset(rows: list[dict[str, object]]) -> ComparisonDataset:
 class TestCompareVerdict:
     """Tests for ``build_compare_verdict`` reading only ``dataset.summary``."""
 
-    def test_verdict_empty_dataset_returns_zeroed_verdict(self) -> None:
-        dataset = build_results_dataset([], PercentileData(), 1e-2)
+    def test_empty_dataset_compares_nothing(self) -> None:
+        dataset = build_results_dataset([], PercentileData(), 0.05)
 
         verdict = build_compare_verdict(dataset)
 
         assert verdict == CompareVerdict(
-            within_tol=0,
-            total=0,
-            worst_variable=None,
-            worst_smape=0.0,
-            all_within_tol=False,
+            tolerance=0.05, close=0, moderate=0, far=0, far_variables=()
         )
+        assert verdict.total == 0
+        assert not verdict.all_close
 
-    def test_verdict_all_within_tol_true_when_every_variable_perfect(self) -> None:
+    def test_counts_each_band(self) -> None:
         dataset = _summary_dataset(
             [
-                {
-                    "variable": "storage_max",
-                    "count": 3,
-                    "mean_abs_diff": 0.0,
-                    "max_abs_diff": 0.0,
-                    "mean_smape": 0.0,
-                    "max_smape": 0.0,
-                    "within_tol_rate": 1.0,
-                    "correlation": None,
-                },
-                {
-                    "variable": "generation_max",
-                    "count": 2,
-                    "mean_abs_diff": 0.0,
-                    "max_abs_diff": 0.0,
-                    "mean_smape": 0.01,
-                    "max_smape": 0.02,
-                    "within_tol_rate": 1.0,
-                    "correlation": None,
-                },
+                _summary_row("bus", "spot_price", 0.01, "close"),
+                _summary_row("hydro", "storage_final_hm3", 0.02, "close"),
+                _summary_row("hydro", "spillage_m3s", 0.1, "moderate"),
+                _summary_row("thermal", "generation_mw", 0.5, "far"),
             ]
         )
 
         verdict = build_compare_verdict(dataset)
 
-        assert verdict.within_tol == 2
-        assert verdict.total == 2
-        assert verdict.all_within_tol is True
+        assert (verdict.close, verdict.moderate, verdict.far) == (2, 1, 1)
+        assert verdict.total == 4
+        assert not verdict.all_close
 
-    def test_verdict_tie_break_picks_lexicographically_first_variable(self) -> None:
+    def test_all_close(self) -> None:
+        dataset = _summary_dataset(
+            [_summary_row("bus", "spot_price", 0.01, "close")], tolerance=0.02
+        )
+
+        verdict = build_compare_verdict(dataset)
+
+        assert verdict.all_close
+        assert verdict.tolerance == 0.02
+
+    def test_policy_rows_are_left_out(self) -> None:
         dataset = _summary_dataset(
             [
-                {
-                    "variable": "b_var",
-                    "count": 1,
-                    "mean_abs_diff": 1.0,
-                    "max_abs_diff": 1.0,
-                    "mean_smape": 0.1,
-                    "max_smape": 0.5,
-                    "within_tol_rate": 0.0,
-                    "correlation": None,
-                },
-                {
-                    "variable": "a_var",
-                    "count": 1,
-                    "mean_abs_diff": 1.0,
-                    "max_abs_diff": 1.0,
-                    "mean_smape": 0.1,
-                    "max_smape": 0.5,
-                    "within_tol_rate": 0.0,
-                    "correlation": None,
-                },
+                _summary_row("bus", "spot_price", 0.01, "close"),
+                _summary_row("convergence", "lower_bound", 2.0, "far"),
+                _summary_row("hydro", "water_value_per_hm3", 1.0, "far"),
             ]
         )
 
         verdict = build_compare_verdict(dataset)
 
-        assert verdict.worst_variable == "a_var"
-        assert verdict.worst_smape == 0.5
+        assert verdict.total == 1
+        assert verdict.all_close
+
+    def test_far_variables_come_largest_gap_first_undefined_leading(self) -> None:
+        dataset = _summary_dataset(
+            [
+                _summary_row("thermal", "generation_mw", 0.5, "far"),
+                _summary_row("hydro", "generation_mw", 0.5, "far"),
+                _summary_row("bus", "deficit_mw", None, "far"),
+                _summary_row("bus", "spot_price", 0.9, "far"),
+            ]
+        )
+
+        verdict = build_compare_verdict(dataset)
+
+        assert [(v.entity_type, v.variable, v.gap) for v in verdict.far_variables] == [
+            ("bus", "deficit_mw", None),
+            ("bus", "spot_price", 0.9),
+            ("hydro", "generation_mw", 0.5),
+            ("thermal", "generation_mw", 0.5),
+        ]
 
 
 # ---------------------------------------------------------------------------
-# plant_max_reldiff_ranking (charts._shared._plant_max_reldiff_table)
+# plant_gaps (charts._shared._plant_gap_table)
 # ---------------------------------------------------------------------------
 
 
-def _reldiff_result(
+def _plant_result(
     name: str,
     code: int,
-    novomodelo_id: int,
     stage: int,
     var: str,
-    rel_diff: float | None,
+    reference: float,
+    novomodelo: float,
     entity_type: str = "hydro",
 ) -> ResultComparison:
     return ResultComparison(
         entity_type=entity_type,
         entity_name=name,
         newave_code=code,
-        novomodelo_id=novomodelo_id,
+        novomodelo_id=code,
         stage=stage,
         variable=var,
-        newave_value=100.0,
-        novomodelo_value=100.0 * (1.0 + (rel_diff or 0.0)),
-        abs_diff=100.0 * (rel_diff or 0.0),
-        rel_diff=rel_diff,
+        newave_value=reference,
+        novomodelo_value=novomodelo,
+        abs_diff=abs(novomodelo - reference),
+        rel_diff=None,
     )
 
 
-def test_plant_max_reldiff_ranking_orders_worst_first_and_computes_median() -> None:
+def test_plant_gaps_pool_stages_and_order_plants_worst_first() -> None:
     results = [
-        _reldiff_result("ITAIPU", 10, 0, 0, "gen", 0.03),
-        # Same (plant, variable), later stage: the larger rel_diff must win.
-        _reldiff_result("ITAIPU", 10, 0, 1, "gen", 0.05),
-        _reldiff_result("ITAIPU", 10, 0, 0, "vol", 0.20),
-        _reldiff_result("TUCURUI", 20, 1, 0, "gen", 0.10),
-        # Unmatched comparison (rel_diff is None) -> excluded from the ranking
-        # and from the median, mirroring the "-" cell it renders as.
-        _reldiff_result("TUCURUI", 20, 1, 0, "vol", None),
-        # Different entity_type -> filtered out entirely.
-        ResultComparison(
-            entity_type="thermal",
-            entity_name="ANGRA",
-            newave_code=30,
-            novomodelo_id=2,
-            stage=0,
-            variable="gen",
-            newave_value=10.0,
-            novomodelo_value=99.0,
-            abs_diff=89.0,
-            rel_diff=8.9,
-        ),
+        # ITAIPU gen: |10| + |0| over |100| + |100| -> 5%.
+        _plant_result("ITAIPU", 10, 0, "gen", 100.0, 110.0),
+        _plant_result("ITAIPU", 10, 1, "gen", 100.0, 100.0),
+        _plant_result("ITAIPU", 10, 0, "vol", 50.0, 60.0),
+        _plant_result("TUCURUI", 20, 0, "gen", 200.0, 260.0),
+        # Different entity_type -> left out.
+        _plant_result("ANGRA", 30, 0, "gen", 10.0, 99.0, entity_type="thermal"),
     ]
     variables = [("gen", "Generation"), ("vol", "Volume")]
 
-    max_rd, plant_keys, medians = plant_max_reldiff_ranking(results, "hydro", variables)
+    gaps = plant_gaps(results, "hydro", variables)
 
-    assert max_rd == {
-        ("ITAIPU", 10, "gen"): 0.05,
-        ("ITAIPU", 10, "vol"): 0.20,
-        ("TUCURUI", 20, "gen"): 0.10,
+    assert gaps.by_plant == {
+        ("ITAIPU", 10, "gen"): pytest.approx(0.05),
+        ("ITAIPU", 10, "vol"): pytest.approx(0.2),
+        ("TUCURUI", 20, "gen"): pytest.approx(0.3),
     }
-    # ITAIPU's worst cell (0.20) beats TUCURUI's (0.10) -> ITAIPU sorts first.
-    assert plant_keys == [("ITAIPU", 10), ("TUCURUI", 20)]
-    assert medians["gen"] == pytest.approx(0.075)
-    assert medians["vol"] == pytest.approx(0.20)
+    # TUCURUI's worst gap (30%) beats ITAIPU's (20%).
+    assert gaps.plants == [("TUCURUI", 20), ("ITAIPU", 10)]
+    # Pooled over every plant: (10 + 0 + 60) / (100 + 100 + 200).
+    assert gaps.totals["gen"] == pytest.approx(70.0 / 400.0)
+    assert gaps.totals["vol"] == pytest.approx(0.2)
 
 
-def test_plant_max_reldiff_ranking_no_matching_rows_returns_none_medians() -> None:
-    results = [_reldiff_result("ANGRA", 30, 2, 0, "gen", 0.1, entity_type="thermal")]
+def test_plant_gaps_judge_a_zero_reference_against_the_mean_plant() -> None:
+    results = [
+        _plant_result("ITAIPU", 10, 0, "gen", 100.0, 500.0),
+        _plant_result("SOBRADINHO", 40, 0, "gen", 0.0, 5.0),
+    ]
 
-    max_rd, plant_keys, medians = plant_max_reldiff_ranking(
-        results, "hydro", [("gen", "Generation")]
-    )
+    gaps = plant_gaps(results, "hydro", [("gen", "Generation")])
 
-    assert max_rd == {}
-    assert plant_keys == []
-    # statistics.median on the empty column -> None (the render layer's "-" cell).
-    assert medians == {"gen": None}
+    # 5 over the mean plant's 50; ITAIPU keeps its own 400 / 100.
+    assert gaps.by_plant[("SOBRADINHO", 40, "gen")] == pytest.approx(0.1)
+    assert gaps.by_plant[("ITAIPU", 10, "gen")] == pytest.approx(4.0)
+    assert gaps.plants == [("ITAIPU", 10), ("SOBRADINHO", 40)]
+    # The pooled total is not floored.
+    assert gaps.totals["gen"] == pytest.approx(405.0 / 100.0)
+
+
+def test_plant_gaps_rank_an_undefined_gap_first() -> None:
+    results = [
+        _plant_result("ITAIPU", 10, 0, "gen", 100.0, 500.0),
+        _plant_result("ITAIPU", 10, 0, "spill", 0.0, 0.0),
+        _plant_result("SOBRADINHO", 40, 0, "gen", 100.0, 100.0),
+        _plant_result("SOBRADINHO", 40, 0, "spill", 0.0, 5.0),
+    ]
+
+    gaps = plant_gaps(results, "hydro", [("gen", "Generation"), ("spill", "Spill")])
+
+    assert gaps.by_plant[("SOBRADINHO", 40, "spill")] is None
+    assert gaps.plants[0] == ("SOBRADINHO", 40)
+
+
+def test_plant_gaps_do_not_rank_by_the_water_value() -> None:
+    results = [
+        _plant_result("ITAIPU", 10, 0, "gen", 100.0, 110.0),
+        _plant_result("ITAIPU", 10, 0, "water_value_per_hm3", 1.0, 9.0),
+        _plant_result("TUCURUI", 20, 0, "gen", 100.0, 150.0),
+    ]
+    variables = [("gen", "Generation"), ("water_value_per_hm3", "Water value")]
+
+    gaps = plant_gaps(results, "hydro", variables)
+
+    assert gaps.plants == [("TUCURUI", 20), ("ITAIPU", 10)]
+    assert gaps.by_plant[("ITAIPU", 10, "water_value_per_hm3")] == pytest.approx(8.0)
+
+
+def test_plant_gaps_without_matching_rows_are_empty() -> None:
+    results = [_plant_result("ANGRA", 30, 0, "gen", 10.0, 11.0, entity_type="thermal")]
+
+    gaps = plant_gaps(results, "hydro", [("gen", "Generation")])
+
+    assert gaps.by_plant == {}
+    assert gaps.plants == []
+    assert gaps.totals == {}
 
 
 # ---------------------------------------------------------------------------

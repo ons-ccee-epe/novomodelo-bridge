@@ -15,9 +15,9 @@ from novomodelo_bridge.core.preflight import (
 )
 from novomodelo_bridge.ui.console import (
     _SUCCESS_STYLE,
+    BAND_STYLE,
     MAX_TABLE_ROWS,
     _progress_enabled,
-    compare_row_style,
     conversion_progress,
     make_table,
     render_checklist,
@@ -327,17 +327,28 @@ class TestMakeTableRowStyles:
         assert table.rows[2].style is None
 
 
-class TestCompareRowStyle:
-    """``compare_row_style`` returns the existing green/red palette, no new colour."""
+class TestBandStyle:
+    """Each agreement band reuses the severity palette: no new colour."""
 
-    def test_within_tol_returns_success_style(self) -> None:
-        assert compare_row_style(within_tol=True) == _SUCCESS_STYLE
-
-    def test_not_within_tol_returns_error_style(self) -> None:
-        from novomodelo_bridge.core.diagnostics import Severity
+    def test_bands_map_to_ok_warning_and_error(self) -> None:
+        from novomodelo_bridge.core.agreement import Band
         from novomodelo_bridge.ui.console import _SEVERITY_STYLE
+        from novomodelo_bridge.ui.theme import SEVERITY
 
-        assert compare_row_style(within_tol=False) == _SEVERITY_STYLE[Severity.ERROR]
+        assert BAND_STYLE == {
+            Band.CLOSE: SEVERITY["ok"],
+            Band.MODERATE: _SEVERITY_STYLE[Severity.WARNING],
+            Band.FAR: _SEVERITY_STYLE[Severity.ERROR],
+        }
+
+    def test_make_table_keeps_a_styled_text_cell(self) -> None:
+        from rich.text import Text
+
+        from novomodelo_bridge.core.agreement import Band
+
+        cell = Text("far", style=BAND_STYLE[Band.FAR])
+        table = make_table(["Agreement"], [[cell]])
+        assert list(table.columns[0].cells) == [cell]
 
 
 class TestProgressGating:

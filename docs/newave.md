@@ -248,8 +248,13 @@ The converter raises `SourceFileError` when:
 `MEDIAS-*.CSV` result files and `pmo.dat` directly in `NEWAVE_DIR`, and on the
 Novomodelo side the `output/` directory `novomodelo run` produced. It aligns entities
 through the conversion's id mapping, aggregates Novomodelo's scenarios to NEWAVE's
-published level, and reports per-variable agreement as a symmetric percentage
-error and the share of points within tolerance. It also re-evaluates the
+published level, and gives each variable's gap: the summed absolute difference
+over every stage and entity, relative to the summed NEWAVE values. A gap up to
+`--tolerance` (5% by default) is close, one beyond four times it is far, and
+the `--json` status is `ok` only when every variable is close. The water values
+and the convergence bounds stay out of that judgement; below the table the
+console prints each model's final lower bound and simulated mean cost, the
+total of the report's cost breakdown. It also re-evaluates the
 converted generic constraints against both models' operation. With
 `--format html` it writes a multi-tab report.
 

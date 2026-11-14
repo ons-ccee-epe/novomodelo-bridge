@@ -29,6 +29,20 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **`compare newave` and `compare decomp` judge each variable by its overall
+  gap, and `--tolerance` defaults to 5%.** The console table labels each
+  variable close, moderate or far (beyond four times the tolerance), leaves
+  out the water values and convergence bounds, and ends with each model's
+  final lower bound and simulated mean cost.
+- **BREAKING: every command's `--json` envelope has `schema_version` 2, and
+  `compare`'s summary counts the variables in each agreement band and lists
+  the far ones.** Its status is `ok` only when every variable is close, and
+  `summary.parquet` has one row per entity type and variable; update scripts
+  that read either.
+- **The `compare` report's Hydro and Thermal Details tabs lead with a per-plant
+  gap table**, tinted by band, worst plant first, where a click opens the
+  plant's charts; the Productivity tab lists only the plants that differ and
+  folds the full tables. Build the report again to update it.
 - **`convert decomp` writes DECOMP's own spillage, turbining, diversion and
   exchange penalties** instead of NEWAVE's: the same cost for every plant
   whatever its productivity, and half the exchange cost on lines that touch

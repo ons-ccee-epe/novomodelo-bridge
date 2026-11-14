@@ -206,7 +206,7 @@ class TestCompareNewaveBadFormat:
         )
 
         assert code == 2
-        assert "variables within tol" in stdout
+        assert "variables close" in stdout
         assert "bogus" in stderr
 
 

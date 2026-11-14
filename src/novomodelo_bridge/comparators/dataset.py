@@ -79,10 +79,15 @@ _INT_KEYED_RENDER_FIELDS: frozenset[str] = frozenset(
     {"nw_bus_names", "novomodelo_bus_meta", "novomodelo_hydro_meta"}
 )
 
-#: Ordered schema of the per-variable summary frame.
+#: Ordered schema of the summary frame, one row per ``(entity_type, variable)``.
+#: ``gap`` is null when undefined and ``band`` holds a
+#: :class:`~novomodelo_bridge.core.agreement.Band` value.
 SUMMARY_SCHEMA: dict[str, type[pl.DataType]] = {
+    "entity_type": pl.Utf8,
     "variable": pl.Utf8,
     "count": pl.Int64,
+    "gap": pl.Float64,
+    "band": pl.Utf8,
     "mean_abs_diff": pl.Float64,
     "max_abs_diff": pl.Float64,
     "mean_smape": pl.Float64,
@@ -162,9 +167,10 @@ class ComparisonDataset:
             (entity, stage, block, variable, source) observation.
         summary: Per-variable summary statistics conforming to
             :data:`SUMMARY_SCHEMA`.
-        metadata: Side-table holding provenance carried verbatim, not read by
-            the HTML report (``top_divergences``, ``footer_counts``,
-            ``nw_hydro_names``, and the DECOMP-track ``unmapped``).
+        metadata: Side-table holding provenance carried verbatim
+            (``top_divergences``, ``footer_counts``, ``nw_hydro_names``,
+            ``tolerance``, and the DECOMP-track ``unmapped``); of these the
+            HTML report reads only ``tolerance``.
         render: The typed non-tidy inputs the HTML report builder reads (see
             :class:`RenderInputs`).
     """

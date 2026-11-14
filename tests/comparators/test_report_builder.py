@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import io
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -41,6 +41,7 @@ from rich.console import Console
 from typer.testing import CliRunner, Result
 
 from novomodelo_bridge.comparators.analyze import build_results_dataset
+from novomodelo_bridge.comparators.charts.costs import PairedCost
 from novomodelo_bridge.comparators.dataset import ComparisonDataset
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
@@ -360,6 +361,7 @@ def test_compare_newave_no_color_summary_has_no_ansi_escapes(
         novomodelo_output_dir: Path,
         *,
         verdict: CompareVerdict,
+        training: Sequence[PairedCost] = (),
         reference_label: str = "NEWAVE",
         console: Console | None = None,
     ) -> None:
@@ -370,6 +372,7 @@ def test_compare_newave_no_color_summary_has_no_ansi_escapes(
             newave_dir,
             novomodelo_output_dir,
             verdict=verdict,
+            training=training,
             reference_label=reference_label,
             console=console,
         )

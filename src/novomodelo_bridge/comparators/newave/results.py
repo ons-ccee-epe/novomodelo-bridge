@@ -19,6 +19,7 @@ import polars as pl
 
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.novomodelo.case_io import case_dir_for
 
@@ -1329,7 +1330,7 @@ def compare_results(
     id_map: NewaveIdMap,
     alignment: EntityAlignment,
     novomodelo_output_dir: Path,
-    tolerance: float = 1e-2,
+    tolerance: float = DEFAULT_TOLERANCE,
 ) -> ComparisonDataset:
     """Compare the source model output results against Novomodelo simulation means.
 
@@ -1357,7 +1358,8 @@ def compare_results(
     novomodelo_output_dir:
         Path to Novomodelo output directory.
     tolerance:
-        Relative tolerance for results comparison (informational).
+        The close band of each summary row's gap (see
+        :mod:`novomodelo_bridge.core.agreement`).
 
     """
     from novomodelo_bridge.comparators.analyze import build_results_dataset

@@ -506,10 +506,11 @@ class _FakeDadger:
         return self._frames.get("ca")
 
 
-def _fake_dataset(*, all_within_tol: bool = False) -> ComparisonDataset:
+def _fake_dataset(*, all_close: bool = False) -> ComparisonDataset:
     """A canonical two-stage, two-variable dataset for the ``compare decomp``
-    CLI tests. ``generation_mw`` always matches; ``turbined_m3s`` diverges
-    unless *all_within_tol* asks for a fully-passing dataset instead."""
+    CLI tests, judged at a 5% tolerance. ``generation_mw`` always matches;
+    ``turbined_m3s`` is far (a 40% gap) unless *all_close* asks for a fully
+    matching dataset instead."""
     tidy = pl.DataFrame(
         {
             "entity_type": ["hydro", "hydro", "hydro", "hydro"],
@@ -525,21 +526,24 @@ def _fake_dataset(*, all_within_tol: bool = False) -> ComparisonDataset:
                 "turbined_m3s",
             ],
             "source": ["newave", "novomodelo", "newave", "novomodelo"],
-            "value": [100.0, 100.0, 100.0, 100.0 if all_within_tol else 90.0],
+            "value": [100.0, 100.0, 100.0, 100.0 if all_close else 60.0],
         },
         schema=TIDY_SCHEMA,
     )
-    turbined_within_tol_rate = 1.0 if all_within_tol else 0.0
-    turbined_smape = 0.0 if all_within_tol else 0.12
+    turbined_diff = 0.0 if all_close else 40.0
+    turbined_smape = 0.0 if all_close else 0.5
     summary = pl.DataFrame(
         {
+            "entity_type": ["hydro", "hydro"],
             "variable": ["generation_mw", "turbined_m3s"],
             "count": [1, 1],
-            "mean_abs_diff": [0.0, 0.0 if all_within_tol else 10.0],
-            "max_abs_diff": [0.0, 0.0 if all_within_tol else 10.0],
+            "gap": [0.0, turbined_diff / 100.0],
+            "band": ["close", "close" if all_close else "far"],
+            "mean_abs_diff": [0.0, turbined_diff],
+            "max_abs_diff": [0.0, turbined_diff],
             "mean_smape": [0.0, turbined_smape],
             "max_smape": [0.0, turbined_smape],
-            "within_tol_rate": [1.0, turbined_within_tol_rate],
+            "within_tol_rate": [1.0, 1.0 if all_close else 0.0],
             "correlation": [1.0, 0.9],
         },
         schema=SUMMARY_SCHEMA,
@@ -547,7 +551,10 @@ def _fake_dataset(*, all_within_tol: bool = False) -> ComparisonDataset:
     return ComparisonDataset(
         tidy=tidy,
         summary=summary,
-        metadata={"unmapped": {"hydro": [], "thermal": [86, 224], "bus": []}},
+        metadata={
+            "tolerance": 0.05,
+            "unmapped": {"hydro": [], "thermal": [86, 224], "bus": []},
+        },
     )
 
 
@@ -555,7 +562,10 @@ def _empty_fake_dataset() -> ComparisonDataset:
     return ComparisonDataset(
         tidy=pl.DataFrame(schema=TIDY_SCHEMA),
         summary=pl.DataFrame(schema=SUMMARY_SCHEMA),
-        metadata={"unmapped": {"hydro": [], "thermal": [], "bus": []}},
+        metadata={
+            "tolerance": 0.05,
+            "unmapped": {"hydro": [], "thermal": [], "bus": []},
+        },
     )
 
 

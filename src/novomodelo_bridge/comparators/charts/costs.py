@@ -8,6 +8,8 @@ the component colours.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import polars as pl
 
 from novomodelo_bridge.comparators import analyze
@@ -272,7 +274,7 @@ def cost_breakdown_table(
             "</tr>"
         )
     body_rows.append(
-        "<tr>"
+        '<tr class="cb-total">'
         '<td class="cb-cat">Total</td>'
         f'<td class="cb-num">{_fmt_money(total_nw)}</td>'
         f'<td class="cb-num">{_fmt_money(total_cb)}</td>'
@@ -285,11 +287,66 @@ def cost_breakdown_table(
     return '<table class="cost-breakdown-table">' + caption + head + body + "</table>"
 
 
+@dataclass(frozen=True)
+class PairedCost:
+    """One cost of each model, in R$; ``None`` where a model reports none."""
+
+    label: str
+    reference: float | None
+    novomodelo: float | None
+
+    @property
+    def diff(self) -> float | None:
+        """Novomodelo minus the reference."""
+        if self.reference is None or self.novomodelo is None:
+            return None
+        return self.novomodelo - self.reference
+
+    @property
+    def pct(self) -> float | None:
+        """:attr:`diff` in percent of the reference; ``None`` near a zero one."""
+        diff = self.diff
+        if diff is None or self.reference is None or abs(self.reference) <= 1e-6:
+            return None
+        return diff / self.reference * 100.0
+
+
 def _final_lower_bound(conv: pl.DataFrame | None) -> float | None:
     if conv is None or conv.is_empty() or "lower_bound" not in conv.columns:
         return None
     bounds = conv.filter(pl.col("lower_bound").is_not_null()).sort("iteration")
     return None if bounds.is_empty() else float(bounds["lower_bound"][-1])
+
+
+def training_costs(
+    nw_conv: pl.DataFrame | None,
+    novomodelo_conv: pl.DataFrame | None,
+    nw_costs: dict[str, float] | None,
+    novomodelo_costs: dict[str, float] | None,
+) -> tuple[PairedCost, ...]:
+    """Each model's final lower bound and simulated mean cost.
+
+    The first row of :func:`net_of_penalties_table` and the Total row of
+    :func:`cost_breakdown_table`; a row neither model reports is left out.
+    """
+    _, total_nw, total_cb, _, _ = analyze.cost_percent_deltas(
+        _resolve_cost_categories(nw_costs or {}, novomodelo_costs or {})
+    )
+    rows = (
+        PairedCost(
+            "Final lower bound",
+            _final_lower_bound(nw_conv),
+            _final_lower_bound(novomodelo_conv),
+        ),
+        PairedCost(
+            "Simulated mean cost",
+            total_nw if nw_costs else None,
+            total_cb if novomodelo_costs else None,
+        ),
+    )
+    return tuple(
+        row for row in rows if row.reference is not None or row.novomodelo is not None
+    )
 
 
 def net_of_penalties_table(
@@ -328,20 +385,16 @@ def net_of_penalties_table(
     def _money(v: float | None) -> str:
         return "—" if v is None else f"{v / 1e9:.3f}"
 
-    def _row(label: str, pair: tuple[float | None, ...]) -> str:
-        source, novomodelo = pair
-        diff = None if source is None or novomodelo is None else novomodelo - source
-        pct = (
-            None
-            if diff is None or source is None or abs(source) <= 1e-6
-            else diff / source * 100.0
-        )
+    def _row(label: str, pair: tuple[float | None, ...], *, total: bool = False) -> str:
+        row = PairedCost(label, *pair)
+        pct = row.pct
+        opening = '<tr class="cb-total">' if total else "<tr>"
         return (
-            "<tr>"
+            f"{opening}"
             f'<td class="cb-cat">{label}</td>'
-            f'<td class="cb-num">{_money(source)}</td>'
-            f'<td class="cb-num">{_money(novomodelo)}</td>'
-            f'<td class="cb-num">{_money(diff)}</td>'
+            f'<td class="cb-num">{_money(row.reference)}</td>'
+            f'<td class="cb-num">{_money(row.novomodelo)}</td>'
+            f'<td class="cb-num">{_money(row.diff)}</td>'
             f'<td class="cb-num">{"—" if pct is None else f"{pct:+.1f}%"}</td>'
             "</tr>"
         )
@@ -369,7 +422,7 @@ def net_of_penalties_table(
         "<tbody>"
         + _row("Final lower bound", lower)
         + _row("Expected violation penalties", penalties)
-        + _row("Lower bound net of penalties", net)
+        + _row("Lower bound net of penalties", net, total=True)
         + "</tbody>"
     )
     return (

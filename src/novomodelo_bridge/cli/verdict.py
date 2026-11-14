@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
 # Bump only on a breaking change: a key rename/removal or a meaning change.
 # Adding a NEW optional key under ``summary`` is backward-compatible — do NOT bump.
-SCHEMA_VERSION: int = 1
+SCHEMA_VERSION: int = 2
 
 _Code = SupportsInt | str
 
@@ -130,22 +130,22 @@ def check_summary(checks: Sequence[Mapping[str, object]]) -> dict[str, object]:
 def compare_summary(verdict: CompareVerdict) -> dict[str, object]:
     """The ``compare`` command's ``summary`` block — the headline verdict.
 
-    Returns ``{"within_tol", "total", "worst_variable", "worst_smape",
-    "all_within_tol"}`` in that order. ``worst_smape`` is the raw sMAPE ratio
-    (NOT a percentage), matching :attr:`CompareVerdict.worst_smape`.
-
-    Mirrors the console ``all_within_tol`` guard in
-    :func:`novomodelo_bridge.ui.console.render_compare_verdict`: on a perfect match the
-    "worst" clause is meaningless, so ``worst_variable`` is nulled to ``None`` and
-    ``worst_smape`` to ``0.0``. Otherwise both pass through verbatim.
+    Returns ``{"tolerance", "total", "close", "moderate", "far",
+    "far_variables"}`` in that order: the operation variables counted by
+    agreement band, and each far one as ``{"entity_type", "variable",
+    "gap"}``, largest gap first. ``gap`` is a ratio (not a percentage), null
+    when undefined.
     """
-    all_within_tol = verdict.all_within_tol
     return {
-        "within_tol": verdict.within_tol,
+        "tolerance": verdict.tolerance,
         "total": verdict.total,
-        "worst_variable": None if all_within_tol else verdict.worst_variable,
-        "worst_smape": 0.0 if all_within_tol else verdict.worst_smape,
-        "all_within_tol": all_within_tol,
+        "close": verdict.close,
+        "moderate": verdict.moderate,
+        "far": verdict.far,
+        "far_variables": [
+            {"entity_type": v.entity_type, "variable": v.variable, "gap": v.gap}
+            for v in verdict.far_variables
+        ],
     }
 
 
@@ -165,29 +165,19 @@ def _coerce_unmapped_code(
     return int(code)
 
 
-def decomp_dataset_summary(
-    dataset: ComparisonDataset, tolerance: float
-) -> dict[str, object]:
+def decomp_dataset_summary(dataset: ComparisonDataset) -> dict[str, object]:
     """The ``compare decomp`` command's dataset-sourced ``summary`` block.
 
-    Returns the shared headline fields from :func:`compare_summary`
-    (``within_tol``, ``total``, ``worst_variable``, ``worst_smape``,
-    ``all_within_tol`` — sourced via
+    Returns the shared headline fields from :func:`compare_summary` —
+    sourced via
     :func:`~novomodelo_bridge.comparators.verdict.build_compare_verdict`, so the
     headline is computed once from ``dataset.summary`` and matches
-    ``compare newave``'s) PLUS the three DECOMP-specific keys read straight
+    ``compare newave``'s — PLUS the three DECOMP-specific keys read straight
     from *dataset*, in this fixed order: ``stages`` (the count of distinct
     ``dataset.tidy["stage"]`` values), ``variables``
     (``dataset.summary.to_dicts()`` verbatim), and ``unmapped``
     (``dataset.metadata["unmapped"]``, with every entity id coerced to
     ``int``).
-
-    *tolerance* is accepted for call-site symmetry with the other compare
-    commands' summary builders — it is not consumed here because
-    ``dataset.summary``'s ``within_tol_rate`` (which
-    :func:`~novomodelo_bridge.comparators.verdict.build_compare_verdict` reads) was
-    already computed against a tolerance when the caller built *dataset*
-    (e.g. via ``build_decomp_dataset(..., tolerance=...)``).
     """
     from novomodelo_bridge.comparators.verdict import build_compare_verdict
 

@@ -511,6 +511,59 @@ def test_fpha_metrics_table_sorts_and_tints_worst() -> None:
     assert "#FEF3C7" in html
 
 
+def _fpha_metrics(nmae: list[float]) -> pl.DataFrame:
+    n = len(nmae)
+    return pl.DataFrame(
+        {
+            "novomodelo_id": list(range(n)),
+            "plant_name": [f"P{i}" for i in range(n)],
+            "stage": [0] * n,
+            "n_planes_newave": [4] * n,
+            "n_planes_novomodelo": [4] * n,
+            "n_v": [1] * n,
+            "nmae": nmae,
+            "bias": [0.0] * n,
+            "max_abs_dev": [1.0] * n,
+            "gh_max_ratio": [1.0] * n,
+        }
+    )
+
+
+def test_fpha_metrics_table_lists_plants_beyond_the_limit_and_folds_all() -> None:
+    from novomodelo_bridge.comparators.charts import fpha_metrics_table
+
+    html = fpha_metrics_table(_fpha_metrics([0.01, 0.12, 0.30]))
+
+    shown, full = html.split('<details class="fold">')
+    assert (
+        "1 of 3 plants fit NEWAVE's surface within 5% NMAE at every stage; the 2 "
+        "beyond it are listed below."
+    ) in shown
+    assert "P1" in shown and "P2" in shown and "P0" not in shown
+    assert "<summary>All 3 plants</summary>" in full
+    assert all(name in full for name in ("P0", "P1", "P2"))
+
+
+def test_fpha_metrics_table_every_plant_within_the_limit() -> None:
+    from novomodelo_bridge.comparators.charts import fpha_metrics_table
+
+    html = fpha_metrics_table(_fpha_metrics([0.01, 0.02]), reference_label="DECOMP")
+
+    assert html.startswith(
+        '<p class="fold-summary">All 2 plants fit DECOMP\'s surface within 5% '
+        'NMAE at every stage.</p><details class="fold">'
+    )
+
+
+def test_fpha_metrics_table_no_plant_within_the_limit_is_unfolded() -> None:
+    from novomodelo_bridge.comparators.charts import fpha_metrics_table
+
+    html = fpha_metrics_table(_fpha_metrics([0.10, 0.20]))
+
+    assert "No plant fits NEWAVE's surface within 5% NMAE at every stage." in html
+    assert "<details" not in html
+
+
 def test_fpha_metrics_table_empty_message() -> None:
     from novomodelo_bridge.comparators.charts import fpha_metrics_table
 

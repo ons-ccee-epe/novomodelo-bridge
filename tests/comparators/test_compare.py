@@ -98,10 +98,17 @@ class TestResultsComparison:
         assert summary.total == 2
         assert summary.by_entity_type["hydro"] == 1
         assert summary.by_entity_type["thermal"] == 1
-        assert "generation_mw" in summary.by_variable
-        stats = summary.by_variable["generation_mw"]
-        assert stats.count == 2
-        assert stats.max_abs_diff == 0.5
+        # Hydro and thermal generation are judged apart, one row each.
+        assert set(summary.by_variable) == {
+            ("hydro", "generation_mw"),
+            ("thermal", "generation_mw"),
+        }
+        hydro = summary.by_variable[("hydro", "generation_mw")]
+        assert hydro.count == 1
+        assert hydro.max_abs_diff == 0.5
+        assert hydro.gap == pytest.approx(0.005)
+        assert hydro.band == "close"
+        assert summary.by_variable[("thermal", "generation_mw")].count == 1
 
 
 # -------------------------------------------------------------------
@@ -169,7 +176,7 @@ class TestReportFormatting:
                 rel_diff=0.2,
             ),
         ]
-        dataset = build_results_dataset(results, PercentileData(), 1e-2)
+        dataset = build_results_dataset(results, PercentileData(), 0.05)
         print_results_summary_from_dataset(
             dataset,
             Path("/nw"),
@@ -177,12 +184,15 @@ class TestReportFormatting:
             verdict=build_compare_verdict(dataset),
         )
         out = capsys.readouterr().out
-        assert "generation_mw" in out
-        assert "2" in out  # the per-variable Count cell
+        assert "Hydro plants" in out
+        assert "Generation (MW)" in out
+        # Σ|diff| / Σ|ref| = 20 / 150.
+        assert "13%" in out
+        assert "moderate" in out
 
 
 # -------------------------------------------------------------------
-# Tolerance row-colouring tests
+# Agreement table tests
 # -------------------------------------------------------------------
 
 
@@ -190,12 +200,11 @@ class _MakeTableSpy:
     """Spy that records every ``make_table`` call and delegates to the real one.
 
     Patched in as ``make_table``'s ``side_effect`` so the printer still renders a
-    genuine table (keeping the parity contract honest) while the test inspects the
-    ``row_styles`` kwarg passed to each call.
+    genuine table while the test inspects the rows and styles of each call.
     """
 
     def __init__(self) -> None:
-        self.records: list[dict[str, object]] = []
+        self.records: list[dict[str, Any]] = []
 
     def __call__(
         self,
@@ -210,12 +219,7 @@ class _MakeTableSpy:
         from novomodelo_bridge.ui.console import make_table
 
         self.records.append(
-            {
-                "title": title,
-                "justify": justify,
-                "caption": caption,
-                "row_styles": row_styles,
-            }
+            {"columns": columns, "rows": rows, "row_styles": row_styles}
         )
         return make_table(
             columns,
@@ -227,46 +231,36 @@ class _MakeTableSpy:
         )
 
 
-class TestToleranceRowColouring:
-    """Compare summary table rows are coloured green/red by tolerance."""
+def _hydro_result(
+    name: str, variable: str, ref: float, novomodelo: float
+) -> ResultComparison:
+    return ResultComparison(
+        entity_type="hydro",
+        entity_name=name,
+        newave_code=10,
+        novomodelo_id=0,
+        stage=0,
+        variable=variable,
+        newave_value=ref,
+        novomodelo_value=novomodelo,
+        abs_diff=abs(novomodelo - ref),
+        rel_diff=abs(novomodelo - ref) / ref,
+    )
 
-    def test_results_row_colour_green_for_within_tol_red_otherwise(self) -> None:
+
+class TestAgreementTable:
+    """The compare summary table labels each variable with its dataset band."""
+
+    def _print(
+        self, results: list[ResultComparison], **kwargs: Any
+    ) -> tuple[ComparisonDataset, _MakeTableSpy]:
         from novomodelo_bridge.comparators.analyze import build_results_dataset
         from novomodelo_bridge.comparators.verdict import build_compare_verdict
         from novomodelo_bridge.ui.compare_summary import (
             print_results_summary_from_dataset,
         )
-        from novomodelo_bridge.ui.console import compare_row_style
 
-        # gen_within is fully within tol (rel_diff under 1e-2); gen_diverge is not.
-        results = [
-            ResultComparison(
-                entity_type="hydro",
-                entity_name="ITAIPU",
-                newave_code=10,
-                novomodelo_id=0,
-                stage=0,
-                variable="gen_within",
-                newave_value=100.0,
-                novomodelo_value=100.0,
-                abs_diff=0.0,
-                rel_diff=0.0,
-            ),
-            ResultComparison(
-                entity_type="hydro",
-                entity_name="TUCURUI",
-                newave_code=20,
-                novomodelo_id=1,
-                stage=0,
-                variable="gen_diverge",
-                newave_value=100.0,
-                novomodelo_value=150.0,
-                abs_diff=50.0,
-                rel_diff=0.5,
-            ),
-        ]
-        dataset = build_results_dataset(results, PercentileData(), 1e-2)
-
+        dataset = build_results_dataset(results, PercentileData(), 0.05)
         spy = _MakeTableSpy()
         with patch("novomodelo_bridge.ui.compare_summary.make_table", side_effect=spy):
             print_results_summary_from_dataset(
@@ -274,19 +268,77 @@ class TestToleranceRowColouring:
                 Path("/nw"),
                 Path("/novomodelo"),
                 verdict=build_compare_verdict(dataset),
+                **kwargs,
             )
+        return dataset, spy
 
-        # Rows are sorted by variable; derive the expected colour FROM the dataset
-        # summary (never recompute tolerance) so the source-of-truth stays single.
-        summary = {row["variable"]: row for row in dataset.summary.to_dicts()}
-        expected = [
-            compare_row_style(within_tol=float(summary[var]["within_tol_rate"]) == 1.0)
-            for var in sorted(summary)
+    def test_agreement_cell_is_the_summary_band(self) -> None:
+        from rich.text import Text
+
+        from novomodelo_bridge.core.agreement import Band
+        from novomodelo_bridge.ui.console import BAND_STYLE
+
+        dataset, spy = self._print(
+            [
+                _hydro_result("ITAIPU", "gen_within", 100.0, 100.0),
+                _hydro_result("TUCURUI", "gen_diverge", 100.0, 150.0),
+            ]
+        )
+
+        bands = {
+            row["variable"]: Band(row["band"]) for row in dataset.summary.to_dicts()
+        }
+        assert bands == {"gen_diverge": Band.FAR, "gen_within": Band.CLOSE}
+        rows = spy.records[0]["rows"]
+        cells = {
+            str(row[0]).strip(): (row[4].plain, row[4].style)
+            for row in rows
+            if isinstance(row[4], Text)
+        }
+        assert cells == {
+            variable: (band.value, BAND_STYLE[band]) for variable, band in bands.items()
+        }
+        # One bold heading row opens the hydro group.
+        assert rows[0][0] == "Hydro plants"
+        assert spy.records[0]["row_styles"] == ["bold", None, None]
+
+    def test_policy_rows_stay_out_of_the_table(self) -> None:
+        dataset, spy = self._print(
+            [
+                _hydro_result("ITAIPU", "generation_mw", 100.0, 100.0),
+                _hydro_result("ITAIPU", "water_value_per_hm3", 100.0, 900.0),
+            ]
+        )
+
+        assert "water_value_per_hm3" in dataset.summary["variable"].to_list()
+        labels = [str(row[0]).strip() for row in spy.records[0]["rows"]]
+        assert labels == ["Hydro plants", "Generation (MW)"]
+
+    def test_training_costs_follow_the_table(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.comparators.charts.costs import PairedCost
+
+        _, spy = self._print(
+            [_hydro_result("ITAIPU", "generation_mw", 100.0, 100.0)],
+            training=[
+                PairedCost("Final lower bound", 2.0e9, 2.2e9),
+                PairedCost("Simulated mean cost", 1.0e9, None),
+            ],
+        )
+
+        assert [record["rows"] for record in spy.records[1:]] == [
+            [
+                ["Final lower bound", "2.000", "2.200", "+10.0%"],
+                ["Simulated mean cost", "1.000", "—", "—"],
+            ]
         ]
-        assert spy.records[0]["row_styles"] == expected
-        # gen_diverge sorts before gen_within: red then green.
-        assert expected[0] == compare_row_style(within_tol=False)  # gen_diverge
-        assert expected[1] == compare_row_style(within_tol=True)  # gen_within
+        assert "Bounds and cost" in capsys.readouterr().out
+
+    def test_no_training_costs_no_second_table(self) -> None:
+        _, spy = self._print([_hydro_result("ITAIPU", "generation_mw", 100.0, 100.0)])
+
+        assert len(spy.records) == 1
 
 
 # -------------------------------------------------------------------
@@ -313,17 +365,68 @@ class TestCompareVerdictLine:
         from novomodelo_bridge.ui.console import render_compare_verdict
 
         render_compare_verdict(
-            CompareVerdict(
-                within_tol=0,
-                total=0,
-                worst_variable=None,
-                worst_smape=0.0,
-                all_within_tol=False,
-            )
+            CompareVerdict(tolerance=0.05, close=0, moderate=0, far=0, far_variables=())
         )
 
         assert (
             _first_nonempty_line(capsys.readouterr().out) == "⚠ no variables compared"
+        )
+
+    def test_render_compare_verdict_all_close(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.comparators.verdict import CompareVerdict
+        from novomodelo_bridge.ui.console import render_compare_verdict
+
+        render_compare_verdict(
+            CompareVerdict(
+                tolerance=0.05, close=12, moderate=0, far=0, far_variables=()
+            )
+        )
+
+        assert (
+            _first_nonempty_line(capsys.readouterr().out)
+            == "✓ 12 of 12 variables close (gap ≤ 5%)"
+        )
+
+    def test_render_compare_verdict_mixed_bands(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.comparators.verdict import CompareVerdict, FarVariable
+        from novomodelo_bridge.ui.console import render_compare_verdict
+
+        render_compare_verdict(
+            CompareVerdict(
+                tolerance=0.05,
+                close=9,
+                moderate=4,
+                far=3,
+                far_variables=(FarVariable("bus", "spot_price", 0.4),) * 3,
+            )
+        )
+
+        assert _first_nonempty_line(capsys.readouterr().out) == (
+            "⚠ 9 of 16 variables close (gap ≤ 5%) · 4 moderate · 3 far (gap > 20%)"
+        )
+
+    def test_render_compare_verdict_leaves_out_an_empty_band(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.comparators.verdict import CompareVerdict, FarVariable
+        from novomodelo_bridge.ui.console import render_compare_verdict
+
+        render_compare_verdict(
+            CompareVerdict(
+                tolerance=0.02,
+                close=1,
+                moderate=0,
+                far=1,
+                far_variables=(FarVariable("bus", "spot_price", None),),
+            )
+        )
+
+        assert _first_nonempty_line(capsys.readouterr().out) == (
+            "⚠ 1 of 2 variables close (gap ≤ 2%) · 1 far (gap > 8%)"
         )
 
 
@@ -416,8 +519,8 @@ class TestCompareVerdictExitCodes:
         # The verdict line is a primary result: on stdout, not stderr.
         verdict_line = _first_nonempty_line(stdout)
         assert verdict_line.startswith(("✓ ", "⚠ "))
-        assert "variables within tol" in verdict_line
-        assert "variables within tol" not in stderr
+        assert "variables close" in verdict_line
+        assert "variables close" not in stderr
 
 
 # -------------------------------------------------------------------
@@ -1799,6 +1902,45 @@ class TestProductivityDetail:
         from novomodelo_bridge.comparators.charts import productivity_blocks_table
 
         assert "No productivity data" in productivity_blocks_table(pl.DataFrame())
+
+    def test_blocks_table_lists_the_differing_plants_and_folds_the_rest(self) -> None:
+        from novomodelo_bridge.comparators.charts import productivity_blocks_table
+
+        html = productivity_blocks_table(self._detail_df())
+
+        shown, full = html.split('<details class="fold">')
+        assert (
+            "1 of 2 plants match NEWAVE on every building block; the one that "
+            "differs is listed below."
+        ) in shown
+        assert "Plants that differ" in shown
+        assert "BETA" in shown and "ALPHA" not in shown
+        assert "<summary>All 2 plants</summary>" in full
+        assert "ALPHA" in full and "BETA" in full
+
+    def test_blocks_table_all_matching_shows_only_the_fold(self) -> None:
+        from novomodelo_bridge.comparators.charts import productivity_blocks_table
+
+        alpha = self._detail_df().filter(pl.col("plant_name") == "ALPHA")
+        df = pl.concat([alpha, alpha.with_columns(plant_name=pl.lit("GAMMA"))])
+
+        html = productivity_blocks_table(df)
+
+        assert html.startswith(
+            '<p class="fold-summary">All 2 plants match NEWAVE on every building '
+            'block.</p><details class="fold">'
+        )
+
+    def test_blocks_table_none_matching_is_shown_unfolded(self) -> None:
+        from novomodelo_bridge.comparators.charts import productivity_blocks_table
+
+        df = self._detail_df().with_columns(cb_vmax_hm3=pl.lit(1.0))
+
+        html = productivity_blocks_table(df, reference_label="DECOMP")
+
+        assert "None of the 2 plants matches DECOMP on every building block." in html
+        assert "<details" not in html
+        assert "ALPHA" in html and "BETA" in html
 
 
 class TestEvaluateLhsNovomodelo:

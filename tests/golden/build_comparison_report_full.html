@@ -328,13 +328,13 @@ nav { position: relative; }
 .cost-breakdown-table tbody tr:hover td {
     background: #EFF6FF;
 }
-.cost-breakdown-table tbody tr:last-child td {
-    border-bottom: none;
+.cost-breakdown-table tbody tr:last-child td { border-bottom: none; }
+.cost-breakdown-table tbody tr.cb-total td {
     border-top: 2px solid #374151;
     background: #F9FAFB;
     font-weight: 700;
 }
-.cost-breakdown-table tbody tr:last-child:hover td {
+.cost-breakdown-table tbody tr.cb-total:hover td {
     background: #F9FAFB;
 }
 .cost-breakdown-table .cb-swatch {
@@ -368,21 +368,24 @@ nav { position: relative; }
     background: #FFFFFF;
     z-index: 1;
 }
-/* FPHA tables: per-plant rows only (no summary row), body scrolled. */
-.cost-breakdown-table.fpha-table tbody tr:last-child td {
-    border-top: none;
-    background: transparent;
-    font-weight: 400;
-}
-.cost-breakdown-table.fpha-table tbody tr:nth-child(even):last-child td {
-    background: #FBFBFA;
-}
-.cost-breakdown-table.fpha-table tbody tr:last-child:hover td {
-    background: #EFF6FF;
-}
-.fpha-scroll { max-height: 60vh; overflow-y: auto; margin-bottom: 16px; }
-.fpha-scroll .cost-breakdown-table { overflow: visible; }
-.fpha-scroll thead th { position: sticky; top: 0; z-index: 2; }
+.fold-summary { margin: 4px 2px 12px; color: #374151; font-size: 0.9rem; }
+details.fold { margin-top: 12px; }
+details.fold > summary { cursor: pointer; color: #2563EB; font-size: 0.85rem; padding: 4px 2px; }
+details.fold[open] > summary { margin-bottom: 8px; }
+.fpha-scroll, .gap-scroll { max-height: 60vh; overflow-y: auto; margin-bottom: 16px; }
+.fpha-scroll .cost-breakdown-table, .gap-scroll .cost-breakdown-table { overflow: visible; }
+.fpha-scroll thead th, .gap-scroll thead th { position: sticky; top: 0; z-index: 2; }
+/* Per-plant gap tables: a cell tinted by its agreement band. */
+.cost-breakdown-table.gap-table { width: auto; min-width: 40%; }
+.gap-table thead th { cursor: pointer; user-select: none; }
+.gap-table thead th[data-sort="desc"]::after { content: " ▾"; }
+.gap-table thead th[data-sort="asc"]::after { content: " ▴"; }
+.gap-table tbody.gap-total tr.cb-total td { border-top: none; border-bottom: 2px solid #374151; }
+.gap-table tr.gap-row { cursor: pointer; }
+.gap-table tr.gap-row:focus-visible td { outline: 2px solid #2563EB; outline-offset: -2px; }
+.cost-breakdown-table tbody tr td.gap-close { background: #E3F1E8; color: #1F5135; }
+.cost-breakdown-table tbody tr td.gap-moderate { background: #FCEFD6; color: #7A4B00; }
+.cost-breakdown-table tbody tr td.gap-far { background: #F9DEDE; color: #8B1D1D; font-weight: 600; }
 
     </style>
 </head>
@@ -393,7 +396,7 @@ nav { position: relative; }
     </nav>
     <main>
         <section id="tab-overview" class="tab-content active">
-<div class="metrics-grid"><div class="metric-card"><div class="metric-value">5</div><div class="metric-label">Comparisons</div></div><div class="metric-card"><div class="metric-value">4</div><div class="metric-label">Entity Types</div></div><div class="metric-card"><div class="metric-value">4</div><div class="metric-label">Variables</div></div></div>
+<div class="metrics-grid"><div class="metric-card"><div class="metric-value">5</div><div class="metric-label">Comparisons</div></div><div class="metric-card"><div class="metric-value">4</div><div class="metric-label">Entity Types</div></div><div class="metric-card"><div class="metric-value">5</div><div class="metric-label">Variables</div></div></div>
 <div class="section-title">Cost Breakdown</div>
 <div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No cost data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No cost data available.</p></div></div>
 <div class="section-title">Per-Stage Cost</div>
@@ -403,8 +406,8 @@ nav { position: relative; }
 <div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No convergence data available.</p></div></div>
 </section><section id="tab-system" class="tab-content">
 <div class="section-title">Spot Price by Bus</div>
-<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-5be5b2ff"></div>
-<script>Plotly.newPlot('chart-5be5b2ff', [{"x":[0],"y":[150.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2},"xaxis":"x","yaxis":"y","legendgroup":"nw","showlegend":true},{"x":[0],"y":[152.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2},"xaxis":"x","yaxis":"y","legendgroup":"cb","showlegend":true}], {"title":{"text":"CMO by Bus"},"xaxis":{"automargin":true,"domain":[0.0,0.47],"title":{"text":"Stage"},"anchor":"y"},"yaxis":{"domain":[0.56,1.0],"title":{"text":"SE"},"anchor":"x"},"height":380,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div></div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-253e379e"></div>
+<script>Plotly.newPlot('chart-253e379e', [{"x":[0],"y":[150.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2},"xaxis":"x","yaxis":"y","legendgroup":"nw","showlegend":true},{"x":[0],"y":[152.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2},"xaxis":"x","yaxis":"y","legendgroup":"cb","showlegend":true}], {"title":{"text":"CMO by Bus"},"xaxis":{"automargin":true,"domain":[0.0,0.47],"title":{"text":"Stage"},"anchor":"y"},"yaxis":{"domain":[0.56,1.0],"title":{"text":"SE"},"anchor":"x"},"height":380,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div></div>
 <div class="section-title">Deficit</div>
 <div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No deficit_mw data available.</p></div></div>
 </section><section id="tab-balance" class="tab-content">
@@ -432,9 +435,9 @@ nav { position: relative; }
 <div class="section-title">Aggregate Energy Variables</div>
 <div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No stored_energy_final_mwh data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No incremental_inflow_energy_mw data available.</p></div></div>
 <div class="section-title">System Totals (SIN)</div>
-<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-ee82f4fb"></div>
-<script>Plotly.newPlot('chart-ee82f4fb', [{"x":[1,1],"y":[5050.0,4100.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[1],"y":[4100.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[1],"y":[5050.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[1],"y":[4500.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[1],"y":[4510.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Total Storage (hm\u00b3)"},"xaxis":{"automargin":true,"title":{"text":"Stage"}},"yaxis":{"title":{"text":"storage_final_hm3"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-81d913f0"></div>
-<script>Plotly.newPlot('chart-81d913f0', [{"x":[0,0],"y":[1400.0,1000.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[0],"y":[1000.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[1400.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[1200.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[0],"y":[1195.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Hydro Generation (MW)"},"xaxis":{"automargin":true,"title":{"text":"Stage"}},"yaxis":{"title":{"text":"generation_mw"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro spillage_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro turbined_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro inflow_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro water_value_per_hm3 data.</p></div></div>
+<div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-ce35f781"></div>
+<script>Plotly.newPlot('chart-ce35f781', [{"x":[1,1],"y":[5050.0,4100.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[1],"y":[4100.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[1],"y":[5050.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[1],"y":[4500.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[1],"y":[4510.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Total Storage (hm\u00b3)"},"xaxis":{"automargin":true,"title":{"text":"Stage"}},"yaxis":{"title":{"text":"storage_final_hm3"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-770fc45a"></div>
+<script>Plotly.newPlot('chart-770fc45a', [{"x":[0,0],"y":[1400.0,1000.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[0],"y":[1000.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[1400.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[1200.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[0],"y":[1195.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Hydro Generation (MW)"},"xaxis":{"automargin":true,"title":{"text":"Stage"}},"yaxis":{"title":{"text":"generation_mw"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro spillage_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro turbined_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro inflow_m3s data.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No hydro water_value_per_hm3 data.</p></div></div>
 <div class="section-title">Withdrawal Slack Pos (m³/s) by Bus</div>
 <div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No water_withdrawal_violation_neg_m3s data available.</p></div></div>
 <div class="section-title">Withdrawal Slack Neg (m³/s) by Bus</div>
@@ -448,7 +451,35 @@ nav { position: relative; }
 <div class="section-title">Hydro Slacks (SIN)</div>
 <div class="chart-grid"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No water_withdrawal_violation_neg_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No water_withdrawal_violation_pos_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No evaporation_violation_pos_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No evaporation_violation_neg_m3s data available.</p></div><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><p>No inflow_nonnegativity_slack_m3s data available.</p></div></div>
 </section><section id="tab-hydro-detail" class="tab-content">
-<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Hydro per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Storage (hm³)</th><th class="cb-num">Generation (MW)</th><th class="cb-num">Turbined (m³/s)</th><th class="cb-num">Productivity = Gen / Turbined (MW per m³/s)</th><th class="cb-num">Spillage (m³/s)</th><th class="cb-num">Total Outflow (m³/s)</th><th class="cb-num">Incremental Inflow (m³/s)</th><th class="cb-num">Total Inflow / QAFLUH (m³/s)</th><th class="cb-num">Evaporation (m³/s)</th><th class="cb-num">Water Withdrawal (m³/s)</th><th class="cb-num">Water Value (R$/hm³)</th></tr></thead><tbody><tr><td class="cb-cat">PLANT_A</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr></tbody></table></div>
+<div style="margin-bottom:32px"><div class="gap-scroll"><table class="cost-breakdown-table gap-table" data-prefix="hydro"><caption>Hydro plants: gap over stages, Σ|Novomodelo − NEWAVE| / Σ|NEWAVE|, Σ|NEWAVE| no smaller than the mean plant's <span class="cb-caption-note">— close up to 5%, far beyond 20%; click a plant to open its charts</span></caption><thead><tr><th class="cb-cat" onclick="gapTableSort(this)">Plant</th><th class="cb-num" onclick="gapTableSort(this)">Storage (hm³)</th><th class="cb-num" onclick="gapTableSort(this)">Generation (MW)</th></tr></thead><tbody class="gap-total"><tr class="cb-total"><td class="cb-cat">All plants</td><td class="cb-num gap-close" data-gap="0.00222222" title="close">0.2%</td><td class="cb-num gap-close" data-gap="0.00416667" title="close">0.4%</td></tr></tbody><tbody><tr class="gap-row" data-plant="1_PLANT_A" tabindex="0" onclick="gapTableOpen(this)" onkeydown="if (event.key === 'Enter') gapTableOpen(this)"><td class="cb-cat">PLANT_A</td><td class="cb-num gap-close" data-gap="0.00222222" title="close">0.2%</td><td class="cb-num gap-close" data-gap="0.00416667" title="close">0.4%</td></tr></tbody></table></div><script>
+function gapTableSort(th) {
+    var table = th.closest('table');
+    var body = table.tBodies[table.tBodies.length - 1];
+    var column = th.cellIndex;
+    var descending = column > 0 && th.dataset.sort !== 'desc';
+    if (column === 0) { descending = th.dataset.sort === 'asc'; }
+    Array.prototype.forEach.call(th.parentNode.cells, function (cell) {
+        delete cell.dataset.sort;
+    });
+    th.dataset.sort = descending ? 'desc' : 'asc';
+    var rows = Array.prototype.slice.call(body.rows);
+    rows.sort(function (a, b) {
+        var x = a.cells[column], y = b.cells[column];
+        var order = column === 0
+            ? x.textContent.localeCompare(y.textContent)
+            : parseFloat(x.dataset.gap) - parseFloat(y.dataset.gap);
+        return descending ? -order : order;
+    });
+    rows.forEach(function (row) { body.appendChild(row); });
+}
+function gapTableOpen(row) {
+    var select = document.getElementById(row.closest('table').dataset.prefix + '-select');
+    if (!select) { return; }
+    select.value = row.dataset.plant;
+    select.dispatchEvent(new Event('change'));
+    select.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+</script></div>
     <div class="plant-selector">
         <label for="hydro-select">Hydro Plant:</label>
         <select id="hydro-select"
@@ -1805,10 +1836,38 @@ nav { position: relative; }
     
 </section><section id="tab-thermal" class="tab-content">
 <div class="section-title">Thermal Generation Comparison</div>
-<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-09b5e64f"></div>
-<script>Plotly.newPlot('chart-09b5e64f', [{"x":[0,0],"y":[350.0,250.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[0],"y":[250.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[350.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[300.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[0],"y":[298.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Thermal Generation"},"xaxis":{"automargin":true,"title":{"text":"Stage"}},"yaxis":{"title":{"text":"MW"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div></div>
+<div class="chart-grid-single"><div class="chart-card"><button type="button" class="expand-btn" title="Expand"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,5 1,1 5,1"/><polyline points="11,1 15,1 15,5"/><polyline points="15,11 15,15 11,15"/><polyline points="5,15 1,15 1,11"/></svg></button><div id="chart-b606891d"></div>
+<script>Plotly.newPlot('chart-b606891d', [{"x":[0,0],"y":[350.0,250.0],"fill":"toself","fillcolor":"rgba(74,144,184,0.15)","line":{"color":"rgba(255,255,255,0)"},"name":"Novomodelo P10\u2013P90","type":"scatter","legendgroup":"band","showlegend":true,"hoverinfo":"skip"},{"x":[0],"y":[250.0],"name":"Novomodelo P10","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[350.0],"name":"Novomodelo P90","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":1,"dash":"dot"},"legendgroup":"band","showlegend":false},{"x":[0],"y":[300.0],"name":"NEWAVE","type":"scatter","mode":"lines","line":{"color":"#F5A623","width":2}},{"x":[0],"y":[298.0],"name":"Novomodelo Mean","type":"scatter","mode":"lines","line":{"color":"#4A90B8","width":2}}], {"title":{"text":"Thermal Generation"},"xaxis":{"automargin":true,"title":{"text":"Stage"}},"yaxis":{"title":{"text":"MW"}},"height":400,"margin":{"l":60,"r":30,"t":60,"b":50},"legend":{"orientation":"h","yref":"container","y":0,"yanchor":"bottom","xanchor":"center","x":0.5,"font":{"size":11}},"template":"plotly_white","hovermode":"x unified"}, {responsive: true});</script></div></div>
 </section><section id="tab-thermal-detail" class="tab-content">
-<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Thermal per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Generation (MW)</th></tr></thead><tbody><tr><td class="cb-cat">GAS_A</td><td class="cb-num cb-diff-neg">0.70%</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.70%</td></tr></tbody></table></div>
+<div style="margin-bottom:32px"><div class="gap-scroll"><table class="cost-breakdown-table gap-table" data-prefix="thermal"><caption>Thermal plants: gap over stages, Σ|Novomodelo − NEWAVE| / Σ|NEWAVE|, Σ|NEWAVE| no smaller than the mean plant's <span class="cb-caption-note">— close up to 5%, far beyond 20%; click a plant to open its charts</span></caption><thead><tr><th class="cb-cat" onclick="gapTableSort(this)">Plant</th><th class="cb-num" onclick="gapTableSort(this)">Generation (MW)</th></tr></thead><tbody class="gap-total"><tr class="cb-total"><td class="cb-cat">All plants</td><td class="cb-num gap-close" data-gap="0.00666667" title="close">0.7%</td></tr></tbody><tbody><tr class="gap-row" data-plant="10_GAS_A" tabindex="0" onclick="gapTableOpen(this)" onkeydown="if (event.key === 'Enter') gapTableOpen(this)"><td class="cb-cat">GAS_A</td><td class="cb-num gap-close" data-gap="0.00666667" title="close">0.7%</td></tr></tbody></table></div><script>
+function gapTableSort(th) {
+    var table = th.closest('table');
+    var body = table.tBodies[table.tBodies.length - 1];
+    var column = th.cellIndex;
+    var descending = column > 0 && th.dataset.sort !== 'desc';
+    if (column === 0) { descending = th.dataset.sort === 'asc'; }
+    Array.prototype.forEach.call(th.parentNode.cells, function (cell) {
+        delete cell.dataset.sort;
+    });
+    th.dataset.sort = descending ? 'desc' : 'asc';
+    var rows = Array.prototype.slice.call(body.rows);
+    rows.sort(function (a, b) {
+        var x = a.cells[column], y = b.cells[column];
+        var order = column === 0
+            ? x.textContent.localeCompare(y.textContent)
+            : parseFloat(x.dataset.gap) - parseFloat(y.dataset.gap);
+        return descending ? -order : order;
+    });
+    rows.forEach(function (row) { body.appendChild(row); });
+}
+function gapTableOpen(row) {
+    var select = document.getElementById(row.closest('table').dataset.prefix + '-select');
+    if (!select) { return; }
+    select.value = row.dataset.plant;
+    select.dispatchEvent(new Event('change'));
+    select.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+</script></div>
     <div class="plant-selector">
         <label for="thermal-select">Thermal Plant:</label>
         <select id="thermal-select"

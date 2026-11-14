@@ -17,9 +17,17 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NEWAVE,
     COLOR_NOVOMODELO,
 )
-from novomodelo_bridge.ui.html.document import escape_text, json_for_script
+from novomodelo_bridge.ui.html.document import (
+    escape_text,
+    folded_table,
+    json_for_script,
+)
 from novomodelo_bridge.ui.html.plotly import LEGEND_DEFAULTS as _LEGEND
 from novomodelo_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
+
+#: Worst surface NMAE, in % of the plant's max generation, above which a plant's
+#: fitted surface is flagged.
+_FPHA_NMAE_LIMIT: float = 5.0
 
 
 def fpha_metrics_table(metrics: pl.DataFrame, reference_label: str = "NEWAVE") -> str:
@@ -29,7 +37,10 @@ def fpha_metrics_table(metrics: pl.DataFrame, reference_label: str = "NEWAVE") -
     worst surface NMAE (as a % of the plant's max generation), the mean bias, the
     GHmax-ratio range across stages, and the plane counts. Sorted worst-NMAE
     first so the most divergent plants surface at the top; rows whose worst NMAE
-    exceeds 5% are tinted. Reuses the ``cost-breakdown-table`` styling.
+    exceeds :data:`_FPHA_NMAE_LIMIT` are tinted. A one-line count of the plants
+    within it leads, the plants beyond it follow, and the full table is folded
+    below (shown unfolded when no plant is within it). Reuses the
+    ``cost-breakdown-table`` styling.
     """
     if metrics.is_empty():
         return "<p>No production-function (FPHA) data available.</p>"
@@ -39,14 +50,14 @@ def fpha_metrics_table(metrics: pl.DataFrame, reference_label: str = "NEWAVE") -
     def _fmt(value: float | None, decimals: int = 2) -> str:
         return "—" if value is None else f"{value:.{decimals}f}"
 
-    rows_html: list[str] = []
-    for r in agg.iter_rows(named=True):
+    def _beyond(r: dict) -> bool:
+        return r["worst_nmae"] is not None and r["worst_nmae"] > _FPHA_NMAE_LIMIT
+
+    def _row(r: dict) -> str:
         worst = r["worst_nmae"]
-        tint = (
-            ' style="background:#FEF3C7"' if worst is not None and worst > 5.0 else ""
-        )
+        tint = ' style="background:#FEF3C7"' if _beyond(r) else ""
         kind = "reservoir" if (r["n_v"] or 0) > 1 else "run-of-river"
-        rows_html.append(
+        return (
             f"<tr{tint}>"
             f'<td class="cb-cat">{escape_text(str(r["plant_name"]))}</td>'
             f"<td>{kind}</td>"
@@ -71,13 +82,39 @@ def fpha_metrics_table(metrics: pl.DataFrame, reference_label: str = "NEWAVE") -
         f"max generation; GHmax ratio = Novomodelo / {reference_label} at the max "
         "V/Q corner</span></caption>"
     )
-    return (
-        '<table class="cost-breakdown-table fpha-table">'
-        + caption
-        + head
-        + "<tbody>"
-        + "".join(rows_html)
-        + "</tbody></table>"
+
+    def _table(rows: list[dict]) -> str:
+        return (
+            '<table class="cost-breakdown-table fpha-table">'
+            + caption
+            + head
+            + "<tbody>"
+            + "".join(_row(r) for r in rows)
+            + "</tbody></table>"
+        )
+
+    rows = list(agg.iter_rows(named=True))
+    beyond = [r for r in rows if _beyond(r)]
+    total = len(rows)
+    within = total - len(beyond)
+    limit = f"{_FPHA_NMAE_LIMIT:g}%"
+    if not within:
+        return (
+            f'<p class="fold-summary">No plant fits {reference_label}\'s surface '
+            f"within {limit} NMAE at every stage.</p>" + _table(rows)
+        )
+    summary = (
+        f"{'All' if not beyond else f'{within} of'} {total} plants fit "
+        f"{reference_label}'s surface within {limit} NMAE at every stage"
+    )
+    if len(beyond) == 1:
+        summary += "; the one beyond it is listed below."
+    elif beyond:
+        summary += f"; the {len(beyond)} beyond it are listed below."
+    else:
+        summary += "."
+    return folded_table(
+        summary, _table(beyond) if beyond else "", _table(rows), f"All {total} plants"
     )
 
 

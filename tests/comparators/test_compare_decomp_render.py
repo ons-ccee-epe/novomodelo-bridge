@@ -94,8 +94,8 @@ def test_compare_decomp_renders_the_full_shared_table(
 
     assert result.exit_code == 0
     assert "Novomodelo vs DECOMP Results Comparison" in result.stdout
-    assert "generation_mw" in result.stdout
-    assert "turbined_m3s" in result.stdout
+    assert "Generation (MW)" in result.stdout
+    assert "Turbined flow (m³/s)" in result.stdout
 
 
 def test_compare_decomp_quiet_suppresses_header_and_table(
@@ -106,8 +106,8 @@ def test_compare_decomp_quiet_suppresses_header_and_table(
 
     assert result.exit_code == 0
     assert "Novomodelo vs DECOMP Results Comparison" not in result.stdout
-    assert "generation_mw" not in result.stdout
-    assert "turbined_m3s" not in result.stdout
+    assert "Generation (MW)" not in result.stdout
+    assert "Turbined flow (m³/s)" not in result.stdout
 
 
 def test_compare_decomp_json_emits_one_verdict_and_suppresses_the_table(
@@ -169,33 +169,31 @@ class TestCompareDecompCommand:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """The shared ``build_compare_verdict`` headline, from ``_fake_dataset``'s
-        mismatch (1/2 within tol, worst ``turbined_m3s`` at 12% sMAPE), is the
-        first line of stdout."""
+        mismatch (``turbined_m3s`` far), is the first line of stdout."""
         result = self._invoke(
             ["compare", "decomp", str(tmp_path), str(tmp_path)], monkeypatch
         )
         assert result.exit_code == 0
         lines = result.stdout.splitlines()
-        assert lines[0] == "⚠ 1/2 variables within tol — worst: turbined_m3s sMAPE 12%"
+        assert lines[0] == "⚠ 1 of 2 variables close (gap ≤ 5%) · 1 far (gap > 20%)"
 
-    def test_headline_leads_stdout_when_all_within_tol(
+    def test_headline_leads_stdout_when_all_close(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         result = self._invoke(
             ["compare", "decomp", str(tmp_path), str(tmp_path)],
             monkeypatch,
-            dataset=_fake_dataset(all_within_tol=True),
+            dataset=_fake_dataset(all_close=True),
         )
         assert result.exit_code == 0
         lines = result.stdout.splitlines()
-        assert lines[0] == "✓ 2/2 variables within tol"
+        assert lines[0] == "✓ 2 of 2 variables close (gap ≤ 5%)"
 
     def test_json_carries_the_summary_and_unmapped_codes(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """``_fake_dataset``'s ``turbined_m3s`` row (``within_tol_rate=0.0``)
-        diverges while ``generation_mw`` (``within_tol_rate=1.0``) does not, so
-        the default fixture reports a mismatch."""
+        """``_fake_dataset``'s ``turbined_m3s`` row is far while
+        ``generation_mw`` is close, so the default fixture reports a mismatch."""
         result = self._invoke(
             ["compare", "decomp", str(tmp_path), str(tmp_path), "--json"], monkeypatch
         )
@@ -212,20 +210,21 @@ class TestCompareDecompCommand:
         assert payload["status"] == "mismatch"
         summary = payload["summary"]
         assert list(summary.keys()) == [
-            "within_tol",
+            "tolerance",
             "total",
-            "worst_variable",
-            "worst_smape",
-            "all_within_tol",
+            "close",
+            "moderate",
+            "far",
+            "far_variables",
             "stages",
             "variables",
             "unmapped",
         ]
-        assert summary["within_tol"] == 1
         assert summary["total"] == 2
-        assert summary["worst_variable"] == "turbined_m3s"
-        assert summary["worst_smape"] == pytest.approx(0.12)
-        assert summary["all_within_tol"] is False
+        assert summary["close"] == 1
+        assert summary["far_variables"] == [
+            {"entity_type": "hydro", "variable": "turbined_m3s", "gap": 0.4}
+        ]
         assert summary["stages"] == 2
         assert {row["variable"] for row in summary["variables"]} == {
             "generation_mw",
@@ -233,21 +232,21 @@ class TestCompareDecompCommand:
         }
         assert summary["unmapped"]["thermal"] == [86, 224]
 
-    def test_json_status_is_ok_when_dataset_reports_all_within_tol(
+    def test_json_status_is_ok_when_dataset_reports_all_close(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """When the dataset's ``within_tol_rate`` is 1.0 for every variable
-        (the tolerance was already applied upstream when the caller built the
-        dataset), the CLI reports ``ok``."""
+        """When the dataset's band is close for every variable (the tolerance
+        was already applied upstream when the caller built the dataset), the
+        CLI reports ``ok``."""
         result = self._invoke(
             ["compare", "decomp", str(tmp_path), str(tmp_path), "--json"],
             monkeypatch,
-            dataset=_fake_dataset(all_within_tol=True),
+            dataset=_fake_dataset(all_close=True),
         )
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
         assert payload["status"] == "ok"
-        assert payload["summary"]["all_within_tol"] is True
+        assert payload["summary"]["close"] == payload["summary"]["total"] == 2
 
     def test_json_reports_no_comparable_rows_when_comparison_is_empty(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -262,9 +261,8 @@ class TestCompareDecompCommand:
         assert payload["status"] == "no-comparable-rows"
         assert payload["summary"]["stages"] == 0
         assert payload["summary"]["variables"] == []
-        assert payload["summary"]["within_tol"] == 0
+        assert payload["summary"]["close"] == 0
         assert payload["summary"]["total"] == 0
-        assert payload["summary"]["all_within_tol"] is False
 
     def test_unreadable_output_exits_two(
         self,

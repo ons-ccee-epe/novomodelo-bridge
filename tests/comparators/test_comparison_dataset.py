@@ -113,8 +113,11 @@ def _small_summary() -> pl.DataFrame:
     """Build a single-row summary frame matching ``SUMMARY_SCHEMA``."""
     return pl.DataFrame(
         {
+            "entity_type": ["hydro"],
             "variable": ["generation_mw"],
             "count": [1],
+            "gap": [0.005],
+            "band": ["close"],
             "mean_abs_diff": [0.5],
             "max_abs_diff": [0.5],
             "mean_smape": [0.1],

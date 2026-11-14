@@ -37,8 +37,11 @@ def _make_dataset() -> ComparisonDataset:
     )
     summary = pl.DataFrame(
         {
+            "entity_type": ["hydro"],
             "variable": ["storage"],
             "count": [1],
+            "gap": [0.05],
+            "band": ["close"],
             "mean_abs_diff": [5.0],
             "max_abs_diff": [5.0],
             "mean_smape": [0.05],

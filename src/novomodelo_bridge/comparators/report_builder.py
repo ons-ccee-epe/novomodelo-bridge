@@ -52,7 +52,7 @@ from novomodelo_bridge.comparators.charts._shared import (
     _REAL_SUBMARKET_ORDER,
     _build_interactive_detail_html,
     _enrich_with_percentiles,
-    _plant_max_reldiff_table,
+    _plant_gap_table,
 )
 from novomodelo_bridge.comparators.constraints import per_stage_bounds
 from novomodelo_bridge.comparators.html_report import (
@@ -68,8 +68,9 @@ from novomodelo_bridge.comparators.model import (
     ResultsSummary,
     ResultVariableStats,
 )
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE, Band
 from novomodelo_bridge.core.pandas_utils import as_int
-from novomodelo_bridge.core.summary_counts import footer_counts
+from novomodelo_bridge.core.summary_counts import footer_counts, summary_tolerance
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 if TYPE_CHECKING:
@@ -83,7 +84,8 @@ def _results_summary_from_dataset(dataset: ComparisonDataset) -> ResultsSummary:
 
     Rebuilds the summary object that ``overview_metrics`` consumes straight from
     the already-computed ``dataset.summary`` rows (one
-    :class:`ResultVariableStats` per variable) and the ``footer_counts`` metadata
+    :class:`ResultVariableStats` per ``(entity_type, variable)``) and the
+    ``footer_counts`` metadata
     (``total`` + ``by_entity_type``), so no per-row statistic is recomputed. The
     per-variable ``mean_rel_diff`` / ``max_rel_diff`` fields aren't carried in
     ``SUMMARY_SCHEMA`` (and aren't read by ``overview_metrics``); they keep their
@@ -91,17 +93,22 @@ def _results_summary_from_dataset(dataset: ComparisonDataset) -> ResultsSummary:
     """
     total, by_entity_type = footer_counts(dataset.metadata)
 
-    by_variable: dict[str, ResultVariableStats] = {}
+    by_variable: dict[tuple[str, str], ResultVariableStats] = {}
     for row in dataset.summary.to_dicts():
         correlation = row["correlation"]
-        by_variable[str(row["variable"])] = ResultVariableStats(
-            count=int(row["count"]),
-            mean_abs_diff=float(row["mean_abs_diff"]),
-            max_abs_diff=float(row["max_abs_diff"]),
-            within_tol_rate=float(row["within_tol_rate"]),
-            mean_smape=float(row["mean_smape"]),
-            max_smape=float(row["max_smape"]),
-            correlation=float(correlation) if correlation is not None else None,
+        gap = row["gap"]
+        by_variable[(str(row["entity_type"]), str(row["variable"]))] = (
+            ResultVariableStats(
+                count=int(row["count"]),
+                gap=None if gap is None else float(gap),
+                band=Band(row["band"]),
+                mean_abs_diff=float(row["mean_abs_diff"]),
+                max_abs_diff=float(row["max_abs_diff"]),
+                within_tol_rate=float(row["within_tol_rate"]),
+                mean_smape=float(row["mean_smape"]),
+                max_smape=float(row["max_smape"]),
+                correlation=float(correlation) if correlation is not None else None,
+            )
         )
 
     return ResultsSummary(
@@ -560,6 +567,7 @@ def build_hydro_detail_tab(
     nw_hydro_slacks: pl.DataFrame | None = None,
     reference_label: str = "NEWAVE",
     masked_hydro: pl.DataFrame | None = None,
+    tolerance: float = DEFAULT_TOLERANCE,
 ) -> str:
     """Build interactive per-plant hydro detail with JS dropdown.
 
@@ -583,9 +591,10 @@ def build_hydro_detail_tab(
     The inflow-non-negativity slack stays Novomodelo-only because the source model has no
     direct counterpart.
 
-    When ``masked_hydro`` is non-empty, the per-plant ranking takes the
+    When ``masked_hydro`` is non-empty, the per-plant gap table takes the
     variables it carries from it (averaged over the points that are not ties)
-    and says so in its caption; the charts keep every point.
+    and says so in its caption; the charts keep every point. *tolerance* sets
+    the bands of that table.
     """
     plants, novomodelo_ids = _group_plant_results(results, "hydro")
     if not plants:
@@ -612,20 +621,22 @@ def build_hydro_detail_tab(
     _enrich_with_percentiles(js_plants, all_vars, pct_df)
 
     if masked_hydro is not None and not masked_hydro.is_empty():
-        summary_table = _plant_max_reldiff_table(
+        summary_table = _plant_gap_table(
             analyze.with_masked_hydro_rows(results, masked_hydro),
             "hydro",
             _HYDRO_VARIABLES,
+            "hydro",
+            tolerance,
             reference_label,
             note=(
-                "generation, turbined flow, productivity, spillage and outflow "
+                "Generation, turbined flow, productivity, spillage and outflow "
                 "are averaged over the points that are not ties (see the "
                 "Productivity tab); the other columns use every point"
             ),
         )
     else:
-        summary_table = _plant_max_reldiff_table(
-            results, "hydro", _HYDRO_VARIABLES, reference_label
+        summary_table = _plant_gap_table(
+            results, "hydro", _HYDRO_VARIABLES, "hydro", tolerance, reference_label
         )
     detail_html = _build_interactive_detail_html(
         js_plants,
@@ -643,8 +654,10 @@ def build_thermal_detail_tab(
     results: list[ResultComparison],
     pct_df: pl.DataFrame | None = None,
     reference_label: str = "NEWAVE",
+    tolerance: float = DEFAULT_TOLERANCE,
 ) -> str:
-    """Build interactive per-plant thermal detail with JS dropdown."""
+    """Build interactive per-plant thermal detail with JS dropdown; *tolerance*
+    sets the bands of its per-plant gap table."""
     plants, novomodelo_ids = _group_plant_results(results, "thermal")
     if not plants:
         return "<p>No thermal data available.</p>"
@@ -664,8 +677,8 @@ def build_thermal_detail_tab(
 
     _enrich_with_percentiles(js_plants, thermal_vars, pct_df)
 
-    summary_table = _plant_max_reldiff_table(
-        results, "thermal", thermal_vars, reference_label
+    summary_table = _plant_gap_table(
+        results, "thermal", thermal_vars, "thermal", tolerance, reference_label
     )
     detail_html = _build_interactive_detail_html(
         js_plants,
@@ -1271,6 +1284,7 @@ def build_comparison_report(
     # ``results`` list — the chart functions below still consume ``results``
     # directly, but ``overview_metrics`` reads only the reconstructed summary.
     summary = _results_summary_from_dataset(dataset)
+    tolerance = summary_tolerance(dataset.metadata)
 
     tab_contents: dict[str, str] = {
         "tab-overview": _build_overview_tab(dataset, summary, reference_label),
@@ -1288,10 +1302,11 @@ def build_comparison_report(
             nw_hydro_slacks=dataset.render.nw_hydro_slacks,
             reference_label=reference_label,
             masked_hydro=dataset.render.hydro_masked,
+            tolerance=tolerance,
         ),
         "tab-thermal": _build_thermal_operation_tab(dataset, reference_label),
         "tab-thermal-detail": build_thermal_detail_tab(
-            results, dataset.render.thermal, reference_label
+            results, dataset.render.thermal, reference_label, tolerance
         ),
         "tab-productivity": _build_productivity_tab(dataset, reference_label),
         "tab-performance": _build_performance_tab(dataset, reference_label),

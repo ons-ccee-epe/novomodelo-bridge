@@ -38,6 +38,7 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
+from novomodelo_bridge.core.agreement import FAR_FACTOR, Band, format_gap
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 from novomodelo_bridge.core.preflight import PreflightVerdict
 from novomodelo_bridge.ui.theme import COPPER_ACCENT, SEVERITY
@@ -76,6 +77,14 @@ _SEVERITY_GLYPH: dict[Severity, str] = {
 
 #: Success style reused for the ✓ summary banner and passing checklist lines.
 _SUCCESS_STYLE = f"bold {SEVERITY['ok']}"
+
+#: Agreement band → Rich style of its compare-table cell. Close is plain green,
+#: not the bold success banner, so the far rows stand out.
+BAND_STYLE: dict[Band, str] = {
+    Band.CLOSE: SEVERITY["ok"],
+    Band.MODERATE: _SEVERITY_STYLE[Severity.WARNING],
+    Band.FAR: _SEVERITY_STYLE[Severity.ERROR],
+}
 
 #: Verdict → (glyph, style, headline text) for the preflight checklist headline.
 #: Reuses the existing severity glyphs/colours: ⚠/✖ and the amber/red styles
@@ -149,7 +158,8 @@ def make_table(
     caption: str | None = None,
     row_styles: Sequence[str | None] | None = None,
 ) -> Table:
-    """Build a styled Rich table from columns + rows (cells coerced to ``str``).
+    """Build a styled Rich table from columns + rows (cells coerced to ``str``,
+    a :class:`~rich.text.Text` cell kept with its style).
 
     ``row_styles`` is an optional per-row Rich style aligned to *rows* by index:
     ``row_styles[i]`` styles ``rows[i]`` (a ``None`` entry, or an index past the
@@ -173,21 +183,12 @@ def make_table(
     return table
 
 
-def compare_row_style(*, within_tol: bool) -> str:
-    """Return the per-row Rich style for a compare table row.
-
-    Green (:data:`_SUCCESS_STYLE`) when the row is fully within tolerance,
-    otherwise the red error style (:data:`_SEVERITY_STYLE`). Reuses the existing
-    pass/fail palette so the compare summaries match the checklist colours — no
-    new colour value is introduced.
-    """
-    return _SUCCESS_STYLE if within_tol else _SEVERITY_STYLE[Severity.ERROR]
-
-
-def _cell(value: object) -> str:
+def _cell(value: object) -> str | Text:
     """Render a table cell value as text (``None`` shows as an em dash)."""
     if value is None:
         return "—"
+    if isinstance(value, Text):
+        return value
     if isinstance(value, float):
         return f"{value:g}"
     return str(value)
@@ -217,14 +218,12 @@ def render_compare_verdict(
 ) -> None:
     """Render the one-line compare headline on stdout (green ✓ / amber ⚠ on a TTY).
 
-    Leads ``compare results`` so the user gets the answer
-    first: ``✓ N/M variables within tol`` when every variable is within tolerance,
-    or ``⚠ N/M variables within tol — worst: <var> sMAPE <pct>%`` otherwise. An
-    empty dataset renders ``⚠ no variables compared`` with no worst clause. The
-    glyphs/styles reuse :data:`_SUCCESS_STYLE` and the amber
-    :data:`_SEVERITY_STYLE` / :data:`_SEVERITY_GLYPH` (no new colour). As a primary
-    result it goes to **stdout** (the given *console* or :func:`get_console`), with
-    ``print_status``-style soft-wrap so the exact text stays greppable.
+    ``✓ 12 of 12 variables close (gap ≤ 5%)`` when every variable is close,
+    otherwise ``⚠ 9 of 16 variables close (gap ≤ 5%) · 4 moderate · 3 far (gap
+    > 20%)``, leaving out a band with no variable. An empty dataset renders
+    ``⚠ no variables compared``. As a primary result it goes to **stdout** (the
+    given *console* or :func:`get_console`), with ``print_status``-style
+    soft-wrap so the exact text stays greppable.
     """
     target = console or get_console()
     warn_glyph = _SEVERITY_GLYPH[Severity.WARNING]
@@ -234,18 +233,24 @@ def render_compare_verdict(
             f"{warn_glyph} no variables compared", style=warn_style, soft_wrap=True
         )
         return
-    if verdict.all_within_tol:
-        glyph, style = "✓", _SUCCESS_STYLE
-    else:
-        glyph, style = warn_glyph, warn_style
-    line = f"{glyph} {verdict.within_tol}/{verdict.total} variables within tol"
-    # The all_within_tol guard suppresses the meaningless "worst: … sMAPE 0%" on a
-    # perfect match, keeping that line exactly "✓ N/N variables within tol".
-    if verdict.worst_variable is not None and not verdict.all_within_tol:
-        line += (
-            f" — worst: {verdict.worst_variable} sMAPE {verdict.worst_smape * 100:.0f}%"
+    close = (
+        f"{verdict.close} of {verdict.total} variables close "
+        f"(gap ≤ {format_gap(verdict.tolerance)})"
+    )
+    if verdict.all_close:
+        target.print(f"✓ {close}", style=_SUCCESS_STYLE, soft_wrap=True)
+        return
+    line = Text(f"{warn_glyph} {close}", style=warn_style)
+    if verdict.moderate:
+        line.append(" · ")
+        line.append(f"{verdict.moderate} moderate", style=BAND_STYLE[Band.MODERATE])
+    if verdict.far:
+        line.append(" · ")
+        line.append(
+            f"{verdict.far} far (gap > {format_gap(FAR_FACTOR * verdict.tolerance)})",
+            style=BAND_STYLE[Band.FAR],
         )
-    target.print(line, style=style, soft_wrap=True)
+    target.print(line, soft_wrap=True)
 
 
 def render_checklist(

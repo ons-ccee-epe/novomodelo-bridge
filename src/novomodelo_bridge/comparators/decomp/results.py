@@ -74,6 +74,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
 )
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.units import HM3_PER_M3S_HOUR, MEAN_MONTH_HOURS
@@ -2959,7 +2960,10 @@ def _verbatim_read_fields(
 
 
 def build_decomp_dataset(
-    decomp_dir: Path, novomodelo_output_dir: Path, *, tolerance: float = 1e-2
+    decomp_dir: Path,
+    novomodelo_output_dir: Path,
+    *,
+    tolerance: float = DEFAULT_TOLERANCE,
 ) -> ComparisonDataset:
     """Build the canonical results dataset for a DECOMP-vs-Novomodelo comparison.
 
@@ -3043,8 +3047,8 @@ def build_decomp_dataset(
         decomp_dir: The deck directory (results resolved via the deck's
             union discovery).
         novomodelo_output_dir: Novomodelo's output directory.
-        tolerance: Relative tolerance (default ``1e-2``) forwarded to the
-            summary builder.
+        tolerance: The close band of each summary row's gap (see
+            :mod:`novomodelo_bridge.core.agreement`).
 
     Returns:
         The validated dataset. ``metadata["unmapped"]`` carries the per-level

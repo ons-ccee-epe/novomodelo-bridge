@@ -1,7 +1,8 @@
 """Cross-subject chart render helpers: layer 0 of the ``charts`` package.
 
-Imports only external modules (``analyze``, ``ui.html.document``, ``html_report``
-colors, ``ui.html.plotly``) — never a sibling subject submodule, so every
+Imports only external modules (``analyze``, ``core.agreement``,
+``ui.html.document``, ``html_report`` colors, ``ui.html.plotly``) — never a
+sibling subject submodule, so every
 subject can depend on this module without risking a cycle.
 """
 
@@ -15,7 +16,12 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NOVOMODELO,
 )
 from novomodelo_bridge.comparators.model import ResultComparison
-from novomodelo_bridge.ui.html.document import escape_text, json_for_script
+from novomodelo_bridge.core import agreement
+from novomodelo_bridge.ui.html.document import (
+    escape_attr,
+    escape_text,
+    json_for_script,
+)
 from novomodelo_bridge.ui.html.plotly import LEGEND_DEFAULTS as _LEGEND
 from novomodelo_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
 from novomodelo_bridge.ui.theme import BAND_FILL, BAND_LINE
@@ -140,78 +146,116 @@ def _enrich_with_percentiles(
         entry.update(analyze.plant_percentile_arrays(pct_df, var_stages, cid))
 
 
-def _plant_max_reldiff_table(
+#: Sorts a gap table by the clicked header and opens a plant's charts when its
+#: row is clicked, by selecting it in the tab's ``{prefix}-select``.
+_GAP_TABLE_JS = """
+function gapTableSort(th) {
+    var table = th.closest('table');
+    var body = table.tBodies[table.tBodies.length - 1];
+    var column = th.cellIndex;
+    var descending = column > 0 && th.dataset.sort !== 'desc';
+    if (column === 0) { descending = th.dataset.sort === 'asc'; }
+    Array.prototype.forEach.call(th.parentNode.cells, function (cell) {
+        delete cell.dataset.sort;
+    });
+    th.dataset.sort = descending ? 'desc' : 'asc';
+    var rows = Array.prototype.slice.call(body.rows);
+    rows.sort(function (a, b) {
+        var x = a.cells[column], y = b.cells[column];
+        var order = column === 0
+            ? x.textContent.localeCompare(y.textContent)
+            : parseFloat(x.dataset.gap) - parseFloat(y.dataset.gap);
+        return descending ? -order : order;
+    });
+    rows.forEach(function (row) { body.appendChild(row); });
+}
+function gapTableOpen(row) {
+    var select = document.getElementById(row.closest('table').dataset.prefix + '-select');
+    if (!select) { return; }
+    select.value = row.dataset.plant;
+    select.dispatchEvent(new Event('change'));
+    select.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+"""
+
+
+def _gap_cell(value: float | None, present: bool, tolerance: float) -> str:
+    if not present:
+        return '<td class="cb-num" data-gap="-1">—</td>'
+    band = agreement.band(value, tolerance)
+    sort_key = "Infinity" if value is None else f"{value:.6g}"
+    return (
+        f'<td class="cb-num gap-{band.value}" data-gap="{sort_key}" '
+        f'title="{band.value}">{agreement.format_gap(value)}</td>'
+    )
+
+
+def _plant_gap_table(
     results: list[ResultComparison],
     entity_type: str,
     variables: list[tuple[str, str]],
+    prefix: str,
+    tolerance: float,
     reference_label: str = "NEWAVE",
     note: str | None = None,
 ) -> str:
-    """Per-plant max relative-difference summary table.
+    """Per-plant gap table: one row per plant, one column per variable.
 
-    Rows: plants (sorted by overall worst max-rel-diff across all
-    variables, worst first). Columns: one per variable in *variables*
-    (skipping variables for which no source-model row exists).
-
-    Cell value = ``max_stages |novomodelo − newave| / |newave| × 100`` (the
-    source-model-relative, per the report convention). Stages with ``|newave| ≈ 0`` are
-    excluded — for any plant/variable that has no eligible stage the cell shows "—".
-
-    Colour cues: ≤ 1 % green, ≤ 10 % amber, > 10 % red. *note* is appended
-    to the caption.
+    Each cell is the plant's gap over stages (see
+    :class:`~novomodelo_bridge.comparators.analyze.PlantGaps`), tinted by
+    its band; an "All plants" row pools every plant. Plants come largest gap
+    first, a header click sorts by that column, and a row click opens the
+    plant in the ``{prefix}-select`` charts below. *note* is appended to the
+    caption.
     """
-    max_rd, plant_keys, medians = analyze.plant_max_reldiff_ranking(
-        results, entity_type, variables
-    )
-    if not plant_keys:
+    gaps = analyze.plant_gaps(results, entity_type, variables)
+    if not gaps.plants:
         return ""
+    shown = [(key, label) for key, label in variables if key in gaps.totals]
 
-    def _cell(rd: float | None) -> str:
-        if rd is None:
-            return '<td class="cb-num">—</td>'
-        pct = rd * 100.0
-        if pct <= 1.0:
-            cls = "cb-num cb-diff-neg"  # reuse green styling
-        elif pct <= 10.0:
-            cls = "cb-num"
-        else:
-            cls = "cb-num cb-diff-pos"  # reuse red styling
-        return f'<td class="{cls}">{pct:.2f}%</td>'
-
-    header_cells = '<th class="cb-cat">Plant</th>' + "".join(
-        f'<th class="cb-num">{label}</th>' for _, label in variables
+    header = '<th class="cb-cat" onclick="gapTableSort(this)">Plant</th>' + "".join(
+        f'<th class="cb-num" onclick="gapTableSort(this)">{escape_text(label)}</th>'
+        for _, label in shown
     )
-    body_rows: list[str] = []
-    for name, code in plant_keys:
-        cells = [f'<td class="cb-cat">{escape_text(name)}</td>']
-        for var_key, _ in variables:
-            rd = max_rd.get((name, code, var_key))
-            cells.append(_cell(rd))
-        body_rows.append("<tr>" + "".join(cells) + "</tr>")
-
-    # Footer: median max-rel-diff per variable across plants. The table
-    # CSS bolds the last tbody row to call out a totals/summary line —
-    # without this row the styling would land on whichever plant
-    # happened to sort last, which is misleading.
-    summary_cells = ['<td class="cb-cat">Median</td>']
-    for var_key, _ in variables:
-        summary_cells.append(_cell(medians[var_key]))
-    body_rows.append("<tr>" + "".join(summary_cells) + "</tr>")
-
-    caption_label = "Hydro" if entity_type == "hydro" else "Thermal"
-    return (
-        '<table class="cost-breakdown-table">'
-        f"<caption>{caption_label} per-plant max relative difference "
-        f"(|Novomodelo − {reference_label}| / |{reference_label}|, over stages)"
-        + (
-            ""
-            if note is None
-            else f' <span class="cb-caption-note">— {escape_text(note)}</span>'
+    total = '<tr class="cb-total"><td class="cb-cat">All plants</td>' + "".join(
+        _gap_cell(gaps.totals[key], True, tolerance) for key, _ in shown
+    )
+    rows: list[str] = []
+    for name, code in gaps.plants:
+        cells = "".join(
+            _gap_cell(
+                gaps.by_plant.get((name, code, key)),
+                (name, code, key) in gaps.by_plant,
+                tolerance,
+            )
+            for key, _ in shown
         )
-        + "</caption>"
-        f"<thead><tr>{header_cells}</tr></thead>"
-        "<tbody>" + "".join(body_rows) + "</tbody>"
-        "</table>"
+        rows.append(
+            f'<tr class="gap-row" data-plant="{escape_attr(f"{code}_{name}")}" '
+            'tabindex="0" onclick="gapTableOpen(this)" '
+            "onkeydown=\"if (event.key === 'Enter') gapTableOpen(this)\">"
+            f'<td class="cb-cat">{escape_text(name)}</td>{cells}</tr>'
+        )
+
+    group = "Hydro" if entity_type == "hydro" else "Thermal"
+    bands = (
+        f"close up to {agreement.format_gap(tolerance)}, far beyond "
+        f"{agreement.format_gap(agreement.FAR_FACTOR * tolerance)}; click a plant "
+        "to open its charts"
+    )
+    caption_note = bands if note is None else f"{note}. {bands[0].upper()}{bands[1:]}"
+    return (
+        '<div class="gap-scroll">'
+        f'<table class="cost-breakdown-table gap-table" data-prefix="{prefix}">'
+        f"<caption>{group} plants: gap over stages, "
+        f"Σ|Novomodelo − {reference_label}| / Σ|{reference_label}|, "
+        f"Σ|{reference_label}| no smaller than the mean plant's"
+        f' <span class="cb-caption-note">— {escape_text(caption_note)}</span>'
+        "</caption>"
+        f"<thead><tr>{header}</tr></thead>"
+        f'<tbody class="gap-total">{total}</tr></tbody>'
+        "<tbody>" + "".join(rows) + "</tbody>"
+        f"</table></div><script>{_GAP_TABLE_JS}</script>"
     )
 
 
