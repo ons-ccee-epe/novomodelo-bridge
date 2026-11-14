@@ -21,6 +21,11 @@ links are cobre-bridge's.
   `decomp-rhv-volume-tipo-deferred`; results change for decks that have them,
   so reconvert those. A `VBOM` term without a `UE` pumping station drops the
   constraint, with a `decomp-rhv-vbom-no-station` warning.
+- **`dashboard` draws each load block of a generic constraint against its own
+  bound** in a new "By block" view of the Constraints tab, and shades the
+  stages where the run used the constraint's slack. It and `compare decomp`
+  also evaluate constraints with thermal, outflow, diversion, pumping or
+  stage-volume terms, and the tab's type filter lists the families the case has.
 
 ### Changed
 
@@ -65,6 +70,11 @@ links are cobre-bridge's.
   a spurious `Other` cost, and the Constraints tab's violation cost was the
   sum over all scenarios instead of their mean. Build the dashboard again to
   update it.
+- **`dashboard` and `compare` drew generic constraints far from their bounds.**
+  Both set an unweighted mean of a stage's load blocks against its first
+  block's bound, the dashboard drew a constraint it could not evaluate at zero,
+  and `compare` scaled a DECOMP `RHE` value by the stage's hours instead of the
+  730.5 h month of its MWmês unit; build the dashboard and the report again.
 
 ## [0.20.0] - 2026-11-03
 

@@ -7,9 +7,9 @@ using both:
 
 - the source model outputs — ``MEDIAS-USIH.CSV`` (``GHIDUH``, ``VARMUH`` per plant
   per stage) and ``int*.out`` (per-line per-stage interchange).
-- Novomodelo simulation outputs — per-(scenario, stage, block) hydro and
-  exchange data, collapsed to one value per (constraint, stage) by
-  averaging across scenarios and blocks.
+- Novomodelo simulation outputs — per-(scenario, stage, block) values,
+  collapsed to one value per (constraint, stage) by weighting blocks by
+  their hours and averaging across scenarios.
 
 The output is consumed by the compare-results report's Constraints tab, mirroring the
 dashboard's per-constraint LHS-vs-Bound visualisation with a the source model overlay so
@@ -24,6 +24,7 @@ import polars as pl
 
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
 from novomodelo_bridge.novomodelo.constraint_expr import (
+    STORAGE_KINDS,
     USEFUL_VOLUME_KINDS,
     ResolvedGenericConstraints,
     unsupported_constraint_ids,
@@ -31,6 +32,12 @@ from novomodelo_bridge.novomodelo.constraint_expr import (
 
 if TYPE_CHECKING:
     from novomodelo_bridge.newave.id_map import NewaveIdMap
+
+
+#: The term kinds the source model's stage outputs can value.
+_NEWAVE_KINDS = STORAGE_KINDS | frozenset(
+    {"hydro_generation", "line_direct", "line_reverse", "line_exchange"}
+)
 
 
 def evaluate_lhs_newave(
@@ -95,7 +102,7 @@ def evaluate_lhs_newave(
         "stage_id": pl.Int32,
         "lhs_value": pl.Float64,
     }
-    skipped = unsupported_constraint_ids(resolved.terms)
+    skipped = unsupported_constraint_ids(resolved.terms, _NEWAVE_KINDS)
     terms = resolved.terms.filter(~pl.col("constraint_id").is_in(list(skipped)))
     if terms.is_empty():
         return pl.DataFrame(schema=schema)

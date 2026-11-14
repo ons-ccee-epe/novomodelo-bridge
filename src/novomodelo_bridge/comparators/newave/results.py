@@ -1290,6 +1290,7 @@ def _generic_constraint_fields(
     from novomodelo_bridge.comparators.constraints import (
         evaluate_lhs_novomodelo,
         load_resolved_generic_constraints,
+        stage_bounds_novomodelo,
     )
     from novomodelo_bridge.comparators.newave.constraints import evaluate_lhs_newave
 
@@ -1317,7 +1318,7 @@ def _generic_constraint_fields(
         gc_lhs_cb = pl.DataFrame()
     return {
         "gc_constraints": gc_constraints,
-        "gc_bounds": gc_resolved.bounds,
+        "gc_bounds": stage_bounds_novomodelo(gc_resolved, novomodelo_output_dir),
         "gc_lhs_newave": gc_lhs_nw,
         "gc_lhs_novomodelo": gc_lhs_cb,
     }

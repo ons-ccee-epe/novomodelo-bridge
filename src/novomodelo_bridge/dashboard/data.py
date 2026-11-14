@@ -628,6 +628,8 @@ class SimulationData:
     ncs_lf: pl.LazyFrame
     buses_lf: pl.LazyFrame
     exchanges_lf: pl.LazyFrame
+    pumping_stations_lf: pl.LazyFrame
+    hydro_bus_generation_lf: pl.LazyFrame
     inflow_lags_lf: pl.LazyFrame
     costs: pd.DataFrame
     gc_violations: pd.DataFrame
@@ -641,6 +643,8 @@ def load_simulation_data(case_dir: Path) -> SimulationData:
     ncs_lf = scan_entity(case_dir, "non_controllables")
     buses_lf = scan_entity(case_dir, "buses")
     exchanges_lf = scan_entity(case_dir, "exchanges")
+    pumping_stations_lf = scan_entity(case_dir, "pumping_stations")
+    hydro_bus_generation_lf = scan_entity(case_dir, "hydro_bus_generation")
 
     inflow_lags_lf = scan_entity(case_dir, "inflow_lags")
 
@@ -659,6 +663,8 @@ def load_simulation_data(case_dir: Path) -> SimulationData:
         ncs_lf=ncs_lf,
         buses_lf=buses_lf,
         exchanges_lf=exchanges_lf,
+        pumping_stations_lf=pumping_stations_lf,
+        hydro_bus_generation_lf=hydro_bus_generation_lf,
         inflow_lags_lf=inflow_lags_lf,
         costs=costs,
         gc_violations=gc_violations,
@@ -1255,6 +1261,18 @@ class DashboardData:
     @property
     def exchanges_lf(self) -> pl.LazyFrame:
         return self.simulation.exchanges_lf
+
+    @property
+    def lhs_frames(self) -> dict[str, pl.LazyFrame]:
+        """The simulation scans generic-constraint LHS terms read from."""
+        sim = self.simulation
+        return {
+            "hydros": sim.hydros_lf,
+            "thermals": sim.thermals_lf,
+            "exchanges": sim.exchanges_lf,
+            "pumping_stations": sim.pumping_stations_lf,
+            "hydro_bus_generation": sim.hydro_bus_generation_lf,
+        }
 
     @property
     def costs(self) -> pd.DataFrame:

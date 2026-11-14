@@ -15,7 +15,10 @@ from novomodelo_bridge.novomodelo import readers as novomodelo_readers
 from novomodelo_bridge.novomodelo.constraint_expr import (
     ResolvedGenericConstraints,
     evaluate_lhs,
+    required_entities,
     resolve_generic_constraints,
+    stage_weighted_bounds,
+    stage_weighted_lhs,
 )
 from novomodelo_bridge.novomodelo.readers import scan_simulation_entity
 
@@ -67,22 +70,26 @@ def load_resolved_generic_constraints(
     )
 
 
-_LHS_SCHEMA = {
-    "constraint_id": pl.Int32,
-    "stage_id": pl.Int32,
-    "lhs_value": pl.Float64,
-}
+_LHS_SCHEMA = pl.Schema(
+    {
+        "constraint_id": pl.Int32,
+        "stage_id": pl.Int32,
+        "lhs_value": pl.Float64,
+    }
+)
 
 
 def evaluate_lhs_novomodelo(
     resolved: ResolvedGenericConstraints,
     novomodelo_output_dir: Path,
 ) -> pl.DataFrame:
-    """Evaluate each constraint's LHS from Novomodelo simulation outputs.
+    """Each constraint's hours-weighted stage LHS from Novomodelo simulation outputs.
 
-    Uses the shared :func:`novomodelo_bridge.novomodelo.constraint_expr.evaluate_lhs`
-    (one row per (constraint, scenario, stage, block)) and collapses to the
-    mean across scenarios and blocks per (constraint, stage).
+    Evaluates the per-block LHS with
+    :func:`novomodelo_bridge.novomodelo.constraint_expr.evaluate_lhs`, weights
+    each scenario's blocks by their hours into one stage value (the
+    source models report block-collapsed, duration-weighted stage values),
+    and averages across scenarios per (constraint, stage).
 
     Returns
     -------
@@ -95,28 +102,43 @@ def evaluate_lhs_novomodelo(
     if resolved.terms.is_empty():
         return empty
 
-    # A present-but-corrupt parquet raises NovomodeloReadError. NB: ``lf or
-    # pl.LazyFrame()`` would evaluate ``bool(lf)``, which polars rejects
-    # ("truth value of a LazyFrame is ambiguous") — use explicit None checks.
-    hydros_lf = scan_simulation_entity(novomodelo_output_dir, "hydros")
-    if hydros_lf is None:
-        # No hydro simulation → no operation data to evaluate the LHS against.
+    # A present-but-corrupt parquet raises NovomodeloReadError.
+    frames = {
+        entity: lf
+        for entity in sorted(required_entities(resolved.terms))
+        if (lf := scan_simulation_entity(novomodelo_output_dir, entity)) is not None
+    }
+    block_hours = novomodelo_readers.read_novomodelo_block_hours(novomodelo_output_dir)
+    if block_hours.is_empty():
+        _LOG.warning(
+            "No block hours in %s; generic-constraint LHS cannot be "
+            "hours-weighted and is not compared.",
+            novomodelo_output_dir,
+        )
         return empty
-    exchanges_lf = scan_simulation_entity(novomodelo_output_dir, "exchanges")
-    if exchanges_lf is None:
-        exchanges_lf = pl.LazyFrame()
-
-    lhs_pd: pd.DataFrame = evaluate_lhs(resolved, hydros_lf, exchanges_lf)
+    lhs_pd: pd.DataFrame = evaluate_lhs(resolved, frames, block_hours)
     if lhs_pd.empty:
         return empty
 
-    # Collapse to mean across scenarios and blocks per (constraint, stage).
-    grouped = lhs_pd.groupby(["constraint_id", "stage_id"], as_index=False)
-    means = pd.DataFrame(grouped["lhs_value"].mean())
-    return pl.from_pandas(means).with_columns(
-        pl.col("constraint_id").cast(pl.Int32),
-        pl.col("stage_id").cast(pl.Int32),
-        pl.col("lhs_value").cast(pl.Float64),
+    return (
+        stage_weighted_lhs(lhs_pd, block_hours)
+        .group_by(["constraint_id", "stage_id"])
+        .agg(pl.col("lhs_value").mean())
+        .cast(_LHS_SCHEMA)
+        .sort(["constraint_id", "stage_id"])
+    )
+
+
+def stage_bounds_novomodelo(
+    resolved: ResolvedGenericConstraints, novomodelo_output_dir: Path
+) -> pl.DataFrame:
+    """The hours-weighted stage bounds matching :func:`evaluate_lhs_novomodelo`.
+
+    See :func:`novomodelo_bridge.novomodelo.constraint_expr.stage_weighted_bounds`.
+    """
+    return stage_weighted_bounds(
+        resolved.bounds,
+        novomodelo_readers.read_novomodelo_block_hours(novomodelo_output_dir),
     )
 
 
@@ -160,12 +182,13 @@ def per_stage_bounds(
     gc_bounds: pl.DataFrame,
     max_stage: int | None = None,
 ) -> dict[int, dict[int, ResolvedBound]]:
-    """Reduce per-(stage, block) bounds to one value per (constraint, stage).
+    """Reduce stage bounds to one :class:`ResolvedBound` per (constraint, stage).
 
-    When per-block bounds disagree (rare; AGRINT/RE bounds are usually
-    block-invariant), the block_id=0 value is preferred.  Returns
-    ``{constraint_id: {stage_id: ResolvedBound}}``; stages beyond
-    ``max_stage`` are dropped when ``max_stage`` is supplied.
+    *gc_bounds* holds one row per (constraint, stage), as
+    :func:`stage_bounds_novomodelo` returns it. Returns
+    ``{constraint_id: {stage_id: ResolvedBound}}``; a stage with neither
+    endpoint is left out, and stages beyond ``max_stage`` are dropped when
+    ``max_stage`` is supplied.
     """
     out: dict[int, dict[int, ResolvedBound]] = {}
     if gc_bounds.is_empty():
@@ -173,20 +196,12 @@ def per_stage_bounds(
     df = gc_bounds
     if max_stage is not None:
         df = df.filter(pl.col("stage_id") <= max_stage)
-    for cid, group in df.group_by("constraint_id"):
-        cid_int = int(cid[0])
-        per_stage: dict[int, ResolvedBound] = {}
-        if "block_id" in group.columns:
-            preferred = group.filter(pl.col("block_id") == 0)
-            if preferred.is_empty():
-                preferred = group
-        else:
-            preferred = group
-        for row in preferred.iter_rows(named=True):
-            stage = int(row["stage_id"])
-            if stage not in per_stage:
-                per_stage[stage] = _resolve_bound(
-                    row["bound_lower"], row["bound_upper"]
-                )
-        out[cid_int] = per_stage
+    df = df.filter(
+        pl.col("bound_lower").is_not_null() | pl.col("bound_upper").is_not_null()
+    )
+    for row in df.sort(["constraint_id", "stage_id"]).iter_rows(named=True):
+        per_stage = out.setdefault(int(row["constraint_id"]), {})
+        per_stage.setdefault(
+            int(row["stage_id"]), _resolve_bound(row["bound_lower"], row["bound_upper"])
+        )
     return out

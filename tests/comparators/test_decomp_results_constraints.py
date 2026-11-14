@@ -26,6 +26,7 @@ from novomodelo_bridge.comparators.decomp.results import (
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
@@ -34,7 +35,6 @@ from novomodelo_bridge.decomp.constraint_registers import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo.constraint_expr import ResolvedGenericConstraints
 from tests.comparators.conftest import (
-    GC_STAGE_HOURS,
     _aligned_fixture,
     _extract_tab_content,
     _no_dec_oper,
@@ -432,8 +432,8 @@ class TestGenericConstraintLhsDecomp:
         assert len(rows) == 1
         assert rows[0]["constraint_id"] == 7
         assert rows[0]["stage_id"] == 3
-        # valor_MW (stage-average MW) over the weekly stage's 168 h, in MWh.
-        assert rows[0]["lhs_value"] == pytest.approx(2951.58 * 168.0)
+        # valor_MW is MWmês: the mean month's hours, not the weekly stage's 168.
+        assert rows[0]["lhs_value"] == pytest.approx(2951.58 * MEAN_MONTH_HOURS)
 
     def test_interchange_term_skips_whole_constraint_novomodelo_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -621,7 +621,7 @@ class TestBuildDecompDatasetConstraints:
         nw_row = dataset.render.gc_lhs_newave.row(0, named=True)
         assert nw_row["constraint_id"] == 0
         assert nw_row["stage_id"] == 0
-        assert nw_row["lhs_value"] == pytest.approx(2951.58 * GC_STAGE_HOURS)
+        assert nw_row["lhs_value"] == pytest.approx(2951.58 * MEAN_MONTH_HOURS)
         cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}
 

@@ -1851,9 +1851,19 @@ class TestEvaluateLhsNovomodelo:
         def fake_scan(_output_dir, entity):
             return hydros if entity == "hydros" else None
 
-        with patch(
-            "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
-            side_effect=fake_scan,
+        hours = pl.DataFrame(
+            {"stage_id": [0, 1], "block_id": [0, 0], "hours": [730.0, 730.0]},
+            schema={"stage_id": pl.Int32, "block_id": pl.Int32, "hours": pl.Float64},
+        )
+        with (
+            patch(
+                "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
+                side_effect=fake_scan,
+            ),
+            patch(
+                "novomodelo_bridge.novomodelo.readers.read_novomodelo_block_hours",
+                return_value=hours,
+            ),
         ):
             result = evaluate_lhs_novomodelo(self._storage_constraint(), Path("/out"))
 
@@ -1889,6 +1899,79 @@ class TestEvaluateLhsNovomodelo:
             )
         assert result.is_empty()
         scan.assert_not_called()
+
+    def test_block_lhs_is_hours_weighted_then_averaged_over_scenarios(self) -> None:
+        from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
+        from novomodelo_bridge.novomodelo.constraint_expr import (
+            resolve_generic_constraints,
+        )
+
+        echo = pl.DataFrame(
+            {
+                "stage_id": [0, 0],
+                "block_id": [0, 1],
+                "constraint_id": [0, 0],
+                "constraint_name": ["RE_1", "RE_1"],
+                "term_index": [0, 0],
+                "variable_kind": ["hydro_generation", "hydro_generation"],
+                "variable": [
+                    "hydro_generation(id=0, bus=all, block=0)",
+                    "hydro_generation(id=0, bus=all, block=1)",
+                ],
+                "coefficient": [1.0, 1.0],
+                "bound_lower": [None, None],
+                "bound_upper": [100.0, 100.0],
+            },
+            schema_overrides={"block_id": pl.Int32, "bound_lower": pl.Float64},
+        )
+        resolved = resolve_generic_constraints(
+            [{"id": 0, "name": "RE_1", "slack": {"enabled": False}}], echo, {}
+        )
+        hydros = pl.LazyFrame(
+            {
+                "scenario_id": [0, 0, 1, 1],
+                "stage_id": [0, 0, 0, 0],
+                "block_id": [0, 1, 0, 1],
+                "hydro_id": [0, 0, 0, 0],
+                "generation_mw": [40.0, 80.0, 60.0, 100.0],
+            }
+        )
+        hours = pl.DataFrame(
+            {"stage_id": [0, 0], "block_id": [0, 1], "hours": [100.0, 300.0]},
+            schema={"stage_id": pl.Int32, "block_id": pl.Int32, "hours": pl.Float64},
+        )
+
+        with (
+            patch(
+                "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
+                side_effect=lambda _d, e: hydros if e == "hydros" else None,
+            ),
+            patch(
+                "novomodelo_bridge.novomodelo.readers.read_novomodelo_block_hours",
+                return_value=hours,
+            ),
+        ):
+            result = evaluate_lhs_novomodelo(resolved, Path("/out"))
+
+        # Scenario 0: (40·100 + 80·300)/400 = 70; scenario 1: 90.
+        assert result["lhs_value"].to_list() == [pytest.approx(80.0)]
+
+    def test_case_without_block_hours_is_not_compared(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
+
+        with (
+            patch(
+                "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
+                return_value=None,
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            result = evaluate_lhs_novomodelo(self._storage_constraint(), Path("/out"))
+
+        assert result.is_empty()
+        assert "No block hours" in caplog.text
 
 
 # -------------------------------------------------------------------

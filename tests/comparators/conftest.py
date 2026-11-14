@@ -289,8 +289,9 @@ def _unmapped_codes(dataset: ComparisonDataset, level: str) -> object:
     return unmapped[level]
 
 
-#: Hours of every stage `_write_generic_constraints_case` declares.
-GC_STAGE_HOURS = 730.0
+#: Hours of every stage `_write_generic_constraints_case` declares: a DECOMP
+#: monthly stage, shorter than the mean month.
+GC_STAGE_HOURS = 648.0
 
 
 def _write_generic_constraints_case(
