@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -30,14 +30,14 @@ wheels = [
 
 [[package]]
 name = "cfinterface"
-version = "1.10.3"
+version = "1.10.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b6/d5/0a83430b2b96a51ec1c3ed2d648e2506699f100bd06144b19d19eaf72902/cfinterface-1.10.3.tar.gz", hash = "sha256:00c525c30f9b1f033d685614d6f9e950e9ef52aba206f4871a3124342587d4a2", size = 82767, upload-time = "2026-10-30T12:03:23.496Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/09/d6/c22454b0f2785f8908119722f96ec73927abdd5b0f27cd12f74e865702f8/cfinterface-1.10.4.tar.gz", hash = "sha256:c3acc60f12a49204b35fa98442ef8632dc558a67800dc6d3cf4b47832922b8a8", size = 83358, upload-time = "2026-11-14T15:28:26.299Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/60/3f126367476eedc102a14752cfb8d3103e61f776acb087c96f0951a0252c/cfinterface-1.10.3-py3-none-any.whl", hash = "sha256:1cd892f998848e41f7047c3bbb5109539fe681b4359b2995c19227914b508070", size = 42310, upload-time = "2026-10-30T12:03:21.924Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/f5/6fa401a9c6bf1b1cb05822ba92e4dc7e2038e31ca959da3628b825435e2d/cfinterface-1.10.4-py3-none-any.whl", hash = "sha256:065432b7f911b46047c3be9a0d4c37592ccfa32e045b264503595a4f16a73054", size = 42321, upload-time = "2026-11-14T15:28:24.765Z" },
 ]
 
 [[package]]
@@ -176,16 +176,16 @@ wheels = [
 
 [[package]]
 name = "inewave"
-version = "1.17.1"
+version = "1.17.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfinterface" },
     { name = "numpy" },
     { name = "pandas" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/01/9b7fad6821aa6944f36979f09f0aff9bd1c75f4fea02f231b76859d80ec6/inewave-1.17.1.tar.gz", hash = "sha256:82c022a3de3f7e6ecca9d7e7e542d50af33de9e0642669d653a1c0ff9d4f98f5", size = 14335588, upload-time = "2026-10-30T12:45:16.072Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/d7/bdb78529207108b776134b6772c5a5399621c06322a3aa062dd653a3f477/inewave-1.17.2.tar.gz", hash = "sha256:a1ca840525b2fc07a8cc78ca08ebcee336211f35b4cc739b96dce7a6d71caaf9", size = 14337701, upload-time = "2026-11-14T15:58:08.981Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/3f/f777fe53ee73898e24f2ffa10febcd2520f4159ae6d4978205ab5e01b66c/inewave-1.17.1-py3-none-any.whl", hash = "sha256:410b4562b6a72279b199464ddc0d13e6a6216e1af6da0292fad94d78c9c9460b", size = 469606, upload-time = "2026-10-30T12:45:14.246Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/71/6a25be570521725de1f9358b1b8baae5bcef59cf3eee9f5d540fcc7cadbd/inewave-1.17.2-py3-none-any.whl", hash = "sha256:347c7540414badf8f78762abff96f3c613c413713189d4deb20350270cb03208", size = 469729, upload-time = "2026-11-14T15:58:06.949Z" },
 ]
 
 [[package]]
@@ -282,9 +282,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cfinterface", specifier = ">=1.10.3" },
+    { name = "cfinterface", specifier = ">=1.10.4" },
     { name = "idecomp", specifier = ">=1.18.3" },
-    { name = "inewave", specifier = ">=1.17.1" },
+    { name = "inewave", specifier = ">=1.17.2" },
     { name = "novomodelo-python", specifier = "==0.20.0" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "plotly", specifier = ">=7.1.0" },
