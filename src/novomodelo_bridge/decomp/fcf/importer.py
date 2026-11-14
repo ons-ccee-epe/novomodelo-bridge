@@ -130,9 +130,9 @@ def _gnl_targets_from(
     codes = sorted(thermal.code for thermal in model.thermals)
     if len(gnl_ids) != len(codes):
         raise ValueError(
-            f"thermals.json carries {len(gnl_ids)} GNL thermal(s) "
+            f"thermals.json carries {dx.counted(len(gnl_ids), 'GNL thermal')} "
             "(anticipated_config), but the dadgnl registry declares "
-            f"{len(codes)} thermal(s); the GNL fleet must match exactly"
+            f"{dx.counted(len(codes), 'thermal')}; the GNL fleet must match exactly"
         )
     id_of = dict(zip(codes, gnl_ids, strict=True))
     return tuple(

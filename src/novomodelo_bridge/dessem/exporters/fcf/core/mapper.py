@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
+from novomodelo_bridge.core.diagnostics import counted
 from novomodelo_bridge.core.policy_dates import (
     UNDATED,
     date_from_yyyymmdd,
@@ -419,7 +420,8 @@ def select_gnl_deliveries(
     target = pool.graph_stage_id + 1
     if target >= len(stages):
         raise MappingError(
-            f"the case has {len(stages)} stage(s) but holds {len(gnl_thermals)} GNL "
+            f"the case has {counted(len(stages), 'stage')} but holds "
+            f"{len(gnl_thermals)} GNL "
             "thermals, whose coefficients price the delivery of the stage after "
             "the first"
         )

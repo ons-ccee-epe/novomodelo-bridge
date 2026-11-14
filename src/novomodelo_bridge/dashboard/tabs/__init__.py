@@ -10,6 +10,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    exception_reason,
 )
 
 if TYPE_CHECKING:
@@ -89,7 +90,7 @@ def _render_error_placeholder(tab_label: str, exc: Exception) -> str:
         'border:1px solid #f3b5b5;border-radius:6px;">'
         f"<strong>{_html.escape(tab_label)} failed to render.</strong>"
         '<pre style="white-space:pre-wrap;margin-top:8px;">'
-        f"{_html.escape(str(exc))}</pre>"
+        f"{_html.escape(exception_reason(exc))}</pre>"
         "</div>"
     )
 
@@ -110,7 +111,7 @@ def get_renderable_tabs(data: DashboardData) -> list[tuple[str, str, str]]:
             html = module.render(data)
         except Exception as exc:
             logger.debug("tab %r failed to render", module.TAB_ID, exc_info=True)
-            failed.append([module.TAB_LABEL, str(exc)])
+            failed.append([module.TAB_LABEL, exception_reason(exc)])
             html = _render_error_placeholder(module.TAB_LABEL, exc)
         result.append((module.TAB_ID, module.TAB_LABEL, html))
     if failed:

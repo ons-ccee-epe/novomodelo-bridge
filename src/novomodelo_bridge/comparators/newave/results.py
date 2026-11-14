@@ -24,6 +24,7 @@ from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     Severity,
     emit,
+    exception_reason,
     report_file_unreadable_diagnostic,
 )
 from novomodelo_bridge.core.pandas_utils import as_int
@@ -1141,7 +1142,7 @@ def _productivity_detail(
                         "from hidr.dat and confhd.dat, so the report's "
                         "Productivity tab leaves them out."
                     ),
-                    notes=[f"Reason: {exc}"],
+                    notes=[f"Reason: {exception_reason(exc)}"],
                 ),
                 logger=_LOG,
             )

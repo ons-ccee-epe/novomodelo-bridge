@@ -12,6 +12,7 @@ from novomodelo_bridge.core.diagnostics import (
     collect,
     counted,
     emit,
+    exception_reason,
     finalize_diagnostics,
     format_stage_ranges,
     merge_tables,
@@ -20,6 +21,7 @@ from novomodelo_bridge.core.diagnostics import (
     report_files_unreadable_diagnostic,
     unreadable_file_diagnostic,
 )
+from novomodelo_bridge.core.errors import BridgeError
 
 
 class TestSeverity:
@@ -223,10 +225,10 @@ class TestUnreadableFileDiagnostic:
         assert diagnostic.summary == (
             "x.dat could not be read, so the case has none of its records."
         )
-        assert diagnostic.notes == ["bad line 3"]
+        assert diagnostic.notes == ["Reason: ValueError: bad line 3"]
         assert diagnostic.remediation == "Check x.dat for a malformed record."
 
-    def test_an_exception_without_text_adds_no_note(self) -> None:
+    def test_an_exception_without_text_is_named_by_its_type(self) -> None:
         diagnostic = unreadable_file_diagnostic(
             code="x-unreadable",
             file_name="x.dat",
@@ -234,7 +236,7 @@ class TestUnreadableFileDiagnostic:
             effect="nothing.",
             exc=ValueError(),
         )
-        assert diagnostic.notes == []
+        assert diagnostic.notes == ["Reason: ValueError"]
 
 
 class TestReportFileDiagnostics:
@@ -266,14 +268,23 @@ class TestReportFileDiagnostics:
         )
         assert diagnostic.notes == [
             "Path: /case/system/hydros.json",
-            "Reason: Expecting value",
+            "Reason: ValueError: Expecting value",
         ]
 
-    def test_a_reason_without_text_adds_no_reason_note(self) -> None:
+    def test_an_empty_reason_adds_no_reason_note(self) -> None:
         diagnostic = report_file_unreadable_diagnostic(
-            "a.json", Path("/a.json"), "nothing.", ValueError()
+            "a.json", Path("/a.json"), "nothing.", ""
         )
         assert diagnostic.notes == ["Path: /a.json"]
+
+    def test_a_stated_reason_is_kept_as_written(self) -> None:
+        diagnostic = report_file_unreadable_diagnostic(
+            "a.json", Path("/a.json"), "nothing.", "no stage with block hours"
+        )
+        assert diagnostic.notes == [
+            "Path: /a.json",
+            "Reason: no stage with block hours",
+        ]
 
     def test_unreadable_files_of_one_kind_are_one_warning_with_a_row_each(
         self,
@@ -291,4 +302,20 @@ class TestReportFileDiagnostics:
         )
         assert diagnostic.table is not None
         assert diagnostic.table.columns == ["File", "Reason"]
-        assert diagnostic.table.rows == [["int001.out", "bad"], ["int002.out", "gone"]]
+        assert diagnostic.table.rows == [
+            ["int001.out", "ValueError: bad"],
+            ["int002.out", "OSError: gone"],
+        ]
+
+
+class TestExceptionReason:
+    def test_a_bridge_message_is_kept_as_written(self) -> None:
+        assert exception_reason(BridgeError("pmo.dat lacks a CMO table")) == (
+            "pmo.dat lacks a CMO table"
+        )
+
+    def test_another_exception_is_led_by_its_type(self) -> None:
+        assert exception_reason(KeyError("hydro_id")) == "KeyError: 'hydro_id'"
+
+    def test_an_exception_without_text_is_its_type(self) -> None:
+        assert exception_reason(OSError()) == "OSError"

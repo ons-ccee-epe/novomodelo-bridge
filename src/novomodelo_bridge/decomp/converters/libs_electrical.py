@@ -1586,7 +1586,7 @@ def _submarket_bus_id(id_map: DecompIdMap, term: ParsedTerm) -> int:
         return id_map.bus_id(code)
     except KeyError as err:
         raise _UnresolvableBucketBTerm(
-            f"{term.token}({code}) references unknown submarket {code}"
+            f"{term.token}({code}) names an undeclared submarket"
         ) from err
 
 
@@ -1617,14 +1617,13 @@ def _peq_block_generation(
         suffix = _PEQ_SUBMARKET_ALIASES.get(suffix, suffix)
     if suffix not in mnemonics:
         raise _UnresolvableBucketBTerm(
-            f"{reference} references unknown subsystem {term.pq_submarket!r}"
+            f"{reference} names the undeclared subsystem {term.pq_submarket}"
         )
     sub_code = id_map.bus_codes[mnemonics.index(suffix)]
     series = pq_generation.get((sub_code, term.pq_name))
     if series is None:
         raise _UnresolvableBucketBTerm(
-            f"{reference} references no PQ series {term.pq_name!r} in "
-            f"subsystem {sub_code}"
+            f"{reference} names no PQ series {term.pq_name} of subsystem {sub_code}"
         )
     return series[stage_index][block_index]
 
@@ -1736,8 +1735,7 @@ def build_data_context(
                 values = carga_ande_series.get(stage_index)
                 if values is None:
                     raise _UnresolvableBucketBTerm(
-                        "carga_ande referenced but the deck declares no RI "
-                        f"register (or no series for stage {stage_index})"
+                        "carga_ande has no RI series on this stage"
                     )
                 return values[block_index]
             if term.token == _ALIAS_TOKEN:
@@ -1747,9 +1745,8 @@ def build_data_context(
                 value = _resolve_alias_value(alias, stage_index, patamar)
                 if value is None:
                     raise _UnresolvableBucketBTerm(
-                        f"alias {term.alias_name!r} has no value at stage "
-                        f"{stage_index} (patamar {patamar}) or any earlier "
-                        "stage"
+                        f"alias {term.alias_name} has no value on this block "
+                        "of this stage or an earlier one"
                     )
                 return value
             if term.token == _PEQ_TOKEN:
@@ -2310,7 +2307,7 @@ class AvailablePower:
         value = self.overlay.get((code, stage_index))
         if value is None:
             raise _UnresolvableDispUsih(
-                f"plant {code} has no available power at stage {stage_index}"
+                f"plant {code} has no available power on this stage"
             )
         return value
 
@@ -2384,13 +2381,13 @@ def _emit_disp_usih_substitution(
             code="decomp-electrical-disp-usih-substituted",
             severity=Severity.INFO,
             category="Special constraints",
-            title="Reserve restrictions converted to generation caps",
+            title="Available power held constant in reserve restrictions",
             summary=(
                 "The listed electrical restrictions bound a plant's reserve "
                 "through disp_usih, its available power. The conversion takes "
-                "that power on each stage as a constant, at the reference head "
-                "and after maintenance, so each restriction caps the plant's "
-                "generation."
+                "that power on each listed stage as a constant, at the "
+                "reference head and after maintenance, so each restriction "
+                "caps the plant's generation."
             ),
             table=DiagnosticTable(
                 columns=["Restriction", "Plant code", "Stage", "Available power (MW)"],

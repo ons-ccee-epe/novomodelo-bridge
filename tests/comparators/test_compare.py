@@ -1557,7 +1557,7 @@ class TestCompareResultsReturnsDataset:
             d for d in collected if d.code == "productivity-accumulated-unavailable"
         ]
         assert diag.severity is dx.Severity.WARNING
-        assert diag.notes == ["Reason: 'codigo_usina'"]
+        assert diag.notes == ["Reason: KeyError: 'codigo_usina'"]
 
 
 class TestProductivityDetail:

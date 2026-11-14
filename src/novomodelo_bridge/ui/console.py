@@ -315,8 +315,8 @@ def render_diagnostics(
 ) -> None:
     """Render a roll-up line, the warning and error panels, then the notes.
 
-    The roll-up under *heading* (``⚠ Conversion notes: 2 warning(s) · 1
-    note(s)``) counts every diagnostic. Warnings and errors follow as panels,
+    The roll-up under *heading* (``⚠ Conversion notes: 2 warnings · 1
+    note``) counts every diagnostic. Warnings and errors follow as panels,
     grouped by category; INFO notes come last, one title line each, or as
     full panels with *verbose*. *quiet* suppresses the notes entirely. Does
     nothing when there are no diagnostics.
@@ -390,7 +390,7 @@ def _diagnostic_panel(diag: Diagnostic) -> Panel:
 
     if diag.table is not None:
         rows = diag.table.rows
-        body.add_row("")
+        # The table's own blank top edge separates it from the summary.
         body.add_row(
             make_table(
                 diag.table.columns,

@@ -386,9 +386,8 @@ def _pee_generation_rows(renovaveis: _PeeRegisters) -> pd.DataFrame | None:
         )
         if on_both:
             raise ValueError(
-                f"renewable park(s) {on_both} declared on both "
-                "PEE-GER-PER-PAT-CEN and PEE-GER-PER-PAT; the generation "
-                "source is ambiguous"
+                "renewable parks declared on both PEE-GER-PER-PAT-CEN and "
+                f"PEE-GER-PER-PAT: {on_both}; the generation source is ambiguous"
             )
     return pd.concat(frames, ignore_index=True) if frames else None
 

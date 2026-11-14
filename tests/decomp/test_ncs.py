@@ -397,7 +397,7 @@ def test_pee_series_park_on_both_cards_raises() -> None:
     det = pd.DataFrame(_deterministic_rows(4, 1, (10.0, 20.0, 30.0)))
     renov = _StubRenovaveis(cad, subm, per_scenario, det)
 
-    with pytest.raises(ValueError, match=r"park\(s\) \[4\] declared on both"):
+    with pytest.raises(ValueError, match=r"declared on both .*: \[4\]"):
         _pee_series(renov, _ID_MAP, _calendar(), 0)
 
 

@@ -263,13 +263,24 @@ def format_stage_ranges(stages: Iterable[int]) -> str:
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in groups)
 
 
+def exception_reason(exc: BaseException) -> str:
+    """*exc* as the reason a diagnostic gives: the bridge's own messages as
+    written, any other exception led by its type, without which a ``KeyError``
+    reads as a bare quoted name."""
+    text = str(exc)
+    if type(exc).__module__.startswith("novomodelo_bridge."):
+        return text
+    name = type(exc).__name__
+    return f"{name}: {text}" if text else name
+
+
 def unreadable_file_diagnostic(
     *, code: str, file_name: str, category: str, effect: str, exc: Exception
 ) -> Diagnostic:
     """WARNING for an optional deck file the conversion could not parse.
 
     *effect* completes ``"<file> could not be read, so ..."``: what the case
-    lacks and how the results differ. The exception text goes to the notes.
+    lacks and how the results differ. The exception goes to the notes.
     """
     return Diagnostic(
         code=code,
@@ -277,7 +288,7 @@ def unreadable_file_diagnostic(
         category=category,
         title=f"{file_name} could not be read",
         summary=f"{file_name} could not be read, so {effect}",
-        notes=[str(exc)] if str(exc) else [],
+        notes=[f"Reason: {exception_reason(exc)}"],
         remediation=f"Check {file_name} for a malformed record.",
     )
 
@@ -319,7 +330,9 @@ def report_file_unreadable_diagnostic(
     or what the file lacks.
     """
     notes = [f"Path: {path}"]
-    if str(reason):
+    if isinstance(reason, Exception):
+        notes.append(f"Reason: {exception_reason(reason)}")
+    elif reason:
         notes.append(f"Reason: {reason}")
     return Diagnostic(
         code="report-file-unreadable",
@@ -348,6 +361,6 @@ def report_files_unreadable_diagnostic(
         summary=f"The listed files could not be read, so {effect}",
         table=DiagnosticTable(
             columns=["File", "Reason"],
-            rows=[[name, str(exc)] for name, exc in failures],
+            rows=[[name, exception_reason(exc)] for name, exc in failures],
         ),
     )

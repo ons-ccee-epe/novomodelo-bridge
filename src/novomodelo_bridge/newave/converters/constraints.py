@@ -31,6 +31,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    exception_reason,
     unreadable_file_diagnostic,
 )
 from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
@@ -1522,7 +1523,7 @@ def _resolve_eletri_penalty(case: NewaveCase) -> float | None:
                         "constraints at ten times the highest deficit cost, or "
                         "makes them hard limits when sistema.dat gives none."
                     ),
-                    notes=[str(exc)],
+                    notes=[f"Reason: {exception_reason(exc)}"],
                 ),
                 logger=_LOG,
             )

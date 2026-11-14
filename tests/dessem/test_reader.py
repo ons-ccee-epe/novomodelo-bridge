@@ -179,7 +179,7 @@ def test_select_pools_refuses_a_pool_the_checkpoint_lacks(
 ) -> None:
     checkpoint = _checkpoint(synthetic_manifest, synthetic_pool, [0])
 
-    with pytest.raises(PolicyFormatError, match=r"pool\(s\) \[1\]"):
+    with pytest.raises(PolicyFormatError, match=r"does not hold: \[1\]"):
         select_pools(checkpoint, [0, 1, 2], include_terminal=False)
 
 
