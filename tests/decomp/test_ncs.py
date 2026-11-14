@@ -8,6 +8,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core.diagnostics import (
+    Severity,
+    collect,
+    finalize_diagnostics,
+)
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.ncs import (
     convert_ncs_factors,
@@ -442,3 +447,69 @@ def test_pee_series_park_without_operating_state_is_must_run_and_warns(
         ("PARK6_1", False),
     ]
     assert any("no PEE-CONFIG-PER operating state" in r.message for r in caplog.records)
+
+
+def _park_case(renov: _StubRenovaveis) -> DecompCase:
+    return make_decomp_case(
+        Path("unused"),
+        dadger=_StubDadger(None),
+        calendar=_calendar(),
+        renovaveis=renov,
+    )
+
+
+class TestPeeFindings:
+    def test_repeated_generation_rows_keep_the_last_and_warn(self) -> None:
+        cad, subm = _pee_registry(4)
+        det = pd.DataFrame(
+            _deterministic_rows(4, 1, (10.0, 20.0, 30.0))
+            + _deterministic_rows(4, 1, (99.0,))
+        )
+        renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
+
+        with collect() as found:
+            doc = convert_non_controllable_sources(_park_case(renov), _ID_MAP)
+
+        [park] = doc["non_controllable_sources"]
+        assert park["max_generation_mw"] == 99.0
+        [repeated] = [
+            d
+            for d in finalize_diagnostics(found)
+            if d.code == "decomp-pee-generation-repeated"
+        ]
+        assert repeated.severity is Severity.WARNING
+        assert repeated.table is not None
+        assert repeated.table.rows == [[4, 0, 0]]
+        assert repeated.table.caption == "Stage and block ids are 0-based."
+
+    def test_one_generation_row_per_patamar_reports_no_repeat(self) -> None:
+        cad, subm = _pee_registry(4)
+        det = pd.DataFrame(_deterministic_rows(4, 1, (10.0, 20.0, 30.0)))
+        renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
+
+        with collect() as found:
+            convert_non_controllable_sources(_park_case(renov), _ID_MAP)
+
+        assert [d.code for d in found] == []
+
+    def test_park_without_operating_state_is_not_curtailable_and_warns(self) -> None:
+        cad, subm = _pee_registry(4, 6)
+        det = pd.DataFrame(
+            _deterministic_rows(4, 1, (10.0, 20.0, 30.0))
+            + _deterministic_rows(6, 1, (10.0, 20.0, 30.0))
+        )
+        renov = _StubRenovaveis(
+            cad, subm, pd.DataFrame(), det, _config_frame({4: "centralizado"})
+        )
+
+        with collect() as found:
+            doc = convert_non_controllable_sources(_park_case(renov), _ID_MAP)
+
+        assert [
+            (e["name"], e["allow_curtailment"]) for e in doc["non_controllable_sources"]
+        ] == [("PARK4_1", True), ("PARK6_1", False)]
+        [missing] = finalize_diagnostics(found)
+        assert missing.code == "decomp-pee-operating-state-missing"
+        assert missing.severity is Severity.WARNING
+        assert missing.table is not None
+        assert missing.table.rows == [[6]]

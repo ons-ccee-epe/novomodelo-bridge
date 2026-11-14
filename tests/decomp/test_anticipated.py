@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 from idecomp.decomp import Dadgnl
 
-from novomodelo_bridge.core.diagnostics import collect
+from novomodelo_bridge.core.diagnostics import Severity, collect
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlClass4Window,
@@ -1567,6 +1567,79 @@ def test_fill_undeclared_block_hours_uniform_week_with_shares_is_silent(
 
     assert filled.commitments[86].stages[7].committed_mw == pytest.approx(50.0)
     assert caplog.records == []
+
+
+def test_undeclared_weeks_without_their_month_shares_take_the_last_stage_hours() -> (
+    None
+):
+    model = _three_block_revision_model((175.0, 30.0, 0.0))
+
+    with collect() as found:
+        filled = fill_undeclared_block_hours(model, _three_block_calendar(), None)
+
+    week8 = filled.commitments[86].stages[7]
+    assert week8.block_hours == pytest.approx((28.0, 70.0, 70.0))
+    fallback = {d.code: d for d in found}["decomp-gnl-block-hours-fallback"]
+    assert fallback.severity is Severity.WARNING
+    assert fallback.table is not None
+    # Weeks 8 and 9 both declare no duracao; gs books both to December.
+    assert fallback.table.rows == [
+        [86, "SANTA CRUZ", "2026-11-28", "2026-12", "last study stage patamar hours"],
+        [86, "SANTA CRUZ", "2026-12-05", "2026-12", "last study stage patamar hours"],
+    ]
+
+
+def test_undeclared_weeks_fall_back_to_equal_weights_on_another_patamar_count() -> None:
+    # The last study stage has one patamar, the weeks three.
+    model = _three_block_revision_model((175.0, 30.0, 0.0))
+
+    with collect() as found:
+        filled = fill_undeclared_block_hours(model, _REVISION_CALENDAR, None)
+
+    week8 = filled.commitments[86].stages[7]
+    assert week8.block_hours == pytest.approx((56.0, 56.0, 56.0))
+    assert week8.committed_mw == pytest.approx(205.0 / 3)
+    fallback = {d.code: d for d in found}["decomp-gnl-block-hours-fallback"]
+    assert fallback.table is not None
+    assert {row[4] for row in fallback.table.rows} == {"equal patamar weights"}
+
+
+def test_undeclared_week_with_a_different_mw_per_patamar_reports_its_mean() -> None:
+    model = _three_block_revision_model((175.0, 30.0, 0.0))
+
+    with collect() as found:
+        fill_undeclared_block_hours(model, _three_block_calendar(), None)
+
+    nonuniform = {d.code: d for d in found}[
+        "decomp-gnl-undeclared-block-hours-nonuniform"
+    ]
+    assert nonuniform.severity is Severity.WARNING
+    assert nonuniform.table is not None
+    # Week 9 commits 0 MW in every patamar, so only week 8 is listed.
+    assert nonuniform.table.rows == [
+        [
+            86,
+            "SANTA CRUZ",
+            "2026-11-28",
+            "175 / 30 / 0",
+            round((175.0 * 96 + 30.0 * 240) / 576, 3),
+            "last study stage patamar hours",
+        ]
+    ]
+
+
+def test_undeclared_weeks_with_their_month_shares_report_no_fallback() -> None:
+    model = _three_block_revision_model((175.0, 30.0, 0.0))
+
+    with collect() as found:
+        fill_undeclared_block_hours(
+            model, _three_block_calendar(), {(2026, 12): (0.25, 0.25, 0.5)}
+        )
+
+    [nonuniform] = found
+    assert nonuniform.code == "decomp-gnl-undeclared-block-hours-nonuniform"
+    assert nonuniform.table is not None
+    assert nonuniform.table.rows[0][4:] == [51.25, "boundary FCF patamar shares"]
 
 
 def test_convert_gnl_keeps_a_plant_whose_gl_commits_nothing() -> None:
