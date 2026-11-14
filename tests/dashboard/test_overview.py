@@ -24,6 +24,7 @@ from novomodelo_bridge.dashboard.tabs.overview import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 
 # ---------------------------------------------------------------------------
 # Helpers / data factories
@@ -132,6 +133,7 @@ def _make_mock_data(
 ) -> MagicMock:
     """Build a minimal MagicMock that satisfies the DashboardData interface."""
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.case_name = case_name
     data.n_scenarios = n_scenarios
     data.n_stages = n_stages
@@ -416,14 +418,14 @@ def test_compute_gen_gwh_returns_gwh() -> None:
         }
     ).lazy()
     # Mean across scenarios: (2000 + 4000) / 2 = 3000 MWh -> 3.0 GWh
-    result = _compute_gen_gwh(lf)
+    result = _compute_gen_gwh(lf, UNIFORM)
     assert abs(result - 3.0) < 0.001
 
 
 def test_compute_gen_gwh_empty_lazyframe_returns_zero() -> None:
     """_compute_gen_gwh must return 0.0 for an empty LazyFrame."""
     lf = pl.LazyFrame({"scenario_id": [], "generation_mwh": []})
-    result = _compute_gen_gwh(lf)
+    result = _compute_gen_gwh(lf, UNIFORM)
     assert result == 0.0
 
 

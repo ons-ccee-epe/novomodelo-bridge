@@ -41,6 +41,7 @@ from novomodelo_bridge.novomodelo.constraint_expr import BLOCK_HOURS_SCHEMA
 from novomodelo_bridge.novomodelo.cost_categories import (
     NOVOMODELO_COST_COMPONENT_COLUMNS,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM, ScenarioWeights
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -109,47 +110,59 @@ def _stage_seasons(novomodelo_output_dir: Path) -> dict[int, list[int]]:
     return {}
 
 
-def _weighted_stage_mean(
+def _scenario_stage_means(
     lf: pl.LazyFrame,
     id_col: str,
-    value_cols: list[str],
-    block_hours: pl.DataFrame,
-    stage_level_cols: list[str] | None = None,
+    flow_cols: list[str],
+    stage_cols: list[str],
+    block_hours: pl.DataFrame | None,
+    weights: ScenarioWeights,
 ) -> pl.LazyFrame:
-    """Compute block-hours-weighted stage mean for flow variables.
-
-    For columns in *value_cols*, computes:
-        stage_avg = Σ(value × hours) / Σ(hours)
-    averaged across scenarios.
-
-    For columns in *stage_level_cols* (same across all blocks), takes the
-    value from any block (first) and averages across scenarios.
-    """
-    bh = block_hours.lazy()
-    stage_level_cols = stage_level_cols or []
-
-    weighted_aggs = [
-        (pl.col(c) * pl.col("hours")).sum().alias(f"_{c}_wsum") for c in value_cols
-    ]
-    hour_sum = pl.col("hours").sum().alias("_total_hours")
-    stage_aggs = [pl.col(c).first().alias(c) for c in stage_level_cols]
-
-    per_scenario = (
-        lf.join(bh, on=["stage_id", "block_id"])
-        .group_by(["scenario_id", id_col, "stage_id"])
-        .agg(weighted_aggs + [hour_sum] + stage_aggs)
+    """The expected stage value of each column per ``entity_id``/``stage_id``:
+    each scenario's :func:`_weighted_scenario_values`, averaged with *weights*."""
+    per_scenario = weights.attach(
+        _weighted_scenario_values(lf, id_col, flow_cols, stage_cols, block_hours)
+    )
+    return per_scenario.group_by("entity_id", "stage_id").agg(
+        [weights.mean(c) for c in flow_cols + stage_cols]
     )
 
-    with_means = per_scenario
-    for c in value_cols:
-        with_means = with_means.with_columns(
-            (pl.col(f"_{c}_wsum") / pl.col("_total_hours")).alias(c)
+
+def read_novomodelo_scenario_weights(novomodelo_output_dir: Path) -> ScenarioWeights:
+    """Each simulation scenario's probability, from ``scenario_summary.parquet``.
+
+    novomodelo leaves ``probability`` null when it samples the scenarios,
+    which then weigh the same, and sets it on every scenario when it
+    enumerates the leaf paths of the policy graph. A run without the file
+    (training only) weighs its scenarios the same.
+
+    Raises:
+        NovomodeloReadError: The file is unreadable, or only some scenarios
+            carry a probability.
+    """
+    simulation_dir = novomodelo_output_dir / "simulation"
+    path = simulation_dir / "scenario_summary.parquet"
+    if not path.is_file():
+        if simulation_dir.is_dir():
+            _LOG.warning(
+                "No %s; the simulation scenarios are averaged with equal weights.",
+                path,
+            )
+        return UNIFORM
+    try:
+        summary = pl.read_parquet(path, columns=["scenario_id", "probability"])
+    except Exception as exc:
+        raise NovomodeloReadError(f"Failed to read {path}") from exc
+    missing = summary["probability"].null_count()
+    if missing == summary.height:
+        return UNIFORM
+    if missing:
+        raise NovomodeloReadError(
+            f"{path}: {missing} of {summary.height} scenarios have no probability"
         )
-
-    drop_cols = [f"_{c}_wsum" for c in value_cols] + ["_total_hours"]
-    final_aggs = [pl.col(c).mean() for c in value_cols + stage_level_cols]
-
-    return with_means.drop(drop_cols).group_by(id_col, "stage_id").agg(final_aggs)
+    return ScenarioWeights.from_probabilities(
+        summary["scenario_id"].to_list(), summary["probability"].to_list()
+    )
 
 
 def read_novomodelo_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame:
@@ -410,24 +423,16 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
         return empty
 
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
 
     try:
-        if block_hours is not None and avail_flow:
-            result = (
-                _weighted_stage_mean(lf, id_col, avail_flow, block_hours, avail_stage)
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
+        result = (
+            _scenario_stage_means(
+                lf, id_col, avail_flow, avail_stage, block_hours, weights
             )
-        else:
-            result = (
-                lf.filter(pl.col("block_id") == 0)
-                .group_by(id_col, "stage_id")
-                .agg([pl.col(c).mean() for c in avail_flow + avail_stage])
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
-            )
+            .sort("entity_id", "stage_id")
+            .collect(engine="streaming")
+        )
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate hydro simulation data: "
@@ -691,6 +696,7 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
     if not is_reservoir:
         return empty
 
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     block_hours = _load_block_hours(novomodelo_output_dir)
     if block_hours is None:
         return empty
@@ -720,8 +726,9 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
                     (pl.col("spill_mw") * pl.col("hours")).sum() / pl.col("hours").sum()
                 ).alias("mw_mean")
             )
+            .pipe(weights.attach)
             .group_by(["stage_id", "category"])
-            .agg(pl.col("mw_mean").mean())
+            .agg(weights.mean("mw_mean"))
             .collect(engine="streaming")
         )
     except Exception as exc:
@@ -882,23 +889,13 @@ def read_novomodelo_line_means(novomodelo_output_dir: Path) -> pl.DataFrame:
         return empty
     id_col = "line_id" if "line_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
-        if block_hours is not None:
-            result = (
-                _weighted_stage_mean(lf, id_col, ["net_flow_mw"], block_hours)
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
-            )
-        else:
-            result = (
-                lf.filter(pl.col("block_id") == 0)
-                .group_by(id_col, "stage_id")
-                .agg(pl.col("net_flow_mw").mean())
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
-            )
+        result = (
+            _scenario_stage_means(lf, id_col, ["net_flow_mw"], [], block_hours, weights)
+            .sort("entity_id", "stage_id")
+            .collect(engine="streaming")
+        )
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate exchange simulation data: "
@@ -921,9 +918,10 @@ def read_novomodelo_line_percentiles(novomodelo_output_dir: Path) -> pl.DataFram
         return pl.DataFrame()
     id_col = "line_id" if "line_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(lf, id_col, ["net_flow_mw"], [], block_hours)
-        return _compute_percentiles(per_sc, ["net_flow_mw"])
+        return _compute_percentiles(per_sc, ["net_flow_mw"], weights)
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute line percentiles: "
@@ -1245,24 +1243,16 @@ def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     id_col = "thermal_id" if "thermal_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
 
     try:
-        if block_hours is not None:
-            result = (
-                _weighted_stage_mean(lf, id_col, ["generation_mw"], block_hours)
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
+        result = (
+            _scenario_stage_means(
+                lf, id_col, ["generation_mw"], [], block_hours, weights
             )
-        else:
-            result = (
-                lf.filter(pl.col("block_id") == 0)
-                .group_by(id_col, "stage_id")
-                .agg(pl.col("generation_mw").mean())
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
-            )
+            .sort("entity_id", "stage_id")
+            .collect(engine="streaming")
+        )
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate thermal simulation data: "
@@ -1303,24 +1293,14 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     id_col = "bus_id" if "bus_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
 
     try:
-        if block_hours is not None:
-            result = (
-                _weighted_stage_mean(lf, id_col, value_cols, block_hours)
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
-            )
-        else:
-            result = (
-                lf.filter(pl.col("block_id") == 0)
-                .group_by(id_col, "stage_id")
-                .agg([pl.col(c).mean() for c in value_cols])
-                .rename({id_col: "entity_id"})
-                .sort("entity_id", "stage_id")
-                .collect(engine="streaming")
-            )
+        result = (
+            _scenario_stage_means(lf, id_col, value_cols, [], block_hours, weights)
+            .sort("entity_id", "stage_id")
+            .collect(engine="streaming")
+        )
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to aggregate bus simulation data: "
@@ -1377,23 +1357,21 @@ def _weighted_scenario_values(
 def _compute_percentiles(
     per_scenario: pl.LazyFrame,
     value_cols: list[str],
+    weights: ScenarioWeights,
 ) -> pl.DataFrame:
     """Aggregate per-scenario values into p10/p50/p90 per (entity, stage).
 
     Returns DataFrame with columns: entity_id, stage_id, and for each var
     in *value_cols*: ``{var}_p10``, ``{var}_p50``, ``{var}_p90``.
     """
-    aggs: list[pl.Expr] = []
-    for c in value_cols:
-        aggs.extend(
-            [
-                pl.col(c).quantile(0.1, interpolation="linear").alias(f"{c}_p10"),
-                pl.col(c).quantile(0.5, interpolation="linear").alias(f"{c}_p50"),
-                pl.col(c).quantile(0.9, interpolation="linear").alias(f"{c}_p90"),
-            ]
-        )
+    aggs = [
+        weights.quantile(c, q).alias(f"{c}_p{round(q * 100)}")
+        for c in value_cols
+        for q in (0.1, 0.5, 0.9)
+    ]
     return (
-        per_scenario.group_by("entity_id", "stage_id")
+        weights.attach(per_scenario)
+        .group_by("entity_id", "stage_id")
         .agg(aggs)
         .sort("entity_id", "stage_id")
         .collect(engine="streaming")
@@ -1443,11 +1421,12 @@ def read_novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFra
         return pl.DataFrame()
 
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(
             lf, id_col, avail_flow, avail_stage, block_hours
         )
-        return _compute_percentiles(per_sc, all_vars)
+        return _compute_percentiles(per_sc, all_vars, weights)
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute hydro percentiles: "
@@ -1467,11 +1446,12 @@ def read_novomodelo_thermal_percentiles(novomodelo_output_dir: Path) -> pl.DataF
 
     id_col = "thermal_id" if "thermal_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(
             lf, id_col, ["generation_mw"], [], block_hours
         )
-        return _compute_percentiles(per_sc, ["generation_mw"])
+        return _compute_percentiles(per_sc, ["generation_mw"], weights)
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute thermal percentiles: "
@@ -1492,9 +1472,10 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
         return pl.DataFrame()
 
     block_hours = _load_block_hours(novomodelo_output_dir)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(lf, id_col, flow_cols, [], block_hours)
-        return _compute_percentiles(per_sc, flow_cols)
+        return _compute_percentiles(per_sc, flow_cols, weights)
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute bus percentiles: "
@@ -1693,25 +1674,24 @@ def _join_bus_frames(frames: list[pl.DataFrame]) -> pl.DataFrame:
 
 
 def _bus_scenario_percentiles(
-    merged: pl.DataFrame, variables: list[str]
+    merged: pl.DataFrame, variables: list[str], weights: ScenarioWeights
 ) -> pl.DataFrame:
     """p10/p50/p90 across scenarios of each present *variables* column per bus/stage."""
-    aggs: list[pl.Expr] = []
-    for c in variables:
-        if c not in merged.columns:
-            continue
-        aggs.extend(
-            [
-                pl.col(c).quantile(0.1, interpolation="linear").alias(f"{c}_p10"),
-                pl.col(c).quantile(0.5, interpolation="linear").alias(f"{c}_p50"),
-                pl.col(c).quantile(0.9, interpolation="linear").alias(f"{c}_p90"),
-            ]
-        )
-
+    aggs = [
+        weights.quantile(c, q).alias(f"{c}_p{round(q * 100)}")
+        for c in variables
+        if c in merged.columns
+        for q in (0.1, 0.5, 0.9)
+    ]
     if not aggs:
         return pl.DataFrame()
 
-    return merged.group_by("bus_id", "stage_id").agg(aggs).sort("bus_id", "stage_id")
+    return (
+        weights.attach(merged)
+        .group_by("bus_id", "stage_id")
+        .agg(aggs)
+        .sort("bus_id", "stage_id")
+    )
 
 
 def read_novomodelo_bus_aggregates(
@@ -1799,7 +1779,8 @@ def read_novomodelo_bus_aggregates(
         )
         all_vars.append("net_load_mw")
 
-    return _bus_scenario_percentiles(merged, all_vars)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
+    return _bus_scenario_percentiles(merged, all_vars, weights)
 
 
 def read_novomodelo_cost_breakdown(
@@ -1808,7 +1789,7 @@ def read_novomodelo_cost_breakdown(
 ) -> dict[str, float]:
     """Read cost breakdown from Novomodelo simulation costs entity.
 
-    Returns ``{category: mean_total_R$}`` averaged across scenarios,
+    Returns ``{category: mean_total_R$}``, the expectation across scenarios,
     summed across all stages and blocks.  Zero-cost categories are excluded.
 
     Parameters
@@ -1848,8 +1829,9 @@ def read_novomodelo_cost_breakdown(
         else:
             disc_exprs = [pl.col(c).sum() for c in cols]
 
-        per_sc = lf.group_by("scenario_id").agg(disc_exprs)
-        means = per_sc.select([pl.col(c).mean() for c in cols]).collect()
+        weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
+        per_sc = weights.attach(lf.group_by("scenario_id").agg(disc_exprs))
+        means = per_sc.select([weights.mean(c) for c in cols]).collect()
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to read Novomodelo cost breakdown: "
@@ -1866,7 +1848,7 @@ def read_novomodelo_cost_breakdown(
 
 
 def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
-    """Read Novomodelo per-stage immediate/future/thermal cost (mean across scenarios).
+    """Read Novomodelo per-stage immediate/future/thermal cost (expected across scenarios).
 
     Returns a DataFrame with columns ``stage_id`` (Int64), ``immediate_cost`` (Float64,
     R$), ``future_cost`` (Float64, R$), ``thermal_cost`` (Float64, R$),
@@ -1886,7 +1868,7 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
     Novomodelo's costs table is one row per ``(scenario_id, stage_id, block_id)``;
     we sum block-level immediate_cost / thermal_cost / anticipated_thermal_cost
     within each (scenario, stage) and keep the (scenario, stage) value of
-    future_cost, then average across scenarios.  ``future_cost`` is identical
+    future_cost, then take the expectation across scenarios.  ``future_cost`` is identical
     across blocks of the same stage so a ``max`` (= any) collapse is safe.
     """
     _SUM_COLS = ("immediate_cost", "thermal_cost", "anticipated_thermal_cost")
@@ -1921,8 +1903,9 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
         agg_exprs.append(pl.col("future_cost").max().alias("future_cost"))
 
     try:
-        per_sc = lf.group_by(["scenario_id", "stage_id"]).agg(agg_exprs)
-        mean_cols = [pl.col(c).mean() for c in _ALL_COLS if c in available]
+        weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
+        per_sc = weights.attach(lf.group_by(["scenario_id", "stage_id"]).agg(agg_exprs))
+        mean_cols = [weights.mean(c) for c in _ALL_COLS if c in available]
         df = per_sc.group_by("stage_id").agg(mean_cols).sort("stage_id").collect()
     except Exception as exc:
         raise NovomodeloReadError(

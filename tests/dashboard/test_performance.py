@@ -16,6 +16,7 @@ from novomodelo_bridge.dashboard.tabs.performance import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 
 # ---------------------------------------------------------------------------
 # Factory helpers
@@ -163,6 +164,7 @@ def _make_mock_data(
       - ``simulation_manifest`` -> ``simulation_metadata``.
     """
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.solver_train = solver_train if solver_train is not None else _make_solver_df()
     data.solver_sim = solver_sim if solver_sim is not None else _make_solver_df()
     data.timing = timing if timing is not None else _make_timing()

@@ -34,6 +34,7 @@ from novomodelo_bridge.dashboard.data import (
     _stage_avg_mw,
     entity_name,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
@@ -73,10 +74,12 @@ TAB_ORDER = 30
 # ---------------------------------------------------------------------------
 
 
-def _compute_total_gwh(lf: pl.LazyFrame, mwh_col: str) -> float:
+def _compute_total_gwh(
+    lf: pl.LazyFrame, mwh_col: str, weights: ScenarioWeights
+) -> float:
     """Return mean total GWh across scenarios for *mwh_col*.
 
-    Sums *mwh_col* per scenario, averages across scenarios, then converts
+    Sums *mwh_col* per scenario, averages across scenarios with *weights*, then converts
     MWh to GWh (divide by 1000).  Returns ``0.0`` when the LazyFrame is
     empty, *mwh_col* is absent, or any computation error occurs.
 
@@ -91,7 +94,8 @@ def _compute_total_gwh(lf: pl.LazyFrame, mwh_col: str) -> float:
         result = (
             lf.group_by("scenario_id")
             .agg(pl.col(mwh_col).sum())
-            .select(pl.col(mwh_col).mean())
+            .pipe(weights.attach)
+            .select(weights.mean(mwh_col))
             .collect(engine="streaming")
         )
         if result.height == 0:
@@ -106,12 +110,13 @@ def _block_weighted_avg_rate(
     lf: pl.LazyFrame,
     col: str,
     bh_df: pl.DataFrame,
+    weights: ScenarioWeights,
 ) -> float:
     """Return the block-hours-weighted horizon mean of a system-total rate.
 
     Sums *col* across entities per (scenario, stage, block), joins block
     hours, reduces to one Σ(col·hours)/Σ(hours) scalar per scenario over the
-    whole horizon, then averages across scenarios — mirrors the
+    whole horizon, then averages across scenarios with *weights* — mirrors the
     ``available_mw`` weighting in ``_render_ncs_curtailment``.  Returns
     ``0.0`` on any failure.
 
@@ -139,7 +144,8 @@ def _block_weighted_avg_rate(
                 pl.col("_bh").sum().alias("_h"),
             )
             .with_columns((pl.col("_w") / pl.col("_h")).alias("_avg"))
-            .select(pl.col("_avg").mean())
+            .pipe(weights.attach)
+            .select(weights.mean("_avg"))
             .collect(engine="streaming")
         )
         if result.height == 0:
@@ -169,24 +175,33 @@ def _build_metrics_row(data: DashboardData) -> str:
     Returns:
         An HTML string containing the section title and metrics grid.
     """
-    hydro_gwh = _compute_total_gwh(data.hydros_lf, "generation_mwh")
-    thermal_gwh = _compute_total_gwh(data.thermals_lf, "generation_mwh")
-    ncs_gwh = _compute_total_gwh(data.ncs_lf, "generation_mwh")
+    hydro_gwh = _compute_total_gwh(
+        data.hydros_lf, "generation_mwh", data.scenario_weights
+    )
+    thermal_gwh = _compute_total_gwh(
+        data.thermals_lf, "generation_mwh", data.scenario_weights
+    )
+    ncs_gwh = _compute_total_gwh(data.ncs_lf, "generation_mwh", data.scenario_weights)
 
     # Deficit: filter to non-fictitious buses only
     try:
         deficit_gwh = _compute_total_gwh(
             data.buses_lf.filter(pl.col("bus_id").is_in(data.non_fictitious_bus_ids)),
             "deficit_mwh",
+            data.scenario_weights,
         )
     except (ValueError, TypeError, KeyError, pl.exceptions.ColumnNotFoundError):
         deficit_gwh = 0.0
 
     # Spillage: expressed as average m3/s (not GWh — no productivity data here)
-    spillage_avg = _block_weighted_avg_rate(data.hydros_lf, "spillage_m3s", data.bh_df)
+    spillage_avg = _block_weighted_avg_rate(
+        data.hydros_lf, "spillage_m3s", data.bh_df, data.scenario_weights
+    )
 
     # Curtailment: expressed in GWh
-    curtailment_gwh = _compute_total_gwh(data.ncs_lf, "curtailment_mwh")
+    curtailment_gwh = _compute_total_gwh(
+        data.ncs_lf, "curtailment_mwh", data.scenario_weights
+    )
 
     cards = [
         metric_card(
@@ -241,9 +256,15 @@ def _chart_gen_mix_hero(data: DashboardData) -> go.Figure:
     Returns:
         A :class:`plotly.graph_objects.Figure`.
     """
-    h_gen = _stage_avg_mw(data.hydros_lf, "generation_mwh", data.stage_hours)
-    t_gen = _stage_avg_mw(data.thermals_lf, "generation_mwh", data.stage_hours)
-    n_gen = _stage_avg_mw(data.ncs_lf, "generation_mwh", data.stage_hours)
+    h_gen = _stage_avg_mw(
+        data.hydros_lf, "generation_mwh", data.stage_hours, data.scenario_weights
+    )
+    t_gen = _stage_avg_mw(
+        data.thermals_lf, "generation_mwh", data.stage_hours, data.scenario_weights
+    )
+    n_gen = _stage_avg_mw(
+        data.ncs_lf, "generation_mwh", data.stage_hours, data.scenario_weights
+    )
 
     load_ser = _compute_lp_load(
         data.load_stats,
@@ -331,6 +352,7 @@ def _bus_stage_avg_mw(
     id_col: str,
     mapping_df: pl.DataFrame,
     hours_df: pl.DataFrame,
+    weights: ScenarioWeights,
 ) -> pl.DataFrame:
     """Join lf to mapping_df, compute per-bus stage-average MW."""
     return (
@@ -339,8 +361,9 @@ def _bus_stage_avg_mw(
         .agg(pl.col(mwh_col).sum())
         .join(hours_df.lazy(), on="stage_id")
         .with_columns((pl.col(mwh_col) / pl.col("_hours")).alias("_avg_mw"))
+        .pipe(weights.attach)
         .group_by(["stage_id", "bus_id"])
-        .agg(pl.col("_avg_mw").mean())
+        .agg(weights.mean("_avg_mw"))
         .sort("stage_id")
         .collect(engine="streaming")
     )
@@ -366,8 +389,9 @@ def _bus_net_import_mw(
                 .agg((pl.col("net_flow_mwh") * sign).sum().alias("_imp_mwh"))
                 .join(hours_df.lazy(), on="stage_id")
                 .with_columns((pl.col("_imp_mwh") / pl.col("_hours")).alias("_mw"))
+                .pipe(data.scenario_weights.attach)
                 .group_by("stage_id")
-                .agg(pl.col("_mw").mean())
+                .agg(data.scenario_weights.mean("_mw"))
                 .collect(engine="streaming")
             )
             parts.append(part)
@@ -415,13 +439,28 @@ def _bus_generation_series(
         }
     )
     h_by_bus = _bus_stage_avg_mw(
-        data.hydros_lf, "generation_mwh", "hydro_id", hbus_df, hours_df
+        data.hydros_lf,
+        "generation_mwh",
+        "hydro_id",
+        hbus_df,
+        hours_df,
+        data.scenario_weights,
     )
     t_by_bus = _bus_stage_avg_mw(
-        data.thermals_lf, "generation_mwh", "thermal_id", tbus_df, hours_df
+        data.thermals_lf,
+        "generation_mwh",
+        "thermal_id",
+        tbus_df,
+        hours_df,
+        data.scenario_weights,
     )
     n_by_bus = _bus_stage_avg_mw(
-        data.ncs_lf, "generation_mwh", "non_controllable_id", nbus_df, hours_df
+        data.ncs_lf,
+        "generation_mwh",
+        "non_controllable_id",
+        nbus_df,
+        hours_df,
+        data.scenario_weights,
     )
 
     # Collect the union of stage IDs across all entity types
@@ -632,7 +671,9 @@ def _render_deficit_excess(data: DashboardData) -> str:
             )
             if sub.empty:
                 continue
-            pct = compute_percentiles(sub, ["stage_id"], "_mw")
+            pct = compute_percentiles(
+                sub, ["stage_id"], "_mw", weights=data.scenario_weights
+            )
             # Map stage_id -> ISO date x-position (proportional date axis)
             pct["_x"] = pct["stage_id"].map(dict(zip(stages, xdates)))
             color = BUS_COLORS[i % len(BUS_COLORS)]
@@ -698,7 +739,9 @@ def _system_storage_pct_fig(data: DashboardData) -> go.Figure:
         df_sys["_pct"] = (
             (df_sys["storage_final_hm3"] - total_vol_min) / total_useful * 100.0
         )
-        pct = compute_percentiles(df_sys, ["stage_id"], "_pct")
+        pct = compute_percentiles(
+            df_sys, ["stage_id"], "_pct", weights=data.scenario_weights
+        )
         stages = sorted(pct["stage_id"].tolist())
         xlabels_sys = stage_x_labels(stages, data.stage_labels)
         xdates_sys = stage_x_dates(stages, data.stage_dates)
@@ -820,7 +863,9 @@ def _bus_storage_pct_fig(
             else:
                 sub["_pct"] = 0.0
 
-            pct = compute_percentiles(sub, ["stage_id"], "_pct")
+            pct = compute_percentiles(
+                sub, ["stage_id"], "_pct", weights=data.scenario_weights
+            )
             pct["_x"] = pct["stage_id"].map(dict(zip(all_stages, xdates)))
             color = BUS_COLORS[idx % len(BUS_COLORS)]
             bus_name = data.bus_names.get(bus_id, str(bus_id))
@@ -959,11 +1004,13 @@ def _energy_quantiles_fig(
     stage_dates: dict[int, str],
     y_title: str,
     color: str,
+    weights: ScenarioWeights,
     scale: float = 1.0,
 ) -> go.Figure:
     """Build a stage-axis p10/p50/p90 figure from a (scenario, stage, value) frame.
 
-    *scale* is applied to the value (e.g. 1/1000 to convert MWh→GWh).
+    *scale* is applied to the value (e.g. 1/1000 to convert MWh→GWh); the
+    percentiles use *weights*.
     """
     fig = go.Figure()
     if df.is_empty():
@@ -980,7 +1027,7 @@ def _energy_quantiles_fig(
 
     pdf = df.to_pandas().copy()
     pdf["_scaled"] = pdf[value_col] * scale
-    pct = compute_percentiles(pdf, ["stage_id"], "_scaled")
+    pct = compute_percentiles(pdf, ["stage_id"], "_scaled", weights=weights)
     stages = sorted(pct["stage_id"].tolist())
     xlabels = stage_x_labels(stages, stage_labels)
     xdates = stage_x_dates(stages, stage_dates)
@@ -1037,6 +1084,7 @@ def _render_stored_energy(data: DashboardData) -> str:
         "stored_energy_final_mwh",
         stage_labels=data.stage_labels,
         stage_dates=data.stage_dates,
+        weights=data.scenario_weights,
         y_title="System EARM (GWh)",
         color=COLORS["hydro"],
         scale=1.0 / 1000.0,
@@ -1074,7 +1122,9 @@ def _render_stored_energy(data: DashboardData) -> str:
             col = idx % n_cols + 1
             sub = by_bus_df.filter(pl.col("bus_id") == bus_id).to_pandas().copy()
             sub["_gwh"] = sub["stored_energy_final_mwh"] / 1000.0
-            pct = compute_percentiles(sub, ["stage_id"], "_gwh")
+            pct = compute_percentiles(
+                sub, ["stage_id"], "_gwh", weights=data.scenario_weights
+            )
             pct["_x"] = pct["stage_id"].map(dict(zip(all_stages, xdates)))
             color = BUS_COLORS[idx % len(BUS_COLORS)]
             add_mean_p50_band(
@@ -1130,6 +1180,7 @@ def _render_inflow_energy(data: DashboardData) -> str:
         "incremental_inflow_energy_mw",
         stage_labels=data.stage_labels,
         stage_dates=data.stage_dates,
+        weights=data.scenario_weights,
         y_title="System ENA (MW)",
         color=GENERATION_COLORS.get("hydro", COLORS["hydro"]),
     )
@@ -1177,8 +1228,9 @@ def _chart_curtailment_by_source(data: DashboardData) -> go.Figure | None:
         curt_df = (
             data.ncs_lf.group_by(["scenario_id", "non_controllable_id"])
             .agg(pl.col("curtailment_mwh").sum())
+            .pipe(data.scenario_weights.attach)
             .group_by("non_controllable_id")
-            .agg(pl.col("curtailment_mwh").mean())
+            .agg(data.scenario_weights.mean("curtailment_mwh"))
             .sort("curtailment_mwh", descending=True)
             .collect(engine="streaming")
         )
@@ -1258,8 +1310,9 @@ def _render_ncs_curtailment(data: DashboardData) -> str:
             .with_columns(
                 (pl.col("generation_mwh") / pl.col("_hours")).alias("_gen_mw")
             )
+            .pipe(data.scenario_weights.attach)
             .group_by("stage_id")
-            .agg(pl.col("_gen_mw").mean())
+            .agg(data.scenario_weights.mean("_gen_mw"))
             .sort("stage_id")
             .collect(engine="streaming")
         )
@@ -1283,8 +1336,9 @@ def _render_ncs_curtailment(data: DashboardData) -> str:
                 pl.col("_bh").sum().alias("_bh_sum"),
             )
             .with_columns((pl.col("_wmw") / pl.col("_bh_sum")).alias("_avail_mw"))
+            .pipe(data.scenario_weights.attach)
             .group_by("stage_id")
-            .agg(pl.col("_avail_mw").mean())
+            .agg(data.scenario_weights.mean("_avail_mw"))
             .sort("stage_id")
             .collect(engine="streaming")
         )
@@ -1498,7 +1552,8 @@ def _build_hero_data(
         sub = df.filter(pl.col("stage_id") == stage_id)
         if sub.height == 0:
             return 0.0
-        val = sub["_avg_mw"].quantile(q, interpolation="linear")
+        weights = data.scenario_weights
+        val = weights.attach(sub).select(weights.quantile("_avg_mw", q)).item()
         return round(float(val) if val is not None else 0.0, 2)
 
     def _scenario_vals(df: pl.DataFrame, stage_id: int) -> dict[int, float]:

@@ -38,6 +38,7 @@ from novomodelo_bridge.dashboard.tabs.stochastic import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 from novomodelo_bridge.ui.html.css import dashboard_css
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ def _make_data(
 ) -> Any:
     """Build a minimal DashboardData-like mock for v2_stochastic tests."""
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.stochastic_available = stochastic_available
     data.inflow_history = (
         inflow_history

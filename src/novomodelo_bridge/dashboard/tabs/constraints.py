@@ -31,6 +31,7 @@ from novomodelo_bridge.novomodelo.constraint_expr import (
     stage_weighted_bounds,
     stage_weighted_lhs,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import (
     escape_attr,
     escape_text,
@@ -120,7 +121,7 @@ def _build_metrics_row(data: DashboardData) -> str:
         )
         violated_count = len(viol_ids)
 
-    summary = compute_cost_summary(data.costs, "component")
+    summary = compute_cost_summary(data.costs, "component", data.scenario_weights)
     generic = summary.loc[summary["group"] == "Generic Constraints", "mean"]
     cost_str = f"R$ {float(generic.sum()):,.0f}"
 
@@ -193,6 +194,7 @@ def _chart_view(
     bounds: pl.DataFrame,
     violated: pl.DataFrame,
     stages: list[int],
+    weights: ScenarioWeights,
 ) -> dict:
     """One LHS-vs-bound view: across-scenario LHS percentiles, bounds and
     violation counts per stage.
@@ -202,9 +204,13 @@ def _chart_view(
     ``scenario_id``/``stage_id`` of every nonzero slack the view covers. A
     stage with no evaluated LHS reads ``None``, never zero.
     """
-    pcts = lhs.group_by("stage_id").agg(
-        pl.col("lhs_value").quantile(q, interpolation="linear").alias(key)
-        for key, q in _LHS_QUANTILES.items()
+    pcts = (
+        weights.attach(lhs)
+        .group_by("stage_id")
+        .agg(
+            weights.quantile("lhs_value", q).alias(key)
+            for key, q in _LHS_QUANTILES.items()
+        )
     )
     counts = dict(
         violated.group_by("stage_id")
@@ -228,6 +234,7 @@ def _build_constraint_lhs_data(
     block_hours: pl.DataFrame,
     block_names: dict[int, str],
     stage_labels: dict[int, str],
+    weights: ScenarioWeights,
 ) -> dict:
     """Build the JSON-serialisable LHS-vs-bound views of every constraint.
 
@@ -249,6 +256,7 @@ def _build_constraint_lhs_data(
         block_hours: ``stage_id``/``block_id``/``hours``.
         block_names: Block id to block name.
         stage_labels: Stage id to human-readable label.
+        weights: The probability of each simulation scenario.
 
     Returns:
         Dict with ``stages``, ``xlabels``, ``n_scenarios`` and
@@ -303,6 +311,7 @@ def _build_constraint_lhs_data(
                 stage_bounds.filter(pl.col("constraint_id") == cid),
                 violated_c,
                 all_stages,
+                weights,
             ),
             "blocks": [
                 {
@@ -312,6 +321,7 @@ def _build_constraint_lhs_data(
                         bounds_c.filter(pl.col("block_id") == b),
                         violated_c.filter(pl.col("block_id") == b),
                         all_stages,
+                        weights,
                     ),
                 }
                 for b in blocks
@@ -358,6 +368,7 @@ def _build_lhs_section(
         block_hours,
         _block_names(data.stages_data),
         data.stage_labels,
+        data.scenario_weights,
     )
     data_json = json_for_script(lhs_data)
     xdates = stage_x_dates(lhs_data["stages"], data.stage_dates)

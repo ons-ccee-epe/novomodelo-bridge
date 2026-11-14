@@ -1874,6 +1874,45 @@ class TestEvaluateLhsNovomodelo:
         assert rows[(0, 0)] == pytest.approx(100.0)
         assert rows[(0, 1)] == pytest.approx(200.0)
 
+    def test_takes_the_expectation_under_the_scenario_probabilities(self) -> None:
+        """An enumerated run's stage LHS is novomodelo's expectation, so it
+        compares with the source model's probability-weighted value."""
+        from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
+        from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
+
+        hydros = pl.DataFrame(
+            {
+                "scenario_id": [0, 1],
+                "stage_id": [0, 0],
+                "block_id": [0, 0],
+                "hydro_id": [0, 0],
+                "storage_final_hm3": [100.0, 300.0],
+            }
+        ).lazy()
+        hours = pl.DataFrame(
+            {"stage_id": [0], "block_id": [0], "hours": [730.0]},
+            schema={"stage_id": pl.Int32, "block_id": pl.Int32, "hours": pl.Float64},
+        )
+        with (
+            patch(
+                "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
+                side_effect=lambda _out, entity: hydros if entity == "hydros" else None,
+            ),
+            patch(
+                "novomodelo_bridge.novomodelo.readers.read_novomodelo_block_hours",
+                return_value=hours,
+            ),
+            patch(
+                "novomodelo_bridge.novomodelo.readers.read_novomodelo_scenario_weights",
+                return_value=ScenarioWeights.from_probabilities([0, 1], [0.25, 0.75]),
+            ),
+        ):
+            result = evaluate_lhs_novomodelo(self._storage_constraint(), Path("/out"))
+
+        assert result.filter(pl.col("stage_id") == 0)["lhs_value"].item() == (
+            pytest.approx(0.25 * 100.0 + 0.75 * 300.0)
+        )
+
     def test_missing_simulation_returns_empty(self) -> None:
         """Both entities absent (None) → empty frame, no error."""
         from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo

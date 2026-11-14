@@ -17,6 +17,7 @@ from novomodelo_bridge.dashboard.tabs.training import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,6 +94,7 @@ def _make_mock_data(
     so both key names are normalised here.
     """
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.conv = conv if conv is not None else _make_conv()
     data.cut_selection = (
         cut_selection if cut_selection is not None else _make_cut_selection()

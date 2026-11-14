@@ -42,6 +42,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_line_means,
     read_novomodelo_lines,
     read_novomodelo_lp_max_generation,
+    read_novomodelo_scenario_weights,
     read_novomodelo_stage_line_bounds,
     read_novomodelo_thermal_means,
     read_novomodelo_thermal_metadata,
@@ -1871,3 +1872,116 @@ class TestNovomodeloSoftwareVersion:
     def test_absent_or_non_string_returns_none(self) -> None:
         assert novomodelo_software_version({}) is None
         assert novomodelo_software_version({"software_version": 18}) is None
+
+
+# ---------------------------------------------------------------------------
+# read_novomodelo_scenario_weights: the probability of each simulation scenario
+# ---------------------------------------------------------------------------
+
+
+def _write_scenario_summary(
+    output_dir: Path, probabilities: list[float | None]
+) -> Path:
+    path = output_dir / "simulation" / "scenario_summary.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(
+            {
+                "scenario_id": pa.array(range(len(probabilities)), type=pa.int32()),
+                "probability": pa.array(probabilities, type=pa.float64()),
+                "discounted_immediate_cost": pa.array(
+                    [1.0] * len(probabilities), type=pa.float64()
+                ),
+            }
+        ),
+        path,
+    )
+    return path
+
+
+class TestReadNovomodeloScenarioWeights:
+    def test_enumerated_run_reads_each_probability(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        _write_scenario_summary(out, [0.25, 0.75])
+
+        weights = read_novomodelo_scenario_weights(out)
+
+        assert weights.probabilities is not None
+        assert dict(weights.probabilities.iter_rows()) == {0: 0.25, 1: 0.75}
+
+    def test_sampled_run_weighs_scenarios_the_same(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        _write_scenario_summary(out, [None, None, None])
+
+        assert read_novomodelo_scenario_weights(out).uniform
+
+    def test_training_only_run_weighs_scenarios_the_same(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        out = tmp_path / "output"
+        out.mkdir()
+
+        assert read_novomodelo_scenario_weights(out).uniform
+        assert not caplog.records
+
+    def test_simulation_without_a_summary_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        out = tmp_path / "output"
+        (out / "simulation").mkdir(parents=True)
+
+        assert read_novomodelo_scenario_weights(out).uniform
+        assert "equal weights" in caplog.text
+
+    def test_some_scenarios_without_a_probability_raise(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        _write_scenario_summary(out, [0.5, None])
+
+        with pytest.raises(NovomodeloReadError, match="1 of 2 scenarios"):
+            read_novomodelo_scenario_weights(out)
+
+    def test_corrupt_summary_raises(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        _write_corrupt_parquet(out / "simulation" / "scenario_summary.parquet")
+
+        with pytest.raises(NovomodeloReadError):
+            read_novomodelo_scenario_weights(out)
+
+
+class TestMeansReadersUseTheScenarioProbabilities:
+    """A means reader returns novomodelo's expectation, not the sample mean."""
+
+    @staticmethod
+    def _two_scenario_thermals(output_dir: Path) -> None:
+        for scenario_id, generation in ((0, 100.0), (1, 200.0)):
+            _write_sim_entity_partition(
+                output_dir,
+                "thermals",
+                scenario_id,
+                [
+                    {
+                        "stage_id": 0,
+                        "block_id": 0,
+                        "thermal_id": 0,
+                        "generation_mw": generation,
+                    }
+                ],
+            )
+
+    def test_enumerated_run_takes_the_expectation(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        self._two_scenario_thermals(out)
+        _write_scenario_summary(out, [0.25, 0.75])
+
+        means = read_novomodelo_thermal_means(out)
+
+        assert means["generation_mw"].to_list() == pytest.approx([175.0])
+
+    def test_sampled_run_takes_the_sample_mean(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        self._two_scenario_thermals(out)
+        _write_scenario_summary(out, [None, None])
+
+        means = read_novomodelo_thermal_means(out)
+
+        assert means["generation_mw"].to_list() == pytest.approx([150.0])

@@ -1,8 +1,8 @@
-"""Tests for the scenario-tree unweighted-averages diagnostic (DASH-03).
+"""Tests for ``DashboardData`` loading.
 
-Covers ``load_temporal_context``'s ``dashboard-unweighted-tree-averages``
-emission/silence (tier-1, no ``novomodelo`` import, no ``example/`` deck) and its
-surfacing through the ``dashboard`` CLI command's diagnostics sink.
+Covers the temporal context, the scenario probabilities a run that enumerates
+its leaf paths carries, the sub-struct shims, and the degraded loads of a
+partial case (tier-1, no ``novomodelo`` import, no ``example/`` deck).
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import pyarrow.parquet as pq
 import pytest
 from typer.testing import CliRunner
 
-from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.dashboard.data import (
     DashboardData,
     _cut_selection_per_stage,
@@ -37,8 +36,6 @@ from tests.conftest import (
     requires_writer_binding,
 )
 
-_DIAG_CODE = "dashboard-unweighted-tree-averages"
-
 _SIMULATION_ENTITIES = (
     "buses",
     "costs",
@@ -49,34 +46,11 @@ _SIMULATION_ENTITIES = (
     "thermals",
 )
 
-#: Repo-internal references that must NEVER leak into this diagnostic's
-#: summary/remediation: a pip-installed user has no repo checkout, no
-#: converter vocabulary, and no file layout to resolve any of these against.
-#: Mirrors ``test_remediation_has_no_repo_internal_references`` in the
-#: DECOMP boundary-FCF capability tests.
-_REPO_INTERNAL_LEAKS = (
-    ".py",
-    ".json",
-    "docs/",
-    "plans/",
-    "~/git",
-    "feat/",
-    "ticket-",
-    "epic-",
-    "policy_graph",
-    "stages.json",
-    "novomodelo_bridge",
-)
-
 
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
 
-
-# ---------------------------------------------------------------------------
-# Minimal fixture for load_temporal_context (tier-1 emission/silence tests)
-# ---------------------------------------------------------------------------
 
 #: A DECOMP-shaped node list: a trunk node feeding a two-way terminal fan
 #: (mirrors ``decomp.temporal.build_node_graph``'s node shape).
@@ -86,27 +60,8 @@ _TREE_NODES: list[dict[str, Any]] = [
     {"id": 2, "stage_id": 1, "scenario_id": 1, "label": "fan-1"},
 ]
 
-
-def _minimal_case(tmp_path: Path, *, policy_graph: dict[str, Any] | None) -> Path:
-    """The 3 files ``load_temporal_context`` reads, nothing else.
-
-    *policy_graph*, when given, is written verbatim under ``stages.json``'s
-    ``policy_graph`` key; omitted (``None``) reproduces the source-model
-    track's shape, which carries no ``policy_graph`` key at all.
-    """
-    case_dir = tmp_path / "case"
-    _write_json(case_dir / "config.json", {"discount_rate": 0.1})
-    stages: dict[str, Any] = {
-        "stages": [
-            {"id": 0, "blocks": [{"id": 0, "hours": 730.0}]},
-            {"id": 1, "blocks": [{"id": 0, "hours": 730.0}]},
-        ]
-    }
-    if policy_graph is not None:
-        stages["policy_graph"] = policy_graph
-    _write_json(case_dir / "stages.json", stages)
-    _write_json(case_dir / "system" / "lines.json", {"lines": []})
-    return case_dir
+#: The probability of each fan branch, and so of each enumerated scenario.
+_TREE_PROBABILITIES = (0.25, 0.75)
 
 
 def _tree_policy_graph() -> dict[str, Any]:
@@ -115,8 +70,8 @@ def _tree_policy_graph() -> dict[str, Any]:
         "annual_discount_rate": 0.1,
         "nodes": _TREE_NODES,
         "transitions": [
-            {"source_id": 0, "target_id": 1, "probability": 0.5},
-            {"source_id": 0, "target_id": 2, "probability": 0.5},
+            {"source_id": 0, "target_id": 1, "probability": _TREE_PROBABILITIES[0]},
+            {"source_id": 0, "target_id": 2, "probability": _TREE_PROBABILITIES[1]},
         ],
     }
 
@@ -143,93 +98,38 @@ class TestLoadTemporalContextAbsentLinesJson:
         assert context.line_meta == []
 
 
-class TestTreeAveragesDiagnosticEmission:
-    """Emit on a non-empty ``nodes`` list; silent otherwise."""
-
-    def test_emits_on_nonempty_nodes(self, tmp_path: Path) -> None:
-        case_dir = _minimal_case(tmp_path, policy_graph=_tree_policy_graph())
-
-        with dx.collect() as collected:
-            load_temporal_context(case_dir)
-
-        matches = [d for d in collected if d.code == _DIAG_CODE]
-        assert len(matches) == 1
-        assert matches[0].severity is dx.Severity.WARNING
-        assert matches[0].category == "Dashboard data"
-
-    def test_silent_when_no_policy_graph_key(self, tmp_path: Path) -> None:
-        case_dir = _minimal_case(tmp_path, policy_graph=None)
-
-        with dx.collect() as collected:
-            load_temporal_context(case_dir)
-
-        assert not [d for d in collected if d.code == _DIAG_CODE]
-
-    def test_silent_when_policy_graph_has_no_nodes_key(self, tmp_path: Path) -> None:
-        """The source-model track's ``transitions``-only shape must not
-        false-positive on a ``transitions``-based check (it has none — this
-        pins the marker to ``nodes`` presence, not ``transitions``)."""
-        policy_graph = {
-            "type": "linear",
-            "annual_discount_rate": 0.1,
-            "transitions": [{"source_id": 0, "target_id": 1, "probability": 1.0}],
-        }
-        case_dir = _minimal_case(tmp_path, policy_graph=policy_graph)
-
-        with dx.collect() as collected:
-            load_temporal_context(case_dir)
-
-        assert not [d for d in collected if d.code == _DIAG_CODE]
-
-    def test_silent_when_nodes_is_empty_list(self, tmp_path: Path) -> None:
-        policy_graph = {
-            "type": "finite_horizon",
-            "annual_discount_rate": 0.1,
-            "nodes": [],
-            "transitions": [],
-        }
-        case_dir = _minimal_case(tmp_path, policy_graph=policy_graph)
-
-        with dx.collect() as collected:
-            load_temporal_context(case_dir)
-
-        assert not [d for d in collected if d.code == _DIAG_CODE]
-
-
-class TestTreeAveragesDiagnosticMessageHygiene:
-    """The message reaches pip-installed end users with no repo checkout."""
-
-    def test_no_repo_internal_references(self, tmp_path: Path) -> None:
-        case_dir = _minimal_case(tmp_path, policy_graph=_tree_policy_graph())
-
-        with dx.collect() as collected:
-            load_temporal_context(case_dir)
-
-        diag = next(d for d in collected if d.code == _DIAG_CODE)
-        assert diag.remediation
-
-        for text in (diag.summary, diag.remediation):
-            for leak in _REPO_INTERNAL_LEAKS:
-                assert leak not in text, f"leaks {leak!r}: {text!r}"
-            # No "/"-separated path fragment of any kind.
-            assert "/" not in text
-            # No private (_-prefixed) symbol.
-            for token in text.replace(",", " ").replace(".", " ").split():
-                assert not token.startswith("_"), (
-                    f"leaks a private symbol {token!r}: {text!r}"
-                )
-
-
 # ---------------------------------------------------------------------------
-# Full synthetic case for the CliRunner surfacing test
+# Full synthetic case
 # ---------------------------------------------------------------------------
+
+
+def _write_scenario_summary(
+    case_dir: Path, probabilities: Sequence[float | None]
+) -> None:
+    """``simulation/scenario_summary.parquet``, one row per scenario."""
+    path = case_dir / "output" / "simulation" / "scenario_summary.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(
+            {
+                "scenario_id": pa.array(range(len(probabilities)), type=pa.int32()),
+                "probability": pa.array(probabilities, type=pa.float64()),
+                "discounted_immediate_cost": pa.array(
+                    [5.0e8] * len(probabilities), type=pa.float64()
+                ),
+            }
+        ),
+        path,
+    )
 
 
 def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
     """A complete, self-contained Novomodelo case directory ``build_dashboard()`` can
     render end-to-end (mirrors ``TestDashboardIntegration.case_dir``, proven
     against the real ``build_dashboard()`` pipeline). *tree* adds a non-empty
-    ``policy_graph.nodes`` list.
+    ``policy_graph.nodes`` list and simulates its two leaf paths, with
+    :data:`_TREE_PROBABILITIES`; otherwise the two scenarios are sampled.
+    Scenario 1's hydro generation is twice scenario 0's.
     """
     case = tmp_path / ("tree_case" if tree else "linear_case")
     case.mkdir()
@@ -296,7 +196,7 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
     _write_json(case / "system" / "lines.json", {"lines": []})
     _write_json(
         case / "system" / "non_controllable_sources.json",
-        {"non_controllable_sources": []},
+        {"non_controllable_sources": [{"id": 0, "name": "WIND_A", "bus_id": 0}]},
     )
 
     (case / "scenarios").mkdir(parents=True, exist_ok=True)
@@ -400,8 +300,17 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
             ),
         }
     )
+    generation = hydro_table.column("generation_mwh").to_pylist()
     for sid in (0, 1):
-        _write_sim_parquet("hydros", sid, hydro_table)
+        _write_sim_parquet(
+            "hydros",
+            sid,
+            hydro_table.set_column(
+                hydro_table.schema.get_field_index("generation_mwh"),
+                "generation_mwh",
+                pa.array([v * (1 + sid) for v in generation], type=pa.float64()),
+            ),
+        )
 
     thermal_table = pa.table(
         {
@@ -504,52 +413,15 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
     for sid in (0, 1):
         _write_sim_parquet("costs", sid, cost_table)
 
+    _write_scenario_summary(case, _TREE_PROBABILITIES if tree else (None, None))
     return case
-
-
-class TestDashboardCliSurfacesTreeAveragesDiagnostic:
-    """The dashboard command surfaces the diagnostic via CliRunner."""
-
-    @staticmethod
-    def _invoke(argv: list[str]) -> Any:
-        from novomodelo_bridge.cli import app
-
-        return CliRunner().invoke(app, argv)
-
-    def test_non_json_prints_title_on_stderr(self, tmp_path: Path) -> None:
-        case_dir = _build_full_case(tmp_path, tree=True)
-
-        result = self._invoke(["dashboard", str(case_dir)])
-
-        assert result.exit_code == 0, result.output
-        assert "Scenario tree averages are not probability-weighted" in result.stderr
-
-    def test_json_verdict_includes_code_and_exits_zero(self, tmp_path: Path) -> None:
-        case_dir = _build_full_case(tmp_path, tree=True)
-
-        result = self._invoke(["dashboard", str(case_dir), "--json"])
-
-        assert result.exit_code == 0, result.output
-        document = json.loads(result.stdout)
-        assert document["command"] == "dashboard"
-        codes = [d["code"] for d in document["diagnostics"]]
-        assert _DIAG_CODE in codes
-
-    def test_linear_case_has_no_tree_diagnostic(self, tmp_path: Path) -> None:
-        case_dir = _build_full_case(tmp_path, tree=False)
-
-        result = self._invoke(["dashboard", str(case_dir), "--json"])
-
-        assert result.exit_code == 0, result.output
-        document = json.loads(result.stdout)
-        codes = [d["code"] for d in document["diagnostics"]]
-        assert _DIAG_CODE not in codes
 
 
 @pytest.mark.parametrize("tree", [True, False])
 def test_build_full_case_fixture_is_valid(tmp_path: Path, tree: bool) -> None:
-    """Guards the fixture itself: ``build_dashboard()`` must complete without
-    raising regardless of the ``tree`` flag, independent of the CLI layer."""
+    """Guards the fixture itself: ``build_dashboard()`` renders every tab
+    whether the scenarios are sampled or enumerated with probabilities,
+    independent of the CLI layer."""
     from novomodelo_bridge.dashboard import build_dashboard
 
     case_dir = _build_full_case(tmp_path, tree=tree)
@@ -557,7 +429,60 @@ def test_build_full_case_fixture_is_valid(tmp_path: Path, tree: bool) -> None:
 
     build_dashboard(case_dir, output_path)
 
-    assert output_path.exists()
+    assert "failed to render" not in output_path.read_text(encoding="utf-8")
+
+
+class TestScenarioWeights:
+    """A run that enumerates its leaf paths weighs each scenario by its
+    probability; a sampled run weighs them the same."""
+
+    def test_enumerated_run_loads_each_scenario_probability(
+        self, tmp_path: Path
+    ) -> None:
+        data = DashboardData.load(_build_full_case(tmp_path, tree=True))
+
+        probabilities = data.scenario_weights.probabilities
+        assert probabilities is not None
+        assert dict(probabilities.iter_rows()) == dict(enumerate(_TREE_PROBABILITIES))
+
+    def test_sampled_run_weighs_scenarios_the_same(self, tmp_path: Path) -> None:
+        data = DashboardData.load(_build_full_case(tmp_path, tree=False))
+
+        assert data.scenario_weights.uniform
+
+    def test_expected_generation_uses_the_probabilities(self, tmp_path: Path) -> None:
+        from novomodelo_bridge.dashboard.tabs.overview import _compute_gen_gwh
+
+        data = DashboardData.load(_build_full_case(tmp_path, tree=True))
+
+        # 180 GWh in scenario 0 and 360 GWh in scenario 1; uniform gives 270.
+        assert _compute_gen_gwh(data.hydros_lf, data.scenario_weights) == pytest.approx(
+            0.25 * 180.0 + 0.75 * 360.0
+        )
+
+    def test_dashboard_exits_1_when_only_some_scenarios_have_a_probability(
+        self, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.cli import app
+
+        case_dir = _build_full_case(tmp_path, tree=True)
+        _write_scenario_summary(case_dir, [0.5, None])
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "dashboard",
+                str(case_dir),
+                "--output",
+                str(tmp_path / "dashboard.html"),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 1, result.output
+        document = json.loads(result.stdout)
+        assert document["status"] == "error"
+        assert "1 of 2 scenarios have no probability" in json.dumps(document)
 
 
 # ---------------------------------------------------------------------------

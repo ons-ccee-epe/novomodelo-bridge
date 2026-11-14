@@ -26,6 +26,7 @@ from novomodelo_bridge.dashboard.tabs.costs import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 from novomodelo_bridge.ui.theme import COST_TOTAL_COLOR
 
 # ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ def _make_mock_data(
     LazyFrames, which causes OOM.
     """
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.costs = costs if costs is not None else _make_costs_df(n_scenarios, n_stages)
     data.discount_rate = discount_rate
     data.n_scenarios = n_scenarios
@@ -302,6 +304,7 @@ def _make_mock_data_full(
 ) -> MagicMock:
     """Build a MagicMock satisfying the full DashboardData interface."""
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.costs = costs if costs is not None else _make_costs_df(n_scenarios, n_stages)
     data.discount_rate = discount_rate
     data.n_scenarios = n_scenarios

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import polars as pl
 
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
@@ -160,9 +161,20 @@ def _weighted_lp_generation_bounds(
     return result
 
 
+def _percentile_bands(columns: list[str], weights: ScenarioWeights) -> list[pl.Expr]:
+    """``<column>_p10``/``_p50``/``_p90`` of each column across scenarios."""
+    return [
+        weights.quantile(m, q).alias(f"{m}_p{round(q * 100)}")
+        for m in columns
+        for q in (0.1, 0.5, 0.9)
+    ]
+
+
 def _compute_hydro_percentiles(
     hydros_lf: pl.LazyFrame,
     bh_df: pl.DataFrame,
+    *,
+    weights: ScenarioWeights,
 ) -> pl.DataFrame:
     """Compute per-plant p10/p50/p90 percentiles for all 7 variables.
 
@@ -191,24 +203,9 @@ def _compute_hydro_percentiles(
                     for m in available_flow
                 ]
             )
+            .pipe(weights.attach)
             .group_by(["stage_id", "hydro_id"])
-            .agg(
-                [
-                    expr
-                    for m in available_flow
-                    for expr in [
-                        pl.col(m)
-                        .quantile(0.1, interpolation="linear")
-                        .alias(f"{m}_p10"),
-                        pl.col(m)
-                        .quantile(0.5, interpolation="linear")
-                        .alias(f"{m}_p50"),
-                        pl.col(m)
-                        .quantile(0.9, interpolation="linear")
-                        .alias(f"{m}_p90"),
-                    ]
-                ]
-            )
+            .agg(_percentile_bands(available_flow, weights))
             .sort(["hydro_id", "stage_id"])
             .collect(engine="streaming")
         )
@@ -221,24 +218,9 @@ def _compute_hydro_percentiles(
             hydros_lf.filter(pl.col("block_id") == 0)
             .group_by(["scenario_id", "stage_id", "hydro_id"])
             .agg([pl.col(m).mean() for m in available_stage])
+            .pipe(weights.attach)
             .group_by(["stage_id", "hydro_id"])
-            .agg(
-                [
-                    expr
-                    for m in available_stage
-                    for expr in [
-                        pl.col(m)
-                        .quantile(0.1, interpolation="linear")
-                        .alias(f"{m}_p10"),
-                        pl.col(m)
-                        .quantile(0.5, interpolation="linear")
-                        .alias(f"{m}_p50"),
-                        pl.col(m)
-                        .quantile(0.9, interpolation="linear")
-                        .alias(f"{m}_p90"),
-                    ]
-                ]
-            )
+            .agg(_percentile_bands(available_stage, weights))
             .sort(["hydro_id", "stage_id"])
             .collect(engine="streaming")
         )
@@ -422,6 +404,8 @@ _THERMAL_VAR_SHORT: dict[str, str] = {
 def _compute_thermal_percentiles(
     thermals_lf: pl.LazyFrame,
     bh_df: pl.DataFrame,
+    *,
+    weights: ScenarioWeights,
 ) -> pl.DataFrame:
     """Compute per-plant p10/p50/p90 percentiles for all 3 thermal variables.
 
@@ -449,18 +433,9 @@ def _compute_thermal_percentiles(
         .agg(
             [(pl.col(m) * pl.col("_bh")).sum() / pl.col("_bh").sum() for m in available]
         )
+        .pipe(weights.attach)
         .group_by(["stage_id", "thermal_id"])
-        .agg(
-            [
-                expr
-                for m in available
-                for expr in [
-                    pl.col(m).quantile(0.1, interpolation="linear").alias(f"{m}_p10"),
-                    pl.col(m).quantile(0.5, interpolation="linear").alias(f"{m}_p50"),
-                    pl.col(m).quantile(0.9, interpolation="linear").alias(f"{m}_p90"),
-                ]
-            ]
-        )
+        .agg(_percentile_bands(available, weights))
         .sort(["thermal_id", "stage_id"])
         .collect(engine="streaming")
     )
@@ -752,6 +727,8 @@ def build_thermal_explorer(
     stage_dates: dict[int, str],
     lp_bounds: pd.DataFrame,
     bh_df: pl.DataFrame,
+    *,
+    weights: ScenarioWeights,
 ) -> str:
     """Build the HTML for the thermal plant explorer sub-tab (data + JS only).
 
@@ -764,7 +741,7 @@ def build_thermal_explorer(
     if not thermal_meta:
         return "<p>No thermal plant data available.</p>"
 
-    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df)
+    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df, weights=weights)
     thermal_data, xdates = _build_thermal_json(
         thermal_meta=thermal_meta,
         percentiles=percentiles,
@@ -1132,6 +1109,8 @@ def build_hydro_explorer(
     bh_df: pl.DataFrame,
     hydro_bounds: pd.DataFrame,
     lp_bounds: pd.DataFrame,
+    *,
+    weights: ScenarioWeights,
 ) -> str:
     """Build the HTML for the hydro plant explorer sub-tab.
 
@@ -1141,7 +1120,7 @@ def build_hydro_explorer(
     if not hydro_meta:
         return "<p>No hydro plant data available.</p>"
 
-    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df)
+    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df, weights=weights)
     hydro_data, xdates = _build_hydro_json(
         hydro_meta=hydro_meta,
         percentiles=percentiles,
@@ -1193,6 +1172,7 @@ def render(data: DashboardData) -> str:
         bh_df=data.bh_df,
         hydro_bounds=data.hydro_bounds,
         lp_bounds=data.lp_bounds,
+        weights=data.scenario_weights,
     )
     thermal_content = build_thermal_explorer(
         thermals_lf=data.thermals_lf,
@@ -1201,6 +1181,7 @@ def render(data: DashboardData) -> str:
         stage_dates=data.stage_dates,
         lp_bounds=data.lp_bounds,
         bh_df=data.bh_df,
+        weights=data.scenario_weights,
     )
 
     sub_tab_bar = (

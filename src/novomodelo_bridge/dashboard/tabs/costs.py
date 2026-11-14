@@ -34,8 +34,10 @@ from novomodelo_bridge.dashboard.chart_helpers import (
     cost_columns,
     group_costs,
     make_chart_card,
+    scenario_means,
 )
 from novomodelo_bridge.novomodelo.cost_categories import VIOLATIONS
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
@@ -103,8 +105,12 @@ def _build_metrics_row(data: DashboardData) -> str:
             ]
         )
 
-    components = _summary_means(compute_cost_summary(data.costs, "component"))
-    categories = _summary_means(compute_cost_summary(data.costs, "category"))
+    components = _summary_means(
+        compute_cost_summary(data.costs, "component", data.scenario_weights)
+    )
+    categories = _summary_means(
+        compute_cost_summary(data.costs, "category", data.scenario_weights)
+    )
     values = (
         sum(components.values()),
         components["Thermal"],
@@ -123,7 +129,7 @@ def _render_npv_section(data: DashboardData) -> str:
     """The NPV cards, then the bar chart and table of each component's NPV."""
     metrics_html = _build_metrics_row(data)
 
-    summary = compute_cost_summary(data.costs, "component")
+    summary = compute_cost_summary(data.costs, "component", data.scenario_weights)
     summary = summary[summary["mean"] > 0]
     if summary.empty:
         no_data = wrap_chart("<p>No cost data available.</p>")
@@ -141,13 +147,16 @@ def _render_npv_section(data: DashboardData) -> str:
 
 
 def _stage_means(
-    by_stage_scen: pd.DataFrame, columns: list[str], level: CostLevel
+    by_stage_scen: pd.DataFrame,
+    columns: list[str],
+    level: CostLevel,
+    weights: ScenarioWeights,
 ) -> dict[str, list[float]]:
     """Each *level* entry's mean cost per stage across scenarios, for the
     entries that are non-zero in some stage, in taxonomy order."""
     grouped = group_costs(by_stage_scen, columns, level)
     labels = [*COST_GROUPS[level], OTHER_COSTS]
-    means = grouped.groupby("stage_id")[labels].mean().sort_index()
+    means = scenario_means(grouped, ["stage_id"], labels, weights)
     return {
         label: [round(float(v), 2) for v in means[label]]
         for label in labels
@@ -177,23 +186,24 @@ def _build_composition_data(data: DashboardData) -> dict | None:
         data.costs.groupby(["scenario_id", "stage_id"])[columns].sum().reset_index()
     )
     views: dict[CostLevel, dict[str, list[float]]] = {
-        "category": _stage_means(by_stage_scen, columns, "category"),
-        "component": _stage_means(by_stage_scen, columns, "component"),
+        "category": _stage_means(
+            by_stage_scen, columns, "category", data.scenario_weights
+        ),
+        "component": _stage_means(
+            by_stage_scen, columns, "component", data.scenario_weights
+        ),
     }
     if not views["component"]:
         return None
 
     stages = sorted(by_stage_scen["stage_id"].unique().tolist())
     by_stage_scen["_total"] = by_stage_scen[columns].sum(axis=1)
-    total_pct = (
-        by_stage_scen.groupby("stage_id")["_total"]
-        .agg(
-            mean="mean",
-            p10=lambda x: x.quantile(0.1),
-            p90=lambda x: x.quantile(0.9),
-        )
-        .reset_index()
-        .sort_values("stage_id")
+    total_pct = compute_percentiles(
+        by_stage_scen,
+        ["stage_id"],
+        "_total",
+        weights=data.scenario_weights,
+        percentiles=(0.1, 0.9),
     )
     total: dict[str, list[float]] = {
         key: [round(float(v), 2) for v in total_pct[key].tolist()]
@@ -411,7 +421,9 @@ def _render_spot_price(data: DashboardData) -> str:
         if sub_pl.is_empty():
             continue
         sub = sub_pl.to_pandas()
-        pct = compute_percentiles(sub, ["stage_id"], "w_spot")
+        pct = compute_percentiles(
+            sub, ["stage_id"], "w_spot", weights=data.scenario_weights
+        )
         if pct.empty:
             continue
         pct["_x"] = pct["stage_id"].map(stage_to_x)
@@ -495,7 +507,9 @@ def _chart_violation_timeline(data: DashboardData) -> go.Figure | None:
         return None
 
     labels = [c for c in per_stage_scen.columns if c not in ("scenario_id", "stage_id")]
-    by_stage = per_stage_scen.groupby("stage_id")[labels].mean().sort_index()
+    by_stage = scenario_means(
+        per_stage_scen, ["stage_id"], labels, data.scenario_weights
+    )
     shown = [label for label in labels if by_stage[label].sum() > 0]
     if not shown:
         return None
@@ -544,7 +558,10 @@ def _render_violations(data: DashboardData) -> str:
         labels = [
             c for c in per_stage_scen.columns if c not in ("scenario_id", "stage_id")
         ]
-        means = per_stage_scen.groupby("scenario_id")[labels].sum().mean()
+        per_scenario = per_stage_scen.groupby("scenario_id")[labels].sum()
+        means = scenario_means(
+            per_scenario.reset_index(), [], labels, data.scenario_weights
+        ).iloc[0]
         totals = {label: float(v) for label, v in means.items() if v > 0}
     if not totals:
         return collapsible_section(

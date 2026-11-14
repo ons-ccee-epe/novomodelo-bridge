@@ -25,6 +25,7 @@ from novomodelo_bridge.novomodelo.cost_categories import (
     COST_COMPONENT_BY_LABEL,
     COST_KEY_COLUMNS,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import wrap_chart
 from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS as _LEGEND,
@@ -49,20 +50,23 @@ def compute_percentiles(
     df: pd.DataFrame | pl.DataFrame,
     group_cols: list[str],
     value_col: str,
+    *,
+    weights: ScenarioWeights,
     percentiles: tuple[float, ...] = (0.1, 0.5, 0.9),
 ) -> pd.DataFrame:
     """Group *df* and compute mean plus named percentile columns.
 
     Accepts either a :class:`pandas.DataFrame` or a :class:`polars.DataFrame`.
-    Polars input is converted to pandas internally before aggregation.
 
     Args:
-        df: Source data.  Must contain all columns in *group_cols* and
+        df: Source data, one row per scenario within each group.  Must
+            contain ``scenario_id``, all columns in *group_cols* and
             *value_col*.
         group_cols: Column names to group by (e.g. ``["stage_id"]``).
         value_col: Name of the numeric column to aggregate.
+        weights: The scenario weights the mean and percentiles use.
         percentiles: Quantile levels.  Each value ``p`` produces a column
-            named ``p{int(p * 100)}``, e.g. ``0.1`` -> ``"p10"``.
+            named ``p{round(p * 100)}``, e.g. ``0.1`` -> ``"p10"``.
 
     Returns:
         A :class:`pandas.DataFrame` with columns
@@ -71,21 +75,43 @@ def compute_percentiles(
         Returns an empty :class:`pandas.DataFrame` with the expected columns
         when *df* is empty.
     """
-    # Convert polars to pandas if necessary
-    if isinstance(df, pl.DataFrame):
-        df = df.to_pandas()
+    frame = df if isinstance(df, pl.DataFrame) else pl.from_pandas(df)
+    pct_col_names = [f"p{round(p * 100)}" for p in percentiles]
+    if frame.is_empty():
+        return pd.DataFrame(columns=group_cols + ["mean"] + pct_col_names)
 
-    pct_col_names = [f"p{int(p * 100)}" for p in percentiles]
-    expected_cols = group_cols + ["mean"] + pct_col_names
+    return (
+        weights.attach(frame)
+        .group_by(group_cols)
+        .agg(
+            weights.mean(value_col).alias("mean"),
+            *(
+                weights.quantile(value_col, p).alias(name)
+                for p, name in zip(percentiles, pct_col_names, strict=True)
+            ),
+        )
+        .sort(group_cols)
+        .to_pandas()
+    )
 
-    if df.empty:
-        return pd.DataFrame(columns=expected_cols)
 
-    grouped = df.groupby(group_cols, sort=True)[value_col]
-    result = grouped.mean().rename("mean").to_frame()
-    for p, col_name in zip(percentiles, pct_col_names):
-        result[col_name] = grouped.quantile(p)
-    return result.reset_index()
+def scenario_means(
+    df: pd.DataFrame,
+    by: list[str],
+    columns: list[str],
+    weights: ScenarioWeights,
+) -> pd.DataFrame:
+    """The mean of each of *columns* across scenarios per *by* group, with
+    *weights*, indexed by *by* in ascending order.
+
+    *df* holds one row per scenario within each group, with ``scenario_id``.
+    With no *by*, the result is one row.
+    """
+    frame = weights.attach(pl.from_pandas(df[["scenario_id", *by, *columns]]))
+    means = [weights.mean(c) for c in columns]
+    if not by:
+        return frame.select(means).to_pandas()
+    return frame.group_by(by).agg(means).sort(by).to_pandas().set_index(by)
 
 
 def stage_hours_weighted_mean(
@@ -279,12 +305,14 @@ def group_costs(
     return result.drop(columns=[c for c in columns if c in result.columns])
 
 
-def compute_cost_summary(costs_df: pd.DataFrame, level: CostLevel) -> pd.DataFrame:
+def compute_cost_summary(
+    costs_df: pd.DataFrame, level: CostLevel, weights: ScenarioWeights
+) -> pd.DataFrame:
     """The NPV of each *level* entry, with its spread across scenarios.
 
     Discounts the components, sums each scenario's over the stages, groups them
     by *level*, then takes the mean, standard deviation, p10 and p90 across
-    scenarios, and each entry's share of the total mean.
+    scenarios with *weights*, and each entry's share of the total mean.
 
     Returns:
         Columns ``["group", "mean", "std", "p10", "p90", "pct"]``, one row per
@@ -297,19 +325,23 @@ def compute_cost_summary(costs_df: pd.DataFrame, level: CostLevel) -> pd.DataFra
 
     columns = cost_columns(costs_df)
     discounted = compute_npv_costs(costs_df)
-    per_scenario = (
-        discounted.groupby("scenario_id")[columns].sum().reset_index()
-        if "scenario_id" in discounted.columns
-        else discounted[columns]
-    )
+    per_scenario = discounted.groupby("scenario_id")[columns].sum().reset_index()
     grouped = group_costs(per_scenario, columns, level)
     group_cols = [*COST_GROUPS[level], OTHER_COSTS]
 
-    agg = grouped[group_cols].agg(
-        ["mean", "std", lambda q: q.quantile(0.1), lambda q: q.quantile(0.9)]
+    agg = (
+        pl.from_pandas(grouped[["scenario_id", *group_cols]])
+        .unpivot(on=group_cols, index="scenario_id", variable_name="group")
+        .pipe(weights.attach)
+        .group_by("group", maintain_order=True)
+        .agg(
+            weights.mean("value").alias("mean"),
+            weights.std("value").alias("std"),
+            weights.quantile("value", 0.1).alias("p10"),
+            weights.quantile("value", 0.9).alias("p90"),
+        )
+        .to_pandas()
     )
-    agg.index = ["mean", "std", "p10", "p90"]
-    agg = agg.T.reset_index().rename(columns={"index": "group"})
 
     total_mean = agg["mean"].sum()
     agg["pct"] = (agg["mean"] / total_mean * 100.0) if total_mean != 0.0 else 0.0

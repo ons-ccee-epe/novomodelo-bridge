@@ -29,8 +29,10 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_hydro_metadata,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
+    read_novomodelo_scenario_weights,
     read_novomodelo_training_metadata,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 
 logger = logging.getLogger(__name__)
 
@@ -315,12 +317,13 @@ def _stage_avg_mw(
     lf: pl.LazyFrame,
     mwh_col: str,
     stage_hours: dict[int, float],
+    weights: ScenarioWeights,
 ) -> dict[int, float]:
     """Compute stage-average MW from MWh summed across all blocks via LazyFrame.
 
     Scans all blocks (no block_id filter), sums ``mwh_col`` per
-    (scenario, stage), divides by total stage hours, then averages across
-    scenarios.
+    (scenario, stage), divides by total stage hours, then takes the
+    expectation across scenarios with *weights*.
 
     Returns ``{stage_id: avg_mw}``.
     """
@@ -332,8 +335,9 @@ def _stage_avg_mw(
         .agg(pl.col(mwh_col).sum())
         .join(hours_df.lazy(), on="stage_id")
         .with_columns((pl.col(mwh_col) / pl.col("_hours")).alias("_avg_mw"))
+        .pipe(weights.attach)
         .group_by("stage_id")
-        .agg(pl.col("_avg_mw").mean())
+        .agg(weights.mean("_avg_mw"))
         .sort("stage_id")
         .collect(engine="streaming")
     )
@@ -519,36 +523,6 @@ def load_temporal_context(case_dir: Path) -> TemporalContext:
     if pg_rate is not None:
         discount_rate = float(pg_rate)
 
-    # A non-empty node list is a scenario tree with per-branch probabilities;
-    # every mean/quantile downstream still averages leaf paths uniformly (full
-    # probability-weighting is a separate follow-up), so the reader needs a
-    # signal that the aggregates are not weighted expectations.
-    nodes = stages_data.get("policy_graph", {}).get("nodes")
-    if nodes:
-        emit(
-            Diagnostic(
-                code="dashboard-unweighted-tree-averages",
-                severity=Severity.WARNING,
-                category="Dashboard data",
-                title="Scenario tree averages are not probability-weighted",
-                summary=(
-                    "This case is built from a scenario tree whose branches "
-                    "occur with different probabilities, but every mean and "
-                    "percentile band in this dashboard treats each scenario "
-                    "path with equal weight. The reported statistics are "
-                    "unweighted averages across scenario paths, not the "
-                    "probability-weighted expectations the underlying "
-                    "optimization targets."
-                ),
-                remediation=(
-                    "Read the displayed means and percentile bands as "
-                    "unweighted scenario-path averages, not probability-"
-                    "weighted expectations."
-                ),
-            ),
-            logger=logger,
-        )
-
     stage_hours: dict[int, float] = {}
     for s in stages_data["stages"]:
         stage_hours[s["id"]] = sum(b["hours"] for b in s["blocks"])
@@ -633,6 +607,7 @@ class SimulationData:
     inflow_lags_lf: pl.LazyFrame
     costs: pd.DataFrame
     gc_violations: pd.DataFrame
+    scenario_weights: ScenarioWeights
 
 
 def load_simulation_data(case_dir: Path) -> SimulationData:
@@ -668,6 +643,7 @@ def load_simulation_data(case_dir: Path) -> SimulationData:
         inflow_lags_lf=inflow_lags_lf,
         costs=costs,
         gc_violations=gc_violations,
+        scenario_weights=read_novomodelo_scenario_weights(case_dir / "output"),
     )
 
 
@@ -1277,6 +1253,10 @@ class DashboardData:
     @property
     def costs(self) -> pd.DataFrame:
         return self.simulation.costs
+
+    @property
+    def scenario_weights(self) -> ScenarioWeights:
+        return self.simulation.scenario_weights
 
     @property
     def line_bounds(self) -> pd.DataFrame:
