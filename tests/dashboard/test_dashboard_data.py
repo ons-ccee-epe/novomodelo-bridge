@@ -302,13 +302,31 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
     )
     generation = hydro_table.column("generation_mwh").to_pylist()
     for sid in (0, 1):
+        scenario_generation = pa.array(
+            [v * (1 + sid) for v in generation], type=pa.float64()
+        )
         _write_sim_parquet(
             "hydros",
             sid,
             hydro_table.set_column(
                 hydro_table.schema.get_field_index("generation_mwh"),
                 "generation_mwh",
-                pa.array([v * (1 + sid) for v in generation], type=pa.float64()),
+                scenario_generation,
+            ),
+        )
+        _write_sim_parquet(
+            "hydro_bus_generation",
+            sid,
+            pa.table(
+                {
+                    "stage_id": hydro_table.column("stage_id"),
+                    "block_id": hydro_table.column("block_id"),
+                    "hydro_id": hydro_table.column("hydro_id"),
+                    "bus_id": pa.array([0, 0], type=pa.int32()),
+                    "turbined_m3s": hydro_table.column("turbined_m3s"),
+                    "generation_mw": hydro_table.column("generation_mw"),
+                    "generation_mwh": scenario_generation,
+                }
             ),
         )
 

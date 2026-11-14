@@ -782,6 +782,36 @@ def test_per_bus_sums_from_results_excludes_multi_bus_plant() -> None:
     assert "AMBIGUOUS_PLANT" in ambiguous[0].summary
 
 
+def test_per_bus_sums_from_results_counts_split_plant_at_its_loaded_bus() -> None:
+    """Itaipu's shape: generating at its market's bus and at a transshipment
+    bus with no load. The whole plant counts at the loaded bus, where the
+    source model reports it, with no diagnostic."""
+    results = [
+        _hydro_row(0, 1, "storage_final_hm3", 100.0, 90.0),
+        _hydro_row(9, 1, "storage_final_hm3", 500.0, 480.0),
+    ]
+    hydro_meta: dict[int, dict[str, object]] = {
+        0: {"bus_ids": {101}},
+        9: {"bus_ids": {100, 105}, "name": "ITAIPU"},
+    }
+    bus_meta: dict[int, dict[str, object]] = {
+        100: {"name": "SUDESTE", "has_load": True},
+        101: {"name": "SUL", "has_load": True},
+        105: {"name": "IVAIPORA", "has_load": False},
+    }
+
+    with dx.collect() as collected:
+        out = per_bus_sums_from_results(
+            results, "storage_final_hm3", hydro_meta, bus_meta
+        )
+
+    assert out["SUDESTE"]["ids"] == {9}
+    assert out["SUDESTE"]["nw"] == {1: 500.0}
+    assert out["SUL"]["ids"] == {0}
+    assert "IVAIPORA" not in out
+    assert not [d for d in collected if d.code == "hydro-multi-bus-ambiguous"]
+
+
 def test_per_bus_sums_from_frame_matches_legacy_closure() -> None:
     df = pl.DataFrame(
         {

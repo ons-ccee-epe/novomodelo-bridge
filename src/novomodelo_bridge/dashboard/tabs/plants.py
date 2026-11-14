@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import polars as pl
 
+from novomodelo_bridge.dashboard.data import hydro_bus_label
 from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
@@ -285,8 +286,7 @@ def _build_hydro_json(
 
     for hid, meta in sorted(hydro_meta.items()):
         name: str = meta.get("name", str(hid))
-        bus_id: int = meta.get("bus_id", -1)
-        bus: str = bus_names.get(bus_id, str(bus_id))
+        bus = hydro_bus_label(meta, bus_names)
         max_gen_mw: float = float(meta.get("max_gen_mw", 0) or 0)
         vol_max: float = float(meta.get("vol_max", 0) or 0)
 

@@ -100,6 +100,10 @@ links are cobre-bridge's.
   warning is gone; build the dashboard and the report again.
 - **`dashboard` stopped with a traceback on a Novomodelo output it could not
   read.** It now exits 1 and reports the file.
+- **`dashboard` and `compare decomp` left Itaipu out of every per-bus view,
+  with a `hydro-unit-groups-multi-bus` warning.** A plant split across buses
+  now counts at the one of them with load, and the dashboard's generation by
+  bus counts each bus's own share; build the dashboard and the report again.
 
 ## [0.20.0] - 2026-11-03
 

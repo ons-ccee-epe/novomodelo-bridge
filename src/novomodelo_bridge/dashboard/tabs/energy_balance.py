@@ -349,15 +349,12 @@ class _BusGenerationSeries(NamedTuple):
 def _bus_stage_avg_mw(
     lf: pl.LazyFrame,
     mwh_col: str,
-    id_col: str,
-    mapping_df: pl.DataFrame,
     hours_df: pl.DataFrame,
     weights: ScenarioWeights,
 ) -> pl.DataFrame:
-    """Join lf to mapping_df, compute per-bus stage-average MW."""
+    """Per-bus stage-average MW of *mwh_col* over *lf*, whose rows carry ``bus_id``."""
     return (
-        lf.join(mapping_df.lazy(), on=id_col)
-        .group_by(["scenario_id", "stage_id", "bus_id"])
+        lf.group_by(["scenario_id", "stage_id", "bus_id"])
         .agg(pl.col(mwh_col).sum())
         .join(hours_df.lazy(), on="stage_id")
         .with_columns((pl.col(mwh_col) / pl.col("_hours")).alias("_avg_mw"))
@@ -411,14 +408,12 @@ def _bus_net_import_mw(
 def _bus_generation_series(
     data: DashboardData, bus_ids: list[int]
 ) -> _BusGenerationSeries:
-    """Per-bus hydro, thermal, NCS and net-import series for ``_chart_gen_by_bus``."""
-    # Build mapping DataFrames for LazyFrame joins
-    hbus_df = pl.DataFrame(
-        {
-            "hydro_id": list(data.hydro_bus_map.keys()),
-            "bus_id": list(data.hydro_bus_map.values()),
-        }
-    )
+    """Per-bus hydro, thermal, NCS and net-import series for ``_chart_gen_by_bus``.
+
+    Hydro generation comes per bus from ``simulation/hydro_bus_generation``,
+    not from ``data.hydro_bus_map``: a plant split across buses, such as
+    Itaipu, generates at each of them, and the map holds one bus per plant.
+    """
     tbus_map = {k: v["bus_id"] for k, v in data.thermal_meta.items()}
     tbus_df = pl.DataFrame(
         {
@@ -439,26 +434,20 @@ def _bus_generation_series(
         }
     )
     h_by_bus = _bus_stage_avg_mw(
-        data.hydros_lf,
+        data.hydro_bus_generation_lf,
         "generation_mwh",
-        "hydro_id",
-        hbus_df,
         hours_df,
         data.scenario_weights,
     )
     t_by_bus = _bus_stage_avg_mw(
-        data.thermals_lf,
+        data.thermals_lf.join(tbus_df.lazy(), on="thermal_id"),
         "generation_mwh",
-        "thermal_id",
-        tbus_df,
         hours_df,
         data.scenario_weights,
     )
     n_by_bus = _bus_stage_avg_mw(
-        data.ncs_lf,
+        data.ncs_lf.join(nbus_df.lazy(), on="non_controllable_id"),
         "generation_mwh",
-        "non_controllable_id",
-        nbus_df,
         hours_df,
         data.scenario_weights,
     )
