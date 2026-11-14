@@ -145,12 +145,14 @@ def test_polinjus_families_with_a_blank_reference_raise() -> None:
         tailrace_families_from_polinjus(*_polinjus_frames([30.0, None]))
 
 
-def test_spill_outside_tailrace_diagnostic_is_info_with_one_row_per_plant() -> None:
+def test_spill_outside_tailrace_diagnostic_is_a_warning_with_one_row_per_plant() -> (
+    None
+):
     diagnostic = spill_outside_tailrace_diagnostic(
         [[185, "BARRA BRAUNA", "0-3"], [225, "SLT APIACAS", "0-3"]]
     )
     assert diagnostic.code == "fpha-spill-outside-tailrace"
-    assert diagnostic.severity is Severity.INFO
+    assert diagnostic.severity is Severity.WARNING
     assert "(2)" in diagnostic.title
     assert diagnostic.table is not None
     assert diagnostic.table.columns == ["Code", "Name", "Stages"]

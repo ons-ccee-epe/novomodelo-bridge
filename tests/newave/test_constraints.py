@@ -142,8 +142,8 @@ class TestStoredEnergyReservoirFilter:
 
 class TestNonFixaPenalizationWarning:
     """curva.dat TIPO DE PENALIZACAO = 0 (FIXA) matches novomodelo-bridge's VminOP
-    modelling and needs no warning; a non-FIXA (iterative/variable) penalization is
-    not reproduced, so the conversion warns that a VminOP-penalty difference is
+    modelling and needs no warning; any other penalization (1 = MAXPEN) is not
+    reproduced, so the conversion warns that a VminOP-penalty difference is
     expected."""
 
     def test_fixa_does_not_warn(self, caplog) -> None:
@@ -168,7 +168,7 @@ class TestNonFixaPenalizationWarning:
         with caplog.at_level(logging.WARNING):
             fired = _warn_if_non_fixa_penalization([1, 11, 1])
         assert fired is True
-        assert "non-FIXA" in caplog.text
+        assert "MAXPEN" in caplog.text
 
     def test_none_does_not_warn(self) -> None:
         assert _warn_if_non_fixa_penalization(None) is False
@@ -189,7 +189,9 @@ class TestNonFixaPenalizationWarning:
         assert diag.code == "vminop-penalization-not-fixa"
         assert diag.severity is Severity.WARNING
         assert diag.category == "Special constraints"
-        assert "non-FIXA" in diag.summary
+        assert diag.title == "Security curve penalized as FIXA, not MAXPEN"
+        assert "TIPO DE PENALIZACAO = 1 (MAXPEN)" in diag.summary
+        assert diag.remediation is None
 
     def test_fixa_emits_structured_info_diagnostic(self) -> None:
         with dx.collect() as collected:
@@ -214,7 +216,7 @@ class TestNonFixaPenalizationWarning:
 
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert len(warnings) == 1
-        assert "non-FIXA" in warnings[0].message
+        assert "MAXPEN" in warnings[0].message
 
 
 class TestCurveSeasonalizes:

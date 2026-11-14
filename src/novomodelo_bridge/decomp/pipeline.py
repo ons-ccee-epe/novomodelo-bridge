@@ -506,12 +506,14 @@ def _topology_relink_diagnostic(
         base_downstream = int(effective.base.loc[code, "codigo_usina_jusante"])
         eff_downstream = effective.downstream_plant(code, 0)
         if eff_downstream != base_downstream:
-            rows.append([name, code, "downstream", base_downstream, eff_downstream])
+            rows.append(
+                [code, name, "downstream plant", base_downstream, eff_downstream]
+            )
             affected_codes.add(code)
         base_gauge = int(effective.base.loc[code, "posto"])
         eff_gauge = effective.inflow_gauge(code, 0)
         if eff_gauge != base_gauge:
-            rows.append([name, code, "gauge", base_gauge, eff_gauge])
+            rows.append([code, name, "gauge", base_gauge, eff_gauge])
             affected_codes.add(code)
 
     if not rows:
@@ -529,16 +531,20 @@ def _topology_relink_diagnostic(
         code="cadastro-topology-relinked",
         severity=dx.Severity.INFO,
         category="Cadastro overrides",
-        title=f"Topology/gauge relinked for {len(affected_codes)} plant(s)",
+        title=(
+            "Downstream plants and gauges changed by AC registers "
+            f"({len(affected_codes)})"
+        ),
         summary=(
-            f"{len(affected_codes)} operated plant(s) carry an AC NUMJUS/"
-            "NUMPOS override that changes their effective downstream link "
-            "or inflow gauge from the base registry"
+            f"{len(affected_codes)} plant(s) take an AC NUMJUS or NUMPOS "
+            "register that changes their downstream plant or inflow gauge from "
+            "hidr.dat, as in DECOMP."
         ),
         table=dx.DiagnosticTable(
-            columns=["Plant", "Code", "Kind", "Base", "Effective"],
+            columns=["Code", "Name", "Changes", "hidr.dat", "Effective"],
             rows=rows,
-            justify=["left", "right", "left", "right", "right"],
+            justify=["right", "left", "left", "right", "right"],
+            caption="Effective values are those of the first stage.",
         ),
     )
 
@@ -959,26 +965,7 @@ def _discover(src: Path) -> DecompCaseArtifacts:
         case.dadger, case.hidr, case.calendar
     )
     if cadastro_report.applied or cadastro_report.out_of_horizon:
-        applied_desc = ", ".join(
-            f"{count} {param}"
-            for param, count in sorted(cadastro_report.applied.items())
-        )
-        summary = f"cadastro overrides applied: {applied_desc or 'none'}"
-        if cadastro_report.out_of_horizon:
-            summary += (
-                f"; {len(cadastro_report.out_of_horizon)} override(s) fall "
-                "outside the study horizon and were not applied"
-            )
-        dx.emit(
-            dx.Diagnostic(
-                code="cadastro-overrides-applied",
-                severity=dx.Severity.INFO,
-                category="Cadastro overrides",
-                title="Cadastro overrides applied",
-                summary=summary,
-            ),
-            logger=_LOG,
-        )
+        dx.emit(_cadastro_overrides_diagnostic(cadastro_report), logger=_LOG)
     # The topology/gauge relink is its own diagnostic
     # (not folded into the summary above) so an automated consumer can key
     # on "cadastro-topology-relinked" specifically — the resolved
@@ -1008,6 +995,50 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     )
 
 
+#: ``AC`` registers whose override count is per unit set, not per plant.
+_UNIT_SET_AC_REGISTERS = ("NUMMAQ", "POTEFE", "VAZEFE", "ALTEFE")
+
+
+def _cadastro_overrides_diagnostic(
+    report: cadastro_conv.CadastroResolutionReport,
+) -> dx.Diagnostic:
+    rows = sorted(
+        [cadastro_conv.AC_REGISTER_BY_PARAM[param], count]
+        for param, count in report.applied.items()
+    )
+    summary = (
+        "The deck's AC registers change the hidr.dat registry of the plants "
+        "below from the stage each one takes effect, as in DECOMP."
+    )
+    if report.out_of_horizon:
+        summary += (
+            f" {len(report.out_of_horizon)} AC override(s) take effect after "
+            "the study horizon and change nothing."
+        )
+    present = {row[0] for row in rows}
+    per_unit_set = [name for name in _UNIT_SET_AC_REGISTERS if name in present]
+    notes = (
+        [f"{', '.join(per_unit_set)} count unit sets, not plants."]
+        if per_unit_set
+        else []
+    )
+    return dx.Diagnostic(
+        code="cadastro-overrides-applied",
+        severity=dx.Severity.INFO,
+        category="Cadastro overrides",
+        title=f"AC registry overrides applied ({len(rows)} register(s))",
+        summary=summary,
+        table=dx.DiagnosticTable(
+            columns=["AC register", "Plants"],
+            rows=rows,
+            justify=["left", "right"],
+        )
+        if rows
+        else None,
+        notes=notes,
+    )
+
+
 def _convert_config_and_stages(
     artifacts: DecompCaseArtifacts, writer: CaseWriter
 ) -> None:
@@ -1020,6 +1051,7 @@ def _convert_config_and_stages(
     # with enumerated forwards (it computes the exact risk-adjusted upper bound).
     cvar = temporal_conv.resolve_cvar(artifacts.dadger, case.files.cortesh)
     if cvar is not None:
+        measure = f"CVaR (α {cvar.alpha:.4g}, λ {cvar.lambda_:.4g})"
         dx.emit(
             dx.Diagnostic(
                 code="decomp-cvar-risk-measure",
@@ -1027,12 +1059,14 @@ def _convert_config_and_stages(
                 category="Risk",
                 title="CVaR risk measure converted",
                 summary=(
-                    f"The deck runs CVaR (alpha={cvar.alpha:.4g}, "
-                    f"lambda={cvar.lambda_:.4g}); DECOMP starts it at stage "
-                    f"{cvar.from_stage_index} but it is emitted uniformly on every "
-                    "stage (it collapses to expectation on the deterministic trunk), "
-                    "so novomodelo's gap stopping rule stays admissible under the "
-                    "risk-adjusted enumerated upper bound."
+                    f"The deck applies {measure} and the converted case applies "
+                    "it on every stage, as DECOMP does."
+                    if cvar.from_stage_index == 0
+                    else f"The deck applies {measure} from stage "
+                    f"{cvar.from_stage_index} (0-based); the converted case "
+                    "applies it on every stage. The earlier stages have a single "
+                    "scenario, where CVaR equals the expected value, so the "
+                    "results are the same."
                 ),
             ),
             logger=_LOG,
@@ -1473,12 +1507,23 @@ def _released_runofriver_codes(
                 code="decomp-runofriver-outflow-relaxed",
                 severity=dx.Severity.INFO,
                 category="Minimum outflow",
-                title="Run-of-river minimum-outflow restriction released",
+                title=(
+                    "Run-of-river plants above the first reservoir without a "
+                    f"minimum outflow ({len(unregulated_codes)})"
+                ),
                 summary=(
-                    f"{len(unregulated_codes)} run-of-river plant(s) "
-                    f"({sorted(unregulated_codes)}) sit above the first cascade "
-                    "reservoir; their RQ/UH minimum-defluence default is "
-                    "released. An explicit RHQ QDEF window, if any, is kept."
+                    f"{len(unregulated_codes)} run-of-river plant(s) sit upstream "
+                    "of the first reservoir of their cascade, so, as in DECOMP, "
+                    "they take no RQ/UH minimum outflow. A single-plant RHQ QDEF "
+                    "floor still applies."
+                ),
+                table=dx.DiagnosticTable(
+                    columns=["Code", "Name"],
+                    rows=[
+                        [code, str(effective.base.loc[code, "nome_usina"]).strip()]
+                        for code in sorted(unregulated_codes)
+                    ],
+                    justify=["right", "left"],
                 ),
             ),
             logger=_LOG,
@@ -1544,14 +1589,34 @@ def _couple_diversion_channels(
                 code="decomp-base-diversion-modeled",
                 severity=dx.Severity.INFO,
                 category="Diversion",
-                title="Base diversion channels modeled",
+                title=f"Diversions without a QDES restriction ({len(base_diversion_channels)})",
                 summary=(
-                    f"{len(base_diversion_channels)} hydro(s) "
-                    f"({sorted(base_diversion_channels)}) divert water through "
-                    "their hidr.dat or AC DESVIO desvio with no QDES restriction; "
-                    "each was given a diversion channel to the receiving plant, "
-                    "limited only by an AC DESVIO flow, so the diverted water "
-                    "reaches that plant."
+                    f"{len(base_diversion_channels)} plant(s) divert water through "
+                    "their hidr.dat or AC DESVIO desvio with no QDES restriction. "
+                    "Each diverts through a channel to the receiving plant, "
+                    "limited only by the AC DESVIO flow, as in DECOMP."
+                ),
+                table=dx.DiagnosticTable(
+                    columns=[
+                        "Code",
+                        "Name",
+                        "Target code",
+                        "Target name",
+                        "Limit (m³/s)",
+                    ],
+                    rows=[
+                        [
+                            id_map.hydro_codes[hydro_id],
+                            names.get(hydro_id, ""),
+                            id_map.hydro_codes[channel["downstream_id"]],
+                            names.get(channel["downstream_id"], ""),
+                            "none"
+                            if channel["max_flow_m3s"] is None
+                            else channel["max_flow_m3s"],
+                        ]
+                        for hydro_id, channel in sorted(base_diversion_channels.items())
+                    ],
+                    justify=["right", "left", "right", "left", "right"],
                 ),
             ),
             logger=_LOG,
@@ -1622,6 +1687,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     # (emission_checks.check_hydro_bounds_no_raising, self-checked below).
     hydro_capacities: dict[int, single_term_bounds.HydroCapacities] = {
         hydro["id"]: single_term_bounds.HydroCapacities(
+            name=hydro["name"],
             max_generation_mw=hydro["generation"]["max_generation_mw"],
             max_turbined_m3s=hydro["generation"]["max_turbined_m3s"],
         )
@@ -1752,6 +1818,7 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
             for hydro in hydros_dict["hydros"]
             for group in hydro["unit_groups"]
         },
+        plant_names={hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]},
     )
     resolved_group_entries: list[
         tuple[tuple[int, int, int, int | None], bounds_accumulator.ResolvedRow]

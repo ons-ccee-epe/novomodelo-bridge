@@ -410,7 +410,7 @@ def test_spill_outside_tailrace_names_the_fpha_stages_of_each_flagged_plant() ->
     )
     assert diagnostic is not None
     assert diagnostic.code == "fpha-spill-outside-tailrace"
-    assert diagnostic.severity is Severity.INFO
+    assert diagnostic.severity is Severity.WARNING
     assert diagnostic.table is not None
     assert diagnostic.table.rows == [[1, "PLANT 1", "0, 2"]]
 
@@ -506,7 +506,7 @@ def test_fpha_eligible_codes_reports_zero_capacity_plants() -> None:
     assert diagnostic.severity is Severity.INFO
     # Plant 3 already fails the curve inputs, so only plant 2 is reported.
     assert diagnostic.table is not None
-    assert diagnostic.table.rows == [["B", 2, 0.0, 0.0]]
+    assert diagnostic.table.rows == [[2, "B", 0.0, 0.0]]
 
 
 def test_fpha_eligible_codes_filters_operated() -> None:

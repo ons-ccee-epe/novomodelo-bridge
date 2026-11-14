@@ -316,7 +316,7 @@ class TestFphaConverters:
         [diagnostic] = [d for d in collected if d.code == "fpha-zero-capacity"]
         assert diagnostic.severity is Severity.INFO
         assert diagnostic.table is not None
-        assert [row[:2] for row in diagnostic.table.rows] == [["USINA_A", 1]]
+        assert [row[:2] for row in diagnostic.table.rows] == [[1, "USINA_A"]]
 
     def test_expanding_plant_is_eligible_on_its_declared_configuration(
         self, tmp_path: Path
@@ -647,7 +647,7 @@ class TestFphaConverters:
         with dx.collect() as collected:
             convert_production_models(case, self._id_map())
         [diagnostic] = [d for d in collected if d.code == "fpha-spill-outside-tailrace"]
-        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.severity is Severity.WARNING
         assert diagnostic.table is not None
         assert diagnostic.table.rows == [[1, "USINA_A", "0-59"]]
 

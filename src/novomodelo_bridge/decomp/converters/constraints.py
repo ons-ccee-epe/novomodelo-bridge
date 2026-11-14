@@ -935,7 +935,7 @@ def _emit_rhe_hydraulic_coupling(couplings: Sequence[RheCoupling]) -> None:
             code="decomp-rhe-ree-hydraulic-coupling",
             severity=Severity.INFO,
             category="Special constraints",
-            title=f"RHE split across coupled REEs ({len(couplings)} plant(s))",
+            title=f"RHE split across coupled REEs ({len(couplings)})",
             summary=(
                 f"{len(couplings)} reservoir(s) with an EZ record drain into "
                 "another REE; their stored energy counts in their own REE down "

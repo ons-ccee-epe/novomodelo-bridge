@@ -340,7 +340,7 @@ class TestEmissionCheckWiring:
         assert not_applicable[0].severity is Severity.INFO
         assert _convert_status(report.diagnostics, success="ok") == "ok"
 
-    def test_over_declared_bound_is_clamped_and_warned_not_errored(
+    def test_over_declared_bound_is_clamped_with_a_note_not_errored(
         self, tmp_path: Path
     ) -> None:
         """A hydro_bounds row above the plant's declared max_turbined_m3s is
@@ -384,6 +384,8 @@ class TestEmissionCheckWiring:
         )
 
         fake_id_map = MagicMock()
+        fake_id_map.all_hydro_codes = [6]
+        fake_id_map.hydro_id.side_effect = {6: 0}.__getitem__
         with contextlib.ExitStack() as stack:
             for p in _all_converter_patches(fake_id_map):
                 stack.enter_context(p)
@@ -401,7 +403,7 @@ class TestEmissionCheckWiring:
             )
             report = convert_newave_case(src, dst)
 
-        # The clamp resolves it: a warning, not a rule-43 error.
+        # The clamp resolves it: a note, not a rule-43 error.
         assert not any(
             d.code == "hydro-bounds-raises-declared-capacity"
             for d in report.diagnostics
@@ -412,9 +414,9 @@ class TestEmissionCheckWiring:
             if d.code == "hydro-bounds-clamped-to-declared-capacity"
         ]
         assert len(clamps) == 1
-        assert clamps[0].severity is Severity.WARNING
+        assert clamps[0].severity is Severity.INFO
 
-        # Load-bearing: a warning does not flip the verdict.
+        # Load-bearing: the clamp does not flip the verdict.
         assert _convert_status(report.diagnostics, success="ok") == "ok"
 
 

@@ -1382,7 +1382,8 @@ class TestCadastroPipelineWiring:
         ]
         assert len(cadastro_diagnostics) == 1
         assert cadastro_diagnostics[0].severity is dx.Severity.INFO
-        assert "volume_maximo" in cadastro_diagnostics[0].summary
+        assert cadastro_diagnostics[0].table is not None
+        assert cadastro_diagnostics[0].table.rows == [["VOLMAX", 1]]
 
 
 # Synthetic RE/RHQ/RHV/RHE ``to_generic`` records for

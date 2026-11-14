@@ -9,6 +9,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.hydro import (
@@ -340,11 +342,9 @@ def _itaipu_frequency_frame() -> pd.DataFrame:
 
 
 class TestConvertHydros:
-    def test_registry_entries_and_cascade_skip(self, caplog) -> None:
+    def test_registry_entries_and_cascade_skip(self) -> None:
         hidr = _hidr_frame()
-        with caplog.at_level(
-            logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
-        ):
+        with dx.collect() as collected:
             doc = convert_hydros(
                 _case(_StubDadger(uh=_uh_frame()), hidr),
                 _ID_MAP,
@@ -377,8 +377,12 @@ class TestConvertHydros:
         assert up["generation"]["max_generation_mw"] == 100.0
 
         assert hydros[1]["downstream_id"] is None
-        assert "coupling-only" in caplog.text
-        assert "99" in caplog.text
+        (excluded,) = [
+            d for d in collected if d.code == "decomp-coupling-only-plants-excluded"
+        ]
+        assert excluded.severity is Severity.INFO
+        assert excluded.table is not None
+        assert excluded.table.rows == [[99, ""]]
 
     def test_unit_groups_present_and_mirror_generation(self, caplog) -> None:
         """Every hydro carries exactly one mirror unit group (novomodelo rule 41)

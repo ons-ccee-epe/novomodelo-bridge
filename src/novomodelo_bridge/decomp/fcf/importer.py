@@ -261,7 +261,8 @@ class _DeckCoupling:
     """What the deck adds to the cut: who takes which row, and the constants.
 
     ``cut`` is the cut's ``(year, month)``; ``recent_observations`` the
-    ``initial_conditions`` windows read on the coupling postos.
+    ``initial_conditions`` windows read on the coupling postos; ``names`` the
+    ``hidr.dat`` name of every registry plant, converted or not.
     """
 
     cut: tuple[int, int]
@@ -272,6 +273,7 @@ class _DeckCoupling:
     carried_share: float
     gnl_plan: GnlRingPlan | None
     recent_observations: list[dict]
+    names: Mapping[int, str]
 
 
 def _read_deck_coupling(
@@ -317,6 +319,10 @@ def _read_deck_coupling(
         recent_observations=convert_recent_observation_windows(
             vazoes, effective, case.id_map, calendar
         ),
+        names={
+            int(code): str(name).strip()
+            for code, name in effective.base["nome_usina"].items()
+        },
     )
 
 
@@ -395,6 +401,8 @@ def _emit_import_diagnostics(
     cuts: BoundaryCuts,
     mapping: MappingResult,
     gnl_plan: GnlRingPlan | None = None,
+    *,
+    names: Mapping[int, str],
 ) -> None:
     """Surface the mapping's accepted approximations.
 
@@ -404,19 +412,27 @@ def _emit_import_diagnostics(
     the cut carries a GNL block.
     """
     summary = summarize_cut_families(cuts)
+    lag_months = max(
+        (depth for depth, n in enumerate(summary.lag_nonzero_by_depth, 1) if n),
+        default=0,
+    )
     dx.emit(
         dx.Diagnostic(
             code="boundary-fcf-cut-family-summary",
             severity=dx.Severity.INFO,
             category="Boundary FCF",
-            title=f"Boundary FCF authors {summary.n_active_cuts} cut(s)",
+            title=f"Boundary cost-to-go imported ({summary.n_active_cuts} cuts)",
             summary=(
-                f"{summary.n_active_cuts} active cut(s) authored from the "
-                f"source model's boundary cuts; {summary.storage_nonzero_plants} "
-                "plant(s) carry a nonzero storage coefficient; nonzero "
-                f"inflow-lag plants by depth {summary.lag_nonzero_by_depth}; "
-                f"RHS range [{summary.rhs_min:.6g}, {summary.rhs_max:.6g}]"
+                f"{summary.n_active_cuts} boundary cut(s) of the deck price the "
+                f"end-of-study storage of {summary.storage_nonzero_plants} "
+                f"plant(s) and up to {lag_months} month(s) of past inflows."
             ),
+            notes=[
+                "Plants with a nonzero inflow term, by lag: "
+                f"{summary.lag_nonzero_by_depth}.",
+                f"Cut constants range from {summary.rhs_min:.6g} to "
+                f"{summary.rhs_max:.6g}.",
+            ],
         ),
         logger=_LOG,
     )
@@ -427,29 +443,26 @@ def _emit_import_diagnostics(
                 code="boundary-fcf-source-only-plants-dropped",
                 severity=dx.Severity.INFO,
                 category="Boundary FCF",
-                title=(
-                    f"{len(mapping.dropped)} source-only plant(s) dropped "
-                    "from the boundary FCF state"
-                ),
+                title=f"Cut plants missing from the case dropped ({len(mapping.dropped)})",
                 summary=(
-                    f"{len(mapping.dropped)} plant(s) of the source model's "
-                    "boundary cuts are not in the converted case; their "
-                    "storage terms are omitted, and their inflow-lag terms "
-                    "are folded into each cut's intercept from the deck's "
-                    "inflow history where the plant has a posto (the "
-                    "terminal stage's share stays out)"
+                    f"{len(mapping.dropped)} plant(s) of the boundary cuts are "
+                    "not in the converted case. Their storage terms are dropped, "
+                    "and their inflow terms are folded into each cut's constant "
+                    "from the deck's inflow history where the plant has a "
+                    "posto; the last stage's share of that inflow is left out."
                 ),
                 table=dx.DiagnosticTable(
-                    columns=["Plant code", "β (pi_varm)", "Inflow folded"],
+                    columns=["Code", "Name", "β (pi_varm)", "Inflow folded"],
                     rows=[
                         [
                             term.plant_code,
+                            names.get(term.plant_code, ""),
                             round(term.beta, 6),
                             "yes" if term.inflow_folded else "no",
                         ]
                         for term in mapping.dropped
                     ],
-                    justify=["right", "right", "left"],
+                    justify=["right", "left", "right", "left"],
                 ),
             ),
             logger=_LOG,
@@ -470,48 +483,66 @@ def _emit_gnl_deviation(
         else []
     )
     relative_headline = (
-        f"{max(row[3] for row in headline_rows):.4g}" if headline_rows else "n/a"
+        f"{max(row[3] for row in headline_rows):.1%}" if headline_rows else "n/a"
     )
     max_absolute_spread = max((row[4] for row in rows), default=0.0)
+    dropped = (
+        f" {len(mapping.gnl_dropped)} GNL term(s) of the cuts reach no "
+        "delivery window and are listed below."
+        if mapping.gnl_dropped
+        else ""
+    )
     dx.emit(
         dx.Diagnostic(
             code="boundary-fcf-gnl-anticipated-deviation",
-            severity=dx.Severity.INFO,
+            severity=dx.Severity.WARNING,
             category="Boundary FCF",
-            title="GNL anticipated ring prices one MW per slot, not per patamar",
+            title="GNL commitment priced per delivery window, not per patamar",
             summary=(
-                "the source model commits GNL per patamar, the converted case "
-                "one MW per ring slot, so each slot is priced at the patamar "
-                "prices weighted by the source's patamar shares; max patamar "
-                f"spread {relative_headline} relative / "
-                f"{max_absolute_spread:.4g} absolute across {len(rows)} "
-                f"(submercado, lag) group(s) (a group carrying less than "
-                f"{_GNL_DEVIATION_REL_FLOOR:g} of the largest |Σ| is left out "
-                f"of the relative figure); {len(mapping.gnl_dropped)} GNL "
-                "term(s) reach no ring slot"
+                "DECOMP's boundary cuts price each patamar of the anticipated "
+                "GNL commitment; the converted case commits one MW per "
+                "delivery window and prices it at the patamar prices weighted "
+                "by DECOMP's patamar shares. The boundary cost therefore "
+                "differs from DECOMP's when the committed MW would differ by "
+                "patamar. The largest relative spread of the patamar prices is "
+                f"{relative_headline} ({max_absolute_spread:.4g} absolute) "
+                f"across {len(rows)} (submercado, lag) group(s)."
+                f"{dropped}"
             ),
             table=dx.DiagnosticTable(
-                columns=["Submercado", "Lag", "Σ pi_gnl (carried)", "Patamar spread"],
+                columns=[
+                    "Submercado",
+                    "Lag",
+                    "Σ pi_gnl (carried)",
+                    "Patamar spread (%)",
+                ],
                 rows=[
-                    [submercado, lag, round(carried_sum, 6), round(spread, 6)]
+                    [submercado, lag, round(carried_sum, 6), round(100 * spread, 2)]
                     for submercado, lag, carried_sum, spread, _abs_spread in rows
                 ],
                 justify=["right", "right", "right", "right"],
             ),
             notes=[
-                f"thermal {term.thermal_id}, submercado {term.submercado}: "
-                f"{term.reason}"
-                if term.thermal_id is not None
-                else f"submercado {term.submercado}, lag {term.lag}: {term.reason} "
-                f"(Σ pi_gnl {term.coefficient:.6g})"
-                for term in mapping.gnl_dropped
+                "The largest relative spread leaves out groups carrying less "
+                f"than {_GNL_DEVIATION_REL_FLOOR:.1%} of the largest |Σ pi_gnl|.",
+                *(
+                    f"thermal {term.thermal_id}, submercado {term.submercado}: "
+                    f"{term.reason}"
+                    if term.thermal_id is not None
+                    else f"submercado {term.submercado}, lag {term.lag}: "
+                    f"{term.reason}, so its term (Σ pi_gnl {term.coefficient:.6g}) "
+                    "prices nothing in DECOMP either"
+                    for term in mapping.gnl_dropped
+                ),
             ],
         ),
         logger=_LOG,
     )
 
 
-def _emit_transit_pricing(mapping: MappingResult, hydro_codes: Sequence[int]) -> None:
+def _emit_transit_pricing(
+    mapping: MappingResult, hydro_codes: Sequence[int], *, names: Mapping[int, str]
+) -> None:
     """Surface the boundary's price for water in transit, which the source
     model's own boundary leaves unpriced."""
     if not mapping.transit:
@@ -519,30 +550,28 @@ def _emit_transit_pricing(mapping: MappingResult, hydro_codes: Sequence[int]) ->
     dx.emit(
         dx.Diagnostic(
             code="boundary-fcf-transit-water-priced",
-            severity=dx.Severity.INFO,
+            severity=dx.Severity.WARNING,
             category="Boundary FCF",
-            title=(
-                f"{len(mapping.transit)} plant(s) value the water still in "
-                "transit toward them at the boundary"
-            ),
+            title=(f"Water in transit valued at the boundary ({len(mapping.transit)})"),
             summary=(
-                "water released upstream that has not reached the plant when "
-                "the study ends is valued with the plant's boundary storage "
-                "term when it takes one, otherwise with its first inflow-lag "
-                "term; the source model gives that water no value at this "
-                "boundary, so the boundary cost differs from the source "
-                "model's by the value of the water in transit"
+                f"Water released upstream that has not reached "
+                f"{len(mapping.transit)} plant(s) when the study ends is valued "
+                "with the plant's boundary storage term when it takes one, "
+                "otherwise with its first inflow-lag term. DECOMP gives that "
+                "water no value at this boundary, so the boundary cost differs "
+                "from DECOMP's by the value of the water in transit."
             ),
             table=dx.DiagnosticTable(
-                columns=["Plant", "Valued as"],
+                columns=["Code", "Name", "Valued as"],
                 rows=[
                     [
                         hydro_codes[entry.hydro_id],
+                        names.get(hydro_codes[entry.hydro_id], ""),
                         "storage" if entry.by_storage else "first inflow lag",
                     ]
                     for entry in mapping.transit
                 ],
-                justify=["right", "left"],
+                justify=["right", "left", "left"],
             ),
         ),
         logger=_LOG,
@@ -553,6 +582,8 @@ def _emit_coupling_diagnostics(
     resolution: CouplingResolution,
     shares: Sequence[TerminalShare],
     carried_share: float,
+    *,
+    names: Mapping[int, str],
 ) -> None:
     """Surface how the converted hydros take the cut's plant terms."""
     if resolution.borrowed:
@@ -562,26 +593,29 @@ def _emit_coupling_diagnostics(
                 severity=dx.Severity.INFO,
                 category="Boundary FCF",
                 title=(
-                    f"{len(resolution.borrowed)} plant(s) take another cut "
-                    "plant's boundary terms"
+                    "Plants priced by another plant's cut row "
+                    f"({len(resolution.borrowed)})"
                 ),
                 summary=(
-                    "a plant without its own boundary-cut row takes the row of "
-                    "its complex (CX) or, failing that, of the first downstream "
-                    "plant that has one; it takes the storage term only through "
-                    "a complex, and only as a reservoir"
+                    f"{len(resolution.borrowed)} plant(s) without a row of their "
+                    "own in the boundary cuts take the row of their complex (CX) "
+                    "or, failing that, of the first plant downstream that has "
+                    "one, as DECOMP does. A plant takes the storage term only "
+                    "through a complex, and only as a reservoir."
                 ),
                 table=dx.DiagnosticTable(
-                    columns=["Plant", "Owner", "Rule"],
+                    columns=["Code", "Name", "Owner code", "Owner name", "Rule"],
                     rows=[
                         [
                             entry.plant_code,
+                            names.get(entry.plant_code, ""),
                             entry.owner_code,
+                            names.get(entry.owner_code, ""),
                             "complex (CX)" if entry.via_complex else "downstream",
                         ]
                         for entry in resolution.borrowed
                     ],
-                    justify=["right", "right", "left"],
+                    justify=["right", "left", "right", "left", "left"],
                 ),
             ),
             logger=_LOG,
@@ -593,16 +627,17 @@ def _emit_coupling_diagnostics(
                 code="boundary-fcf-unowned-plants",
                 severity=dx.Severity.ERROR,
                 category="Boundary FCF",
-                title=(f"{len(resolution.unowned)} plant(s) take no boundary-cut term"),
+                title=f"Plants with no boundary-cut term ({len(resolution.unowned)})",
                 summary=(
-                    "these plants have no row in the boundary cuts, belong to "
-                    "no complex, and reach no downstream plant that has one, so "
-                    "the boundary cost-to-go gives their water no value"
+                    f"{len(resolution.unowned)} plant(s) have no row in the "
+                    "boundary cuts, belong to no complex and reach no plant "
+                    "downstream that has one, so the boundary cost-to-go gives "
+                    "their water no value."
                 ),
                 table=dx.DiagnosticTable(
-                    columns=["Plant"],
-                    rows=[[code] for code in resolution.unowned],
-                    justify=["right"],
+                    columns=["Code", "Name"],
+                    rows=[[code, names.get(code, "")] for code in resolution.unowned],
+                    justify=["right", "left"],
                 ),
             ),
             logger=_LOG,
@@ -616,13 +651,14 @@ def _emit_coupling_diagnostics(
                 code="boundary-fcf-coupling-lag-carried-share",
                 severity=dx.Severity.WARNING,
                 category="Boundary FCF",
-                title="The coupling month starts before the last stage",
+                title="Boundary cut's inflow month priced on the last stage alone",
                 summary=(
-                    f"{carried_share:.1%} of the boundary cut's month lies in "
-                    "stages before the last one; novomodelo evaluates the cut's "
-                    "first inflow lag on the last stage's inflow alone, so that "
-                    "share is priced at the last stage's inflow instead of the "
-                    "inflow that occurred"
+                    f"{carried_share:.1%} of the month whose inflow the boundary "
+                    "cuts price falls in stages before the last one. Novomodelo "
+                    "evaluates that inflow on the last stage's inflow alone, so "
+                    "that share is priced at the last stage's inflow instead of "
+                    "the inflow that occurred, and the boundary cost differs "
+                    "from DECOMP's."
                 ),
             ),
             logger=_LOG,
@@ -638,19 +674,22 @@ def _emit_coupling_diagnostics(
                 severity=dx.Severity.WARNING,
                 category="Boundary FCF",
                 title=(
-                    f"{len(shares)} plant(s) couple on an inflow novomodelo's lag "
-                    "state does not carry in the last stage"
+                    "Last-stage inflow of the boundary cuts read on the operation "
+                    f"posto ({len(shares)})"
                 ),
                 summary=(
-                    "the source model evaluates the boundary cut's inflow terms "
-                    "on each plant's coupling posto; the deterministic stages' "
-                    "difference is folded into each cut's intercept, but the "
-                    "last stage's scenario-dependent difference is not "
-                    "represented"
+                    "DECOMP evaluates the boundary cuts' inflow terms of "
+                    f"{len(shares)} plant(s) on a coupling posto that differs "
+                    "from the inflow the converted case carries. The difference "
+                    "over the earlier stages is folded into the cuts, but in the "
+                    "last stage it varies by scenario and is left out, so the "
+                    "boundary cost differs from DECOMP's; the table gives each "
+                    "plant's largest inflow gap."
                 ),
                 table=dx.DiagnosticTable(
                     columns=[
-                        "Plant",
+                        "Code",
+                        "Name",
                         "Coupling posto",
                         "Operation posto",
                         "Max gap (m³/s)",
@@ -658,6 +697,7 @@ def _emit_coupling_diagnostics(
                     rows=[
                         [
                             share.plant_code,
+                            names.get(share.plant_code, ""),
                             share.coupling_posto,
                             "-"
                             if share.operation_posto is None
@@ -666,7 +706,7 @@ def _emit_coupling_diagnostics(
                         ]
                         for share in shares
                     ],
-                    justify=["right", "right", "right", "right"],
+                    justify=["right", "left", "right", "right", "right"],
                 ),
             ),
             logger=_LOG,
@@ -819,10 +859,13 @@ def import_boundary_fcf(
         *coupling.cut,
         MEAN_MONTH_HOURS,
     )
-    _emit_import_diagnostics(cuts, mapping, coupling.gnl_plan)
-    _emit_transit_pricing(mapping, case.id_map.hydro_codes)
+    _emit_import_diagnostics(cuts, mapping, coupling.gnl_plan, names=coupling.names)
+    _emit_transit_pricing(mapping, case.id_map.hydro_codes, names=coupling.names)
     _emit_coupling_diagnostics(
-        coupling.resolution, coupling.terminal_shares, coupling.carried_share
+        coupling.resolution,
+        coupling.terminal_shares,
+        coupling.carried_share,
+        names=coupling.names,
     )
 
     stage_cuts_payload = build_stage_cuts_payload(

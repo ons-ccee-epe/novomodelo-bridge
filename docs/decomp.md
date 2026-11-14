@@ -139,9 +139,10 @@ inputs follow DECOMP:
   gets that fallback for every plant, and the conversion warns.
 - Where `hidr.dat` keeps a plant's spilled flow out of its tailrace
   (`influencia_vertimento_canal_fuga` 0), DECOMP's planes carry no spillage
-  term. Novomodelo's fit always raises the tailrace with the spilled flow, so the
-  planes of such a plant lose generation as it spills. `convert decomp` lists
-  these plants in an info diagnostic; an `AC VERTJU` override is not read.
+  term. Novomodelo's fit always raises the tailrace with the spilled flow, so
+  such a plant generates less than in DECOMP whenever it spills, and
+  `convert decomp` warns, naming these plants; an `AC VERTJU` override is not
+  read.
 - A stage where the plant's turbined limit is zero, for example with every
   machine under maintenance, gets a zero constant productivity in place of
   the production function. DECOMP builds no planes for such a stage.
@@ -221,7 +222,8 @@ DECOMP. The import couples them plant by plant, as DECOMP does:
   takes one, otherwise with its first inflow-lag term. This is the in-channel
   rule CEPEL documents for the cost-to-go function DECOMP hands to DESSEM.
   DECOMP gives that water no value at the NEWAVE boundary, so the two
-  boundary costs differ by its value; the import lists the plants concerned.
+  boundary costs differ by its value; the import warns, naming the plants
+  concerned.
 
 Two parts of the coupling cannot be represented yet, and the import warns
 about each. In the last stage, the coupling inflow's difference from the
@@ -229,9 +231,11 @@ operated inflow, and the inflow of cut plants outside the case, vary by
 scenario and are not folded; the warning names the plants and the largest
 gap. When the cut's month begins before the last
 stage, Novomodelo evaluates the first inflow lag on the last stage's inflow
-alone; the warning states the share of the month this affects. A third note
-reports how far the per-patamar GNL prices spread, since Novomodelo holds one MW
-per delivery window rather than one per patamar.
+alone; the warning states the share of the month this affects. Novomodelo also
+holds one GNL commitment per delivery window rather than one per patamar, so
+the boundary cost differs from DECOMP's when the commitment would differ by
+patamar; the import warns and reports how far the per-patamar GNL prices
+spread.
 
 The [DECOMP data map](decomp-data-map.md) traces each term to the deck
 record it is read from.

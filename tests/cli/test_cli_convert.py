@@ -2383,9 +2383,9 @@ class TestCliInProcess:
             dx.emit(
                 dx.Diagnostic(
                     code="boundary-fcf-gnl-anticipated-deviation",
-                    severity=dx.Severity.INFO,
+                    severity=dx.Severity.WARNING,
                     category="Boundary FCF",
-                    title="GNL anticipated ring carries a per-patamar sum",
+                    title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
                 )
             )
@@ -2419,8 +2419,8 @@ class TestCliInProcess:
         doc = json.loads(stdout)
         codes = {d["code"] for d in doc["diagnostics"]}
         assert "boundary-fcf-gnl-anticipated-deviation" in codes
-        # ``status`` stays "ok": the importer's diagnostic is INFO-severity,
-        # so surfacing it never flips the verdict outcome.
+        # ``status`` stays "ok": only an ERROR flips the verdict, and the
+        # importer's diagnostic is a warning.
         assert doc["status"] == "ok"
 
     def test_convert_decomp_boundary_fcf_importer_diagnostics_render_panel(
@@ -2444,9 +2444,9 @@ class TestCliInProcess:
             dx.emit(
                 dx.Diagnostic(
                     code="boundary-fcf-gnl-anticipated-deviation",
-                    severity=dx.Severity.INFO,
+                    severity=dx.Severity.WARNING,
                     category="Boundary FCF",
-                    title="GNL anticipated ring carries a per-patamar sum",
+                    title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
                 )
             )
@@ -2476,7 +2476,7 @@ class TestCliInProcess:
             )
 
         assert code == 0
-        assert "GNL anticipated ring carries a per-patamar sum" in stderr
+        assert "GNL commitment priced per delivery window, not per patamar" in stderr
         # The boundary-FCF confirmation still surfaces (happy-path intact).
         assert f"novomodelo run {dst}" in stderr
         assert "--output" not in stderr
@@ -2574,9 +2574,9 @@ class TestCliInProcess:
             dx.emit(
                 dx.Diagnostic(
                     code="boundary-fcf-gnl-anticipated-deviation",
-                    severity=dx.Severity.INFO,
+                    severity=dx.Severity.WARNING,
                     category="Boundary FCF",
-                    title="GNL anticipated ring carries a per-patamar sum",
+                    title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
                 )
             )

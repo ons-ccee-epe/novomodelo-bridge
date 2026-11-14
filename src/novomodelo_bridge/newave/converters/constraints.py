@@ -389,19 +389,22 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
     return max(acc.values()) if acc else None
 
 
+#: curva.dat ``TIPO DE PENALIZACAO`` values, as the file's own header names them.
+_PENALIZATION_TYPES = {0: "FIXA", 1: "MAXPEN"}
+
+
 def _warn_if_non_fixa_penalization(configuracoes_penalizacao: list[Any] | None) -> bool:
     """Warn when curva.dat selects a *non-FIXA* security-curve penalization.
 
     The penalization-config line of curva.dat carries, as its first field, the ``TIPO DE
     PENALIZACAO``: ``0`` = **FIXA** (a fixed per-violation penalty at the curve cost),
-    anything else = the source model's iterative / variable penalization (the
-    ``ETAPA-2`` adjustment).
+    ``1`` = **MAXPEN**.
 
     Novomodelo-bridge models the **FIXA** convention: a per-stage VminOP (minimum stored
     energy) slack penalized at the fixed curve cost.  This is the faithful equivalent of
     the source model FIXA, so a FIXA deck needs no warning.  It does **not** reproduce
-    the iterative / variable penalization, so a non-FIXA deck will show an expected
-    VminOP violation-penalty difference.
+    any other penalization, so such a deck will show an expected VminOP
+    violation-penalty difference.
 
     Emits an INFO confirmation for FIXA and a WARNING for non-FIXA.  Returns
     ``True`` only when the (non-FIXA) warning fired (for testability).
@@ -418,30 +421,30 @@ def _warn_if_non_fixa_penalization(configuracoes_penalizacao: list[Any] | None) 
                 code="vminop-penalization-fixa",
                 severity=Severity.INFO,
                 category=_CATEGORY,
-                title="Security curve uses FIXA penalization",
+                title="Security curve penalized as in NEWAVE (FIXA)",
                 summary=(
-                    "curva.dat selects TIPO DE PENALIZACAO = 0 (FIXA): matches "
-                    "novomodelo-bridge's VminOP modelling (a per-stage curve slack "
-                    "at the fixed penalty), so no VminOP violation-penalty "
-                    "difference is expected from the curve handling."
+                    "curva.dat sets TIPO DE PENALIZACAO = 0 (FIXA), which matches "
+                    "the converted case: each stage's shortfall below the "
+                    "security curve is penalized at the curve cost."
                 ),
             ),
             logger=_LOG,
         )
         return False
+    label = _PENALIZATION_TYPES.get(tipo, f"type {tipo}")
     emit(
         Diagnostic(
             code="vminop-penalization-not-fixa",
             severity=Severity.WARNING,
             category=_CATEGORY,
-            title="Security curve uses non-FIXA penalization",
+            title=f"Security curve penalized as FIXA, not {label}",
             summary=(
-                f"curva.dat selects TIPO DE PENALIZACAO = {tipo} (non-FIXA): "
-                "novomodelo-bridge models the FIXA convention and does not "
-                "reproduce NEWAVE's iterative / variable curve penalization, "
-                "so a VminOP violation-penalty difference is expected."
+                f"curva.dat sets TIPO DE PENALIZACAO = {tipo} ({label}), but the "
+                "converted case penalizes each stage's shortfall below the "
+                "security curve at the curve cost, NEWAVE's FIXA rule. The "
+                "security-curve penalties, and the storage kept above the "
+                "curve, can differ from NEWAVE's."
             ),
-            remediation="Check curva.dat's TIPO DE PENALIZACAO field.",
         ),
         logger=_LOG,
     )
