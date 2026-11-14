@@ -104,6 +104,11 @@ links are cobre-bridge's.
   with a `hydro-unit-groups-multi-bus` warning.** A plant split across buses
   now counts at the one of them with load, and the dashboard's generation by
   bus counts each bus's own share; build the dashboard and the report again.
+- **`convert newave` wrote no security-curve (VminOP) constraints for a deck
+  whose `curva.dat` lines end in trailing spaces.** It now stops with an error
+  when the curve names a REE that `ree.dat` does not declare.
+- **`convert newave` reported a spurious `hydro-geometry-extended` note** for a
+  plant whose FPHA reference volume equals one of its storage bounds.
 - **`compare` dropped the warnings its HTML report raised.** They now reach the
   comparison notes, the `--json` output and `comparison.json`, and a bad
   `--format` value now stops `compare` before it runs the comparison.

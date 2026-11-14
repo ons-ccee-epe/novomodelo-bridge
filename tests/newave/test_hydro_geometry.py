@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
@@ -300,6 +301,24 @@ class TestGeometryCoversReferenceVolumes:
             table = generate_hydro_geometry(cadastro, id_map, {1: [300.0] * 12})
 
         assert max(table.column("volume_hm3").to_pylist()) == pytest.approx(1000.0)
+        assert [d for d in collected if d.code == "hydro-geometry-extended"] == []
+
+    def test_reference_volumes_at_the_float32_bounds_keep_geometry(self) -> None:
+        """hidr.dat stores the range in float32, so a decimal reference volume
+        equal to a bound can sit a rounding error outside it."""
+        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
+
+        cadastro = _make_geometry_cadastro()
+        vmin, vmax = float(np.float32(100.3)), float(np.float32(999.1))
+        assert vmin > 100.3 and vmax < 999.1
+        cadastro.loc[1, "volume_minimo"] = vmin
+        cadastro.loc[1, "volume_maximo"] = vmax
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
+        with dx.collect() as collected:
+            table = generate_hydro_geometry(cadastro, id_map, {1: [100.3, 999.1]})
+
+        volumes = table.column("volume_hm3").to_pylist()
+        assert (volumes[0], volumes[-1]) == (vmin, vmax)
         assert [d for d in collected if d.code == "hydro-geometry-extended"] == []
 
     def test_single_volume_plant_ignores_reference_volumes(self) -> None:

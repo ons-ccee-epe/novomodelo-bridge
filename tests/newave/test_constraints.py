@@ -1910,8 +1910,10 @@ def _make_vminop_case(
     penalty: float = 1488.0,
     num_anos_pos_estudo: int = 0,
     seasonalize: bool = False,
+    curve_ree: int = 1,
 ) -> tuple[NewaveCase, NewaveIdMap]:
-    """REE 1 (SUDESTE) over the three-plant monthly-reservoir cascade."""
+    """REE 1 (SUDESTE) over the three-plant monthly-reservoir cascade, with the
+    curve read under *curve_ree*."""
     cadastro = _make_cadastro()
     cadastro["tipo_regulacao"] = "M"
 
@@ -1925,7 +1927,7 @@ def _make_vminop_case(
     curva = MagicMock()
     curva.curva_seguranca = pd.DataFrame(
         {
-            "codigo_ree": [1] * len(curve),
+            "codigo_ree": [curve_ree] * len(curve),
             "data": [d for d, _ in curve],
             "valor": [v for _, v in curve],
         }
@@ -2042,6 +2044,29 @@ class TestVminopStoredEnergy:
         assert result is not None
         values = result.per_stage_parameters["pct_vminop_ree1"]
         assert values[12:] == pytest.approx([m / 100.0 for m in range(1, 13)])
+
+
+class TestVminopUnknownRee:
+    """A curve REE that ree.dat does not declare means curva.dat was misread."""
+
+    def test_a_curve_ree_missing_from_ree_dat_stops_the_conversion(
+        self, tmp_path: Path
+    ) -> None:
+        # A curva.dat whose REE lines end in trailing spaces once parsed as a
+        # single REE 0 holding year-0001 rows, and the run wrote no VminOP.
+        case, id_map = _make_vminop_case(
+            tmp_path,
+            curve=[(datetime(1, 1, 1), float("nan")), (datetime(2020, 1, 1), 30.0)],
+            curve_ree=0,
+        )
+
+        with dx.collect() as collected, pytest.raises(FieldParseError) as excinfo:
+            convert_vminop_constraints(case, id_map)
+
+        assert "REE 0" in str(excinfo.value)
+        assert "ree.dat" in str(excinfo.value)
+        assert excinfo.value.path == "curva.dat"
+        assert collected == []
 
 
 def _make_coupled_vminop_case(tmp_path: Path) -> tuple[NewaveCase, NewaveIdMap]:
