@@ -274,6 +274,13 @@ DECOMP's by the tree's probabilities, Novomodelo's by the probability of each
 simulated leaf path in `simulation/scenario_summary.parquet`. The `dashboard`
 takes its means, spreads and P10–P90 bands across scenarios the same way.
 
+Itaipu's 60 Hz units sit at the transshipment bus, which has no load, and its
+50 Hz units at its submarket's bus. The per-bus charts of `compare decomp`
+count the whole plant at the submarket's bus, where DECOMP reports it, and so
+do the `dashboard`'s per-bus storage, stored-energy and inflow charts. The
+`dashboard`'s generation by bus counts each bus's own share, and the 60 Hz
+output reaches the submarket's bus as an import over the transshipment line.
+
 The overview's cost breakdown is at present value on both sides. DECOMP's
 cost report prints each stage's parcels at their nominal value and the stage
 total at both nominal and present value, so each parcel is discounted by that

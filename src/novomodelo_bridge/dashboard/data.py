@@ -25,12 +25,15 @@ from novomodelo_bridge.novomodelo.constraint_expr import (
     resolve_generic_constraints,
 )
 from novomodelo_bridge.novomodelo.readers import (
+    hydro_home_bus,
     read_novomodelo_generic_constraint_echo,
     read_novomodelo_hydro_metadata,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
+    read_novomodelo_load_bus_ids,
     read_novomodelo_scenario_weights,
     read_novomodelo_training_metadata,
+    split_plant_without_home_summary,
 )
 from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 
@@ -139,76 +142,80 @@ def load_stage_dates(case_dir: Path) -> dict[int, str]:
     return dates
 
 
-def resolve_hydro_bus_id(hydro: dict, *, hydros_path: Path) -> int | None:
-    """Resolve one hydro plant's bus id from its ``unit_groups`` array.
+def _unit_group_bus_ids(hydro: dict) -> list[int]:
+    return sorted({g["bus_id"] for g in hydro.get("unit_groups") or []})
 
-    Single implementation of the pre-0.13 top-level ``hydros.json``
-    ``bus_id`` -> 0.13 ``unit_groups[].bus_id`` relocation, shared by
-    ``load_hydro_bus_map`` and ``load_hydro_metadata`` so the two never
-    disagree on a plant's bus.
 
-    - Every plant either pipeline emits today carries exactly one distinct
-      ``bus_id`` across its groups (novomodelo rule 41's mirror invariant) -- that
-      value is returned.
-    - A plant recorded at more than one distinct bus is **not** collapsed
-      onto an arbitrary group's bus (that would silently mislabel it) and is
-      **not** duplicated across every bus it touches either (that would
-      double-count it wherever a caller sums per bus) -- the same dilemma the
-      compare layer resolved the same way in
-      ``comparators.analyze._bus_name_lookups``. Implementation note (a
-      deliberate degraded-rendering choice): a ``WARNING``
-      :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` is emitted and ``None``
-      is returned. Callers must omit the plant from any single-bus-keyed
-      view: ``load_hydro_bus_map``'s id->bus map has no room for more than
-      one bus per plant, and ``load_hydro_metadata`` drops the ``"bus_id"``
-      key entirely so its existing ``.get("bus_id", <default>)`` call sites
-      in the dashboard tabs degrade to "unknown bus" for it. The plant's
-      non-bus metadata (name, volumes, productivity, ...) is unaffected and
-      keeps rendering in the per-plant tables that are not bus-keyed.
-    - Missing or empty ``unit_groups`` raises :class:`NovomodeloOutputError`
-      naming the plant. This cannot happen on a real 0.13 case (novomodelo rejects
-      it at load), so it only guards a hand-edited or pre-0.13 file.
+def resolve_hydro_bus_id(
+    hydro: dict, *, hydros_path: Path, load_bus_ids: frozenset[int]
+) -> int | None:
+    """Resolve the bus a hydro plant's reservoir counts at, from its ``unit_groups``.
+
+    Shared by ``load_hydro_bus_map`` and ``load_hydro_metadata`` so the two
+    never disagree on a plant's bus, and by rule
+    (``novomodelo_readers.hydro_home_bus``) with the compare layer's
+    ``comparators.analyze._bus_name_lookups``. A plant split across buses,
+    such as Itaipu, resolves to the one of them with load.
+
+    A split plant with no such bus gets a ``WARNING``
+    :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` and ``None``:
+    callers leave it out of the views keyed by one bus per plant, so its
+    ``load_hydro_metadata`` entry has no ``"bus_id"``. Its generation still
+    counts at each bus, read per bus from ``simulation/hydro_bus_generation``.
+
+    Raises:
+        NovomodeloOutputError: ``unit_groups`` is missing or empty, which
+            novomodelo rejects at load, so only a hand-edited file has it.
     """
     hid = hydro.get("id")
     name = hydro.get("name", str(hid))
-    groups = hydro.get("unit_groups")
-    if not groups:
+    bus_ids = _unit_group_bus_ids(hydro)
+    if not bus_ids:
         raise NovomodeloOutputError(
             f"hydro {hid} ({name}) has no unit_groups; cannot resolve its bus",
             path=str(hydros_path),
         )
-    bus_ids = {g["bus_id"] for g in groups}
-    if len(bus_ids) == 1:
-        return next(iter(bus_ids))
+    home = hydro_home_bus(bus_ids, load_bus_ids)
+    if home is not None:
+        return home
     emit(
         Diagnostic(
             code="hydro-unit-groups-multi-bus",
             severity=Severity.WARNING,
             category="Dashboard data",
             title="Hydro plant spans multiple buses",
-            summary=(
-                f"Hydro {hid} ({name}) has unit_groups recorded at buses "
-                f"{sorted(bus_ids)}; a single plant-level bus cannot be "
-                "chosen without collapsing onto one of them or "
-                "double-counting the plant at each, so it is omitted from "
-                "bus-keyed dashboard views."
+            summary=split_plant_without_home_summary(
+                hydro["id"], name, bus_ids, load_bus_ids
+            )
+            + (
+                " Its generation still counts at each bus, but it is left "
+                "out of the per-bus storage, stored-energy and inflow charts."
             ),
-            notes=[f"hydro_id: {hid}", f"bus_ids: {sorted(bus_ids)}"],
+            notes=[f"hydro_id: {hid}", f"bus_ids: {bus_ids}"],
         ),
         logger=logger,
     )
     return None
 
 
-def load_hydro_bus_map(case_dir: Path) -> dict[int, int]:
+def load_hydro_bus_map(
+    case_dir: Path, *, load_bus_ids: frozenset[int] | None = None
+) -> dict[int, int]:
+    """Return hydro_id -> the bus :func:`resolve_hydro_bus_id` resolves.
+
+    *load_bus_ids* defaults to the case's
+    ``novomodelo_readers.read_novomodelo_load_bus_ids``.
+    """
     path = case_dir / "system" / "hydros.json"
     if not path.exists():
         return {}
+    if load_bus_ids is None:
+        load_bus_ids = read_novomodelo_load_bus_ids(case_dir / "output")
     with open(path, encoding="utf-8") as f:
         d = json.load(f)
     result: dict[int, int] = {}
     for h in d["hydros"]:
-        bus_id = resolve_hydro_bus_id(h, hydros_path=path)
+        bus_id = resolve_hydro_bus_id(h, hydros_path=path, load_bus_ids=load_bus_ids)
         if bus_id is not None:
             result[h["id"]] = bus_id
     return result
@@ -251,21 +258,11 @@ def load_ncs_bus_map(case_dir: Path) -> dict[int, int]:
 def load_hydro_metadata(
     case_dir: Path, *, bus_map: dict[int, int] | None = None
 ) -> dict[int, dict]:
-    """Return hydro_id -> {bus_id, name, vol_max, vol_min, max_gen_mw, max_turbined}.
+    """Return hydro_id -> {bus_id, bus_ids, name, vol_max, vol_min, max_gen_mw, ...}.
 
-    ``bus_id`` is resolved via :func:`resolve_hydro_bus_id` and is absent from
-    a plant's dict when its ``unit_groups`` disagree on a bus (see that
-    function's docstring for the degraded-rendering rationale).
-
-    *bus_map*, when supplied, is used instead of re-resolving each plant's
-    bus: :func:`load_entity_metadata` computes it once via
-    :func:`load_hydro_bus_map` and passes it here, so an ambiguous plant's
-    ``hydro-unit-groups-multi-bus`` warning is diagnosed once per case load
-    rather than once per loader (``load_hydro_bus_map`` and
-    ``load_hydro_metadata`` otherwise each resolve every plant's bus
-    independently over the same ``hydros.json``). Called standalone (the
-    default, *bus_map* omitted) this still resolves each plant's bus itself,
-    exactly as before.
+    ``bus_ids`` lists every bus the plant's ``unit_groups`` sit at, and
+    ``bus_id`` is the plant's *bus_map* entry, absent when it has none.
+    *bus_map* defaults to :func:`load_hydro_bus_map`.
 
     Productivity is read from ``hydro_energy_productivity.parquet`` (the
     novomodelo productivity-resolution-rules contract). Falls back through
@@ -276,6 +273,8 @@ def load_hydro_metadata(
     path = case_dir / "system" / "hydros.json"
     if not path.exists():
         return {}
+    if bus_map is None:
+        bus_map = load_hydro_bus_map(case_dir)
     with open(path, encoding="utf-8") as f:
         d = json.load(f)
     # Share the single canonical productivity cascade with the comparator so
@@ -287,13 +286,10 @@ def load_hydro_metadata(
         res = h.get("reservoir", {})
         prod = productivities.get(h["id"]) or 0
         max_turbined = gen.get("max_turbined_m3s", 0)
-        bus_id = (
-            bus_map.get(h["id"])
-            if bus_map is not None
-            else resolve_hydro_bus_id(h, hydros_path=path)
-        )
+        bus_id = bus_map.get(h["id"])
         entry: dict = {
             "name": h.get("name", str(h["id"])),
+            "bus_ids": _unit_group_bus_ids(h),
             "vol_max": res.get("max_storage_hm3", 0),
             "vol_min": res.get("min_storage_hm3", 0),
             "max_gen_mw": gen.get("max_generation_mw", 0),
@@ -306,6 +302,14 @@ def load_hydro_metadata(
             entry["bus_id"] = bus_id
         result[h["id"]] = entry
     return result
+
+
+def hydro_bus_label(meta: dict, bus_names: dict[int, str]) -> str:
+    """Name a hydro plant's buses, the one it resolves to first ("SE, IV")."""
+    home = meta.get("bus_id")
+    bus_ids = meta.get("bus_ids") or ([home] if home is not None else [])
+    ordered = sorted(bus_ids, key=lambda b: (b != home, b))
+    return ", ".join(bus_names.get(b, str(b)) for b in ordered)
 
 
 # ---------------------------------------------------------------------------
@@ -459,28 +463,6 @@ def _correct_wall_times_from_convergence(
     return corrected
 
 
-def compute_non_fictitious_bus_ids(load_stats: pd.DataFrame) -> list[int]:
-    """Return sorted bus IDs that have mean_mw > 0 in at least one stage.
-
-    A fictitious bus is defined as one whose mean load is zero across all
-    stages in the input load seasonal stats.  Tabs that show per-bus facets
-    should filter to this list so that accounting-only buses (e.g. NOFICT1)
-    are excluded.
-
-    Args:
-        load_stats: DataFrame with columns ``bus_id``, ``stage_id``, ``mean_mw``.
-
-    Returns:
-        Sorted list of integer bus IDs with at least one stage where
-        ``mean_mw > 0``.  Returns an empty list when ``load_stats`` is empty
-        or the ``mean_mw`` column is absent.
-    """
-    if load_stats.empty or "mean_mw" not in load_stats.columns:
-        return []
-    positive = load_stats[load_stats["mean_mw"] > 0]
-    return sorted(positive["bus_id"].unique().tolist())
-
-
 # ---------------------------------------------------------------------------
 # Section loaders
 # ---------------------------------------------------------------------------
@@ -566,20 +548,20 @@ class EntityMetadata:
     ncs_bus_map: dict[int, int]
     hydro_meta: dict[int, dict]
     bus_names: dict[int, str]
+    non_fictitious_bus_ids: list[int]
 
 
 def load_entity_metadata(case_dir: Path) -> EntityMetadata:
     """Load entity name maps and hydro/thermal metadata dictionaries.
 
-    ``hydro_bus_map`` is resolved once via :func:`load_hydro_bus_map` and
-    reused by :func:`load_hydro_metadata` (both loaders resolve
-    every plant's bus over the same ``system/hydros.json``; without sharing
-    the map, an ambiguous plant's ``hydro-unit-groups-multi-bus`` warning
-    fires twice per dashboard build instead of once).
+    ``hydro_bus_map`` is resolved once and reused by
+    :func:`load_hydro_metadata`, so a split plant's
+    ``hydro-unit-groups-multi-bus`` warning fires once per dashboard build.
     """
     names = load_names(case_dir)
     bus_names = {eid: nm for (entity, eid), nm in names.items() if entity == "buses"}
-    hydro_bus_map = load_hydro_bus_map(case_dir)
+    load_bus_ids = read_novomodelo_load_bus_ids(case_dir / "output")
+    hydro_bus_map = load_hydro_bus_map(case_dir, load_bus_ids=load_bus_ids)
     return EntityMetadata(
         names=names,
         stage_labels=load_stage_labels(case_dir),
@@ -589,6 +571,7 @@ def load_entity_metadata(case_dir: Path) -> EntityMetadata:
         ncs_bus_map=load_ncs_bus_map(case_dir),
         hydro_meta=load_hydro_metadata(case_dir, bus_map=hydro_bus_map),
         bus_names=bus_names,
+        non_fictitious_bus_ids=sorted(load_bus_ids),
     )
 
 
@@ -653,7 +636,6 @@ class ScenarioInputs:
 
     load_stats: pd.DataFrame
     load_factors_list: list[dict]
-    non_fictitious_bus_ids: list[int]
     ncs_stats: pd.DataFrame
     inflow_history: pd.DataFrame
     line_bounds: pd.DataFrame
@@ -678,8 +660,6 @@ def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
     if lf_path.exists():
         with lf_path.open(encoding="utf-8") as f:
             load_factors_list = json.load(f)["load_factors"]
-
-    non_fictitious_bus_ids = compute_non_fictitious_bus_ids(load_stats)
 
     ncs_stats_path = case_dir / "scenarios" / "non_controllable_stats.parquet"
     ncs_stats = (
@@ -717,7 +697,6 @@ def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
     return ScenarioInputs(
         load_stats=load_stats,
         load_factors_list=load_factors_list,
-        non_fictitious_bus_ids=non_fictitious_bus_ids,
         ncs_stats=ncs_stats,
         inflow_history=inflow_history,
         line_bounds=line_bounds,
@@ -1239,6 +1218,10 @@ class DashboardData:
         return self.simulation.exchanges_lf
 
     @property
+    def hydro_bus_generation_lf(self) -> pl.LazyFrame:
+        return self.simulation.hydro_bus_generation_lf
+
+    @property
     def lhs_frames(self) -> dict[str, pl.LazyFrame]:
         """The simulation scans generic-constraint LHS terms read from."""
         sim = self.simulation
@@ -1296,7 +1279,7 @@ class DashboardData:
 
     @property
     def non_fictitious_bus_ids(self) -> list[int]:
-        return self.scenario.non_fictitious_bus_ids
+        return self.entities.non_fictitious_bus_ids
 
     @property
     def stage_hours(self) -> dict[int, float]:

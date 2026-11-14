@@ -22,6 +22,7 @@ import plotly.subplots as ps
 import polars as pl
 
 from novomodelo_bridge.dashboard.chart_helpers import make_chart_card
+from novomodelo_bridge.dashboard.data import hydro_bus_label
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
@@ -1248,8 +1249,7 @@ def _render_per_hydro_inflow_explorer(data: DashboardData) -> str:
     for hid in hydro_ids:
         meta = data.hydro_meta[hid]
         name = meta.get("name", str(hid))
-        bus_id = meta.get("bus_id", "")
-        bus_name = data.bus_names.get(bus_id, str(bus_id)) if bus_id != "" else ""
+        bus_name = hydro_bus_label(meta, data.bus_names)
         table_rows.append(
             f'<tr data-name="{escape_attr(name.lower())}" data-index="{hid}">'
             f"<td>{escape_text(name)}</td>"

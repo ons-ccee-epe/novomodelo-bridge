@@ -58,12 +58,20 @@ def _load_compare_context(
     return case, id_map, alignment, lines_json
 
 
+def _resolve_compare_formats(command: str, args: CompareArgs) -> set[str]:
+    """Parse ``--format`` before the comparison runs; a bad token exits 2."""
+    try:
+        return _parse_formats(args.format)
+    except ValueError as exc:
+        _fail(command, args, exc, 2)
+
+
 def _export_compare_artifacts(
     dataset: ComparisonDataset,
     *,
-    command: str,
+    formats: set[str],
     args: CompareArgs,
-    raw_formats: list[str] | None,
+    command: str,
     source_dir: Path,
     novomodelo_output_dir: Path,
     tolerance: float,
@@ -71,29 +79,22 @@ def _export_compare_artifacts(
     input_files: list[dict[str, object]] | None = None,
     diagnostics: list[dict[str, object]] | None = None,
     quiet_status: bool = False,
-) -> tuple[set[str], Path]:
-    """Resolve ``--format`` and write the machine-readable comparison artifacts.
+) -> Path:
+    """Write the machine-readable comparison artifacts *formats* asks for.
 
     Shared by `compare newave` and `compare decomp` (``source_dir`` names the
     source-case directory generically — the manifest field itself is
-    reused across both callers). Returns the requested formats and the
-    resolved out_dir so the handler can run its own HTML branch and
-    exit-code logic.
+    reused across both callers). Returns the resolved out_dir for the
+    handler's HTML report.
 
-    An invalid ``--format`` token exits 2 via :func:`_fail`. A write failure
-    must NOT change the comparison exit code, so an ``OSError`` is warned and
-    swallowed.
+    A write failure must NOT change the comparison exit code, so an
+    ``OSError`` is warned and swallowed.
 
     *quiet_status* (set by ``--json``) gates ONLY the ``Artifacts written to …``
     stdout status line so stdout stays pure JSON; the file export still runs and
     the ``OSError`` write-failure warning still reaches stderr.
     """
     from novomodelo_bridge.comparators.export import write_artifacts
-
-    try:
-        formats = _parse_formats(raw_formats)
-    except ValueError as exc:
-        _fail(command, args, exc, 2)
 
     out_dir: Path = out_dir_arg or (novomodelo_output_dir / "comparison_artifacts")
     export_formats = formats & {"csv", "parquet", "json"}
@@ -119,25 +120,33 @@ def _export_compare_artifacts(
             style="#F5A623",
         )
 
-    return formats, out_dir
+    return out_dir
 
 
-def _write_html_compare_report(
-    dataset: ComparisonDataset,
-    out_dir: Path,
-    args: CompareArgs,
-    *,
-    reference_label: str,
-) -> None:
-    """Build and write the opt-in HTML comparison report (``--format html``/``all``).
+def _build_html_compare_report(
+    dataset: ComparisonDataset, formats: set[str], *, reference_label: str
+) -> str | None:
+    """Build the HTML report when *formats* asks for it (``html``/``all``).
 
-    Shared by `compare newave` and `compare decomp`. The file is still written
-    under ``--json`` (it is a ``--format`` artifact); only its stdout advisory
-    is routed to stderr so stdout stays pure JSON.
+    Call it inside the run's ``diagnostics.collect()`` block: the report's
+    charts emit diagnostics, which outside a sink are only logged and never
+    reach the comparison notes, the ``comparison.json`` manifest or the
+    ``--json`` envelope.
     """
+    if "html" not in formats:
+        return None
     from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
-    html = build_comparison_report(dataset, reference_label=reference_label)
+    return build_comparison_report(dataset, reference_label=reference_label)
+
+
+def _write_html_compare_report(html: str, out_dir: Path, args: CompareArgs) -> None:
+    """Write the HTML report built by :func:`_build_html_compare_report`.
+
+    The file is still written under ``--json`` (it is a ``--format``
+    artifact); only its stdout advisory is routed to stderr so stdout stays
+    pure JSON.
+    """
     report_path = out_dir / "report.html"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(html, encoding="utf-8")
@@ -241,6 +250,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
     newave_dir: Path = args.source_dir
     novomodelo_output_dir: Path = args.novomodelo_output_dir
     tolerance: float = args.tolerance
+    formats = _resolve_compare_formats("compare newave", args)
 
     case, id_map, alignment, _lines_json = _load_compare_context(
         newave_dir, novomodelo_output_dir, command="compare newave", args=args
@@ -267,6 +277,9 @@ def _run_newave_comparison(args: CompareArgs) -> None:
                 )
         except (NovomodeloReadError, NovomodeloPartitionMissingError) as exc:
             _fail("compare newave", args, exc, 2)
+        report_html = _build_html_compare_report(
+            dataset, formats, reference_label="NEWAVE"
+        )
 
     verdict = build_compare_verdict(dataset)
 
@@ -290,11 +303,11 @@ def _run_newave_comparison(args: CompareArgs) -> None:
             quiet=args.quiet,
         )
 
-    formats, out_dir = _export_compare_artifacts(
+    out_dir = _export_compare_artifacts(
         dataset,
-        command="compare newave",
+        formats=formats,
         args=args,
-        raw_formats=args.format,
+        command="compare newave",
         source_dir=newave_dir,
         novomodelo_output_dir=novomodelo_output_dir,
         tolerance=tolerance,
@@ -304,8 +317,8 @@ def _run_newave_comparison(args: CompareArgs) -> None:
         quiet_status=args.json_output,
     )
 
-    if "html" in formats:
-        _write_html_compare_report(dataset, out_dir, args, reference_label="NEWAVE")
+    if report_html is not None:
+        _write_html_compare_report(report_html, out_dir, args)
 
     if args.json_output:
         # ``status`` is DECOUPLED from the exit code (this command always
@@ -349,6 +362,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
     # ``build_decomp_dataset`` below gets a concrete tolerance rather than the
     # raw, possibly-``None`` CLI value — mirrors ``_run_newave_comparison``.
     args = _resolve_compare_settings(args)
+    formats = _resolve_compare_formats("compare decomp", args)
 
     try:
         decomp_case = DecompCase.from_directory(args.source_dir)
@@ -376,6 +390,9 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             ValueError,
         ) as exc:
             _fail("compare decomp", args, exc, 2)
+        report_html = _build_html_compare_report(
+            dataset, formats, reference_label="DECOMP"
+        )
 
     verdict = build_compare_verdict(dataset)
 
@@ -397,11 +414,11 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             quiet=args.quiet,
         )
 
-    formats, out_dir = _export_compare_artifacts(
+    out_dir = _export_compare_artifacts(
         dataset,
-        command="compare decomp",
+        formats=formats,
         args=args,
-        raw_formats=args.format,
+        command="compare decomp",
         source_dir=args.source_dir,
         novomodelo_output_dir=args.novomodelo_output_dir,
         tolerance=args.tolerance,
@@ -411,8 +428,8 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
         quiet_status=args.json_output,
     )
 
-    if "html" in formats:
-        _write_html_compare_report(dataset, out_dir, args, reference_label="DECOMP")
+    if report_html is not None:
+        _write_html_compare_report(report_html, out_dir, args)
 
     if args.json_output:
         # ``status`` is DECOUPLED from the exit code (this command always

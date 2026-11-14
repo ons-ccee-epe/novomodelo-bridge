@@ -38,6 +38,10 @@ from novomodelo_bridge.comparators.fpha import (
 from novomodelo_bridge.comparators.model import ResultComparison, build_results_summary
 from novomodelo_bridge.core import agreement
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.novomodelo.readers import (
+    hydro_home_bus,
+    split_plant_without_home_summary,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -607,26 +611,22 @@ def _bus_name_lookups(
     Shared helper for the per-bus roll-up. ``bus_id_to_name`` maps each bus id
     to ``bus_meta[bid]["name"]`` (fallback ``str(bid)``).
 
-    ``hydro_to_bus`` maps each plant id to its single owning bus, sourced from
-    ``hydro_meta[hid]["bus_ids"]`` -- the distinct-``(hydro_id, bus_id)``-pair
-    label the ``simulation/hydro_bus_generation`` partition carries per plant
-    (see ``novomodelo_readers.read_novomodelo_hydro_bus_labels``). ``hydro_meta`` itself
-    (``novomodelo_readers.read_novomodelo_hydro_metadata``) carries no bus information --
-    it is plant physics only -- ``"bus_ids"`` is merged onto it
-    by the results-comparison orchestrator before it reaches here.
+    ``hydro_to_bus`` maps each plant id to its home bus
+    (``novomodelo_readers.hydro_home_bus``), from ``hydro_meta[hid]["bus_ids"]``
+    -- the buses the ``simulation/hydro_bus_generation`` partition records the
+    plant at, merged onto the plant-physics ``hydro_meta`` by the
+    results-comparison orchestrator -- and the ``bus_meta[bid]["has_load"]``
+    flags. A plant split across buses, such as Itaipu's 60 Hz half on the
+    transshipment bus, has its home at the one bus with load, where the
+    source model reports the whole plant.
 
     A plant with no recorded bus (``"bus_ids"`` absent or empty) is skipped.
-    A plant recorded at *more than one* bus (only possible once a case has
-    genuine multi-bus hydros) is **not** collapsed onto an arbitrary one of them
-    and **not** added to every one of them either: either choice would misreport the
-    per-bus roll-up (silently dropping one bus's share, or double-counting
-    the plant's whole value at each bus it touches). It is instead excluded
-    from ``hydro_to_bus`` and a :class:`~novomodelo_bridge.core.diagnostics.Diagnostic`
-    is raised naming the plant (id and, when available, its
-    ``hydro_meta[hid]["name"]``), so the ambiguity surfaces instead of
-    quietly producing wrong numbers. If that leaves ``hydro_to_bus`` empty
-    despite a non-empty ``hydro_meta``, a second diagnostic flags the map
-    itself as unusable -- the failure mode this helper exists to make loud.
+    A split plant with no home (none or several of its buses have load) is
+    neither collapsed onto an arbitrary bus nor added to each, which would
+    drop one bus's share or double-count the plant. It is left out of
+    ``hydro_to_bus`` with a :class:`~novomodelo_bridge.core.diagnostics.Diagnostic`
+    naming it. If that leaves ``hydro_to_bus`` empty despite a non-empty
+    ``hydro_meta``, a second diagnostic flags the map itself as unusable.
 
     Repeated calls with the identical ``(hydro_meta, bus_meta)`` object pair
     hit :data:`_lookup_cache` and do not re-emit (see that class's docstring).
@@ -634,7 +634,8 @@ def _bus_name_lookups(
     Args:
         hydro_meta: Per-plant metadata; read-only. The bus label, when
             present, lives under the ``"bus_ids"`` key as a set of bus ids.
-        bus_meta: Per-bus metadata carrying ``name``; read-only.
+        bus_meta: Per-bus metadata carrying ``name`` and ``has_load``;
+            read-only.
 
     Returns:
         ``(bus_id_to_name, hydro_to_bus)``.
@@ -652,13 +653,17 @@ def _bus_name_lookups(
         bid: cast("str", meta.get("name", str(bid))) for bid, meta in bus_meta.items()
     }
 
+    load_bus_ids = frozenset(
+        bid for bid, meta in bus_meta.items() if meta.get("has_load")
+    )
     hydro_to_bus: dict[int, int] = {}
     for hid, meta in hydro_meta.items():
         raw_bus_ids = meta.get("bus_ids")
         if not raw_bus_ids:
             continue
         bus_ids = {int(b) for b in cast("Iterable[int]", raw_bus_ids)}
-        if len(bus_ids) > 1:
+        home = hydro_home_bus(bus_ids, load_bus_ids)
+        if home is None:
             name = cast("str", meta.get("name", str(hid)))
             emit(
                 Diagnostic(
@@ -666,20 +671,16 @@ def _bus_name_lookups(
                     severity=Severity.WARNING,
                     category="Compare data",
                     title="Hydro plant spans multiple buses",
-                    summary=(
-                        f"Hydro {hid} ({name}) is recorded at buses "
-                        f"{sorted(bus_ids)} in the hydro_bus_generation "
-                        "partition; a single plant-level value cannot be "
-                        "attributed to one bus without collapsing or "
-                        "double-counting, so it is excluded from the "
-                        "per-bus hydro charts."
-                    ),
+                    summary=split_plant_without_home_summary(
+                        hid, name, bus_ids, load_bus_ids
+                    )
+                    + " It is left out of the per-bus hydro charts.",
                     notes=[f"hydro_id: {hid}", f"bus_ids: {sorted(bus_ids)}"],
                 ),
                 logger=_LOG,
             )
             continue
-        hydro_to_bus[hid] = next(iter(bus_ids))
+        hydro_to_bus[hid] = home
 
     if hydro_meta and not hydro_to_bus:
         emit(
@@ -729,7 +730,8 @@ def per_bus_sums_from_results(
         hydro_meta: Per-plant metadata; read-only. The bus label, when
             present, lives under the ``"bus_ids"`` key (see
             :func:`_bus_name_lookups`).
-        bus_meta: Per-bus metadata carrying ``name``; read-only.
+        bus_meta: Per-bus metadata carrying ``name`` and ``has_load``;
+            read-only.
 
     Returns:
         A dict keyed by upper-cased ``bus_name``; each value is a dict with
@@ -797,7 +799,8 @@ def per_bus_sums_from_frame(
         hydro_meta: Per-plant metadata; read-only. The bus label, when
             present, lives under the ``"bus_ids"`` key (see
             :func:`_bus_name_lookups`).
-        bus_meta: Per-bus metadata carrying ``name``; read-only.
+        bus_meta: Per-bus metadata carrying ``name`` and ``has_load``;
+            read-only.
 
     Returns:
         A dict keyed by upper-cased ``bus_name``; each value is a dict with

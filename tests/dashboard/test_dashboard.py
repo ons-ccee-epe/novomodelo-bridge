@@ -25,6 +25,7 @@ from novomodelo_bridge.dashboard.data import (
     _correct_wall_times_from_convergence,
     _normalize_output_columns,
     entity_name,
+    hydro_bus_label,
     load_entity_metadata,
     load_hydro_bus_map,
     load_hydro_metadata,
@@ -51,6 +52,26 @@ from tests.conftest import hydro_with_group
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _write_bus_loads(case_dir: Path, mean_mw_by_bus: dict[int, float]) -> None:
+    path = case_dir / "scenarios" / "load_seasonal_stats.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(
+        {
+            "bus_id": list(mean_mw_by_bus),
+            "stage_id": [0] * len(mean_mw_by_bus),
+            "mean_mw": list(mean_mw_by_bus.values()),
+            "std_mw": [0.0] * len(mean_mw_by_bus),
+        }
+    ).write_parquet(path)
+
+
+def _split_plant(hydro_id: int, bus_ids: tuple[int, int], name: str) -> dict:
+    """A hydro whose two unit groups sit at different buses, as Itaipu's do."""
+    hydro = hydro_with_group(hydro_id, bus_ids[0], name=name)
+    hydro["unit_groups"].append({**hydro["unit_groups"][0], "bus_id": bus_ids[1]})
+    return hydro
 
 
 # ---------------------------------------------------------------------------
@@ -210,14 +231,40 @@ def test_load_hydro_bus_map_missing_file_returns_empty(tmp_path: Path) -> None:
     assert result == {}
 
 
-def test_load_hydro_bus_map_omits_multi_bus_plant(tmp_path: Path) -> None:
-    """A plant whose unit_groups disagree on bus is dropped from the
-    map entirely -- neither collapsed onto one of its buses nor kept at a
-    guessed value -- and a Diagnostic is raised naming it."""
-    ambiguous = hydro_with_group(1, 10)
-    ambiguous["unit_groups"].append({**ambiguous["unit_groups"][0], "bus_id": 20})
-    hydros_json = {"hydros": [hydro_with_group(0, 5), ambiguous]}
+def test_load_hydro_bus_map_puts_split_plant_at_its_loaded_bus(
+    tmp_path: Path,
+) -> None:
+    """Itaipu's shape: one unit group on its market's bus, the other on a
+    transshipment bus with no load. The plant resolves to the loaded bus,
+    with no warning."""
+    hydros_json = {"hydros": [hydro_with_group(0, 5), _split_plant(1, (20, 10), "X")]}
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
+    _write_bus_loads(tmp_path, {5: 900.0, 10: 4000.0, 20: 0.0})
+
+    with dx.collect() as collected:
+        result = load_hydro_bus_map(tmp_path)
+
+    assert result == {0: 5, 1: 10}
+    assert not [d for d in collected if d.code == "hydro-unit-groups-multi-bus"]
+
+
+@pytest.mark.parametrize(
+    ("loads", "phrase"),
+    [
+        ({5: 900.0, 10: 0.0, 20: 0.0}, "none of them has load"),
+        ({5: 900.0, 10: 4000.0, 20: 300.0}, "2 of them have load"),
+    ],
+    ids=["no-loaded-bus", "two-loaded-buses"],
+)
+def test_load_hydro_bus_map_omits_split_plant_without_one_loaded_bus(
+    tmp_path: Path, loads: dict[int, float], phrase: str
+) -> None:
+    """A split plant with no loaded bus, or several, is dropped from the
+    map -- neither collapsed onto one of its buses nor kept at a guessed
+    value -- and a Diagnostic names it and says why."""
+    hydros_json = {"hydros": [hydro_with_group(0, 5), _split_plant(1, (10, 20), "X")]}
+    _write_json(tmp_path / "system" / "hydros.json", hydros_json)
+    _write_bus_loads(tmp_path, loads)
 
     with dx.collect() as collected:
         result = load_hydro_bus_map(tmp_path)
@@ -227,9 +274,9 @@ def test_load_hydro_bus_map_omits_multi_bus_plant(tmp_path: Path) -> None:
     ambiguous_diags = [d for d in collected if d.code == "hydro-unit-groups-multi-bus"]
     assert len(ambiguous_diags) == 1
     assert ambiguous_diags[0].severity is dx.Severity.WARNING
-    assert "1" in ambiguous_diags[0].summary
-    assert "10" in ambiguous_diags[0].summary
-    assert "20" in ambiguous_diags[0].summary
+    assert "Hydro 1 (X)" in ambiguous_diags[0].summary
+    assert "[10, 20]" in ambiguous_diags[0].summary
+    assert phrase in ambiguous_diags[0].summary
 
 
 def test_load_hydro_bus_map_missing_unit_groups_raises_named_error(
@@ -375,21 +422,21 @@ def test_load_hydro_metadata_missing_file_returns_empty(tmp_path: Path) -> None:
     assert result == {}
 
 
-def test_load_hydro_metadata_omits_bus_id_for_multi_bus_plant(
+def test_load_hydro_metadata_omits_bus_id_for_split_plant_without_home(
     tmp_path: Path,
 ) -> None:
-    """A plant whose unit_groups disagree on bus keeps its non-bus
-    metadata (name, volumes, productivity, ...) but has no "bus_id" key --
-    it is not collapsed onto one of its buses -- and a Diagnostic names it."""
-    ambiguous = hydro_with_group(1, 10, name="AMBIGUOUS")
-    ambiguous["unit_groups"].append({**ambiguous["unit_groups"][0], "bus_id": 20})
-    hydros_json = {"hydros": [ambiguous]}
+    """A split plant with no loaded bus keeps its non-bus metadata (name,
+    volumes, productivity, ...) and the list of its buses, but has no
+    "bus_id" key -- it is not collapsed onto one of its buses -- and a
+    Diagnostic names it."""
+    hydros_json = {"hydros": [_split_plant(1, (10, 20), "AMBIGUOUS")]}
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
     with dx.collect() as collected:
         result = load_hydro_metadata(tmp_path)
 
     assert result[1]["name"] == "AMBIGUOUS"
+    assert result[1]["bus_ids"] == [10, 20]
     assert "bus_id" not in result[1]
 
     ambiguous_diags = [d for d in collected if d.code == "hydro-unit-groups-multi-bus"]
@@ -449,9 +496,9 @@ def test_load_entity_metadata_emits_multi_bus_diagnostic_once(
     previously untested. An ambiguous plant's
     hydro-unit-groups-multi-bus warning must fire once per case load, not
     once per loader."""
-    ambiguous = hydro_with_group(1, 10, name="AMBIGUOUS")
-    ambiguous["unit_groups"].append({**ambiguous["unit_groups"][0], "bus_id": 20})
-    hydros_json = {"hydros": [hydro_with_group(0, 5), ambiguous]}
+    hydros_json = {
+        "hydros": [hydro_with_group(0, 5), _split_plant(1, (10, 20), "AMBIGUOUS")]
+    }
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
     with dx.collect() as collected:
@@ -463,6 +510,39 @@ def test_load_entity_metadata_emits_multi_bus_diagnostic_once(
     ambiguous_diags = [d for d in collected if d.code == "hydro-unit-groups-multi-bus"]
     assert len(ambiguous_diags) == 1
     assert "AMBIGUOUS" in ambiguous_diags[0].summary
+
+
+def test_load_entity_metadata_resolves_split_plant_to_its_loaded_bus(
+    tmp_path: Path,
+) -> None:
+    """The bus map and the plant metadata agree on a split plant's bus, and
+    the transshipment bus is not among the facet buses."""
+    hydros_json = {"hydros": [_split_plant(1, (0, 5), "ITAIPU")]}
+    _write_json(tmp_path / "system" / "hydros.json", hydros_json)
+    _write_bus_loads(tmp_path, {0: 40000.0, 5: 0.0})
+
+    metadata = load_entity_metadata(tmp_path)
+
+    assert metadata.hydro_bus_map == {1: 0}
+    assert metadata.hydro_meta[1]["bus_id"] == 0
+    assert metadata.hydro_meta[1]["bus_ids"] == [0, 5]
+    assert metadata.non_fictitious_bus_ids == [0]
+
+
+@pytest.mark.parametrize(
+    ("meta", "label"),
+    [
+        ({"bus_id": 0, "bus_ids": [0, 5]}, "SE, IV"),
+        ({"bus_id": 5, "bus_ids": [0, 5]}, "IV, SE"),
+        ({"bus_ids": [0, 5]}, "SE, IV"),
+        ({"bus_id": 0}, "SE"),
+        ({"bus_id": 9}, "9"),
+        ({}, ""),
+    ],
+    ids=["home-first", "home-not-lowest", "no-home", "no-list", "unnamed", "none"],
+)
+def test_hydro_bus_label_names_the_resolved_bus_first(meta: dict, label: str) -> None:
+    assert hydro_bus_label(meta, {0: "SE", 5: "IV"}) == label
 
 
 # ---------------------------------------------------------------------------
@@ -1736,62 +1816,8 @@ def test_load_inflow_lags_lf_present(_v2_case: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# compute_non_fictitious_bus_ids
+# non_fictitious_bus_ids
 # ---------------------------------------------------------------------------
-
-
-def test_compute_non_fictitious_bus_ids_filters_zero_load() -> None:
-    """Bus with zero mean_mw in all stages is excluded; nonzero bus is included."""
-    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
-
-    load_stats = pd.DataFrame(
-        {
-            "bus_id": [0, 0, 1, 1],
-            "stage_id": [0, 1, 0, 1],
-            "mean_mw": [100.0, 80.0, 0.0, 0.0],
-        }
-    )
-
-    result = compute_non_fictitious_bus_ids(load_stats)
-
-    assert result == [0]
-
-
-def test_compute_non_fictitious_bus_ids_all_nonzero() -> None:
-    """All buses with nonzero load in at least one stage are returned sorted."""
-    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
-
-    load_stats = pd.DataFrame(
-        {
-            "bus_id": [0, 1, 0, 1],
-            "stage_id": [0, 0, 1, 1],
-            "mean_mw": [50.0, 10.0, 48.0, 9.0],
-        }
-    )
-
-    result = compute_non_fictitious_bus_ids(load_stats)
-
-    assert result == [0, 1]
-
-
-def test_compute_non_fictitious_bus_ids_empty_df() -> None:
-    """Empty DataFrame returns an empty list."""
-    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
-
-    result = compute_non_fictitious_bus_ids(pd.DataFrame())
-
-    assert result == []
-
-
-def test_compute_non_fictitious_bus_ids_missing_column() -> None:
-    """DataFrame missing mean_mw column returns an empty list (defensive)."""
-    from novomodelo_bridge.dashboard.data import compute_non_fictitious_bus_ids
-
-    load_stats = pd.DataFrame({"bus_id": [0, 1], "stage_id": [0, 0]})
-
-    result = compute_non_fictitious_bus_ids(load_stats)
-
-    assert result == []
 
 
 def test_non_fictitious_bus_ids_field_on_data(_v2_case: Path) -> None:

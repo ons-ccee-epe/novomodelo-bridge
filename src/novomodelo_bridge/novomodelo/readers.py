@@ -2154,6 +2154,60 @@ def read_novomodelo_hydro_bus_labels(
     return {hid: frozenset(buses) for hid, buses in result.items()}
 
 
+def read_novomodelo_load_bus_ids(novomodelo_output_dir: Path) -> frozenset[int]:
+    """Return the buses with a positive mean load at one stage or more.
+
+    A bus with zero load at every stage of
+    ``scenarios/load_seasonal_stats.parquet`` is an accounting node, such as
+    a transshipment bus, rather than a market. Absent file: empty set.
+    """
+    path = (
+        case_dir_for(novomodelo_output_dir)
+        / "scenarios"
+        / "load_seasonal_stats.parquet"
+    )
+    if not path.exists():
+        _LOG.warning("load_seasonal_stats.parquet not found at %s", path)
+        return frozenset()
+    try:
+        stats = pl.read_parquet(path, columns=["bus_id", "mean_mw"])
+    except (OSError, pl.exceptions.PolarsError) as exc:
+        raise NovomodeloReadError(
+            f"Failed to read load_seasonal_stats.parquet: {path}"
+        ) from exc
+    loaded = stats.filter(pl.col("mean_mw") > 0)["bus_id"].unique()
+    return frozenset(int(b) for b in loaded)
+
+
+def hydro_home_bus(bus_ids: Iterable[int], load_bus_ids: frozenset[int]) -> int | None:
+    """Return the one bus that a hydro plant's reservoir quantities count at.
+
+    A plant split across buses, such as Itaipu's 60 Hz half on a
+    transshipment bus, has its home at the only one of them with load.
+    Returns ``None`` when no bus, or more than one, qualifies: picking one
+    then would misattribute the reservoir, so callers leave the plant out
+    of the per-bus views and say so.
+    """
+    distinct = set(bus_ids)
+    if len(distinct) == 1:
+        return next(iter(distinct))
+    loaded = distinct & load_bus_ids
+    return next(iter(loaded)) if len(loaded) == 1 else None
+
+
+def split_plant_without_home_summary(
+    hydro_id: int, name: str, bus_ids: Iterable[int], load_bus_ids: frozenset[int]
+) -> str:
+    """Say why :func:`hydro_home_bus` found no home for a plant."""
+    distinct = sorted(set(bus_ids))
+    n_loaded = sum(1 for b in distinct if b in load_bus_ids)
+    which = "none of them has" if n_loaded == 0 else f"{n_loaded} of them have"
+    return (
+        f"Hydro {hydro_id} ({name}) has generating units at buses {distinct}, "
+        f"and {which} load, so no one bus can stand for the whole plant."
+    )
+
+
 def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int, dict]:
     """Read the per-hydro converted building blocks for the Productivity tab.
 
@@ -2274,7 +2328,8 @@ def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, d
 def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
     """Read bus metadata from Novomodelo buses.json.
 
-    Returns ``{entity_id: {"name": str}}``.
+    Returns ``{entity_id: {"name": str, "has_load": bool}}``, with
+    ``has_load`` from :func:`read_novomodelo_load_bus_ids`.
     """
     path = _find_system_json(novomodelo_output_dir, "buses.json")
     if path is None:
@@ -2288,8 +2343,12 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
         _LOG.warning("Failed to parse buses.json")
         return {}
 
+    load_bus_ids = read_novomodelo_load_bus_ids(novomodelo_output_dir)
     return {
-        int(b["id"]): {"name": str(b.get("name", f"bus_{b['id']}"))}
+        int(b["id"]): {
+            "name": str(b.get("name", f"bus_{b['id']}")),
+            "has_load": int(b["id"]) in load_bus_ids,
+        }
         for b in data.get("buses", [])
     }
 

@@ -28,9 +28,11 @@ from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.novomodelo.readers import (
     NovomodeloReadError,
     _load_entity_bus_map,
+    hydro_home_bus,
     novomodelo_software_version,
     read_novomodelo_bus_aggregates,
     read_novomodelo_bus_means,
+    read_novomodelo_bus_metadata,
     read_novomodelo_fpha_fit_config,
     read_novomodelo_hydro_bus_generation,
     read_novomodelo_hydro_bus_labels,
@@ -41,12 +43,14 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_line_bounds,
     read_novomodelo_line_means,
     read_novomodelo_lines,
+    read_novomodelo_load_bus_ids,
     read_novomodelo_lp_max_generation,
     read_novomodelo_scenario_weights,
     read_novomodelo_stage_line_bounds,
     read_novomodelo_thermal_means,
     read_novomodelo_thermal_metadata,
     read_novomodelo_training_metadata,
+    split_plant_without_home_summary,
 )
 
 # ---------------------------------------------------------------------------
@@ -738,6 +742,97 @@ class TestHydroBusLabels:
         (out / "simulation" / "hydro_bus_generation").mkdir(parents=True)
 
         assert read_novomodelo_hydro_bus_labels(out) == {}
+
+
+# ---------------------------------------------------------------------------
+# Loaded buses and the home bus of a plant split across buses.
+# ---------------------------------------------------------------------------
+
+
+def _write_load_stats(case_dir: Path, columns: dict[str, list]) -> None:
+    path = case_dir / "scenarios" / "load_seasonal_stats.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(columns).write_parquet(path)
+
+
+class TestReadNovomodeloLoadBusIds:
+    def test_bus_without_load_at_any_stage_is_left_out(self, tmp_path: Path) -> None:
+        _write_load_stats(
+            tmp_path,
+            {
+                "bus_id": [0, 0, 1, 1],
+                "stage_id": [0, 1, 0, 1],
+                "mean_mw": [100.0, 80.0, 0.0, 0.0],
+            },
+        )
+
+        assert read_novomodelo_load_bus_ids(tmp_path / "output") == {0}
+
+    def test_bus_with_load_at_one_stage_counts(self, tmp_path: Path) -> None:
+        _write_load_stats(
+            tmp_path,
+            {
+                "bus_id": [0, 1, 0, 1],
+                "stage_id": [0, 0, 1, 1],
+                "mean_mw": [50.0, 0.0, 48.0, 9.0],
+            },
+        )
+
+        assert read_novomodelo_load_bus_ids(tmp_path / "output") == {0, 1}
+
+    def test_absent_file_yields_empty_set(self, tmp_path: Path) -> None:
+        assert read_novomodelo_load_bus_ids(tmp_path / "output") == frozenset()
+
+    def test_file_without_mean_mw_raises(self, tmp_path: Path) -> None:
+        _write_load_stats(tmp_path, {"bus_id": [0, 1], "stage_id": [0, 0]})
+
+        with pytest.raises(NovomodeloReadError, match="load_seasonal_stats"):
+            read_novomodelo_load_bus_ids(tmp_path / "output")
+
+
+class TestBusMetadataHasLoad:
+    def test_flags_each_bus_by_its_load(self, tmp_path: Path) -> None:
+        (tmp_path / "system").mkdir()
+        (tmp_path / "system" / "buses.json").write_text(
+            json.dumps({"buses": [{"id": 0, "name": "SE"}, {"id": 5, "name": "IV"}]}),
+            encoding="utf-8",
+        )
+        _write_load_stats(
+            tmp_path, {"bus_id": [0, 5], "stage_id": [0, 0], "mean_mw": [9e4, 0.0]}
+        )
+
+        assert read_novomodelo_bus_metadata(tmp_path / "output") == {
+            0: {"name": "SE", "has_load": True},
+            5: {"name": "IV", "has_load": False},
+        }
+
+
+class TestHydroHomeBus:
+    def test_single_bus_plant_is_home_there_whatever_the_load(self) -> None:
+        assert hydro_home_bus({5}, frozenset()) == 5
+
+    def test_split_plant_is_home_at_its_one_loaded_bus(self) -> None:
+        """Itaipu: 50 Hz units on SE, 60 Hz units on the transshipment bus."""
+        assert hydro_home_bus([0, 5, 5], frozenset({0, 1, 2, 3})) == 0
+
+    @pytest.mark.parametrize(
+        "load_bus_ids",
+        [frozenset(), frozenset({0, 5})],
+        ids=["none-loaded", "both-loaded"],
+    )
+    def test_split_plant_without_one_loaded_bus_has_no_home(
+        self, load_bus_ids: frozenset[int]
+    ) -> None:
+        assert hydro_home_bus({0, 5}, load_bus_ids) is None
+
+    def test_summary_names_the_plant_its_buses_and_why(self) -> None:
+        summary = split_plant_without_home_summary(
+            47, "ITAIPU", [5, 0], frozenset({0, 5})
+        )
+
+        assert summary.startswith("Hydro 47 (ITAIPU) has generating units at buses")
+        assert "[0, 5]" in summary
+        assert "2 of them have load" in summary
 
 
 # ---------------------------------------------------------------------------

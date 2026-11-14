@@ -19,6 +19,8 @@ from novomodelo_bridge.dashboard.tabs.energy_balance import (
     _build_hero_data,
     _build_hero_section,
     _build_metrics_row,
+    _bus_generation_series,
+    _bus_stage_map,
     _chart_gen_by_bus,
     _chart_gen_mix_hero,
     _compute_total_gwh,
@@ -55,6 +57,18 @@ def _make_hydros_lf(
                 }
             )
     return pl.DataFrame(rows).lazy()
+
+
+def _hydro_bus_generation_lf(
+    hydros_lf: pl.LazyFrame, hydro_bus_map: dict[int, int]
+) -> pl.LazyFrame:
+    """The ``hydro_bus_generation`` rows of plants that each sit at one bus."""
+    buses = pl.DataFrame(
+        {"hydro_id": list(hydro_bus_map), "bus_id": list(hydro_bus_map.values())}
+    )
+    return hydros_lf.join(buses.lazy(), on="hydro_id").select(
+        "scenario_id", "stage_id", "hydro_id", "bus_id", "generation_mwh"
+    )
 
 
 def _make_thermals_lf(
@@ -168,6 +182,9 @@ def _make_mock_data(
     data.load_stats = _make_load_stats(bus_ids)
     data.load_factors_list = _make_load_factors(bus_ids)
     data.hydros_lf = _make_hydros_lf()
+    data.hydro_bus_generation_lf = _hydro_bus_generation_lf(
+        data.hydros_lf, hydro_bus_map
+    )
     data.thermals_lf = _make_thermals_lf()
     data.ncs_lf = _make_ncs_lf_full()
     data.buses_lf = _make_buses_lf_full(bus_ids=bus_ids)
@@ -476,6 +493,29 @@ def test_chart_gen_by_bus_empty_bus_list_returns_figure() -> None:
     assert len(fig.data) == 0
 
 
+def test_bus_generation_series_counts_a_split_plant_at_each_bus() -> None:
+    """A plant split across buses, as Itaipu's 50 Hz and 60 Hz halves are,
+    adds each bus's own share there, whichever one bus hydro_bus_map holds."""
+    data = _make_mock_data(non_fictitious_bus_ids=[0, 1], hydro_bus_map={0: 0})
+    hours = data.stage_hours
+    data.hydro_bus_generation_lf = pl.DataFrame(
+        {
+            "scenario_id": [0] * 6,
+            "stage_id": [0, 0, 1, 1, 2, 2],
+            "hydro_id": [0] * 6,
+            "bus_id": [0, 1] * 3,
+            "generation_mwh": [
+                mw * hours[stage] for stage in (0, 1, 2) for mw in (300.0, 100.0)
+            ],
+        }
+    ).lazy()
+
+    series = _bus_generation_series(data, [0, 1])
+
+    assert _bus_stage_map(series.hydro, 0) == {0: 300.0, 1: 300.0, 2: 300.0}
+    assert _bus_stage_map(series.hydro, 1) == {0: 100.0, 1: 100.0, 2: 100.0}
+
+
 def test_chart_gen_by_bus_first_row_shows_legend() -> None:
     """Only the first bus row must have showlegend=True for each trace group."""
     data = _make_mock_data(non_fictitious_bus_ids=[0, 1])
@@ -753,6 +793,9 @@ def _make_mock_data_full(
     data.load_stats = _make_load_stats(bus_ids)
     data.load_factors_list = _make_load_factors(bus_ids)
     data.hydros_lf = _make_hydros_lf_full()
+    data.hydro_bus_generation_lf = _hydro_bus_generation_lf(
+        data.hydros_lf, hydro_bus_map
+    )
     data.thermals_lf = _make_thermals_lf()
     data.ncs_lf = ncs_lf
     data.buses_lf = _make_buses_lf_full(bus_ids=bus_ids)
