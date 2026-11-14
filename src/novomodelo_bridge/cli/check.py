@@ -54,6 +54,7 @@ def _render_and_exit(args: CheckArgs, result: PreflightResult, command: str) -> 
             console=args.out_console(),
             diagnostics_console=args.err_console(),
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
 
     _gate_check_exit(result.verdict)

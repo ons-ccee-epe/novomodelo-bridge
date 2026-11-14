@@ -29,6 +29,11 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **Every command prints a note on one line and keeps the full panel for
+  warnings and errors**; `-v` prints the notes in full. `convert decomp`
+  reports the conversion and the boundary FCF import under one roll-up and
+  ends on the command that runs the case, and its `conversion_manifest.json`
+  now records the import's diagnostics too.
 - **`compare newave` and `compare decomp` judge each variable by its overall
   gap, and `--tolerance` defaults to 5%.** The console table labels each
   variable close, moderate or far (beyond four times the tolerance), leaves

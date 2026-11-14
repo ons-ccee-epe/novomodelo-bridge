@@ -26,11 +26,12 @@ from novomodelo_bridge.novomodelo.compat import MIN_NOVOMODELO_VERSION
 from novomodelo_bridge.ui.console import print_status
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from rich.console import Console
 
     from novomodelo_bridge.core.conversion import ConversionReport
+    from novomodelo_bridge.core.diagnostics import Diagnostic
     from novomodelo_bridge.decomp.files import DecompFiles
     from novomodelo_bridge.newave.files import NewaveFiles
 
@@ -111,14 +112,16 @@ def _write_conversion_manifest(
     command: str,
     discover: Callable[[Path], NewaveFiles | DecompFiles],
     console: Console,
+    diagnostics: Sequence[Diagnostic] | None = None,
 ) -> None:
     """Write the conversion provenance manifest into ``dst`` as JSON.
 
     Rediscovers the source-model input files via *discover* (each command
     passes its own files-dataclass constructor) to hash, builds a
     :class:`ConversionManifest` labelled with *command* from the bridge
-    version/git SHA, the entity counts in *report*, and its diagnostics, then
-    writes it to ``dst / "conversion_manifest.json"``.
+    version/git SHA, the entity counts in *report*, and the run's
+    *diagnostics* (``report.diagnostics`` when omitted), then writes it to
+    ``dst / "conversion_manifest.json"``.
 
     Both a discovery failure and a write failure are reported as warnings and
     swallowed — the conversion itself already succeeded, so neither changes the
@@ -151,14 +154,15 @@ def _write_conversion_manifest(
     # ``operational_start_date`` on all system entities (novomodelo 0.10.0+), and a
     # mandatory hydro ``unit_groups`` array with the top-level ``bus_id`` removed
     # (novomodelo 0.13.0+), so the output is only loadable by novomodelo >= MIN_NOVOMODELO_VERSION.
+    run_diagnostics = report.diagnostics if diagnostics is None else diagnostics
     manifest = ConversionManifest.create(
         command,
         src,
         dst,
         entity_counts=entity_counts,
         input_files=hash_input_files(files),
-        diagnostics_summary=summarize_diagnostics(report.diagnostics),
-        diagnostics=[d.to_dict() for d in report.diagnostics],
+        diagnostics_summary=summarize_diagnostics(run_diagnostics),
+        diagnostics=[d.to_dict() for d in run_diagnostics],
         min_novomodelo_version=MIN_NOVOMODELO_VERSION,
     )
 

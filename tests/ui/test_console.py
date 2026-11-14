@@ -125,12 +125,78 @@ class TestRenderDiagnostics:
         assert "GTMIN exceeds capacity" in text
         assert "Fictitious note" not in text
 
+    def _plants_note(self) -> Diagnostic:
+        return Diagnostic(
+            code="fictitious-plants-excluded",
+            severity=Severity.INFO,
+            category="Entity exclusion",
+            title="Fictitious plants left out (2)",
+            summary="accounting nodes with no productivity",
+            table=DiagnosticTable(
+                columns=["Plant", "Code"], rows=[["FICT.SERRA M", 291]]
+            ),
+            notes=["a detail line"],
+        )
+
+    def test_notes_show_one_line_each_without_their_detail(self) -> None:
+        console, buf = _console()
+        render_diagnostics(
+            [self._plants_note()], heading="Conversion notes", console=console
+        )
+        text = buf.getvalue()
+        assert "ℹ Fictitious plants left out (2)" in text
+        assert "-v" in text  # says how to see the detail
+        assert "accounting nodes" not in text
+        assert "FICT.SERRA M" not in text
+        assert "a detail line" not in text
+        assert "╭" not in text  # no panel
+
+    def test_verbose_shows_notes_in_full(self) -> None:
+        console, buf = _console()
+        render_diagnostics(
+            [self._plants_note()],
+            heading="Conversion notes",
+            console=console,
+            verbose=True,
+        )
+        text = buf.getvalue()
+        assert "Fictitious plants left out (2)" in text
+        assert "accounting nodes" in text
+        assert "FICT.SERRA M" in text
+        assert "a detail line" in text
+
+    def test_warnings_come_before_the_notes(self) -> None:
+        console, buf = _console()
+        render_diagnostics(
+            [self._plants_note(), self._gtmin()],
+            heading="Conversion notes",
+            console=console,
+        )
+        text = buf.getvalue()
+        assert text.index("GTMIN exceeds capacity") < text.index(
+            "Fictitious plants left out"
+        )
+        assert "one plant affected" in text  # the warning keeps its panel
+
+    def test_quiet_wins_over_verbose_for_notes(self) -> None:
+        console, buf = _console()
+        render_diagnostics(
+            [self._plants_note()],
+            heading="Conversion notes",
+            console=console,
+            quiet=True,
+            verbose=True,
+        )
+        text = buf.getvalue()
+        assert "1 note(s)" in text
+        assert "Fictitious plants left out" not in text
+
     def test_long_table_is_capped_with_overflow_caption(self) -> None:
         console, buf = _console()
         rows = [[f"P{i}", i] for i in range(MAX_TABLE_ROWS + 5)]
         diag = Diagnostic(
             code="many",
-            severity=Severity.INFO,
+            severity=Severity.WARNING,
             category="Entity exclusion",
             title="Many plants",
             summary="lots",

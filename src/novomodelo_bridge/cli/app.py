@@ -53,7 +53,7 @@ _VerboseOpt = Annotated[
         "--verbose",
         "-v",
         count=True,
-        help="Increase console log verbosity (-v INFO, -vv DEBUG).",
+        help="Print notes in full and raise the console log level (-v INFO, -vv DEBUG).",
     ),
 ]
 _LogFileOpt = Annotated[

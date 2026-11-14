@@ -72,6 +72,7 @@ def _handle_conversion_pipeline_failure(
             heading="Conversion notes",
             console=err_console,
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
     raise typer.Exit(code=1)
 
@@ -209,13 +210,8 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
     status = _convert_status(report.diagnostics, success="ok")
 
     if not args.json_output:
-        if not args.quiet:
-            render_conversion_summary(report, console=out_console)
-        render_diagnostics(
-            report.diagnostics,
-            heading="Conversion notes",
-            console=err_console,
-            quiet=args.quiet,
+        _render_conversion_result(
+            report, report.diagnostics, args, out_console, err_console
         )
 
     if args.diagnostics_json is not None:
@@ -262,6 +258,25 @@ def _gate_convert_exit(status: str, *, validation_failed: bool) -> None:
         raise typer.Exit(code=2)
     if status == "error":
         raise typer.Exit(code=1)
+
+
+def _render_conversion_result(
+    report: ConversionReport,
+    diagnostics: Sequence[Diagnostic],
+    args: ConvertArgs,
+    out_console: Console,
+    err_console: Console,
+) -> None:
+    """Render the run's notes, then the ``✓ Converted …`` summary below them."""
+    render_diagnostics(
+        diagnostics,
+        heading="Conversion notes",
+        console=err_console,
+        quiet=args.quiet,
+        verbose=args.verbose > 0,
+    )
+    if not args.quiet:
+        render_conversion_summary(report, console=out_console)
 
 
 def _render_dry_run_summary(
@@ -325,6 +340,7 @@ def _report_dry_run(
             heading="Conversion notes",
             console=err_console,
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
     if args.validate:
         print_status(
@@ -378,10 +394,11 @@ def _handle_boundary_fcf_failure(
         )
     else:
         render_diagnostics(
-            [*fcf_diags, diag],
+            failure_diagnostics,
             heading="Conversion notes",
             console=err_console,
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
     raise typer.Exit(code=1)
 
@@ -458,27 +475,11 @@ def _import_decomp_boundary_fcf(
             err_console=err_console,
         )
 
-    boundary_diagnostics = list(fcf_diags)
-    print_status(
-        f"Boundary FCF imported. Run this case with: novomodelo run {args.dst}",
-        console=err_console,
-    )
     summary["boundary_fcf"] = {
         "imported": True,
         "path": "boundary",
     }
-    if not args.json_output:
-        # boundary_diagnostics only: ``report.diagnostics`` was
-        # already rendered above (the converter's own panel), so
-        # this renders solely the importer's captured diagnostics —
-        # never a double-render of the same findings.
-        render_diagnostics(
-            boundary_diagnostics,
-            heading="Conversion notes",
-            console=err_console,
-            quiet=args.quiet,
-        )
-    return boundary_diagnostics
+    return list(fcf_diags)
 
 
 def _conclude_decomp_conversion(
@@ -486,21 +487,15 @@ def _conclude_decomp_conversion(
     args: ConvertArgs,
     *,
     summary: dict[str, object],
-    boundary_diagnostics: Sequence[Diagnostic],
+    combined_diagnostics: Sequence[Diagnostic],
     err_console: Console,
 ) -> None:
     """Write the sidecar, validate, emit the verdict and gate the exit code.
 
     The sidecar, verdict and status carry the merged converter + boundary-FCF
-    diagnostics.
+    diagnostics. A validated case with an imported boundary FCF ends on the
+    command that runs it.
     """
-    # The merge of the converter's own findings and the boundary-FCF
-    # importer's (empty when ``--boundary-fcf`` was not requested, or the
-    # sink never captured anything). Computed once here so both the
-    # ``--diagnostics-json`` sidecar and the ``--json`` verdict below emit the
-    # identical merged set.
-    combined_diagnostics = [*report.diagnostics, *boundary_diagnostics]
-
     if args.diagnostics_json is not None:
         # The --diagnostics-json sidecar coexists with --json (both can be
         # set); it always carries the same merged diagnostics as the
@@ -528,6 +523,12 @@ def _conclude_decomp_conversion(
     # diagnostics allow it) and feeds both the --json verdict below and the
     # exit-code gate, so it is computed unconditionally.
     status = _convert_status(combined_diagnostics, success="ok")
+
+    if "boundary_fcf" in summary and not validation_failed:
+        print_status(
+            f"Boundary FCF imported. Run this case with: novomodelo run {args.dst}",
+            console=err_console,
+        )
 
     # Emit the --json verdict now (after validation has populated ``summary``).
     if args.json_output:
@@ -640,23 +641,23 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
     # known until the boundary-FCF block below has run.
     summary = _convert_verdict_summary(report)
 
-    if not args.json_output:
-        if not args.quiet:
-            render_conversion_summary(report, console=out_console)
-        render_diagnostics(
-            report.diagnostics,
-            heading="Conversion notes",
-            console=err_console,
-            quiet=args.quiet,
-        )
+    # Imported BEFORE ``--validate`` so validation sees the patched
+    # ``config.json`` (``policy.boundary``); novomodelo infers the inflow-lag
+    # depth from the boundary, so no ``state_space`` is written.
+    boundary_diagnostics = _import_decomp_boundary_fcf(
+        report,
+        args,
+        summary=summary,
+        config=fcf_inputs.config,
+        initial_conditions=fcf_inputs.initial_conditions,
+        err_console=err_console,
+    )
+    combined_diagnostics = [*report.diagnostics, *boundary_diagnostics]
 
-    # The --diagnostics-json sidecar write is deferred until AFTER the
-    # boundary-FCF block below (both on its success and its failure path) so
-    # it can serialize the combined converter + boundary-FCF diagnostic set —
-    # mirroring the --json verdict's merge — instead of the converter-only
-    # snapshot a write at this point would capture. When --boundary-fcf is
-    # off (or never reaches the sink), ``boundary_diagnostics`` stays empty
-    # and the sidecar content is unchanged from a converter-only write.
+    if not args.json_output:
+        _render_conversion_result(
+            report, combined_diagnostics, args, out_console, err_console
+        )
 
     # Provenance manifest, always written on a successful conversion. Notes go
     # to err_console (stderr) so the --json stdout verdict stays byte-deterministic.
@@ -667,24 +668,13 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
         command="convert decomp",
         discover=discover_decomp_files,
         console=err_console,
-    )
-
-    # Runs after the manifest write and BEFORE ``--validate`` so validation
-    # sees the patched ``config.json`` (``policy.boundary``); novomodelo infers the
-    # inflow-lag depth from the boundary, so no ``state_space`` is written.
-    boundary_diagnostics = _import_decomp_boundary_fcf(
-        report,
-        args,
-        summary=summary,
-        config=fcf_inputs.config,
-        initial_conditions=fcf_inputs.initial_conditions,
-        err_console=err_console,
+        diagnostics=combined_diagnostics,
     )
 
     _conclude_decomp_conversion(
         report,
         args,
         summary=summary,
-        boundary_diagnostics=boundary_diagnostics,
+        combined_diagnostics=combined_diagnostics,
         err_console=err_console,
     )
