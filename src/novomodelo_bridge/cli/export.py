@@ -235,7 +235,7 @@ def _export_dessem(
     # Broad by design, as in `convert`: an unexpected export failure must still
     # reach the user as one rendered diagnostic or `--json` envelope, exit 1.
     except Exception as exc:
-        _fail(command, args, exc, 1)
+        _fail(command, args, exc, 1, found_before=export_diags)
     export_diags = dx.finalize_diagnostics(export_diags)
 
     status = "ok" if exit_code == 0 else "error"

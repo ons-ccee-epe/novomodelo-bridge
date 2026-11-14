@@ -86,7 +86,10 @@ links are cobre-bridge's.
   `dessem-fcf-cut-pools-unexpected`,
   `dessem-fcf-inflow-lag-coefficients-dropped`,
   `dessem-fcf-failure-manifest-unwritten` and a
-  `dessem-fcf-mapcut-fields-zero` warning on every export.
+  `dessem-fcf-mapcut-fields-zero` warning on every export. A command that
+  fails still reports what it found before the failure, and `compare newave`
+  reports what it finds while reading the deck, such as
+  `fictitious-plants-excluded`.
 - **`convert decomp` reports RE ceilings capped at a unit group's capacity as
   `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
   that `decomp-re-generation-clamped` reports.

@@ -252,15 +252,14 @@ def _run_newave_comparison(args: CompareArgs) -> None:
     tolerance: float = args.tolerance
     formats = _resolve_compare_formats("compare newave", args)
 
-    case, id_map, alignment, _lines_json = _load_compare_context(
-        newave_dir, novomodelo_output_dir, command="compare newave", args=args
-    )
-
     # NovomodeloPartitionMissingError (a BridgeError; output predates a partition
     # this compare needs) and NovomodeloReadError (a RuntimeError; a malformed
     # output file) are disjoint hierarchies — both must stay in the ``except``,
     # or the dropped one crashes with a bare traceback instead of exit 2.
     with dx.collect() as compare_diagnostics:
+        case, id_map, alignment, _lines_json = _load_compare_context(
+            newave_dir, novomodelo_output_dir, command="compare newave", args=args
+        )
         try:
             with spinner(
                 "Comparing results…",
@@ -276,7 +275,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
                     tolerance=tolerance,
                 )
         except (NovomodeloReadError, NovomodeloPartitionMissingError) as exc:
-            _fail("compare newave", args, exc, 2)
+            _fail("compare newave", args, exc, 2, found_before=compare_diagnostics)
         report_html = _build_html_compare_report(
             dataset, formats, reference_label="NEWAVE"
         )
@@ -391,7 +390,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             FileNotFoundError,
             ValueError,
         ) as exc:
-            _fail("compare decomp", args, exc, 2)
+            _fail("compare decomp", args, exc, 2, found_before=compare_diagnostics)
         report_html = _build_html_compare_report(
             dataset, formats, reference_label="DECOMP"
         )

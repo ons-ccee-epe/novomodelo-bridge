@@ -446,3 +446,36 @@ class TestDashboardJson:
         assert exit_code == 0
         document = json.loads(stdout)
         assert document["summary"]["output"] == str(out_path)
+
+
+class TestDashboardReadFailure:
+    def test_json_failure_keeps_the_warnings_found_before_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+        from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
+
+        def _warn_then_fail(_case_dir: Path, _output_path: Path) -> None:
+            emit(
+                Diagnostic(
+                    code="report-file-unreadable",
+                    severity=Severity.WARNING,
+                    category="c",
+                    title="t",
+                    summary="lines.json could not be read.",
+                )
+            )
+            raise NovomodeloReadError("hydros partition is corrupt")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.dashboard.build_dashboard", _warn_then_fail
+        )
+
+        result = _invoke(["dashboard", str(_make_case_dir(tmp_path)), "--json"])
+
+        assert result.exit_code == 1
+        document = json.loads(result.stdout)
+        assert [(d["code"], d["severity"]) for d in document["diagnostics"]] == [
+            ("report-file-unreadable", "warning"),
+            ("unexpected-error", "error"),
+        ]
