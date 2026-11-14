@@ -5,19 +5,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.cli.args import CompareArgs, ResolvedCompareArgs, _parse_formats
-from novomodelo_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, load_config
+from novomodelo_bridge.cli.config import load_config
 from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
 from novomodelo_bridge.cli.verdict import (
     build_verdict,
     compare_summary,
     decomp_dataset_summary,
 )
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 from novomodelo_bridge.core.provenance import hash_input_files
 from novomodelo_bridge.ui.console import print_status, render_diagnostics, spinner
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from novomodelo_bridge.comparators.charts.costs import PairedCost
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
     from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
     from novomodelo_bridge.newave.case import NewaveCase
@@ -167,7 +169,7 @@ def _resolve_compare_settings(args: CompareArgs) -> ResolvedCompareArgs:
     elif cfg.results_tolerance is not None:
         resolved_tolerance = cfg.results_tolerance
     else:
-        resolved_tolerance = RESULTS_TOLERANCE_DEFAULT
+        resolved_tolerance = DEFAULT_TOLERANCE
 
     # Format: only consult config when neither flag nor env supplied it. Leave
     # ``None`` (rather than pre-expanding) so ``_parse_formats`` stays the single
@@ -201,6 +203,18 @@ def _resolve_compare_settings(args: CompareArgs) -> ResolvedCompareArgs:
         tolerance=resolved_tolerance,
         format=resolved_format,
         out_dir=resolved_out_dir,
+    )
+
+
+def _training_costs(dataset: ComparisonDataset) -> tuple[PairedCost, ...]:
+    from novomodelo_bridge.comparators.charts.costs import training_costs
+
+    render = dataset.render
+    return training_costs(
+        render.nw_convergence,
+        render.novomodelo_convergence,
+        render.nw_costs,
+        render.novomodelo_costs,
     )
 
 
@@ -266,6 +280,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
                 newave_dir,
                 novomodelo_output_dir,
                 verdict=verdict,
+                training=_training_costs(dataset),
                 console=args.out_console(),
             )
         render_diagnostics(
@@ -371,6 +386,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
                 args.source_dir,
                 args.novomodelo_output_dir,
                 verdict=verdict,
+                training=_training_costs(dataset),
                 reference_label="DECOMP",
                 console=args.out_console(),
             )
@@ -402,7 +418,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
         # ``status`` is DECOUPLED from the exit code (this command always
         # exits 0, mirroring ``compare newave``) and uses the shared
         # ``compare_status`` vocabulary.
-        summary = decomp_dataset_summary(dataset, args.tolerance)
+        summary = decomp_dataset_summary(dataset)
         status = compare_status(dataset)
         _emit_convert_json(
             build_verdict("compare decomp", status, summary, compare_diagnostics)

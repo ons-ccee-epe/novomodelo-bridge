@@ -1,4 +1,32 @@
-<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Hydro per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Storage (hm³)</th><th class="cb-num">Generation (MW)</th><th class="cb-num">Turbined (m³/s)</th><th class="cb-num">Productivity = Gen / Turbined (MW per m³/s)</th><th class="cb-num">Spillage (m³/s)</th><th class="cb-num">Total Outflow (m³/s)</th><th class="cb-num">Incremental Inflow (m³/s)</th><th class="cb-num">Total Inflow / QAFLUH (m³/s)</th><th class="cb-num">Evaporation (m³/s)</th><th class="cb-num">Water Withdrawal (m³/s)</th><th class="cb-num">Water Value (R$/hm³)</th></tr></thead><tbody><tr><td class="cb-cat">PLANT_A</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.20%</td><td class="cb-num cb-diff-neg">0.40%</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td><td class="cb-num">—</td></tr></tbody></table></div>
+<div style="margin-bottom:32px"><div class="gap-scroll"><table class="cost-breakdown-table gap-table" data-prefix="hydro"><caption>Hydro plants: gap over stages, Σ|Novomodelo − NEWAVE| / Σ|NEWAVE|, Σ|NEWAVE| no smaller than the mean plant's <span class="cb-caption-note">— close up to 5%, far beyond 20%; click a plant to open its charts</span></caption><thead><tr><th class="cb-cat" onclick="gapTableSort(this)">Plant</th><th class="cb-num" onclick="gapTableSort(this)">Storage (hm³)</th><th class="cb-num" onclick="gapTableSort(this)">Generation (MW)</th></tr></thead><tbody class="gap-total"><tr class="cb-total"><td class="cb-cat">All plants</td><td class="cb-num gap-close" data-gap="0.00222222" title="close">0.2%</td><td class="cb-num gap-close" data-gap="0.00416667" title="close">0.4%</td></tr></tbody><tbody><tr class="gap-row" data-plant="1_PLANT_A" tabindex="0" onclick="gapTableOpen(this)" onkeydown="if (event.key === 'Enter') gapTableOpen(this)"><td class="cb-cat">PLANT_A</td><td class="cb-num gap-close" data-gap="0.00222222" title="close">0.2%</td><td class="cb-num gap-close" data-gap="0.00416667" title="close">0.4%</td></tr></tbody></table></div><script>
+function gapTableSort(th) {
+    var table = th.closest('table');
+    var body = table.tBodies[table.tBodies.length - 1];
+    var column = th.cellIndex;
+    var descending = column > 0 && th.dataset.sort !== 'desc';
+    if (column === 0) { descending = th.dataset.sort === 'asc'; }
+    Array.prototype.forEach.call(th.parentNode.cells, function (cell) {
+        delete cell.dataset.sort;
+    });
+    th.dataset.sort = descending ? 'desc' : 'asc';
+    var rows = Array.prototype.slice.call(body.rows);
+    rows.sort(function (a, b) {
+        var x = a.cells[column], y = b.cells[column];
+        var order = column === 0
+            ? x.textContent.localeCompare(y.textContent)
+            : parseFloat(x.dataset.gap) - parseFloat(y.dataset.gap);
+        return descending ? -order : order;
+    });
+    rows.forEach(function (row) { body.appendChild(row); });
+}
+function gapTableOpen(row) {
+    var select = document.getElementById(row.closest('table').dataset.prefix + '-select');
+    if (!select) { return; }
+    select.value = row.dataset.plant;
+    select.dispatchEvent(new Event('change'));
+    select.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+</script></div>
     <div class="plant-selector">
         <label for="hydro-select">Hydro Plant:</label>
         <select id="hydro-select"

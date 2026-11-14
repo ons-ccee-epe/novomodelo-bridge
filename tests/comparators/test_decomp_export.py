@@ -50,8 +50,11 @@ def _make_decomp_dataset() -> ComparisonDataset:
     )
     summary = pl.DataFrame(
         {
+            "entity_type": ["hydro"],
             "variable": ["generation_mw"],
             "count": [1],
+            "gap": [0.1],
+            "band": ["moderate"],
             "mean_abs_diff": [10.0],
             "max_abs_diff": [10.0],
             "mean_smape": [0.105],

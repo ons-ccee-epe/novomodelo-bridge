@@ -26,7 +26,7 @@ from novomodelo_bridge.comparators.dataset import (
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 
 
-def _newave_dataset(*, all_within_tol: bool) -> ComparisonDataset:
+def _newave_dataset(*, all_close: bool) -> ComparisonDataset:
     results = [
         ResultComparison(
             entity_type="hydro",
@@ -36,19 +36,19 @@ def _newave_dataset(*, all_within_tol: bool) -> ComparisonDataset:
             stage=0,
             variable="generation_mw",
             newave_value=100.0,
-            novomodelo_value=100.0 if all_within_tol else 110.0,
-            abs_diff=0.0 if all_within_tol else 10.0,
-            rel_diff=0.0 if all_within_tol else 0.1,
+            novomodelo_value=100.0 if all_close else 110.0,
+            abs_diff=0.0 if all_close else 10.0,
+            rel_diff=0.0 if all_close else 0.1,
         ),
     ]
-    return build_results_dataset(results, PercentileData(), 1e-2)
+    return build_results_dataset(results, PercentileData(), 0.05)
 
 
 def _empty_newave_dataset() -> ComparisonDataset:
-    return build_results_dataset([], PercentileData(), 1e-2)
+    return build_results_dataset([], PercentileData(), 0.05)
 
 
-def _decomp_dataset(*, all_within_tol: bool) -> ComparisonDataset:
+def _decomp_dataset(*, all_close: bool) -> ComparisonDataset:
     tidy = pl.DataFrame(
         {
             "entity_type": ["hydro", "hydro"],
@@ -59,19 +59,22 @@ def _decomp_dataset(*, all_within_tol: bool) -> ComparisonDataset:
             "block": [-1, -1],
             "variable": ["generation_mw", "generation_mw"],
             "source": ["newave", "novomodelo"],
-            "value": [100.0, 100.0 if all_within_tol else 110.0],
+            "value": [100.0, 100.0 if all_close else 110.0],
         },
         schema=TIDY_SCHEMA,
     )
     summary = pl.DataFrame(
         {
+            "entity_type": ["hydro"],
             "variable": ["generation_mw"],
             "count": [1],
-            "mean_abs_diff": [0.0 if all_within_tol else 10.0],
-            "max_abs_diff": [0.0 if all_within_tol else 10.0],
-            "mean_smape": [0.0 if all_within_tol else 0.1],
-            "max_smape": [0.0 if all_within_tol else 0.1],
-            "within_tol_rate": [1.0 if all_within_tol else 0.0],
+            "gap": [0.0 if all_close else 0.1],
+            "band": ["close" if all_close else "moderate"],
+            "mean_abs_diff": [0.0 if all_close else 10.0],
+            "max_abs_diff": [0.0 if all_close else 10.0],
+            "mean_smape": [0.0 if all_close else 0.1],
+            "max_smape": [0.0 if all_close else 0.1],
+            "within_tol_rate": [1.0 if all_close else 0.0],
             "correlation": [1.0],
         },
         schema=SUMMARY_SCHEMA,
@@ -163,12 +166,10 @@ class TestCompareNewaveStatusConvergence:
         assert result.exit_code == 0
         assert json.loads(result.stdout)["status"] == "no-comparable-rows"
 
-    def test_all_within_tol_reports_ok(
+    def test_all_close_reports_ok(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        result = _invoke_newave(
-            tmp_path, monkeypatch, _newave_dataset(all_within_tol=True)
-        )
+        result = _invoke_newave(tmp_path, monkeypatch, _newave_dataset(all_close=True))
 
         assert result.exit_code == 0
         assert json.loads(result.stdout)["status"] == "ok"
@@ -176,9 +177,7 @@ class TestCompareNewaveStatusConvergence:
     def test_out_of_tolerance_reports_mismatch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        result = _invoke_newave(
-            tmp_path, monkeypatch, _newave_dataset(all_within_tol=False)
-        )
+        result = _invoke_newave(tmp_path, monkeypatch, _newave_dataset(all_close=False))
 
         assert result.exit_code == 0
         assert json.loads(result.stdout)["status"] == "mismatch"
@@ -196,12 +195,10 @@ class TestCompareDecompStatusConvergence:
         assert result.exit_code == 0
         assert json.loads(result.stdout)["status"] == "no-comparable-rows"
 
-    def test_all_within_tol_reports_ok(
+    def test_all_close_reports_ok(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        result = _invoke_decomp(
-            tmp_path, monkeypatch, _decomp_dataset(all_within_tol=True)
-        )
+        result = _invoke_decomp(tmp_path, monkeypatch, _decomp_dataset(all_close=True))
 
         assert result.exit_code == 0
         assert json.loads(result.stdout)["status"] == "ok"
@@ -209,9 +206,7 @@ class TestCompareDecompStatusConvergence:
     def test_out_of_tolerance_reports_mismatch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        result = _invoke_decomp(
-            tmp_path, monkeypatch, _decomp_dataset(all_within_tol=False)
-        )
+        result = _invoke_decomp(tmp_path, monkeypatch, _decomp_dataset(all_close=False))
 
         assert result.exit_code == 0
         assert json.loads(result.stdout)["status"] == "mismatch"

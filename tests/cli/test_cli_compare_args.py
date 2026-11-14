@@ -19,7 +19,8 @@ from unittest.mock import patch
 import pytest
 
 from novomodelo_bridge.cli.args import CompareArgs
-from novomodelo_bridge.cli.config import RESULTS_TOLERANCE_DEFAULT, BridgeConfig
+from novomodelo_bridge.cli.config import BridgeConfig
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 
 # `novomodelo_bridge.cli`'s __init__ re-exports `app` (the Typer instance) from
 # a same-named submodule, shadowing a plain `import ... as` target the same
@@ -97,7 +98,7 @@ class TestResolveCompareSettingsPrecedence:
         with patch.object(cli, "load_config", return_value=BridgeConfig()):
             resolved = cli._resolve_compare_settings(args)
 
-        assert resolved.tolerance == RESULTS_TOLERANCE_DEFAULT
+        assert resolved.tolerance == DEFAULT_TOLERANCE
         # Format/out-dir stay None so the downstream defaults (_parse_formats /
         # derived out-dir) still apply.
         assert resolved.format is None
@@ -257,15 +258,10 @@ class TestResolveCompareSettings:
 
     def test_builtin_default_when_config_empty(self) -> None:
         """An empty config falls through to the built-in tolerance default."""
-        from novomodelo_bridge.cli.config import (
-            RESULTS_TOLERANCE_DEFAULT,
-            BridgeConfig,
-        )
-
         _args, resolved = self._resolve(
             BridgeConfig(), tolerance=None, fmt=None, out_dir=None
         )
-        assert resolved.tolerance == RESULTS_TOLERANCE_DEFAULT
+        assert resolved.tolerance == DEFAULT_TOLERANCE
         # Format/out-dir stay None so the downstream defaults (``_parse_formats``
         # / derived out-dir) still apply.
         assert resolved.format is None

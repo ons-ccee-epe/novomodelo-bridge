@@ -178,7 +178,7 @@ class TestCliExitCodes:
 
         assert result.returncode == 1
         doc = json.loads(result.stdout)
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert doc["command"] == "convert newave"
         assert doc["status"] == "error"
         assert doc["summary"]["hydros"] == 0

@@ -1,8 +1,10 @@
-"""Results-footer count extraction shared by the compare report and summary."""
+"""Compare-dataset metadata shared by the compare report and the console summary."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 
 
 def footer_counts(metadata: Mapping[str, object]) -> tuple[int, dict[str, int]]:
@@ -30,3 +32,12 @@ def _as_int_counts(value: object) -> dict[str, int]:
         for key, count in value.items()
         if isinstance(key, str) and isinstance(count, int)
     }
+
+
+def summary_tolerance(metadata: Mapping[str, object]) -> float:
+    """The tolerance the summary bands were judged with, from
+    ``metadata["tolerance"]``; :data:`DEFAULT_TOLERANCE` when absent."""
+    raw = metadata.get("tolerance")
+    if isinstance(raw, int | float) and not isinstance(raw, bool):
+        return float(raw)
+    return DEFAULT_TOLERANCE

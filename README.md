@@ -116,6 +116,9 @@ written.
 the set: `parquet` and `json` (the tidy comparison dataset) by default, `csv`,
 `html` for a multi-tab `report.html` covering costs, system and energy
 balance, network, convergence, performance, and per-plant detail, or `all`.
+The console summary gives each variable's gap, its summed absolute difference
+over the summed reference values, and labels it close up to `--tolerance` (5%
+by default), far beyond four times it, and moderate in between.
 `compare` is informational: differences between the two models never change the
 exit code, and the report is where you judge them.
 
@@ -148,7 +151,7 @@ format = ["console", "html"]   # or one string; same tokens as --format
 out_dir = "comparisons"
 
 [compare.results]
-tolerance = 0.01               # relative
+tolerance = 0.05               # largest gap that counts as close
 ```
 
 The file is looked up in the working directory and its parents, then

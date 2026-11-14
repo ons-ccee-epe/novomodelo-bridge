@@ -1,4 +1,32 @@
-<div style="margin-bottom:32px"><table class="cost-breakdown-table"><caption>Thermal per-plant max relative difference (|Novomodelo − NEWAVE| / |NEWAVE|, over stages)</caption><thead><tr><th class="cb-cat">Plant</th><th class="cb-num">Generation (MW)</th></tr></thead><tbody><tr><td class="cb-cat">GAS_A</td><td class="cb-num cb-diff-neg">0.70%</td></tr><tr><td class="cb-cat">Median</td><td class="cb-num cb-diff-neg">0.70%</td></tr></tbody></table></div>
+<div style="margin-bottom:32px"><div class="gap-scroll"><table class="cost-breakdown-table gap-table" data-prefix="thermal"><caption>Thermal plants: gap over stages, Σ|Novomodelo − NEWAVE| / Σ|NEWAVE|, Σ|NEWAVE| no smaller than the mean plant's <span class="cb-caption-note">— close up to 5%, far beyond 20%; click a plant to open its charts</span></caption><thead><tr><th class="cb-cat" onclick="gapTableSort(this)">Plant</th><th class="cb-num" onclick="gapTableSort(this)">Generation (MW)</th></tr></thead><tbody class="gap-total"><tr class="cb-total"><td class="cb-cat">All plants</td><td class="cb-num gap-close" data-gap="0.00666667" title="close">0.7%</td></tr></tbody><tbody><tr class="gap-row" data-plant="10_GAS_A" tabindex="0" onclick="gapTableOpen(this)" onkeydown="if (event.key === 'Enter') gapTableOpen(this)"><td class="cb-cat">GAS_A</td><td class="cb-num gap-close" data-gap="0.00666667" title="close">0.7%</td></tr></tbody></table></div><script>
+function gapTableSort(th) {
+    var table = th.closest('table');
+    var body = table.tBodies[table.tBodies.length - 1];
+    var column = th.cellIndex;
+    var descending = column > 0 && th.dataset.sort !== 'desc';
+    if (column === 0) { descending = th.dataset.sort === 'asc'; }
+    Array.prototype.forEach.call(th.parentNode.cells, function (cell) {
+        delete cell.dataset.sort;
+    });
+    th.dataset.sort = descending ? 'desc' : 'asc';
+    var rows = Array.prototype.slice.call(body.rows);
+    rows.sort(function (a, b) {
+        var x = a.cells[column], y = b.cells[column];
+        var order = column === 0
+            ? x.textContent.localeCompare(y.textContent)
+            : parseFloat(x.dataset.gap) - parseFloat(y.dataset.gap);
+        return descending ? -order : order;
+    });
+    rows.forEach(function (row) { body.appendChild(row); });
+}
+function gapTableOpen(row) {
+    var select = document.getElementById(row.closest('table').dataset.prefix + '-select');
+    if (!select) { return; }
+    select.value = row.dataset.plant;
+    select.dispatchEvent(new Event('change'));
+    select.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+</script></div>
     <div class="plant-selector">
         <label for="thermal-select">Thermal Plant:</label>
         <select id="thermal-select"

@@ -9,8 +9,8 @@ two-path divergence where console and HTML aggregated separately and drifted.
 This module renders the dataset-driven console printers, parses the numbers back
 out of the rendered text, and asserts those parsed cells equal the cells produced
 by formatting the matching ``dataset.summary`` / ``dataset.metadata`` values with
-the printer's OWN helpers (``report._fmt_metric`` and the percent/correlation
-format strings). The ONLY computation the test performs is parsing printed text:
+the printer's OWN helpers (``core.agreement.format_gap``, ``variable_label`` and
+the count/correlation format strings). The ONLY computation the test performs is parsing printed text:
 every expected cell is derived FROM the dataset, never recomputed from raw
 ``ResultComparison`` rows. If a future edit makes a printer recompute a
 statistic instead of reading the dataset, the parsed cells diverge from the
@@ -39,19 +39,23 @@ from novomodelo_bridge.comparators.model import (
     ResultComparison,
 )
 from novomodelo_bridge.comparators.verdict import build_compare_verdict
-from novomodelo_bridge.core.pandas_utils import as_float, as_int
-from novomodelo_bridge.ui.compare_summary import (
-    _fmt_metric,
-    print_results_summary_from_dataset,
+from novomodelo_bridge.core.agreement import (
+    ENTITY_GROUPS,
+    Band,
+    format_gap,
+    is_policy_row,
+    variable_label,
 )
+from novomodelo_bridge.core.pandas_utils import as_float, as_int
+from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
 
 _NW = Path("/fake/nw")
 _NOVOMODELO = Path("/fake/novomodelo")
-_RESULTS_TOL = 1e-2
+_RESULTS_TOL = 0.05
 
-# Number of value columns in the per-variable results table, after the variable
-# name: Count, Mean|D|, Max|D|, WithinTol, sMAPE, r.
-_RESULTS_VALUE_COLS = 6
+# Value columns of the agreement table after the variable label: Points, Gap,
+# r, Agreement.
+_RESULTS_VALUE_COLS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +70,7 @@ def _make_single_point_results() -> list[ResultComparison]:
     ``build_results_summary`` leaves ``correlation`` at its ``None`` default
     (Pearson is undefined for fewer than two points). This drives the dataset
     summary's ``correlation`` cell to ``None`` and exercises the printer's
-    ``"N/A"`` rendering branch.
+    ``"—"`` rendering branch.
     """
     return [
         ResultComparison(
@@ -85,7 +89,8 @@ def _make_single_point_results() -> list[ResultComparison]:
 
 
 def _make_results() -> list[ResultComparison]:
-    """Three result comparisons spanning two entity types."""
+    """Result comparisons spanning two entity types, plus a policy row the
+    table leaves out."""
     return [
         ResultComparison(
             entity_type="hydro",
@@ -123,6 +128,18 @@ def _make_results() -> list[ResultComparison]:
             abs_diff=5.0,
             rel_diff=None,
         ),
+        ResultComparison(
+            entity_type="hydro",
+            entity_name="ITAIPU",
+            newave_code=10,
+            novomodelo_id=0,
+            stage=0,
+            variable="water_value_per_hm3",
+            newave_value=100.0,
+            novomodelo_value=900.0,
+            abs_diff=800.0,
+            rel_diff=8.0,
+        ),
     ]
 
 
@@ -158,36 +175,30 @@ def _capture(func: Callable[..., object], *args: object, **kwargs: object) -> st
 # ---------------------------------------------------------------------------
 
 
-def _parse_results_table(text: str) -> dict[str, list[str]]:
-    """Parse the per-variable results table into ``{variable: [cells]}``.
+def _parse_results_table(text: str) -> dict[tuple[str, str], list[str]]:
+    """Parse the agreement table into ``{(group heading, label): [cells]}``.
 
-    Skips the title block, the ``=`` / ``-`` rules, the column header, the blank
-    lines, and the ``Summary:`` footer. Each surviving data row is split on runs
-    of whitespace (the fixtures' variable names are space-free); the first token
-    is the variable and the remaining tokens are the value cells. A clear
-    ``AssertionError`` is raised if a data row's token count is unexpected.
+    A line that is exactly a group heading opens that group; a line ending in a
+    band name is a variable row, whose last four whitespace-separated tokens are
+    the value cells and whose leading tokens are the label. Everything else (the
+    verdict, the header block, rules, the footnote and the footer) is skipped.
     """
-    table: dict[str, list[str]] = {}
+    bands = {band.value for band in Band}
+    headings = set(ENTITY_GROUPS.values())
+    table: dict[tuple[str, str], list[str]] = {}
+    group: str | None = None
     for raw in text.splitlines():
         line = raw.strip()
-        if not line:
-            continue
-        if line.startswith(("✓ ", "⚠ ")):  # leading compare verdict line
-            continue
-        if line.startswith(("Novomodelo vs", "NEWAVE case:", "Novomodelo output:")):
-            continue
-        if line.startswith("Summary:"):
-            continue
-        if set(line) <= {"=", "-", "━", "─"}:  # text underline or Rich table rule
+        if line in headings:
+            group = line
             continue
         tokens = line.split()
-        if tokens[0] == "Variable":
+        if not tokens or tokens[-1] not in bands or line.startswith(("✓ ", "⚠ ")):
             continue
-        assert len(tokens) == 1 + _RESULTS_VALUE_COLS, (
-            f"unexpected results data row token count {len(tokens)} "
-            f"(expected {1 + _RESULTS_VALUE_COLS}) in line: {raw!r}"
-        )
-        table[tokens[0]] = tokens[1:]
+        assert group is not None, f"variable row before any group heading: {raw!r}"
+        assert len(tokens) > _RESULTS_VALUE_COLS, f"short variable row: {raw!r}"
+        label = " ".join(tokens[:-_RESULTS_VALUE_COLS])
+        table[(group, label)] = tokens[-_RESULTS_VALUE_COLS:]
     return table
 
 
@@ -219,22 +230,35 @@ def _parse_results_footer(text: str) -> tuple[int, dict[str, int]]:
 # ---------------------------------------------------------------------------
 
 
+def _expected_key(row: dict[str, object]) -> tuple[str, str]:
+    return (
+        ENTITY_GROUPS[str(row["entity_type"])],
+        variable_label(str(row["variable"])),
+    )
+
+
 def _expected_results_cells(row: dict[str, object]) -> list[str]:
     """Format a ``dataset.summary`` row with the printer's OWN helpers.
 
-    The cell order matches the printed table:
-    ``[Count, Mean|D|, Max|D|, WithinTol, sMAPE, r]``. Every cell is derived from
-    the dataset row — nothing is recomputed from raw comparison rows.
+    The cell order matches the printed table: ``[Points, Gap, r, Agreement]``.
+    Every cell is derived from the dataset row — nothing is recomputed from raw
+    comparison rows.
     """
     correlation = row["correlation"]
-    corr = f"{as_float(correlation):.4f}" if correlation is not None else "N/A"
+    gap = row["gap"]
     return [
-        str(as_int(row["count"])),
-        _fmt_metric(as_float(row["mean_abs_diff"])),
-        _fmt_metric(as_float(row["max_abs_diff"])),
-        f"{as_float(row['within_tol_rate']) * 100:.1f}%",
-        f"{as_float(row['mean_smape']) * 100:.1f}%",
-        corr,
+        f"{as_int(row['count']):,}",
+        format_gap(None if gap is None else as_float(gap)),
+        "—" if correlation is None else f"{as_float(correlation):.3f}",
+        str(row["band"]),
+    ]
+
+
+def _operation_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        row
+        for row in rows
+        if not is_policy_row(str(row["entity_type"]), str(row["variable"]))
     ]
 
 
@@ -249,15 +273,18 @@ def test_results_table_cells_equal_dataset_summary() -> None:
     )
 
     parsed = _parse_results_table(text)
-    summary_rows = {row["variable"]: row for row in dataset.summary.to_dicts()}
+    all_rows = dataset.summary.to_dicts()
+    summary_rows = {_expected_key(row): row for row in _operation_rows(all_rows)}
 
-    # Every dataset variable is printed and every printed variable is in the dataset.
+    # The fixture's policy row is in the dataset but not on the console.
+    assert len(summary_rows) == len(all_rows) - 1
+    # Every operation row is printed and every printed row is in the dataset.
     assert set(parsed) == set(summary_rows)
 
-    for variable, row in summary_rows.items():
+    for key, row in summary_rows.items():
         expected_cells = _expected_results_cells(row)
-        assert parsed[variable] == expected_cells, (
-            f"console cells for {variable!r} diverged from dataset.summary"
+        assert parsed[key] == expected_cells, (
+            f"console cells for {key!r} diverged from dataset.summary"
         )
 
 
@@ -279,16 +306,16 @@ def test_results_footer_equals_dataset_footer_counts() -> None:
     assert by_entity_type == footer_counts["by_entity_type"]
 
 
-def test_results_correlation_none_renders_na_from_dataset() -> None:
+def test_results_correlation_none_renders_dash_from_dataset() -> None:
     # Arrange: a single-data-point variable -> dataset.summary.correlation is None.
     dataset = build_results_dataset(
         _make_single_point_results(), PercentileData(), _RESULTS_TOL
     )
     summary_rows = {row["variable"]: row for row in dataset.summary.to_dicts()}
     row = summary_rows["lonely_var"]
-    # The N/A branch must be genuinely reached, not asserted blindly.
+    # The dash branch must be genuinely reached, not asserted blindly.
     assert row["correlation"] is None, (
-        "fixture must yield correlation=None to exercise the N/A branch; "
+        "fixture must yield correlation=None to exercise the dash branch; "
         f"got {row['correlation']!r}"
     )
 
@@ -302,12 +329,9 @@ def test_results_correlation_none_renders_na_from_dataset() -> None:
     )
     parsed = _parse_results_table(text)
 
-    # Assert: the printed ``r`` cell is "N/A", and "N/A" is exactly what the
+    # Assert: the printed ``r`` cell is "—", and "—" is exactly what the
     # dataset-derived expected cells produce from correlation=None — proving the
-    # printed N/A traces to dataset.summary.correlation, not a recompute.
+    # printed dash traces to dataset.summary.correlation, not a recompute.
     expected_cells = _expected_results_cells(row)
-    assert (
-        expected_cells[-1] == "N/A"
-    )  # derived FROM dataset.summary (correlation None)
-    assert parsed["lonely_var"][-1] == "N/A"  # the ``r`` column is the last cell
-    assert parsed["lonely_var"] == expected_cells
+    assert expected_cells[2] == "—"
+    assert parsed[_expected_key(row)] == expected_cells

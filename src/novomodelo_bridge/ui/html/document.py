@@ -61,6 +61,17 @@ def wrap_chart(html: str) -> str:
     )
 
 
+def folded_table(summary: str, shown: str, full: str, full_label: str) -> str:
+    """A one-line *summary*, then *shown* (the rows that need a look, or
+    ``""``), then the *full* table folded under *full_label*; *summary* and
+    *full_label* are plain text."""
+    return (
+        f'<p class="fold-summary">{escape_text(summary)}</p>{shown}'
+        f'<details class="fold"><summary>{escape_text(full_label)}</summary>'
+        f"{full}</details>"
+    )
+
+
 def section_title(text: str) -> str:
     """Create a section title element using the .section-title class."""
     return f'<div class="section-title">{text}</div>'

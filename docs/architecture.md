@@ -52,7 +52,7 @@ and renders one module per tab under `dashboard/tabs/`. Both reuse
 
 | Package       | Role                                                                                                                                                      |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core`        | Shared foundation for both tracks: diagnostics, errors, units, physics, calendar, generic-constraint format and builder. Imports only itself.               |
+| `core`        | Shared foundation for both tracks: diagnostics, errors, units, physics, calendar, generic-constraint format and builder, compare agreement bands. Imports only itself. |
 | `novomodelo`       | Novomodelo-side I/O: the case writer, the schema registry, version compatibility, output readers.                                                              |
 | `newave`      | The NEWAVE track: spine modules plus `converters/`.                                                                                                       |
 | `decomp`      | The DECOMP track: spine modules plus `converters/` and `fcf/` (boundary cost-to-go import).                                                               |

@@ -264,6 +264,11 @@ the deck again.
 deterministic tree has too few scenarios to report a spread without
 synthesizing it.
 
+Each variable is judged by its gap as `compare newave` judges it, and the
+console ends with each model's final lower bound and simulated mean cost. The
+lower bound includes the future cost at the end of the study, which the
+simulated mean cost leaves out, so the two rows are far apart on both models.
+
 Each scenario of the stochastic stage weighs by its probability on both sides:
 DECOMP's by the tree's probabilities, Novomodelo's by the probability of each
 simulated leaf path in `simulation/scenario_summary.parquet`. The `dashboard`

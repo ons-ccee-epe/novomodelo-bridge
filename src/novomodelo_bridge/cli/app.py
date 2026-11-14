@@ -135,8 +135,9 @@ _ToleranceOpt = Annotated[
     typer.Option(
         envvar="NOVOMODELO_BRIDGE_RESULTS_TOLERANCE",
         help=(
-            "Relative tolerance for results comparison (default 1e-2; "
-            "overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml)."
+            "Largest gap, as a fraction, at which a variable counts as close "
+            "(default 0.05); beyond four times it a variable is far. Overridable "
+            "via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml."
         ),
     ),
 ]

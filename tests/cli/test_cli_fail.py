@@ -81,7 +81,7 @@ def test_fail_json_emits_one_error_envelope_and_exits(
     # ``json.loads`` raises on trailing/extra data, so a clean parse of the
     # whole stdout blob already proves exactly one JSON object was written.
     document = json.loads(captured.out)
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["command"] == "convert newave"
     assert document["status"] == "error"
     assert len(document["diagnostics"]) == 1

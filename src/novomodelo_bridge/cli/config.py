@@ -1,12 +1,12 @@
 """Leaf config-resolution layer: discover and parse ``novomodelo-bridge.toml``.
 
 This module supplies the *file-sourced* defaults for the compare commands —
-the absolute/relative tolerances, the output format set, and the artifact
-output directory — as a typed, frozen :class:`BridgeConfig`. It sits at the
-bottom of the precedence chain **CLI flag > env var > config file > built-in
-default**: it discovers a single TOML file and reads the recognised keys,
-exposing the four built-in defaults as module constants for the CLI to fall
-back on.
+the results tolerance, the output format set, and the artifact output
+directory — as a typed, frozen :class:`BridgeConfig`. It sits above the
+built-in defaults in the precedence chain **CLI flag > env var > config file >
+built-in default**: it discovers a single TOML file and reads the recognised
+keys. The built-in tolerance is
+:data:`novomodelo_bridge.core.agreement.DEFAULT_TOLERANCE`.
 
 It is a pure leaf. It imports nothing from ``cli``, Typer, ``ui``,
 ``diagnostics``, or any converter, and it consults the environment **only** for
@@ -25,7 +25,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-RESULTS_TOLERANCE_DEFAULT: float = 1e-2
 FORMAT_DEFAULT: tuple[str, ...] = ("console", "parquet", "json")
 # out-dir has no fixed default (it derives from <novomodelo_output_dir>); the config
 # value, when absent, is None and the CLI keeps its derived default.

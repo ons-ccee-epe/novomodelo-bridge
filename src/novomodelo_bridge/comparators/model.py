@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
+from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE, Band, band, gap
+
 
 @dataclass
 class PercentileData:
@@ -153,6 +155,8 @@ class ResultVariableStats:
     """Per-variable comparison statistics."""
 
     count: int = 0
+    gap: float | None = None  # see novomodelo_bridge.core.agreement.gap
+    band: Band = Band.FAR
     mean_abs_diff: float = 0.0
     max_abs_diff: float = 0.0
     mean_rel_diff: float = 0.0
@@ -169,7 +173,10 @@ class ResultsSummary:
 
     total: int = 0
     by_entity_type: dict[str, int] = field(default_factory=dict)
-    by_variable: dict[str, ResultVariableStats] = field(default_factory=dict)
+    #: Keyed by ``(entity_type, variable)``.
+    by_variable: dict[tuple[str, str], ResultVariableStats] = field(
+        default_factory=dict
+    )
 
 
 def smape(nw_value: float, novomodelo_value: float) -> float:
@@ -221,12 +228,12 @@ def _pearson(xs: list[float], ys: list[float]) -> float | None:
 
 
 def build_results_summary(
-    results: list[ResultComparison], tolerance: float = 1e-2
+    results: list[ResultComparison], tolerance: float = DEFAULT_TOLERANCE
 ) -> ResultsSummary:
-    """Compute aggregate statistics from comparison results.
+    """Compute aggregate statistics per ``(entity_type, variable)``.
 
-    ``tolerance`` is the relative tolerance used for the per-variable
-    within-tolerance match rate.
+    ``tolerance`` is the relative tolerance of the within-tolerance match
+    rate and the close band of the gap.
     """
     summary = ResultsSummary(total=len(results))
 
@@ -236,13 +243,14 @@ def build_results_summary(
             summary.by_entity_type.get(r.entity_type, 0) + 1
         )
 
-    # Group by variable for stats.
-    var_groups: dict[str, list[ResultComparison]] = {}
+    var_groups: dict[tuple[str, str], list[ResultComparison]] = {}
     for r in results:
-        var_groups.setdefault(r.variable, []).append(r)
+        var_groups.setdefault((r.entity_type, r.variable), []).append(r)
 
-    for var, group in var_groups.items():
+    for key, group in var_groups.items():
         stats = ResultVariableStats(count=len(group))
+        stats.gap = gap((r.newave_value, r.novomodelo_value) for r in group)
+        stats.band = band(stats.gap, tolerance)
 
         abs_diffs = [r.abs_diff for r in group]
         rel_diffs = [r.rel_diff for r in group if r.rel_diff is not None]
@@ -270,6 +278,6 @@ def build_results_summary(
         if len(nw_vals) > 1:
             stats.correlation = _pearson(nw_vals, cb_vals)
 
-        summary.by_variable[var] = stats
+        summary.by_variable[key] = stats
 
     return summary

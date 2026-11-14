@@ -1,12 +1,28 @@
 [
   {
+    "entity_type": "hydro",
     "variable": "generation_mw",
-    "count": 3,
-    "mean_abs_diff": 8.333333333333334,
+    "count": 2,
+    "gap": 0.13333333333333333,
+    "band": "far",
+    "mean_abs_diff": 10.0,
     "max_abs_diff": 10.0,
-    "mean_smape": 0.7724867724867724,
+    "mean_smape": 0.15873015873015872,
+    "max_smape": 0.2222222222222222,
+    "within_tol_rate": 0.0,
+    "correlation": 1.0
+  },
+  {
+    "entity_type": "thermal",
+    "variable": "generation_mw",
+    "count": 1,
+    "gap": null,
+    "band": "far",
+    "mean_abs_diff": 5.0,
+    "max_abs_diff": 5.0,
+    "mean_smape": 2.0,
     "max_smape": 2.0,
     "within_tol_rate": 0.0,
-    "correlation": 0.9819805060619656
+    "correlation": null
   }
 ]

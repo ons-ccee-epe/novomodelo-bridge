@@ -159,13 +159,13 @@ COST_BREAKDOWN_TABLE_CSS: str = """
 .cost-breakdown-table tbody tr:hover td {
     background: #EFF6FF;
 }
-.cost-breakdown-table tbody tr:last-child td {
-    border-bottom: none;
+.cost-breakdown-table tbody tr:last-child td { border-bottom: none; }
+.cost-breakdown-table tbody tr.cb-total td {
     border-top: 2px solid #374151;
     background: #F9FAFB;
     font-weight: 700;
 }
-.cost-breakdown-table tbody tr:last-child:hover td {
+.cost-breakdown-table tbody tr.cb-total:hover td {
     background: #F9FAFB;
 }
 .cost-breakdown-table .cb-swatch {
@@ -199,21 +199,24 @@ COST_BREAKDOWN_TABLE_CSS: str = """
     background: #FFFFFF;
     z-index: 1;
 }
-/* FPHA tables: per-plant rows only (no summary row), body scrolled. */
-.cost-breakdown-table.fpha-table tbody tr:last-child td {
-    border-top: none;
-    background: transparent;
-    font-weight: 400;
-}
-.cost-breakdown-table.fpha-table tbody tr:nth-child(even):last-child td {
-    background: #FBFBFA;
-}
-.cost-breakdown-table.fpha-table tbody tr:last-child:hover td {
-    background: #EFF6FF;
-}
-.fpha-scroll { max-height: 60vh; overflow-y: auto; margin-bottom: 16px; }
-.fpha-scroll .cost-breakdown-table { overflow: visible; }
-.fpha-scroll thead th { position: sticky; top: 0; z-index: 2; }
+.fold-summary { margin: 4px 2px 12px; color: #374151; font-size: 0.9rem; }
+details.fold { margin-top: 12px; }
+details.fold > summary { cursor: pointer; color: #2563EB; font-size: 0.85rem; padding: 4px 2px; }
+details.fold[open] > summary { margin-bottom: 8px; }
+.fpha-scroll, .gap-scroll { max-height: 60vh; overflow-y: auto; margin-bottom: 16px; }
+.fpha-scroll .cost-breakdown-table, .gap-scroll .cost-breakdown-table { overflow: visible; }
+.fpha-scroll thead th, .gap-scroll thead th { position: sticky; top: 0; z-index: 2; }
+/* Per-plant gap tables: a cell tinted by its agreement band. */
+.cost-breakdown-table.gap-table { width: auto; min-width: 40%; }
+.gap-table thead th { cursor: pointer; user-select: none; }
+.gap-table thead th[data-sort="desc"]::after { content: " ▾"; }
+.gap-table thead th[data-sort="asc"]::after { content: " ▴"; }
+.gap-table tbody.gap-total tr.cb-total td { border-top: none; border-bottom: 2px solid #374151; }
+.gap-table tr.gap-row { cursor: pointer; }
+.gap-table tr.gap-row:focus-visible td { outline: 2px solid #2563EB; outline-offset: -2px; }
+.cost-breakdown-table tbody tr td.gap-close { background: #E3F1E8; color: #1F5135; }
+.cost-breakdown-table tbody tr td.gap-moderate { background: #FCEFD6; color: #7A4B00; }
+.cost-breakdown-table tbody tr td.gap-far { background: #F9DEDE; color: #8B1D1D; font-weight: 600; }
 """
 
 DATA_TABLE_CSS: str = """

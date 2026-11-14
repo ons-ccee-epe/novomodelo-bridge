@@ -390,7 +390,7 @@ class TestCheckCommand:
             "summary",
             "diagnostics",
         ]
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert doc["command"] == "check newave"
         assert doc["status"] == "will-not-convert"
         # The checklist moves UNDER summary.
@@ -496,7 +496,7 @@ class TestCheckCommand:
             "summary",
             "diagnostics",
         ]
-        assert doc["schema_version"] == 1
+        assert doc["schema_version"] == 2
         assert doc["command"] == "check newave"
         assert doc["status"] == "will-not-convert"
         # The checklist lives under summary now, not at the top level.

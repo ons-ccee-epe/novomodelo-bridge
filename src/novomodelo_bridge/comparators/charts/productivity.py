@@ -7,7 +7,7 @@ import polars as pl
 from novomodelo_bridge.comparators import analyze
 from novomodelo_bridge.comparators.charts._shared import _build_interactive_detail_html
 from novomodelo_bridge.comparators.html_report import COLOR_NOVOMODELO
-from novomodelo_bridge.ui.html.document import escape_text
+from novomodelo_bridge.ui.html.document import escape_text, folded_table
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 # kind -> (pmo column, novomodelo-bridge column, pmo label, novomodelo-bridge label). Each
@@ -191,7 +191,11 @@ def _prod_blocks_pct(nw: float | None, cb: float | None) -> float | None:
 def productivity_blocks_table(df: pl.DataFrame, reference_label: str = "NEWAVE") -> str:
     """Grouped building-blocks table — per metric: The source model | Novomodelo | Δ%.
 
-    One row per aligned hydro. The columns are organised into metric groups (ρ_esp,
+    A plant *matches* when both models show the same value of every metric at
+    the precision the table prints. A one-line count of the matching plants
+    leads; the plants that differ follow, and the full table, one row per
+    aligned hydro, is folded below. When no plant matches, the full table is
+    shown unfolded. The columns are organised into metric groups (ρ_esp,
     tailwater, losses, vmin, vmax), each spanning three sub-columns — the source model,
     Novomodelo, Δ% — via a two-level header (``colspan`` on the top row). Alternate metric
     groups get a subtle background tint across both header and body cells and a stronger
@@ -218,7 +222,15 @@ def productivity_blocks_table(df: pl.DataFrame, reference_label: str = "NEWAVE")
         return "—" if v is None else f"{v:.{decimals}f}"
 
     def _fmt_pct(p: float | None) -> str:
-        return "" if p is None else f"{p:+.1f}%"
+        if p is None:
+            return ""
+        return "0.0%" if abs(p) < 0.05 else f"{p:+.1f}%"
+
+    def _matches(row: dict) -> bool:
+        return all(
+            _fmt(row.get(nw_col), decimals) == _fmt(row.get(cb_col), decimals)
+            for _, nw_col, cb_col, decimals in groups
+        )
 
     def _cls(idx: int, *, sub_index: int, extra: str = "") -> str:
         """Class string for a numeric cell in metric-group *idx*.
@@ -248,9 +260,7 @@ def productivity_blocks_table(df: pl.DataFrame, reference_label: str = "NEWAVE")
             sub_cells.append(f'<th class="{_cls(idx, sub_index=j)}">{sub}</th>')
     head = f"<thead><tr>{''.join(top_cells)}</tr><tr>{''.join(sub_cells)}</tr></thead>"
 
-    # --- Body ---
-    body_rows: list[str] = []
-    for row in df.iter_rows(named=True):
+    def _body_row(row: dict) -> str:
         cells = [f'<td class="cb-cat">{escape_text(row["plant_name"])}</td>']
         for idx, (_, nw_col, cb_col, decimals) in enumerate(groups):
             nw_v = row.get(nw_col)
@@ -267,18 +277,50 @@ def productivity_blocks_table(df: pl.DataFrame, reference_label: str = "NEWAVE")
                 f'<td class="{_cls(idx, sub_index=2, extra=highlight)}">'
                 f"{_fmt_pct(pct)}</td>"
             )
-        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+        return "<tr>" + "".join(cells) + "</tr>"
 
-    body = "<tbody>" + "".join(body_rows) + "</tbody>"
-    caption = (
-        "<caption>Productivity Building Blocks "
-        '<span class="cb-caption-note">— columns are grouped per metric: '
-        f"{reference_label} vs Novomodelo vs Δ%</span></caption>"
-    )
-    return (
-        '<table class="cost-breakdown-table prod-blocks-table">'
-        + caption
-        + head
-        + body
-        + "</table>"
+    def _table(rows: list[dict], title: str) -> str:
+        caption = (
+            f"<caption>{title} "
+            '<span class="cb-caption-note">— columns are grouped per metric: '
+            f"{reference_label} vs Novomodelo vs Δ%</span></caption>"
+        )
+        return (
+            '<table class="cost-breakdown-table prod-blocks-table">'
+            + caption
+            + head
+            + "<tbody>"
+            + "".join(_body_row(row) for row in rows)
+            + "</tbody></table>"
+        )
+
+    rows = list(df.iter_rows(named=True))
+    differing = [row for row in rows if not _matches(row)]
+    total = len(rows)
+    matching = total - len(differing)
+    if not matching:
+        return (
+            f'<p class="fold-summary">None of the {total} plants matches '
+            f"{reference_label} on every building block.</p>"
+            + _table(rows, "Productivity Building Blocks")
+        )
+    if differing:
+        rest = (
+            "the one that differs is"
+            if len(differing) == 1
+            else f"the {len(differing)} that differ are"
+        )
+        summary = (
+            f"{matching} of {total} plants match {reference_label} on every "
+            f"building block; {rest} listed below."
+        )
+        shown = _table(differing, "Plants that differ")
+    else:
+        summary = f"All {total} plants match {reference_label} on every building block."
+        shown = ""
+    return folded_table(
+        summary,
+        shown,
+        _table(rows, "Productivity Building Blocks"),
+        f"All {total} plants",
     )

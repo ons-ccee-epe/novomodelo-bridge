@@ -177,7 +177,7 @@ $ novomodelo-bridge compare decomp [OPTIONS] {decomp_dir} {novomodelo_output_dir
 
 **Options**:
 
-* `--tolerance <float>`: Relative tolerance for results comparison (default 1e-2; overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml).  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
+* `--tolerance <float>`: Largest gap, as a fraction, at which a variable counts as close (default 0.05); beyond four times it a variable is far. Overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml.  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
 * `--format FORMAT`: Output format(s): console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
 * `--out-dir <path>`: Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR or novomodelo-bridge.toml. (default: &lt;novomodelo_output_dir&gt;/comparison_artifacts).  [env var: NOVOMODELO_BRIDGE_OUT_DIR]
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
@@ -207,7 +207,7 @@ $ novomodelo-bridge compare newave [OPTIONS] {newave_dir} {novomodelo_output_dir
 
 **Options**:
 
-* `--tolerance <float>`: Relative tolerance for results comparison (default 1e-2; overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml).  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
+* `--tolerance <float>`: Largest gap, as a fraction, at which a variable counts as close (default 0.05); beyond four times it a variable is far. Overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml.  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
 * `--format FORMAT`: Output format(s): console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
 * `--out-dir <path>`: Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR or novomodelo-bridge.toml. (default: &lt;novomodelo_output_dir&gt;/comparison_artifacts).  [env var: NOVOMODELO_BRIDGE_OUT_DIR]
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
