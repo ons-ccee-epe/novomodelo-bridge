@@ -97,6 +97,26 @@ class TestLoadTemporalContextAbsentLinesJson:
 
         assert context.line_meta == []
 
+    def test_unparseable_lines_json_yields_empty_line_meta_and_a_warning(
+        self, tmp_path: Path
+    ) -> None:
+        case_dir = tmp_path / "case"
+        _write_json(case_dir / "config.json", {"discount_rate": 0.1})
+        _write_json(
+            case_dir / "stages.json",
+            {"stages": [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]},
+        )
+        (case_dir / "system").mkdir()
+        (case_dir / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+
+        with dx.collect() as found:
+            context = load_temporal_context(case_dir)
+
+        assert context.line_meta == []
+        assert [(d.code, d.title) for d in found] == [
+            ("report-file-unreadable", "system/lines.json could not be read")
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Full synthetic case

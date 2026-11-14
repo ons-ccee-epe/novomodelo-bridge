@@ -598,7 +598,8 @@ def read_novomodelo_hydro_total_flows(
     -------
     pl.DataFrame
         Columns ``entity_id``, ``stage_id``, ``total_inflow_m3s``.
-        Empty when ``hydros.json`` is missing or the source frame lacks
+        Empty when ``hydros.json`` is missing, or, with a
+        ``report-file-unreadable`` warning, when the simulation output lacks
         either component column.
     """
     empty = pl.DataFrame(
@@ -612,6 +613,15 @@ def read_novomodelo_hydro_total_flows(
         return empty
     required = {"entity_id", "stage_id", "incremental_inflow_m3s", "outflow_m3s"}
     if not required.issubset(novomodelo_hydro_means.columns):
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/simulation/hydros",
+                novomodelo_output_dir / "simulation" / "hydros",
+                "the report leaves out the hydro plants' total inflow.",
+                _missing_columns(required, novomodelo_hydro_means.columns),
+            ),
+            logger=_LOG,
+        )
         return empty
 
     case_dir = case_dir_for(novomodelo_output_dir)
@@ -1000,7 +1010,8 @@ def read_novomodelo_lp_max_generation(novomodelo_output_dir: Path) -> pl.DataFra
     matches the dashboard's plant-explorer behaviour.
 
     Returns columns: ``entity_id``, ``stage_id``,
-    ``novomodelo_lp_gen_max_mw``. Empty when the parquet is missing.
+    ``novomodelo_lp_gen_max_mw``. Empty when the parquet is missing, or, with
+    a ``report-file-unreadable`` warning, when it lacks a column it needs.
     """
     empty = pl.DataFrame(
         schema={
@@ -1026,6 +1037,15 @@ def read_novomodelo_lp_max_generation(novomodelo_output_dir: Path) -> pl.DataFra
         "bound_value",
     }
     if not required.issubset(df.columns):
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/training/dictionaries/bounds.parquet",
+                bounds_path,
+                "the report leaves out the hydro plants' generation ceiling in the LP.",
+                _missing_columns(required, df.columns),
+            ),
+            logger=_LOG,
+        )
         return empty
     filt = df.filter(
         (pl.col("entity_type_code") == 0) & (pl.col("bound_type_code") == 7)
@@ -1050,7 +1070,8 @@ def read_novomodelo_hydro_withdrawal(novomodelo_output_dir: Path) -> pl.DataFram
     (see ``newave.converters.hydro.convert_water_withdrawal``).
 
     Returns columns: ``entity_id``, ``stage_id``, ``withdrawal_m3s``.
-    Empty frame if the parquet is missing or lacks the column.
+    Empty frame if the parquet is missing or lacks the column, as it does for
+    a case without withdrawal.
     """
     empty = pl.DataFrame(
         schema={
@@ -1193,20 +1214,9 @@ def read_novomodelo_network_lines(
     """The Network tab's line capacity per (line, stage) and ``lines.json`` lines.
 
     The capacities are :func:`read_novomodelo_stage_line_bounds`'; the lines are
-    :func:`read_novomodelo_lines`' list verbatim. An unparseable ``lines.json``
-    is a ``report-file-unreadable`` warning and leaves the tab without lines
-    instead of failing the comparison.
+    :func:`read_novomodelo_lines`' list verbatim.
     """
-    try:
-        lines = read_novomodelo_lines(novomodelo_output_dir)
-    except NovomodeloReadError as exc:
-        path = _find_system_json(novomodelo_output_dir, "lines.json")
-        _emit_system_json_unreadable(
-            path or case_dir_for(novomodelo_output_dir) / "system" / "lines.json",
-            "the report's Network tab shows no line.",
-            exc.__cause__ if isinstance(exc.__cause__, Exception) else exc,
-        )
-        lines = []
+    lines = read_novomodelo_lines(novomodelo_output_dir)
     return read_novomodelo_stage_line_bounds(novomodelo_output_dir, lines), lines
 
 
@@ -2407,12 +2417,30 @@ def _emit_system_json_missing(
     )
 
 
-def _emit_system_json_unreadable(path: Path, effect: str, exc: Exception) -> None:
+def _missing_columns(required: Iterable[str], present: Iterable[str]) -> str:
+    """The reason a frame without some *required* column cannot be used."""
+    missing = sorted(set(required) - set(present))
+    if len(missing) == 1:
+        return f"no {missing[0]} column"
+    return f"no {', '.join(missing[:-1])} or {missing[-1]} columns"
+
+
+def _emit_system_json_unreadable(
+    path: Path, effect: str, reason: Exception | str
+) -> None:
     """Warn that the ``system/`` JSON at *path* could not be parsed."""
     emit(
-        report_file_unreadable_diagnostic(f"system/{path.name}", path, effect, exc),
+        report_file_unreadable_diagnostic(f"system/{path.name}", path, effect, reason),
         logger=_LOG,
     )
+
+
+#: What a report loses when ``lines.json`` cannot be read, the same from every
+#: reader so the warning is reported once.
+_LINES_UNREADABLE_EFFECT = (
+    "the report treats the case as having no lines, so it shows no interchange "
+    "between buses and no line on the Network tab."
+)
 
 
 def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
@@ -2422,11 +2450,10 @@ def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
     (``case_dir_for(novomodelo_output_dir)`` -> ``novomodelo_output_dir`` -> its
     parent), so every caller -- the compare context, the dashboard, the
     DECOMP corridor-alignment index -- resolves the same file. Returns
-    ``[]`` when the file, or its ``"lines"`` key, is absent -- the
-    graceful-degrade half of this module's reader-failure contract. A
-    present-but-unparseable ``lines.json`` raises :class:`NovomodeloReadError`
-    rather than silently degrading to an empty list, mirroring
-    :func:`_load_entity_bus_map`.
+    ``[]`` when the file, or its ``"lines"`` key, is absent, as for a case
+    without lines. A present ``lines.json`` that does not parse, or holds no
+    list of lines, also returns ``[]``, with a ``report-file-unreadable``
+    warning.
     """
     path = _find_system_json(novomodelo_output_dir, "lines.json")
     if path is None:
@@ -2435,9 +2462,14 @@ def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
     try:
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise NovomodeloReadError(f"Failed to parse lines.json: {path}") from exc
-    return data.get("lines", [])
+    except (OSError, ValueError) as exc:
+        _emit_system_json_unreadable(path, _LINES_UNREADABLE_EFFECT, exc)
+        return []
+    lines = data.get("lines", []) if isinstance(data, dict) else None
+    if not isinstance(lines, list):
+        _emit_system_json_unreadable(path, _LINES_UNREADABLE_EFFECT, "no list of lines")
+        return []
+    return lines
 
 
 def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
