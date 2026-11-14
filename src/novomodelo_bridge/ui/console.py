@@ -384,7 +384,8 @@ def _diagnostic_panel(diag: Diagnostic) -> Panel:
     """Render one diagnostic as a titled, severity-coloured panel."""
     style = _SEVERITY_STYLE[diag.severity]
     body = Table.grid(padding=(0, 0))
-    body.add_column()
+    # Folded, not cut: a summary often names a path wider than the panel.
+    body.add_column(overflow="fold")
     body.add_row(Text(diag.summary))
 
     if diag.table is not None:

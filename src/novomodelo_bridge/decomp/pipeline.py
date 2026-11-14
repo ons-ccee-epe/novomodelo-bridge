@@ -30,7 +30,6 @@ from novomodelo_bridge.core.bound_merge import merge_bound_tables
 from novomodelo_bridge.core.conversion import (
     ClearedArtifacts,
     ConversionReport,
-    clear_dst_contents,
     run_conversion,
 )
 from novomodelo_bridge.core.diversion import (
@@ -2429,23 +2428,10 @@ def convert_decomp_case(
         A ``ValueError``: a post-emission self-check in
         :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
         violation in the converted artifacts. No report is returned.
-    FileExistsError
-        If *dst* already exists, is non-empty, and ``force`` is not set.
+    ~novomodelo_bridge.core.errors.OutputExistsError
+        A ``FileExistsError``: *dst* already holds files and ``force`` is not
+        set.
     """
-    # Refuse before ``run_conversion``, whose failure rollback would otherwise
-    # delete the pre-existing case.
-    if dst.exists() and any(dst.iterdir()):
-        if not force:
-            raise FileExistsError(
-                f"{dst} already contains files; pass force to overwrite"
-            )
-        # --force over a populated dst: pre-clear the previous case's full
-        # artifact set before rewriting, so a conditional artifact this run
-        # does not reproduce (post_study_stages.json, boundary/) cannot
-        # survive. Skipped under a dry run, which never mutates dst.
-        if not dry_run:
-            clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
-
     return run_conversion(
         lambda: _convert_decomp_case_impl(
             src,
@@ -2457,6 +2443,7 @@ def convert_decomp_case(
         ),
         dst,
         DECOMP_CLEARED_ARTIFACTS,
+        force=force,
         dry_run=dry_run,
     )
 
@@ -2486,9 +2473,6 @@ def _convert_decomp_case_impl(
     step = on_phase if on_phase is not None else (lambda _label: None)
     step("Discovering deck")
     artifacts = _discover(src)
-
-    if not dry_run:
-        dst.mkdir(parents=True, exist_ok=True)
 
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in

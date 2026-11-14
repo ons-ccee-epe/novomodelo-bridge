@@ -90,6 +90,11 @@ links are cobre-bridge's.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.
+- **`convert newave`, `convert decomp` and `export dessem` refuse to write
+  over an earlier run as `output-exists`**, in one wording that names the
+  directory and says to pass `--force`; `convert newave` reported it as
+  `conversion-error`, `convert decomp` as `unexpected-error`. `export dessem`
+  names the files it would overwrite.
 - **`compare newave` and `compare decomp` judge each variable by its overall
   gap, and `--tolerance` defaults to 5%.** The console table labels each
   variable close, moderate or far (beyond four times the tolerance), leaves
@@ -142,6 +147,11 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **A failed `convert newave` or `convert decomp` left an empty case directory
+  behind.** The directories the run created are now removed with its partial
+  outputs.
+- **Error and warning panels cut a long path short with "…".** They now wrap
+  it onto the next line.
 - **`convert decomp` stopped on an `HV` constraint on the stored volume of a
   plant in `hidr.dat` with no `UH` record.** It now leaves the constraint out
   with a `decomp-rhv-varm-plant-uncadastred` warning, as for a plant missing

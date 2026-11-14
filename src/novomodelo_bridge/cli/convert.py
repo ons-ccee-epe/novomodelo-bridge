@@ -20,7 +20,6 @@ from novomodelo_bridge.cli.verdict import (
 )
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.errors import (
-    BridgeError,
     SourceFileError,
     diagnostic_from_exception,
 )
@@ -122,11 +121,9 @@ def _write_diagnostics_json(
 
 def _run_newave_conversion(args: ConvertArgs) -> None:
     """Execute the convert newave subcommand."""
-    from novomodelo_bridge.core.conversion import clear_dst_contents
     from novomodelo_bridge.newave.files import NewaveFiles
     from novomodelo_bridge.newave.pipeline import (
         CONVERSION_PHASE_LABELS,
-        NEWAVE_CLEARED_ARTIFACTS,
         convert_newave_case,
     )
 
@@ -145,27 +142,6 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
             summary=_convert_verdict_summary(None),
         )
 
-    if dst.exists() and any(dst.iterdir()):
-        if not args.force:
-            _fail(
-                "convert newave",
-                args,
-                BridgeError(
-                    f"destination directory '{dst}' is not empty."
-                    " Use --force to overwrite."
-                ),
-                1,
-                summary=_convert_verdict_summary(None),
-            )
-        # --force: remove previous pipeline outputs before converting. A dry run
-        # never mutates the destination, so the clear is skipped even with --force.
-        if not args.dry_run:
-            clear_dst_contents(dst, NEWAVE_CLEARED_ARTIFACTS)
-
-    # A dry run creates no destination directory; the pipeline writes nothing.
-    if not args.dry_run:
-        dst.mkdir(parents=True, exist_ok=True)
-
     try:
         with (
             dx.collect() as found_before,
@@ -179,6 +155,7 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
             report: ConversionReport = convert_newave_case(
                 src,
                 dst,
+                force=args.force,
                 on_phase=step,
                 dry_run=args.dry_run,
                 float_digits=args.json_float_digits,

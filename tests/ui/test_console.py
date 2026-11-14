@@ -206,6 +206,20 @@ class TestRenderDiagnostics:
         assert "P0" in text
         assert f"P{MAX_TABLE_ROWS + 4}" not in text  # last row not printed
 
+    def test_a_path_wider_than_the_panel_is_printed_whole(self) -> None:
+        console, buf = _console()
+        path = "/" + "/".join(f"dir{i:02d}" for i in range(30))
+        diag = Diagnostic(
+            code="output-exists",
+            severity=Severity.ERROR,
+            category="Conversion failure",
+            title="Conversion failed",
+            summary=f"'{path}' already holds files.",
+        )
+        render_diagnostics([diag], heading="Conversion notes", console=console)
+        lines = [line.strip("│ ") for line in buf.getvalue().splitlines()]
+        assert f"'{path}'" in "".join(lines)
+
 
 class TestRenderChecklist:
     def test_render_checklist_ok_headline_and_items(self) -> None:

@@ -496,8 +496,8 @@ class TestConversionWarningCapture:
 
     def test_partial_outputs_cleared_on_failure(self, tmp_path: Path) -> None:
         """A failure partway through the write phase must not leave a partial,
-        valid-looking case behind: the known pipeline outputs are removed so a
-        plain (no --force) re-run is not refused as non-empty."""
+        valid-looking case behind: the known pipeline outputs, and the
+        directory the run created for them, are removed."""
         from novomodelo_bridge.newave import pipeline
         from novomodelo_bridge.newave.pipeline import convert_newave_case
 
@@ -524,11 +524,7 @@ class TestConversionWarningCapture:
         ):
             convert_newave_case(tmp_path, dst)
 
-        # No pipeline outputs survive — dst holds no half-written case.
-        assert not (dst / "config.json").exists()
-        assert not (dst / "system").exists()
-        # dst itself may remain but must be empty, so a no-force re-run proceeds.
-        assert not any(dst.iterdir())
+        assert not dst.exists()
 
     def test_failure_hands_earlier_diagnostics_to_the_callers_sink(
         self,
@@ -588,10 +584,28 @@ class TestConversionWarningCapture:
             patch.object(pipeline, "_convert_newave_case_impl", side_effect=fake_impl),
             pytest.raises(RuntimeError, match="boom"),
         ):
-            convert_newave_case(tmp_path, dst, dry_run=True)
+            convert_newave_case(tmp_path, dst, dry_run=True, force=True)
 
         assert (dst / "config.json").exists()
         assert (dst / "system").exists()
+
+    def test_real_run_against_populated_dst_refuses_without_clearing(
+        self, tmp_path: Path
+    ) -> None:
+        """Without ``force`` a populated ``dst`` is refused before the
+        conversion's failure rollback could delete the case it holds."""
+        from novomodelo_bridge.core.errors import OutputExistsError
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
+
+        dst = tmp_path / "case"
+        dst.mkdir()
+        existing = dst / "config.json"
+        existing.write_bytes(b"keep me")
+
+        with pytest.raises(OutputExistsError, match="already holds files"):
+            convert_newave_case(tmp_path / "src", dst)
+
+        assert existing.read_bytes() == b"keep me"
 
 
 def test_convert_newave_case_threads_on_phase(tmp_path: Path) -> None:

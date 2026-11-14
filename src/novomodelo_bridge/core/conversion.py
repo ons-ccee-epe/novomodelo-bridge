@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.errors import OutputExistsError
 
 
 @dataclass
@@ -67,30 +68,52 @@ def clear_dst_contents(dst: Path, artifacts: ClearedArtifacts) -> None:
             path.unlink()
 
 
+def _remove_empty_dirs(dirs: list[Path]) -> None:
+    """Remove each of *dirs*, given deepest first, until one is not empty."""
+    for path in dirs:
+        try:
+            path.rmdir()
+        except OSError:
+            return
+
+
 def run_conversion(
     convert: Callable[[], ConversionReport],
     dst: Path,
     artifacts: ClearedArtifacts,
     *,
+    force: bool,
     dry_run: bool,
 ) -> ConversionReport:
-    """Run one track's *convert* and return its report with every finding in it.
+    """Run one track's *convert* into *dst* and return its report with every finding.
 
-    On a failure, *artifacts* are removed from *dst* unless *dry_run*, the
-    findings collected so far are emitted on the caller's sink (an early
-    warning such as a tab in a fixed-column file often explains the failure,
-    and a failed self-check details it), and the exception propagates.
+    A *dst* that already holds files raises :class:`OutputExistsError` unless
+    *force*, which first clears *artifacts* from it. On a failure, *artifacts*
+    and the directories this run created are removed, the findings collected
+    so far are emitted on the caller's sink (an early warning such as a tab in
+    a fixed-column file often explains the failure, and a failed self-check
+    details it), and the exception propagates. A dry run never changes *dst*.
     """
+    # Refused before the rollback below can delete the earlier case.
+    if dst.exists() and any(dst.iterdir()):
+        if not force:
+            raise OutputExistsError(f"'{dst}' already holds files.")
+        if not dry_run:
+            # A conditional artifact this run does not write again must not
+            # survive into the new case.
+            clear_dst_contents(dst, artifacts)
+    created = [] if dry_run else [p for p in (dst, *dst.parents) if not p.exists()]
+    if not dry_run:
+        dst.mkdir(parents=True, exist_ok=True)
     try:
         with dx.collect() as collected:
             report = convert()
     except BaseException:
-        # Clear the partial outputs so a half-written case is never mistaken for
-        # a complete one and a re-run is not refused as "not empty". Never on a
-        # dry run: it wrote nothing, and dst may hold a case the user never
-        # asked to clear.
+        # A half-written case must never be mistaken for a complete one, nor
+        # refuse a re-run.
         if not dry_run:
             clear_dst_contents(dst, artifacts)
+            _remove_empty_dirs(created)
         for diagnostic in dx.finalize_diagnostics(collected):
             dx.emit(diagnostic)
         raise

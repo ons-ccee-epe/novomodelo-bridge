@@ -1058,7 +1058,7 @@ class TestCliInProcess:
         )
 
         with patch(
-            "novomodelo_bridge.newave.pipeline.convert_newave_case",
+            "novomodelo_bridge.newave.pipeline._convert_newave_case_impl",
             return_value=fake_report,
         ) as convert:
             code, _stdout, stderr = self._invoke_main(
@@ -1067,8 +1067,7 @@ class TestCliInProcess:
             )
 
         assert code == 1
-        assert "Use --force" in stderr
-        # The destination is untouched: the guard fired before the pipeline ran.
+        assert "--force" in stderr
         assert convert.call_count == 0
         assert existing.read_text(encoding="utf-8") == "keep me"
         assert list(dst.iterdir()) == [existing]
