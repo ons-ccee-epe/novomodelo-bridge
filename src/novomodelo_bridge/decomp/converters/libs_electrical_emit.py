@@ -38,7 +38,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    collect,
+    emit,
+    merge_tables,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -46,6 +53,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
 )
 from novomodelo_bridge.decomp.constraint_registers import ConstraintRecord, StageBounds
 from novomodelo_bridge.decomp.converters.constraints import (
+    Unresolved,
     _format_expression,
     _hydro_generation_token,
     slots_from_record,
@@ -72,75 +80,74 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 
-def _emit_bucket_a_unresolved(term: ParsedTerm, *, map_name: str) -> None:
-    """Emit the shared ``decomp-electrical-bucket-a-unresolved`` WARNING for
-    one bucket-A term whose plant/thermal/park/line is absent from *map_name*."""
+_OUTSIDE_CASE = "decomp-electrical-bucket-a-unresolved"
+_ENER_COMERC = "decomp-electrical-ener-comerc-deferred"
+
+_TERM_FINDINGS: dict[str, tuple[str, str, list[str]]] = {
+    _OUTSIDE_CASE: (
+        "Electrical restrictions on entities outside the case",
+        "The listed electrical restrictions in the LIBS file name a plant, park "
+        "or line the case does not have. The conversion leaves each restriction "
+        "out, so the case runs without these limits.",
+        ["Restriction", "Term", "Missing"],
+    ),
+    _ENER_COMERC: (
+        "Electrical restrictions on commercial energy",
+        "The listed electrical restrictions in the LIBS file name ener_comerc, "
+        "the commercial energy between two submarkets, which the case has no "
+        "variable for. The conversion leaves each restriction out, so the case "
+        "runs without these limits.",
+        ["Restriction", "Term"],
+    ),
+}
+
+
+def _outside_case(term: ParsedTerm, missing: str) -> Unresolved:
+    return Unresolved(_OUTSIDE_CASE, (_term_text(term), missing))
+
+
+def _term_text(term: ParsedTerm) -> str:
+    return f"{term.token}({', '.join(str(arg) for arg in term.args)})"
+
+
+def _emit_unresolved_term(restriction: int, unresolved: Unresolved) -> None:
+    """Emit the one-row WARNING for *restriction*, left out over the term
+    *unresolved* describes."""
+    title, summary, columns = _TERM_FINDINGS[unresolved.code]
     emit(
         Diagnostic(
-            code="decomp-electrical-bucket-a-unresolved",
+            code=unresolved.code,
             severity=Severity.WARNING,
             category="Special constraints",
-            title="Electrical restriction decision term could not be resolved",
-            summary=(
-                f"Electrical restriction decision term {term.token}"
-                f"{list(term.args)} could not be resolved via {map_name}; "
-                "the constraint is skipped rather than emitted with a "
-                "partial expression."
-            ),
-            remediation=(
-                "Check the source model's data feeding "
-                f"{term.token}{list(term.args)}; the constraint is skipped."
+            title=title,
+            summary=summary,
+            table=DiagnosticTable(
+                columns=columns, rows=[[restriction, *unresolved.cells]]
             ),
         )
     )
 
 
-def _emit_ener_comerc_deferred(term: ParsedTerm) -> None:
-    """Emit the shared ``decomp-electrical-ener-comerc-deferred`` WARNING.
-
-    ``ener_comerc`` (bilateral commercial energy) does not appear on the
-    target deck and has no novomodelo ``VariableRef`` counterpart yet;
-    a restriction carrying one is skipped rather than guessed at.
-    """
-    emit(
-        Diagnostic(
-            code="decomp-electrical-ener-comerc-deferred",
-            severity=Severity.WARNING,
-            category="Special constraints",
-            title="ener_comerc term deferred",
-            summary=(
-                f"Electrical restriction decision term ener_comerc"
-                f"{list(term.args)} has no equivalent variable in the target "
-                "model yet; the constraint is skipped."
-            ),
-            remediation=(
-                "ener_comerc does not appear on the target deck; no action "
-                "needed to convert."
-            ),
-        )
-    )
-
-
-def _emit_unrecognized_token(code: int, err: UnrecognizedElectricalToken) -> None:
-    """Emit the shared ``decomp-electrical-unrecognized-token`` WARNING for
-    one restriction whose (expanded) formula references a well-formed but
-    undeclared identifier (skip-not-partial containment)."""
+def _emit_unrecognized_token(restriction: int, name: str) -> None:
+    """Emit the one-row ``decomp-electrical-unrecognized-token`` WARNING for
+    *restriction*, left out over the undeclared *name*."""
     emit(
         Diagnostic(
             code="decomp-electrical-unrecognized-token",
             severity=Severity.WARNING,
             category="Special constraints",
-            title="Electrical restriction references an unrecognized token",
+            title="Electrical restrictions with an undeclared name",
             summary=(
-                f"Electrical restriction {code} references an unrecognized "
-                f"token ({err}); the constraint is skipped rather than "
-                "aborting the whole conversion."
+                "The listed electrical restrictions name an expression or alias "
+                "the LIBS file does not declare. The conversion leaves each "
+                "restriction out, so the case runs without these limits."
+            ),
+            table=DiagnosticTable(
+                columns=["Restriction", "Name"], rows=[[restriction, name]]
             ),
             remediation=(
-                "Check the source model's declared expressions/aliases for "
-                f"restriction {code} (see the summary for the offending "
-                "identifier); the constraint is skipped until it is "
-                "modeled."
+                "Declare each listed name in the LIBS electrical file, or "
+                "correct it in the restriction."
             ),
         )
     )
@@ -172,7 +179,7 @@ def _novomodelo_token(
     ncs_id_by_pee_code: Mapping[int, int],
     conjh_bus_by_code_group: Mapping[tuple[int, int], int],
     line_map: Mapping[tuple[int, int], int],
-) -> str | None:
+) -> str | Unresolved:
     """The novomodelo ``VariableRef`` expression token for one bucket-A term.
 
     - ``ger_usih(h)`` -> ``hydro_generation(id_map.hydro_id(h))``.
@@ -191,12 +198,12 @@ def _novomodelo_token(
       that is not a declared SB code resolves to the IV transshipment bus
       (:func:`_resolve_interc_bus`); the line-lookup miss path still guards
       against a genuinely-unknown code with no matching transshipment line.
-    - ``ener_comerc(c)`` -> not on the target deck; always ``None`` (deferred).
+    - ``ener_comerc(c)`` -> no novomodelo variable; always
+      :class:`~novomodelo_bridge.decomp.converters.constraints.Unresolved`.
 
-    Returns ``None`` — after emitting one ``Severity.WARNING``
-    :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` — when *term*'s plant,
-    thermal, park, bus, or line is absent from its map (a caught
-    ``KeyError``, never propagated) or when *term* is ``ener_comerc``.
+    Returns an ``Unresolved`` naming the finding when *term*'s plant,
+    thermal, park, bus, or line is absent from its map, or when *term* is
+    ``ener_comerc``.
 
     Raises
     ------
@@ -211,8 +218,7 @@ def _novomodelo_token(
         try:
             hydro_id = id_map.hydro_id(code)
         except KeyError:
-            _emit_bucket_a_unresolved(term, map_name="the hydro id map")
-            return None
+            return _outside_case(term, "hydro plant")
         return _hydro_generation_token(hydro_id)
 
     if term.token == "ger_usit":
@@ -220,8 +226,7 @@ def _novomodelo_token(
         try:
             thermal_id = id_map.thermal_id(code)
         except KeyError:
-            _emit_bucket_a_unresolved(term, map_name="the thermal id map")
-            return None
+            return _outside_case(term, "thermal")
         return f"thermal_generation({thermal_id})"
 
     if term.token == "ger_pee":
@@ -229,8 +234,7 @@ def _novomodelo_token(
         try:
             ncs_id = ncs_id_by_pee_code[code]
         except KeyError:
-            _emit_bucket_a_unresolved(term, map_name="the renewable-park ncs id map")
-            return None
+            return _outside_case(term, "renewable park")
         return f"non_controllable_generation({ncs_id})"
 
     if term.token == "ger_conjh":
@@ -238,15 +242,11 @@ def _novomodelo_token(
         try:
             hydro_id = id_map.hydro_id(code)
         except KeyError:
-            _emit_bucket_a_unresolved(term, map_name="the hydro id map")
-            return None
+            return _outside_case(term, "hydro plant")
         try:
             bus_id = conjh_bus_by_code_group[(code, group)]
         except KeyError:
-            _emit_bucket_a_unresolved(
-                term, map_name="the ger_conjh frequency-split bus map"
-            )
-            return None
+            return _outside_case(term, "unit group bus")
         return _hydro_generation_token(hydro_id, bus_id)
 
     if term.token == "ener_interc":
@@ -257,12 +257,10 @@ def _novomodelo_token(
             return f"line_direct({line_map[(bus_a, bus_b)]})"
         if (bus_b, bus_a) in line_map:
             return f"line_reverse({line_map[(bus_b, bus_a)]})"
-        _emit_bucket_a_unresolved(term, map_name="the FI line map")
-        return None
+        return _outside_case(term, "line")
 
     if term.token == "ener_comerc":
-        _emit_ener_comerc_deferred(term)
-        return None
+        return Unresolved(_ENER_COMERC, (_term_text(term),))
 
     raise ValueError(f"_novomodelo_token: unrecognized bucket-A token {term.token!r}")
 
@@ -273,7 +271,7 @@ def build_electrical_expression(
     ncs_id_by_pee_code: Mapping[int, int],
     conjh_bus_by_code_group: Mapping[tuple[int, int], int],
     line_map: Mapping[tuple[int, int], int],
-) -> str | None:
+) -> str | Unresolved | None:
     """Render *assembled*'s sign-canonical bucket-A terms into one novomodelo
     expression string.
 
@@ -281,18 +279,18 @@ def build_electrical_expression(
     token)`` and joins the result with ``constraints._format_expression``
     (the same coefficient-formatting rules — unit coefficients render bare,
     fractional ones as ``{coeff} * {token}`` — the other special-constraint
-    emitters already use). Any single unresolved token (:func:`_novomodelo_token` returning
-    ``None``, having already emitted its own WARNING) drops the **whole**
-    expression — ``None``, skip-not-partial — never a partial string built
-    from only the resolvable terms.
+    emitters already use). The first unresolved term
+    (:func:`_novomodelo_token` returning an ``Unresolved``) drops the **whole**
+    expression, skip-not-partial: never a partial string built from only the
+    resolvable terms. ``None`` when *assembled* has no decision term.
     """
     resolved: list[tuple[float, str]] = []
     for term in assembled.terms:
         token = _novomodelo_token(
             term, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map
         )
-        if token is None:
-            return None
+        if isinstance(token, Unresolved):
+            return token
         resolved.append((term.coefficient, token))
     return _format_expression(resolved)
 
@@ -446,7 +444,38 @@ def emit_libs_electrical_generics(
     0) when omitted; the pipeline threads one shared instance across every
     emitter.
     """
-    allocator = allocator or ConstraintIdAllocator()
+    with collect() as found:
+        result = _emit_restrictions(
+            model,
+            id_map,
+            context_factory,
+            a_h,
+            calendar,
+            ncs_id_by_pee_code,
+            conjh_bus_by_code_group,
+            line_map,
+            big_m,
+            allocator or ConstraintIdAllocator(),
+        )
+    for diagnostic in merge_tables(found):
+        emit(diagnostic)
+    return result
+
+
+def _emit_restrictions(
+    model: LibsElectricalModel,
+    id_map: DecompIdMap,
+    context_factory: Callable[[int, int], DataContext],
+    a_h: AvailablePower,
+    calendar: Sequence[OperativeStage],
+    ncs_id_by_pee_code: Mapping[int, int],
+    conjh_bus_by_code_group: Mapping[tuple[int, int], int],
+    line_map: Mapping[tuple[int, int], int],
+    big_m: float,
+    allocator: ConstraintIdAllocator,
+) -> LibsElectricalResult:
+    """The body of :func:`emit_libs_electrical_generics`, reporting each
+    restriction's findings as it meets them."""
     builder = GenericConstraintBuilder(allocator)
     converted: list[int] = []
     deferred: dict[str, list[int]] = {
@@ -500,11 +529,13 @@ def emit_libs_electrical_generics(
                 line_map,
             )
         except UnrecognizedElectricalToken as err:
-            _emit_unrecognized_token(code, err)
+            _emit_unrecognized_token(code, err.name)
             deferred["unrecognized-token"].append(code)
             continue
 
-        if expression is None:
+        if isinstance(expression, Unresolved):
+            _emit_unresolved_term(code, expression)
+        if expression is None or isinstance(expression, Unresolved):
             deferred["unresolved-bucket-a"].append(code)
             continue
 

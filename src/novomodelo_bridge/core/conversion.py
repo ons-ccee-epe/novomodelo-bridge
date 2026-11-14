@@ -78,9 +78,9 @@ def run_conversion(
     """Run one track's *convert* and return its report with every finding in it.
 
     On a failure, *artifacts* are removed from *dst* unless *dry_run*, the
-    below-``ERROR`` findings collected so far are emitted on the caller's sink
-    (an early warning such as a tab in a fixed-column file often explains the
-    failure), and the exception propagates.
+    findings collected so far are emitted on the caller's sink (an early
+    warning such as a tab in a fixed-column file often explains the failure,
+    and a failed self-check details it), and the exception propagates.
     """
     collector = dx.WarningCollector()
     pkg_logger = logging.getLogger("novomodelo_bridge")
@@ -95,10 +95,8 @@ def run_conversion(
         # asked to clear.
         if not dry_run:
             clear_dst_contents(dst, artifacts)
-        # ERROR findings are left out: the exception they raised repeats them.
         for diagnostic in dx.finalize_diagnostics(collected, collector.messages):
-            if diagnostic.severity is not dx.Severity.ERROR:
-                dx.emit(diagnostic)
+            dx.emit(diagnostic)
         raise
     finally:
         pkg_logger.removeHandler(collector)

@@ -252,10 +252,7 @@ def _report_artificial_gauge(
     }
     emit(
         artificial_gauge_plants_diagnostic(
-            [
-                (code, name_of.get(code, ""), id_map.hydro_id(code))
-                for code in artificial
-            ]
+            [(code, name_of.get(code, "")) for code in artificial]
         ),
         logger=logger,
     )

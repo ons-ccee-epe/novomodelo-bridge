@@ -55,7 +55,7 @@ from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.tolerances import relative_tolerance
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
     from pathlib import Path
 
 _LOG = logging.getLogger(__name__)
@@ -867,8 +867,8 @@ def bound_conflicts_diagnostic(
             plant_names.get(conflict.code, ""),
             conflict.variable,
             ", ".join(f"{conflict.family} {cid}" for cid in conflict.constraint_ids),
-            conflict.stage_index + 1,
-            conflict.block + 1,
+            conflict.stage_index,
+            conflict.block,
             conflict.floor,
             conflict.ceiling,
         ]
@@ -880,11 +880,11 @@ def bound_conflicts_diagnostic(
         category=_CATEGORY,
         title=f"Conflicting flow restrictions kept soft ({len(rows)})",
         summary=(
-            f"{len(rows)} plant flow(s) carry single-plant HQ restrictions that "
-            "no value meets at once. Each listed restriction is converted as a "
-            "generic constraint with its own slack at the common penalty "
-            "instead of a plant bound, so novomodelo violates whichever is cheaper, "
-            "as the source model does."
+            "The listed plant flows carry single-plant HQ restrictions that no "
+            "value meets at once. Each restriction is converted as a generic "
+            "constraint with its own slack at the common penalty instead of a "
+            "plant bound, so novomodelo violates whichever is cheaper, as "
+            "DECOMP does."
         ),
         table=DiagnosticTable(
             columns=[
@@ -894,17 +894,184 @@ def bound_conflicts_diagnostic(
                 "Restrictions",
                 "First stage",
                 "Block",
-                "Floor (m3/s)",
-                "Ceiling (m3/s)",
+                "Floor (m³/s)",
+                "Ceiling (m³/s)",
             ],
             rows=rows,
+            justify=[
+                "right",
+                "left",
+                "left",
+                "left",
+                "right",
+                "right",
+                "right",
+                "right",
+            ],
+            caption="Stage and block ids are 0-based.",
         ),
         remediation=(
-            "Check the listed restrictions in the deck: one of them is violated "
-            "in every scenario, and the source model reports which one in its "
+            "Check the listed restrictions in dadger.rvN: one of them is violated "
+            "in every scenario, and DECOMP reports which one in its "
             "infeasibility report (inviab)."
         ),
     )
+
+
+@dataclass(frozen=True)
+class _EntityCheck:
+    """A term variable whose code must name an entity the case holds."""
+
+    family: str
+    variable: str
+    entity: str
+    diagnostic_code: str
+    title: str
+    summary: str
+    code_column: str
+    remediation: str
+
+
+_ENTITY_CHECKS = (
+    _EntityCheck(
+        family="RE",
+        variable="thermal_generation",
+        entity="thermal",
+        diagnostic_code="decomp-re-thermal-not-normal",
+        title="RE constraints on thermals without a CT record",
+        summary=(
+            "The listed RE constraints have an FT term on a thermal with no CT "
+            "record in dadger.rvN, such as a GNL thermal of dadgnl.rvN. The "
+            "conversion leaves each constraint out, so the case runs without "
+            "the limits DECOMP applies."
+        ),
+        code_column="Thermal code",
+        remediation=(
+            "Give each listed thermal a CT record in dadger.rvN, or remove its FT term."
+        ),
+    ),
+    _EntityCheck(
+        family="HQ",
+        variable="QBOM",
+        entity="pumping",
+        diagnostic_code="decomp-rhq-qbom-no-station",
+        title="HQ constraints on missing pumping stations",
+        summary=(
+            "The listed HQ constraints have a CQ QBOM term on a code with no UE "
+            "pumping station in dadger.rvN. The conversion leaves each "
+            "constraint out, so the case runs without the limits DECOMP "
+            "applies."
+        ),
+        code_column="Station code",
+        remediation=(
+            "Give each listed code a UE record in dadger.rvN, or remove its CQ "
+            "QBOM term."
+        ),
+    ),
+    _EntityCheck(
+        family="HV",
+        variable="VBOM",
+        entity="pumping",
+        diagnostic_code="decomp-rhv-vbom-no-station",
+        title="HV constraints on missing pumping stations",
+        summary=(
+            "The listed HV constraints have a CV VBOM term on a code with no UE "
+            "pumping station in dadger.rvN. The conversion leaves each "
+            "constraint out, so the case runs without the limits DECOMP "
+            "applies."
+        ),
+        code_column="Station code",
+        remediation=(
+            "Give each listed code a UE record in dadger.rvN, or remove its CV "
+            "VBOM term."
+        ),
+    ),
+    _EntityCheck(
+        family="HV",
+        variable="VARM",
+        entity="hydro",
+        diagnostic_code="decomp-rhv-varm-plant-uncadastred",
+        title="HV constraints on plants the case does not operate",
+        summary=(
+            "The listed HV constraints have a CV VARM term on a plant with no UH "
+            "record giving an initial volume in dadger.rvN, so the case has no "
+            "storage for it. The conversion leaves each constraint out, so the "
+            "case runs without the limits DECOMP applies."
+        ),
+        code_column="Plant code",
+        remediation=(
+            "Give each listed plant a UH record with an initial volume in "
+            "dadger.rvN, or remove its CV VARM term."
+        ),
+    ),
+)
+
+
+def drop_unknown_entities(
+    census: ConstraintCensus,
+    *,
+    hydro_codes: Collection[int],
+    thermal_codes: Collection[int],
+    pumping_codes: Collection[int],
+) -> tuple[ConstraintCensus, list[Diagnostic]]:
+    """Leave out every constraint with a term on an entity the case lacks.
+
+    Checks the ``FT`` thermal, the ``QBOM``/``VBOM`` pumping station and the
+    ``VARM`` plant of each term against *thermal_codes*, *pumping_codes* and
+    *hydro_codes* (the operated plants). A constraint with any such term is
+    dropped from both lowering buckets, never lowered in part, and reported
+    once per kind of term as a WARNING listing the constraint and the code.
+    ``by_family`` keeps every record read.
+    """
+    known = {
+        "hydro": set(hydro_codes),
+        "thermal": set(thermal_codes),
+        "pumping": set(pumping_codes),
+    }
+    rows: dict[str, list[list[object]]] = defaultdict(list)
+    dropped: set[tuple[str, int]] = set()
+    for record in (*census.to_bounds, *census.to_generic):
+        for check in _ENTITY_CHECKS:
+            if record.family != check.family:
+                continue
+            for term in record.terms:
+                if (
+                    term.variable == check.variable
+                    and term.code not in known[check.entity]
+                ):
+                    rows[check.diagnostic_code].append(
+                        [record.constraint_id, term.code]
+                    )
+                    dropped.add((record.family, record.constraint_id))
+    if not dropped:
+        return census, []
+    screened = replace(
+        census,
+        to_bounds=tuple(
+            r for r in census.to_bounds if (r.family, r.constraint_id) not in dropped
+        ),
+        to_generic=tuple(
+            r for r in census.to_generic if (r.family, r.constraint_id) not in dropped
+        ),
+    )
+    diagnostics = [
+        Diagnostic(
+            code=check.diagnostic_code,
+            severity=Severity.WARNING,
+            category=_CATEGORY,
+            title=f"{check.title} ({len(rows[check.diagnostic_code])})",
+            summary=check.summary,
+            table=DiagnosticTable(
+                columns=["Constraint", check.code_column],
+                rows=sorted(rows[check.diagnostic_code]),
+                justify=["right", "right"],
+            ),
+            remediation=check.remediation,
+        )
+        for check in _ENTITY_CHECKS
+        if rows[check.diagnostic_code]
+    ]
+    return screened, diagnostics
 
 
 def read_constraints(dadger: ConstraintRegisters) -> ConstraintCensus:
@@ -966,7 +1133,6 @@ def detect_unconverted_rha(dadger: RhaRegisters) -> Diagnostic | None:
             ids.update(int(code) for code in frame["codigo_restricao"])
     if not ids:
         return None
-    listed = ", ".join(str(code) for code in sorted(ids))
     # TRACKED NOVOMODELO-GAP (C34): an RHA bounds the plant's inflow averaged
     # over the stage by block hours, not each block's inflow; novomodelo's generic
     # constraints have no stage-level inflow variable, and per-block
@@ -975,17 +1141,16 @@ def detect_unconverted_rha(dadger: RhaRegisters) -> Diagnostic | None:
         code="decomp-rha-family-unconverted",
         severity=Severity.WARNING,
         category=_CATEGORY,
-        title="RHA inflow constraints (HA/LA/CA) not converted",
+        title=f"RHA inflow constraints not converted ({len(ids)})",
         summary=(
-            f"The deck declares {len(ids)} RHA inflow constraint(s) "
-            f"(HA/LA/CA ids {listed}). Each bounds a plant's mean inflow over "
-            "the stage; novomodelo generic constraints have no stage-level "
-            "inflow variable yet, so they are not converted."
+            "The listed RHA constraints, declared in HA, LA and CA records of "
+            "dadger.rvN, each bound a plant's mean inflow over the stage. A "
+            "novomodelo generic constraint cannot hold a stage-mean inflow, so "
+            "the conversion leaves them out and the case runs without these "
+            "limits."
         ),
-        remediation=(
-            "These inflow limits are not converted until novomodelo supports "
-            "stage-level inflow in generic constraints; no action needed to "
-            "convert."
+        table=DiagnosticTable(
+            columns=["Constraint"], rows=[[code] for code in sorted(ids)]
         ),
     )
 
@@ -1010,15 +1175,10 @@ def detect_libs_electrical(libs_file: Path | None) -> Diagnostic | None:
         code="decomp-libs-electrical-present",
         severity=Severity.WARNING,
         category=_CATEGORY,
-        title="LIBs electrical constraints present",
+        title="LIBS electrical constraints not converted",
         summary=(
-            "The deck's LIBS index lists a RESTRICAO-ELETRICA-ESPECIAL "
-            "entry (the LIBs-era electrical-constraint family); this richer "
-            "format is not converted, so the electrical model on this deck "
-            "is not authoritative."
-        ),
-        remediation=(
-            "LIBs electrical-constraint conversion is deferred; no action "
-            "needed to convert."
+            "The deck's LIBS index lists a RESTRICAO-ELETRICA-ESPECIAL file "
+            "with no electrical constraint in the long form the conversion "
+            "reads, so the case runs without that file's constraints."
         ),
     )

@@ -10,9 +10,11 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     WarningCollector,
     collect,
+    counted,
     emit,
     finalize_diagnostics,
     format_stage_ranges,
+    merge_tables,
 )
 
 
@@ -186,3 +188,49 @@ class TestFinalizeDiagnostics:
         result = finalize_diagnostics([self._diag()], ["legacy"])
         assert result[0].code == "x"
         assert result[1].code == "legacy-warning"
+
+
+class TestCounted:
+    def test_singular_for_one(self) -> None:
+        assert counted(1, "plant") == "1 plant"
+
+    def test_regular_plural_otherwise(self) -> None:
+        assert counted(0, "plant") == "0 plants"
+        assert counted(3, "plant") == "3 plants"
+
+    def test_irregular_plural(self) -> None:
+        assert counted(2, "series", "series") == "2 series"
+
+
+class TestMergeTables:
+    @staticmethod
+    def _row(code: str, row: list[object], title: str = "Finding") -> Diagnostic:
+        return Diagnostic(
+            code=code,
+            severity=Severity.WARNING,
+            category="c",
+            title=title,
+            summary="The listed plants.",
+            table=DiagnosticTable(columns=["Code"], rows=[row]),
+        )
+
+    def test_one_diagnostic_per_code_with_distinct_rows_and_count(self) -> None:
+        merged = merge_tables(
+            [self._row("a", [1]), self._row("a", [2]), self._row("a", [1])]
+        )
+        assert len(merged) == 1
+        assert merged[0].title == "Finding (2)"
+        assert merged[0].table is not None
+        assert merged[0].table.rows == [[1], [2]]
+
+    def test_keeps_first_appearance_order_across_codes(self) -> None:
+        plain = Diagnostic(
+            code="p", severity=Severity.INFO, category="c", title="T", summary="S."
+        )
+        merged = merge_tables(
+            [self._row("a", [1]), plain, self._row("b", [5]), self._row("a", [2])]
+        )
+        assert [d.code for d in merged] == ["a", "p", "b"]
+        assert merged[1] is plain
+        assert merged[0].table is not None
+        assert merged[0].table.rows == [[1], [2]]

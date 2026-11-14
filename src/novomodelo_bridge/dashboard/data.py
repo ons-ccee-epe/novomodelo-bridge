@@ -17,7 +17,12 @@ import pandas as pd
 import polars as pl
 import pyarrow.parquet as pq
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.errors import NovomodeloOutputError
 from novomodelo_bridge.novomodelo.case_io import resolve_hydro_productivities
 from novomodelo_bridge.novomodelo.constraint_expr import (
@@ -25,6 +30,8 @@ from novomodelo_bridge.novomodelo.constraint_expr import (
     resolve_generic_constraints,
 )
 from novomodelo_bridge.novomodelo.readers import (
+    SPLIT_PLANT_COLUMNS,
+    SPLIT_PLANT_SUMMARY,
     hydro_home_bus,
     read_novomodelo_generic_constraint_echo,
     read_novomodelo_hydro_metadata,
@@ -33,7 +40,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_load_bus_ids,
     read_novomodelo_scenario_weights,
     read_novomodelo_training_metadata,
-    split_plant_without_home_summary,
+    split_plant_row,
 )
 from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 
@@ -157,11 +164,11 @@ def resolve_hydro_bus_id(
     ``comparators.analyze._bus_name_lookups``. A plant split across buses,
     such as Itaipu, resolves to the one of them with load.
 
-    A split plant with no such bus gets a ``WARNING``
-    :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` and ``None``:
-    callers leave it out of the views keyed by one bus per plant, so its
-    ``load_hydro_metadata`` entry has no ``"bus_id"``. Its generation still
-    counts at each bus, read per bus from ``simulation/hydro_bus_generation``.
+    A split plant with no such bus gets ``None``: callers leave it out of the
+    views keyed by one bus per plant, so its ``load_hydro_metadata`` entry
+    has no ``"bus_id"``, and :func:`load_hydro_bus_map` reports it. Its
+    generation still counts at each bus, read per bus from
+    ``simulation/hydro_bus_generation``.
 
     Raises:
         NovomodeloOutputError: ``unit_groups`` is missing or empty, which
@@ -175,27 +182,7 @@ def resolve_hydro_bus_id(
             f"hydro {hid} ({name}) has no unit_groups; cannot resolve its bus",
             path=str(hydros_path),
         )
-    home = hydro_home_bus(bus_ids, load_bus_ids)
-    if home is not None:
-        return home
-    emit(
-        Diagnostic(
-            code="hydro-unit-groups-multi-bus",
-            severity=Severity.WARNING,
-            category="Dashboard data",
-            title="Hydro plant spans multiple buses",
-            summary=split_plant_without_home_summary(
-                hydro["id"], name, bus_ids, load_bus_ids
-            )
-            + (
-                " Its generation still counts at each bus, but it is left "
-                "out of the per-bus storage, stored-energy and inflow charts."
-            ),
-            notes=[f"hydro_id: {hid}", f"bus_ids: {bus_ids}"],
-        ),
-        logger=logger,
-    )
-    return None
+    return hydro_home_bus(bus_ids, load_bus_ids)
 
 
 def load_hydro_bus_map(
@@ -214,10 +201,40 @@ def load_hydro_bus_map(
     with open(path, encoding="utf-8") as f:
         d = json.load(f)
     result: dict[int, int] = {}
+    split_rows: list[list[object]] = []
     for h in d["hydros"]:
         bus_id = resolve_hydro_bus_id(h, hydros_path=path, load_bus_ids=load_bus_ids)
         if bus_id is not None:
             result[h["id"]] = bus_id
+            continue
+        split_rows.append(
+            split_plant_row(
+                h["id"],
+                h.get("name", str(h["id"])),
+                _unit_group_bus_ids(h),
+                load_bus_ids,
+            )
+        )
+    if split_rows:
+        emit(
+            Diagnostic(
+                code="hydro-unit-groups-multi-bus",
+                severity=Severity.WARNING,
+                category="Dashboard data",
+                title=f"Hydro plants spanning several buses ({len(split_rows)})",
+                summary=(
+                    f"{SPLIT_PLANT_SUMMARY} Their generation still counts at "
+                    "each bus, but the dashboard leaves them out of the per-bus "
+                    "storage, stored-energy and inflow charts."
+                ),
+                table=DiagnosticTable(
+                    columns=SPLIT_PLANT_COLUMNS,
+                    rows=split_rows,
+                    justify=["right", "left", "left", "right"],
+                ),
+            ),
+            logger=logger,
+        )
     return result
 
 

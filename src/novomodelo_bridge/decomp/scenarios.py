@@ -300,11 +300,7 @@ def _report_artificial_gauge_plants(
     effective: EffectiveCadastro, id_map: DecompIdMap
 ) -> None:
     plants = [
-        (
-            code,
-            str(effective.base.loc[code, "nome_usina"]).strip(),
-            id_map.hydro_id(code),
-        )
+        (code, str(effective.base.loc[code, "nome_usina"]).strip())
         for code in id_map.hydro_codes
         if is_artificial_gauge(effective.inflow_gauge(code, 0))
     ]
@@ -330,7 +326,7 @@ def _report_negative_incrementals(
             code,
             str(effective.base.loc[code, "nome_usina"]).strip(),
             effective.inflow_gauge(code, 0),
-            stage_index + 1,
+            stage_index,
             len(found),
             min(found),
         ]
@@ -344,11 +340,11 @@ def _report_negative_incrementals(
             category="Inflow scenarios",
             title=f"Negative incremental inflows kept ({plants})",
             summary=(
-                f"{plants} plant(s) have a negative incremental inflow in the "
-                "inflow file. The values are converted as they are, so novomodelo's "
+                "The listed plants have a negative incremental inflow in "
+                "vazoes.rvN. The conversion keeps each value, so the case's "
                 "water balance removes that water unless its priced inflow "
-                "slack adds it back. The source model reports these "
-                "incremental inflows as zero in its operation output."
+                "slack adds it back. DECOMP reports these incremental inflows "
+                "as zero in its operation output."
             ),
             table=DiagnosticTable(
                 columns=[
@@ -357,15 +353,16 @@ def _report_negative_incrementals(
                     "Posto",
                     "Stage",
                     "Scenarios",
-                    "Lowest (m3/s)",
+                    "Lowest (m³/s)",
                 ],
                 rows=rows,
+                justify=["right", "left", "right", "right", "right", "right"],
+                caption="Stage ids are 0-based.",
             ),
-            remediation=(
-                "Compare the listed plants' operation with the source model's. "
+            notes=[
                 "A negative inflow below a plant whose outflow is capped can "
                 "force that plant to spill or violate its outflow limit."
-            ),
+            ],
         ),
         logger=_LOG,
     )

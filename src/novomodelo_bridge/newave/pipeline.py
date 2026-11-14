@@ -738,7 +738,7 @@ def convert_newave_case(
     FileNotFoundError
         If *src* does not exist, is not a directory, or a required source-model
         file is missing.
-    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+    ~novomodelo_bridge.core.errors.EmissionCheckError
         A ``ValueError``: a post-emission self-check in
         :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
         violation in the converted artifacts. No report is returned.

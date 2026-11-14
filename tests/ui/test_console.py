@@ -102,9 +102,7 @@ class TestRenderDiagnostics:
             [self._gtmin(), note], heading="Dashboard notes", console=console
         )
         text = buf.getvalue()
-        assert "Dashboard notes: 1 warning(s) · 1 note(s)" in text
-        assert "1 warning(s)" in text
-        assert "1 note(s)" in text
+        assert "Dashboard notes: 1 warning · 1 note" in text
 
     def test_quiet_suppresses_info_but_keeps_warnings(self) -> None:
         console, buf = _console()
@@ -188,10 +186,10 @@ class TestRenderDiagnostics:
             verbose=True,
         )
         text = buf.getvalue()
-        assert "1 note(s)" in text
+        assert "1 note" in text
         assert "Fictitious plants left out" not in text
 
-    def test_long_table_is_capped_with_overflow_caption(self) -> None:
+    def test_long_table_is_capped_with_a_full_width_overflow_line(self) -> None:
         console, buf = _console()
         rows = [[f"P{i}", i] for i in range(MAX_TABLE_ROWS + 5)]
         diag = Diagnostic(
@@ -204,7 +202,7 @@ class TestRenderDiagnostics:
         )
         render_diagnostics([diag], heading="Conversion notes", console=console)
         text = buf.getvalue()
-        assert "5 more" in text  # overflow summarised
+        assert "… and 5 more (see --diagnostics-json)" in text
         assert "P0" in text
         assert f"P{MAX_TABLE_ROWS + 4}" not in text  # last row not printed
 

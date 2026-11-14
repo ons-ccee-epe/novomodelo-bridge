@@ -171,7 +171,7 @@ class TestCheckNewaveSwitchAdvisoryJson:
                 CheckItem(
                     label="dger.dat switches",
                     passed=True,
-                    detail="1 present input(s) switched off",
+                    detail="1 present input switched off",
                 ),
             ],
         )

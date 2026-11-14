@@ -473,4 +473,4 @@ def test_plants_on_the_artificial_gauge_are_reported() -> None:
     reported = [d for d in diagnostics if d.code == "artificial-gauge-plants"]
     assert len(reported) == 1
     assert reported[0].table is not None
-    assert reported[0].table.rows == [[1, "A", 0], [2, "B", 1]]
+    assert reported[0].table.rows == [[1, "A"], [2, "B"]]

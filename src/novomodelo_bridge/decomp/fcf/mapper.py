@@ -466,7 +466,7 @@ def _resolve_gnl(
                         submercado,
                         lag,
                         math.fsum(first.pi_gnl[c] for c in columns),
-                        "no GNL thermal in submercado",
+                        "no GNL thermal in the submarket",
                     )
                 )
     return resolved, tuple(commanded), tuple(dropped)

@@ -264,11 +264,11 @@ class TestApplyPermanentOverrides:
         assert len(collected) == 1
         diag = collected[0]
         assert diag.code == "modif-override-plant-uncadastred"
-        assert diag.severity is Severity.WARNING
+        assert diag.severity is Severity.INFO
         assert diag.category == "Cadastro overrides"
         assert diag.table is not None
-        assert diag.table.columns == ["Code"]
-        assert diag.table.rows == [[999]]
+        assert diag.table.columns == ["Code", "Name"]
+        assert diag.table.rows == [[999, ""]]
 
         _assert_no_repo_internal_leaks(collected)
 
@@ -420,7 +420,7 @@ class TestExtractTemporalOverrides:
         assert [d.code for d in collected] == ["modif-temporal-volume-unit-unknown"]
         assert collected[0].severity is Severity.WARNING
         assert collected[0].table is not None
-        assert collected[0].table.rows == [[1, "VMAXT", ""]]
+        assert collected[0].table.rows == [[1, "", "VMAXT", ""]]
 
     def test_filters_by_confhd_codes(self, tmp_path) -> None:
         """Plants not in confhd_codes are excluded from the result."""
@@ -789,8 +789,8 @@ class TestApplyPermanentOverridesDiagnostics:
         assert diag.severity is Severity.WARNING
         assert diag.category == "Cadastro overrides"
         assert diag.table is not None
-        assert diag.table.columns == ["Code", "Type"]
-        assert diag.table.rows == [[1, "VMINP"], [2, "SOME_FUTURE_TYPE"]]
+        assert diag.table.columns == ["Code", "Name", "Record"]
+        assert diag.table.rows == [[1, "", "VMINP"], [2, "", "SOME_FUTURE_TYPE"]]
 
         _assert_no_repo_internal_leaks(collected)
 
@@ -832,7 +832,9 @@ class TestApplyPermanentOverridesDiagnostics:
 
         from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
 
-        mock_modif = modif_mock((999, []))  # 999 is not in the cadastro
+        unknown_rec = MagicMock()
+        type(unknown_rec).__name__ = "SOME_FUTURE_TYPE"
+        mock_modif = modif_mock((1, [unknown_rec]))
 
         with caplog.at_level(logging.WARNING):
             _apply_permanent_overrides(
@@ -860,7 +862,7 @@ class TestApplyPermanentOverridesDiagnostics:
         assert float(result.loc[1, "volume_maximo"]) == pytest.approx(2000.0)
         assert [d.code for d in collected] == ["modif-permanent-volume-unit-unknown"]
         assert collected[0].table is not None
-        assert collected[0].table.rows == [[1, "VOLMAX", "??"]]
+        assert collected[0].table.rows == [[1, "", "VOLMAX", "??"]]
 
     def test_no_findings_emits_nothing(self, tmp_path) -> None:
         from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides
@@ -923,7 +925,7 @@ class TestExtractTemporalOverridesDiagnostics:
         assert diag.code == "modif-temporal-override-undated"
         assert diag.severity is Severity.WARNING
         assert diag.table is not None
-        assert diag.table.rows == [[1, "VAZMINT"], [1, "VAZMINT"]]
+        assert diag.table.rows == [[1, "", "VAZMINT"], [1, "", "VAZMINT"]]
         _assert_no_repo_internal_leaks(collected)
 
     def test_no_sink_fallback_logs_one_warning(self, tmp_path, caplog) -> None:

@@ -202,16 +202,12 @@ class TestOptionalInputAdvisory:
 
         assert len(checks) == 8
         assert all(check.passed for check in checks)
-        assert len(diagnostics) == 8
-        assert all(d.code == "optional-file-absent" for d in diagnostics)
-        assert all(d.severity is Severity.INFO for d in diagnostics)
+        [advisory] = diagnostics
+        assert advisory.code == "optional-file-absent"
+        assert advisory.severity is Severity.INFO
+        assert advisory.table is not None
 
-        reported = {
-            note.removeprefix("field: ")
-            for d in diagnostics
-            for note in d.notes
-            if note.startswith("field: ")
-        }
+        reported = {row[0] for row in advisory.table.rows}
         assert reported == {
             "dadgnl",
             "renovaveis",
@@ -228,8 +224,10 @@ class TestOptionalInputAdvisory:
 
         _checks, diagnostics = optional_input_advisory(files)
 
-        assert len(diagnostics) == 7
-        assert not any("field: dadgnl" in d.notes for d in diagnostics)
+        [advisory] = diagnostics
+        assert advisory.table is not None
+        assert len(advisory.table.rows) == 7
+        assert ["dadgnl"] not in advisory.table.rows
 
     def test_run_decomp_preflight_uses_the_shared_advisory_helper(self) -> None:
         source = inspect.getsource(run_decomp_preflight)
@@ -298,17 +296,21 @@ class TestAcCoverage:
         }
         assert by_code["decomp-ac-overrides-applied"].severity is Severity.INFO
         assert by_code["decomp-ac-overrides-deferred"].severity is Severity.WARNING
-        assert by_code["decomp-ac-out-of-horizon"].severity is Severity.WARNING
+        assert by_code["decomp-ac-out-of-horizon"].severity is Severity.INFO
 
-        deferred_summary = by_code["decomp-ac-overrides-deferred"].summary
-        assert "COTVAZ" in deferred_summary
-        assert "ALTEFE" not in deferred_summary
-        assert "ALTEFE" in by_code["decomp-ac-overrides-applied"].summary
+        def registers(code: str) -> list[object]:
+            table = by_code[code].table
+            assert table is not None
+            return [row[0] for row in table.rows]
+
+        assert "COTVAZ" in registers("decomp-ac-overrides-deferred")
+        assert "ALTEFE" not in registers("decomp-ac-overrides-deferred")
+        assert "ALTEFE" in registers("decomp-ac-overrides-applied")
 
         table = by_code["decomp-ac-out-of-horizon"].table
         assert table is not None
-        assert table.columns == ["plant", "param", "month", "year"]
-        assert table.rows == [[7, "volume_minimo", 12, 2030]]
+        assert table.columns == ["Code", "AC register", "Month", "Year"]
+        assert table.rows == [[7, "VOLMIN", 12, 2030]]
 
     def test_ac_coverage_applied_only_emits_only_info_diagnostic(self) -> None:
         present = pd.DataFrame({"codigo_usina": [1]})
@@ -395,9 +397,9 @@ class TestSpecialConstraintCoverage:
         assert by_code["decomp-rha-family-unconverted"].severity is (Severity.WARNING)
         present_families = [fam for fam, records in census.by_family.items() if records]
         assert checks[0].detail == (
-            f"{len(census.to_bounds)} record(s) lowered to bounds, "
+            f"{len(census.to_bounds)} records lowered to bounds, "
             f"{len(census.to_generic)} emitted as generic constraints, "
-            f"{len(present_families)} family(ies) present in the deck"
+            f"{len(present_families)} families present in the deck"
         )
 
     def test_converted_counts_match_the_census_probe(self) -> None:
@@ -411,8 +413,13 @@ class TestSpecialConstraintCoverage:
         )
         # Probe — asserted against the census's own counts, never
         # a hard-coded oracle.
-        assert str(len(census.to_bounds)) in converted.summary
-        assert str(len(census.to_generic)) in converted.summary
+        assert converted.table is not None
+        assert sum(int(str(row[1])) for row in converted.table.rows) == len(
+            census.to_bounds
+        )
+        assert sum(int(str(row[2])) for row in converted.table.rows) == len(
+            census.to_generic
+        )
         assert len(census.to_bounds) == 3  # RE FU + HV VARM + HQ QDES
         assert len(census.to_generic) == 1  # HE (always generic)
 
@@ -452,8 +459,8 @@ class TestSpecialConstraintCoverage:
         assert len(checks) == 1
         assert checks[0].passed is True
         assert checks[0].detail == (
-            "0 record(s) lowered to bounds, 0 emitted as generic constraints, "
-            "0 family(ies) present in the deck"
+            "0 records lowered to bounds, 0 emitted as generic constraints, "
+            "0 families present in the deck"
         )
         assert diagnostics == []
 

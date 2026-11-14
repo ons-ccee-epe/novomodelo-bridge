@@ -23,7 +23,7 @@ import logging
 from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Literal
 
@@ -231,6 +231,48 @@ def finalize_diagnostics(
             )
         )
     return result
+
+
+def merge_tables(diagnostics: Iterable[Diagnostic]) -> list[Diagnostic]:
+    """One diagnostic per code, for an emitter that reports each entity as it
+    meets it: the distinct rows of every same-code diagnostic's table in one
+    table, in the order met, with their count after the first one's title.
+
+    A diagnostic without a table passes through unchanged.
+    """
+    merged: dict[str, tuple[Diagnostic, DiagnosticTable, list[list[object]]]] = {}
+    order: list[Diagnostic | str] = []
+    for diagnostic in diagnostics:
+        table = diagnostic.table
+        if table is None:
+            order.append(diagnostic)
+            continue
+        if diagnostic.code not in merged:
+            merged[diagnostic.code] = (diagnostic, table, [])
+            order.append(diagnostic.code)
+        rows = merged[diagnostic.code][2]
+        for row in table.rows:
+            if list(row) not in rows:
+                rows.append(list(row))
+    result: list[Diagnostic] = []
+    for item in order:
+        if isinstance(item, Diagnostic):
+            result.append(item)
+            continue
+        first, table, rows = merged[item]
+        result.append(
+            replace(
+                first,
+                title=f"{first.title} ({len(rows)})",
+                table=replace(table, rows=rows),
+            )
+        )
+    return result
+
+
+def counted(count: int, noun: str, plural: str | None = None) -> str:
+    """*count* and *noun* agreeing in number: ``"1 plant"``, ``"3 plants"``."""
+    return f"{count} {noun if count == 1 else plural or noun + 's'}"
 
 
 def format_stage_ranges(stages: Iterable[int]) -> str:

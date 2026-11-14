@@ -38,6 +38,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
 )
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.constraints import (
+    Unresolved,
     _format_expression,
     _hydro_generation_token,
     _variable_token,
@@ -203,7 +204,7 @@ def test_resolve_fi_term_reverse_match(fi_id_map: DecompIdMap) -> None:
     assert resolve_fi_term(term, fi_id_map, line_map) == "line_reverse(1)"
 
 
-def test_resolve_fi_term_no_line_warns_and_skips(fi_id_map: DecompIdMap) -> None:
+def test_resolve_fi_term_without_a_line_is_unresolved(fi_id_map: DecompIdMap) -> None:
     line_map = {(0, 2): 1}
     term = ConstraintTerm(
         code=0,
@@ -212,16 +213,13 @@ def test_resolve_fi_term_no_line_warns_and_skips(fi_id_map: DecompIdMap) -> None
         submarket_de="SE",
         submarket_para="S",
     )
-    with dx.collect() as collected:
-        result = resolve_fi_term(term, fi_id_map, line_map)
 
-    assert result is None
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-fi-no-line"
+    assert resolve_fi_term(term, fi_id_map, line_map) == Unresolved(
+        "decomp-fi-no-line", ("SE", "S", "no IA record joins them")
+    )
 
 
-def test_resolve_fi_term_unknown_name_warns_and_skips(fi_id_map: DecompIdMap) -> None:
+def test_resolve_fi_term_unknown_name_is_unresolved(fi_id_map: DecompIdMap) -> None:
     line_map = {(0, 2): 1}
     term = ConstraintTerm(
         code=0,
@@ -230,13 +228,10 @@ def test_resolve_fi_term_unknown_name_warns_and_skips(fi_id_map: DecompIdMap) ->
         submarket_de="SE",
         submarket_para="XX",
     )
-    with dx.collect() as collected:
-        result = resolve_fi_term(term, fi_id_map, line_map)
 
-    assert result is None
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-fi-no-line"
+    assert resolve_fi_term(term, fi_id_map, line_map) == Unresolved(
+        "decomp-fi-no-line", ("SE", "XX", "a submarket has no SB record")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -270,28 +265,22 @@ def test_resolve_fe_term_picks_the_contract_kind_by_number_and_submarket() -> No
     assert resolve_fe_term(_fe_term(1, 2), tokens) == "contract_export(1)"
 
 
-def test_resolve_fe_term_unknown_contract_warns_and_skips() -> None:
+def test_resolve_fe_term_unknown_contract_is_unresolved() -> None:
     tokens = build_contract_token_map([_contract(0, "import", 1, 1)])
 
-    with dx.collect() as collected:
-        result = resolve_fe_term(_fe_term(2, 1), tokens)
-
-    assert result is None
-    assert [d.code for d in collected] == ["decomp-fe-no-contract"]
-    assert "no such contract" in collected[0].summary
+    assert resolve_fe_term(_fe_term(2, 1), tokens) == Unresolved(
+        "decomp-fe-no-contract", (2, 1, "no CI or CE record")
+    )
 
 
-def test_resolve_fe_term_number_shared_by_ci_and_ce_warns_and_skips() -> None:
+def test_resolve_fe_term_number_shared_by_ci_and_ce_is_unresolved() -> None:
     tokens = build_contract_token_map(
         [_contract(0, "import", 1, 1), _contract(1, "export", 1, 1)]
     )
 
-    with dx.collect() as collected:
-        result = resolve_fe_term(_fe_term(1, 1), tokens)
-
-    assert result is None
-    assert [d.code for d in collected] == ["decomp-fe-no-contract"]
-    assert "both a CI and a CE" in collected[0].summary
+    assert resolve_fe_term(_fe_term(1, 1), tokens) == Unresolved(
+        "decomp-fe-no-contract", (1, 1, "both a CI and a CE record")
+    )
 
 
 def test_resolve_fe_term_without_submarket_raises() -> None:
@@ -519,37 +508,6 @@ def test_emit_re_generics_mixed_hydro_interchange_round_trip(
     assert rows[0]["bound_upper"] == 500.0
 
 
-def test_emit_re_generics_gnl_thermal_skips_and_warns(id_map: DecompIdMap) -> None:
-    record = ConstraintRecord(
-        family="RE",
-        constraint_id=20,
-        stage_start=0,
-        stage_end=0,
-        terms=(
-            ConstraintTerm(code=99, coefficient=1.0, variable="thermal_generation"),
-        ),
-        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
-        per_block=True,
-    )
-    census = _census(record)
-    calendar = [_stage(0, 1)]
-
-    with dx.collect() as collected:
-        result = emit_re_generics(
-            _case(calendar),
-            id_map,
-            census=census,
-            line_map={},
-            contract_tokens={},
-            big_m=45000.0,
-        )
-
-    assert result is None
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-re-thermal-not-normal"
-
-
 def test_emit_re_generics_frequency_split_skips_and_warns(
     id_map: DecompIdMap,
 ) -> None:
@@ -583,6 +541,8 @@ def test_emit_re_generics_frequency_split_skips_and_warns(
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-re-frequency-split-deferred"
+    assert warnings[0].table is not None
+    assert warnings[0].table.rows == [[21, 5, "50"]]
 
 
 def test_emit_re_generics_fi_no_line_skips(id_map: DecompIdMap) -> None:
@@ -638,35 +598,27 @@ def test_emit_re_generics_all_records_skipped_returns_none(
         bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
         per_block=True,
     )
-    gnl_thermal = ConstraintRecord(
-        family="RE",
-        constraint_id=31,
-        stage_start=0,
-        stage_end=0,
-        terms=(
-            ConstraintTerm(code=99, coefficient=1.0, variable="thermal_generation"),
-        ),
-        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
-        per_block=True,
-    )
-    fi_no_line = ConstraintRecord(
-        family="RE",
-        constraint_id=32,
-        stage_start=0,
-        stage_end=0,
-        terms=(
-            ConstraintTerm(
-                code=0,
-                coefficient=1.0,
-                variable="interchange",
-                submarket_de="SE",
-                submarket_para="IV",
+    fi_no_line = [
+        ConstraintRecord(
+            family="RE",
+            constraint_id=constraint_id,
+            stage_start=0,
+            stage_end=0,
+            terms=(
+                ConstraintTerm(
+                    code=0,
+                    coefficient=1.0,
+                    variable="interchange",
+                    submarket_de="SE",
+                    submarket_para="IV",
+                ),
             ),
-        ),
-        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
-        per_block=True,
-    )
-    census = _census(frequency_split, gnl_thermal, fi_no_line)
+            bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
+            per_block=True,
+        )
+        for constraint_id in (31, 32)
+    ]
+    census = _census(frequency_split, *fi_no_line)
     calendar = [_stage(0, 1)]
 
     with dx.collect() as collected:
@@ -681,7 +633,10 @@ def test_emit_re_generics_all_records_skipped_returns_none(
 
     assert result is None
     warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 3
+    assert [(w.code, len(w.table.rows) if w.table else 0) for w in warnings] == [
+        ("decomp-fi-no-line", 2),
+        ("decomp-re-frequency-split-deferred", 1),
+    ]
 
 
 def test_emit_re_generics_hydro_and_contract_terms(id_map: DecompIdMap) -> None:
@@ -839,38 +794,6 @@ def test_emit_rhq_rhv_generics_rhq_single_qbom_via_pumping_map(
     assert result.constraints[0]["expression"] == "pumping_flow(1)"
 
 
-def test_emit_rhq_rhv_generics_rhq_qbom_no_station_skips_and_warns(
-    unused_effective: EffectiveCadastro,
-) -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    record = ConstraintRecord(
-        family="HQ",
-        constraint_id=10,
-        stage_start=0,
-        stage_end=0,
-        terms=(ConstraintTerm(code=2, coefficient=1.0, variable="QBOM"),),
-        bounds={0: StageBounds(lower=(None,), upper=(80.0,))},
-        per_block=True,
-    )
-    census = _census(record)
-    calendar = [_stage(0, 1)]
-
-    with dx.collect() as collected:
-        result = emit_rhq_rhv_generics(
-            _case(calendar),
-            id_map,
-            census=census,
-            pumping_station_ids={},
-            effective=unused_effective,
-            big_m=45000.0,
-        )
-
-    assert result is None
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-rhq-qbom-no-station"
-
-
 def test_emit_rhq_rhv_generics_rhv_multi_varm_additive_floor() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
     effective = EffectiveCadastro(
@@ -912,42 +835,6 @@ def test_emit_rhq_rhv_generics_rhv_multi_varm_additive_floor() -> None:
     assert rows[0]["bound_upper"] is None
     assert rows[0]["block_id"] is None
     assert rows[0]["stage_id"] == 0
-
-
-def test_emit_rhq_rhv_generics_rhv_varm_uncadastred_skips_and_warns() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
-    effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
-    )
-    record = ConstraintRecord(
-        family="HV",
-        constraint_id=7,
-        stage_start=0,
-        stage_end=0,
-        terms=(
-            ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),
-            ConstraintTerm(code=6, coefficient=1.0, variable="VARM"),
-        ),
-        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
-        per_block=False,
-    )
-    census = _census(record)
-    calendar = [_stage(0, 1)]
-
-    with dx.collect() as collected:
-        result = emit_rhq_rhv_generics(
-            _case(calendar),
-            id_map,
-            census=census,
-            pumping_station_ids={},
-            effective=effective,
-            big_m=45000.0,
-        )
-
-    assert result is None
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-rhv-varm-plant-uncadastred"
 
 
 def test_emit_rhq_rhv_generics_rhv_vdef_is_one_stage_volume_row(
@@ -1043,34 +930,6 @@ def test_emit_rhq_rhv_generics_rhv_vbom_via_pumping_map(
 
     assert result is not None
     assert result.constraints[0]["expression"] == "pumping_volume(1)"
-
-
-def test_emit_rhq_rhv_generics_rhv_vbom_no_station_skips_and_warns(
-    unused_effective: EffectiveCadastro,
-) -> None:
-    record = ConstraintRecord(
-        family="HV",
-        constraint_id=11,
-        stage_start=0,
-        stage_end=0,
-        terms=(ConstraintTerm(code=2, coefficient=1.0, variable="VBOM"),),
-        bounds={0: StageBounds(lower=(None,), upper=(40.0,))},
-        per_block=False,
-    )
-
-    with dx.collect() as collected:
-        result = emit_rhq_rhv_generics(
-            _case([_stage(0, 1)]),
-            DecompIdMap(bus_codes=(1,), bus_names=("SE",)),
-            census=_census(record),
-            pumping_station_ids={},
-            effective=unused_effective,
-            big_m=45000.0,
-        )
-
-    assert result is None
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert [w.code for w in warnings] == ["decomp-rhv-vbom-no-station"]
 
 
 def test_format_expression_parameter_weight() -> None:

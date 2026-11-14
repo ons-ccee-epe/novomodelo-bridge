@@ -616,7 +616,7 @@ def test_loss_factor_nonnull_emits_one_warning() -> None:
     assert diagnostic.severity is dx.Severity.WARNING
     assert diagnostic.code == "contract-loss-factor-unmapped"
     assert diagnostic.table is not None
-    assert any(row[0] == 0 and row[1] == "X" for row in diagnostic.table.rows)
+    assert diagnostic.table.rows == [[1, "X", 3.5]]
 
 
 def test_loss_factor_zero_is_treated_as_null() -> None:

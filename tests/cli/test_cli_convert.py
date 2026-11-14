@@ -2540,7 +2540,7 @@ class TestCliInProcess:
 
         assert code == 0
         assert stderr.count("Conversion notes") == 1
-        assert "Conversion notes: 1 warning(s) · 1 note(s)" in stderr
+        assert "Conversion notes: 1 warning · 1 note" in stderr
         last_line = stderr.strip().splitlines()[-1]
         assert f"novomodelo run {dst}" in last_line
         manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")

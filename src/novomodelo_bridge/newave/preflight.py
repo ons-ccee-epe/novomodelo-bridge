@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, counted
 from novomodelo_bridge.core.errors import diagnostic_from_exception
 from novomodelo_bridge.core.preflight import (
     CheckItem,
@@ -151,7 +151,7 @@ def _switch_advisory(
         )
     off = switched_off_inputs(files, switches)
     detail = (
-        f"{len(off)} present input(s) switched off"
+        f"{counted(len(off), 'present input')} switched off"
         if off
         else "every present optional input is switched on"
     )

@@ -290,7 +290,7 @@ def _non_empty_frame(accessor_result: object) -> pd.DataFrame | None:
 def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
     keys = sorted(
         {
-            (int(r["codigo_pee"]), int(r["estagio"]), int(r["patamar"]))
+            (int(r["codigo_pee"]), int(r["estagio"]) - 1, int(r["patamar"]) - 1)
             for _, r in dropped.iterrows()
         }
     )
@@ -299,18 +299,21 @@ def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
             code="decomp-pee-generation-repeated",
             severity=Severity.WARNING,
             category="Renewable parks",
-            title="Repeated PEE-GER-PER-PAT generation rows",
+            title=f"Repeated PEE-GER-PER-PAT generation rows ({len(keys)})",
             summary=(
-                f"{len(dropped)} PEE-GER-PER-PAT row(s) repeat a (park, stage, "
-                "load block) already declared; the last row of each is used."
+                "The listed renewable parks have more than one PEE-GER-PER-PAT "
+                "row for the same stage and patamar. The conversion keeps the "
+                "last of them, so the park generates the last declared value."
             ),
             table=DiagnosticTable(
-                columns=["Park", "Stage", "Load block"],
+                columns=["Code", "Stage", "Block"],
                 rows=[list(key) for key in keys],
+                justify=["right", "right", "right"],
+                caption="Stage and block ids are 0-based.",
             ),
             remediation=(
-                "Check the renewable generation file; each park should declare "
-                "one value per stage and load block."
+                "Keep one PEE-GER-PER-PAT row per park, stage and patamar in "
+                "the renewable file."
             ),
         ),
         logger=_LOG,
@@ -584,16 +587,16 @@ def _emit_pee_without_operating_state(codes: Sequence[int]) -> None:
             code="decomp-pee-operating-state-missing",
             severity=Severity.WARNING,
             category="Renewable parks",
-            title="Renewable parks without an operating state",
+            title=f"Renewable parks without an operating state ({len(codes)})",
             summary=(
-                f"{len(codes)} renewable park(s) have generation but no "
-                "PEE-CONFIG-PER operating state; they are converted without "
-                "curtailment."
+                "The listed renewable parks have generation but no "
+                "PEE-CONFIG-PER operating state. The conversion treats each as "
+                "not curtailable, so it always generates its declared value."
             ),
-            table=DiagnosticTable(columns=["Park"], rows=[[code] for code in codes]),
+            table=DiagnosticTable(columns=["Code"], rows=[[code] for code in codes]),
             remediation=(
-                "Declare the park's operating state in the renewable file if "
-                "its generation may be curtailed."
+                "Declare a PEE-CONFIG-PER operating state in the renewable file "
+                "for each listed park whose generation may be curtailed."
             ),
         ),
         logger=_LOG,

@@ -16,6 +16,7 @@ from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
+    counted,
     emit,
 )
 from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
@@ -122,9 +123,10 @@ def _emit_travel_time_info(
     ]
     if undated.total_buckets:
         notes.append(
-            f"{undated.total_buckets} transit bucket(s) carry no arrival window, "
-            "Novomodelo's placeholders for water that would arrive after the "
-            "study ends; they take no part in pi_qdefp."
+            "Transit buckets with no arrival window "
+            f"({undated.total_buckets}) are Novomodelo's placeholders for water "
+            "that would arrive after the study ends; they take no part in "
+            "pi_qdefp."
         )
     emit(
         Diagnostic(
@@ -133,9 +135,9 @@ def _emit_travel_time_info(
             category="FCF export",
             title="Travel-time coefficients exported",
             summary=(
-                f"The cuts value the water in transit from {len(plants)} "
-                "plant(s), by the stage it was released in, up to "
-                f"{max_lag(plants)} stage(s) back."
+                "The cuts value the water in transit from "
+                f"{counted(len(plants), 'plant')}, by the stage it was released "
+                f"in, up to {counted(max_lag(plants), 'stage')} back."
             ),
             notes=notes,
         )
@@ -151,28 +153,30 @@ def _emit_undated_bucket_warning(undated: UndatedBucketAudit) -> None:
             code="dessem-fcf-undated-buckets-priced",
             severity=Severity.WARNING,
             category="FCF export",
-            title="Coefficients on undated transit buckets dropped",
+            title=(
+                "Coefficients on undated transit buckets dropped "
+                f"({undated.total_priced})"
+            ),
             summary=(
-                f"{undated.total_priced} cut coefficient(s) sit on transit buckets "
-                "with no arrival window and are left out of pi_qdefp."
+                "The policy's cuts price transit buckets with no arrival window, "
+                "and the export leaves those coefficients out of pi_qdefp. The "
+                "exported cuts carry no value for the water they priced, so "
+                "they can overstate the future cost and are no longer a "
+                "guaranteed lower bound on it."
             ),
             notes=[
-                f"Pool {count.pool_id}: {count.priced} coefficient(s) on "
-                f"{count.buckets} undated bucket(s)."
+                f"Pool {count.pool_id}: {counted(count.priced, 'coefficient')} "
+                f"on {counted(count.buckets, 'undated bucket')}."
                 for count in undated.per_pool
                 if count.priced
             ]
             + [
                 "Premise P3: a release is priced through the buckets its water "
-                "arrives in; a bucket with no arrival window has no release to charge."
+                "arrives in; a bucket with no arrival window has no release to "
+                "charge.",
+                "Such coefficients usually mean the case's boundary future-cost "
+                "function prices water that arrives after the study ends.",
             ],
-            remediation=(
-                "The exported cuts carry no value for the water those "
-                "coefficients priced, so they can overstate the future cost "
-                "and are no longer a guaranteed lower bound on it. Check "
-                "whether the case's boundary future-cost function prices "
-                "water that arrives after the study ends."
-            ),
         )
     )
 
@@ -221,14 +225,14 @@ def _emit_gnl_delivery_missing(
             code="dessem-fcf-gnl-delivery-missing",
             severity=Severity.WARNING,
             category="FCF export",
-            title="GNL delivery missing from the policy",
+            title=f"GNL delivery missing from the policy ({len(rows)})",
             summary=(
-                f"{len(rows)} GNL plant(s) have no coefficient for the delivery "
-                "of the case's second stage; their cuts carry 0.0 for GNL."
+                "The listed GNL plants have no coefficient for the delivery of "
+                "the case's second stage, so their cuts carry 0.0 for GNL."
             ),
             table=DiagnosticTable(
                 columns=[
-                    "GNL plant",
+                    "Code",
                     "Name",
                     "Delivery start",
                     "Lead time (h)",
@@ -320,15 +324,15 @@ def _emit_gnl_coefficients_exported(
             code="dessem-fcf-gnl-coefficients-exported",
             severity=Severity.INFO,
             category="FCF export",
-            title="GNL coefficients exported",
+            title=f"GNL coefficients exported ({len(rows)})",
             summary=(
-                f"The cuts of the first cut-building node carry GNL coefficients "
-                f"for {len(rows)} plant(s), at the delivery of the case's second "
+                "The cuts of the first cut-building node carry GNL coefficients "
+                "for the listed plants, at the delivery of the case's second "
                 "stage."
             ),
             table=DiagnosticTable(
                 columns=[
-                    "GNL plant",
+                    "Code",
                     "Name",
                     "Submarket",
                     "Delivery",
@@ -368,20 +372,19 @@ def _emit_gnl_coefficient_zero(
             code="dessem-fcf-gnl-coefficient-zero",
             severity=Severity.WARNING,
             category="FCF export",
-            title="GNL coefficient is zero in some cuts",
+            title=f"GNL coefficient zero in some cuts ({len(rows)})",
             summary=(
-                f"{len(rows)} GNL plant(s) have cuts whose GNL coefficient is "
-                "exactly 0.0 although the policy holds their delivery."
+                "The listed GNL plants have cuts whose GNL coefficient is "
+                "exactly 0.0 although the policy holds their delivery. The "
+                "export writes the policy's value unchanged, so DESSEM prices "
+                "that commitment at zero where DECOMP's own cuts may not."
             ),
             table=DiagnosticTable(
-                columns=["GNL plant", "Name", "Zero cuts", "Cuts"],
+                columns=["Code", "Name", "Zero cuts", "Cuts"],
                 rows=rows,
                 justify=["right", "left", "right", "right"],
             ),
-            notes=[
-                "The zero is the policy's own value, written unchanged. A "
-                "commitment at the plant's capacity is a known cause."
-            ],
+            notes=["A commitment at the plant's capacity is a known cause."],
         )
     )
 
@@ -415,10 +418,10 @@ def _emit_gnl_committed_cost(
             code="dessem-fcf-gnl-committed-cost-exported",
             severity=Severity.INFO,
             category="FCF export",
-            title="GNL committed cost exported",
+            title=f"GNL committed cost exported ({len(rows)})",
             summary=(
-                "mapcut record 10 holds the cost of the GNL generation committed "
-                f"before the study for each of the {len(rows)} stages."
+                "Record 10 of mapcut holds the cost of the GNL generation "
+                "committed before the study for each listed stage."
             ),
             table=DiagnosticTable(
                 columns=["Stage", "Period", "Hours", "GNL plants", "10³ R$"],
@@ -454,8 +457,8 @@ def _emit_gnl_submarket_repeated(
             code="dessem-fcf-gnl-submarket-repeated",
             severity=Severity.WARNING,
             category="FCF export",
-            title="GNL plants share a submarket",
-            summary=f"{len(rows)} submarket(s) hold more than one GNL plant.",
+            title=f"GNL plants sharing a submarket ({len(rows)})",
+            summary="The listed submarkets hold more than one GNL plant.",
             table=DiagnosticTable(
                 columns=["Submarket", "GNL plants"],
                 rows=rows,

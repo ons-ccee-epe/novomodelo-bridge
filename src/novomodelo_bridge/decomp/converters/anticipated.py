@@ -530,15 +530,16 @@ def fill_undeclared_block_hours(
                 severity=dx.Severity.WARNING,
                 category="GNL",
                 title=(
-                    f"{len(fallback_rows)} GNL week(s) past the horizon weighted "
-                    "without their month's patamar shares"
+                    "GNL weeks weighted without their month's patamar shares "
+                    f"({len(fallback_rows)})"
                 ),
                 summary=(
-                    "These committed GNL weeks declare no patamar duration and the "
-                    "boundary FCF header (cortesh) is absent or does not cover "
-                    "their month, so their patamares are weighted by the last "
-                    "study stage's patamar hours (equal weights when its patamar "
-                    "count differs) instead of that month's shares"
+                    "The listed GNL weeks past the study horizon declare no "
+                    "patamar duration, and cortesh.dat is absent or does not "
+                    "cover their month. The conversion weights their patamares "
+                    "by the last study stage's patamar hours, or equally when "
+                    "that stage has another patamar count, so the MW each week "
+                    "commits can differ from DECOMP's."
                 ),
                 table=dx.DiagnosticTable(
                     columns=["Code", "Name", "Week start", "Month", "Weights"],
@@ -555,13 +556,15 @@ def fill_undeclared_block_hours(
                 severity=dx.Severity.WARNING,
                 category="GNL",
                 title=(
-                    f"{len(nonuniform_rows)} GNL week(s) past the horizon commit "
-                    "different MW per patamar"
+                    "GNL weeks committing a different MW per patamar "
+                    f"({len(nonuniform_rows)})"
                 ),
                 summary=(
-                    "These committed GNL weeks declare no patamar duration and "
-                    "commit different MW per patamar, so the single MW rate "
-                    "converted for each depends on the patamar weights used"
+                    "The listed GNL weeks past the study horizon declare no "
+                    "patamar duration and commit a different MW in each "
+                    "patamar. The case commits one MW for the week, the mean "
+                    "under the listed weights, so the dispatch of each patamar "
+                    "can differ from DECOMP's."
                 ),
                 table=dx.DiagnosticTable(
                     columns=[

@@ -326,7 +326,7 @@ def test_pee_series_deterministic_repeated_key_uses_last_row_and_warns(
         series = _pee_series(renov, _ID_MAP, _calendar(), 0)
 
     assert series[0].per_stage_blocks[0] == (99.0, 20.0, 30.0)
-    assert any("PEE-GER-PER-PAT row(s) repeat" in r.message for r in caplog.records)
+    assert any("more than one PEE-GER-PER-PAT" in r.message for r in caplog.records)
 
 
 def test_pee_series_cards_with_distinct_parks_are_combined() -> None:

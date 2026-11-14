@@ -616,7 +616,7 @@ def test_map_gnl_drops_submercado_without_thermal() -> None:
     )
 
     assert (
-        GnlDroppedTerm(None, 2, 1, 0.75, "no GNL thermal in submercado")
+        GnlDroppedTerm(None, 2, 1, 0.75, "no GNL thermal in the submarket")
         in result.gnl_dropped
     )
 

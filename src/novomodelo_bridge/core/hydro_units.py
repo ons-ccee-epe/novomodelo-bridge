@@ -61,7 +61,7 @@ def fpha_zero_capacity_diagnostic(
         category="Hydro production model",
         title=f"FPHA skipped for zero-capacity plants ({len(plants)})",
         summary=(
-            f"{len(plants)} plant(s) eligible for the computed FPHA have zero "
+            "The listed plants are eligible for the computed FPHA but have zero "
             "rated turbined flow or rated power after overrides and keep "
             "constant productivity."
         ),

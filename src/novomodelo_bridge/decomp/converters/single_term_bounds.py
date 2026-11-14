@@ -146,7 +146,7 @@ def _ceiling_clamp_diagnostic(
         category="Special constraints",
         title=f"{title} ({len(rows)})",
         summary=(
-            f"{len(rows)} {constraint_kind} ceiling(s) sit above the capacity "
+            f"The listed {constraint_kind} ceilings sit above the capacity "
             "they bound and were capped at it. That capacity is already a hard "
             "limit, so the cap leaves the results unchanged."
         ),
@@ -449,32 +449,11 @@ def _qbom_pumping_contributions(
 
     A ``QBOM`` term's ``code`` is a pumping-station ``codigo_usina``, not a
     hydro code, so it resolves through *pumping_station_ids* rather than
-    ``id_map.hydro_id``. A code absent from *pumping_station_ids* emits a
-    ``WARNING`` diagnostic and is skipped entirely — skip-not-partial,
-    mirroring ``constraints.py::_emit_rhq_qbom_no_station`` — rather than
-    raising a raw ``KeyError`` or falling back to a generic constraint.
+    ``id_map.hydro_id``; the census screening
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`)
+    has already left out a code with no station.
     """
     code = record.terms[0].code
-    if code not in pumping_station_ids:
-        emit(
-            Diagnostic(
-                code="decomp-rhq-qbom-no-station",
-                severity=Severity.WARNING,
-                category="Special constraints",
-                title="RHQ QBOM term has no matching pumping station",
-                summary=(
-                    f"HQ constraint {record.constraint_id} carries a QBOM "
-                    f"term for plant code {code}, which has no matching "
-                    "pumping station; the constraint is skipped."
-                ),
-                remediation=(
-                    f"HQ constraint {record.constraint_id} is skipped; check "
-                    f"that plant code {code} is declared as a pumping "
-                    "station."
-                ),
-            )
-        )
-        return []
     return _per_block_contributions(
         record,
         "pumping",
@@ -506,31 +485,11 @@ def _hv_storage_contributions(
     honours per-stage ``AC VOLMIN``/``VOLMAX`` overrides and the
     run-of-river ``D`` collapse) to reach the absolute bound.
 
-    A ``code`` absent from the cadastro (``effective.base.index``) emits a
-    ``WARNING`` diagnostic and is skipped entirely rather than crashing or
-    silently dropping the constraint.
+    The census screening
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`)
+    has already left out a plant the case does not operate.
     """
     code = record.terms[0].code
-    if code not in effective.base.index:
-        emit(
-            Diagnostic(
-                code="decomp-rhv-varm-plant-uncadastred",
-                severity=Severity.WARNING,
-                category="Special constraints",
-                title="RHV VARM constraint references an uncadastred plant",
-                summary=(
-                    f"HV constraint {record.constraint_id} bounds the stored "
-                    f"volume of plant code {code}, which has no cadastro row; "
-                    "the constraint cannot be lowered to a storage bound."
-                ),
-                remediation=(
-                    f"HV constraint {record.constraint_id} is skipped; check "
-                    f"that plant code {code} is cadastred and operated."
-                ),
-            )
-        )
-        return []
-
     hydro_id = id_map.hydro_id(code)
     term = record.terms[0]
     contributions: list[BoundContribution] = []

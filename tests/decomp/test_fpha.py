@@ -269,8 +269,8 @@ def test_unconverted_fp_fields_warn_only_when_off_the_default_fit() -> None:
     diagnostic = unconverted_fp_fields_diagnostic(fp)
     assert diagnostic is not None
     assert diagnostic.severity is Severity.WARNING
-    assert "all plants from stage 1; plant 6 from stage 2." in diagnostic.summary
-    assert "plant 31" not in diagnostic.summary
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [["all", 0], [6, 1]]
 
 
 def test_unconverted_fp_fields_message_has_no_repo_internal_references() -> None:
@@ -372,7 +372,8 @@ def test_fpha_config_carries_the_spillage_range_only_when_there_is_one() -> None
 def test_mlt_absent_diagnostic_is_a_warning_naming_the_plant_count() -> None:
     diagnostic = mlt_absent_diagnostic(3)
     assert diagnostic.severity is Severity.WARNING
-    assert "3 FPHA plant(s)" in diagnostic.summary
+    assert "3 FPHA plants" in diagnostic.summary
+    assert "1 FPHA plant is" in mlt_absent_diagnostic(1).summary
     assert "mlt.dat" in (diagnostic.remediation or "")
 
 

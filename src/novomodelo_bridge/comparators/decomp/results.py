@@ -75,7 +75,12 @@ from novomodelo_bridge.comparators.decomp.readers import (
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.units import HM3_PER_M3S_HOUR, MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
@@ -2050,14 +2055,17 @@ def _ree_result_comparisons(
                 code="ree-membership-plant-unmapped",
                 severity=Severity.WARNING,
                 category="Compare data",
-                title="Hydro plant absent from REE membership table",
-                summary=(
-                    f"{len(unmapped)} source-model hydro plant code(s) carry "
-                    "no row in the relato uhes_rees_submercados membership "
-                    "table; excluded from every REE energy sum rather than "
-                    "silently dropped."
+                title=(
+                    f"Hydro plants missing from the REE membership ({len(unmapped)})"
                 ),
-                notes=[f"codigo_usina: {unmapped}"],
+                summary=(
+                    "The listed DECOMP plants have no row in the table of "
+                    "relato.rvN that assigns each plant to its REE, so the "
+                    "comparison leaves them out of every REE energy sum."
+                ),
+                table=DiagnosticTable(
+                    columns=["Code"], rows=[[code] for code in unmapped]
+                ),
             ),
             logger=_LOG,
         )
@@ -2270,15 +2278,26 @@ def _evaporation_result_comparisons(
                 code="evaporation-plant-one-sided",
                 severity=Severity.WARNING,
                 category="Compare data",
-                title="Hydro plant has evaporation data on only one side",
-                summary=(
-                    f"{len(one_sided)} hydro plant(s) carry an evaporation "
-                    "series on only one side (the source model's "
-                    "dec_oper_evap or Novomodelo's evaporation_m3s, not both); "
-                    "excluded from the paired evaporation comparison rather "
-                    "than silently dropped."
+                title=(
+                    f"Hydro plants with evaporation on one side only ({len(one_sided)})"
                 ),
-                notes=[f"novomodelo_id: {one_sided}"],
+                summary=(
+                    "The listed plants have an evaporation series in DECOMP's "
+                    "dec_oper_evap.csv or in the run output, not in both, so the "
+                    "comparison leaves them out of the evaporation panel."
+                ),
+                table=DiagnosticTable(
+                    columns=["Code", "Name", "Series in"],
+                    rows=[
+                        [
+                            id_map.hydro_codes[hydro_id],
+                            names.get(hydro_id, ""),
+                            "DECOMP" if hydro_id in decomp_ids else "run output",
+                        ]
+                        for hydro_id in one_sided
+                    ],
+                    justify=["right", "left", "left"],
+                ),
             ),
             logger=_LOG,
         )

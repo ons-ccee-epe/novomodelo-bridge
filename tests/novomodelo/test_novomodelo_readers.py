@@ -50,7 +50,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_thermal_means,
     read_novomodelo_thermal_metadata,
     read_novomodelo_training_metadata,
-    split_plant_without_home_summary,
+    split_plant_row,
 )
 
 # ---------------------------------------------------------------------------
@@ -825,14 +825,10 @@ class TestHydroHomeBus:
     ) -> None:
         assert hydro_home_bus({0, 5}, load_bus_ids) is None
 
-    def test_summary_names_the_plant_its_buses_and_why(self) -> None:
-        summary = split_plant_without_home_summary(
-            47, "ITAIPU", [5, 0], frozenset({0, 5})
-        )
+    def test_row_names_the_plant_its_buses_and_their_load(self) -> None:
+        row = split_plant_row(47, "ITAIPU", [5, 0, 5], frozenset({0, 5}))
 
-        assert summary.startswith("Hydro 47 (ITAIPU) has generating units at buses")
-        assert "[0, 5]" in summary
-        assert "2 of them have load" in summary
+        assert row == [47, "ITAIPU", "0, 5", 2]
 
 
 # ---------------------------------------------------------------------------

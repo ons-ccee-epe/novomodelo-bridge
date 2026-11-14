@@ -1327,8 +1327,10 @@ def test_assemble_bound_drops_and_warns_on_unresolvable_carga_ande() -> None:
     assert result is None
     assert len(sink) == 1
     assert sink[0].severity is dx.Severity.WARNING
-    assert "carga_ande" in sink[0].summary
-    assert "999" in sink[0].summary
+    assert sink[0].table is not None
+    [[code, stage, block, reason]] = sink[0].table.rows
+    assert (code, stage, block) == (999, 0, 0)
+    assert "carga_ande" in str(reason)
 
 
 # ---------------------------------------------------------------------------
@@ -1566,7 +1568,8 @@ def test_active_cells_inactive_everywhere_returns_empty_and_emits_info() -> None
     assert result == set()
     assert len(sink) == 1
     assert sink[0].severity is dx.Severity.INFO
-    assert "703" in sink[0].summary
+    assert sink[0].table is not None
+    assert sink[0].table.rows == [[703, 0, 1]]
 
 
 def test_active_cells_dangling_habilita_raises_value_error_naming_both() -> None:
@@ -1665,13 +1668,10 @@ def test_assemble_bound_disp_usih_emits_one_fidelity_diagnostic_per_substitution
     for diagnostic in sink:
         assert diagnostic.severity is dx.Severity.INFO
 
-    first, second = sink
-    assert "261" in first.summary
-    assert "1000" in first.summary
-    assert "stage 0" in first.summary
-    assert "262" in second.summary
-    assert "800" in second.summary
-    assert "stage 0" in second.summary
+    assert [d.table.rows for d in sink if d.table is not None] == [
+        [[402, 261, 0, 1000.0]],
+        [[402, 262, 0, 800.0]],
+    ]
 
 
 def test_assemble_bound_disp_usih_unresolvable_plant_drops_and_warns() -> None:
@@ -1684,8 +1684,10 @@ def test_assemble_bound_disp_usih_unresolvable_plant_drops_and_warns() -> None:
     assert result is None
     assert len(sink) == 1
     assert sink[0].severity is dx.Severity.WARNING
-    assert "999" in sink[0].summary
-    assert "403" in sink[0].summary
+    assert sink[0].table is not None
+    [[code, stage, block, reason]] = sink[0].table.rows
+    assert (code, stage, block) == (403, 0, 0)
+    assert "999" in str(reason)
 
 
 def test_assemble_bound_disp_usih_without_available_power_raises_value_error() -> None:
@@ -1845,14 +1847,12 @@ def test_read_period_rows_not_matching_the_card_shape_are_reported() -> None:
         model = read_libs_electrical(stub, _calendar(1))
     assert model is not None
     assert model.restrictions[401].overrides == ()
-    summaries = [
-        d.summary for d in sink if d.code == "decomp-electrical-period-rows-unused"
+    [unused] = [d for d in sink if d.code == "decomp-electrical-period-rows-unused"]
+    assert unused.table is not None
+    assert unused.table.rows == [
+        ["RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", 401],
+        ["RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR", 449],
     ]
-    assert len(summaries) == 2
-    assert "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR" in summaries[0]
-    assert "[401]" in summaries[0]
-    assert "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR" in summaries[1]
-    assert "[449]" in summaries[1]
 
 
 def _period_only_inequacao(

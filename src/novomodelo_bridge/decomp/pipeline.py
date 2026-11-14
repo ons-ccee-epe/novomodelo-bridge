@@ -536,9 +536,9 @@ def _topology_relink_diagnostic(
             f"({len(affected_codes)})"
         ),
         summary=(
-            f"{len(affected_codes)} plant(s) take an AC NUMJUS or NUMPOS "
-            "register that changes their downstream plant or inflow gauge from "
-            "hidr.dat, as in DECOMP."
+            "The listed plants take an AC NUMJUS or NUMPOS register that "
+            "changes their downstream plant or inflow gauge from hidr.dat, as "
+            "in DECOMP."
         ),
         table=dx.DiagnosticTable(
             columns=["Code", "Name", "Changes", "hidr.dat", "Effective"],
@@ -765,8 +765,8 @@ def _diversion_channel_dropped_diagnostic(
         channel = _first_diversion_channel(effective, code)
         rows.append(
             [
-                names.get(hydro_id, ""),
                 code,
+                names.get(hydro_id, ""),
                 channel.downstream if channel is not None else "-",
                 ceilings[hydro_id],
             ]
@@ -775,19 +775,20 @@ def _diversion_channel_dropped_diagnostic(
         code="decomp-diversion-channel-dropped",
         severity=dx.Severity.WARNING,
         category="Diversion",
-        title="Diversion closed: target plant not in the case",
+        title=f"Diversion closed: target plant not in the case ({len(rows)})",
         summary=(
-            f"{len(dropped)} hydro(s) allow a positive diverted flow, but the "
-            "plant that receives it is not in the case; their diversion is "
-            "closed, so the water stays in the plant's own river."
+            "The listed plants allow a positive diverted flow, but the plant "
+            "that receives it is not in the case. The conversion closes each "
+            "diversion, so the water stays in the plant's own river."
         ),
         table=dx.DiagnosticTable(
-            columns=["Plant", "Code", "Target code", "Max diversion (m³/s)"],
+            columns=["Code", "Name", "Target code", "Max diversion (m³/s)"],
             rows=rows,
+            justify=["right", "left", "right", "right"],
         ),
         remediation=(
-            "Include the receiving plant in the case if the diversion should "
-            "be modeled; otherwise this is informational."
+            "Declare each listed target plant with a UH record in dadger.rvN "
+            "to model its diversion."
         ),
     )
 
@@ -830,6 +831,14 @@ def _base_diversion_channels(
     return channels
 
 
+_LIBS_LEFT_OUT = {
+    "inactive": "Left out: never active",
+    "unrecognized-token": "Left out: undeclared name",
+    "unresolved-bucket-a": "Left out: no case variable for a term",
+    "unresolved-bucket-bc": "Left out: data term not evaluated",
+}
+
+
 def _libs_electrical_census_diagnostic(
     result: libs_electrical_emit.LibsElectricalResult,
 ) -> dx.Diagnostic:
@@ -849,24 +858,22 @@ def _libs_electrical_census_diagnostic(
     converted" claim survives over it.
     """
     n_converted = len(result.converted_codes)
-    n_dropped = sum(len(codes) for codes in result.deferred.values())
+    total = n_converted + sum(len(codes) for codes in result.deferred.values())
     rows: list[list[object]] = [["Converted", n_converted]]
     rows.extend(
-        [reason, len(codes)] for reason, codes in sorted(result.deferred.items())
+        [_LIBS_LEFT_OUT[reason], len(codes)]
+        for reason, codes in sorted(result.deferred.items())
     )
     return dx.Diagnostic(
         code="decomp-libs-electrical-converted",
         severity=dx.Severity.INFO,
         category="Special constraints",
-        title=(
-            f"LIBs electrical constraints converted "
-            f"({n_converted}/{n_converted + n_dropped})"
-        ),
+        title=f"LIBS electrical restrictions converted ({n_converted} of {total})",
         summary=(
-            f"{n_converted} of {n_converted + n_dropped} LIBs-era long-form "
-            "electrical restriction(s) converted to a novomodelo generic "
-            "constraint; the rest were dropped (see table for the "
-            "per-reason breakdown)."
+            f"Of the {dx.counted(total, 'electrical restriction')} in the LIBS "
+            f"file, the conversion turns {n_converted} into generic "
+            "constraints. The table counts the rest by the reason each is left "
+            "out; the other electrical-restriction panels list them."
         ),
         table=dx.DiagnosticTable(
             columns=["Outcome", "Count"],
@@ -1011,9 +1018,11 @@ def _cadastro_overrides_diagnostic(
         "below from the stage each one takes effect, as in DECOMP."
     )
     if report.out_of_horizon:
+        late = len(report.out_of_horizon)
         summary += (
-            f" {len(report.out_of_horizon)} AC override(s) take effect after "
-            "the study horizon and change nothing."
+            f" {dx.counted(late, 'AC override')} "
+            f"{'takes' if late == 1 else 'take'} effect after the study "
+            f"horizon and {'changes' if late == 1 else 'change'} nothing."
         )
     present = {row[0] for row in rows}
     per_unit_set = [name for name in _UNIT_SET_AC_REGISTERS if name in present]
@@ -1026,7 +1035,7 @@ def _cadastro_overrides_diagnostic(
         code="cadastro-overrides-applied",
         severity=dx.Severity.INFO,
         category="Cadastro overrides",
-        title=f"AC registry overrides applied ({len(rows)} register(s))",
+        title=f"AC registry overrides applied ({len(rows)})",
         summary=summary,
         table=dx.DiagnosticTable(
             columns=["AC register", "Plants"],
@@ -1459,10 +1468,14 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
 
 
 def _read_constraint_census(
-    dadger: Dadger, effective: cadastro_conv.EffectiveCadastro
+    dadger: Dadger,
+    effective: cadastro_conv.EffectiveCadastro,
+    id_map: DecompIdMap,
+    pumping_ids: Mapping[int, int],
 ) -> constraint_registers.ConstraintCensus:
-    """The deck's special constraints split by lowering target, reporting any
-    conflicting bounds they declare as a diagnostic."""
+    """The deck's special constraints split by lowering target, without the
+    ones on an entity the case lacks, reporting those and any conflicting
+    bounds as diagnostics."""
     census = constraint_registers.read_constraints(dadger)
     if census.bound_conflicts:
         names = {
@@ -1476,6 +1489,14 @@ def _read_constraint_census(
             ),
             logger=_LOG,
         )
+    census, unknown = constraint_registers.drop_unknown_entities(
+        census,
+        hydro_codes=id_map.hydro_codes,
+        thermal_codes=id_map.thermal_codes,
+        pumping_codes=pumping_ids.keys(),
+    )
+    for diagnostic in unknown:
+        dx.emit(diagnostic, logger=_LOG)
     return census
 
 
@@ -1512,7 +1533,7 @@ def _released_runofriver_codes(
                     f"minimum outflow ({len(unregulated_codes)})"
                 ),
                 summary=(
-                    f"{len(unregulated_codes)} run-of-river plant(s) sit upstream "
+                    "The listed run-of-river plants sit upstream "
                     "of the first reservoir of their cascade, so, as in DECOMP, "
                     "they take no RQ/UH minimum outflow. A single-plant RHQ QDEF "
                     "floor still applies."
@@ -1591,7 +1612,7 @@ def _couple_diversion_channels(
                 category="Diversion",
                 title=f"Diversions without a QDES restriction ({len(base_diversion_channels)})",
                 summary=(
-                    f"{len(base_diversion_channels)} plant(s) divert water through "
+                    "The listed plants divert water through "
                     "their hidr.dat or AC DESVIO desvio with no QDES restriction. "
                     "Each diverts through a channel to the receiving plant, "
                     "limited only by the AC DESVIO flow, as in DECOMP."
@@ -1674,8 +1695,8 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     turbine_limits = artifacts.turbine_limits
     assert turbine_limits is not None
 
-    census = _read_constraint_census(dadger, effective)
     pumping_ids = network_conv.pumping_station_id_map(dadger)
+    census = _read_constraint_census(dadger, effective, id_map, pumping_ids)
     thermal_generation_contribs, thermal_cost_table = (
         thermal_conv.convert_thermal_bounds(case, id_map)
     )
@@ -2362,7 +2383,7 @@ def convert_decomp_case(
 
     Raises
     ------
-    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+    ~novomodelo_bridge.core.errors.EmissionCheckError
         A ``ValueError``: a post-emission self-check in
         :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
         violation in the converted artifacts. No report is returned.

@@ -376,7 +376,7 @@ class TestFphaConverters:
         self, tmp_path: Path, fpha: bool
     ) -> None:
         case = self._case(tmp_path, fpha=fpha, plant_1=_OUTAGES)
-        expected = _operational_caps(case.hidr.cadastro.loc[1], "USINA_A")[0]
+        expected = _operational_caps(case.hidr.cadastro.loc[1])[0]
         assert expected != pytest.approx(4 * 222.2 * _AVAILABILITY)
 
         hydros = convert_hydros(case, self._id_map())["hydros"]
@@ -397,13 +397,13 @@ class TestFphaConverters:
         assert table is not None
         rows = table.to_pylist()
         for hydro_id, code in ((0, 1), (1, 2)):
-            turbined, available = _operational_caps(case.hidr.cadastro.loc[code], "X")
+            turbined, available = _operational_caps(case.hidr.cadastro.loc[code])
             plant_rows = [r for r in rows if r["hydro_id"] == hydro_id]
             assert [r["stage_id"] for r in plant_rows] == list(range(60))
             for row in plant_rows:
                 assert row["max_generation_mw"] == pytest.approx(available)
                 assert row["max_turbined_m3s"] == pytest.approx(turbined)
-        assert _operational_caps(case.hidr.cadastro.loc[1], "X")[1] == pytest.approx(
+        assert _operational_caps(case.hidr.cadastro.loc[1])[1] == pytest.approx(
             4 * 200.0 * _AVAILABILITY
         )
 
@@ -426,8 +426,8 @@ class TestFphaConverters:
             ]
 
         hreg = self._case(tmp_path, plant_1=_OUTAGES).hidr.cadastro.loc[1]
-        expected = _operational_caps(hreg, "USINA_A", canal_fuga_override=30.0)[0]
-        assert expected != pytest.approx(_operational_caps(hreg, "USINA_A")[0])
+        expected = _operational_caps(hreg, canal_fuga_override=30.0)[0]
+        assert expected != pytest.approx(_operational_caps(hreg)[0])
         assert turbined(fpha=True) == [pytest.approx(expected)] * 60
         assert turbined(fpha=False) == [pytest.approx(expected)] * 60
 
@@ -450,8 +450,8 @@ class TestFphaConverters:
         )
         id_map = self._id_map()
         hreg = case.hidr.cadastro.loc[1]
-        start = _operational_caps(hreg_with_machines(hreg, {1: 1}), "USINA_A")
-        final = _operational_caps(hreg_with_machines(hreg, {1: 3}), "USINA_A")
+        start = _operational_caps(hreg_with_machines(hreg, {1: 1}))
+        final = _operational_caps(hreg_with_machines(hreg, {1: 3}))
 
         table = convert_per_stage_capacity_caps(case, id_map)
         assert table is not None

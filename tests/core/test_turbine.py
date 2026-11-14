@@ -141,4 +141,4 @@ def test_turbine_limit_gap_diagnostic_warns_one_row_per_plant() -> None:
     assert diagnostic.severity is Severity.WARNING
     assert diagnostic.table is not None
     assert diagnostic.table.rows == rows
-    assert diagnostic.summary.startswith("1 plant(s)")
+    assert diagnostic.summary.startswith("The listed plants lack a datum")

@@ -14,6 +14,7 @@ from novomodelo_bridge.core.conversion import (
     ConversionReport,
     run_conversion,
 )
+from novomodelo_bridge.core.errors import EmissionCheckError
 
 _ARTIFACTS = ClearedArtifacts(subdirs=("system",), files=("config.json",))
 
@@ -44,7 +45,7 @@ def test_run_conversion_folds_findings_and_legacy_warnings_into_the_report(
     assert report.warnings == ["early", "legacy text"]
 
 
-def test_failed_emission_check_reaches_the_caller_once_as_the_raised_error(
+def test_failed_emission_check_reaches_the_caller_with_its_findings(
     tmp_path: Path,
 ) -> None:
     def convert() -> ConversionReport:
@@ -58,11 +59,11 @@ def test_failed_emission_check_reaches_the_caller_once_as_the_raised_error(
 
     with (
         dx.collect() as outer,
-        pytest.raises(emission_checks.EmissionCheckError, match="check-failed"),
+        pytest.raises(EmissionCheckError, match="check-failed"),
     ):
         run_conversion(convert, tmp_path, _ARTIFACTS, dry_run=False)
 
-    assert [d.code for d in outer] == ["early", "legacy-warning"]
+    assert [d.code for d in outer] == ["early", "check-failed", "legacy-warning"]
     assert not (tmp_path / "system").exists()
     assert not (tmp_path / "config.json").exists()
 

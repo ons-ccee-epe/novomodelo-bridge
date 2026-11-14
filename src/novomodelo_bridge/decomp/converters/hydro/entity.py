@@ -117,9 +117,9 @@ def _coupling_only_diagnostic(hidr: pd.DataFrame, codes: list[int]) -> Diagnosti
         category="Entity exclusion",
         title=f"Plants DECOMP does not operate left out ({len(codes)})",
         summary=(
-            f"{len(codes)} UH register(s) give no initial volume: DECOMP does "
-            "not operate these plants and keeps them only for the coupling "
-            "with NEWAVE, so the case leaves them out."
+            "The listed plants have UH records in dadger.rvN with no initial "
+            "volume: DECOMP does not operate them and keeps them only for the "
+            "coupling with NEWAVE, so the case leaves them out."
         ),
         table=DiagnosticTable(
             columns=["Code", "Name"],

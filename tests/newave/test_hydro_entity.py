@@ -67,6 +67,21 @@ class TestConvertHydros:
             base[1]["generation"]["max_generation_mw"]
         )
 
+    def test_outage_rate_above_100_is_reported_once(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.hydro import convert_hydros
+
+        cadastro = _make_hidr_cadastro()
+        cadastro.loc[1, "teif"] = 150.0
+
+        with dx.collect() as collected:
+            convert_hydros(
+                _hydro_case(tmp_path, cadastro=cadastro), self._make_id_map()
+            )
+
+        [diag] = [d for d in collected if d.code == "hydro-outage-rate-clamped"]
+        assert diag.table is not None
+        assert [row[0] for row in diag.table.rows] == [1]
+
     def test_returns_hydros_key(self, tmp_path) -> None:
         case = _hydro_case(tmp_path)
         from novomodelo_bridge.newave.converters.hydro import convert_hydros

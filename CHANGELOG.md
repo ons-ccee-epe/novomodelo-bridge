@@ -34,15 +34,30 @@ links are cobre-bridge's.
   reports the conversion and the boundary FCF import under one roll-up and
   ends on the command that runs the case, and its `conversion_manifest.json`
   now records the import's diagnostics too.
-- **`convert newave` and `convert decomp` warn only where the results will
-  differ from NEWAVE's or DECOMP's**: `fpha-spill-outside-tailrace`,
+- **`convert` and `check` warn only where the results will differ from
+  NEWAVE's or DECOMP's**: `fpha-spill-outside-tailrace`,
   `boundary-fcf-transit-water-priced` and
   `boundary-fcf-gnl-anticipated-deviation` are now warnings, while
-  `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`
-  and `decomp-qtur-turbined-clamped` are notes. A stage limit raised to a
+  `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`,
+  `decomp-qtur-turbined-clamped`, `modif-override-plant-uncadastred`,
+  `vminop-ree-not-expressible`, `electric-constraint-hydro-unmapped`,
+  `electric-constraint-interchange-no-line`, `agrint-interchange-no-line`,
+  `agrint-group-empty`, `artificial-gauge-data-ignored`, `libs-unindexed-file`
+  and `decomp-ac-out-of-horizon` are notes. A stage limit raised to a
   plant's minimum now warns as `hydro-bounds-raised-to-declared-minimum`, and
   DECOMP plants kept only for the NEWAVE coupling are listed in a
   `decomp-coupling-only-plants-excluded` note instead of a log warning.
+- **Every command reports each kind of finding once, with a table of the
+  plants, records or constraints it concerns**, where `convert decomp`,
+  `compare` and `dashboard` gave one panel and one `--json` entry per record;
+  update scripts that count `--json` entries. DECOMP tables number stages and
+  load blocks from 0, as the case files do. NEWAVE electric constraints with
+  no limit on any stage are listed in a new `electric-constraint-unbounded`
+  note instead of `electric-constraint-skipped`, and `check` lists the absent
+  optional inputs in one `optional-file-absent` note.
+- **`convert` reports a converted case that fails its own checks as
+  `case-self-check-failed`** instead of `unexpected-error`, with the panels of
+  each failed check.
 - **`compare newave` and `compare decomp` judge each variable by its overall
   gap, and `--tolerance` defaults to 5%.** The console table labels each
   variable close, moderate or far (beyond four times the tolerance), leaves
@@ -90,6 +105,10 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`convert decomp` stopped on an `HV` constraint on the stored volume of a
+  plant in `hidr.dat` with no `UH` record.** It now leaves the constraint out
+  with a `decomp-rhv-varm-plant-uncadastred` warning, as for a plant missing
+  from `hidr.dat`.
 - **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
   Such a deck now converts.
 - **`dashboard` showed wrong costs**: the Costs tab listed `Hydro Violation`

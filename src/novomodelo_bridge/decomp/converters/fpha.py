@@ -34,7 +34,9 @@ import pyarrow as pa
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
+    DiagnosticTable,
     Severity,
+    counted,
     emit,
     format_stage_ranges,
 )
@@ -345,27 +347,34 @@ def unconverted_fp_fields_diagnostic(fp: pd.DataFrame | None) -> Diagnostic | No
     counts differ from :data:`_UNCONVERTED_FP_DEFAULTS`, or ``None``."""
     if fp is None or fp.empty:
         return None
-    flagged: list[str] = []
+    flagged: list[list[object]] = []
     for row in fp.to_dict("records"):
         if any(
             not pd.isna(row.get(column)) and float(row[column]) != default
             for column, default in _UNCONVERTED_FP_DEFAULTS.items()
         ):
             code = int(row["codigo_usina"])
-            plant = "all plants" if code == _ALL_PLANTS else f"plant {code}"
-            flagged.append(f"{plant} from stage {int(row['estagio'])}")
+            plant = "all" if code == _ALL_PLANTS else code
+            flagged.append([plant, int(row["estagio"]) - 1])
     if not flagged:
         return None
     return Diagnostic(
         code="decomp-fp-fit-fields-unconverted",
         severity=Severity.WARNING,
         category="Hydro production model",
-        title="FP turbined-flow window and point counts not converted",
+        title=f"FP turbined-flow windows and point counts not converted ({len(flagged)})",
         summary=(
-            f"{len(flagged)} FP record(s) set a turbined-flow window or a number "
-            "of discretization points: " + "; ".join(flagged) + ". Only their "
-            "volume window is converted. Novomodelo fits each plant from zero to its "
-            "maximum turbined flow, with its own number of points."
+            "The listed FP records of dadger.rvN set a turbined-flow window or "
+            "a number of discretization points. Only their volume window is "
+            "converted: novomodelo fits each plant from zero to its maximum "
+            "turbined flow with its own number of points, so the FPHA planes "
+            "can differ from DECOMP's."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "From stage"],
+            rows=flagged,
+            justify=["right", "right"],
+            caption="Stage ids are 0-based.",
         ),
     )
 
@@ -454,8 +463,9 @@ def mlt_absent_diagnostic(plant_count: int) -> Diagnostic:
         category="Hydro production model",
         title="FPHA spillage range without mlt.dat",
         summary=(
-            f"The deck has no mlt.dat, so the spillage coefficient of {plant_count} "
-            "FPHA plant(s) is fit over twice the plant's maximum turbined flow. "
+            "The deck has no mlt.dat, so the spillage coefficient of "
+            f"{counted(plant_count, 'FPHA plant')} is fit over twice the plant's "
+            "maximum turbined flow. "
             "DECOMP fits it over twice the largest monthly long-term mean inflow "
             "of the plant's gauge. A plant whose floods exceed the narrower range "
             "can have its spillage held down by its own production function."

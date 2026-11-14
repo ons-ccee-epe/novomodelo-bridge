@@ -31,6 +31,7 @@ from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.bounds import (
     _operational_caps,
     _per_stage_turbined_envelope,
+    _report_outage_overshoots,
 )
 from novomodelo_bridge.newave.converters.hydro.geometry import (
     _EVAP_MONTHS,
@@ -164,7 +165,7 @@ def _diversion_channels(
                 category="Diversion channels",
                 title=f"Diversion channels ({len(modeled)})",
                 summary=(
-                    f"{len(modeled)} plant(s) divert water to the target plant "
+                    "The listed plants divert water to the target plant "
                     "through a channel declared by CDESVIO in modif.dat, up to "
                     "the listed maximum flow."
                 ),
@@ -189,8 +190,8 @@ def _diversion_channels(
                 category="Diversion channels",
                 title=f"Diversion channels not converted ({len(dropped)})",
                 summary=(
-                    f"{len(dropped)} CDESVIO record(s) in modif.dat convert to "
-                    "no channel, so the listed plants release water only to "
+                    "The listed CDESVIO records in modif.dat convert to "
+                    "no channel, so their plants release water only to "
                     "their downstream plant."
                 ),
                 table=DiagnosticTable(
@@ -455,7 +456,7 @@ def _generation_caps(
     """
     config = context.expansion_configs.get(newave_code)
     hreg_declared = hreg if config is None else config.declared_hreg(hreg)
-    max_turbined_reference = _operational_caps(hreg_declared, name)[0]
+    max_turbined_reference = _operational_caps(hreg_declared)[0]
     envelope_value = context.turbined_envelope.get(hydro_id)
     max_turbined = (
         max_turbined_reference
@@ -694,7 +695,7 @@ def _report_filling_plants(rows: list[list[object]]) -> None:
             category="Filling plants",
             title=f"Plants filling their dead volume ({len(rows)})",
             summary=(
-                f"{len(rows)} plant(s) marked NE in confhd.dat fill their dead "
+                "The listed plants marked NE in confhd.dat fill their dead "
                 "volume as exph.dat schedules before they operate; their "
                 "capacity is 0 until then and grows as their units enter."
             ),
@@ -709,7 +710,7 @@ def _report_filling_plants(rows: list[list[object]]) -> None:
                 ],
                 rows=rows,
                 justify=["right", "left", "right", "right", "right", "left"],
-                caption=("Stage ids are 0-based; capacity is 0 until 'Operates from'."),
+                caption="Stage ids are 0-based.",
             ),
         ),
         logger=_LOG,
@@ -726,19 +727,18 @@ def _report_expansion_plants(rows: list[list[object]]) -> None:
             category="Expansion plants",
             title=f"Expansion plants ramped ({len(rows)})",
             summary=(
-                f"{len(rows)} plant(s) marked "
-                '"existente em expansão" operate from the first stage at the '
-                "configuration modif.dat declares for the study start and "
-                "reach the hidr.dat configuration as the exph.dat machines "
-                "enter; the capacity before each entry is written as a "
-                "per-stage bound."
+                "The listed plants marked EE in confhd.dat operate from the "
+                "first stage at the configuration modif.dat declares for the "
+                "study start and reach the hidr.dat configuration as the "
+                "exph.dat machines enter, as in NEWAVE; the capacity before "
+                "each entry is a per-stage bound."
             ),
             table=DiagnosticTable(
                 columns=[
                     "Code",
                     "Name",
-                    "MW at start",
-                    "MW when full",
+                    "At start (MW)",
+                    "When full (MW)",
                     "Machines entering",
                     "First entry stage",
                 ],
@@ -797,6 +797,9 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # separate diagnostics.
     _report_filling_plants(filling_rows)
     _report_expansion_plants(expansion_rows)
+    _report_outage_overshoots(
+        context.cadastro, (int(code) for code in context.active_hydros["codigo_usina"])
+    )
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),

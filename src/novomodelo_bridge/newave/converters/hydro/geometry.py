@@ -236,7 +236,7 @@ def _vha_points(
     return vol_grid, height_arr, area_arr
 
 
-def _report_geometry_skips(skips: list[tuple[str, int, str]]) -> None:
+def _report_geometry_skips(skips: list[tuple[int, str, str]]) -> None:
     if not skips:
         return
     emit(
@@ -244,16 +244,17 @@ def _report_geometry_skips(skips: list[tuple[str, int, str]]) -> None:
             code="hydro-geometry-skipped",
             severity=Severity.WARNING,
             category="Hydro geometry",
-            title=f"Hydro geometry skipped ({len(skips)} plant(s))",
+            title=f"Plants without a volume-height-area table ({len(skips)})",
             summary=(
-                f"{len(skips)} plant(s) had no geometry generated: "
-                "not present in the cadastro, or an all-zero "
-                "volume-to-height polynomial."
+                "The listed plants have no row in "
+                "system/hydro_geometry.parquet, because hidr.dat lacks the "
+                "plant or gives it no volume-to-height polynomial, so the case "
+                "has no reservoir area for them."
             ),
             table=DiagnosticTable(
-                columns=["Plant", "Code", "Reason"],
-                rows=[[name, code, reason] for name, code, reason in skips],
-                justify=["left", "right", "left"],
+                columns=["Code", "Name", "Reason"],
+                rows=[list(skip) for skip in skips],
+                justify=["right", "left", "left"],
             ),
         ),
         logger=_LOG,
@@ -268,27 +269,24 @@ def _report_geometry_extensions(rows: list[list[object]]) -> None:
             code="hydro-geometry-extended",
             severity=Severity.INFO,
             category="Hydro geometry",
-            title=(
-                f"Hydro geometry extended past the storage range ({len(rows)} plant(s))"
-            ),
+            title=f"Geometry extended past the storage range ({len(rows)})",
             summary=(
-                f"{len(rows)} plant(s) have an FPHA reference volume "
-                "outside [volume_minimo, volume_maximo], where the source "
-                "model reads the downstream level of the plant above. Their "
-                "geometry samples the volume-to-height polynomial out to "
-                "those volumes."
+                "The listed plants have an FPHA reference volume outside "
+                "their hidr.dat minimum and maximum volumes, where NEWAVE reads "
+                "the downstream level of the plant above, so their geometry "
+                "samples the volume-to-height polynomial out to those volumes."
             ),
             table=DiagnosticTable(
                 columns=[
-                    "Plant",
                     "Code",
-                    "volume_minimo (hm³)",
-                    "volume_maximo (hm³)",
+                    "Name",
+                    "Min volume (hm³)",
+                    "Max volume (hm³)",
                     "Sampled from (hm³)",
                     "Sampled to (hm³)",
                 ],
                 rows=rows,
-                justify=["left", "right", "right", "right", "right", "right"],
+                justify=["right", "left", "right", "right", "right", "right"],
             ),
         ),
         logger=_LOG,
@@ -346,12 +344,12 @@ def generate_hydro_geometry(
 
     # Loop-accumulate-then-emit-once: one record per skipped plant, emitted
     # after the loop so both skip causes survive finalize_diagnostics' de-dup.
-    geometry_skips: list[tuple[str, int, str]] = []
+    geometry_skips: list[tuple[int, str, str]] = []
     extended: list[list[object]] = []
 
     for newave_code in id_map.all_hydro_codes:
         if newave_code not in cadastro.index:
-            geometry_skips.append(("?", newave_code, "plant not in cadastro"))
+            geometry_skips.append((newave_code, "", "not in hidr.dat"))
             continue
 
         hreg = cadastro.loc[newave_code]
@@ -360,9 +358,9 @@ def generate_hydro_geometry(
         # Polynomial coefficients for volume -> height (hm3 -> m).
         vc_coeffs = [float(hreg[f"a{i}_volume_cota"]) for i in range(5)]
         if all(c == 0.0 for c in vc_coeffs):
-            name = str(hreg.get("nome_usina", "?"))
+            name = str(hreg.get("nome_usina", "")).strip()
             geometry_skips.append(
-                (name, newave_code, "all volume-to-height polynomial coefficients zero")
+                (newave_code, name, "volume-to-height polynomial all zero")
             )
             continue
 
@@ -381,8 +379,8 @@ def generate_hydro_geometry(
             if sampled != (vol_min, vol_max):
                 extended.append(
                     [
-                        str(hreg.get("nome_usina", "?")).strip(),
                         newave_code,
+                        str(hreg.get("nome_usina", "")).strip(),
                         *(round(v, 2) for v in (vol_min, vol_max, *sampled)),
                     ]
                 )

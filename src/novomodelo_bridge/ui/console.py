@@ -39,7 +39,7 @@ from rich.table import Table
 from rich.text import Text
 
 from novomodelo_bridge.core.agreement import FAR_FACTOR, Band, format_gap
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, counted
 from novomodelo_bridge.core.preflight import PreflightVerdict
 from novomodelo_bridge.ui.theme import COPPER_ACCENT, SEVERITY
 
@@ -364,11 +364,11 @@ def _rollup_line(diagnostics: Sequence[Diagnostic], heading: str) -> Text:
         counts[diag.severity] += 1
     parts: list[str] = []
     if counts[Severity.ERROR]:
-        parts.append(f"{counts[Severity.ERROR]} error(s)")
+        parts.append(counted(counts[Severity.ERROR], "error"))
     if counts[Severity.WARNING]:
-        parts.append(f"{counts[Severity.WARNING]} warning(s)")
+        parts.append(counted(counts[Severity.WARNING], "warning"))
     if counts[Severity.INFO]:
-        parts.append(f"{counts[Severity.INFO]} note(s)")
+        parts.append(counted(counts[Severity.INFO], "note"))
     glyph = _SEVERITY_GLYPH[
         Severity.ERROR
         if counts[Severity.ERROR]
@@ -389,21 +389,20 @@ def _diagnostic_panel(diag: Diagnostic) -> Panel:
 
     if diag.table is not None:
         rows = diag.table.rows
-        capped = rows[:MAX_TABLE_ROWS]
-        caption = diag.table.caption
-        if len(rows) > MAX_TABLE_ROWS:
-            overflow = len(rows) - MAX_TABLE_ROWS
-            extra = f"… and {overflow} more (see --diagnostics-json)"
-            caption = f"{caption}; {extra}" if caption else extra
         body.add_row("")
         body.add_row(
             make_table(
                 diag.table.columns,
-                capped,
+                rows[:MAX_TABLE_ROWS],
                 justify=diag.table.justify,
-                caption=caption,
+                caption=diag.table.caption,
             )
         )
+        if len(rows) > MAX_TABLE_ROWS:
+            overflow = len(rows) - MAX_TABLE_ROWS
+            body.add_row(
+                Text(f"… and {overflow} more (see --diagnostics-json)", style="dim")
+            )
 
     for note in diag.notes:
         body.add_row(Text(f"• {note}", style="dim"))

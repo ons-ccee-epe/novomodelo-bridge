@@ -778,8 +778,8 @@ def test_per_bus_sums_from_results_excludes_multi_bus_plant() -> None:
 
     ambiguous = [d for d in collected if d.code == "hydro-multi-bus-ambiguous"]
     assert len(ambiguous) == 1
-    assert "9" in ambiguous[0].summary
-    assert "AMBIGUOUS_PLANT" in ambiguous[0].summary
+    assert ambiguous[0].table is not None
+    assert [row[:2] for row in ambiguous[0].table.rows] == [[9, "AMBIGUOUS_PLANT"]]
 
 
 def test_per_bus_sums_from_results_counts_split_plant_at_its_loaded_bus() -> None:

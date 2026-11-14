@@ -20,6 +20,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     soft_slack,
 )
+from novomodelo_bridge.decomp.converters.constraints import Unresolved
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     AssembledBound,
     AvailablePower,
@@ -100,14 +101,12 @@ def test_novomodelo_token_ener_interc_reverse_orientation() -> None:
     assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_reverse(5)"
 
 
-def test_novomodelo_token_ener_interc_no_line_warns_and_returns_none() -> None:
+def test_novomodelo_token_ener_interc_no_line_is_unresolved() -> None:
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2))
-    with dx.collect() as sink:
-        result = _novomodelo_token(term, id_map, {}, {}, {})
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
+    assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ener_interc(1, 2)", "line")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -166,34 +165,25 @@ def test_novomodelo_token_ener_interc_unknown_code_no_transshipment_line_drops()
     # existing skip-not-partial drop still applies.
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(6, 1))
-    with dx.collect() as sink:
-        result = _novomodelo_token(term, id_map, {}, {}, {})
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
+    assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ener_interc(6, 1)", "line")
+    )
 
 
-def test_novomodelo_token_ener_comerc_deferred_warns_and_returns_none() -> None:
+def test_novomodelo_token_ener_comerc_is_unresolved() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="ener_comerc", args=(1,))
-    with dx.collect() as sink:
-        result = _novomodelo_token(term, id_map, {}, {}, {})
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
-    assert "ener_comerc" in sink[0].summary
+    assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
+        "decomp-electrical-ener-comerc-deferred", ("ener_comerc(1)",)
+    )
 
 
-def test_novomodelo_token_ger_usih_unresolved_warns_and_returns_none() -> None:
+def test_novomodelo_token_ger_usih_outside_the_case_is_unresolved() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     term = ParsedTerm(coefficient=1.0, token="ger_usih", args=(999,))
-    with dx.collect() as sink:
-        result = _novomodelo_token(term, id_map, {}, {}, {})
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
-    assert "ger_usih" in sink[0].summary
-    assert "999" in sink[0].summary
+    assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ger_usih(999)", "hydro plant")
+    )
 
 
 def test_novomodelo_token_unrecognized_bucket_a_token_raises_value_error() -> None:
@@ -244,8 +234,8 @@ def test_build_electrical_expression_all_token_kinds_exact_string() -> None:
 
 def test_build_electrical_expression_unresolved_token_drops_whole_expression() -> None:
     # ger_usih(999) is absent from id_map.hydro_codes -- the WHOLE
-    # expression drops (None), not a partial one built from ger_usih(66)
-    # alone (skip-not-partial).
+    # expression drops, not a partial one built from ger_usih(66) alone
+    # (skip-not-partial).
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     assembled = AssembledBound(
         terms=(
@@ -255,13 +245,9 @@ def test_build_electrical_expression_unresolved_token_drops_whole_expression() -
         lower=None,
         upper=100.0,
     )
-    with dx.collect() as sink:
-        result = build_electrical_expression(assembled, id_map, {}, {}, {})
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
-    assert "ger_usih" in sink[0].summary
-    assert "999" in sink[0].summary
+    assert build_electrical_expression(assembled, id_map, {}, {}, {}) == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ger_usih(999)", "hydro plant")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -728,6 +714,43 @@ def test_emit_unresolved_bucket_a_token_defers_without_partial_constraint() -> N
     assert sink[0].severity is dx.Severity.WARNING
 
 
+def test_emit_merges_one_finding_across_restrictions_into_one_table() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    calendar = _emit_calendar(1, n_blocks=1)
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            705: _restriction(705, "ger_usih(998)", "<=", "500"),
+            706: _restriction(706, "ger_usit(7)", "<=", "500"),
+        },
+        rules={},
+    )
+
+    with dx.collect() as sink:
+        result = emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            calendar,
+            {},
+            {},
+            {},
+            big_m=999.0,
+        )
+
+    assert result.deferred["unresolved-bucket-a"] == (705, 706)
+    [finding] = sink
+    assert finding.code == "decomp-electrical-bucket-a-unresolved"
+    assert finding.title.endswith(" (2)")
+    assert finding.table is not None
+    assert finding.table.rows == [
+        [705, "ger_usih(998)", "hydro plant"],
+        [706, "ger_usit(7)", "thermal"],
+    ]
+
+
 def test_emit_unresolved_bucket_bc_term_defers_whole_restriction() -> None:
     # Requirement 2's second bullet: a single unresolvable active cell
     # (assemble_bound already WARNED) drops the WHOLE restriction -- no
@@ -887,8 +910,8 @@ def test_emit_unrecognized_token_defers_one_restriction_sibling_converts() -> No
 
     warnings = [d for d in sink if d.severity is dx.Severity.WARNING]
     assert len(warnings) == 1
-    assert "709" in warnings[0].summary
-    assert "mmgd_N_PCHgd" in warnings[0].summary
+    assert warnings[0].table is not None
+    assert warnings[0].table.rows == [[709, "mmgd_N_PCHgd"]]
 
 
 def test_emit_no_unrecognized_tokens_leaves_deferred_reason_empty() -> None:
@@ -1006,8 +1029,8 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
 
     warnings = [d for d in sink if d.severity is dx.Severity.WARNING]
     assert len(warnings) == 1
-    assert "720" in warnings[0].summary
-    assert "mmgd_N_PCHgd" in warnings[0].summary
+    assert warnings[0].table is not None
+    assert warnings[0].table.rows == [[720, "mmgd_N_PCHgd"]]
 
 
 def test_emit_malformed_activation_rule_propagates_value_error() -> None:

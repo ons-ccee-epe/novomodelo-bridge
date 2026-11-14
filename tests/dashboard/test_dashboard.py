@@ -249,15 +249,15 @@ def test_load_hydro_bus_map_puts_split_plant_at_its_loaded_bus(
 
 
 @pytest.mark.parametrize(
-    ("loads", "phrase"),
+    ("loads", "loaded"),
     [
-        ({5: 900.0, 10: 0.0, 20: 0.0}, "none of them has load"),
-        ({5: 900.0, 10: 4000.0, 20: 300.0}, "2 of them have load"),
+        ({5: 900.0, 10: 0.0, 20: 0.0}, 0),
+        ({5: 900.0, 10: 4000.0, 20: 300.0}, 2),
     ],
     ids=["no-loaded-bus", "two-loaded-buses"],
 )
 def test_load_hydro_bus_map_omits_split_plant_without_one_loaded_bus(
-    tmp_path: Path, loads: dict[int, float], phrase: str
+    tmp_path: Path, loads: dict[int, float], loaded: int
 ) -> None:
     """A split plant with no loaded bus, or several, is dropped from the
     map -- neither collapsed onto one of its buses nor kept at a guessed
@@ -274,9 +274,8 @@ def test_load_hydro_bus_map_omits_split_plant_without_one_loaded_bus(
     ambiguous_diags = [d for d in collected if d.code == "hydro-unit-groups-multi-bus"]
     assert len(ambiguous_diags) == 1
     assert ambiguous_diags[0].severity is dx.Severity.WARNING
-    assert "Hydro 1 (X)" in ambiguous_diags[0].summary
-    assert "[10, 20]" in ambiguous_diags[0].summary
-    assert phrase in ambiguous_diags[0].summary
+    assert ambiguous_diags[0].table is not None
+    assert ambiguous_diags[0].table.rows == [[1, "X", "10, 20", loaded]]
 
 
 def test_load_hydro_bus_map_missing_unit_groups_raises_named_error(
@@ -441,8 +440,8 @@ def test_load_hydro_metadata_omits_bus_id_for_split_plant_without_home(
 
     ambiguous_diags = [d for d in collected if d.code == "hydro-unit-groups-multi-bus"]
     assert len(ambiguous_diags) == 1
-    assert "1" in ambiguous_diags[0].summary
-    assert "AMBIGUOUS" in ambiguous_diags[0].summary
+    assert ambiguous_diags[0].table is not None
+    assert [row[:2] for row in ambiguous_diags[0].table.rows] == [[1, "AMBIGUOUS"]]
 
 
 def test_load_hydro_metadata_missing_unit_groups_raises_named_error(
@@ -509,7 +508,8 @@ def test_load_entity_metadata_emits_multi_bus_diagnostic_once(
 
     ambiguous_diags = [d for d in collected if d.code == "hydro-unit-groups-multi-bus"]
     assert len(ambiguous_diags) == 1
-    assert "AMBIGUOUS" in ambiguous_diags[0].summary
+    assert ambiguous_diags[0].table is not None
+    assert [row[:2] for row in ambiguous_diags[0].table.rows] == [[1, "AMBIGUOUS"]]
 
 
 def test_load_entity_metadata_resolves_split_plant_to_its_loaded_bus(

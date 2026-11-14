@@ -87,8 +87,8 @@ class TestSwitchOffDiagnostic:
         assert diag.severity is Severity.INFO
         assert "ghmin.dat" in diag.title
         assert "CONSIDERA GHMIN = 0" in diag.title
-        assert diag.notes == ["switch: considera_ghmin"]
-        assert diag.remediation is not None and "dger.dat" in diag.remediation
+        assert diag.notes == []
+        assert diag.remediation is None
 
 
 class TestSwitchedOffInputs:

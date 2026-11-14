@@ -316,13 +316,13 @@ def read_novomodelo_hydro_bus_generation(novomodelo_output_dir: Path) -> pl.Lazy
                 code="hydro-bus-generation-partition-empty",
                 severity=Severity.WARNING,
                 category="Compare data",
-                title="hydro_bus_generation partition is present but empty",
+                title="Hydro generation per bus missing from the run output",
                 summary=(
-                    f"{sim_dir} exists but contains no scenario parquet "
-                    "files; treating hydro-bus generation as empty rather "
-                    "than failing the comparison."
+                    "The run output's simulation/hydro_bus_generation "
+                    "directory has no scenario files, so the generation of "
+                    "each hydro plant per bus reads as empty."
                 ),
-                notes=[f"path: {sim_dir}"],
+                notes=[f"Directory: {sim_dir}"],
             ),
             logger=_LOG,
         )
@@ -2195,17 +2195,25 @@ def hydro_home_bus(bus_ids: Iterable[int], load_bus_ids: frozenset[int]) -> int 
     return next(iter(loaded)) if len(loaded) == 1 else None
 
 
-def split_plant_without_home_summary(
+SPLIT_PLANT_COLUMNS = ["Hydro ID", "Name", "Buses", "Buses with load"]
+SPLIT_PLANT_SUMMARY = (
+    "The listed hydro plants have generating units at more than one bus, and "
+    "none or several of those buses have load, so no one bus can stand for "
+    "the whole plant."
+)
+
+
+def split_plant_row(
     hydro_id: int, name: str, bus_ids: Iterable[int], load_bus_ids: frozenset[int]
-) -> str:
-    """Say why :func:`hydro_home_bus` found no home for a plant."""
+) -> list[object]:
+    """The table row naming a plant :func:`hydro_home_bus` found no home for."""
     distinct = sorted(set(bus_ids))
-    n_loaded = sum(1 for b in distinct if b in load_bus_ids)
-    which = "none of them has" if n_loaded == 0 else f"{n_loaded} of them have"
-    return (
-        f"Hydro {hydro_id} ({name}) has generating units at buses {distinct}, "
-        f"and {which} load, so no one bus can stand for the whole plant."
-    )
+    return [
+        hydro_id,
+        name,
+        ", ".join(str(bus) for bus in distinct),
+        sum(1 for bus in distinct if bus in load_bus_ids),
+    ]
 
 
 def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int, dict]:

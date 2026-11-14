@@ -261,7 +261,8 @@ class TestEvaporationResultComparisons:
         assert one_sided == [1]
         assert len(collected) == 1
         assert collected[0].code == "evaporation-plant-one-sided"
-        assert "1" in " ".join(str(n) for n in collected[0].notes)
+        assert collected[0].table is not None
+        assert collected[0].table.rows == [[20, "B", "run output"]]
 
     def test_plant_present_only_on_source_side_excluded_and_counted(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

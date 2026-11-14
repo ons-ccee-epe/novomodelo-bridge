@@ -200,22 +200,22 @@ def ignored_files(
 def unindexed_files_diagnostic(
     ignored: Sequence[tuple[str, str]], *, remediation: str
 ) -> Diagnostic | None:
-    """WARNING naming the deck files the source model ignores because nothing
+    """INFO naming the deck files the source model ignores because nothing
     declares them, or ``None`` when there are none."""
     if not ignored:
         return None
     return Diagnostic(
         code=UNINDEXED_FILES_CODE,
-        severity=Severity.WARNING,
+        severity=Severity.INFO,
         category="Source files",
-        title="Deck files not declared in the LIBS index",
+        title=f"Deck files not declared in the LIBS index ({len(ignored)})",
         summary=(
-            f"{len(ignored)} file(s) in the deck folder look like LIBS input files, "
+            "The listed files in the deck folder look like LIBS input files, "
             "but the deck does not declare them, so the source model ignores them "
             "and so does the conversion."
         ),
         table=DiagnosticTable(
-            columns=["file", "record"], rows=[list(row) for row in ignored]
+            columns=["File", "Record"], rows=[list(row) for row in ignored]
         ),
         remediation=remediation,
     )
@@ -241,13 +241,13 @@ def unread_lines_diagnostic(
         code=UNREAD_LINES_CODE,
         severity=Severity.WARNING,
         category="Source files",
-        title=f"Lines of {file.name} that are not read",
+        title=f"Lines of {file.name} not read ({len(lines)})",
         summary=(
-            f"{len(lines)} line(s) of {file.name} are not records the conversion "
+            f"The listed lines of {file.name} are not records the conversion "
             "knows, so it ignores them. Record names are read only as the manual "
             "writes them, in full and in upper case."
         ),
-        table=DiagnosticTable(columns=["line"], rows=[[line] for line in lines]),
+        table=DiagnosticTable(columns=["Line"], rows=[[line] for line in lines]),
         remediation=(
             "Write each record name exactly as the manual does, in upper case, or "
             "delete the line if it is not a record."

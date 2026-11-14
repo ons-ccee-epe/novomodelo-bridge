@@ -1551,7 +1551,7 @@ def test_fill_undeclared_block_hours_falls_back_to_the_last_stage_and_warns(
     week8 = filled.commitments[86].stages[7]
     assert week8.committed_mw == pytest.approx((175.0 * 96 + 30.0 * 240) / 576)
     assert any("last study stage" in r.message for r in caplog.records)
-    assert any("different MW per patamar" in r.message for r in caplog.records)
+    assert any("a different MW in each patamar" in r.message for r in caplog.records)
 
 
 def test_fill_undeclared_block_hours_uniform_week_with_shares_is_silent(

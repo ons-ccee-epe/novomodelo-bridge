@@ -273,7 +273,7 @@ def convert_buses(
                 load = reference_load_mw[bus_id]
                 depth_mw = depth_pu * load
                 scaled_rows.append(
-                    [info["name"], seg["patamar"], depth_pu, load, depth_mw]
+                    [code, info["name"], seg["patamar"], depth_pu, load, depth_mw]
                 )
             deficit_segments.append({"depth_mw": depth_mw, "cost": seg["cost"]})
 
@@ -295,21 +295,24 @@ def convert_buses(
                 category="Deficit",
                 title="Deficit segment depths fixed at the mean load",
                 summary=(
-                    "Deficit segment depths are a fraction of each stage's load in "
-                    "the source model but a fixed MW per bus in novomodelo; each "
-                    "depth is taken at the bus's hours-weighted mean load over the "
-                    "study period."
+                    "In NEWAVE a deficit segment's depth is a fraction of each "
+                    "stage's load, but Novomodelo takes one depth in MW per "
+                    "subsystem, so each depth is the fraction times the "
+                    "subsystem's hours-weighted mean load over the study. The "
+                    "deficit costs differ on stages whose load is far from that "
+                    "mean."
                 ),
                 table=DiagnosticTable(
                     columns=[
-                        "Bus",
+                        "Code",
+                        "Name",
                         "Segment",
-                        "Depth p.u.",
-                        "Mean load MW",
-                        "Depth MW",
+                        "Depth (p.u.)",
+                        "Mean load (MW)",
+                        "Depth (MW)",
                     ],
                     rows=scaled_rows,
-                    justify=["left", "right", "right", "right", "right"],
+                    justify=["right", "left", "right", "right", "right", "right"],
                 ),
             ),
             logger=_LOG,

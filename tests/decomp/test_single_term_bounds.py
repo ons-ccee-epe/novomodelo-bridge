@@ -1221,34 +1221,6 @@ def test_hq_qbom_lowers_to_pumping_flow_bound(
     assert contribution.contributor == "HQ_166"
 
 
-def test_hq_qbom_no_station_warns_and_skips(
-    qbom_id_map: DecompIdMap, effective: EffectiveCadastro
-) -> None:
-    """A QBOM term whose code has no matching pumping station is dropped —
-    skip-not-partial, never a raw ``KeyError`` and never a fall-back to a
-    generic constraint."""
-    record = _qbom_record(
-        constraint_id=166,
-        bounds={0: StageBounds(lower=(5.0,), upper=(80.0,))},
-    )
-    calendar = [_stage(0, 1)]
-
-    with dx.collect() as collected:
-        contributions = single_term_bound_contributions(
-            _case(calendar),
-            qbom_id_map,
-            census=_census(record),
-            pumping_station_ids={},
-            effective=effective,
-            hydro_capacities={},
-        )
-
-    assert contributions == []
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-rhq-qbom-no-station"
-
-
 def _hv_hidr_frame(
     *, code: int = 1, volume_minimo: float = 20.0, volume_maximo: float = 100.0
 ) -> pd.DataFrame:
@@ -1369,29 +1341,3 @@ def test_hv_varm_negative_coefficient_flips_then_adds_floor(
     assert len(contributions) == 1
     assert contributions[0].lower == -10.0
     assert contributions[0].upper == 15.0
-
-
-def test_hv_varm_uncadastred_plant_warns_and_skips(hv_id_map: DecompIdMap) -> None:
-    effective = EffectiveCadastro(base=_hv_hidr_frame(), n_stages=1, stage_varying={})
-    record = _hv_record(
-        constraint_id=7,
-        coefficient=1.0,
-        bounds={0: StageBounds(lower=(5.0,), upper=(30.0,))},
-        code=99,
-    )
-    calendar = [_stage(0, 1)]
-
-    with dx.collect() as collected:
-        contributions = single_term_bound_contributions(
-            _case(calendar),
-            hv_id_map,
-            census=_census(record),
-            pumping_station_ids={},
-            effective=effective,
-            hydro_capacities={},
-        )
-
-    assert contributions == []
-    warnings = [d for d in collected if d.severity is Severity.WARNING]
-    assert len(warnings) == 1
-    assert warnings[0].code == "decomp-rhv-varm-plant-uncadastred"

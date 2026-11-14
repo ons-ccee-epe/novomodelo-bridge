@@ -56,6 +56,9 @@ is read and are the authoritative statements; do not restate them here:
 - `.claude/rules/bridge.md` (`src/`) — twin-track symmetry, the tracked
   novomodelo-gap protocol, presentation and I/O boundaries, exit-code and `--json`
   contracts.
+- `.claude/rules/diagnostics.md` (`src/`) — diagnostic severity by effect on
+  results, one diagnostic per kind of finding, and the wording of titles,
+  summaries, tables and remediations (`tests/test_diagnostic_style.py`).
 
 `.kiro/steering/` is generated from this file and those rules by
 `scripts/gen/sync-kiro-steering.py`; never hand-edit it.

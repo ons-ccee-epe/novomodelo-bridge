@@ -1006,8 +1006,8 @@ class TestGtminAboveCapacityDiagnostic:
 
         [diag] = collected
         assert diag.table is not None
-        assert diag.table.columns[-1] == "Excess MW"
-        assert diag.table.rows == [["TERMO_A", 10, "2-3", 478.03, 477.96, 0.07]]
+        assert diag.table.columns[-1] == "Excess (MW)"
+        assert diag.table.rows == [[10, "TERMO_A", "2-3", 478.03, 477.96, 0.07]]
 
 
 class TestThermalGenerationBounds:

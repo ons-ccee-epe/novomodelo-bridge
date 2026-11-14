@@ -238,7 +238,7 @@ def test_ignored_files_lists_conventional_files_the_index_did_not_resolve(
     ]
 
 
-def test_unindexed_files_diagnostic_is_a_warning_with_one_row_per_file() -> None:
+def test_unindexed_files_diagnostic_is_a_note_with_one_row_per_file() -> None:
     diagnostic = unindexed_files_diagnostic(
         [("tratamento-fpha.csv", HIDRELETRICA_FPHA_REDUCAO_CORTES)],
         remediation="List the record in indices.csv.",
@@ -246,7 +246,7 @@ def test_unindexed_files_diagnostic_is_a_warning_with_one_row_per_file() -> None
 
     assert diagnostic is not None
     assert diagnostic.code == UNINDEXED_FILES_CODE
-    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.severity is Severity.INFO
     assert diagnostic.table is not None
     assert diagnostic.table.rows == [
         ["tratamento-fpha.csv", HIDRELETRICA_FPHA_REDUCAO_CORTES]

@@ -625,8 +625,8 @@ class TestTravelTimeExport:
             d for d in diagnostics if d.code == "dessem-fcf-undated-buckets-priced"
         )
         assert warning.severity is dx.Severity.WARNING
-        assert "15 cut coefficient(s)" in warning.summary  # 3 pools x 5 cuts x 1 bucket
-        assert "Pool 0: 5 coefficient(s) on 1 undated bucket(s)." in warning.notes
+        assert warning.title.endswith("(15)")  # 3 pools x 5 cuts x 1 bucket
+        assert "Pool 0: 5 coefficients on 1 undated bucket." in warning.notes
 
     def test_undated_bucket_warning_has_no_repo_internal_references(
         self, travel_time_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
@@ -1111,7 +1111,7 @@ class TestGnlDiagnostics:
         assert exported.category == "FCF export"
         assert exported.table is not None
         assert exported.table.columns == [
-            "GNL plant",
+            "Code",
             "Name",
             "Submarket",
             "Delivery",
@@ -1171,7 +1171,7 @@ class TestGnlDiagnostics:
         (zero,) = _with_code(diagnostics, _ZERO)
         assert zero.severity == dx.Severity.WARNING
         assert zero.table is not None
-        assert zero.table.columns == ["GNL plant", "Name", "Zero cuts", "Cuts"]
+        assert zero.table.columns == ["Code", "Name", "Zero cuts", "Cuts"]
         assert zero.table.rows == [[87, "GNL_B", 1, 5]]
         (exported,) = _with_code(diagnostics, _EXPORTED)
         assert exported.table is not None

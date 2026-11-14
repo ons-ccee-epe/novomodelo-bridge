@@ -241,7 +241,8 @@ class TestReeResultComparisons:
         assert unmapped == [30]
         assert len(collected) == 1
         assert collected[0].code == "ree-membership-plant-unmapped"
-        assert "30" in " ".join(str(n) for n in collected[0].notes)
+        assert collected[0].table is not None
+        assert collected[0].table.rows == [[30]]
         # The unmapped plant's novomodelo id (2) was never a REE member -- the
         # sums are unaffected (still exactly the two-plant fixture's totals).
         by_variable = {r.variable: r for r in results}
