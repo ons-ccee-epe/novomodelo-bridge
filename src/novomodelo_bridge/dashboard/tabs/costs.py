@@ -54,6 +54,7 @@ from novomodelo_bridge.ui.html.plotly import (
 from novomodelo_bridge.ui.html.plotly import (
     apply_stage_date_axis,
     apply_standard_layout,
+    stage_date_xaxis,
     stage_x_dates,
     stage_x_labels,
 )
@@ -160,8 +161,9 @@ def _build_composition_data(data: DashboardData) -> dict | None:
     Returns:
         A dict with ``category`` and ``component`` (each entry's mean cost
         per stage), ``total`` (``mean``, ``p10`` and ``p90`` of the total cost
-        across scenarios per stage), ``stages`` and ``stage_labels`` (x-axis
-        dates and tick text) and ``colors`` (per view, each entry's colour).
+        across scenarios per stage), ``stages`` (x-axis dates), ``xaxis`` (the
+        :func:`stage_date_xaxis` over them) and ``colors`` (per view, each
+        entry's colour).
         ``None`` when there is no cost, or every cost is zero.
     """
     if data.costs.empty:
@@ -198,11 +200,12 @@ def _build_composition_data(data: DashboardData) -> dict | None:
         for key in ("mean", "p10", "p90")
     }
 
+    x_dates = stage_x_dates(stages, data.stage_dates)
     return {
         **views,
         "total": total,
-        "stages": stage_x_dates(stages, data.stage_dates),
-        "stage_labels": stage_x_labels(stages, data.stage_labels),
+        "stages": x_dates,
+        "xaxis": stage_date_xaxis(x_dates, stage_x_labels(stages, data.stage_labels)),
         "colors": {
             level: {label: cost_color(level, label) for label in entries}
             for level, entries in views.items()
@@ -254,6 +257,7 @@ def _build_composition_section(data: DashboardData) -> str:
         "</div>"
         "<script>\n"
         "const COSTS_COMP_DATA = " + data_json + ";\n"
+        "const COSTS_COMP_LEGEND = " + json_for_script(_LEGEND) + ";\n"
         r"""
 function updateCostsComposition() {
   var sel = document.getElementById('costs-group-sel');
@@ -262,9 +266,19 @@ function updateCostsComposition() {
   var groups = d[view];
   var stages = d.stages;
   var colors = d.colors[view];
-  var traces = [];
+  // The total's P10-P90 band goes under the stack, which would otherwise
+  // show through it in a tinted colour; its P10 edge is redrawn on top.
+  var traces = [{
+    x: stages, y: d.total.p10,
+    name: 'Total P10', showlegend: false, mode: 'lines',
+    line: {width: 0}, hoverinfo: 'skip', legendgroup: 'band'
+  }, {
+    x: stages, y: d.total.p90,
+    name: 'Total P10\u2013P90', mode: 'lines',
+    line: {width: 0}, fill: 'tonexty',
+    fillcolor: 'rgba(55,65,81,0.15)', hoverinfo: 'skip', legendgroup: 'band'
+  }];
 
-  // Stacked area traces (one per category or component)
   Object.keys(groups).forEach(function(name) {
     traces.push({
       x: stages, y: groups[name], name: name,
@@ -275,20 +289,12 @@ function updateCostsComposition() {
     });
   });
 
-  // p10-p90 band (lower bound, invisible reference)
   traces.push({
     x: stages, y: d.total.p10,
     name: 'Total P10', showlegend: false, mode: 'lines',
-    line: {width: 0}, hoverinfo: 'skip'
+    line: {color: '#374151', width: 1, dash: 'dot'},
+    hoverinfo: 'skip', legendgroup: 'band'
   });
-  // p10-p90 band (upper bound, fills to p10)
-  traces.push({
-    x: stages, y: d.total.p90,
-    name: 'Total P10\u2013P90', showlegend: true, mode: 'lines',
-    line: {width: 0}, fill: 'tonexty',
-    fillcolor: 'rgba(55,65,81,0.15)', hoverinfo: 'skip'
-  });
-  // Total mean line
   traces.push({
     x: stages, y: d.total.mean,
     name: 'Total Mean', mode: 'lines',
@@ -298,10 +304,10 @@ function updateCostsComposition() {
 
   var layout = {
     title: {text: 'Cost Composition by Stage (undiscounted, mean across scenarios)', font: {size: 13}, x: 0.02},
-    xaxis: {title: 'Stage', type: 'date', tickmode: 'array', tickvals: d.stages, ticktext: d.stage_labels},
+    xaxis: Object.assign({title: 'Stage'}, d.xaxis),
     yaxis: {title: 'Cost (R$)'},
-    legend: {orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'center', x: 0.5, font: {size: 11}},
-    margin: {l: 60, r: 20, t: 60, b: 50},
+    legend: COSTS_COMP_LEGEND,
+    margin: {l: 60, r: 20, t: 60, b: 10},
     template: 'plotly_white'
   };
   Plotly.react('costs-comp', traces, layout, {responsive: true});

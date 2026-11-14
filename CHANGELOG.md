@@ -75,6 +75,11 @@ links are cobre-bridge's.
   block's bound, the dashboard drew a constraint it could not evaluate at zero,
   and `compare` scaled a DECOMP `RHE` value by the stage's hours instead of the
   730.5 h month of its MWmês unit; build the dashboard and the report again.
+- **`dashboard` and `compare` charts had overlapping labels.** Stage axes
+  labelled every stage, so a long study's dates ran into each other, and a
+  legend that wrapped into several rows covered the chart title or the axis
+  labels. Stage axes now label at most eight stages and legends sit below the
+  plot; build the dashboard and the report again.
 
 ## [0.20.0] - 2026-11-03
 

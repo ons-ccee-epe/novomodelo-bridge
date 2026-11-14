@@ -235,7 +235,7 @@ def test_build_line_explorer_has_two_options() -> None:
 
 
 def test_build_line_explorer_embeds_js_data() -> None:
-    """build_line_explorer embeds NW_DATA and NW_LABELS JS constants."""
+    """build_line_explorer embeds the NW_DATA and NW_XAXIS JS constants."""
     exchanges_lf = _make_exchanges_lf([0, 1])
     bh_df = _make_bh_df()
     names = _make_names([0, 1])
@@ -245,7 +245,7 @@ def test_build_line_explorer_embeds_js_data() -> None:
     html = build_line_explorer(exchanges_lf, names, stage_labels, stage_dates, bh_df)
 
     assert "NW_DATA" in html
-    assert "NW_LABELS" in html
+    assert "const NW_XAXIS = " in html
     assert "updateNetworkDetail" in html
 
 

@@ -6,6 +6,9 @@ onclick attributes — do not rename function parameters.
 
 from __future__ import annotations
 
+from novomodelo_bridge.ui.html.document import json_for_script
+from novomodelo_bridge.ui.html.plotly import LEGEND_DEFAULTS
+
 PLOTLY_TITLE_SHIM_JS: str = """
 (function() {
     // plotly.js 3.x dropped bare-string `title` support (layout, axis, scene
@@ -324,9 +327,9 @@ function plotlyLayout(overrides) {
         // Stage x-values are ISO dates (see *_DATES); a date axis spaces the
         // stages by true calendar distance (weekly stages closer than a
         // following monthly one). Overridable per call.
-        xaxis: { type: 'date' },
+        xaxis: { type: 'date', automargin: true },
         margin: { l: 60, r: 30, t: 60, b: 50 },
-        legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'center', x: 0.5, font: { size: 11 } },
+        legend: __LEGEND_DEFAULTS__,
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)'
     };
@@ -446,7 +449,7 @@ function initComparisonMode(config) {
         }
     }, false);
 }
-"""
+""".replace("__LEGEND_DEFAULTS__", json_for_script(LEGEND_DEFAULTS))
 
 SUB_TAB_JS: str = """
 // Sub-tab switching: shows/hides panels within a data-subtab-group container.

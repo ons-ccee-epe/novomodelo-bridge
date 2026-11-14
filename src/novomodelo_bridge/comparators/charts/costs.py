@@ -194,9 +194,8 @@ def cost_breakdown_chart(
         "yaxis": {"title": "Cost (10⁹ R$)"},
         "barmode": "stack",
         "bargap": 0.4,
-        # Vertical legend on the right — the cost map has 15+ categories
-        # which wrap into 3+ rows when laid out horizontally above the
-        # plot and collide with the chart title.
+        # Vertical legend on the right — the cost map has 15+ categories,
+        # which a horizontal legend wraps into 3+ rows.
         "legend": {
             "orientation": "v",
             "yanchor": "top",
@@ -466,7 +465,6 @@ def _stage_cost_subplot(
         "title": title,
         "xaxis": {"title": "Stage (0-based)"},
         "yaxis": {"title": "Cost (10⁶ R$)"},
-        "legend": {"orientation": "h", "y": -0.2},
     }
     return _plotly_div(traces, layout)
 
@@ -614,6 +612,5 @@ def other_costs_chart(
         "title": "Other Costs — COPER − CTERM (non-thermal operation)",
         "xaxis": {"title": "Stage (0-based)"},
         "yaxis": {"title": "Cost (10⁶ R$)"},
-        "legend": {"orientation": "h", "y": -0.2},
     }
     return _plotly_div(traces, layout)

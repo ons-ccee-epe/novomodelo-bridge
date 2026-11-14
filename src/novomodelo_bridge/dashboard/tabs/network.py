@@ -30,13 +30,15 @@ from novomodelo_bridge.ui.html.document import (
     wrap_chart,
 )
 from novomodelo_bridge.ui.html.plotly import (
-    MARGIN_DEFAULTS as _MARGIN,
-)
-from novomodelo_bridge.ui.html.plotly import (
+    LEGEND_DEFAULTS,
     apply_stage_date_axis,
     fig_to_html,
+    stage_date_xaxis,
     stage_x_dates,
     stage_x_labels,
+)
+from novomodelo_bridge.ui.html.plotly import (
+    MARGIN_DEFAULTS as _MARGIN,
 )
 from novomodelo_bridge.ui.theme import BAND_FILL
 
@@ -185,7 +187,7 @@ def build_line_explorer(
         for lid, d in sorted(line_data.items(), key=lambda x: x[1]["name"])
     )
     data_json = json_for_script(line_data)
-    labels_json = json_for_script(xlabels)
+    xaxis_json = json_for_script(stage_date_xaxis(xdates, xlabels))
     dates_json = json_for_script(xdates)
 
     chart_html = (
@@ -207,10 +209,12 @@ def build_line_explorer(
         + "<script>\n"
         + "const NW_DATA = "
         + data_json
-        + ";\nconst NW_LABELS = "
-        + labels_json
+        + ";\nconst NW_XAXIS = "
+        + xaxis_json
         + ";\nconst NW_DATES = "
         + dates_json
+        + ";\nconst NW_LEGEND = "
+        + json_for_script(LEGEND_DEFAULTS)
         + ";\n"
         + r"""
 function _nw_band(lbl, p10, p90, color) {
@@ -223,10 +227,8 @@ function _nw_line(nm, y, c, w, dash) {
   return {x:NW_DATES, y:y, name:nm, mode:'lines',
           line:{color:c, width:w||2, dash:dash||'solid'}};
 }
-var _NW_L = {hovermode:'x unified', margin:{l:60,r:20,t:60,b:60},
-             xaxis:{type:'date', tickmode:'array', tickvals:NW_DATES, ticktext:NW_LABELS},
-             legend:{orientation:'h',yanchor:'bottom',y:1.02,
-                     xanchor:'center',x:0.5,font:{size:11}}};
+var _NW_L = {hovermode:'x unified', margin:{l:60,r:20,t:60,b:10},
+             xaxis:NW_XAXIS, legend:NW_LEGEND};
 var _NW_C = {responsive:true};
 
 function updateNetworkDetail() {

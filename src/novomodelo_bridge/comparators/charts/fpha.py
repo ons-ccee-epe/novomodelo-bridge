@@ -18,6 +18,7 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NOVOMODELO,
 )
 from novomodelo_bridge.ui.html.document import escape_text, json_for_script
+from novomodelo_bridge.ui.html.plotly import LEGEND_DEFAULTS as _LEGEND
 from novomodelo_bridge.ui.html.plotly import MARGIN_DEFAULTS as _MARGIN
 
 
@@ -574,11 +575,12 @@ def fpha_slice_chart(
         if (f.novomodelo_q_m3s !== null) traces.push({{x: [f.novomodelo_q_m3s],
             y: [f.novomodelo_gh_mw], name: 'Novomodelo mean point', mode: 'markers',
             marker: {{color: '{COLOR_NOVOMODELO}', size: 11, symbol: 'diamond'}}}});
-        var legend = {{orientation: 'h', y: -0.3, yanchor: 'top'}};
-        var margin = Object.assign({{}}, {json_for_script(_MARGIN)}, {{b: 110}});
+        var legend = {json_for_script(_LEGEND)};
+        var margin = {json_for_script(_MARGIN)};
         Plotly.react('op-slice', traces, {{
             title: 'GH vs turbined flow at the {ref} mean storage and spill',
-            xaxis: {{title: 'Turbined (m³/s)'}}, yaxis: {{title: 'GH (MW)'}},
+            xaxis: {{title: 'Turbined (m³/s)', automargin: true}},
+            yaxis: {{title: 'GH (MW)'}},
             hovermode: 'x unified', template: 'plotly_white', height: 460,
             legend: legend, margin: margin}},
             {{responsive: true}});
@@ -592,7 +594,8 @@ def fpha_slice_chart(
                 mode: 'lines', line: {{color: '{COLOR_NOVOMODELO}', width: 2}}}}];
         Plotly.react('op-gap', gaps, {{
             title: 'Planes − exact at the {ref} mean storage and spill (MW)',
-            xaxis: {{title: 'Turbined (m³/s)'}}, yaxis: {{title: 'ΔGH (MW)'}},
+            xaxis: {{title: 'Turbined (m³/s)', automargin: true}},
+            yaxis: {{title: 'ΔGH (MW)'}},
             hovermode: 'x unified', template: 'plotly_white', height: 340,
             legend: legend, margin: margin}},
             {{responsive: true}});

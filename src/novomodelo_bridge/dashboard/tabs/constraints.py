@@ -39,7 +39,12 @@ from novomodelo_bridge.ui.html.document import (
     metrics_grid,
     section_title,
 )
-from novomodelo_bridge.ui.html.plotly import stage_x_dates, stage_x_labels
+from novomodelo_bridge.ui.html.plotly import (
+    LEGEND_DEFAULTS,
+    stage_date_xaxis,
+    stage_x_dates,
+    stage_x_labels,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -355,8 +360,9 @@ def _build_lhs_section(
         data.stage_labels,
     )
     data_json = json_for_script(lhs_data)
-    # ISO date x-positions (proportional date axis); xlabels stay the tick text.
-    dates_json = json_for_script(stage_x_dates(lhs_data["stages"], data.stage_dates))
+    xdates = stage_x_dates(lhs_data["stages"], data.stage_dates)
+    dates_json = json_for_script(xdates)
+    xaxis_json = json_for_script(stage_date_xaxis(xdates, lhs_data["xlabels"]))
 
     options_html = "\n".join(
         f'<option value="{c["id"]}">{escape_text(c["name"])}</option>'
@@ -401,6 +407,10 @@ def _build_lhs_section(
         + ";\n"
         + "const GC_LHS_DATES = "
         + dates_json
+        + ";\nconst GC_LHS_XAXIS = "
+        + xaxis_json
+        + ";\nconst GC_LHS_LEGEND = "
+        + json_for_script(LEGEND_DEFAULTS)
         + ";\n"
         + _LHS_CHART_JS
         + "</script>"
@@ -491,11 +501,9 @@ function updateConstraintChart() {
     title: cdata.name + ' — LHS vs Bound'
       + (byBlock ? ' by block' : ' (hours-weighted stage mean)'),
     hovermode: 'x unified',
-    xaxis: {type: 'date', tickmode: 'array', tickvals: xdates,
-            ticktext: GC_LHS_DATA.xlabels, automargin: true},
+    xaxis: GC_LHS_XAXIS,
     margin: {l: 60, r: 20, t: 60, b: 10},
-    legend: {orientation: 'h', yref: 'container', y: 0, yanchor: 'bottom',
-             xanchor: 'center', x: 0.5, font: {size: 11}}
+    legend: GC_LHS_LEGEND
   };
   if (byBlock) {
     layout.grid = {rows: panels.length, columns: 1, pattern: 'coupled',

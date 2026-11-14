@@ -31,6 +31,7 @@ from novomodelo_bridge.ui.html.document import (
     wrap_chart,
 )
 from novomodelo_bridge.ui.html.plotly import (
+    LEGEND_DEFAULTS,
     MARGIN_DEFAULTS,
     apply_stage_date_axis,
     apply_standard_layout,
@@ -314,14 +315,7 @@ def _chart_gen_mix(data: DashboardData) -> go.Figure | None:
     fig.update_layout(
         xaxis_title="Stage",
         yaxis_title="Average MW",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5,
-            font=dict(size=11),
-        ),
+        legend=LEGEND_DEFAULTS,
         margin=MARGIN_DEFAULTS,
     )
     all_stages = sorted(data.stage_dates)

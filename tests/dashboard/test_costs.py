@@ -790,9 +790,8 @@ def _make_composition_costs_df(
 def test_build_composition_data_keys() -> None:
     """_build_composition_data must return a dict with required top-level keys.
 
-    Keys are category, component, total, stages, colors — plus ``stage_labels``
-    (the tick text paired with the ISO date positions in ``stages`` for the
-    proportional date x-axis).
+    Keys are category, component, total, stages, colors — plus ``xaxis``
+    (the stage-date axis over the ISO date positions in ``stages``).
     """
     costs = _make_composition_costs_df()
     data = _make_mock_data_full(costs=costs, n_scenarios=2, n_stages=3)
@@ -803,7 +802,7 @@ def test_build_composition_data_keys() -> None:
         "component",
         "total",
         "stages",
-        "stage_labels",
+        "xaxis",
         "colors",
     }
 
