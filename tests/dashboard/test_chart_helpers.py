@@ -35,6 +35,7 @@ from novomodelo_bridge.dashboard.chart_helpers import (
     make_chart_card,
     stage_hours_weighted_mean,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 from tests.golden_utils import assert_html_golden
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,9 @@ def test_compute_percentiles_pandas_basic(
     five_scenarios_three_stages: pd.DataFrame,
 ) -> None:
     """Five scenarios x three stages produces 3 rows with the expected columns."""
-    result = compute_percentiles(five_scenarios_three_stages, ["stage_id"], "value")
+    result = compute_percentiles(
+        five_scenarios_three_stages, ["stage_id"], "value", weights=UNIFORM
+    )
 
     assert result.shape[0] == 3
     assert list(result.columns) == ["stage_id", "mean", "p10", "p50", "p90"]
@@ -86,7 +89,9 @@ def test_compute_percentiles_pandas_values(
     five_scenarios_three_stages: pd.DataFrame,
 ) -> None:
     """Computed mean equals the arithmetic mean of the five scenarios per stage."""
-    result = compute_percentiles(five_scenarios_three_stages, ["stage_id"], "value")
+    result = compute_percentiles(
+        five_scenarios_three_stages, ["stage_id"], "value", weights=UNIFORM
+    )
     # For stage 1: values are 11, 12, 13, 14, 15 -> mean = 13.0
     stage1 = result[result["stage_id"] == 1]
     assert stage1["mean"].iloc[0] == pytest.approx(13.0)
@@ -103,7 +108,7 @@ def test_compute_percentiles_polars_input(
     """Polars DataFrame input is converted and returns correct pandas output."""
     polars_df = pl.from_pandas(five_scenarios_three_stages)
 
-    result = compute_percentiles(polars_df, ["stage_id"], "value")
+    result = compute_percentiles(polars_df, ["stage_id"], "value", weights=UNIFORM)
 
     assert isinstance(result, pd.DataFrame)
     assert result.shape[0] == 3
@@ -122,7 +127,7 @@ def test_compute_percentiles_empty() -> None:
     """Empty DataFrame returns empty result with the expected column names."""
     empty_df = pd.DataFrame(columns=["stage_id", "scenario_id", "value"])
 
-    result = compute_percentiles(empty_df, ["stage_id"], "value")
+    result = compute_percentiles(empty_df, ["stage_id"], "value", weights=UNIFORM)
 
     assert result.empty
     assert list(result.columns) == ["stage_id", "mean", "p10", "p50", "p90"]
@@ -141,6 +146,7 @@ def test_compute_percentiles_custom_percentiles(
         five_scenarios_three_stages,
         ["stage_id"],
         "value",
+        weights=UNIFORM,
         percentiles=(0.05, 0.5, 0.95),
     )
 
@@ -606,7 +612,7 @@ def _make_costs_df(n_scenarios: int = 100, n_stages: int = 10) -> pd.DataFrame:
 def test_cost_summary_shape(level: CostLevel) -> None:
     """Output has the summary columns and one row per entry plus Other."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, level)
+    result = compute_cost_summary(df, level, UNIFORM)
 
     assert list(result.columns) == _SUMMARY_COLUMNS
     assert set(result["group"]) == {*COST_GROUPS[level], OTHER_COSTS}
@@ -616,7 +622,7 @@ def test_cost_summary_shape(level: CostLevel) -> None:
 def test_cost_summary_pct_sums_to_100(level: CostLevel) -> None:
     """The 'pct' column sums to approximately 100.0 across all groups."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, level)
+    result = compute_cost_summary(df, level, UNIFORM)
 
     assert result["pct"].sum() == pytest.approx(100.0, rel=1e-4)
 
@@ -624,7 +630,7 @@ def test_cost_summary_pct_sums_to_100(level: CostLevel) -> None:
 def test_cost_summary_sorted_descending() -> None:
     """Rows are sorted by mean in descending order."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, "component")
+    result = compute_cost_summary(df, "component", UNIFORM)
 
     means = result["mean"].tolist()
     assert means == sorted(means, reverse=True)
@@ -633,7 +639,7 @@ def test_cost_summary_sorted_descending() -> None:
 def test_cost_summary_mean_is_the_expected_npv() -> None:
     """Each entry's mean is the scenario mean of its discounted stage sum."""
     df = _make_costs_df(n_scenarios=4, n_stages=3)
-    result = compute_cost_summary(df, "component").set_index("group")
+    result = compute_cost_summary(df, "component", UNIFORM).set_index("group")
 
     discounted = df["thermal_cost"] * df["discount_factor"]
     expected = discounted.groupby(df["scenario_id"]).sum().mean()
@@ -644,7 +650,7 @@ def test_cost_summary_ignores_row_keys_and_aggregates() -> None:
     """``node_id`` and ``immediate_cost`` add nothing to Other or the total."""
     df = _make_costs_df(n_scenarios=4, n_stages=3)
     df["node_id"] = 7
-    result = compute_cost_summary(df, "category").set_index("group")
+    result = compute_cost_summary(df, "category", UNIFORM).set_index("group")
 
     assert result.loc[OTHER_COSTS, "mean"] == pytest.approx(0.0)
     components = ["thermal_cost", "deficit_cost", "spillage_cost"]
@@ -656,8 +662,8 @@ def test_cost_summary_ignores_row_keys_and_aggregates() -> None:
 def test_cost_summary_category_and_component_totals_agree() -> None:
     """Both breakdowns split the same expected cost."""
     df = _make_costs_df()
-    categories = compute_cost_summary(df, "category")
-    components = compute_cost_summary(df, "component")
+    categories = compute_cost_summary(df, "category", UNIFORM)
+    components = compute_cost_summary(df, "component", UNIFORM)
 
     assert categories["mean"].sum() == pytest.approx(components["mean"].sum())
 
@@ -665,7 +671,7 @@ def test_cost_summary_category_and_component_totals_agree() -> None:
 def test_cost_summary_empty() -> None:
     """Empty input returns an empty DataFrame with the expected columns."""
     empty = pd.DataFrame(columns=["scenario_id", "stage_id", "thermal_cost"])
-    result = compute_cost_summary(empty, "category")
+    result = compute_cost_summary(empty, "category", UNIFORM)
 
     assert result.empty
     assert list(result.columns) == _SUMMARY_COLUMNS
@@ -674,7 +680,7 @@ def test_cost_summary_empty() -> None:
 def test_cost_summary_p10_le_mean_le_p90() -> None:
     """For every row with spread: p10 <= mean <= p90."""
     df = _make_costs_df()
-    result = compute_cost_summary(df, "component")
+    result = compute_cost_summary(df, "component", UNIFORM)
 
     non_zero = result[result["mean"] > 0]
     for _, row in non_zero.iterrows():
@@ -703,7 +709,7 @@ def test_cost_color_gives_every_entry_its_own_colour(level: CostLevel) -> None:
 
 def test_build_cost_table_category_headers() -> None:
     """A category table has one label column and the R$ statistics."""
-    summary = compute_cost_summary(_make_costs_df(), "category")
+    summary = compute_cost_summary(_make_costs_df(), "category", UNIFORM)
     html = build_cost_table(summary, "category")
 
     assert re.findall(r"<th>(.*?)</th>", html) == [
@@ -719,7 +725,7 @@ def test_build_cost_table_category_headers() -> None:
 
 def test_build_cost_table_component_names_its_category() -> None:
     """A component table names each component's category beside it."""
-    summary = compute_cost_summary(_make_costs_df(), "component")
+    summary = compute_cost_summary(_make_costs_df(), "component", UNIFORM)
     html = build_cost_table(summary, "component")
 
     assert re.findall(r"<th>(.*?)</th>", html)[:2] == ["Component", "Category"]
@@ -729,14 +735,14 @@ def test_build_cost_table_component_names_its_category() -> None:
 
 def test_build_cost_table_contains_data_table_class() -> None:
     """build_cost_table must return HTML with class 'data-table'."""
-    summary = compute_cost_summary(_make_costs_df(), "category")
+    summary = compute_cost_summary(_make_costs_df(), "category", UNIFORM)
     html = build_cost_table(summary, "category")
     assert 'class="data-table"' in html
 
 
 def test_build_cost_table_has_tbody_with_rows() -> None:
     """build_cost_table must include a <tbody> with at least one <tr>."""
-    summary = compute_cost_summary(_make_costs_df(), "category")
+    summary = compute_cost_summary(_make_costs_df(), "category", UNIFORM)
     html = build_cost_table(summary, "category")
     assert "<tbody>" in html
     assert "<tr>" in html
@@ -769,7 +775,7 @@ def _one_row_summary(**overrides: float) -> pd.DataFrame:
 
 def test_chart_cost_bar_vertical_bars_coloured_by_taxonomy() -> None:
     """One vertical bar trace, each bar in its component's colour."""
-    summary = compute_cost_summary(_make_costs_df(), "component")
+    summary = compute_cost_summary(_make_costs_df(), "component", UNIFORM)
     fig = chart_cost_bar(summary, "component")
 
     bar_traces = [t for t in fig.data if isinstance(t, go.Bar)]
@@ -784,7 +790,7 @@ def test_chart_cost_bar_vertical_bars_coloured_by_taxonomy() -> None:
 
 def test_chart_cost_bar_skips_zero_entries() -> None:
     """Entries with no cost get no bar."""
-    summary = compute_cost_summary(_make_costs_df(), "component")
+    summary = compute_cost_summary(_make_costs_df(), "component", UNIFORM)
     fig = chart_cost_bar(summary, "component")
 
     assert set(fig.data[0].x) == {"Thermal", "Deficit", "Spillage"}

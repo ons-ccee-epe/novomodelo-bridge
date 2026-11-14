@@ -27,8 +27,9 @@ Three conventions, each chosen so neither side is silently privileged:
   identically that row's value, so only a genuine scenario fan's aggregate
   changes; a deck with no ``relato``/``relato2`` probability source at all
   degrades to :func:`_scenario_mean`'s original unweighted mean rather than
-  raising. novomodelo's per-stage statistics are already an expectation over its
-  own (equiprobable) simulation scenarios, so the two sides stay comparable.
+  raising. novomodelo's side is the expectation under its own scenario
+  probabilities, which for a converted case are these same tree
+  probabilities, so the two sides stay comparable.
   **The Overview operating cost** (:func:`_cost_frames`) predates this and
   keeps its own, independent path: it reads the same real ``probabilidade``
   directly off its already-unioned ``relato``/``relato2`` cost frame via

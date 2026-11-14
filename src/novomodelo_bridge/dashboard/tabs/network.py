@@ -23,6 +23,7 @@ from novomodelo_bridge.dashboard.chart_helpers import (
     stage_hours_weighted_mean,
 )
 from novomodelo_bridge.dashboard.data import entity_name
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
     json_for_script,
@@ -66,6 +67,8 @@ def build_line_explorer(
     bh_df: pl.DataFrame,
     line_bounds: pd.DataFrame | None = None,
     line_meta: list[dict] | None = None,
+    *,
+    weights: ScenarioWeights,
 ) -> str:
     """Build HTML with embedded per-line p10/p50/p90 data and JS dropdown.
 
@@ -86,6 +89,7 @@ def build_line_explorer(
             ``direct_mw``, ``reverse_mw``.  May be None or empty.
         line_meta: List of line metadata dicts, each with keys ``id``,
             ``direct_capacity_mw``, ``reverse_capacity_mw``.  May be None.
+        weights: The probability of each simulation scenario.
 
     Returns:
         HTML string with ``<select id="nw-select">``, chart divs
@@ -109,6 +113,7 @@ def build_line_explorer(
 
     if ex0.height == 0:
         return "<p>No line flow data available.</p>"
+    ex0 = weights.attach(ex0)
 
     stages = sorted(ex0["stage_id"].unique().to_list())
     xlabels = stage_x_labels(stages, stage_labels)
@@ -138,15 +143,8 @@ def build_line_explorer(
         pcts = (
             ldf.group_by("stage_id")
             .agg(
-                pl.col("net_flow_mw")
-                .quantile(0.1, interpolation="linear")
-                .alias("p10"),
-                pl.col("net_flow_mw")
-                .quantile(0.5, interpolation="linear")
-                .alias("p50"),
-                pl.col("net_flow_mw")
-                .quantile(0.9, interpolation="linear")
-                .alias("p90"),
+                weights.quantile("net_flow_mw", q).alias(key)
+                for key, q in (("p10", 0.1), ("p50", 0.5), ("p90", 0.9))
             )
             .sort("stage_id")
         )
@@ -415,6 +413,8 @@ def build_bus_balance(
     line_meta: list[dict],
     bus_names: dict[int, str],
     bh_df: pl.DataFrame,
+    *,
+    weights: ScenarioWeights,
 ) -> str:
     """Build a horizontal bar chart of mean net import/export per bus.
 
@@ -429,6 +429,7 @@ def build_bus_balance(
             ``source_bus_id``, ``target_bus_id``.
         bus_names: Mapping from bus_id to display name.
         bh_df: Block-hours DataFrame for weighted averaging.
+        weights: The probability of each simulation scenario.
 
     Returns:
         HTML string containing the Plotly bar chart.
@@ -490,10 +491,7 @@ def build_bus_balance(
     if not bus_ids_in_meta:
         return "<p>No bus balance data available.</p>"
 
-    # per_scenario_bus_balance[bus_id] = [balance_scen0, balance_scen1, ...]
-    per_scenario_bus_balance: dict[int, list[float]] = {
-        bid: [] for bid in bus_ids_in_meta
-    }
+    balances: list[tuple[int, int, float]] = []
     for scen in sorted(scenario_ids):
         bus_bal_scen: dict[int, float] = {bid: 0.0 for bid in bus_ids_in_meta}
         for lm in line_meta:
@@ -507,31 +505,26 @@ def build_bus_balance(
                 bus_bal_scen[int(tgt_bus)] = bus_bal_scen.get(int(tgt_bus), 0.0) + flow
             if src_bus is not None:
                 bus_bal_scen[int(src_bus)] = bus_bal_scen.get(int(src_bus), 0.0) - flow
-        for bid in bus_ids_in_meta:
-            per_scenario_bus_balance[bid].append(bus_bal_scen[bid])
+        balances.extend((int(scen), bid, bal) for bid, bal in bus_bal_scen.items())
 
-    # Derive mean, p10, p90 per bus from scenario distribution
-    bus_stats: dict[int, tuple[float, float, float]] = {}
-    for bid, values in per_scenario_bus_balance.items():
-        if not values:
-            continue
-        sorted_vals = sorted(values)
-        n = len(sorted_vals)
-        mean_val = sum(sorted_vals) / n
-
-        # Linear interpolation quantile
-        def _quantile(vs: list[float], q: float) -> float:
-            if len(vs) == 1:
-                return vs[0]
-            idx = q * (len(vs) - 1)
-            lo = int(idx)
-            hi = min(lo + 1, len(vs) - 1)
-            frac = idx - lo
-            return vs[lo] * (1.0 - frac) + vs[hi] * frac
-
-        p10_val = _quantile(sorted_vals, 0.1)
-        p90_val = _quantile(sorted_vals, 0.9)
-        bus_stats[bid] = (mean_val, p10_val, p90_val)
+    per_scenario_balance = pl.DataFrame(
+        balances,
+        schema={"scenario_id": pl.Int64, "bus_id": pl.Int64, "balance": pl.Float64},
+        orient="row",
+    )
+    stats = (
+        weights.attach(per_scenario_balance)
+        .group_by("bus_id")
+        .agg(
+            weights.mean("balance").alias("mean"),
+            weights.quantile("balance", 0.1).alias("p10"),
+            weights.quantile("balance", 0.9).alias("p90"),
+        )
+        .select("bus_id", "mean", "p10", "p90")
+    )
+    bus_stats: dict[int, tuple[float, float, float]] = {
+        int(bid): (mean, p10, p90) for bid, mean, p10, p90 in stats.iter_rows()
+    }
 
     if not bus_stats:
         return "<p>No bus balance data available.</p>"
@@ -631,6 +624,7 @@ def render(data: DashboardData) -> str:
             data.bh_df,
             data.line_bounds,
             data.line_meta,
+            weights=data.scenario_weights,
         )
         + section_title("Bus Balance")
         + chart_grid(
@@ -640,6 +634,7 @@ def render(data: DashboardData) -> str:
                     data.line_meta,
                     data.bus_names,
                     data.bh_df,
+                    weights=data.scenario_weights,
                 )
             ],
             single=True,

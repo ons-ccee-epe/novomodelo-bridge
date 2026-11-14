@@ -80,6 +80,12 @@ links are cobre-bridge's.
   legend that wrapped into several rows covered the chart title or the axis
   labels. Stage axes now label at most eight stages and legends sit below the
   plot; build the dashboard and the report again.
+- **`dashboard` and `compare` treated a converted DECOMP case's scenarios as
+  equally likely.** Their means, costs, spreads and P10–P90 bands now weigh
+  each scenario by its probability, and the `dashboard-unweighted-tree-averages`
+  warning is gone; build the dashboard and the report again.
+- **`dashboard` stopped with a traceback on a Novomodelo output it could not
+  read.** It now exits 1 and reports the file.
 
 ## [0.20.0] - 2026-11-03
 

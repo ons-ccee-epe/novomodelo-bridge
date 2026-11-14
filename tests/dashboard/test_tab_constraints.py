@@ -33,6 +33,7 @@ from novomodelo_bridge.dashboard.tabs.constraints_utils import (
     derive_constraint_shape,
 )
 from novomodelo_bridge.novomodelo.constraint_expr import BLOCK_HOURS_SCHEMA
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 
 # ---------------------------------------------------------------------------
 # Helpers / data factories
@@ -175,6 +176,7 @@ def _make_mock_data(
     auto-chaining from causing OOM.
     """
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.gc_constraints = (
         constraints if constraints is not None else _make_constraints()
     )
@@ -403,6 +405,7 @@ def _lhs_data(
         block_hours if block_hours is not None else _hours(n_stages),
         block_names or {},
         {i: f"S{i}" for i in range(n_stages)},
+        UNIFORM,
     )
 
 

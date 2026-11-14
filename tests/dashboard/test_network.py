@@ -22,6 +22,7 @@ from novomodelo_bridge.dashboard.tabs.network import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 
 # ---------------------------------------------------------------------------
 # Data factories
@@ -150,6 +151,8 @@ def _make_mock_data(
     line_meta = [] if empty_line_meta else _make_line_meta(line_ids)
 
     data = MagicMock()
+
+    data.scenario_weights = UNIFORM
     data.line_meta = line_meta
     data.line_bounds = _make_line_bounds(line_ids)
     data.names = _make_names(line_ids)
@@ -188,6 +191,7 @@ def test_module_attributes() -> None:
 def test_can_render_true_when_simulation_available() -> None:
     """can_render should return True when simulation data is present."""
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.simulation_available = True
     assert can_render(data) is True
 
@@ -195,6 +199,7 @@ def test_can_render_true_when_simulation_available() -> None:
 def test_can_render_false_when_simulation_missing() -> None:
     """can_render must return False on training-only cases."""
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.simulation_available = False
     assert can_render(data) is False
 
@@ -212,7 +217,9 @@ def test_build_line_explorer_contains_select_and_divs() -> None:
     stage_labels = _make_stage_labels(3)
     stage_dates = _make_stage_dates(3)
 
-    html = build_line_explorer(exchanges_lf, names, stage_labels, stage_dates, bh_df)
+    html = build_line_explorer(
+        exchanges_lf, names, stage_labels, stage_dates, bh_df, weights=UNIFORM
+    )
 
     assert 'id="nw-select"' in html
     assert 'id="nw-net"' in html
@@ -229,7 +236,9 @@ def test_build_line_explorer_has_two_options() -> None:
     stage_labels = _make_stage_labels(3)
     stage_dates = _make_stage_dates(3)
 
-    html = build_line_explorer(exchanges_lf, names, stage_labels, stage_dates, bh_df)
+    html = build_line_explorer(
+        exchanges_lf, names, stage_labels, stage_dates, bh_df, weights=UNIFORM
+    )
 
     assert html.count("<option") == 2
 
@@ -242,7 +251,9 @@ def test_build_line_explorer_embeds_js_data() -> None:
     stage_labels = _make_stage_labels()
     stage_dates = _make_stage_dates()
 
-    html = build_line_explorer(exchanges_lf, names, stage_labels, stage_dates, bh_df)
+    html = build_line_explorer(
+        exchanges_lf, names, stage_labels, stage_dates, bh_df, weights=UNIFORM
+    )
 
     assert "NW_DATA" in html
     assert "const NW_XAXIS = " in html
@@ -257,7 +268,9 @@ def test_build_line_explorer_auto_trigger() -> None:
     stage_labels = _make_stage_labels()
     stage_dates = _make_stage_dates()
 
-    html = build_line_explorer(exchanges_lf, names, stage_labels, stage_dates, bh_df)
+    html = build_line_explorer(
+        exchanges_lf, names, stage_labels, stage_dates, bh_df, weights=UNIFORM
+    )
 
     assert "DOMContentLoaded" in html
 
@@ -270,7 +283,9 @@ def test_build_line_explorer_empty_exchanges_returns_no_data() -> None:
     stage_labels = _make_stage_labels()
     stage_dates = _make_stage_dates()
 
-    html = build_line_explorer(exchanges_lf, names, stage_labels, stage_dates, bh_df)
+    html = build_line_explorer(
+        exchanges_lf, names, stage_labels, stage_dates, bh_df, weights=UNIFORM
+    )
 
     assert "<p>" in html
     assert "nw-select" not in html
@@ -296,7 +311,14 @@ def test_build_line_explorer_bounds_in_data() -> None:
     line_meta = _make_line_meta([0, 1])
 
     html = build_line_explorer(
-        exchanges_lf, names, stage_labels, stage_dates, bh_df, line_bounds, line_meta
+        exchanges_lf,
+        names,
+        stage_labels,
+        stage_dates,
+        bh_df,
+        line_bounds,
+        line_meta,
+        weights=UNIFORM,
     )
 
     # nw-util chart div was removed
@@ -326,7 +348,14 @@ def test_build_line_explorer_net_and_bound_keys() -> None:
     line_meta = _make_line_meta([0, 1])
 
     html = build_line_explorer(
-        exchanges_lf, names, stage_labels, stage_dates, bh_df, line_bounds, line_meta
+        exchanges_lf,
+        names,
+        stage_labels,
+        stage_dates,
+        bh_df,
+        line_bounds,
+        line_meta,
+        weights=UNIFORM,
     )
 
     # Extract NW_DATA JSON from the embedded script
@@ -397,7 +426,14 @@ def test_build_line_explorer_bound_values() -> None:
     )
 
     html = build_line_explorer(
-        exchanges_lf, names, stage_labels, stage_dates, bh_df, line_bounds, line_meta
+        exchanges_lf,
+        names,
+        stage_labels,
+        stage_dates,
+        bh_df,
+        line_bounds,
+        line_meta,
+        weights=UNIFORM,
     )
 
     match = re.search(r"const NW_DATA = (\{.*?\});", html, re.DOTALL)
@@ -423,7 +459,14 @@ def test_build_line_explorer_bound_lines_in_js() -> None:
     line_meta = _make_line_meta([0, 1])
 
     html = build_line_explorer(
-        exchanges_lf, names, stage_labels, stage_dates, bh_df, line_bounds, line_meta
+        exchanges_lf,
+        names,
+        stage_labels,
+        stage_dates,
+        bh_df,
+        line_bounds,
+        line_meta,
+        weights=UNIFORM,
     )
 
     # Bound data is now rendered as traces on the single nw-net chart
@@ -592,7 +635,7 @@ def test_build_bus_balance_returns_plotly_bar_html() -> None:
     line_meta = _make_line_meta([0, 1])
     bus_names = {0: "Bus Alpha", 1: "Bus Beta", 2: "Bus Gamma"}
 
-    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df)
+    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df, weights=UNIFORM)
 
     # Should contain a chart div
     assert "<div" in html
@@ -606,7 +649,7 @@ def test_build_bus_balance_includes_bus_names() -> None:
     line_meta = _make_line_meta([0, 1])
     bus_names = {0: "Bus Alpha", 1: "Bus Beta", 2: "Bus Gamma"}
 
-    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df)
+    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df, weights=UNIFORM)
 
     # Bus names should appear somewhere in the rendered Plotly HTML
     assert "Bus Alpha" in html or "Bus Beta" in html or "Bus Gamma" in html
@@ -617,7 +660,7 @@ def test_build_bus_balance_no_line_meta_returns_no_data() -> None:
     exchanges_lf = _make_exchanges_lf([0, 1])
     bh_df = _make_bh_df()
 
-    html = build_bus_balance(exchanges_lf, [], {0: "Bus A"}, bh_df)
+    html = build_bus_balance(exchanges_lf, [], {0: "Bus A"}, bh_df, weights=UNIFORM)
 
     assert "<p>" in html
 
@@ -651,7 +694,7 @@ def test_build_bus_balance_direction() -> None:
     ]
     bus_names = {0: "Source", 1: "Target"}
 
-    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df)
+    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df, weights=UNIFORM)
 
     # Should render without error and contain bus names
     assert isinstance(html, str)
@@ -702,7 +745,7 @@ def test_build_bus_balance_weights_by_stage_hours() -> None:
     ]
     bus_names = {0: "Source", 1: "Target"}
 
-    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df)
+    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df, weights=UNIFORM)
 
     assert "+179.4 MW" in html
     assert "-179.4 MW" in html
@@ -754,7 +797,7 @@ def test_build_bus_balance_has_error_x_with_multiple_scenarios() -> None:
     ]
     bus_names = {0: "Source", 1: "Target"}
 
-    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df)
+    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df, weights=UNIFORM)
 
     assert isinstance(html, str)
     # The rendered Plotly JSON must contain error_x data (non-zero arrays)
@@ -803,7 +846,7 @@ def test_build_bus_balance_error_x_values_from_scenario_distribution() -> None:
     ]
     bus_names = {0: "Source", 1: "Target"}
 
-    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df)
+    html = build_bus_balance(exchanges_lf, line_meta, bus_names, bh_df, weights=UNIFORM)
 
     # Extract the embedded Plotly JSON from the chart card HTML.
     # The figure is serialised by fig_to_html / Plotly; we locate it by

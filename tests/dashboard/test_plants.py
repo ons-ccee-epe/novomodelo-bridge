@@ -28,6 +28,7 @@ from novomodelo_bridge.dashboard.tabs.plants import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM
 
 # ---------------------------------------------------------------------------
 # Data factories
@@ -194,12 +195,14 @@ def test_module_constants() -> None:
 
 def test_can_render_true_when_simulation_available() -> None:
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.simulation_available = True
     assert can_render(data) is True
 
 
 def test_can_render_false_when_simulation_missing() -> None:
     data = MagicMock()
+    data.scenario_weights = UNIFORM
     data.simulation_available = False
     assert can_render(data) is False
 
@@ -213,7 +216,7 @@ def test_compute_hydro_percentiles_returns_correct_columns() -> None:
     hydros_lf = _make_hydros_lf(n_scenarios=2, n_stages=2, n_blocks=1, hydro_ids=[0, 1])
     bh_df = _make_bh_df(n_stages=2, n_blocks=1)
 
-    result = _compute_hydro_percentiles(hydros_lf, bh_df)
+    result = _compute_hydro_percentiles(hydros_lf, bh_df, weights=UNIFORM)
 
     assert isinstance(result, pl.DataFrame)
     # Should have hydro_id and stage_id columns
@@ -234,7 +237,7 @@ def test_compute_hydro_percentiles_correct_row_count() -> None:
     hydros_lf = _make_hydros_lf(n_scenarios=3, n_stages=2, n_blocks=1, hydro_ids=[0, 1])
     bh_df = _make_bh_df(n_stages=2, n_blocks=1)
 
-    result = _compute_hydro_percentiles(hydros_lf, bh_df)
+    result = _compute_hydro_percentiles(hydros_lf, bh_df, weights=UNIFORM)
 
     assert len(result) == 4  # 2 hydros x 2 stages
 
@@ -244,7 +247,7 @@ def test_compute_hydro_percentiles_p50_between_p10_p90() -> None:
     hydros_lf = _make_hydros_lf(n_scenarios=5, n_stages=2, n_blocks=1, hydro_ids=[0])
     bh_df = _make_bh_df(n_stages=2, n_blocks=1)
 
-    result = _compute_hydro_percentiles(hydros_lf, bh_df)
+    result = _compute_hydro_percentiles(hydros_lf, bh_df, weights=UNIFORM)
 
     for var in ["generation_mw", "storage_final_hm3"]:
         p10_col = f"{var}_p10"
@@ -270,7 +273,7 @@ def test_build_hydro_json_with_bounds_has_stor_keys() -> None:
     hydro_meta = _make_hydro_meta([0, 1])
     hydros_lf = _make_hydros_lf(n_scenarios=2, n_stages=2, hydro_ids=[0, 1])
     bh_df = _make_bh_df(n_stages=2)
-    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df)
+    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df, weights=UNIFORM)
     stages = sorted(percentiles["stage_id"].unique().to_list())
 
     # Only plant 0 has bounds
@@ -309,7 +312,7 @@ def test_build_hydro_json_with_lp_bounds_has_gen_keys() -> None:
     hydro_meta = _make_hydro_meta([0])
     hydros_lf = _make_hydros_lf(n_scenarios=2, n_stages=2, hydro_ids=[0])
     bh_df = _make_bh_df(n_stages=2)
-    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df)
+    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df, weights=UNIFORM)
     stages = sorted(percentiles["stage_id"].unique().to_list())
 
     lp_bounds = _make_lp_bounds(hydro_ids=[0], n_stages=2)
@@ -338,7 +341,7 @@ def test_build_hydro_json_sorted_alphabetically() -> None:
     # Plant 0 = "Agua Vermelha", Plant 1 = "Barra Grande"
     hydros_lf = _make_hydros_lf(n_scenarios=2, n_stages=2, hydro_ids=[0, 1])
     bh_df = _make_bh_df(n_stages=2)
-    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df)
+    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df, weights=UNIFORM)
     stages = sorted(percentiles["stage_id"].unique().to_list())
 
     hydro_data, _ = _build_hydro_json(
@@ -361,7 +364,7 @@ def test_build_hydro_json_outflow_is_turbined_plus_spillage() -> None:
     hydro_meta = _make_hydro_meta([0])
     hydros_lf = _make_hydros_lf(n_scenarios=2, n_stages=3, hydro_ids=[0])
     bh_df = _make_bh_df(n_stages=3)
-    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df)
+    percentiles = _compute_hydro_percentiles(hydros_lf, bh_df, weights=UNIFORM)
     stages = sorted(percentiles["stage_id"].unique().to_list())
 
     hydro_data, _ = _build_hydro_json(
@@ -387,6 +390,7 @@ def test_build_hydro_json_outflow_is_turbined_plus_spillage() -> None:
 
 def test_build_hydro_explorer_empty_meta_returns_no_data_paragraph() -> None:
     result = build_hydro_explorer(
+        weights=UNIFORM,
         hydros_lf=pl.LazyFrame(),
         hydro_meta={},
         bus_names={},
@@ -412,6 +416,7 @@ def test_build_hydro_explorer_normal_contains_expected_ids() -> None:
     lp_bounds = _make_lp_bounds(hydro_ids=[0], n_stages=3)
 
     html = build_hydro_explorer(
+        weights=UNIFORM,
         hydros_lf=hydros_lf,
         hydro_meta=hydro_meta,
         bus_names={0: "Bus-A", 1: "Bus-B"},
@@ -450,6 +455,7 @@ def test_build_hydro_explorer_has_two_table_rows() -> None:
     hydro_meta = _make_hydro_meta([0, 1])
 
     html = build_hydro_explorer(
+        weights=UNIFORM,
         hydros_lf=hydros_lf,
         hydro_meta=hydro_meta,
         bus_names={0: "Bus-A", 1: "Bus-B"},
@@ -475,6 +481,7 @@ def test_build_hydro_explorer_rows_sorted_alphabetically() -> None:
     # Plant 0 = "Agua Vermelha", Plant 1 = "Barra Grande"
 
     html = build_hydro_explorer(
+        weights=UNIFORM,
         hydros_lf=hydros_lf,
         hydro_meta=hydro_meta,
         bus_names={},
@@ -499,6 +506,7 @@ def test_build_hydro_explorer_bounds_json_embedded() -> None:
     hydro_bounds = _make_hydro_bounds(hydro_ids=[0], n_stages=2)
 
     html = build_hydro_explorer(
+        weights=UNIFORM,
         hydros_lf=hydros_lf,
         hydro_meta=hydro_meta,
         bus_names={0: "Bus-A"},
@@ -520,6 +528,7 @@ def test_build_hydro_explorer_empty_bounds_skips_bound_keys() -> None:
     hydro_meta = _make_hydro_meta([0])
 
     html = build_hydro_explorer(
+        weights=UNIFORM,
         hydros_lf=hydros_lf,
         hydro_meta=hydro_meta,
         bus_names={0: "Bus-A"},
@@ -619,7 +628,7 @@ def test_compute_thermal_percentiles_returns_correct_columns() -> None:
     )
     bh_df = _make_bh_df(n_stages=2, n_blocks=1)
 
-    result = _compute_thermal_percentiles(thermals_lf, bh_df)
+    result = _compute_thermal_percentiles(thermals_lf, bh_df, weights=UNIFORM)
 
     assert isinstance(result, pl.DataFrame)
     assert "thermal_id" in result.columns
@@ -636,7 +645,7 @@ def test_compute_thermal_percentiles_correct_row_count() -> None:
     )
     bh_df = _make_bh_df(n_stages=2, n_blocks=1)
 
-    result = _compute_thermal_percentiles(thermals_lf, bh_df)
+    result = _compute_thermal_percentiles(thermals_lf, bh_df, weights=UNIFORM)
 
     assert len(result) == 4  # 2 thermals x 2 stages
 
@@ -648,7 +657,7 @@ def test_compute_thermal_percentiles_p50_between_p10_p90() -> None:
     )
     bh_df = _make_bh_df(n_stages=2, n_blocks=1)
 
-    result = _compute_thermal_percentiles(thermals_lf, bh_df)
+    result = _compute_thermal_percentiles(thermals_lf, bh_df, weights=UNIFORM)
 
     for var in ["generation_mw", "generation_cost", "generation_mwh"]:
         for row in result.iter_rows(named=True):
@@ -670,7 +679,7 @@ def test_build_thermal_json_with_lp_bounds_has_gen_max() -> None:
     thermal_meta = _make_thermal_meta([0, 1])
     thermals_lf = _make_thermals_lf(n_scenarios=2, n_stages=2, thermal_ids=[0, 1])
     bh_df = _make_bh_df(n_stages=2)
-    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df)
+    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df, weights=UNIFORM)
     stages = sorted(percentiles["stage_id"].unique().to_list())
 
     # Only plant 0 has LP gen_max bound
@@ -705,7 +714,7 @@ def test_build_thermal_json_sorted_alphabetically() -> None:
     # Plant 0 = "Angra 1", Plant 1 = "Termeletrica Sul"
     thermals_lf = _make_thermals_lf(n_scenarios=2, n_stages=2, thermal_ids=[0, 1])
     bh_df = _make_bh_df(n_stages=2)
-    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df)
+    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df, weights=UNIFORM)
     stages = sorted(percentiles["stage_id"].unique().to_list())
 
     thermal_data, _ = _build_thermal_json(
@@ -727,7 +736,7 @@ def test_build_thermal_json_empty_lp_bounds() -> None:
     thermal_meta = _make_thermal_meta([0])
     thermals_lf = _make_thermals_lf(n_scenarios=2, n_stages=2, thermal_ids=[0])
     bh_df = _make_bh_df(n_stages=2)
-    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df)
+    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df, weights=UNIFORM)
     stages = sorted(percentiles["stage_id"].unique().to_list())
 
     thermal_data, _ = _build_thermal_json(
@@ -878,7 +887,7 @@ def test_build_thermal_json_per_block_bound_matches_weighted_generation() -> Non
     bh_df = pl.DataFrame(
         {"stage_id": [2, 2, 2], "block_id": [0, 1, 2], "_bh": [24.0, 67.0, 77.0]}
     )
-    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df)
+    percentiles = _compute_thermal_percentiles(thermals_lf, bh_df, weights=UNIFORM)
 
     thermal_data, _ = _build_thermal_json(
         thermal_meta=thermal_meta,
@@ -906,6 +915,7 @@ def test_build_thermal_json_per_block_bound_matches_weighted_generation() -> Non
 
 def test_build_thermal_explorer_empty_meta_returns_no_data_paragraph() -> None:
     result = build_thermal_explorer(
+        weights=UNIFORM,
         thermals_lf=pl.LazyFrame(),
         thermal_meta={},
         bus_names={},
@@ -933,6 +943,7 @@ def test_build_thermal_explorer_normal_contains_expected_ids() -> None:
     )
 
     html = build_thermal_explorer(
+        weights=UNIFORM,
         thermals_lf=thermals_lf,
         thermal_meta=thermal_meta,
         bus_names={0: "Bus-A", 1: "Bus-B"},
@@ -963,6 +974,7 @@ def test_build_thermal_explorer_has_two_table_rows() -> None:
     thermal_meta = _make_thermal_meta([0, 1])
 
     html = build_thermal_explorer(
+        weights=UNIFORM,
         thermals_lf=thermals_lf,
         thermal_meta=thermal_meta,
         bus_names={0: "Bus-A", 1: "Bus-B"},
@@ -986,6 +998,7 @@ def test_build_thermal_explorer_rows_sorted_alphabetically() -> None:
     # Plant 0 = "Angra 1", Plant 1 = "Termeletrica Sul"
 
     html = build_thermal_explorer(
+        weights=UNIFORM,
         thermals_lf=thermals_lf,
         thermal_meta=thermal_meta,
         bus_names={},
@@ -1018,6 +1031,8 @@ def test_render_contains_subtab_structure() -> None:
     thermal_meta = _make_thermal_meta([0])
 
     data = MagicMock()
+
+    data.scenario_weights = UNIFORM
     data.hydros_lf = hydros_lf
     data.thermals_lf = thermals_lf
     data.bh_df = bh_df
@@ -1064,6 +1079,8 @@ def test_render_band_toggle_checkbox() -> None:
     hydro_meta = _make_hydro_meta([0])
 
     data = MagicMock()
+
+    data.scenario_weights = UNIFORM
     data.hydros_lf = hydros_lf
     data.thermals_lf = pl.LazyFrame()
     data.bh_df = bh_df
@@ -1087,6 +1104,8 @@ def test_render_band_toggle_js_variable() -> None:
     hydro_meta = _make_hydro_meta([0])
 
     data = MagicMock()
+
+    data.scenario_weights = UNIFORM
     data.hydros_lf = hydros_lf
     data.thermals_lf = pl.LazyFrame()
     data.bh_df = bh_df
@@ -1109,6 +1128,7 @@ def test_render_hydro_detail_respects_band_var() -> None:
     hydro_meta = _make_hydro_meta([0])
 
     html = build_hydro_explorer(
+        weights=UNIFORM,
         hydros_lf=hydros_lf,
         hydro_meta=hydro_meta,
         bus_names={0: "Bus-A"},
@@ -1134,6 +1154,7 @@ def test_render_thermal_detail_respects_band_var() -> None:
     thermal_meta = _make_thermal_meta([0])
 
     html = build_thermal_explorer(
+        weights=UNIFORM,
         thermals_lf=thermals_lf,
         thermal_meta=thermal_meta,
         bus_names={0: "Bus-A"},

@@ -89,7 +89,7 @@ def evaluate_lhs_novomodelo(
     :func:`novomodelo_bridge.novomodelo.constraint_expr.evaluate_lhs`, weights
     each scenario's blocks by their hours into one stage value (the
     source models report block-collapsed, duration-weighted stage values),
-    and averages across scenarios per (constraint, stage).
+    and takes the expectation across scenarios per (constraint, stage).
 
     Returns
     -------
@@ -120,10 +120,11 @@ def evaluate_lhs_novomodelo(
     if lhs_pd.empty:
         return empty
 
+    weights = novomodelo_readers.read_novomodelo_scenario_weights(novomodelo_output_dir)
     return (
-        stage_weighted_lhs(lhs_pd, block_hours)
+        weights.attach(stage_weighted_lhs(lhs_pd, block_hours))
         .group_by(["constraint_id", "stage_id"])
-        .agg(pl.col("lhs_value").mean())
+        .agg(weights.mean("lhs_value"))
         .cast(_LHS_SCHEMA)
         .sort(["constraint_id", "stage_id"])
     )

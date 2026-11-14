@@ -28,6 +28,7 @@ from novomodelo_bridge.dashboard.tabs.energy_balance import (
     can_render,
     render,
 )
+from novomodelo_bridge.novomodelo.scenario_weights import UNIFORM, ScenarioWeights
 
 # ---------------------------------------------------------------------------
 # Helpers / data factories
@@ -143,6 +144,8 @@ def _make_mock_data(
     bus_ids = non_fictitious_bus_ids
 
     data = MagicMock()
+
+    data.scenario_weights = UNIFORM
     data.non_fictitious_bus_ids = non_fictitious_bus_ids
     data.stage_labels = {0: "Jan 2024", 1: "Feb 2024", 2: "Mar 2024"}
     data.stage_dates = {0: "2024-01-01", 1: "2024-02-01", 2: "2024-03-01"}
@@ -217,7 +220,7 @@ def test_compute_total_gwh_single_scenario_converts_to_gwh() -> None:
             "generation_mwh": [2_000_000.0],
         }
     ).lazy()
-    result = _compute_total_gwh(lf, "generation_mwh")
+    result = _compute_total_gwh(lf, "generation_mwh", UNIFORM)
     assert abs(result - 2_000.0) < 0.001
 
 
@@ -232,21 +235,21 @@ def test_compute_total_gwh_averages_across_scenarios() -> None:
             "generation_mwh": [2_000.0, 4_000.0],
         }
     ).lazy()
-    result = _compute_total_gwh(lf, "generation_mwh")
+    result = _compute_total_gwh(lf, "generation_mwh", UNIFORM)
     assert abs(result - 3.0) < 0.001
 
 
 def test_compute_total_gwh_empty_lazyframe_returns_zero() -> None:
     """_compute_total_gwh must return 0.0 for an empty LazyFrame."""
     lf = pl.LazyFrame({"scenario_id": [], "generation_mwh": []})
-    result = _compute_total_gwh(lf, "generation_mwh")
+    result = _compute_total_gwh(lf, "generation_mwh", UNIFORM)
     assert result == 0.0
 
 
 def test_compute_total_gwh_missing_column_returns_zero() -> None:
     """_compute_total_gwh must return 0.0 when the requested column is absent."""
     lf = pl.DataFrame({"scenario_id": [0], "stage_id": [0]}).lazy()
-    result = _compute_total_gwh(lf, "nonexistent_col")
+    result = _compute_total_gwh(lf, "nonexistent_col", UNIFORM)
     assert result == 0.0
 
 
@@ -260,7 +263,7 @@ def test_compute_total_gwh_none_value_returns_zero() -> None:
         },
         schema={"scenario_id": pl.Int64, "generation_mwh": pl.Float64},
     ).lazy()
-    result = _compute_total_gwh(lf, "generation_mwh")
+    result = _compute_total_gwh(lf, "generation_mwh", UNIFORM)
     assert result == 0.0
 
 
@@ -290,7 +293,7 @@ def test_block_weighted_avg_rate_weights_by_block_hours() -> None:
             "_bh": [6.0, 2.0],
         }
     )
-    result = _block_weighted_avg_rate(lf, "spillage_m3s", bh_df)
+    result = _block_weighted_avg_rate(lf, "spillage_m3s", bh_df, UNIFORM)
     assert abs(result - 125.0) < 0.001
 
 
@@ -311,7 +314,7 @@ def test_block_weighted_avg_rate_empty_returns_zero() -> None:
             "_bh": pl.Series([], dtype=pl.Float64),
         }
     )
-    result = _block_weighted_avg_rate(lf, "spillage_m3s", bh_df)
+    result = _block_weighted_avg_rate(lf, "spillage_m3s", bh_df, UNIFORM)
     assert result == 0.0
 
 
@@ -319,7 +322,7 @@ def test_block_weighted_avg_rate_missing_column_returns_zero() -> None:
     """_block_weighted_avg_rate must return 0.0 when the rate column is absent."""
     lf = pl.DataFrame({"scenario_id": [0], "stage_id": [0], "block_id": [0]}).lazy()
     bh_df = pl.DataFrame({"stage_id": [0], "block_id": [0], "_bh": [6.0]})
-    result = _block_weighted_avg_rate(lf, "does_not_exist", bh_df)
+    result = _block_weighted_avg_rate(lf, "does_not_exist", bh_df, UNIFORM)
     assert result == 0.0
 
 
@@ -345,6 +348,26 @@ def test_build_metrics_row_contains_expected_labels() -> None:
     assert "Deficit" in html
     assert "Spillage" in html
     assert "Curtailment" in html
+
+
+def test_build_metrics_row_cards_are_expectations_under_the_probabilities() -> None:
+    """Each energy card is the expected total under the scenario probabilities."""
+    data = _make_mock_data()
+    data.scenario_weights = ScenarioWeights.from_probabilities([0, 1], [0.25, 0.75])
+    data.buses_lf = pl.concat(
+        [
+            _make_buses_lf_full(deficit_mwh=100_000.0, bus_ids=[0, 1], n_scenarios=1),
+            _make_buses_lf_full(
+                deficit_mwh=300_000.0, bus_ids=[0, 1], n_scenarios=1
+            ).with_columns(pl.lit(1, dtype=pl.Int64).alias("scenario_id")),
+        ]
+    )
+    data.non_fictitious_bus_ids = [0, 1]
+
+    html = _build_metrics_row(data)
+
+    # 600 GWh in scenario 0 and 1,800 GWh in scenario 1; uniform gives 1,200.
+    assert "1,500 GWh" in html
 
 
 def test_build_metrics_row_with_empty_lfs_does_not_raise() -> None:
@@ -710,6 +733,8 @@ def _make_mock_data_full(
         )
 
     data = MagicMock()
+
+    data.scenario_weights = UNIFORM
     data.non_fictitious_bus_ids = non_fictitious_bus_ids
     data.stage_labels = stage_labels
     data.stage_dates = {

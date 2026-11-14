@@ -23,6 +23,7 @@ from novomodelo_bridge.dashboard.chart_helpers import (
 from novomodelo_bridge.dashboard.data import _stage_avg_mw
 from novomodelo_bridge.dashboard.tabs import energy_balance, training
 from novomodelo_bridge.novomodelo.readers import novomodelo_software_version
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
     metric_card,
@@ -151,18 +152,19 @@ def _run_status_strip(data: DashboardData) -> str:
     )
 
 
-def _compute_gen_gwh(lf: pl.LazyFrame) -> float:
-    """Extract mean total generation GWh from a simulation LazyFrame.
+def _compute_gen_gwh(lf: pl.LazyFrame, weights: ScenarioWeights) -> float:
+    """Extract expected total generation GWh from a simulation LazyFrame.
 
-    Groups by scenario_id, sums generation_mwh, then averages across
-    scenarios.  Returns 0.0 when the LazyFrame is empty or the column
+    Groups by scenario_id, sums generation_mwh, then takes the expectation
+    across scenarios.  Returns 0.0 when the LazyFrame is empty or the column
     is absent.
     """
     try:
         result = (
             lf.group_by("scenario_id")
             .agg(pl.col("generation_mwh").sum())
-            .select(pl.col("generation_mwh").mean())
+            .pipe(weights.attach)
+            .select(weights.mean("generation_mwh"))
             .collect(engine="streaming")
         )
         if result.height == 0:
@@ -288,7 +290,9 @@ def _chart_gen_mix(data: DashboardData) -> go.Figure | None:
 
     for label, lf, color in sources:
         try:
-            stage_mw = _stage_avg_mw(lf, "generation_mwh", data.stage_hours)
+            stage_mw = _stage_avg_mw(
+                lf, "generation_mwh", data.stage_hours, data.scenario_weights
+            )
         except (ValueError, TypeError, KeyError):
             continue
         if not stage_mw:
@@ -333,15 +337,15 @@ def _render_metric_cards(data: DashboardData) -> str:
     if data.costs.empty:
         cost_value_str = "N/A"
     else:
-        summary = compute_cost_summary(data.costs, "category")
+        summary = compute_cost_summary(data.costs, "category", data.scenario_weights)
         if summary.empty:
             cost_value_str = "N/A"
         else:
             cost_value_str = f"R$ {float(summary['mean'].sum()):,.0f}"
 
-    hydro_gwh = _compute_gen_gwh(data.hydros_lf)
-    thermal_gwh = _compute_gen_gwh(data.thermals_lf)
-    ncs_gwh = _compute_gen_gwh(data.ncs_lf)
+    hydro_gwh = _compute_gen_gwh(data.hydros_lf, data.scenario_weights)
+    thermal_gwh = _compute_gen_gwh(data.thermals_lf, data.scenario_weights)
+    ncs_gwh = _compute_gen_gwh(data.ncs_lf, data.scenario_weights)
 
     cards = [
         metric_card(
@@ -373,7 +377,7 @@ def _render_cost_breakdown(data: DashboardData) -> str:
     if data.costs.empty:
         return section_title("Cost Breakdown") + "<p>No cost data available.</p>"
 
-    summary = compute_cost_summary(data.costs, "category")
+    summary = compute_cost_summary(data.costs, "category", data.scenario_weights)
     summary = summary[summary["mean"] > 0]
     if summary.empty:
         return section_title("Cost Breakdown") + "<p>No cost data available.</p>"

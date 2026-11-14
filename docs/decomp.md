@@ -264,6 +264,11 @@ the deck again.
 deterministic tree has too few scenarios to report a spread without
 synthesizing it.
 
+Each scenario of the stochastic stage weighs by its probability on both sides:
+DECOMP's by the tree's probabilities, Novomodelo's by the probability of each
+simulated leaf path in `simulation/scenario_summary.parquet`. The `dashboard`
+takes its means, spreads and P10–P90 bands across scenarios the same way.
+
 The overview's cost breakdown is at present value on both sides. DECOMP's
 cost report prints each stage's parcels at their nominal value and the stage
 total at both nominal and present value, so each parcel is discounted by that

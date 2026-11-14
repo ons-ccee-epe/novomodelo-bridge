@@ -20,6 +20,7 @@ from novomodelo_bridge.ui.console import (
 def _run_dashboard(args: DashboardArgs) -> None:
     """Execute the dashboard subcommand."""
     from novomodelo_bridge.dashboard import build_dashboard
+    from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
 
     case_dir: Path = args.case_dir.resolve()
     if not (case_dir / "output" / "simulation").exists():
@@ -38,13 +39,16 @@ def _run_dashboard(args: DashboardArgs) -> None:
             f"Building dashboard from {case_dir} ...", console=args.out_console()
         )
     with dx.collect() as dash_diags:
-        with spinner(
-            "Building dashboard…",
-            verbose=args.verbose > 0,
-            quiet=args.quiet,
-            no_color=args.no_color,
-        ):
-            build_dashboard(case_dir, output_path)
+        try:
+            with spinner(
+                "Building dashboard…",
+                verbose=args.verbose > 0,
+                quiet=args.quiet,
+                no_color=args.no_color,
+            ):
+                build_dashboard(case_dir, output_path)
+        except NovomodeloReadError as exc:
+            _fail("dashboard", args, exc, 1)
     size_kb = output_path.stat().st_size / 1024
     if not args.json_output:
         if not args.quiet:
@@ -62,8 +66,8 @@ def _run_dashboard(args: DashboardArgs) -> None:
     if args.json_output:
         # --json: one machine-readable verdict to stdout. Emitted BEFORE the
         # --open block so the stdout JSON flushes regardless of browser outcome;
-        # a built dashboard is always a success (the only failure path exits 1
-        # before the build). ``size_kb`` keeps the precise float — only the
+        # a built dashboard is always a success (every failure path has already
+        # exited 1). ``size_kb`` keeps the precise float — only the
         # human line above rounds it with ``:.0f``.
         _emit_convert_json(
             build_verdict(

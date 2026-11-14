@@ -149,7 +149,8 @@ def _compute_synthetic_stats(data: DashboardData) -> pd.DataFrame:
 
     Uses ``incremental_inflow_m3s`` from the simulation hydro output, which
     contains the actual PAR-generated inflow realizations.  Mean and std are
-    computed across scenarios for each ``(hydro_id, stage_id)`` pair.
+    taken across scenarios, under their probabilities, for each
+    ``(hydro_id, stage_id)`` pair.
 
     Returns:
         DataFrame with columns ``hydro_id``, ``stage_id``, ``mean_m3s``,
@@ -159,13 +160,15 @@ def _compute_synthetic_stats(data: DashboardData) -> pd.DataFrame:
     empty = pd.DataFrame(columns=["hydro_id", "stage_id", "mean_m3s", "std_m3s"])
     if not data.simulation_available:
         return empty
+    weights = data.scenario_weights
     try:
         result = (
-            data.hydros_lf.group_by(["hydro_id", "stage_id"])
+            weights.attach(data.hydros_lf)
+            .group_by(["hydro_id", "stage_id"])
             .agg(
                 [
-                    pl.col("incremental_inflow_m3s").mean().alias("mean_m3s"),
-                    pl.col("incremental_inflow_m3s").std().alias("std_m3s"),
+                    weights.mean("incremental_inflow_m3s").alias("mean_m3s"),
+                    weights.std("incremental_inflow_m3s").alias("std_m3s"),
                 ]
             )
             .sort(["hydro_id", "stage_id"])
