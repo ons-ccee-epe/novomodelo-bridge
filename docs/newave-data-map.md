@@ -17,7 +17,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | Arquivo do deck | `config.json` | `stages.json` | `penalties.json` | `initial_conditions.json` |
 | --- | :-: | :-: | :-: | :-: |
 | `dger.dat` | ● | ● | ● | ● |
-| `confhd.dat` |  |  | ● | ● |
+| `confhd.dat` | ● |  | ● | ● |
 | `conft.dat` |  |  |  | ● |
 | `sistema.dat` |  |  | ● |  |
 | `term.dat` |  |  |  | ● |
@@ -104,16 +104,18 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 
 ### `config.json`
 
-**Lê:** `dger.dat`, `shist.dat` (opcional)  
+**Lê:** `dger.dat`, `shist.dat` (opcional), `confhd.dat`  
 **Quando:** sempre.  
 **Esquema:** [config.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/config.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/temporal.py`
 
-Parâmetros de treinamento e simulação do Novomodelo derivados dos flags de `dger.dat`; `shist.dat` entra somente no modo determinístico e na simulação histórica.
+Parâmetros de treinamento e simulação do Novomodelo derivados dos flags de `dger.dat`; `shist.dat` entra somente no modo determinístico e na simulação histórica, e `confhd.dat` dá os anos em que o modelo de afluências é ajustado.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
 | `estimation.max_order` | `dger.dat` › `ordem_maxima_parp` | Valor direto (6 quando ausente). No modo determinístico (`num_forwards` = 1, `num_aberturas` = 1, `tipo_simulacao_final` = 2 e `shist.dat` com `varredura` = 0 e um único ano) é forçado a 0 para não carregar estado de defasagem de afluência. |
 | `estimation.order_selection` | `dger.dat` › `consideracao_media_anual_afluencias` | 0 → `pacf`; 1, 2 ou 3 → `pacf_annual` (o Novomodelo implementa a variante exata de 12 eixos, opção 3). Campo omitido quando o flag está ausente; no modo determinístico é `pacf`. |
+| `estimation.history_years.from` | `confhd.dat` › `usinas · ano_inicio_historico` *(condicional: somente quando toda usina convertida preenche `ano_inicio_historico` e `ano_fim_historico`)* | Primeiro ano, inclusive, da janela em que o modelo de afluências é ajustado. O Novomodelo ajusta todas as usinas numa só janela, então o deck é recusado quando as usinas convertidas trazem janelas diferentes, quando a janela termina antes de começar ou quando sai do histórico de `vazoes.dat` anterior ao início do estudo. Com um ano em branco o campo é omitido e o ajuste usa todo o histórico, com o aviso `hydro-fit-window-blank`: o NEWAVE leria esses anos do `postos.dat`, que o bridge não lê. |
+| `estimation.history_years.to` | `confhd.dat` › `usinas · ano_fim_historico` *(condicional: somente quando toda usina convertida preenche `ano_inicio_historico` e `ano_fim_historico`)* | Último ano, inclusive, da mesma janela, com as mesmas recusas de `estimation.history_years.from`. |
 | `exports.states` | `dger.dat` › `impressao_estados_geracao_cortes` | `true` quando o flag vale 0 (NEWAVE grava os estados visitados na geração de cortes); qualquer outro valor mantém `false`. |
 | `exports.stochastic` | — *(constante)* | Sempre `true`: a exportação do modelo estocástico é ligada para permitir a comparação das estatísticas de afluência. |
 | `modeling.inflow_non_negativity.method` | — *(constante)* | Sempre `truncation_with_penalty` (a conversão DECOMP usa `penalty`): a afluência incremental negativa mantém seu valor no balanço hídrico e nas defasagens, e a folga penalizada por `hydro.inflow_nonnegativity_cost` pode repor no máximo a água que falta, `max(-afluência, 0)`. |
@@ -894,10 +896,12 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 
 ### `confhd.dat`
 
-**Estado:** convertido em parte. **Lido por:** 16 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 17 arquivos gerados; ver a visão geral.
 
 Entram no caso as usinas em operação e não fictícias — `usina_existente` igual a `EX` ou a `EE` (existente em expansão) —, mais as usinas `NE` com registro de enchimento de volume morto em `exph.dat`. A usina `EE` opera desde o primeiro estágio e sua capacidade cresce conforme as máquinas de `exph.dat` entram.
 
+- `usinas · ano_inicio_historico` → `config.json` › `estimation.history_years.from`
+- `usinas · ano_fim_historico` → `config.json` › `estimation.history_years.to`
 - `usinas · codigo_usina_jusante` → `penalties.json` › `hydro.water_withdrawal_violation_cost`
 - `usinas · codigo_usina_jusante` → `penalties.json` › `hydro.evaporation_violation_cost`
 - `usinas · codigo_usina_jusante` → `penalties.json` › `hydro.storage_violation_below_cost`
@@ -959,7 +963,6 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `usinas fictícias (produtibilidade_especifica = 0 no mesmo posto de uma usina geradora)` — *adiado.* Excluídas do mapa de ids com o diagnóstico `fictitious-plants-excluded`. São nós contábeis de cascata energética; o bridge preserva a topologia religando `downstream_id` à próxima usina real e somando a produtibilidade da cadeia fictícia à usina de montante.
 - `usinas NE sem registro de enchimento em exph.dat e usinas NC` — *não lido.* Não entram no LP; a cascata é religada através delas (log informativo apenas). Converter uma expansão sem enchimento exigiria `entry_stage_id` sem bloco `filling`.
 - `usina_modificada` — *não lido.* Indica se a usina tem registros em `modif.dat`; o bridge aplica os registros de `modif.dat` a toda usina cadastrada, sem consultar o flag.
-- `ano_inicio_historico · ano_fim_historico` — *não lido.* Janela do histórico de vazões por usina. O bridge usa o histórico completo de `vazoes.dat` desde `ano_inicial_historico` até o mês anterior ao início do estudo para todas as usinas.
 
 ### `conft.dat`
 
@@ -1907,7 +1910,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `confhd.dat` › `usinas fictícias (produtibilidade_especifica = 0 no mesmo posto de uma usina geradora)` — *adiado.* Excluídas do mapa de ids com o diagnóstico `fictitious-plants-excluded`. São nós contábeis de cascata energética; o bridge preserva a topologia religando `downstream_id` à próxima usina real e somando a produtibilidade da cadeia fictícia à usina de montante.
 - `confhd.dat` › `usinas NE sem registro de enchimento em exph.dat e usinas NC` — *não lido.* Não entram no LP; a cascata é religada através delas (log informativo apenas). Converter uma expansão sem enchimento exigiria `entry_stage_id` sem bloco `filling`.
 - `confhd.dat` › `usina_modificada` — *não lido.* Indica se a usina tem registros em `modif.dat`; o bridge aplica os registros de `modif.dat` a toda usina cadastrada, sem consultar o flag.
-- `confhd.dat` › `ano_inicio_historico · ano_fim_historico` — *não lido.* Janela do histórico de vazões por usina. O bridge usa o histórico completo de `vazoes.dat` desde `ano_inicial_historico` até o mês anterior ao início do estudo para todas as usinas.
 - `conft.dat` › `usina_existente · classe` — *não lido.* Toda usina listada vira uma térmica do Novomodelo; o estado `EX`/`NE`/`EE` e a classe térmica não são consultados. A disponibilidade efetiva vem das janelas POTEF de `expt.dat`.
 - `sistema.dat` › `numero_patamares_deficit` — *não lido.* Os segmentos de déficit são derivados das linhas de `custo_deficit` (`patamar_deficit`, `custo`, `corte`); a contagem declarada não é lida.
 - `sistema.dat` › `limites_intercambio · registros com flag 1` — *não lido.* Intercâmbio mínimo obrigatório. Não é convertido nem reportado: os limites de `system/lines.json` e de `constraints/line_bounds.parquet` usam só os registros com `flag` 0.

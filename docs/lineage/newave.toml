@@ -23,8 +23,9 @@ module = "src/novomodelo_bridge/newave/converters/temporal.py"
 reads = [
   { file = "dger" },
   { file = "shist" },
+  { file = "confhd" },
 ]
-summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos flags de `dger.dat`; `shist.dat` entra somente no modo determinístico e na simulação histórica."
+summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos flags de `dger.dat`; `shist.dat` entra somente no modo determinístico e na simulação histórica, e `confhd.dat` dá os anos em que o modelo de afluências é ajustado."
 
   [[output.field]]
   path = "estimation.max_order"
@@ -35,6 +36,18 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   path = "estimation.order_selection"
   from = [ { file = "dger", item = "consideracao_media_anual_afluencias" } ]
   how = "0 → `pacf`; 1, 2 ou 3 → `pacf_annual` (o Novomodelo implementa a variante exata de 12 eixos, opção 3). Campo omitido quando o flag está ausente; no modo determinístico é `pacf`."
+
+  [[output.field]]
+  path = "estimation.history_years.from"
+  from = [ { file = "confhd", item = "usinas · ano_inicio_historico" } ]
+  when = "somente quando toda usina convertida preenche `ano_inicio_historico` e `ano_fim_historico`"
+  how = "Primeiro ano, inclusive, da janela em que o modelo de afluências é ajustado. O Novomodelo ajusta todas as usinas numa só janela, então o deck é recusado quando as usinas convertidas trazem janelas diferentes, quando a janela termina antes de começar ou quando sai do histórico de `vazoes.dat` anterior ao início do estudo. Com um ano em branco o campo é omitido e o ajuste usa todo o histórico, com o aviso `hydro-fit-window-blank`: o NEWAVE leria esses anos do `postos.dat`, que o bridge não lê."
+
+  [[output.field]]
+  path = "estimation.history_years.to"
+  from = [ { file = "confhd", item = "usinas · ano_fim_historico" } ]
+  when = "somente quando toda usina convertida preenche `ano_inicio_historico` e `ano_fim_historico`"
+  how = "Último ano, inclusive, da mesma janela, com as mesmas recusas de `estimation.history_years.from`."
 
   [[output.field]]
   path = "exports.states"
@@ -3234,11 +3247,6 @@ note = "Entram no caso as usinas em operação e não fictícias — `usina_exis
   item = "usina_modificada"
   status = "unread"
   note = "Indica se a usina tem registros em `modif.dat`; o bridge aplica os registros de `modif.dat` a toda usina cadastrada, sem consultar o flag."
-
-  [[source.item]]
-  item = "ano_inicio_historico · ano_fim_historico"
-  status = "unread"
-  note = "Janela do histórico de vazões por usina. O bridge usa o histórico completo de `vazoes.dat` desde `ano_inicial_historico` até o mês anterior ao início do estudo para todas as usinas."
 
 [[source]]
 file = "conft"

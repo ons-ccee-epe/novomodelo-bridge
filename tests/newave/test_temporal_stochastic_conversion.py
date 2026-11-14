@@ -12,6 +12,7 @@ from __future__ import annotations
 import calendar
 import datetime
 import struct
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1215,6 +1216,122 @@ class TestConvertConfig:
             result = convert_config(case)
         assert result["estimation"]["order_selection"] == "pacf_annual"
         assert [d.code for d in found] == ["par-annual-option-unknown"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: convert_history_years
+# ---------------------------------------------------------------------------
+
+
+def _fit_window_confhd(rows: Sequence[tuple[int, str, int | None, int | None]]):
+    confhd = MagicMock()
+    confhd.usinas = pd.DataFrame(
+        rows,
+        columns=[
+            "codigo_usina",
+            "nome_usina",
+            "ano_inicio_historico",
+            "ano_fim_historico",
+        ],
+    )
+    return confhd
+
+
+def _history(first_year: int, last_year: int) -> pa.Table:
+    starts = [
+        datetime.date(y, m, 1)
+        for y in range(first_year, last_year + 1)
+        for m in (1, 12)
+    ]
+    return pa.table({"start_date": pa.array(starts, type=pa.date32())})
+
+
+class TestConvertHistoryYears:
+    def _convert(
+        self,
+        tmp_path: Path,
+        rows: Sequence[tuple[int, str, int | None, int | None]],
+        history: pa.Table,
+        codes: list[int] | None = None,
+    ) -> dict[str, int] | None:
+        from novomodelo_bridge.newave.converters.temporal import convert_history_years
+
+        case = make_case(tmp_path, confhd=_fit_window_confhd(rows))
+        id_map = _make_id_map_hydros(codes or [row[0] for row in rows])
+        return convert_history_years(case, id_map, history)
+
+    def test_one_window_for_every_plant_becomes_the_range(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 1931, 2024), (8, "ESTREITO", 1931, 2024)]
+
+        with dx.collect() as found:
+            years = self._convert(tmp_path, rows, _history(1931, 2025))
+
+        assert years == {"from": 1931, "to": 2024}
+        assert found == []
+
+    def test_plants_left_out_of_the_case_do_not_count(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 1931, 2024), (99, "NOVA", 1950, 2020)]
+
+        years = self._convert(tmp_path, rows, _history(1931, 2025), codes=[6])
+
+        assert years == {"from": 1931, "to": 2024}
+
+    def test_different_windows_refuse_the_deck_naming_the_other_plants(
+        self, tmp_path
+    ) -> None:
+        rows = [
+            (6, "FURNAS", 1931, 2024),
+            (8, "ESTREITO", 1931, 2024),
+            (12, "PEIXOTO  ", 1931, 2022),
+        ]
+
+        with pytest.raises(FieldParseError) as raised:
+            self._convert(tmp_path, rows, _history(1931, 2025))
+
+        assert str(raised.value) == (
+            "confhd.dat gives the converted plants different fit windows: "
+            "1931-2024 for 2 plants; 1931-2022 for PEIXOTO. The case fits the "
+            "inflow model on one window for every plant."
+        )
+        assert raised.value.field == "INIC.HIST/FIM HIST"
+
+    def test_a_window_beyond_the_history_refuses_the_deck(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 1931, 2025)]
+
+        with pytest.raises(FieldParseError, match="covers 1931-2024"):
+            self._convert(tmp_path, rows, _history(1931, 2024))
+
+    def test_a_window_before_the_history_refuses_the_deck(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 1930, 2024)]
+
+        with pytest.raises(FieldParseError, match="fits the inflow model on 1930-2024"):
+            self._convert(tmp_path, rows, _history(1931, 2025))
+
+    def test_an_inverted_window_refuses_the_deck(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 2024, 1931)]
+
+        with pytest.raises(FieldParseError, match="ends before it starts"):
+            self._convert(tmp_path, rows, _history(1931, 2025))
+
+    def test_a_blank_year_fits_on_the_whole_history_and_warns(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 1931, 2024), (8, "ESTREITO", None, 2024)]
+
+        with dx.collect() as found:
+            years = self._convert(tmp_path, rows, _history(1931, 2025))
+
+        assert years is None
+        [diag] = found
+        assert diag.code == "hydro-fit-window-blank"
+        assert diag.severity is Severity.WARNING
+        assert "1931-2025" in diag.summary
+        assert diag.table is not None
+        assert diag.table.rows == [[8, "ESTREITO", "", "2024"]]
+
+    def test_an_empty_history_gives_no_range(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 1931, 2024)]
+        empty = pa.table({"start_date": pa.array([], type=pa.date32())})
+
+        assert self._convert(tmp_path, rows, empty) is None
 
 
 # ---------------------------------------------------------------------------

@@ -126,6 +126,13 @@ the same output.
 - **Stochastic data.** Historical inflows (`vazoes.dat`, `vazpast.dat`), load
   (`sistema.dat`, `c_adic.dat`), and block factors (`patamar.dat`) are written
   under `scenarios/`, stage-varying tables as Parquet.
+- **Inflow model fit years.** Novomodelo fits the inflow model on the years
+  `confhd.dat` gives the plants (INIC.HIST to FIM HIST). It fits every plant
+  on one window, so the converter refuses a deck whose converted plants give
+  different windows, or a window outside the inflow history before the study
+  start. When a plant leaves either year blank, NEWAVE takes its years from
+  `postos.dat`, which the converter does not read: `convert newave` warns and
+  the fit uses every year of the history.
 - **Incremental inflows.** NEWAVE records natural inflow per gauging station
   (posto); Novomodelo takes each plant's incremental inflow. The converter
   subtracts, for each plant, the natural inflow of the stations of the plants
