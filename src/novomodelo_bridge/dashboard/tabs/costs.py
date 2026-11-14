@@ -33,6 +33,10 @@ from novomodelo_bridge.dashboard.chart_helpers import (
     group_costs,
     make_chart_card,
 )
+from novomodelo_bridge.novomodelo.cost_categories import (
+    AGGREGATE_COST_COLUMNS,
+    COST_PARTITION_COLUMNS,
+)
 from novomodelo_bridge.ui.html.document import (
     chart_grid,
     collapsible_section,
@@ -63,23 +67,8 @@ TAB_ID = "tab-costs"
 TAB_LABEL = "Costs"
 TAB_ORDER = 40
 
-# Non-cost metadata columns that are excluded from cost aggregations.
-# Must match chart_helpers._NON_COST_COLS to avoid double-counting.
-_NON_COST_COLS: frozenset[str] = frozenset(
-    {
-        "scenario_id",
-        "stage_id",
-        "block_id",
-        "total_cost",
-        "immediate_cost",
-        "future_cost",
-        "discount_factor",
-        "hydro_violation_cost",  # aggregate of 6 individual hydro violations
-    }
-)
+_NON_COST_COLS: frozenset[str] = COST_PARTITION_COLUMNS | AGGREGATE_COST_COLUMNS
 
-# All known violation cost column names from the costs DataFrame spec.
-# NOTE: hydro_violation_cost is excluded — it's an aggregate of the 6 below.
 _VIOLATION_COLS: frozenset[str] = frozenset(
     {
         "storage_violation_cost",
@@ -92,9 +81,22 @@ _VIOLATION_COLS: frozenset[str] = frozenset(
         "withdrawal_violation_cost",
         "inflow_penalty_cost",
         "generic_violation_cost",
-        "generic_constraint_violation_cost",
     }
 )
+
+
+def _violation_columns(costs: pd.DataFrame) -> list[str]:
+    """The violation cost columns of *costs*, in frame order.
+
+    ``hydro_violation_cost`` matches the ``_violation_cost`` suffix but is the
+    sum of six of these components, so it is left out.
+    """
+    return [
+        c
+        for c in costs.columns
+        if (c in _VIOLATION_COLS or c.endswith("_violation_cost"))
+        and c not in _NON_COST_COLS
+    ]
 
 
 def can_render(data: DashboardData) -> bool:
@@ -826,11 +828,7 @@ def _chart_violation_timeline(data: DashboardData) -> go.Figure | None:
     if "stage_id" not in data.costs.columns:
         return None
 
-    viol_cols = [
-        c
-        for c in data.costs.columns
-        if c in _VIOLATION_COLS or c.endswith("_violation_cost")
-    ]
+    viol_cols = _violation_columns(data.costs)
     if not viol_cols:
         return None
 
@@ -896,9 +894,7 @@ def _render_violations(data: DashboardData) -> str:
     Only rendered when at least one known violation cost column has non-zero
     values.  When all violation costs are zero, returns a ``<p>`` fallback.
 
-    Violation cost columns are identified by intersecting ``data.costs.columns``
-    with the known set :data:`_VIOLATION_COLS` plus any column whose name ends
-    in ``"_violation_cost"``.
+    Violation cost columns are those :func:`_violation_columns` selects.
 
     Args:
         data: Dashboard data instance.
@@ -915,12 +911,7 @@ def _render_violations(data: DashboardData) -> str:
             default_collapsed=True,
         )
 
-    # Identify violation columns present in the DataFrame
-    viol_cols = [
-        c
-        for c in data.costs.columns
-        if c in _VIOLATION_COLS or c.endswith("_violation_cost")
-    ]
+    viol_cols = _violation_columns(data.costs)
 
     if not viol_cols:
         return collapsible_section(

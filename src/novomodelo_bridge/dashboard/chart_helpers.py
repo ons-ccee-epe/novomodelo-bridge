@@ -49,9 +49,8 @@ COST_GROUPS: dict[str, list[str]] = {
     "Contract": ["contract_cost"],
     "Pumping": ["pumping_cost"],
     "Inflow Penalty": ["inflow_penalty_cost"],
-    # Hydro violation costs (each broken out for visibility)
-    # NOTE: hydro_violation_cost is an aggregate of the 6 costs below — excluded
-    # via _NON_COST_COLS to avoid double-counting.
+    # Hydro violation costs, each on its own. Their aggregate
+    # hydro_violation_cost (the sum of six of them) stays out via _NON_COST_COLS.
     "Outflow Min": ["outflow_violation_below_cost"],
     "Outflow Max": ["outflow_violation_above_cost"],
     "Turbining Bounds": ["turbined_violation_cost"],

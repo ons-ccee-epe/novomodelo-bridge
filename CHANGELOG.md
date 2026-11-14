@@ -53,6 +53,10 @@ links are cobre-bridge's.
 
 - **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
   Such a deck now converts.
+- **`dashboard` showed a `Hydro Violation` cost beside the violation costs it
+  sums** in the Costs tab's Violation Costs charts, so those costs appeared
+  twice. The charts now show only the individual violations; build the
+  dashboard again to update it.
 
 ## [0.20.0] - 2026-11-03
 

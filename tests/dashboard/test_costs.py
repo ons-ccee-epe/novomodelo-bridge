@@ -784,6 +784,55 @@ def test_render_violations_timeline_absent_when_all_violation_zero() -> None:
     assert "chart-card" not in html
 
 
+def _make_costs_df_with_hydro_violations(
+    n_scenarios: int = 2,
+    n_stages: int = 3,
+) -> pd.DataFrame:
+    """Return a costs DataFrame whose ``hydro_violation_cost`` is, as Novomodelo
+    writes it, the sum of the outflow and generation violation costs beside
+    it, plus a storage violation that the aggregate leaves out.
+    """
+    rows = []
+    for scenario_id in range(n_scenarios):
+        for stage_id in range(n_stages):
+            rows.append(
+                {
+                    "scenario_id": scenario_id,
+                    "stage_id": stage_id,
+                    "block_id": 0,
+                    "thermal_cost": 1000.0,
+                    "storage_violation_cost": 10.0,
+                    "hydro_violation_cost": 50.0,
+                    "outflow_violation_below_cost": 30.0,
+                    "generation_violation_cost": 20.0,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_render_violations_omits_the_hydro_violation_aggregate() -> None:
+    """The violation section shows the hydro violation components, never their
+    sum beside them."""
+    data = _make_mock_data_full(costs=_make_costs_df_with_hydro_violations())
+    html = _render_violations(data)
+    assert "Hydro Violation" not in html
+    for label in ("Outflow Min", "Generation Bounds", "Storage Bounds"):
+        assert label in html
+
+
+def test_chart_violation_timeline_omits_the_hydro_violation_aggregate() -> None:
+    """The timeline draws one line per violation component and none for the
+    aggregate."""
+    data = _make_mock_data_full(costs=_make_costs_df_with_hydro_violations())
+    fig = _chart_violation_timeline(data)
+    assert fig is not None
+    assert {t.name for t in fig.data} == {
+        "Outflow Violation Below",
+        "Generation Violation",
+        "Storage Violation",
+    }
+
+
 # ---------------------------------------------------------------------------
 # test__build_composition_data
 # ---------------------------------------------------------------------------
