@@ -8,7 +8,7 @@ from pathlib import Path
 from novomodelo_bridge.cli.args import DashboardArgs
 from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
 from novomodelo_bridge.cli.verdict import build_verdict, dashboard_summary
-from novomodelo_bridge.core.errors import BridgeError, NovomodeloOutputError
+from novomodelo_bridge.core.errors import NovomodeloOutputError
 from novomodelo_bridge.ui.console import (
     get_console,
     print_status,
@@ -46,7 +46,10 @@ def _run_dashboard(args: DashboardArgs) -> None:
                 no_color=args.no_color,
             ):
                 build_dashboard(case_dir, output_path)
-        except BridgeError as exc:
+        # Broad by design, as in `convert` and `export`: a failure no typed
+        # error covers, such as a corrupt parquet file, must still reach the
+        # user as one rendered diagnostic or `--json` envelope, exit 1.
+        except Exception as exc:
             _fail("dashboard", args, exc, 1, found_before=dash_diags)
     dash_diags = dx.finalize_diagnostics(dash_diags)
     size_kb = output_path.stat().st_size / 1024

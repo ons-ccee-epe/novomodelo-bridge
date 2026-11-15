@@ -494,3 +494,24 @@ class TestDashboardReadFailure:
         [error] = [d for d in document["diagnostics"] if d["severity"] == "error"]
         assert error["code"] == "novomodelo-output-unreadable"
         assert error["summary"].startswith("stages.json could not be read")
+
+    def test_a_corrupt_parquet_file_is_one_unexpected_error_envelope(
+        self, tmp_path: Path
+    ) -> None:
+        case_dir = _make_case_dir(tmp_path)
+        stages = {"stages": [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]}
+        (case_dir / "stages.json").write_text(json.dumps(stages), encoding="utf-8")
+        corrupt = case_dir / "scenarios" / "inflow_history.parquet"
+        corrupt.parent.mkdir()
+        corrupt.write_bytes(b"not a parquet file")
+
+        result = _invoke(
+            ["dashboard", str(case_dir), "--json", "-o", str(tmp_path / "d.html")]
+        )
+
+        assert result.exit_code == 1
+        document = json.loads(result.stdout)
+        assert document["status"] == "error"
+        [error] = [d for d in document["diagnostics"] if d["severity"] == "error"]
+        assert error["code"] == "unexpected-error"
+        assert str(corrupt) in error["summary"]
