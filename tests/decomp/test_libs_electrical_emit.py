@@ -1062,3 +1062,155 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
         )
 
     assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
+
+
+# ---------------------------------------------------------------------------
+# The findings each dropped or rewritten restriction reports, by code
+# ---------------------------------------------------------------------------
+
+
+def _emit_findings(
+    model: LibsElectricalModel,
+    *,
+    calendar: list[OperativeStage],
+    factory: Callable[[int, int], DataContext] | None = None,
+    a_h: AvailablePower | None = None,
+) -> tuple[LibsElectricalResult, list[dx.Diagnostic]]:
+    """Run the emitter on *model* for a one-plant case, with what it reports."""
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    with dx.collect() as sink:
+        result = emit_libs_electrical_generics(
+            model,
+            id_map,
+            factory or (lambda s, b: _dict_context({})),
+            a_h or AvailablePower(overlay={}),
+            calendar,
+            {},
+            {},
+            {},
+            big_m=999.0,
+        )
+    return result, sink
+
+
+def test_emit_reserve_restriction_reports_each_stage_available_power_used() -> None:
+    restriction = _reserve_restriction(407, plant_code=1, threshold=300.0)
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={407: restriction}, rules={}
+    )
+
+    result, sink = _emit_findings(
+        model,
+        calendar=_emit_calendar(2, n_blocks=2),
+        a_h=AvailablePower(overlay={(1, 0): 1000.0, (1, 1): 900.0}),
+    )
+
+    assert result.converted_codes == (407,)
+    assert result.generic is not None
+    caps = {
+        (row["stage_id"], row["block_id"]): row["bound_upper"]
+        for row in result.generic.bounds.to_pylist()
+    }
+    assert caps == {(0, 0): 700.0, (0, 1): 700.0, (1, 0): 600.0, (1, 1): 600.0}
+    [finding] = sink
+    assert finding.code == "decomp-electrical-disp-usih-substituted"
+    assert finding.severity is dx.Severity.INFO
+    assert finding.table is not None
+    assert finding.table.columns == [
+        "Restriction",
+        "Plant code",
+        "Stage",
+        "Available power (MW)",
+    ]
+    assert finding.table.rows == [[407, 1, 0, 1000.0], [407, 1, 1, 900.0]]
+
+
+def test_emit_restriction_without_disp_usih_reports_nothing() -> None:
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={711: _restriction(711, "ger_usih(1)", "<=", "500")},
+        rules={},
+    )
+
+    result, sink = _emit_findings(model, calendar=_emit_calendar(1, n_blocks=1))
+
+    assert result.converted_codes == (711,)
+    assert sink == []
+
+
+def test_emit_restrictions_never_active_are_one_note_listing_their_horizons() -> None:
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            703: _restriction(703, "ger_usih(1)", "<=", "500", habilita=10),
+            704: _restriction(
+                704, "ger_usih(1)", "<=", "500", habilita=10, stage_start=1
+            ),
+        },
+        rules={10: "demanda_sin >= 50000"},
+    )
+
+    result, sink = _emit_findings(
+        model,
+        calendar=_emit_calendar(3, n_blocks=1),
+        factory=_demanda_sin_context_factory({}),
+    )
+
+    assert result.generic is None
+    assert result.converted_codes == ()
+    assert result.deferred["inactive"] == (703, 704)
+    [finding] = sink
+    assert finding.code == "decomp-electrical-restriction-inactive"
+    assert finding.severity is dx.Severity.INFO
+    assert finding.title == "Electrical restrictions never active (2)"
+    assert finding.table is not None
+    assert finding.table.rows == [[703, 0, 2], [704, 1, 2]]
+
+
+def test_emit_restriction_active_on_one_cell_is_not_reported_inactive() -> None:
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={701: _restriction(701, "ger_usih(1)", "<=", "500", habilita=10)},
+        rules={10: "demanda_sin >= 50000"},
+    )
+
+    result, sink = _emit_findings(
+        model,
+        calendar=_emit_calendar(2, n_blocks=1),
+        factory=_demanda_sin_context_factory({(1, 0): 60000.0}),
+    )
+
+    assert result.converted_codes == (701,)
+    assert result.deferred["inactive"] == ()
+    assert sink == []
+
+
+def test_emit_undeclared_names_in_formula_and_rule_are_one_warning() -> None:
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            709: _restriction(709, "mmgd_N_PCHgd", "<=", "500"),
+            710: _restriction(710, "ger_usih(1)", "<=", "500"),
+            720: _restriction(720, "ger_usih(1)", "<=", "500", habilita=20),
+        },
+        rules={20: "carga_sul_gd >= 50000"},
+    )
+
+    result, sink = _emit_findings(model, calendar=_emit_calendar(1, n_blocks=1))
+
+    assert result.converted_codes == (710,)
+    assert result.deferred["unrecognized-token"] == (709, 720)
+    assert result.generic is not None
+    assert [c["name"] for c in result.generic.constraints] == ["LIBS_ELEC_710"]
+    [finding] = sink
+    assert finding.code == "decomp-electrical-unrecognized-token"
+    assert finding.severity is dx.Severity.WARNING
+    assert finding.title == "Electrical restrictions with an undeclared name (2)"
+    assert finding.table is not None
+    assert finding.table.columns == ["Restriction", "Name"]
+    assert finding.table.rows == [[709, "mmgd_N_PCHgd"], [720, "carga_sul_gd"]]
+    assert finding.remediation is not None

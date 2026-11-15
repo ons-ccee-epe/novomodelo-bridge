@@ -101,7 +101,7 @@ _FormatOpt = Annotated[
         metavar="FORMAT",
         envvar="NOVOMODELO_BRIDGE_FORMAT",
         help=(
-            "Output format(s): console,html,csv,parquet,json,all. "
+            "Output formats: console,html,csv,parquet,json,all. "
             "Comma-separated and/or repeatable. Overridable via "
             "NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. "
             "(default: console,parquet,json)"

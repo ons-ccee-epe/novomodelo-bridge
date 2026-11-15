@@ -62,9 +62,10 @@ links are cobre-bridge's.
   `vazpast-unreadable`, `c-adic-unreadable`, `expt-unreadable`,
   `manutt-unreadable` and `penalid-unreadable` for an optional file it cannot
   read; `patamar-duration-missing`, `patamar-load-factors-missing`,
-  `cvar-file-absent`, `shist-start-years-empty`, `shist-range-collapsed`,
-  `par-annual-option-unknown`, `par-annual-variant-approximated` and
-  `cut-window-not-converted` for settings the case cannot follow;
+  `cvar-file-absent`, `adterm-file-absent`, `shist-start-years-empty`,
+  `shist-range-collapsed`, `par-annual-option-unknown`,
+  `par-annual-variant-approximated` and `cut-window-not-converted` for
+  settings the case cannot follow;
   `load-subsystem-undeclared`, `load-factor-subsystem-undeclared` and
   `ncs-subsystem-undeclared` for data of a subsystem `sistema.dat` does not
   declare; and `initial-storage-clamped`, `adterm-thermal-undeclared` and
@@ -86,7 +87,21 @@ links are cobre-bridge's.
   `dessem-fcf-cut-pools-unexpected`,
   `dessem-fcf-inflow-lag-coefficients-dropped`,
   `dessem-fcf-failure-manifest-unwritten` and a
-  `dessem-fcf-mapcut-fields-zero` warning on every export.
+  `dessem-fcf-mapcut-fields-zero` warning on every export. A command that
+  fails still reports what it found before the failure, and `compare newave`
+  reports what it finds while reading the deck, such as
+  `fictitious-plants-excluded`.
+- **`convert decomp` reports RE ceilings capped at a unit group's capacity as
+  `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
+  that `decomp-re-generation-clamped` reports.
+- **`compare` and `dashboard` no longer stop on a `system/lines.json` they
+  cannot read**: they treat the case as having no lines, leave out the
+  interchange and the Network tab's lines, and say so in a
+  `report-file-unreadable` warning.
+- **`export dessem` reports a missing DECOMP deck directory as
+  `source-file-missing` and a missing case directory as
+  `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead
+  of `conversion-error`.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.

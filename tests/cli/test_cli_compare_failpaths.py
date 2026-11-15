@@ -426,3 +426,54 @@ class TestCompareNewaveSuccessStillExitsZero:
         )
 
         assert code == 0
+
+
+class TestCompareNewaveSetupFindings:
+    """What ``compare newave`` finds while it loads the case and aligns the
+    entities reaches the verdict, even when the comparison then fails."""
+
+    def test_json_failure_keeps_the_alignment_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+        from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
+
+        _patch_compare_context(monkeypatch)
+
+        def _align_with_a_warning(*_args: object, **_kwargs: object) -> object:
+            emit(
+                Diagnostic(
+                    code="line-bus-unmapped",
+                    severity=Severity.WARNING,
+                    category="Compare data",
+                    title="Lines to buses with no NEWAVE submarket (1)",
+                    summary="A line ends at an unmatched bus.",
+                )
+            )
+            return MagicMock()
+
+        def _raise_read_error(*_args: object, **_kwargs: object) -> object:
+            raise NovomodeloReadError("bad parquet partition")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.newave.alignment.build_entity_alignment",
+            _align_with_a_warning,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.newave.results.compare_results",
+            _raise_read_error,
+        )
+        novomodelo_dir = tmp_path / "novomodelo"
+        novomodelo_dir.mkdir()
+
+        code, stdout, _stderr = _invoke_main(
+            ["compare", "newave", str(tmp_path / "nw"), str(novomodelo_dir), "--json"],
+            monkeypatch,
+        )
+
+        assert code == 2
+        document = json.loads(stdout)
+        assert [(d["code"], d["severity"]) for d in document["diagnostics"]] == [
+            ("line-bus-unmapped", "warning"),
+            ("unexpected-error", "error"),
+        ]

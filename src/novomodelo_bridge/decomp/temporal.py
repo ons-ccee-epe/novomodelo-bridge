@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Protocol
 
+from novomodelo_bridge.core.diagnostics import counted
 from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.core.season_calendar import (
     block_names,
@@ -461,7 +462,7 @@ def build_node_graph(
     if terminal < 1:
         raise ValueError(
             "the DECOMP node graph needs at least a trunk stage and a "
-            f"terminal fan stage; got {n_stages} stage(s)"
+            f"terminal fan stage; got {counted(n_stages, 'stage')}"
         )
 
     nodes: list[dict] = [

@@ -1255,7 +1255,7 @@ class TestConvertElectricConstraintsEmission:
         diag = by_code["electric-penalty-unreadable"]
         assert diag.severity is Severity.WARNING
         assert diag.table is None
-        assert diag.notes == ["corrupt PENALID.DAT"]
+        assert diag.notes == ["Reason: ValueError: corrupt PENALID.DAT"]
 
         _assert_no_repo_internal_leaks(collected)
 

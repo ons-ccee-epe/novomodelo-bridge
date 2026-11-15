@@ -944,7 +944,7 @@ def _gnl_thermal_codes(
     shared = sorted(codes.intersection(id_map.thermal_codes))
     if shared:
         raise ValueError(
-            f"thermal code(s) {shared} are declared both in the dadger CT "
+            f"the thermal codes {shared} are declared both in the dadger CT "
             "registry and in the dadgnl TG registry; an electrical restriction's "
             "ger_usit for them cannot be told apart as a decision or a "
             "commanded GNL generation"

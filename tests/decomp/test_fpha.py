@@ -272,6 +272,37 @@ def test_unconverted_fp_fields_warn_only_when_off_the_default_fit() -> None:
     assert diagnostic.table.rows == [["all", 0], [6, 1]]
 
 
+_VOLUME_WINDOW = {
+    "tipo_entrada_janela_volume": 0,
+    "limite_inferior_janela_volume": 10.0,
+    "limite_superior_janela_volume": 10.0,
+}
+
+
+def test_volume_window_rule_warns_on_fp_fields_off_the_default_fit() -> None:
+    fp = pd.DataFrame(
+        [
+            _fit_fields(1, 1) | _VOLUME_WINDOW,
+            _fit_fields(1, 2, numero_pontos_turbinamento=9) | _VOLUME_WINDOW,
+        ]
+    )
+    with dx.collect() as collected:
+        volume_window_rule(_FpDadger(fp, {1: 50.0}), _calendar(168.0, 168.0))
+    [diagnostic] = collected
+    assert diagnostic.code == "decomp-fp-fit-fields-unconverted"
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.title.endswith("(1)")
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, 1]]
+
+
+def test_volume_window_rule_is_silent_on_the_default_fit() -> None:
+    fp = pd.DataFrame([_fit_fields(1, 1) | _VOLUME_WINDOW])
+    with dx.collect() as collected:
+        volume_window_rule(_FpDadger(fp, {1: 50.0}), _calendar(168.0, 168.0))
+    assert collected == []
+
+
 def test_unconverted_fp_fields_message_has_no_repo_internal_references() -> None:
     diagnostic = unconverted_fp_fields_diagnostic(
         pd.DataFrame([_fit_fields(6, 1, numero_pontos_turbinamento=9)])

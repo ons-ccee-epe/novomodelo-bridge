@@ -1353,7 +1353,7 @@ def convert_non_controllable_sources(
                 # to the realized availability for every scenario; otherwise the LP
                 # discovers that curtailing NCS is one of the cheapest slacks and
                 # produces a +15 % hydro / -23 % spillage divergence vs the source model
-                # on this case family. See docs/findings/ncs-must-run-treatment.md.
+                # on this case family.
                 "allow_curtailment": False,
             }
         )

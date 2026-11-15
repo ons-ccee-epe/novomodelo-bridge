@@ -105,6 +105,43 @@ class TestConvertBuses:
         assert depths[0] == pytest.approx(0.05 * 2000.0)
         assert depths[1] == pytest.approx(0.05 * 1000.0)
 
+    def test_depths_scaled_from_the_mean_load_are_one_warning(self, tmp_path) -> None:
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.diagnostics import Severity
+        from novomodelo_bridge.newave.converters.network import convert_buses
+
+        deficit = _make_deficit_df(n_patamares=2)
+        deficit.loc[deficit["patamar_deficit"] == 1, "corte"] = 0.05
+        sistema = MagicMock()
+        sistema.custo_deficit = deficit
+        case = make_case(tmp_path, sistema=sistema)
+
+        with dx.collect() as collected:
+            convert_buses(case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW)
+
+        [diag] = collected
+        assert diag.code == "deficit-depth-from-mean-load"
+        assert diag.severity is Severity.WARNING
+        assert diag.table is not None
+        assert diag.table.rows == [
+            [1, "SE", 1, 0.05, 2000.0, pytest.approx(100.0)],
+            [2, "S", 1, 0.05, 1000.0, pytest.approx(50.0)],
+            [99, "FICT", 1, 0.05, 0.0, 0.0],
+        ]
+
+    def test_a_single_unbounded_segment_reports_no_scaled_depth(self, tmp_path) -> None:
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.newave.converters.network import convert_buses
+
+        sistema = MagicMock()
+        sistema.custo_deficit = _make_deficit_df(n_patamares=1)
+        case = make_case(tmp_path, sistema=sistema)
+
+        with dx.collect() as collected:
+            convert_buses(case, self._make_id_map(), reference_load_mw=_BUS_LOAD_MW)
+
+        assert collected == []
+
 
 class TestMeanBusLoad:
     def test_weights_each_bus_by_stage_hours(self) -> None:

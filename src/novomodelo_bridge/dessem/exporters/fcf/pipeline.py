@@ -18,6 +18,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     counted,
     emit,
+    exception_reason,
 )
 from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
     content_csv_path,
@@ -665,7 +666,7 @@ def _write_failure_manifest(
                     "record the failure either, so the file is missing or still "
                     "describes an earlier export."
                 ),
-                notes=[f"Reason: {exc}"],
+                notes=[f"Reason: {exception_reason(exc)}"],
             )
         )
 

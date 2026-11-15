@@ -1124,9 +1124,9 @@ def test_build_data_context_peq_accepts_sb_mnemonic_or_region_name(
 @pytest.mark.parametrize(
     ("text", "match"),
     [
-        ("peq_SECO_PCHgd_SUDESTE", "unknown subsystem 'SUDESTE'"),
-        ("peq_N_BIOgd_N", "no PQ series 'N_BIOgd' in subsystem 4"),
-        ("peq_SECO_PCHgd_N", "no PQ series 'SECO_PCHgd' in subsystem 4"),
+        ("peq_SECO_PCHgd_SUDESTE", "undeclared subsystem SUDESTE$"),
+        ("peq_N_BIOgd_N", "no PQ series N_BIOgd of subsystem 4$"),
+        ("peq_SECO_PCHgd_N", "no PQ series SECO_PCHgd of subsystem 4$"),
     ],
 )
 def test_build_data_context_peq_unresolvable_raises(text: str, match: str) -> None:

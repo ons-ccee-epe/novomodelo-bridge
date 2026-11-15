@@ -4,8 +4,9 @@ Checks the mechanical rules of `.claude/rules/diagnostics.md` on the text of
 each `Diagnostic(...)` and `DiagnosticTable(...)` call that the source spells
 out: literal strings, f-strings, concatenations and conditional expressions.
 A field built at run time (`summary=str(exc)`) is out of reach and skipped.
-Log calls are checked too: a finding is a diagnostic, never a log warning,
-and no log message carries a `(s)` plural marker.
+Log calls are checked too: a finding is a diagnostic, never a log warning.
+No string in `src/` outside a docstring, an error message or help text among
+them, carries a `(s)` plural marker.
 
 Tier-1: pure ``ast`` and ``pathlib`` -- no ``novomodelo`` import.
 """
@@ -29,6 +30,8 @@ _LOG_PHRASING = re.compile(
 _BOILERPLATE = re.compile(r"no action (needed|required)|informational", re.I)
 _UPPER_FILE = re.compile(r"\b[A-Z][A-Z0-9_]*\.(DAT|RV\d|RVN)\b")
 _PLURAL_MARKER = re.compile(r"\w\((s|es|ies)\)")
+# Embedded JavaScript's ``function(s)`` is a call, not a plural.
+_PROSE_PLURAL_MARKER = re.compile(r"\b(?!function\b)[A-Za-z_]\w*\((?:s|es|ies)\)")
 _LOGGERS = frozenset({"_LOG", "logger", "logging"})
 _LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 _FINDING_LEVELS = frozenset({"warning", "error", "exception", "critical"})
@@ -208,6 +211,35 @@ def test_no_log_message_has_a_plural_marker() -> None:
         if call.args
         and any(_PLURAL_MARKER.search(text) for text in _texts(call.args[0]))
     )
+    assert found == []
+
+
+def _docstrings(tree: ast.Module) -> set[int]:
+    owners = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    return {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, owners)
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+
+
+def test_no_message_has_a_plural_marker() -> None:
+    found: list[str] = []
+    for path in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        docstrings = _docstrings(tree)
+        rel = path.relative_to(_SRC).as_posix()
+        found.extend(
+            f"{rel}:{node.lineno}: string has a '(s)' plural marker"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+            and _PROSE_PLURAL_MARKER.search(node.value)
+        )
     assert found == []
 
 

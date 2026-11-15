@@ -688,7 +688,7 @@ def test_get_renderable_tabs_shows_placeholder_when_render_raises() -> None:
     assert diag.severity is dx.Severity.WARNING
     assert diag.title == "Dashboard tabs that could not be built (1)"
     assert diag.table is not None
-    assert diag.table.rows == [["Bad", "rendering <failed>"]]
+    assert diag.table.rows == [["Bad", "RuntimeError: rendering <failed>"]]
 
     by_id = {tab_id: html for tab_id, _label, html in result}
     assert "tab-bad" in by_id  # not dropped

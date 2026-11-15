@@ -183,9 +183,24 @@ def read_anticipated_dispatch(
 
     adterm_path: Path | None = case.files.adterm
     if adterm_path is None or not adterm_path.exists():
-        _LOG.info(
-            "despacho_antecipado_gnl is on but adterm.dat is missing; "
-            "no anticipated thermals will be emitted."
+        emit(
+            Diagnostic(
+                code="adterm-file-absent",
+                severity=Severity.WARNING,
+                category="GNL",
+                title="Anticipated GNL dispatch switched on without adterm.dat",
+                summary=(
+                    "dger.dat switches anticipated GNL dispatch on, but the deck "
+                    "has no adterm.dat naming the committed thermals, so every "
+                    "thermal is dispatched without anticipation and the policy "
+                    "differs from NEWAVE's."
+                ),
+                remediation=(
+                    "Add adterm.dat to the deck, or switch anticipated GNL "
+                    "dispatch off in dger.dat."
+                ),
+            ),
+            logger=_LOG,
         )
         return {}
 

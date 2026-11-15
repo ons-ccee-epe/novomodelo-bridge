@@ -1761,4 +1761,4 @@ class TestExportFindings:
         assert result == 1
         [unwritten] = _with_code(diagnostics, "dessem-fcf-failure-manifest-unwritten")
         assert unwritten.title == "export_manifest.json could not be written"
-        assert unwritten.notes == ["Reason: disk full"]
+        assert unwritten.notes == ["Reason: OSError: disk full"]

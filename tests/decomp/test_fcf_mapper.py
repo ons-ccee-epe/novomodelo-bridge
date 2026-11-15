@@ -551,7 +551,7 @@ def test_map_gnl_leaves_undated_untargeted_and_unpriced_slots_at_zero() -> None:
             3,
             None,
             0.0,
-            "1 ring slot(s) deliver in a month the cut's GNL lags do not price",
+            "1 ring slot delivers in a month the cut's GNL lags do not price",
         ),
     )
 

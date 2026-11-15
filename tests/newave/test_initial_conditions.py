@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from novomodelo_bridge.core.diagnostics import collect
+from novomodelo_bridge.core.diagnostics import Severity, collect
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
@@ -469,3 +469,38 @@ class TestReadAnticipatedDispatchHorizonTruncation:
         assert truncated.code == "adterm-lag-beyond-horizon"
         assert truncated.table is not None
         assert truncated.table.rows == [[86, 15]]
+
+
+class TestReadAnticipatedDispatchFileAbsent:
+    def test_switched_on_without_adterm_warns_and_anticipates_nothing(
+        self, tmp_path
+    ) -> None:
+        from novomodelo_bridge.newave.converters.anticipated import (
+            read_anticipated_dispatch,
+        )
+
+        mock_dger = MagicMock()
+        mock_dger.despacho_antecipado_gnl = 1
+        case = make_case(make_nw_files(tmp_path, adterm=None), dger=mock_dger)
+
+        with collect() as found:
+            result = read_anticipated_dispatch(case)
+
+        assert result == {}
+        [absent] = found
+        assert absent.code == "adterm-file-absent"
+        assert absent.severity is Severity.WARNING
+        assert absent.remediation is not None
+
+    def test_switched_off_without_adterm_reports_nothing(self, tmp_path) -> None:
+        from novomodelo_bridge.newave.converters.anticipated import (
+            read_anticipated_dispatch,
+        )
+
+        mock_dger = MagicMock()
+        mock_dger.despacho_antecipado_gnl = 0
+        case = make_case(make_nw_files(tmp_path, adterm=None), dger=mock_dger)
+
+        with collect() as found:
+            assert read_anticipated_dispatch(case) == {}
+        assert found == []

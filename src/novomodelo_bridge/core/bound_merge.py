@@ -43,7 +43,7 @@ def merge_bound_tables(
     )
     if missing:
         raise ValueError(
-            f"join key(s) {missing} not present in both base and overlay frames"
+            f"join keys missing from the base or the overlay frame: {missing}"
         )
 
     key = list(on)

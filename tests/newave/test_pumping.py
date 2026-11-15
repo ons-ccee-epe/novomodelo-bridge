@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, PropertyMock
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.newave.converters.pumping import (
     PumpingInputs,
@@ -279,6 +281,51 @@ class TestConvertPumpingStations:
         assert station["consumption_mw_per_m3s"] == 1.5
         assert station["flow"]["min_m3s"] == 0.0
         assert station["flow"]["max_m3s"] == 100.0
+
+    def test_converted_stations_are_one_note_listing_each_by_code(self) -> None:
+        case = MagicMock()
+        case.horizon.start_year = 2025
+        case.horizon.start_month = 1
+        id_map = MagicMock()
+        id_map.bus_id.return_value = 0
+        id_map.hydro_id.side_effect = lambda code: code
+        stations_df = pd.DataFrame(
+            [
+                {
+                    "codigo_estacao": code,
+                    "nome_estacao": f" {name} ",
+                    "codigo_usina_origem": origin,
+                    "codigo_usina_destino": destination,
+                    "codigo_submercado": 1,
+                    "consumo_estacao": 1.0,
+                    "bombeamento_maximo": 50.0,
+                }
+                for code, name, origin, destination in [
+                    (7, "SANTA CECILIA", 30, 40),
+                    (3, "VIGARIO", 10, 20),
+                ]
+            ]
+        )
+        inputs = PumpingInputs(stations=stations_df, limits=pd.DataFrame())
+
+        with dx.collect() as collected:
+            convert_pumping_stations(case, id_map, inputs, {3: 0, 7: 1})
+
+        [diag] = collected
+        assert diag.code == "pumping-stations-converted"
+        assert diag.severity is Severity.INFO
+        assert diag.title == "Pumping stations converted (2)"
+        assert diag.table is not None
+        assert diag.table.rows == [
+            [3, "VIGARIO", 10, 20, 1],
+            [7, "SANTA CECILIA", 30, 40, 1],
+        ]
+
+    def test_a_case_without_pumping_reports_nothing(self) -> None:
+        with dx.collect() as collected:
+            convert_pumping_stations(MagicMock(), MagicMock(), None, {})
+
+        assert collected == []
 
 
 class TestConvertPumpingBounds:

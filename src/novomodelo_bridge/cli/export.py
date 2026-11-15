@@ -15,7 +15,11 @@ from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
 from novomodelo_bridge.cli.logging_config import configure_logging as _configure_logging
 from novomodelo_bridge.cli.verdict import build_verdict
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.errors import BridgeError, OutputExistsError
+from novomodelo_bridge.core.errors import (
+    NovomodeloOutputError,
+    OutputExistsError,
+    SourceFileError,
+)
 from novomodelo_bridge.dessem.exporters.fcf import EXPORT_PHASE_LABELS
 from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
 from novomodelo_bridge.dessem.exporters.fcf.source import read_source_deck
@@ -167,11 +171,16 @@ def _export_dessem(
         _fail(
             command,
             args,
-            BridgeError(f"DECOMP deck directory not found: {decomp_dir}"),
+            SourceFileError(f"DECOMP deck directory '{decomp_dir}' does not exist"),
             1,
         )
     if not case_dir.is_dir():
-        _fail(command, args, BridgeError(f"Case directory not found: {case_dir}"), 1)
+        _fail(
+            command,
+            args,
+            NovomodeloOutputError(f"case directory '{case_dir}' does not exist"),
+            1,
+        )
 
     # Broad by design, as around `run_export` below: the deck reader surfaces
     # idecomp's own parse errors, which must still reach the user as one
@@ -235,7 +244,7 @@ def _export_dessem(
     # Broad by design, as in `convert`: an unexpected export failure must still
     # reach the user as one rendered diagnostic or `--json` envelope, exit 1.
     except Exception as exc:
-        _fail(command, args, exc, 1)
+        _fail(command, args, exc, 1, found_before=export_diags)
     export_diags = dx.finalize_diagnostics(export_diags)
 
     status = "ok" if exit_code == 0 else "error"

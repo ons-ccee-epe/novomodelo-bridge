@@ -19,9 +19,10 @@ HARD (exit 1):
     symbol or the docs page instead,
   * design-doc section refs (``design §5``): those docs live in gitignored
     ``plans/`` — inline the durable content,
-  * a repo-relative ``src/<package>/...``, ``tests/...`` or ``e2e/...`` ``.py`` path that
-    no longer resolves — a sibling-test / module pointer that rotted when the
-    file moved. Repoint it to the live path or (better) name the symbol/test.
+  * a repo-relative ``src/<package>/...``, ``tests/...`` or ``e2e/...`` ``.py`` path, or
+    a ``docs/...`` page, that no longer resolves — a pointer that rotted when
+    the file moved or was never written. Repoint it to the live path or
+    (better) name the symbol/test.
 
 Scanned scopes: src/, tests/ and e2e/ prose (comments + docstrings). Test *file
 names* and *function names* are never scanned — only comments and docstrings.
@@ -58,17 +59,19 @@ HARD_PATTERNS = [
     ("internal-design-ref", re.compile(r"\bdesign[ \-]*§")),
 ]
 
-# A repo-relative source/test .py path cited in prose. The match stops at
-# ``.py`` (``:`` and ``::`` are not in the class), so a ``…py::symbol`` or
-# ``…py:NNN`` suffix is dropped before the existence check.
+# A repo-relative source/test .py path or docs page cited in prose. The match
+# stops at the extension (``:`` and ``::`` are not in the class), so a
+# ``…py::symbol`` or ``…py:NNN`` suffix is dropped before the existence check.
 _SRC_PREFIX = re.escape(rel(SRC_ROOT))
-_REPO_PY_PATH = re.compile(rf"\b(?:{_SRC_PREFIX}|tests|e2e)/[\w./-]+\.py\b")
+_REPO_PATH = re.compile(
+    rf"\b(?:{_SRC_PREFIX}|tests|e2e)/[\w./-]+\.py\b|\bdocs/[\w./-]+\.(?:md|toml)\b"
+)
 
 
 def _stale_path_hits(line: str, where: str) -> list[str]:
-    """Flag cited src/, tests/ or e2e/ .py paths that no longer resolve against the tree."""
+    """Flag cited .py paths and docs pages that no longer resolve against the tree."""
     hits: list[str] = []
-    for path in _REPO_PY_PATH.findall(line):
+    for path in _REPO_PATH.findall(line):
         if not (REPO_ROOT / path).exists():
             hits.append(f"{where}: [stale-path] {path}")
     return hits

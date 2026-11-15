@@ -861,6 +861,29 @@ def test_bound_conflicts_diagnostic_names_plant_restrictions_and_limits() -> Non
         assert leak not in text
 
 
+def test_bound_conflicts_diagnostic_is_coded_and_counts_the_conflicts() -> None:
+    conflicts = read_constraints(_qdef_ceiling_and_floor()).bound_conflicts
+    diagnostic = bound_conflicts_diagnostic(conflicts, {118: "BILLINGS"})
+    assert diagnostic.code == "decomp-conflicting-flow-restrictions"
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.title == "Conflicting flow restrictions kept soft (1)"
+    assert diagnostic.remediation
+    assert diagnostic.table is not None
+    assert diagnostic.table.caption == "Stage and block ids are 0-based."
+
+
+def test_a_flow_floor_below_its_ceiling_is_no_conflict() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((116, 1, 2), (170, 1, 2)),
+        cq=_coeff((116, 118, 1.0, 1, "QDEF"), (170, 118, 1.0, 1, "QDEF"), tipo=True),
+        lq=_lu(
+            (116, 1, _NAN, 10.0, _NAN, 10.0, _NAN, 10.0),
+            (170, 1, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
+        ),
+    )
+    assert read_constraints(dadger).bound_conflicts == ()
+
+
 # ---------------------------------------------------------------------------
 # drop_unknown_entities
 # ---------------------------------------------------------------------------

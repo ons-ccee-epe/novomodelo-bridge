@@ -47,33 +47,17 @@ def _handle_conversion_pipeline_failure(
     args: ConvertArgs,
     *,
     command: str,
-    err_console: Console,
     found_before: Sequence[Diagnostic],
 ) -> NoReturn:
-    """Render/emit a pipeline failure verdict and exit 1 (shared by both tracks).
+    """Emit a pipeline failure verdict and exit 1 (shared by both tracks).
 
-    ``report`` is None on this path, so counts are zeroed and the dry-run
-    would-write listing is empty; ``status`` is "error" because
-    ``diagnostic_from_exception`` yields an ERROR-severity diagnostic.
+    No report exists on this path, so the counts are zeroed and the dry-run
+    would-write listing is empty.
     """
-    diagnostics = [*found_before, diagnostic_from_exception(exc, context="Conversion")]
-    if args.json_output:
-        summary = _convert_verdict_summary(None)
-        if args.dry_run:
-            summary["would_write"] = []
-            status = _convert_status(diagnostics, success="dry-run")
-        else:
-            status = _convert_status(diagnostics, success="ok")
-        _emit_convert_json(build_verdict(command, status, summary, diagnostics))
-    else:
-        render_diagnostics(
-            diagnostics,
-            heading="Conversion notes",
-            console=err_console,
-            quiet=args.quiet,
-            verbose=args.verbose > 0,
-        )
-    raise typer.Exit(code=1)
+    summary = _convert_verdict_summary(None)
+    if args.dry_run:
+        summary["would_write"] = []
+    _fail(command, args, exc, 1, summary=summary, found_before=found_before)
 
 
 def _write_diagnostics_json(
@@ -165,7 +149,6 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
             exc,
             args,
             command="convert newave",
-            err_console=err_console,
             found_before=found_before,
         )
 
@@ -348,7 +331,9 @@ def _handle_boundary_fcf_failure(
 ) -> NoReturn:
     """Render/emit a boundary-FCF import failure verdict and exit 1."""
     diag = diagnostic_from_exception(exc, context="Boundary FCF import")
-    failure_diagnostics = [*report.diagnostics, *fcf_diags, diag]
+    failure_diagnostics = dx.finalize_diagnostics(
+        [*report.diagnostics, *fcf_diags, diag]
+    )
     if args.diagnostics_json is not None:
         # The sidecar carries the same merged set as the failure
         # verdict below: the converter's own findings, whatever the
@@ -589,7 +574,6 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
             exc,
             args,
             command="convert decomp",
-            err_console=err_console,
             found_before=found_before,
         )
 

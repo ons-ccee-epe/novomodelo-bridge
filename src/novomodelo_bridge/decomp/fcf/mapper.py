@@ -47,6 +47,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.core.diagnostics import counted
 from novomodelo_bridge.core.policy_dates import (
     UNDATED,
     date_from_yyyymmdd,
@@ -309,7 +310,7 @@ def _validated_lag_subindices(
         if not 0 <= subindex < lag_bound:
             raise ValueError(
                 f"lag_slot_of({depth}) = {subindex} is out of range for the "
-                f"manifest's {lag_bound} HydroInflowLag slot(s)"
+                f"manifest's {counted(lag_bound, 'HydroInflowLag slot')}"
             )
     return subindices
 
@@ -422,8 +423,9 @@ def _resolve_gnl(
                     target.submercado,
                     None,
                     0.0,
-                    f"{unpriced} ring slot(s) deliver in a month the cut's "
-                    "GNL lags do not price",
+                    f"{counted(unpriced, 'ring slot')} "
+                    f"{'delivers' if unpriced == 1 else 'deliver'} in a month "
+                    "the cut's GNL lags do not price",
                 )
             )
 
