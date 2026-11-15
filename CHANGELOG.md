@@ -179,6 +179,11 @@ links are cobre-bridge's.
   contradict its probabilities is reported as `source-field-parse`.
   `compare decomp` and `export dessem` report the ones they meet the same
   way.
+- **BREAKING: `compare decomp` exits 1, not 2, when it stops on the DECOMP
+  deck**, such as a deck it cannot convert (`source-unsupported`), a
+  malformed field (`source-field-parse`) or a missing file
+  (`source-file-missing`). It still exits 2 on a Novomodelo output it cannot
+  read. Update scripts that read its exit code.
 - **The `compare` report's Hydro and Thermal Details tabs lead with a per-plant
   gap table**, tinted by band, worst plant first, where a click opens the
   plant's charts; the Productivity tab lists only the plants that differ and

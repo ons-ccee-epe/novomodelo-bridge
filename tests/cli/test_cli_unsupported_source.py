@@ -2,7 +2,8 @@
 
 Each case edits a copy of the DECOMP mini-deck. ``convert decomp`` stops on it
 with exit 1, and ``check decomp`` never crashes on it and, where it reaches the
-refusal, fails with the same diagnostic.
+refusal, fails with the same diagnostic. ``compare decomp`` stops with exit 1
+on a refusal it meets before reading the Novomodelo output.
 
 Tier-1: the refusal fires before anything is written, so nothing needs
 ``novomodelo``.
@@ -263,3 +264,21 @@ def test_convert_and_check_decomp_refuse_the_deck(
         assert unsupported["summary"] == converted["summary"]
     else:
         assert check.exit_code in (0, 1)
+
+
+def test_compare_decomp_exits_1_on_a_deck_it_refuses(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _copied_deck(decomp_mini_deck, tmp_path)
+    _reserved_subsystem_name(deck)
+
+    result = CliRunner().invoke(
+        app, ["compare", "decomp", str(deck), str(tmp_path), "--json"]
+    )
+
+    assert result.exit_code == 1
+    [refused] = _refusals(result)
+    assert (refused["code"], refused["notes"]) == (
+        "source-unsupported",
+        ["file: dadger.rvN", "field: SB nome_submercado"],
+    )
