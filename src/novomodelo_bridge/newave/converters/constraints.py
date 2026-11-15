@@ -1162,6 +1162,20 @@ def _formula_expression(
     return _ElectricExpression(_render_signed_expression(variables), tuple(data_terms))
 
 
+def _directional_flow(
+    line_id_map: dict[tuple[int, int], int], a: int, b: int
+) -> str | None:
+    """The source model's non-negative flow from subsystem *a* to *b* as a
+    novomodelo line variable, or ``None`` when no line joins the pair."""
+    line_id = line_id_map.get((min(a, b), max(a, b)))
+    if line_id is None:
+        return None
+    # The direction is the variable choice, never a negated coefficient or a
+    # signed ``line_exchange``: either lets the sum go negative when a term
+    # flows in its non-canonical direction, diluting the bound.
+    return f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
+
+
 def _decision_variable(
     cod: int,
     term: ParsedTerm,
@@ -1173,8 +1187,8 @@ def _decision_variable(
     *term_skips*, when it names a plant or a subsystem pair outside the case."""
     if term.token == "ener_interc":
         sys_from, sys_to = term.args
-        line_id = line_id_map.get((min(sys_from, sys_to), max(sys_from, sys_to)))
-        if line_id is None:
+        variable = _directional_flow(line_id_map, sys_from, sys_to)
+        if variable is None:
             term_skips.append(
                 _ElectricTermSkip(
                     cod,
@@ -1184,16 +1198,7 @@ def _decision_variable(
                     sys_to=sys_to,
                 )
             )
-            return None
-        # The source model's ``ener_interc(A, B)`` is the directional flow from A to
-        # B as a non-negative variable.  Map to Novomodelo's
-        # ``line_direct``/``line_reverse`` so the sign is encoded by the variable
-        # choice rather than by negating the coefficient (the latter would dilute
-        # the bound when LP solutions route in the non-canonical direction).  See
-        # ``_agrint_expression`` for the same rule applied to AGRINT terms.
-        if sys_from < sys_to:
-            return f"line_direct({line_id})"
-        return f"line_reverse({line_id})"
+        return variable
 
     (plant_code,) = term.args
     if term.token == "ger_usih":
@@ -2137,24 +2142,12 @@ def _agrint_expression(
     Every term whose subsystem pair has no line is recorded on *term_skips*;
     ``None`` when none is left.
     """
-    # The source model's ``Interc(A→B)`` is the *non-negative directional* flow from
-    # A to B (zero whenever physical flow goes B→A).  Novomodelo's ``line_direct(id)`` /
-    # ``line_reverse(id)`` are the matching non-negative LP variables:
-    # ``line_direct`` is the flow in the canonical (src<tgt) direction,
-    # ``line_reverse`` the flow in the opposite direction.
-    #
-    # The naive substitution ``-line_exchange`` (signed net flow,
-    # negated when reversed) would let the LHS go negative when one
-    # term is flowing in its non-canonical direction — diluting the
-    # bound at fictitious hubs and producing incorrect dispatch.
     parsed_terms: list[tuple[float, str]] = []
     for a, b, coeff in terms_raw:
-        src, tgt = (a, b) if a < b else (b, a)
-        line_id = line_id_map.get((src, tgt))
-        if line_id is None:
+        var = _directional_flow(line_id_map, a, b)
+        if var is None:
             term_skips.append(_AgrintTermSkip(group_id=group_id, sys_a=a, sys_b=b))
             continue
-        var = f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
         parsed_terms.append((coeff, var))
 
     if not parsed_terms:
