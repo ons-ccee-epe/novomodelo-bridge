@@ -274,9 +274,9 @@ links are cobre-bridge's.
   or could not be read**, such as a `relato.rvN` without its cost table. It
   now leaves out what the file feeds, such as DECOMP's cost breakdown, and
   says so in a `report-file-missing` note or a `report-file-unreadable`
-  warning. It also warns when `avl_cortesfpha_dec.rvN`, `eco_fpha_.rvN` or
-  `dec_desvfpha.rvN` cannot be read, where the Productivity tab left out what
-  they feed without saying so.
+  warning. It also warns when `avl_cortesfpha_dec.rvN`, `eco_fpha_.rvN`,
+  `dec_desvfpha.rvN` or `dec_oper_rhesoft.csv` cannot be read, where the
+  Productivity and Constraints tabs left out what they feed without saying so.
 
 ## [0.20.0] - 2026-11-03
 

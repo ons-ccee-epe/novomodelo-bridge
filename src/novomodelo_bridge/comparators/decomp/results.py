@@ -124,6 +124,7 @@ _RELATO_COSTS_UNREADABLE_EFFECT = (
 #: The same for its REE membership table, shared with ``dec_oper_ree.csv``.
 _REE_ENERGY_EFFECT = "the report leaves out the REE energy comparison."
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
+_DEC_OPER_RHESOFT_EFFECT = "the report leaves out DECOMP's side of the RHE constraints."
 
 
 def _emit_missing(file_name: str, decomp_dir: Path, effect: str) -> None:
@@ -2534,18 +2535,19 @@ def _dec_oper_thermal_stage_frame(
 
 
 def _dec_oper_rhesoft_frame(decomp_dir: Path) -> pl.DataFrame:
-    """Best-effort ``dec_oper_rhesoft.csv`` read.
+    """``dec_oper_rhesoft.csv``, empty when absent or unreadable.
 
-    Empty when the deck carries no RHE (soft minimum-stored-energy)
-    constraints -- the source model omits the file entirely in that case,
-    which `read_dec_oper_rhesoft`'s own empty-is-error contract (for a
-    genuinely broken/empty parse) does not distinguish on its own.
+    The source model writes the file only for a deck with RHE (soft
+    minimum-stored-energy) constraints, so an absent one is no finding.
     """
-    try:
-        return read_dec_oper_rhesoft(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No dec_oper_rhesoft.csv (no RHE constraints?): %s", exc)
-        return pl.DataFrame()
+    table = read_or_note(
+        read_dec_oper_rhesoft,
+        "dec_oper_rhesoft.csv",
+        decomp_dir,
+        _DEC_OPER_RHESOFT_EFFECT,
+        note_missing=False,
+    )
+    return pl.DataFrame() if table is None else table
 
 
 def _stage_frame_to_lookup(
