@@ -643,7 +643,7 @@ Disponibilidade determinística das fontes não controláveis replicada nas colu
 **Quando:** somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base, ou limite de turbinamento e potência disponível de Itaipu)  
 **Código:** `src/novomodelo_bridge/decomp/converters/bounds.py`
 
-Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base, limite de turbinamento de Itaipu) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único.
+Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base, limite de turbinamento de Itaipu) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único. Um piso acima do teto: em turbinamento, geração, defluência e armazenamento, ambos ficam como no deck, com o aviso `decomp-bound-floor-above-ceiling` (o DECOMP viola o que for mais barato e o Novomodelo cobra a violação), ou o piso é reduzido ao teto sem diagnóstico dentro da precisão escrita do deck; em vertimento e desvio, que o Novomodelo impõe dos dois lados, a conversão para com `source-field-parse`, nomeando os registros.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
@@ -670,7 +670,7 @@ Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hy
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/decomp/group_bounds.py`
 
-Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `system/hydros.json`: a potência disponível do estágio (instalada × `MP` × `FD`) e o engolimento máximo do estágio de cada grupo em todos os estágios, limitando ou não, mais os pisos e tetos por frequência do `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas.
+Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `system/hydros.json`: a potência disponível do estágio (instalada × `MP` × `FD`) e o engolimento máximo do estágio de cada grupo em todos os estágios, limitando ou não, mais os pisos e tetos por frequência do `RI` de Itaipu e os limites das `RE` de termo único sobre uma frequência de Itaipu. Os valores são calculados em `converters/hydro/bounds.py`; este módulo só os dispõe em linhas. Um piso acima do teto do grupo fica como no deck, com o aviso `decomp-bound-floor-above-ceiling` (o DECOMP viola o que for mais barato e o Novomodelo cobra a violação), ou é reduzido ao teto sem diagnóstico dentro da precisão escrita do deck.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
@@ -689,7 +689,7 @@ Limites por (usina, grupo, estágio, patamar) dos `unit_groups` de `system/hydro
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/decomp/converters/thermal.py`
 
-Limites de geração e CVU de cada térmica de `CT` em cada estágio (estágios não declarados herdam o último; estágio 1 obrigatório), intersectados com as restrições elétricas `RE` de termo único sobre uma térmica (`FT` com coeficiente ±1 e limites `LU`). Térmicas GNL não recebem linhas.
+Limites de geração e CVU de cada térmica de `CT` em cada estágio (estágios não declarados herdam o último; estágio 1 obrigatório), intersectados com as restrições elétricas `RE` de termo único sobre uma térmica (`FT` com coeficiente ±1 e limites `LU`). Térmicas GNL não recebem linhas. Um piso acima do teto, que o Novomodelo imporia dos dois lados, para a conversão com `source-field-parse`, nomeando os registros.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
@@ -722,7 +722,7 @@ Limites de intercâmbio por linha e estágio a partir de `IA` (estágios não de
 **Quando:** somente quando alguma restrição hidráulica `HQ` de termo único `QBOM` (coeficiente ±1 em `CQ`) limita uma estação de bombeamento declarada em `UE`  
 **Código:** `src/novomodelo_bridge/decomp/converters/single_term_bounds.py`
 
-Limites de vazão bombeada por estação, estágio e patamar, oriundos exclusivamente das restrições `HQ`/`LQ`/`CQ` cujo único termo é `QBOM`. Os limites de `UE` ficam em `system/pumping_stations.json`. Um `QBOM` sem estação correspondente é avisado e ignorado.
+Limites de vazão bombeada por estação, estágio e patamar, oriundos exclusivamente das restrições `HQ`/`LQ`/`CQ` cujo único termo é `QBOM`. Os limites de `UE` ficam em `system/pumping_stations.json`. Um `QBOM` sem estação correspondente é avisado e ignorado. Um piso acima do teto, que o Novomodelo imporia dos dois lados, para a conversão com `source-field-parse`, nomeando os registros.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
@@ -738,7 +738,7 @@ Limites de vazão bombeada por estação, estágio e patamar, oriundos exclusiva
 **Quando:** somente quando `dadger` declara ao menos um contrato `CI`/`CE` real (tabela não vazia)  
 **Código:** `src/novomodelo_bridge/decomp/converters/contracts.py`
 
-Limites e preço de cada contrato por estágio (estágios não declarados herdam o último; estágio 1 obrigatório). Por (contrato, estágio) há uma única linha de base quando `limite_inferior`, `limite_superior` e `custo` são uniformes entre patamares, ou uma linha por patamar quando não são, nunca ambas.
+Limites e preço de cada contrato por estágio (estágios não declarados herdam o último; estágio 1 obrigatório). Por (contrato, estágio) há uma única linha de base quando `limite_inferior`, `limite_superior` e `custo` são uniformes entre patamares, ou uma linha por patamar quando não são, nunca ambas. Um piso acima do teto, que o Novomodelo imporia dos dois lados, para a conversão com `source-field-parse`, nomeando os registros.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |

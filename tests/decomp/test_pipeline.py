@@ -22,8 +22,12 @@ from typer.testing import CliRunner
 
 from novomodelo_bridge.cli import app
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
-from novomodelo_bridge.core.errors import EmissionCheckError
-from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
+from novomodelo_bridge.core.errors import (
+    EmissionCheckError,
+    FieldParseError,
+    diagnostic_from_exception,
+)
+from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution, resolve
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
@@ -57,6 +61,8 @@ from novomodelo_bridge.decomp.pipeline import (
     _couple_diversion_channels,
     _diversion_channel_dropped_diagnostic,
     _diversion_channels,
+    _keep_soft_conflicts,
+    _KeptConflict,
     _read_constraint_census,
     _released_runofriver_codes,
 )
@@ -820,6 +826,113 @@ class TestBoundAccumulatorWiring:
         assert "hydro-bounds-raised-to-declared-minimum" not in {
             d.code for d in diagnostics
         }
+
+    def test_generation_floor_above_another_records_ceiling_is_kept(
+        self, tmp_path: Path
+    ) -> None:
+        """RE 12's floor above RE 13's ceiling on one plant is written as the
+        deck has it, since the source model violates whichever soft limit is
+        cheaper, with one warning naming both records and no second report of
+        the same cells."""
+        diagnostics: list[Diagnostic] = []
+        dst = _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            to_bounds=(
+                _re_generation_record(12, lower=30.0, upper=None),
+                _re_generation_record(13, lower=None, upper=20.0),
+            ),
+            diagnostics_out=diagnostics,
+        )
+
+        hydro = json.loads(
+            (dst / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"][0]
+        table = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
+        assert table["min_generation_mw"].drop_null().to_pylist() == [30.0] * 3
+        assert table["max_generation_mw"].drop_null().to_pylist() == [20.0] * 3
+        reported = [
+            d
+            for d in diagnostics
+            if d.code
+            in {
+                "hydro-bounds-raised-to-declared-minimum",
+                "hydro-bounds-floor-above-declared-capacity",
+                "decomp-bound-floor-above-ceiling",
+            }
+        ]
+        assert [(d.code, d.severity) for d in reported] == [
+            ("decomp-bound-floor-above-ceiling", Severity.WARNING)
+        ]
+        assert reported[0].table is not None
+        assert reported[0].table.rows == [
+            [1, hydro["name"], "Generation (MW)", "RE 12", "RE 13", "0", 30.0, 20.0]
+        ]
+
+    def test_spillage_floor_above_another_records_ceiling_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """novomodelo enforces both spillage limits, so a floor above the
+        ceiling has no solution: the conversion stops naming both records."""
+        records = tuple(
+            ConstraintRecord(
+                family="HQ",
+                constraint_id=constraint_id,
+                stage_start=0,
+                stage_end=0,
+                terms=(ConstraintTerm(code=1, coefficient=1.0, variable="QVER"),),
+                bounds={0: StageBounds(lower=(lower,) * 3, upper=(upper,) * 3)},
+                per_block=True,
+            )
+            for constraint_id, lower, upper in ((30, 70.0, None), (31, None, 60.0))
+        )
+
+        with pytest.raises(FieldParseError) as raised:
+            _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None, to_bounds=records)
+
+        diagnostic = diagnostic_from_exception(raised.value, context="convert")
+        assert diagnostic.code == "source-field-parse"
+        assert "spillage of plant 1" in diagnostic.summary
+        assert "stage 1, load block 1, a floor of 70.0 m³/s (RHQ 30)" in (
+            diagnostic.summary
+        )
+        assert "ceiling of 60.0 m³/s (RHQ 31)" in diagnostic.summary
+        assert raised.value.field == "RHQ 30, RHQ 31"
+
+    @pytest.mark.parametrize(
+        ("floor", "kept_floor", "reported"),
+        [(100.0 * (1 + 1e-7), 100.0, False), (101.0, 101.0, True)],
+    )
+    def test_storage_floor_above_the_ceiling_is_kept_past_the_written_precision(
+        self, floor: float, kept_floor: float, *, reported: bool
+    ) -> None:
+        """A storage floor above the ceiling by less than the deck's written
+        precision is lowered to the ceiling silently; past it, the floor stays
+        and the conflict is recorded for the warning."""
+        contribs = [
+            BoundContribution(
+                family="hydro",
+                entity_id=0,
+                stage_id=0,
+                block_id=None,
+                axis="storage",
+                lower=low,
+                upper=high,
+                contributor=contributor,
+            )
+            for low, high, contributor in (
+                (floor, None, "VE"),
+                (None, 100.0, "storage-envelope"),
+            )
+        ]
+        kept: list[_KeptConflict] = []
+        (row,) = _keep_soft_conflicts(
+            resolve(contribs, {0: 1}), lambda _row: (1, "Hydro 1", ""), kept
+        )
+        assert (row.lower, row.upper) == (kept_floor, 100.0)
+        assert [(k.code, k.limit, k.stage_id) for k in kept] == (
+            [(1, "Storage (hm³)", 0)] if reported else []
+        )
 
     def test_no_pumping_records_writes_no_pumping_bounds_file(
         self, tmp_path: Path
@@ -2674,6 +2787,59 @@ class TestMiniDeckItaipuFrequencyBounds:
                     for block in range(3)
                 }
             ), column
+
+    def test_a_floor_above_the_unit_groups_capacity_is_kept_with_a_warning(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        """``RE 461`` raised to a 7500 MW floor on the first block, above the
+        50 Hz group's 7000 MW and its available power, is written as the
+        deck has it with one warning naming the record and the ceilings' sources,
+        ``RE 561`` among them."""
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        dadger = deck / "dadger.rv2"
+        text = dadger.read_text(encoding="latin-1")
+        original = "LU  461   1      4267.20   7086.00"
+        assert text.count(original) == 1
+        dadger.write_text(
+            text.replace(original, "LU  461   1      7500.00          "),
+            encoding="latin-1",
+        )
+
+        out = tmp_path / "out"
+        report = convert_decomp_case(deck, out)
+
+        group_floors = {
+            row["stage_id"]: row["min_generation_mw"]
+            for row in pq.read_table(
+                out / "constraints" / "hydro_unit_group_bounds.parquet"
+            ).to_pylist()
+            if row["hydro_unit_group_id"] == 0
+            and row["block_id"] == 0
+            and row["min_generation_mw"] == 7500.0
+        }
+        assert sorted(group_floors) == [0, 1, 2]
+        (kept,) = [
+            d
+            for d in report.diagnostics
+            if d.code == "decomp-bound-floor-above-ceiling"
+        ]
+        assert kept.severity is Severity.WARNING
+        assert kept.table is not None
+        assert kept.table.rows == [
+            [
+                66,
+                "ITAIPU",
+                "Unit group 0 generation (MW)",
+                "RE 461",
+                "available power or RI, RE 561",
+                "0-2",
+                7500.0,
+                6300.0,
+            ]
+        ]
 
 
 class TestMiniDeckFphaProductionModels:

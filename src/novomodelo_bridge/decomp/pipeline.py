@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 from calendar import monthrange
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import NamedTuple
@@ -37,6 +37,7 @@ from novomodelo_bridge.core.diversion import (
     is_unlimited_flow,
     unlimited_channels_diagnostic,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintResult,
@@ -45,6 +46,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
 from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
+from novomodelo_bridge.core.tolerances import beyond_written_precision
 from novomodelo_bridge.decomp import (
     bounds_accumulator,
     constraint_registers,
@@ -159,6 +161,7 @@ class DecompCaseArtifacts:
     hydro_bounds: pa.Table | None = None
     thermal_bounds_table: pa.Table | None = None
     pumping_bounds_table: pa.Table | None = None
+    kept_bound_conflicts: list[_KeptConflict] | None = None
     # Populated by `_convert_constraints`.
     group_bounds: pa.Table | None = None
     contract_bounds_table: pa.Table | None = None
@@ -1666,16 +1669,19 @@ def _resolve_line_bounds(
 #: report names, followed by the constraint id.
 _SPECIAL_CONSTRAINT_REGISTERS: dict[str, str] = {"RE": "RE", "HQ": "RHQ", "HV": "RHV"}
 
-#: Every other hydro bound contributor -> the deck record or limit a report
-#: names.
+#: Every other bound contributor that can meet another -> the deck record or
+#: limit a report names.
 _BOUND_SOURCE_LABELS: dict[str, str] = {
     "RQ": "RQ",
     "UH": "UH",
     "UH_vert": "UH",
     "VE": "VE",
+    "CT": "CT",
     "storage-envelope": "AC VOLMIN/VOLMAX",
     "turbine_limit": "turbined-flow limit",
     "split_plant_availability": "available power",
+    "group_bounds": "available power or RI",
+    "convert_contract_bounds": "CI/CE",
 }
 
 
@@ -1710,6 +1716,188 @@ def _hydro_bound_labels(
                     [],
                 ).append((source, value))
     return labels
+
+
+def _source_list(sources: Iterable[tuple[str, float]]) -> str:
+    """The deck constraints and limits behind *sources*' contributors, each
+    named once."""
+    return ", ".join(
+        dict.fromkeys(_bound_source_label(contributor) for contributor, _ in sources)
+    )
+
+
+#: Two-sided bound axes novomodelo enforces on both sides -> the noun and unit
+#: a refusal names the variable by.
+_ENFORCED_AXIS_NOUNS: dict[tuple[str, str], tuple[str, str]] = {
+    ("hydro", "spillage"): ("spillage", "m³/s"),
+    ("hydro", "diversion"): ("diversion", "m³/s"),
+    ("thermal", "generation"): ("generation", "MW"),
+    ("pumping", "flow"): ("pumped flow", "m³/s"),
+    ("contract", "power"): ("contracted power", "MW"),
+}
+
+
+def _resolve_or_refuse(
+    contribs: Sequence[bounds_accumulator.BoundContribution],
+    block_counts: Mapping[int, int],
+    entity: Callable[[bounds_accumulator.ResolvedRow], str],
+    *,
+    dadger: Path,
+) -> list[bounds_accumulator.ResolvedRow]:
+    """:func:`bounds_accumulator.resolve`, refusing a floor above the ceiling
+    on an axis novomodelo enforces on both sides.
+
+    Raises
+    ------
+    FieldParseError
+        Naming the entity, as *entity* names a row's, the stage, both limits
+        and the *dadger* records that set them.
+    """
+    try:
+        return bounds_accumulator.resolve(contribs, block_counts)
+    except bounds_accumulator.FloorAboveCeilingError as exc:
+        row, conflict = exc.row, exc.conflict
+        noun, unit = _ENFORCED_AXIS_NOUNS[(row.family, row.axis)]
+        floors = _source_list(conflict.floors)
+        ceilings = _source_list(conflict.ceilings)
+        block = "," if row.block_id is None else f", load block {row.block_id + 1},"
+        raise FieldParseError(
+            f"The deck sets the {noun} of {entity(row)} in its stage "
+            f"{row.stage_id + 1}{block} a floor of {round(conflict.lower, 6)} "
+            f"{unit} ({floors}) above its ceiling of {round(conflict.upper, 6)} "
+            f"{unit} ({ceilings}). novomodelo holds the {noun} within both "
+            "limits, so the case would have no solution.",
+            path=str(dadger),
+            field=_source_list((*conflict.floors, *conflict.ceilings)),
+        ) from exc
+
+
+#: Soft bound axes the merge can keep a floor above the ceiling on -> the
+#: limit a report names.
+_SOFT_LIMIT_LABELS: dict[tuple[str, str], str] = {
+    ("hydro", "turbined"): "Turbined flow (m³/s)",
+    ("hydro", "generation"): "Generation (MW)",
+    ("hydro", "outflow"): "Outflow (m³/s)",
+    ("hydro", "storage"): "Storage (hm³)",
+    ("hydro_unit_group", "turbined"): "turbined flow (m³/s)",
+    ("hydro_unit_group", "generation"): "generation (MW)",
+}
+
+
+@dataclass(frozen=True)
+class _KeptConflict:
+    """A floor above the ceiling written as the deck has it: the plant's code
+    and name, the limit, and the stage."""
+
+    code: int
+    name: str
+    limit: str
+    stage_id: int
+    conflict: bounds_accumulator.FloorAboveCeiling
+
+
+def _keep_soft_conflicts(
+    rows: Sequence[bounds_accumulator.ResolvedRow],
+    plant: Callable[[bounds_accumulator.ResolvedRow], tuple[int, str, str]],
+    kept: list[_KeptConflict],
+) -> list[bounds_accumulator.ResolvedRow]:
+    """*rows* with each floor above its ceiling settled: lowered to the ceiling
+    within the deck's written precision, else kept and recorded in *kept*
+    under the ``(code, name, limit prefix)`` *plant* gives its row."""
+    settled: list[bounds_accumulator.ResolvedRow] = []
+    for row in rows:
+        conflict = row.conflict
+        if conflict is None:
+            settled.append(row)
+        elif beyond_written_precision(conflict.lower, conflict.upper):
+            code, name, prefix = plant(row)
+            limit = prefix + _SOFT_LIMIT_LABELS[(row.family, row.axis)]
+            kept.append(_KeptConflict(code, name, limit, row.stage_id, conflict))
+            settled.append(row)
+        else:
+            settled.append(replace(row, lower=row.upper, conflict=None))
+    return settled
+
+
+def _kept_conflicts_diagnostic(kept: Sequence[_KeptConflict]) -> dx.Diagnostic:
+    """WARNING listing the floors above the ceiling written as the deck has
+    them, one row per plant and limit."""
+    grouped: dict[tuple[int, str, str], list[_KeptConflict]] = {}
+    for item in kept:
+        grouped.setdefault((item.code, item.name, item.limit), []).append(item)
+    rows: list[list[object]] = []
+    for (code, name, limit), items in sorted(grouped.items()):
+        widest = max(items, key=lambda i: i.conflict.lower - i.conflict.upper)
+        rows.append(
+            [
+                code,
+                name,
+                limit,
+                _source_list(s for i in items for s in i.conflict.floors),
+                _source_list(s for i in items for s in i.conflict.ceilings),
+                dx.format_stage_ranges(i.stage_id for i in items),
+                round(widest.conflict.lower, 6),
+                round(widest.conflict.upper, 6),
+            ]
+        )
+    return dx.Diagnostic(
+        code="decomp-bound-floor-above-ceiling",
+        severity=dx.Severity.WARNING,
+        category="Special constraints",
+        title=f"Stage floors above the stage ceiling ({len(rows)})",
+        summary=(
+            "The deck sets the listed floors above the ceilings beside them on "
+            "the listed stages. Both limits were written as the deck has them: "
+            "DECOMP violates whichever is cheaper, and novomodelo charges the "
+            "violation at its penalty, which raises the cost of those stages."
+        ),
+        table=dx.DiagnosticTable(
+            columns=[
+                "Code",
+                "Name",
+                "Limit",
+                "Floor set by",
+                "Ceiling set by",
+                "Stages",
+                "Floor",
+                "Ceiling",
+            ],
+            rows=rows,
+            justify=["right", "left", "left", "left", "left", "left", "right", "right"],
+            caption=(
+                "Stage and unit-group ids are 0-based; the values shown are the "
+                "stage with the widest gap."
+            ),
+        ),
+    )
+
+
+def _bound_entity(
+    row: bounds_accumulator.ResolvedRow,
+    id_map: DecompIdMap,
+    hydro_names: Mapping[int, str],
+    thermals: dict | None,
+    pumping_ids: Mapping[int, int],
+) -> str:
+    """How a refusal names the plant or pumping station of *row*."""
+    if row.family == "hydro":
+        return (
+            f"plant {id_map.hydro_codes[row.entity_id]} ({hydro_names[row.entity_id]})"
+        )
+    if row.family == "thermal":
+        assert thermals is not None
+        (name,) = [t["name"] for t in thermals["thermals"] if t["id"] == row.entity_id]
+        return f"thermal plant {id_map.thermal_codes[row.entity_id]} ({name})"
+    (code,) = [
+        code for code, station in pumping_ids.items() if station == row.entity_id
+    ]
+    return f"pumping station {code}"
+
+
+def _contract_entity(contract: contracts_conv.Contract) -> str:
+    """How a refusal names *contract*: its register, number and name."""
+    register = contracts_conv.register_label(contract.kind)
+    return f"{register} {contract.numero} ({contract.name})"
 
 
 def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
@@ -1780,8 +1968,25 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         },
     )
     block_counts = {stage.index: len(stage.block_hours) for stage in calendar}
+    hydro_names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
+    kept: list[_KeptConflict] = []
     bound_tables = bounds_accumulator.build_bound_tables(
-        bounds_accumulator.resolve(contribs, block_counts)
+        _keep_soft_conflicts(
+            _resolve_or_refuse(
+                contribs,
+                block_counts,
+                lambda row: _bound_entity(
+                    row, id_map, hydro_names, artifacts.thermals_dict, pumping_ids
+                ),
+                dadger=case.files.dadger,
+            ),
+            lambda row: (
+                id_map.hydro_codes[row.entity_id],
+                hydro_names[row.entity_id],
+                "",
+            ),
+            kept,
+        )
     )
     # An RE or RHQ QTUR ceiling can sit above the plant's declared capacity
     # (BELO MONTE's RE does on both real decks); novomodelo rule 43 rejects it.
@@ -1820,6 +2025,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     artifacts.census = census
     artifacts.pumping_ids = pumping_ids
     artifacts.block_counts = block_counts
+    artifacts.kept_bound_conflicts = kept
     artifacts.availability_values = availability_values
     artifacts.hydro_bounds = hydro_bounds
     artifacts.thermal_bounds_table = thermal_bounds_table
@@ -1847,6 +2053,9 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     assert hydros_dict is not None
     availability_values = artifacts.availability_values
     assert availability_values is not None
+    kept = artifacts.kept_bound_conflicts
+    assert kept is not None
+    hydro_names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
 
     group_values = hydro_conv.itaipu_frequency_group_values(
         case, id_map, availability_values
@@ -1872,7 +2081,7 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
             for hydro in hydros_dict["hydros"]
             for group in hydro["unit_groups"]
         },
-        plant_names={hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]},
+        plant_names=hydro_names,
     )
     resolved_group_entries: list[
         tuple[tuple[int, int, int, int | None], bounds_accumulator.ResolvedRow]
@@ -1888,7 +2097,15 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
             ),
             *frequency_contribs.get(hydro_id, []),
         ]
-        for resolved in bounds_accumulator.resolve(per_hydro_contribs, block_counts):
+        for resolved in _keep_soft_conflicts(
+            bounds_accumulator.resolve(per_hydro_contribs, block_counts),
+            lambda row, hydro_id=hydro_id: (
+                id_map.hydro_codes[hydro_id],
+                hydro_names[hydro_id],
+                f"Unit group {row.entity_id} ",
+            ),
+            kept,
+        ):
             resolved_group_entries.append(
                 (
                     (
@@ -1937,10 +2154,16 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
         axes=("power",),
         contributor="convert_contract_bounds",
     )
+    contract_by_id = {contract.id: contract for contract in contracts}
     resolved_contract_power = _fan_resolved_rows(
         [
             ((row.entity_id, row.stage_id, row.block_id), row)
-            for row in bounds_accumulator.resolve(contract_power_contribs, block_counts)
+            for row in _resolve_or_refuse(
+                contract_power_contribs,
+                block_counts,
+                lambda row: _contract_entity(contract_by_id[row.entity_id]),
+                dadger=case.files.dadger,
+            )
         ],
         schema=_CONTRACT_POWER_SCHEMA,
         key_columns=("contract_id", "stage_id", "block_id"),
@@ -1948,6 +2171,8 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     contract_bounds_table = _rejoin_contract_price(
         resolved_contract_power, contract_bounds_table
     ).sort_by([("contract_id", "ascending"), *_BOUND_SORT_KEYS])
+    if kept:
+        dx.emit(_kept_conflicts_diagnostic(kept), logger=_LOG)
 
     artifacts.group_bounds = group_bounds
     artifacts.contract_bounds_table = contract_bounds_table

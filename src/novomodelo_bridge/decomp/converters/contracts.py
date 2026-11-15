@@ -59,7 +59,8 @@ class Contract:
     stages: list[ContractStage]
 
 
-def _register_label(kind: str) -> str:
+def register_label(kind: str) -> str:
+    """The dadger register, ``CI`` or ``CE``, a contract of *kind* comes from."""
     return "CI" if kind == "import" else "CE"
 
 
@@ -108,7 +109,7 @@ def read_contracts(
     ):
         if frame is None or frame.empty:
             continue
-        register = _register_label(kind)
+        register = register_label(kind)
         for _, row in frame.iterrows():
             if _is_placeholder_row(row):
                 continue
