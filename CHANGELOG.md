@@ -76,11 +76,15 @@ links are cobre-bridge's.
   `decomp-re-gnl-terms-only`. Results change for decks with such terms, so
   reconvert them. A GNL term in a stage where no `GL` week starts stops the
   conversion with `source-field-parse`, as it stops DECOMP, where a LIBS
-  `ger_usit` term stopped it with `unexpected-error`.
+  `ger_usit` term stopped it with `unexpected-error`. A GNL term on a plant
+  whose number a `CT` record of the same subsystem also gives stops it with
+  `source-field-parse` too, since DECOMP requires distinct thermal numbers
+  within a subsystem.
 - **BREAKING: `convert decomp` stops with `source-unsupported` on an `RE`
-  constraint with an `FT` term on a thermal that has both a `CT` and a `TG`
-  record**, which it converted as a normal thermal; remove one of the two
-  records, or the term, to convert such a deck.
+  constraint with an `FT` term on a GNL thermal whose number a `CT` record
+  gives in another subsystem**, which it converted as a normal thermal; give
+  one of the two plants a number the other does not use, or remove the term,
+  to convert such a deck.
 - **BREAKING: `check newave` and `check decomp` raise the warnings `convert`
   raises for what it leaves out or keeps soft, and fail where it stops**: the
   lines of the electrical-constraint file it does not read

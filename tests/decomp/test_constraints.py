@@ -1117,8 +1117,10 @@ def test_emit_rhq_rhv_generics_constant_coefficients_declare_no_parameter(
 # fold_commanded_gnl_terms
 # ---------------------------------------------------------------------------
 
-#: GNL plant 86 commands 100/200/300 MW at stage 0 and nothing at stage 1.
+#: GNL plant 86 of subsystem 1 commands 100/200/300 MW at stage 0 and nothing
+#: at stage 1.
 _GNL_GENERATION = {86: [(100.0, 200.0, 300.0), None]}
+_GNL_SUBMARKETS = {86: 1}
 
 
 def _gnl_ft(
@@ -1159,12 +1161,13 @@ def _split(*records: ConstraintRecord) -> ConstraintCensus:
 
 
 def _fold(
-    census: ConstraintCensus, *, thermal_codes: tuple[int, ...] = ()
+    census: ConstraintCensus, *, ct_submarkets: dict[int, frozenset[int]] | None = None
 ) -> tuple[ConstraintCensus, list[Diagnostic]]:
     return fold_commanded_gnl_terms(
         census,
         _GNL_GENERATION,
-        thermal_codes=thermal_codes,
+        gnl_submarkets=_GNL_SUBMARKETS,
+        ct_submarkets={} if ct_submarkets is None else ct_submarkets,
         dadger_path="dadger.rv0",
         dadgnl_path="dadgnl.rv0",
     )
@@ -1182,7 +1185,7 @@ def test_fold_moves_the_commanded_gnl_generation_into_the_limits() -> None:
     untouched = _re_record(2, hydro, other_thermal)
     census = _split(folded_record, untouched)
 
-    folded, diagnostics = _fold(census, thermal_codes=(3,))
+    folded, diagnostics = _fold(census, ct_submarkets={3: frozenset({1})})
 
     assert diagnostics == []
     [bound] = folded.to_bounds
@@ -1232,12 +1235,38 @@ def test_a_gnl_term_absent_at_a_stage_reads_no_commitment_there() -> None:
     assert bound.bounds[1] == record.bounds[1]
 
 
-def test_a_gnl_code_with_a_ct_record_stops_the_fold() -> None:
+def test_a_gnl_number_a_ct_record_gives_in_its_subsystem_is_a_parse_error() -> None:
+    """DECOMP requires distinct numbers for two thermals of one subsystem,
+    across CT and TG records, so the deck is at fault, on dadgnl TG."""
     hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
 
     with pytest.raises(
-        UnsupportedSourceError, match="both a CT record in dadger and a TG record"
+        FieldParseError,
+        match="^thermal 86, which the FT term of RE 5 is on, is the number of "
+        "both a CT record in dadger and a TG record in dadgnl in subsystem 1;",
     ) as raised:
-        _fold(_split(_re_record(5, hydro, _gnl_ft())), thermal_codes=(86,))
+        _fold(
+            _split(_re_record(5, hydro, _gnl_ft())),
+            ct_submarkets={86: frozenset({1, 2})},
+        )
+
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rv0", "TG")
+
+
+def test_a_gnl_number_a_ct_record_gives_in_another_subsystem_is_unsupported() -> None:
+    """DECOMP tells the two thermals apart by subsystem; the conversion
+    tells thermals apart by number alone, so the term is refused."""
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+
+    with pytest.raises(
+        UnsupportedSourceError,
+        match="^RE 5 has an FT term on thermal 86, the number of a TG record "
+        "in dadgnl in subsystem 1 and of a CT record in dadger in subsystems "
+        "2, 3;",
+    ) as raised:
+        _fold(
+            _split(_re_record(5, hydro, _gnl_ft())),
+            ct_submarkets={86: frozenset({3, 2})},
+        )
 
     assert (raised.value.path, raised.value.field) == ("dadger.rv0", "RE/FT")

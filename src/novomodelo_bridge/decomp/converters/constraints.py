@@ -59,7 +59,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
-from novomodelo_bridge.core.errors import UnsupportedSourceError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -677,7 +677,8 @@ def fold_commanded_gnl_terms(
     census: ConstraintCensus,
     gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
     *,
-    thermal_codes: Collection[int],
+    gnl_submarkets: Mapping[int, int],
+    ct_submarkets: Mapping[int, Collection[int]],
     dadger_path: str,
     dadgnl_path: str | None,
 ) -> tuple[ConstraintCensus, list[Diagnostic]]:
@@ -693,17 +694,23 @@ def fold_commanded_gnl_terms(
     no term bounds no case variable: it is left out and reported in one
     INFO. ``by_family`` keeps every record read.
 
+    *gnl_submarkets* gives each GNL plant's subsystem and *ct_submarkets*
+    the subsystems of each ``CT`` plant number, for a GNL plant whose number
+    a ``CT`` record also gives.
+
     Raises
     ------
     FieldParseError
         When a GNL plant's generation is not commanded at a stage its term is
         in (:func:`~novomodelo_bridge.decomp.converters.anticipated.commanded_gnl_generation`),
-        where the source model stops too.
+        where the source model stops too, or when a ``CT`` record gives the
+        plant's number in the plant's own subsystem, which DECOMP does not
+        allow.
     UnsupportedSourceError
-        When the plant's code also has a ``CT`` record in *thermal_codes*, so
-        the term cannot be told apart as a decision or a commanded generation.
+        When a ``CT`` record gives the plant's number in another subsystem:
+        the conversion tells thermals apart by number alone, so the term
+        cannot be told apart as a decision or a commanded generation.
     """
-    ct_codes = set(thermal_codes)
     folded: dict[int, ConstraintRecord | None] = {}
     rows: list[list[object]] = []
     for record in (*census.to_bounds, *census.to_generic):
@@ -717,16 +724,14 @@ def fold_commanded_gnl_terms(
         if not gnl_terms:
             continue
         for term in gnl_terms:
-            if term.code in ct_codes:
-                raise UnsupportedSourceError(
-                    f"RE {record.constraint_id} has an FT term on thermal "
-                    f"{term.code}, which has both a CT record in dadger and a "
-                    "TG record in dadgnl; such a term is not converted yet, "
-                    "since it cannot be told apart as a decision or a "
-                    "commanded GNL generation",
-                    path=dadger_path,
-                    field="RE/FT",
-                )
+            _refuse_shared_thermal_number(
+                record.constraint_id,
+                term.code,
+                gnl_submarkets,
+                ct_submarkets,
+                dadger_path=dadger_path,
+                dadgnl_path=dadgnl_path,
+            )
         bounds = {
             stage_index: _without_commanded_generation(
                 record.constraint_id,
@@ -766,6 +771,53 @@ def fold_commanded_gnl_terms(
         census, to_bounds=tuple(to_bounds), to_generic=tuple(to_generic)
     )
     return screened, [_gnl_terms_only_diagnostic(rows)] if rows else []
+
+
+def _refuse_shared_thermal_number(
+    constraint_id: int,
+    code: int,
+    gnl_submarkets: Mapping[int, int],
+    ct_submarkets: Mapping[int, Collection[int]],
+    *,
+    dadger_path: str,
+    dadgnl_path: str | None,
+) -> None:
+    """Stop on the ``FT`` term of ``RE`` *constraint_id* on GNL plant *code*
+    when a ``CT`` record gives the same number.
+
+    Raises
+    ------
+    FieldParseError
+        On the ``TG`` field of *dadgnl_path*, when the ``CT`` record is in
+        the plant's own subsystem: DECOMP requires distinct numbers for two
+        thermals of one subsystem, even across ``CT`` and ``TG`` records.
+    UnsupportedSourceError
+        On the ``RE/FT`` field of *dadger_path*, when it is in another one.
+    """
+    ct_subsystems = ct_submarkets.get(code)
+    if ct_subsystems is None:
+        return
+    subsystem = gnl_submarkets[code]
+    if subsystem in ct_subsystems:
+        raise FieldParseError(
+            f"thermal {code}, which the FT term of RE {constraint_id} is on, "
+            f"is the number of both a CT record in dadger and a TG record in "
+            f"dadgnl in subsystem {subsystem}; DECOMP requires distinct "
+            "numbers for two thermals of one subsystem, so give the GNL "
+            "thermal a number no CT record of its subsystem uses",
+            path=dadgnl_path,
+            field="TG",
+        )
+    others = sorted(ct_subsystems)
+    raise UnsupportedSourceError(
+        f"RE {constraint_id} has an FT term on thermal {code}, the number of "
+        f"a TG record in dadgnl in subsystem {subsystem} and of a CT record "
+        f"in dadger in subsystem{'s' if len(others) > 1 else ''} "
+        f"{', '.join(str(s) for s in others)}; such a term is not converted "
+        "yet, since the conversion tells thermals apart by number alone",
+        path=dadger_path,
+        field="RE/FT",
+    )
 
 
 def _without_commanded_generation(

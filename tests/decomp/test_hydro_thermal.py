@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 import pytest
@@ -29,11 +30,15 @@ from novomodelo_bridge.decomp.converters.hydro import (
 from novomodelo_bridge.decomp.converters.thermal import (
     convert_thermal_bounds,
     convert_thermals,
+    ct_submarkets,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
+
+if TYPE_CHECKING:
+    from idecomp.decomp import Dadger
 
 _EVAPORATION_COLUMNS = (
     "evaporacao_JAN",
@@ -783,3 +788,16 @@ class TestConvertThermals:
         ct.loc[ct["codigo_usina"] == 20, "estagio"] = 2
         with pytest.raises(ValueError, match="stage 1"):
             convert_thermals(_case(_StubDadger(ct=ct)), _ID_MAP)
+
+
+def test_ct_submarkets_gathers_each_number_s_subsystems() -> None:
+    """Two CT plants of different subsystems can share a number."""
+    ct = _ct_frame()
+    ct.loc[2, "codigo_submercado"] = 3
+    ct.loc[len(ct)] = {**ct.loc[2], "codigo_usina": 10}
+
+    assert ct_submarkets(cast("Dadger", _StubDadger(ct=ct))) == {
+        10: frozenset({1, 3}),
+        20: frozenset({3}),
+    }
+    assert ct_submarkets(cast("Dadger", _StubDadger())) == {}

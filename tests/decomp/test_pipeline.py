@@ -673,6 +673,8 @@ class TestConstraintCensusConflictDiagnostic:
                 self._ID_MAP,
                 {},
                 {},
+                gnl_submarkets={},
+                ct_submarkets={},
                 dadger_path="dadger.rv0",
                 dadgnl_path=None,
             )
@@ -712,6 +714,8 @@ class TestConstraintCensusConflictDiagnostic:
                 self._ID_MAP,
                 {},
                 {86: [(100.0, 200.0, 300.0)]},
+                gnl_submarkets={86: 1},
+                ct_submarkets={},
                 dadger_path="dadger.rv0",
                 dadgnl_path="dadgnl.rv0",
             )
@@ -1441,6 +1445,7 @@ def _run_cadastro_pipeline(
             ConstraintCensus(by_family={}, to_bounds=to_bounds, to_generic=to_generic)
         ),
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.ct_submarkets": {},
         # The mock deck has no RHA accessors and no real files
         # (DecompCase.from_directory is patched wholesale above), so the
         # detection helpers are patched too, the same way the
@@ -1468,6 +1473,9 @@ def _run_cadastro_pipeline(
         ] = gnl_model
         patches[
             "novomodelo_bridge.decomp.pipeline.anticipated_conv.gnl_block_commitments"
+        ] = {}
+        patches[
+            "novomodelo_bridge.decomp.pipeline.anticipated_conv.gnl_submarkets"
         ] = {}
         patches["novomodelo_bridge.decomp.pipeline.anticipated_conv.convert_gnl"] = (
             gnl_emission

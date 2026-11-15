@@ -420,6 +420,11 @@ def gnl_block_commitments(
     return commitments
 
 
+def gnl_submarkets(model: GnlCommitmentModel) -> dict[int, int]:
+    """Each GNL plant's subsystem, from its ``tg`` record."""
+    return {thermal.code: thermal.submarket_code for thermal in model.thermals}
+
+
 def commanded_gnl_generation(
     gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
     code: int,

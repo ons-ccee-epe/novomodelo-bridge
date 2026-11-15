@@ -470,16 +470,20 @@ def _coverage(
     pumping_ids: dict[int, int],
     *,
     gnl_generation: dict[int, list[tuple[float, ...] | None]] | None = None,
+    ct_submarkets: dict[int, frozenset[int]] | None = None,
     libs_long_form: bool | None = False,
     plant_names: dict[int, str] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
-    """``_special_constraint_coverage`` with the deck's file names filled in."""
+    """``_special_constraint_coverage`` with the deck's file names filled in
+    and every GNL plant in subsystem 1."""
     return _special_constraint_coverage(
         dadger,
         libs_file,
         id_map,
         pumping_ids,
         gnl_generation=gnl_generation,
+        gnl_submarkets=dict.fromkeys(gnl_generation or {}, 1),
+        ct_submarkets={} if ct_submarkets is None else ct_submarkets,
         dadger_path="dadger.rv0",
         dadgnl_path="dadgnl.rv0",
         libs_long_form=libs_long_form,
@@ -619,6 +623,8 @@ class TestSpecialConstraintCoverage:
                 id_map,
                 {},
                 {},
+                gnl_submarkets={},
+                ct_submarkets={},
                 dadger_path="dadger.rv0",
                 dadgnl_path=None,
             )
@@ -720,6 +726,36 @@ class TestSpecialConstraintCoverage:
         assert diagnostic.code == "source-field-parse"
         assert diagnostic.severity is Severity.ERROR
 
+    @pytest.mark.parametrize(
+        ("ct_subsystem", "code", "detail"),
+        [
+            (1, "source-field-parse", "DECOMP requires distinct numbers"),
+            (2, "source-unsupported", "tells thermals apart by number alone"),
+        ],
+    )
+    def test_a_gnl_term_on_a_ct_number_fails_the_check_as_convert_stops(
+        self, ct_subsystem: int, code: str, detail: str
+    ) -> None:
+        """A CT record giving GNL plant 86's number in the plant's own
+        subsystem is a deck error; in another subsystem, an unsupported
+        term."""
+        checks, diagnostics = _coverage(
+            self._gnl_dadger(),
+            None,
+            _SC_ID_MAP,
+            {},
+            gnl_generation={86: [(100.0, 200.0, 300.0), (100.0, 200.0, 300.0)]},
+            ct_submarkets={86: frozenset({ct_subsystem})},
+        )
+
+        [check] = checks
+        assert check.passed is False
+        assert check.detail is not None
+        assert detail in check.detail
+        [diagnostic] = diagnostics
+        assert diagnostic.code == code
+        assert diagnostic.severity is Severity.ERROR
+
     def test_no_special_constraints_deck_emits_only_the_passing_summary(
         self,
     ) -> None:
@@ -752,18 +788,18 @@ class TestGnlGenerationRead:
     stops."""
 
     def test_a_deck_without_dadgnl_commands_nothing(self) -> None:
-        generation, checks, diagnostics = _gnl_generation_read(
+        generation, submarkets, checks, diagnostics = _gnl_generation_read(
             cast("DecompCase", _NoDadgnl()), []
         )
 
-        assert (generation, checks, diagnostics) == ({}, [], [])
+        assert (generation, submarkets, checks, diagnostics) == ({}, {}, [], [])
 
     def test_an_unreadable_dadgnl_fails_the_check(self) -> None:
-        generation, checks, diagnostics = _gnl_generation_read(
+        generation, submarkets, checks, diagnostics = _gnl_generation_read(
             cast("DecompCase", _UnreadableDadgnl()), []
         )
 
-        assert generation is None
+        assert (generation, submarkets) == (None, {})
         [check] = checks
         assert check.passed is False
         assert check.detail is not None

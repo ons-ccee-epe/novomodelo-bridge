@@ -169,7 +169,8 @@ def _re_generics(
     census, folded = fold_commanded_gnl_terms(
         ConstraintCensus(by_family={}, to_generic=(record,)),
         _DC_GNL_GENERATION,
-        thermal_codes=(),
+        gnl_submarkets={},
+        ct_submarkets={},
         dadger_path="dadger.rv0",
         dadgnl_path="dadgnl.rv0",
     )

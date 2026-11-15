@@ -413,6 +413,7 @@ def _run_libs_pipeline(
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
         ),
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.ct_submarkets": {},
         "novomodelo_bridge.decomp.pipeline"
         ".constraint_registers.detect_unconverted_rha": None,
         "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (

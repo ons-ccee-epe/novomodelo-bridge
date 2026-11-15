@@ -63,7 +63,7 @@ from novomodelo_bridge.decomp.files import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from idecomp.decomp import Dadger, Vazoes
 
@@ -359,6 +359,8 @@ def _special_constraint_coverage(
     pumping_ids: Mapping[int, int],
     *,
     gnl_generation: Mapping[int, Sequence[Sequence[float] | None]] | None = None,
+    gnl_submarkets: Mapping[int, int] | None = None,
+    ct_submarkets: Mapping[int, Collection[int]],
     dadger_path: str,
     dadgnl_path: str | None,
     libs_long_form: bool | None = False,
@@ -372,7 +374,8 @@ def _special_constraint_coverage(
     Counts the census ``convert decomp`` consumes:
     :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`
     with the GNL terms of *gnl_generation* folded by
-    :func:`~novomodelo_bridge.decomp.converters.constraints.fold_commanded_gnl_terms`,
+    :func:`~novomodelo_bridge.decomp.converters.constraints.fold_commanded_gnl_terms`
+    under *gnl_submarkets* and *ct_submarkets*,
     screened by
     :func:`~novomodelo_bridge.decomp.constraint_registers.screen_constraints`
     against *id_map* and the ``UE`` codes of *pumping_ids*. Returns one
@@ -397,7 +400,8 @@ def _special_constraint_coverage(
         census, gnl_only = fold_commanded_gnl_terms(
             census,
             gnl_generation or {},
-            thermal_codes=id_map.thermal_codes,
+            gnl_submarkets=gnl_submarkets or {},
+            ct_submarkets=ct_submarkets,
             dadger_path=dadger_path,
             dadgnl_path=dadgnl_path,
         )
@@ -525,17 +529,20 @@ def _gnl_generation_read(
     case: DecompCase, calendar: list[OperativeStage]
 ) -> tuple[
     Mapping[int, Sequence[Sequence[float] | None]] | None,
+    Mapping[int, int],
     list[CheckItem],
     list[Diagnostic],
 ]:
-    """Each GNL plant's commanded generation per stage and block, read from
-    ``dadgnl`` as ``convert decomp`` does; empty without the file.
+    """Each GNL plant's commanded generation per stage and block, and each
+    plant's subsystem, read from ``dadgnl`` as ``convert decomp`` does; empty
+    without the file.
 
-    A file it cannot read gives ``None`` and a failed check, since
-    ``convert decomp`` stops on it.
+    A file it cannot read gives ``None``, no subsystem and a failed check,
+    since ``convert decomp`` stops on it.
     """
     from novomodelo_bridge.decomp.converters.anticipated import (
         gnl_block_commitments,
+        gnl_submarkets,
         read_gnl_model,
     )
 
@@ -547,8 +554,8 @@ def _gnl_generation_read(
         failed = CheckItem(
             label="GNL commitments readable", passed=False, detail=str(exc)
         )
-        return None, [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
-    return generation, [], []
+        return None, {}, [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
+    return generation, gnl_submarkets(model) if model is not None else {}, [], []
 
 
 def run_decomp_preflight(src: Path) -> PreflightResult:
@@ -669,6 +676,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         from novomodelo_bridge.decomp.converters.network import (
             pumping_station_id_map,
         )
+        from novomodelo_bridge.decomp.converters.thermal import ct_submarkets
 
         plant_names: dict[int, str] = {}
         try:
@@ -699,7 +707,9 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         checks.extend(electrical_checks)
         diagnostics.extend(electrical_diags)
 
-        gnl_generation, gnl_checks, gnl_diags = _gnl_generation_read(case, calendar)
+        gnl_generation, gnl_submarkets, gnl_checks, gnl_diags = _gnl_generation_read(
+            case, calendar
+        )
         checks.extend(gnl_checks)
         diagnostics.extend(gnl_diags)
 
@@ -709,6 +719,8 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             id_map,
             pumping_station_id_map(dadger),
             gnl_generation=gnl_generation,
+            gnl_submarkets=gnl_submarkets,
+            ct_submarkets=ct_submarkets(dadger),
             dadger_path=str(files.dadger),
             dadgnl_path=str(files.dadgnl) if files.dadgnl is not None else None,
             libs_long_form=libs_long_form,

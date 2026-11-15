@@ -111,9 +111,11 @@ the limits, and the term leaves the sum. An `RE` left with one plant term
 becomes a plant bound, and one left with no other term bounds nothing in the
 case and is left out with a note. A plant with no `GL` week in a stage where
 its term applies stops the conversion, as it stops DECOMP, and `check decomp`
-reports it for an `RE` constraint. So does an `FT` term on a thermal with
-both a `CT` record and a `TG` record, which cannot be told apart as a
-decision or a commanded generation.
+reports it for an `RE` constraint. So does an `FT` term on a GNL plant whose
+number a `CT` record also gives: as a malformed field when the `CT` record is
+in the plant's own subsystem, which DECOMP does not allow, and as unsupported
+when it is in another one, since DECOMP tells the two plants apart by
+subsystem and the conversion tells thermals apart by number alone.
 
 Incremental inflows are converted as the inflow file gives them, negative
 values included. DECOMP reports a negative incremental inflow as zero in its

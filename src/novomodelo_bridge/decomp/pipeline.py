@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from calendar import monthrange
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
@@ -1478,6 +1478,8 @@ def _read_constraint_census(
     pumping_ids: Mapping[int, int],
     gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
     *,
+    gnl_submarkets: Mapping[int, int],
+    ct_submarkets: Mapping[int, Collection[int]],
     dadger_path: str,
     dadgnl_path: str | None,
 ) -> constraint_registers.ConstraintCensus:
@@ -1488,7 +1490,8 @@ def _read_constraint_census(
     census, gnl_only = constraints_conv.fold_commanded_gnl_terms(
         constraint_registers.read_constraints(dadger),
         gnl_generation,
-        thermal_codes=id_map.thermal_codes,
+        gnl_submarkets=gnl_submarkets,
+        ct_submarkets=ct_submarkets,
         dadger_path=dadger_path,
         dadgnl_path=dadgnl_path,
     )
@@ -1946,14 +1949,19 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     assert turbine_limits is not None
 
     pumping_ids = network_conv.pumping_station_id_map(dadger)
+    gnl_model = artifacts.gnl_model
     census = _read_constraint_census(
         dadger,
         effective,
         id_map,
         pumping_ids,
-        anticipated_conv.gnl_block_commitments(artifacts.gnl_model, calendar)
-        if artifacts.gnl_model is not None
+        anticipated_conv.gnl_block_commitments(gnl_model, calendar)
+        if gnl_model is not None
         else {},
+        gnl_submarkets=(
+            anticipated_conv.gnl_submarkets(gnl_model) if gnl_model is not None else {}
+        ),
+        ct_submarkets=thermal_conv.ct_submarkets(dadger),
         dadger_path=str(case.files.dadger),
         dadgnl_path=str(case.files.dadgnl) if case.files.dadgnl is not None else None,
     )
