@@ -1476,7 +1476,14 @@ def _read_constraint_census(
     """The deck's special constraints split by lowering target, without the
     ones on an entity the case lacks, reporting those and any conflicting
     bounds as diagnostics."""
-    census = constraint_registers.read_constraints(dadger)
+    census, unknown = constraint_registers.drop_unknown_entities(
+        constraint_registers.read_constraints(dadger),
+        hydro_codes=id_map.hydro_codes,
+        thermal_codes=id_map.thermal_codes,
+        pumping_codes=pumping_ids.keys(),
+    )
+    for diagnostic in unknown:
+        dx.emit(diagnostic, logger=_LOG)
     if census.bound_conflicts:
         names = {
             conflict.code: str(effective.base.loc[conflict.code, "nome_usina"]).strip()
@@ -1489,14 +1496,6 @@ def _read_constraint_census(
             ),
             logger=_LOG,
         )
-    census, unknown = constraint_registers.drop_unknown_entities(
-        census,
-        hydro_codes=id_map.hydro_codes,
-        thermal_codes=id_map.thermal_codes,
-        pumping_codes=pumping_ids.keys(),
-    )
-    for diagnostic in unknown:
-        dx.emit(diagnostic, logger=_LOG)
     return census
 
 

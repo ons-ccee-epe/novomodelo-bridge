@@ -628,6 +628,12 @@ class TestConstraintCensusConflictDiagnostic:
     def test_deck_without_restrictions_reports_no_conflict(self) -> None:
         assert self._census(_FakeDadger()) == []
 
+    def test_a_conflict_on_a_missing_pumping_station_is_not_reported(self) -> None:
+        """The restrictions the entity check leaves out are not reported as
+        conflicting."""
+        diagnostics = self._census(_qdef_ceiling_and_floor(variable="QBOM"))
+        assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]
+
 
 class TestEmissionCheckWiring:
     """The post-emission self-checks run inside
