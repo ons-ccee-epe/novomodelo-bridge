@@ -52,58 +52,55 @@ links are cobre-bridge's.
 
 ### Changed
 
-- **`convert newave` and `convert decomp` treat a constraint term outside
-  the case by its cause**: a term that is zero in the source model too, on an
-  interchange between submarkets no line joins or on a plant that generates
-  nothing (fictitious, `NC`, `NE` with no `exph.dat` row, or a DECOMP plant
-  kept only for the NEWAVE coupling), is left out with a note and the rest of
-  the constraint is kept, where DECOMP left the whole constraint out with a
-  warning; the new notes are `electric-constraint-term-idle-plant`,
-  `decomp-re-term-coupling-only-plant`,
+- **`convert newave` and `convert decomp` leave out only the term, with a
+  note, when a constraint term is zero in the source model too**: a term on
+  an interchange between submarkets no line joins, or on a plant that
+  generates nothing (fictitious, `NC`, `NE` with no `exph.dat` row, or a
+  DECOMP plant whose `UH` record gives no initial volume). The rest of the
+  constraint is kept, where `convert decomp` left the whole constraint out
+  with a warning or stopped, and `convert newave` warned with
+  `electric-constraint-hydro-unmapped`. The notes are
+  `electric-constraint-term-idle-plant`, `decomp-re-term-coupling-only-plant`,
   `decomp-electrical-term-coupling-only-plant`,
   `decomp-re-term-interchange-no-line` and
   `decomp-electrical-term-interchange-no-line`. A term on a code the deck
   does not declare, or on an `NE` plant with unit rows but no filling row in
-  `exph.dat`, leaves the whole constraint out with a warning on both tracks,
-  so NEWAVE's `electric-constraint-hydro-unmapped` and
-  `electric-constraint-thermal-unmapped` no longer keep the rest of the
-  constraint. Results change for decks with such terms, so reconvert them;
-  `check decomp` reports a term on a plant DECOMP does not operate as a note,
-  no longer as `decomp-re-plant-not-operated`, unless the constraint has no
-  other term.
-- **`convert decomp` takes the commanded generation of a GNL thermal off an
-  `RE` constraint's limits**: an `FT` term on a fuel-constrained thermal of
-  `dadgnl.rvN` leaves the sum, and its coefficient times the generation the
-  `GL` records command at each stage and patamar is subtracted from the
-  limits, as DECOMP does and as the conversion already did for `ger_usit` in
-  the LIBS file, instead of leaving the whole constraint out with the
-  `decomp-re-thermal-not-normal` warning. A constraint left with no other term
-  is left out with the new note `decomp-re-gnl-terms-only`. A plant with no
-  `GL` week in a stage where its term applies stops the conversion with
-  `source-field-parse`, as it stops DECOMP, where a LIBS `ger_usit` term
-  stopped it with `unexpected-error`, and an `FT` term on a thermal with both
-  a `CT` and a `TG` record stops it with `source-unsupported`; `check decomp`
-  now reads `dadgnl.rvN` and reports both for an `RE` constraint. Results
-  change for decks with such terms, so reconvert them.
+  `exph.dat`, now leaves the whole constraint out with a warning on both
+  tracks, where `convert newave` left out the term alone. Results change for
+  decks with such terms, so reconvert them.
+- **`convert decomp` converts an `RE` constraint with an `FT` term on a GNL
+  thermal of `dadgnl.rvN`**: the generation the `GL` records command at each
+  stage and patamar moves onto the limits, as for a LIBS `ger_usit` term,
+  where the whole constraint was left out with `decomp-re-thermal-not-normal`;
+  a constraint with no other term is left out with the new note
+  `decomp-re-gnl-terms-only`. Results change for decks with such terms, so
+  reconvert them. A GNL term in a stage where no `GL` week starts stops the
+  conversion with `source-field-parse`, as it stops DECOMP, where a LIBS
+  `ger_usit` term stopped it with `unexpected-error`.
+- **BREAKING: `convert decomp` stops with `source-unsupported` on an `RE`
+  constraint with an `FT` term on a thermal that has both a `CT` and a `TG`
+  record**, which it converted as a normal thermal; remove one of the two
+  records, or the term, to convert such a deck.
 - **BREAKING: `check newave` and `check decomp` raise the warnings `convert`
-  raises for what it leaves out or keeps soft**: the lines of the
-  electrical-constraint file it does not read (`libs-unread-lines`) and, on
-  DECOMP, the special constraints and `AC` registers it leaves out
-  (`decomp-re-thermal-not-normal`, `decomp-re-plant-not-operated`,
-  `decomp-rhq-qbom-no-station`, `decomp-rhq-plant-not-operated`,
-  `decomp-rhv-vbom-no-station`, `decomp-rhv-varm-plant-uncadastred`,
-  `decomp-electrical-period-rows-unused`, `decomp-ac-topology-varies`) and the
-  conflicting `HQ` restrictions it keeps soft
-  (`decomp-conflicting-flow-restrictions`). So they exit 1 on such decks, and
-  `decomp-special-constraints-converted` no longer counts the constraints left
-  out; `convert decomp` in turn warns about the `AC` registers it does not
-  read with `decomp-ac-overrides-deferred`. `check newave` exits 2 on an
-  electrical-constraint file that does not parse, and `check decomp` exits 2,
-  with the `source-unsupported` error `convert decomp` stops on, on `CD`
-  deficit curves, `SB` subsystem names, summer-time (`VR`) `DP` weeks and
-  `vazoes` scenario trees that `convert decomp` cannot convert, and on a
-  terminal fan whose probabilities `convert decomp` rejects. Update scripts
-  that expect `check` to exit 0 on these decks.
+  raises for what it leaves out or keeps soft, and fail where it stops**: the
+  lines of the electrical-constraint file it does not read
+  (`libs-unread-lines`) and, on DECOMP, the special constraints and `AC`
+  registers it leaves out (`decomp-re-thermal-not-normal`,
+  `decomp-re-plant-not-operated`, `decomp-rhq-qbom-no-station`,
+  `decomp-rhq-plant-not-operated`, `decomp-rhv-vbom-no-station`,
+  `decomp-rhv-varm-plant-uncadastred`, `decomp-electrical-period-rows-unused`,
+  `decomp-ac-topology-varies`) and the conflicting `HQ` restrictions it keeps
+  soft (`decomp-conflicting-flow-restrictions`), so they exit 1 on such decks
+  and `decomp-special-constraints-converted` no longer counts the constraints
+  left out. `check newave` exits 2 on an electrical-constraint file that does
+  not parse, and `check decomp` exits 2, with the error `convert decomp`
+  stops on, on the `CD` deficit curves, `SB` subsystem names, summer-time
+  (`VR`) `DP` weeks, `vazoes` scenario trees and terminal-fan probabilities it
+  cannot convert, on a LIBS inequality operator other than `>=` or `<=`, and
+  on the GNL `FT` terms of an `RE` constraint it stops on. Update scripts that
+  expect `check` to exit 0 on these decks. `convert decomp` in turn warns
+  about the `AC` registers it does not read with
+  `decomp-ac-overrides-deferred`.
 - **Every command prints a note on one line and keeps the full panel for
   warnings and errors**; `-v` prints the notes in full. `convert decomp`
   reports the conversion and the boundary FCF import under one roll-up and
@@ -117,10 +114,9 @@ links are cobre-bridge's.
   `modif-override-plant-uncadastred`, `vminop-ree-not-expressible`,
   `electric-constraint-interchange-no-line`, `agrint-interchange-no-line`,
   `agrint-group-empty`, `artificial-gauge-data-ignored`, `libs-unindexed-file`
-  and `decomp-ac-out-of-horizon` are notes. A raised stage limit now warns as
-  `hydro-bounds-raised-to-declared-minimum`, and
-  DECOMP plants kept only for the NEWAVE coupling are listed in a
-  `decomp-coupling-only-plants-excluded` note instead of a log warning.
+  and `decomp-ac-out-of-horizon` are notes, and DECOMP plants kept only for
+  the NEWAVE coupling are listed in a `decomp-coupling-only-plants-excluded`
+  note instead of a log warning.
   `check` therefore exits 0 with status `ok` on a deck whose only warnings
   were `libs-unindexed-file` or `decomp-ac-out-of-horizon`.
 - **Every command reports each kind of finding once, with a table of the
@@ -169,42 +165,36 @@ links are cobre-bridge's.
   fails still reports what it found before the failure, and `compare newave`
   reports what it finds while reading the deck, such as
   `fictitious-plants-excluded`.
-- **BREAKING: `convert decomp` reports RE and RHQ `QTUR` ceilings capped at a
-  plant's capacity as `hydro-bounds-clamped-to-declared-capacity`, as `convert
-  newave` does**, in place of `decomp-re-generation-clamped` and
-  `decomp-qtur-turbined-clamped`, and those capped at a unit group's capacity
-  as `decomp-re-unit-group-generation-clamped`; update scripts that filter on
-  the old ids. Neither command lists a ceiling that equals the capacity at the
-  deck's written precision, such as BELO MONTE's 11000 MW `RE`.
 - **`convert newave` raises a per-stage turbined-flow, generation or outflow
-  ceiling that sits below the stage's floor**, the floor the deck sets on that
-  stage or else the plant's minimum, up to that floor or at most the plant's
-  capacity, with the `hydro-bounds-raised-to-declared-minimum` warning. It
-  compared the ceiling with the plant's minimum alone, so results change for
-  decks whose stage floor differs from it; reconvert those.
+  ceiling below the stage's floor up to that floor**, the one the deck sets
+  on the stage or else the plant's minimum, at most to the plant's capacity,
+  and reports it with the new `hydro-bounds-raised-to-declared-minimum`
+  warning instead of `hydro-bounds-clamped-to-declared-capacity`. It compared
+  the ceiling with the plant's minimum alone, so results change for decks
+  whose stage floor differs from it; reconvert those.
 - **`convert newave` and `convert decomp` stop on a malformed electrical
   formula with a `source-field-parse` error naming the file, the constraint
-  and its record**, where `convert newave` left the malformed part out as
-  `electric-constraint-malformed-term` and `convert decomp` stopped with an
+  and its record**, where `convert newave` left the malformed part out and
+  reported only an `ener_interc` with one subsystem, as
+  `electric-constraint-malformed-term`, and `convert decomp` stopped with
   `unexpected-error`. `convert decomp` refuses the same way a malformed
   activation rule, a `RESTRICAO-ELETRICA-HABILITA` naming an undeclared rule,
   a decision term in either branch of a `se(...)`, a LIBS formula restriction
   with no limit on a period and block where it is active, and a LIBS
-  inequality whose operator is not `>=` or `<=` (`check decomp` reports the
-  operator too), and now reads a LIBS coefficient written before a space or a
-  parenthesis. Both commands stop with `source-unsupported` on a formula that
-  multiplies or divides a term by a constant written after it
-  (`ger_usih(1) * 2`), which the source model accepts but the conversion does
-  not read yet.
+  inequality whose operator is not `>=` or `<=`, and now reads a LIBS
+  coefficient written before a space or a parenthesis.
+- **BREAKING: `convert newave` stops with `source-unsupported` on a
+  `restricao-eletrica.csv` formula that multiplies or divides a term by a
+  constant written after it** (`ger_usih(1) * 2`), where it left the factor
+  out without notice; write the factor as a coefficient before the term
+  (`2 * ger_usih(1)`). `convert decomp` reports such a LIBS formula the same
+  way, instead of `unexpected-error`.
 - **`dashboard` no longer stops on a file it can go without and cannot read,
   nor `compare` on such a `system/lines.json` or `system/hydros.json`**, where
   `compare newave` exited 2 and `dashboard` stopped with a traceback: a
   `report-file-unreadable` warning says what the report leaves out, and a
   hydro plant without unit groups is left out of the per-bus charts with a new
-  `hydro-unit-groups-missing` warning. `dashboard` still needs `stages.json`
-  and exits 1 with `novomodelo-output-unreadable` when it is missing or
-  unusable, as it does with the new `output-write-failed` on an output path it
-  cannot write.
+  `hydro-unit-groups-missing` warning.
 - **`export dessem` reports a missing DECOMP deck directory as
   `source-file-missing` and a missing case directory as
   `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead
@@ -214,9 +204,6 @@ links are cobre-bridge's.
   trained cuts or an output directory it cannot write as
   `dessem-fcf-export-failed` naming the failed step, where all of these
   ended as `unexpected-error`.
-- **`compare` and `dashboard` report a Novomodelo output file they cannot read
-  as `novomodelo-output-unreadable`** instead of `unexpected-error`, with the
-  same exit codes as before.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.
@@ -240,14 +227,13 @@ links are cobre-bridge's.
   the record field, saying what to change and, where the conversion rather
   than Novomodelo is missing, that the value is not converted yet. This
   covers `CD` deficit curves with more than one curve per subsystem, a limit
-  under 100 % or a cost that varies; an `SB` subsystem named `IV`; a `VI`
-  travel time longer than the post-study stage; an `NL` lag or `GL` dates the
-  study cannot hold, or `GL` dates past the horizon that differ between GNL
-  plants; `GS` months split into weeks in a study of monthly stages; a
-  `vazoes` scenario tree that branches before the last stage; a summer-time
-  (`VR`) week in `DP`; and a renewable park with more than one
-  `PEE-CONFIG-PER` operating state. A `vazoes` file whose generated scenarios
-  contradict its probabilities is reported as `source-field-parse`.
+  under 100 % or a cost that varies; an `SB` subsystem named `IV`; an `NL`
+  lag or `GL` dates the study cannot hold, or `GL` dates past the horizon that
+  differ between GNL plants; `GS` months split into weeks in a study of
+  monthly stages; a `vazoes` scenario tree that branches before the last
+  stage; a summer-time (`VR`) week in `DP`; and a renewable park with more
+  than one `PEE-CONFIG-PER` operating state. A `vazoes` file whose generated
+  scenarios contradict its probabilities is reported as `source-field-parse`.
   `compare decomp` and `export dessem` report the ones they meet the same
   way.
 - **BREAKING: `compare decomp` exits 1, not 2, when it stops on the DECOMP
@@ -286,25 +272,33 @@ links are cobre-bridge's.
   now reads.** `post_study_stages.json` holds the thermal calendar as
   `thermal_stages` instead of `stages`, and a deck with `VI` travel times also
   gets a `water_bucket_stages` stage from the end of the last operative stage
-  to the end of that month. A travel time longer than that stage fails the
-  conversion, naming the plant. The converted cases need the paired novomodelo
-  revision; convert a deck again to update it.
+  to the end of that month. A travel time longer than that stage stops the
+  conversion with `source-unsupported`, naming the plant. The converted cases
+  need the paired novomodelo revision; convert a deck again to update it.
 
 ### Removed
 
-- **`convert newave` and `convert decomp` no longer report `legacy-warning`**:
-  each finding it stood for has its own id; update scripts that filter on it.
+- **BREAKING: `convert newave` and `convert decomp` no longer report
+  `legacy-warning`**: each finding it stood for has its own id; update
+  scripts that filter on it.
+- **BREAKING: `convert decomp` no longer reports
+  `decomp-re-generation-clamped` or `decomp-qtur-turbined-clamped`**: an `RE`
+  or `RHQ` `QTUR` ceiling capped at a plant's capacity is reported as
+  `hydro-bounds-clamped-to-declared-capacity`, as `convert newave` does, and
+  one capped at a unit group's capacity as
+  `decomp-re-unit-group-generation-clamped`; update scripts that filter on
+  the old ids.
 
 ### Fixed
 
 - **`convert decomp` stopped with `unexpected-error` on deck limits that put
   a floor above the ceiling.** On turbined flow, generation, outflow, storage
   and unit groups it now writes both limits as the deck has them, with one
-  `decomp-bound-floor-above-ceiling` warning, also when the floor is above the
-  plant's capacity: DECOMP violates whichever is cheaper, and novomodelo
-  charges the violation. On spillage, diversion,
-  thermal generation, pumped flow and contracts, which novomodelo holds within
-  both limits, it stops with `source-field-parse` naming the records.
+  `decomp-bound-floor-above-ceiling` warning, also when the floor is above
+  the plant's capacity, and novomodelo charges the violation; on spillage,
+  diversion, thermal generation, pumped flow and contracts, which novomodelo
+  holds within both limits, it stops with `source-field-parse` naming the
+  records.
 - **A failed `convert newave` or `convert decomp` left an empty case directory
   behind.** The directories the run created are now removed with its partial
   outputs. When a file cannot be removed, the command still reports the error
@@ -316,7 +310,9 @@ links are cobre-bridge's.
   the case does not operate**, such as a plant in `hidr.dat` with no `UH`
   record. It now leaves the constraint out with a
   `decomp-re-plant-not-operated`, `decomp-rhq-plant-not-operated` or
-  `decomp-rhv-varm-plant-uncadastred` warning.
+  `decomp-rhv-varm-plant-uncadastred` warning, and leaves out of an `RE`
+  constraint only the terms on plants whose `UH` record gives no initial
+  volume, with a note.
 - **`check decomp` warned that a `RESTRICAO-ELETRICA-ESPECIAL` file
   `convert decomp` converts was left out** (`decomp-libs-electrical-present`)
   and exited 1. It now warns only when `convert decomp` leaves the file out,
@@ -352,7 +348,11 @@ links are cobre-bridge's.
   each scenario by its probability, and the `dashboard-unweighted-tree-averages`
   warning is gone; build the dashboard and the report again.
 - **`dashboard` stopped with a traceback on a Novomodelo output it could not
-  read.** It now exits 1 and reports the file.
+  read**, such as a missing `stages.json`. It now exits 1 with
+  `novomodelo-output-unreadable` naming the file, and with the new
+  `output-write-failed` on an output path it cannot write; `compare` reports
+  an output file it cannot read as `novomodelo-output-unreadable` too,
+  instead of `unexpected-error`, with the same exit code.
 - **`dashboard` and `compare decomp` left Itaipu out of every per-bus view,
   with a `hydro-unit-groups-multi-bus` warning.** A plant split across buses
   now counts at the one of them with load, and the dashboard's generation by
