@@ -27,6 +27,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
     drop_unknown_entities,
     lowers_to_bound,
     read_constraints,
+    read_screened_constraints,
 )
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.constraints import (
@@ -853,6 +854,7 @@ def test_conflicting_flow_restrictions_emit_two_soft_generic_constraints() -> No
 def test_bound_conflicts_diagnostic_names_plant_restrictions_and_limits() -> None:
     [conflict] = read_constraints(_qdef_ceiling_and_floor()).bound_conflicts
     diagnostic = bound_conflicts_diagnostic([conflict], {118: "BILLINGS"})
+    assert diagnostic is not None
     assert diagnostic.severity is Severity.WARNING
     assert diagnostic.table is not None
     assert diagnostic.table.rows == [
@@ -866,12 +868,57 @@ def test_bound_conflicts_diagnostic_names_plant_restrictions_and_limits() -> Non
 def test_bound_conflicts_diagnostic_is_coded_and_counts_the_conflicts() -> None:
     conflicts = read_constraints(_qdef_ceiling_and_floor()).bound_conflicts
     diagnostic = bound_conflicts_diagnostic(conflicts, {118: "BILLINGS"})
+    assert diagnostic is not None
     assert diagnostic.code == "decomp-conflicting-flow-restrictions"
     assert diagnostic.severity is Severity.WARNING
     assert diagnostic.title == "Conflicting flow restrictions kept soft (1)"
     assert diagnostic.remediation
     assert diagnostic.table is not None
     assert diagnostic.table.caption == "Stage and block ids are 0-based."
+
+
+def test_bound_conflicts_diagnostic_is_none_without_conflicts() -> None:
+    assert bound_conflicts_diagnostic([], {118: "BILLINGS"}) is None
+
+
+def test_read_screened_constraints_reports_unknown_entities_then_conflicts() -> None:
+    """A QDEF conflict on plant 118 and an HQ on a missing pumping station."""
+    dadger = _FakeDadger(
+        hq=_decl((116, 1, 2), (170, 1, 2), (180, 1, 2)),
+        cq=_coeff(
+            (116, 118, 1.0, 1, "QDEF"),
+            (170, 118, 1.0, 1, "QDEF"),
+            (180, 4, 1.0, 1, "QBOM"),
+            tipo=True,
+        ),
+        lq=_lu(
+            (116, 1, _NAN, 0.0, _NAN, 0.0, _NAN, 0.0),
+            (170, 1, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
+            (180, 1, _NAN, 5.0, _NAN, 5.0, _NAN, 5.0),
+        ),
+    )
+
+    census, diagnostics = read_screened_constraints(
+        dadger,
+        hydro_codes=(118,),
+        thermal_codes=(),
+        pumping_codes=(),
+        plant_names={118: "BILLINGS"},
+    )
+
+    assert {r.constraint_id for r in (*census.to_bounds, *census.to_generic)} == {
+        116,
+        170,
+    }
+    assert [d.code for d in diagnostics] == [
+        "decomp-rhq-qbom-no-station",
+        "decomp-conflicting-flow-restrictions",
+    ]
+    conflicts = diagnostics[1].table
+    assert conflicts is not None
+    assert conflicts.rows == [
+        [118, "BILLINGS", "QDEF", "HQ 116, HQ 170", 0, 0, 6.0, 0.0]
+    ]
 
 
 def test_a_flow_floor_below_its_ceiling_is_no_conflict() -> None:

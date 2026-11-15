@@ -48,17 +48,21 @@ links are cobre-bridge's.
 
 ### Changed
 
-- **BREAKING: `check decomp` raises the warnings `convert decomp` raises for
-  the special constraints and `AC` registers it leaves out**
+- **BREAKING: `check newave` and `check decomp` raise the warnings `convert`
+  raises for what it leaves out or keeps soft**: the lines of the
+  electrical-constraint file it does not read (`libs-unread-lines`) and, on
+  DECOMP, the special constraints and `AC` registers it leaves out
   (`decomp-re-thermal-not-normal`, `decomp-re-plant-not-operated`,
   `decomp-rhq-qbom-no-station`, `decomp-rhq-plant-not-operated`,
   `decomp-rhv-vbom-no-station`, `decomp-rhv-varm-plant-uncadastred`,
-  `decomp-electrical-period-rows-unused`, `decomp-ac-topology-varies`), so it
-  exits 1 on such decks and
-  `decomp-special-constraints-converted` no longer counts those constraints;
-  `convert decomp` in turn warns about the `AC` registers it does not read
-  with `decomp-ac-overrides-deferred`. Update scripts that expect `check
-  decomp` to exit 0 on these decks.
+  `decomp-electrical-period-rows-unused`, `decomp-ac-topology-varies`) and the
+  conflicting `HQ` restrictions it keeps soft
+  (`decomp-conflicting-flow-restrictions`). So they exit 1 on such decks,
+  `check newave` exits 2 on an electrical-constraint file that does not parse,
+  and `decomp-special-constraints-converted` no longer counts the constraints
+  left out; `convert decomp` in turn warns about the `AC` registers it does
+  not read with `decomp-ac-overrides-deferred`. Update scripts that expect
+  `check` to exit 0 on these decks.
 - **Every command prints a note on one line and keeps the full panel for
   warnings and errors**; `-v` prints the notes in full. `convert decomp`
   reports the conversion and the boundary FCF import under one roll-up and

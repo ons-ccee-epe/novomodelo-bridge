@@ -614,9 +614,7 @@ class TestConstraintCensusConflictDiagnostic:
 
     def _census(self, dadger: _FakeDadger) -> list[Diagnostic]:
         with collect() as collected:
-            _read_constraint_census(
-                cast("Dadger", dadger), self._effective(), self._ID_MAP, {}
-            )
+            _read_constraint_census(dadger, self._effective(), self._ID_MAP, {})
         return collected
 
     def test_conflicting_restrictions_are_reported_by_plant_name(self) -> None:

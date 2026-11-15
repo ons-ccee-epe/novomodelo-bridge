@@ -26,8 +26,10 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     collect,
     counted,
+    emit,
 )
 from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
+from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
@@ -309,36 +311,33 @@ def _special_constraint_coverage(
     pumping_ids: Mapping[int, int],
     *,
     libs_long_form: bool | None = False,
+    plant_names: Mapping[int, str] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
     split into bounds-lowered vs generic-emitted), left out (a term on an
     entity the case lacks) and deferred (RHA/LIBs-electrical), without
     running a conversion.
 
-    Counts the census ``convert decomp`` consumes:
-    :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`
-    screened by
-    :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`
+    Counts the census ``convert decomp`` consumes,
+    :func:`~novomodelo_bridge.decomp.constraint_registers.read_screened_constraints`
     against *id_map* and the ``UE`` codes of *pumping_ids*. Always returns
     exactly one passing summary :class:`CheckItem` (coverage never blocks
     conversion), an ``INFO`` for the converted split when any constraint
     converts, and, verbatim as ``convert decomp`` raises them, the screen's
-    WARNINGs, the one of
+    WARNINGs (conflicting restrictions under *plant_names*), the one of
     :func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
     and, when *libs_long_form* is ``False`` (the LIBS file has no long-form
     card ``convert decomp`` reads; ``None`` when the read failed, which its own
     failed check reports), the one of
     :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`.
-    :func:`_libs_electrical_read` raises the LIBS file's own
-    ``decomp-electrical-period-rows-unused``. Neither raises
-    ``decomp-conflicting-flow-restrictions``, which ``convert decomp`` raises
-    for the census's ``bound_conflicts``.
+    :func:`_libs_electrical_read` raises the LIBS file's own WARNINGs.
     """
-    census, unknown = constraint_registers.drop_unknown_entities(
-        constraint_registers.read_constraints(dadger),
+    census, screened = constraint_registers.read_screened_constraints(
+        dadger,
         hydro_codes=id_map.hydro_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
+        plant_names={} if plant_names is None else plant_names,
     )
 
     bounds_by_family: dict[str, int] = {}
@@ -396,7 +395,7 @@ def _special_constraint_coverage(
                 ),
             )
         )
-    diagnostics.extend(unknown)
+    diagnostics.extend(screened)
 
     rha_diagnostic = constraint_registers.detect_unconverted_rha(dadger)
     if rha_diagnostic is not None:
@@ -414,20 +413,23 @@ def _libs_electrical_read(
     """Read the LIBS ``RESTRICAO-ELETRICA-ESPECIAL`` file as ``convert decomp`` does.
 
     Returns whether it has a long-form card ``convert decomp`` reads, with the
-    WARNINGs the read raises. A file it cannot read gives ``None`` and a failed
-    check, since ``convert decomp`` stops on it.
+    WARNINGs the read raises, the lines it does not read among them. A file it
+    cannot read gives ``None`` and a failed check, since ``convert decomp``
+    stops on it.
     """
     from novomodelo_bridge.decomp.converters import libs_electrical
 
+    path = case.files.libs_restricao_eletrica
     found: list[Diagnostic] = []
     try:
         with collect() as found:
             restricoes = case.libs_restricao_eletrica
-            model = (
-                libs_electrical.read_libs_electrical(restricoes, calendar)
-                if restricoes is not None
-                else None
-            )
+            model = None
+            if path is not None and restricoes is not None:
+                unread = unread_lines_diagnostic(path, restricoes.data)
+                if unread is not None:
+                    emit(unread)
+                model = libs_electrical.read_libs_electrical(restricoes, calendar)
     except Exception as exc:
         failed = CheckItem(
             label="LIBS electrical restrictions readable",
@@ -553,6 +555,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             pumping_station_id_map,
         )
 
+        plant_names: dict[int, str] = {}
         try:
             hidr = read_hidr(files.hidr)
             effective, cadastro_report = build_effective_cadastro(
@@ -567,6 +570,10 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 )
             )
         else:
+            plant_names = {
+                int(code): str(name).strip()
+                for code, name in effective.base["nome_usina"].items()
+            }
             cov_checks, cov_diags = _ac_coverage(dadger, effective, cadastro_report)
             checks.extend(cov_checks)
             diagnostics.extend(cov_diags)
@@ -583,6 +590,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             id_map,
             pumping_station_id_map(dadger),
             libs_long_form=libs_long_form,
+            plant_names=plant_names,
         )
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)

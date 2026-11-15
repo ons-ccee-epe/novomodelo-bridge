@@ -859,8 +859,11 @@ def _split_bound_conflicts(
 
 def bound_conflicts_diagnostic(
     conflicts: Sequence[BoundConflict], plant_names: Mapping[int, str]
-) -> Diagnostic:
-    """WARNING listing the conflicting restrictions kept as soft constraints."""
+) -> Diagnostic | None:
+    """WARNING listing the conflicting restrictions kept as soft constraints, or
+    ``None`` when there are none."""
+    if not conflicts:
+        return None
     rows = [
         [
             conflict.code,
@@ -1117,6 +1120,30 @@ def drop_unknown_entities(
         if rows[check.diagnostic_code]
     ]
     return screened, diagnostics
+
+
+def read_screened_constraints(
+    dadger: ConstraintRegisters,
+    *,
+    hydro_codes: Collection[int],
+    thermal_codes: Collection[int],
+    pumping_codes: Collection[int],
+    plant_names: Mapping[int, str],
+) -> tuple[ConstraintCensus, list[Diagnostic]]:
+    """The deck's special constraints screened by :func:`drop_unknown_entities`,
+    with the WARNINGs ``check decomp`` and ``convert decomp`` both raise for them:
+    one per kind of term on an entity the case lacks, then the conflicting flow
+    restrictions, under their *plant_names*."""
+    census, diagnostics = drop_unknown_entities(
+        read_constraints(dadger),
+        hydro_codes=hydro_codes,
+        thermal_codes=thermal_codes,
+        pumping_codes=pumping_codes,
+    )
+    conflicts = bound_conflicts_diagnostic(census.bound_conflicts, plant_names)
+    if conflicts is not None:
+        diagnostics.append(conflicts)
+    return census, diagnostics
 
 
 def read_constraints(dadger: ConstraintRegisters) -> ConstraintCensus:

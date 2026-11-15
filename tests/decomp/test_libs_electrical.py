@@ -69,7 +69,10 @@ from tests.conftest import make_decomp_case
 
 
 class _StubRestricoes:
-    """Return a preset DataFrame (or ``None``) for each ``Restricoes`` accessor."""
+    """Return a preset DataFrame (or ``None``) for each ``Restricoes`` accessor,
+    with no line kept as plain text."""
+
+    data: tuple[object, ...] = ()
 
     def __init__(self, **frames: pd.DataFrame) -> None:
         self._frames = frames

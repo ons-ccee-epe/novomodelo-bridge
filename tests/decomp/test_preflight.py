@@ -19,8 +19,9 @@ from idecomp.decomp.modelos.dadger import (
     ACVOLMIN,
 )
 
-from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.diagnostics import Severity, collect
 from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
@@ -47,6 +48,7 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.pipeline import _read_constraint_census
 from novomodelo_bridge.decomp.preflight import (
     _ac_coverage,
     _load_factor_check,
@@ -61,6 +63,7 @@ from tests.decomp.test_constraint_registers import (
     _decl,
     _he,
     _lv,
+    _qdef_ceiling_and_floor,
 )
 from tests.decomp.test_constraint_registers import _FakeDadger as _ConstraintFakeDadger
 from tests.decomp.test_libs_electrical import (
@@ -499,6 +502,34 @@ class TestSpecialConstraintCoverage:
             "4 families present in the deck"
         )
 
+    def test_conflicting_flow_restrictions_are_reported_as_convert_does(
+        self,
+    ) -> None:
+        dadger = _qdef_ceiling_and_floor()
+        id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(118,))
+        hidr = pd.DataFrame({118: {"nome_usina": "BILLINGS    "}}).T
+        hidr.index.name = "codigo_usina"
+        effective = EffectiveCadastro(base=hidr, n_stages=2, stage_varying={})
+        with collect() as converted:
+            _read_constraint_census(dadger, effective, id_map, {})
+
+        _checks, diagnostics = _special_constraint_coverage(
+            dadger, None, id_map, {}, plant_names={118: "BILLINGS"}
+        )
+
+        [expected] = converted
+        assert expected.code == "decomp-conflicting-flow-restrictions"
+        assert [d for d in diagnostics if d.code == expected.code] == [expected]
+
+    def test_a_conflict_on_a_missing_pumping_station_is_not_reported(self) -> None:
+        id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(118,))
+
+        _checks, diagnostics = _special_constraint_coverage(
+            _qdef_ceiling_and_floor(variable="QBOM"), None, id_map, {}
+        )
+
+        assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]
+
     def test_deferred_rha_diagnostic_is_sourced_from_the_helper_verbatim(
         self,
     ) -> None:
@@ -569,20 +600,24 @@ class TestLibsElectricalWarning:
         self,
         decomp_mini_deck: Path,
         tmp_path: Path,
-        cards: object,
+        cards: object | None,
         reader: MagicMock | None = None,
+        *,
+        text: str = "",
     ) -> PreflightResult:
-        """Check the mini deck with a LIBS file whose cards are *cards*, read
-        by *reader* in place of the real reader when given."""
+        """Check the mini deck with a LIBS file holding *text*, whose cards are
+        *cards* when given, read by *reader* in place of the real reader when
+        given."""
         deck = tmp_path / "deck"
         shutil.copytree(decomp_mini_deck, deck)
         with (deck / "indices.csv").open("a", encoding="utf-8") as index:
             index.write(f" RESTRICAO-ELETRICA-ESPECIAL ;eletricas ;{self._LIBS_FILE}\n")
-        (deck / self._LIBS_FILE).write_text("", encoding="utf-8")
+        (deck / self._LIBS_FILE).write_text(text, encoding="utf-8")
         with ExitStack() as stack:
-            stack.enter_context(
-                patch.object(DecompCase, "libs_restricao_eletrica", new=cards)
-            )
+            if cards is not None:
+                stack.enter_context(
+                    patch.object(DecompCase, "libs_restricao_eletrica", new=cards)
+                )
             if reader is not None:
                 stack.enter_context(
                     patch(
@@ -597,7 +632,10 @@ class TestLibsElectricalWarning:
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
         result = self._run(
-            decomp_mini_deck, tmp_path, object(), MagicMock(return_value=object())
+            decomp_mini_deck,
+            tmp_path,
+            _StubRestricoes(),
+            MagicMock(return_value=object()),
         )
 
         codes = {d.code for d in result.diagnostics}
@@ -607,7 +645,7 @@ class TestLibsElectricalWarning:
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
         result = self._run(
-            decomp_mini_deck, tmp_path, object(), MagicMock(return_value=None)
+            decomp_mini_deck, tmp_path, _StubRestricoes(), MagicMock(return_value=None)
         )
 
         codes = {d.code for d in result.diagnostics}
@@ -640,13 +678,36 @@ class TestLibsElectricalWarning:
         }
         assert result.verdict is PreflightVerdict.WARNINGS
 
+    def test_lines_the_reader_keeps_as_text_are_warned_as_convert_does(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(
+            decomp_mini_deck,
+            tmp_path,
+            None,
+            text="& comentario\n\nrestricao-eletrica-formula; 1; ger_usih(1)\n",
+        )
+
+        [unread] = [d for d in result.diagnostics if d.code == UNREAD_LINES_CODE]
+        assert unread.severity is Severity.WARNING
+        assert unread.table is not None
+        assert unread.table.rows == [["restricao-eletrica-formula; 1; ger_usih(1)"]]
+        assert result.verdict is PreflightVerdict.WARNINGS
+
+    def test_a_file_whose_lines_are_all_read_raises_no_unread_warning(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(decomp_mini_deck, tmp_path, None, text="& comentario\n")
+
+        assert UNREAD_LINES_CODE not in {d.code for d in result.diagnostics}
+
     def test_an_unreadable_file_fails_the_check(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
         result = self._run(
             decomp_mini_deck,
             tmp_path,
-            object(),
+            _StubRestricoes(),
             MagicMock(side_effect=ValueError("restriction 7 is malformed")),
         )
 
