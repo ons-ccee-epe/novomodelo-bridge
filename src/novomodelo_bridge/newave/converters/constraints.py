@@ -58,6 +58,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     hard_slack,
     soft_slack,
 )
+from novomodelo_bridge.core.generic_constraint_format import render_expression
 from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_int, as_timestamp, is_na
 from novomodelo_bridge.core.productivity import (
@@ -1010,28 +1011,6 @@ def _electric_limit(value: object, cod: int, path: Path) -> float | None:
     return None if limit <= _UNBOUNDED_THRESHOLD else limit
 
 
-def _render_signed_expression(parsed_terms: list[tuple[float, str]]) -> str:
-    """Render (coefficient, variable) pairs into a signed sum expression string.
-
-    - Positive coefficient 1.0:  ``variable(id)``
-    - Positive coefficient other: ``coeff * variable(id)``
-    - Negative coefficient -1.0: ``- variable(id)``
-    - Negative coefficient other: ``- abs(coeff) * variable(id)``
-    - First term omits leading ``+``; subsequent positive terms use ``+ ``;
-      negative terms use ``- `` as binary subtraction.
-    """
-    parts: list[str] = []
-    for i, (coeff, var) in enumerate(parsed_terms):
-        abs_coeff = abs(coeff)
-        is_negative = coeff < 0.0
-        term_body = var if abs_coeff == 1.0 else f"{abs_coeff} * {var}"
-        if i == 0:
-            parts.append(f"- {term_body}" if is_negative else term_body)
-        else:
-            parts.append(f"- {term_body}" if is_negative else f"+ {term_body}")
-    return " ".join(parts)
-
-
 #: The demand terms of restricao-eletrica.csv formulas, folded into the
 #: limits at the case's own block load.
 _BUS_DEMAND_TOKENS = frozenset({"demanda", "val_demanda"})
@@ -1157,9 +1136,10 @@ def _formula_expression(
         if (variable := _decision_variable(cod, term, id_map, line_id_map, term_skips))
         is not None
     ]
-    if not variables:
+    text = render_expression(variables)
+    if text is None:
         return _ElectricConstraintSkip(cod, "termless")
-    return _ElectricExpression(_render_signed_expression(variables), tuple(data_terms))
+    return _ElectricExpression(text, tuple(data_terms))
 
 
 def _directional_flow(
@@ -1696,7 +1676,7 @@ def _electric_expression(
     if formula is not None:
         return _formula_expression(cod, formula, id_map, line_id_map, term_skips)
 
-    terms: list[str] = []
+    terms: list[tuple[float, str]] = []
     for plant_code in sorted(sources.re_conjuntos[cod]):
         try:
             novomodelo_id = id_map.hydro_id(plant_code)
@@ -1710,10 +1690,11 @@ def _electric_expression(
                 )
             )
             continue
-        terms.append(f"hydro_generation({novomodelo_id})")
-    if not terms:
+        terms.append((1.0, f"hydro_generation({novomodelo_id})"))
+    text = render_expression(terms)
+    if text is None:
         return _ElectricConstraintSkip(cod, "termless")
-    return _ElectricExpression(" + ".join(terms))
+    return _ElectricExpression(text)
 
 
 def _electric_bounds(
@@ -2149,11 +2130,7 @@ def _agrint_expression(
             term_skips.append(_AgrintTermSkip(group_id=group_id, sys_a=a, sys_b=b))
             continue
         parsed_terms.append((coeff, var))
-
-    if not parsed_terms:
-        return None
-
-    return _render_signed_expression(parsed_terms)
+    return render_expression(parsed_terms)
 
 
 def _agrint_slots(

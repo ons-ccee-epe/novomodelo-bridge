@@ -9,8 +9,8 @@ electrical_expression.ParsedTerm` sequence, not yet a novomodelo token. This mod
 owns that last mile: :func:`_novomodelo_token` maps one such term to its novomodelo
 ``VariableRef`` string, and :func:`build_electrical_expression`
 joins a whole :class:`AssembledBound`'s terms into one expression via
-``constraints._format_expression`` — the same coefficient-formatting rules
-the other special-constraint emitters already use.
+:func:`~novomodelo_bridge.core.generic_constraint_format.render_expression`,
+the renderer every generic-constraint emitter uses.
 
 This mirrors the codebase's existing read/emit split
 (``constraint_registers.py`` reads/classifies, ``constraints.py`` emits):
@@ -58,10 +58,10 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     GenericConstraintBuilder,
     soft_slack,
 )
+from novomodelo_bridge.core.generic_constraint_format import render_expression
 from novomodelo_bridge.decomp.constraint_registers import ConstraintRecord, StageBounds
 from novomodelo_bridge.decomp.converters.constraints import (
     Unresolved,
-    _format_expression,
     _hydro_generation_token,
     slots_from_record,
 )
@@ -276,10 +276,8 @@ def build_electrical_expression(
     expression string.
 
     Maps every term via :func:`_novomodelo_token` to ``(term.coefficient,
-    token)`` and joins the result with ``constraints._format_expression``
-    (the same coefficient-formatting rules — unit coefficients render bare,
-    fractional ones as ``{coeff} * {token}`` — the other special-constraint
-    emitters already use). The first unresolved term
+    token)`` and joins the result with :func:`~novomodelo_bridge.core.
+    generic_constraint_format.render_expression`. The first unresolved term
     (:func:`_novomodelo_token` returning an ``Unresolved``) drops the **whole**
     expression, skip-not-partial: never a partial string built from only the
     resolvable terms. ``None`` when *assembled* has no decision term.
@@ -292,7 +290,7 @@ def build_electrical_expression(
         if isinstance(token, Unresolved):
             return token
         resolved.append((term.coefficient, token))
-    return _format_expression(resolved)
+    return render_expression(resolved)
 
 
 # ---------------------------------------------------------------------------
