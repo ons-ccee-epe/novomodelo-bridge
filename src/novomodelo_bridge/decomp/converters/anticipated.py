@@ -70,7 +70,7 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.anticipated import commitment_clamped_diagnostic
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.pandas_utils import (
     as_float,
     as_frame,
@@ -92,6 +92,7 @@ _LOG = logging.getLogger(__name__)
 _DADGNL = "dadgnl.rvN"
 
 _NONZERO_TOLERANCE = 1e-9
+_DADGNL = "dadgnl.rvN"
 _HOURS_PER_OPERATIVE_WEEK = 168  # 7 days x 24 h; the study/post-study grid step
 
 
@@ -1127,15 +1128,19 @@ def _shared_class4_end(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         If the plants' ``class4_end`` values disagree.
     """
     ends = {classification.plants[t.code].class4_end for t in thermals}
     if len(ends) > 1:
-        raise ValueError(
-            "GNL plants declare differing já-comandada cutoffs "
-            f"{sorted(ends)}; post_study_stages is emitted once, globally, "
-            "and needs one shared class4_end"
+        dates = ", ".join(end.isoformat() for end in sorted(ends))
+        raise UnsupportedSourceError(
+            "dadgnl.rvN commits the dispatch of the GNL plants past the study "
+            f"horizon up to different dates ({dates}). GNL plants committed past "
+            "the horizon up to different dates are not converted yet, so give "
+            "each GNL plant GL weeks past the horizon up to the same date.",
+            path=_DADGNL,
+            field="GL data_inicio",
         )
     return next(iter(ends), horizon_end)
 
@@ -1228,20 +1233,24 @@ def _monthly_lead_stages(
     Raises
     ------
     ValueError
-        If the plant declares no lag, a lag outside ``1..n_stages``, or a
-        ``gl`` dispatch dated past the horizon: a delivery past the horizon
-        decided before the study has no in-study stage to carry it.
+        If the plant declares no lag.
+    UnsupportedSourceError
+        If the lag is outside ``1..n_stages``, or a ``gl`` dispatch is dated
+        past the horizon: a delivery past the horizon decided before the study
+        has no in-study stage to carry it.
     """
     label = f"GNL plant {thermal.code} ({thermal.name})"
     lag = model.nl_lag_months.get(thermal.code)
     if lag is None:
         raise ValueError(f"{label} declares no nl dispatch-anticipation lag")
     if not 1 <= lag <= n_stages:
-        raise ValueError(
-            f"{label}: an nl lag of {dx.counted(lag, 'month')} is not supported "
-            f"for a study of {dx.counted(n_stages, 'monthly stage')}; the lag must "
-            "be between 1 and the "
-            "stage count"
+        raise UnsupportedSourceError(
+            f"dadgnl.rvN gives {label} an NL lag of {dx.counted(lag, 'month')}, "
+            f"but the study has {dx.counted(n_stages, 'monthly stage')}. In a "
+            "study of monthly stages only, a lag outside its stages is not "
+            f"converted yet, so give the plant an NL lag from 1 to {n_stages}.",
+            path=_DADGNL,
+            field="NL lag",
         )
     late = [
         s.start_date.isoformat()
@@ -1249,9 +1258,13 @@ def _monthly_lead_stages(
         if s.start_date >= horizon_end
     ]
     if late:
-        raise ValueError(
-            f"{label}: gl dispatch dated past the study horizon ({', '.join(late)}) "
-            "is not supported for a study of monthly stages only"
+        raise UnsupportedSourceError(
+            f"dadgnl.rvN commits {label} to GL dispatch past the study horizon "
+            f"({', '.join(late)}). In a study of monthly stages only, GL dispatch "
+            "past the horizon is not converted yet, so remove the plant's GL "
+            "records dated past the horizon.",
+            path=_DADGNL,
+            field="GL data_inicio",
         )
     return lag
 
@@ -1354,15 +1367,23 @@ def _convert_monthly_gnl(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         If ``gs`` books more than one interval to a month, or a plant's lag or
         ``gl`` dispatch fails :func:`_monthly_lead_stages`.
+    ValueError
+        If a plant declares no ``nl`` lag.
     """
     split_months = {m: n for m, n in model.weeks_per_month.items() if n != 1}
     if split_months:
-        raise ValueError(
-            "a study of monthly stages only books one gs interval per month; gs "
-            f"declares {split_months} (month: intervals)"
+        months = ", ".join(
+            f"month {month} into {n}" for month, n in sorted(split_months.items())
+        )
+        raise UnsupportedSourceError(
+            f"dadgnl.rvN splits GS months into several intervals ({months}) in a "
+            "study of monthly stages only. The case decides one GNL dispatch per "
+            "monthly stage, so give every GS month one interval.",
+            path=_DADGNL,
+            field="GS semanas",
         )
     n_stages = len(calendar)
     horizon_start = calendar[0].start_date

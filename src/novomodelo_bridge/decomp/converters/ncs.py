@@ -38,6 +38,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.decomp.temporal import hours_weighted
@@ -610,7 +611,7 @@ def _pee_curtailment_by_code(renovaveis: _PeeRegisters) -> dict[int, bool]:
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         When a park declares more than one distinct state.
     """
     config = _non_empty_frame(renovaveis.pee_config_per(df=True))
@@ -623,10 +624,16 @@ def _pee_curtailment_by_code(renovaveis: _PeeRegisters) -> dict[int, bool]:
     curtailable: dict[int, bool] = {}
     for code, declared in states.items():
         if len(declared) > 1:
-            raise ValueError(
-                f"renewable park {code} declares more than one PEE-CONFIG-PER "
-                f"operating state ({sorted(declared)}); one state per park is "
-                "supported"
+            # TRACKED NOVOMODELO-GAP (C39): novomodelo allows or forbids
+            # curtailment once per source for the whole study. Remove when it
+            # accepts a per-stage curtailment switch.
+            raise UnsupportedSourceError(
+                f"renovaveis.csv gives renewable park {code} more than one "
+                f"PEE-CONFIG-PER operating state ({', '.join(sorted(declared))}). "
+                "The case holds one operating state per park for the whole "
+                "study, so give the park a single PEE-CONFIG-PER operating state.",
+                path="renovaveis.csv",
+                field="PEE-CONFIG-PER estado_operacao",
             )
         curtailable[code] = declared.pop() == _CURTAILABLE_OPERATING_STATE
     return curtailable

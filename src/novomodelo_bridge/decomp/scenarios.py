@@ -42,6 +42,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.incremental_inflow import (
     artificial_gauge_plants_diagnostic,
     is_artificial_gauge,
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 _PROBABILITY_ATOL = 1e-4
+_VAZOES = "vazoes.rvN"
 
 
 class ObservationTables(Protocol):
@@ -276,9 +278,13 @@ def _tree_values(
                 f"the monthly range ({n_weekly + 1}..{terminal + 1})"
             )
         if stage_index < terminal and scenario_index != 0:
-            raise ValueError(
-                f"monthly trunk stage {int(row['estagio'])} has scenario "
-                f"{int(row['cenario'])}; only the terminal stage may fan"
+            raise FieldParseError(
+                f"vazoes.rvN gives monthly stage {int(row['estagio'])} (counted "
+                f"from 1) inflow scenario {int(row['cenario'])}, but its "
+                "probability table gives every stage before the last one a "
+                "single scenario.",
+                path=_VAZOES,
+                field="cenarios_gerados cenario",
             )
         values[(stage_index, scenario_index)] = _incremental_values(
             row, id_map, station_by_code
@@ -437,12 +443,14 @@ def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
         }
     )
     if branching:
-        raise ValueError(
-            f"inflow stages {branching} branch into multiple scenarios, but "
-            f"only the terminal stage {terminal} may fan. DECOMP's scenario "
-            f"tree branches from the second month on; a deck that branches "
-            f"before its last stage is not convertible by the terminal-fan "
-            f"model."
+        stages = ", ".join(str(stage) for stage in branching)
+        raise UnsupportedSourceError(
+            f"vazoes.rvN branches the inflow scenario tree at stages {stages} "
+            f"(counted from 1), before its last stage {terminal}. A tree that "
+            "branches before its last stage is not converted yet, so generate "
+            "vazoes.rvN with a tree that branches only there.",
+            path=_VAZOES,
+            field="probabilidades cenario",
         )
 
 

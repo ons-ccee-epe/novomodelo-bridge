@@ -65,7 +65,9 @@ class UnsupportedSourceError(BridgeError, ValueError):
     """A valid source-model input the conversion cannot carry.
 
     Unlike :class:`FieldParseError`, the value is well formed: the source model
-    accepts it, but the case has no way to represent it.
+    accepts it, but the case has no way to represent it. Also subclasses
+    :class:`ValueError` so existing ``except ValueError`` handlers keep
+    catching it.
     """
 
     def __init__(

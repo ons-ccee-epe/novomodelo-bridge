@@ -341,9 +341,9 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
 
     Informational like ``compare newave``: divergences never change the exit
     code (0) -- the command describes them rather than judging them. Two
-    failures stop it, the same as on the NEWAVE track: a missing source deck
-    (exit 1) and an unreadable *existing* output file (exit 2) -- reporting a
-    zero-vs-zero match on data we could not read would be worse than stopping.
+    failures stop it: a source deck that is missing or refused (exit 1) and an
+    unreadable *existing* output file (exit 2) -- reporting a zero-vs-zero
+    match on data we could not read would be worse than stopping.
     """
     from novomodelo_bridge.comparators.decomp.results import build_decomp_dataset
     from novomodelo_bridge.comparators.verdict import (
@@ -352,7 +352,8 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
     )
     from novomodelo_bridge.core import diagnostics as dx
     from novomodelo_bridge.core.errors import (
-        FieldParseError,
+        BridgeError,
+        NovomodeloOutputError,
         NovomodeloPartitionMissingError,
     )
     from novomodelo_bridge.decomp.case import DecompCase
@@ -385,11 +386,13 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
                 )
         except (
             NovomodeloReadError,
+            NovomodeloOutputError,
             NovomodeloPartitionMissingError,
-            FieldParseError,
-            FileNotFoundError,
-            ValueError,
         ) as exc:
+            _fail("compare decomp", args, exc, 2, found_before=compare_diagnostics)
+        except BridgeError as exc:
+            _fail("compare decomp", args, exc, 1, found_before=compare_diagnostics)
+        except (FileNotFoundError, ValueError) as exc:
             _fail("compare decomp", args, exc, 2, found_before=compare_diagnostics)
         report_html = _build_html_compare_report(
             dataset, formats, reference_label="DECOMP"

@@ -21,7 +21,7 @@ from idecomp.decomp.modelos.dadger import (
 )
 
 from novomodelo_bridge.core.diagnostics import Severity, collect
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.core.preflight import (
     CheckItem,
@@ -49,14 +49,17 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.pipeline import _read_constraint_census
+from novomodelo_bridge.decomp.pipeline import (
+    _read_constraint_census,
+    convert_decomp_case,
+)
 from novomodelo_bridge.decomp.preflight import (
     _ac_coverage,
     _load_factor_check,
     _special_constraint_coverage,
     run_decomp_preflight,
 )
-from tests.conftest import make_decomp_case
+from tests.conftest import branching_vazoes, make_decomp_case
 from tests.decomp.test_cadastro import _FakeDadger
 from tests.decomp.test_constraint_registers import (
     _cm,
@@ -109,10 +112,9 @@ def _decomp_files(tmp_path: Path) -> DecompFiles:
 
 
 class TestIdMapReconcile:
-    """The id-map ``except`` widens from ``ValueError`` alone to
-    ``(FieldParseError, ValueError)`` -- the typed ``from_dadger`` parse
-    boundary and the id map's own ``__post_init__`` invariant checks both
-    still degrade to a diagnosed ``WILL_NOT_CONVERT`` instead of crashing.
+    """A typed refusal from ``from_dadger`` (a parse failure or an SB record the
+    case cannot carry) and the id map's own invariant checks all degrade to a
+    diagnosed ``WILL_NOT_CONVERT`` instead of crashing.
     """
 
     def _run_with_id_map_error(self, tmp_path: Path, error: Exception):
@@ -152,6 +154,27 @@ class TestIdMapReconcile:
         assert id_map_check.passed is False
         assert any(d.code == "source-field-parse" for d in result.diagnostics)
 
+    def test_unsupported_source_error_reconciles_to_will_not_convert(
+        self, tmp_path: Path
+    ) -> None:
+        error = UnsupportedSourceError(
+            "dadger.rvN declares a subsystem named IV in SB.",
+            path="dadger.rvN",
+            field="SB nome_submercado",
+        )
+        result = self._run_with_id_map_error(tmp_path, error)
+
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        id_map_check = next(c for c in result.checks if c.label == "Entity id map")
+        assert id_map_check.passed is False
+        diagnostic = next(
+            d for d in result.diagnostics if d.code == "source-unsupported"
+        )
+        assert list(diagnostic.notes) == [
+            "file: dadger.rvN",
+            "field: SB nome_submercado",
+        ]
+
     def test_post_init_value_error_is_still_caught(self, tmp_path: Path) -> None:
         error = ValueError("bus codes must be strictly ascending; got (2, 1)")
         result = self._run_with_id_map_error(tmp_path, error)
@@ -159,6 +182,32 @@ class TestIdMapReconcile:
         assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
         id_map_check = next(c for c in result.checks if c.label == "Entity id map")
         assert id_map_check.passed is False
+
+
+class TestTreeShapeCheck:
+    def test_a_trunk_that_branches_fails_as_convert_decomp_refuses_it(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        with branching_vazoes():
+            with pytest.raises(UnsupportedSourceError) as raised:
+                convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+            result = run_decomp_preflight(decomp_mini_deck)
+
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        shape = next(c for c in result.checks if c.label.startswith("Tree shape"))
+        assert shape.passed is False
+        [diagnostic] = [d for d in result.diagnostics if d.code == "source-unsupported"]
+        assert diagnostic.summary == str(raised.value)
+        assert list(diagnostic.notes) == [
+            "file: vazoes.rvN",
+            "field: probabilidades cenario",
+        ]
+
+    def test_a_terminal_fan_passes_with_its_width(self, decomp_mini_deck: Path) -> None:
+        result = run_decomp_preflight(decomp_mini_deck)
+
+        shape = next(c for c in result.checks if c.label.startswith("Tree shape"))
+        assert (shape.passed, shape.detail) == (True, "a terminal fan of 2 scenarios")
 
 
 class TestTabCharacterAdvisory:

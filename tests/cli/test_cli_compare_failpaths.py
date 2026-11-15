@@ -2,8 +2,8 @@
 
 Covers the three compare failures ``_load_compare_context`` (source-model case
 missing, exit 1), ``_resolve_compare_formats`` (bad ``--format``, exit 2), and
-the two compare handlers' read-error ``except`` blocks (exit 2) now go
-through — each emits a valid ``--json`` error envelope on stdout instead of
+the two compare handlers' read-error ``except`` blocks (exit 2; ``compare
+decomp`` exits 1 on a source-side failure) now go through — each emits a valid ``--json`` error envelope on stdout instead of
 staying empty/stderr-only, and a plain run still renders the diagnostic to
 stderr. All three fail before any primary result is printed, so their
 plain-mode stdout is empty; a bad ``--format`` fails before the comparison
@@ -301,6 +301,61 @@ class TestCompareDecompReadError:
         assert code == 2
         assert stdout == ""
         assert "bad parquet partition" in stderr
+
+
+def _compare_failure(name: str) -> Exception:
+    from novomodelo_bridge.core import errors
+    from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
+
+    failures: dict[str, Exception] = {
+        "FieldParseError": errors.FieldParseError("bad field"),
+        "UnsupportedSourceError": errors.UnsupportedSourceError("cannot carry"),
+        "SourceFileError": errors.SourceFileError("no relato"),
+        "NovomodeloOutputError": errors.NovomodeloOutputError("bad json"),
+        "NovomodeloPartitionMissingError": (
+            errors.NovomodeloPartitionMissingError("no partition")
+        ),
+        "NovomodeloReadError": NovomodeloReadError("bad parquet partition"),
+    }
+    return failures[name]
+
+
+@pytest.mark.parametrize(
+    ("name", "exit_code"),
+    [
+        ("FieldParseError", 1),
+        ("UnsupportedSourceError", 1),
+        ("SourceFileError", 1),
+        ("NovomodeloOutputError", 2),
+        ("NovomodeloPartitionMissingError", 2),
+        ("NovomodeloReadError", 2),
+    ],
+)
+def test_compare_decomp_exits_1_on_the_source_and_2_on_the_output(
+    name: str,
+    exit_code: int,
+    decomp_mini_deck: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novomodelo_bridge.core.errors import diagnostic_from_exception
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise _compare_failure(name)
+
+    monkeypatch.setattr(
+        "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset", fail
+    )
+
+    code, stdout, _ = _invoke_main(
+        ["compare", "decomp", str(decomp_mini_deck), str(tmp_path), "--json"],
+        monkeypatch,
+    )
+
+    assert code == exit_code
+    [diagnostic] = json.loads(stdout)["diagnostics"]
+    expected = diagnostic_from_exception(_compare_failure(name), context="Compare")
+    assert diagnostic["code"] == expected.code
 
 
 _REPORT_NOTE = "emitted while the HTML report is built"

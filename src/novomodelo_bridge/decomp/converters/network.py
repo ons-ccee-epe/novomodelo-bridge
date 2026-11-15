@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Protocol
 import pandas as pd
 import pyarrow as pa
 
+from novomodelo_bridge.core.diagnostics import counted
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
@@ -36,14 +38,19 @@ if TYPE_CHECKING:
 _COST_COLUMN = re.compile(r"^custo_(\d+)$")
 _LIMIT_COLUMN = re.compile(r"^limite_superior_(\d+)$")
 _FULL_DEPTH_PERCENT = 100.0
+_DADGER = "dadger.rvN"
 
 
 def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
     """Extract one deficit cost per subsystem code from the ``CD`` records.
 
-    Enforces the single-segment shape the Novomodelo bus model encodes: one
-    curve per subsystem, 100 % depth, one cost uniform across blocks and
-    across every declared stage.
+    Accepts only one curve per subsystem at 100 % depth, with one cost uniform
+    across blocks and across every declared stage.
+
+    Raises
+    ------
+    UnsupportedSourceError
+        A subsystem's ``CD`` records fall outside that shape.
     """
     cd = as_frame(dadger.cd(df=True))
     if cd is None or cd.empty:
@@ -55,10 +62,18 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
     costs: dict[int, float] = {}
     for code, group in cd.groupby("codigo_submercado"):
         code = as_int(code)
-        if group["codigo_curva"].nunique() != 1:
-            raise ValueError(
-                f"subsystem {code}: multi-segment deficit curves are not "
-                "supported yet (multiple codigo_curva values)"
+        curves = sorted(
+            as_int(curve) for curve in group["codigo_curva"].dropna().unique()
+        )
+        if len(curves) > 1:
+            listed = ", ".join(str(curve) for curve in curves)
+            raise UnsupportedSourceError(
+                f"dadger.rvN gives subsystem {code} "
+                f"{counted(len(curves), 'CD deficit curve')} ({listed}). More "
+                "than one deficit curve per subsystem is not converted yet, so "
+                "give the subsystem a single CD curve.",
+                path=_DADGER,
+                field="CD codigo_curva",
             )
         values: set[float] = set()
         for _, row in group.iterrows():
@@ -69,15 +84,29 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
             for column in limit_columns:
                 limit = row[column]
                 if not pd.isna(limit) and float(limit) != _FULL_DEPTH_PERCENT:
-                    raise ValueError(
-                        f"subsystem {code}: deficit segment depth "
-                        f"{float(limit)} % is not supported yet (expected "
-                        f"{_FULL_DEPTH_PERCENT} %)"
+                    raise UnsupportedSourceError(
+                        f"dadger.rvN limits the CD deficit curve of subsystem "
+                        f"{code} to {float(limit):g} % of the load. A deficit "
+                        "curve that does not cover the whole load is not "
+                        "converted yet, so give every block of the curve a "
+                        f"limit of {_FULL_DEPTH_PERCENT:g} %.",
+                        path=_DADGER,
+                        field="CD limite_superior",
                     )
-        if len(values) != 1:
-            raise ValueError(
-                f"subsystem {code}: deficit cost must be one value uniform "
-                f"across blocks and stages; got {sorted(values)}"
+        if not values:
+            raise ValueError(f"subsystem {code}: the CD records give no deficit cost")
+        if len(values) > 1:
+            listed = ", ".join(f"{value:g}" for value in sorted(values))
+            # TRACKED NOVOMODELO-GAP (C38): the source model prices the deficit
+            # per stage and block, novomodelo takes one cost per bus deficit
+            # segment. Remove when novomodelo accepts stage-varying deficit costs.
+            raise UnsupportedSourceError(
+                f"dadger.rvN gives subsystem {code} different CD deficit costs "
+                f"across blocks and stages ({listed}). The case carries "
+                "one deficit cost per subsystem, so give every block and stage "
+                "of its CD curve the same cost.",
+                path=_DADGER,
+                field="CD custo",
             )
         costs[code] = values.pop()
     return costs

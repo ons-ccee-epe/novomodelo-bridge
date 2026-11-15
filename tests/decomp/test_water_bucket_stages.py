@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.decomp.pipeline import _water_bucket_stages, convert_decomp_case
 from tests.conftest import requires_novomodelo_python
 
@@ -33,8 +34,11 @@ def test_deck_without_travel_time_gets_no_water_stage() -> None:
 
 
 def test_travel_time_longer_than_the_stage_names_the_plant() -> None:
-    with pytest.raises(ValueError, match="plant 66 .*400 h.*360 h"):
+    with pytest.raises(
+        UnsupportedSourceError, match="plant 66 a VI travel time of 400 h.*360 h"
+    ) as raised:
         _water_bucket_stages(date(2026, 2, 14), {18: 120.0, 66: 400.0})
+    assert (raised.value.path, raised.value.field) == ("dadger.rvN", "VI duracao")
 
 
 @requires_novomodelo_python

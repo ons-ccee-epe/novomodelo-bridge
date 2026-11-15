@@ -57,12 +57,16 @@ links are cobre-bridge's.
   `decomp-rhv-vbom-no-station`, `decomp-rhv-varm-plant-uncadastred`,
   `decomp-electrical-period-rows-unused`, `decomp-ac-topology-varies`) and the
   conflicting `HQ` restrictions it keeps soft
-  (`decomp-conflicting-flow-restrictions`). So they exit 1 on such decks,
-  `check newave` exits 2 on an electrical-constraint file that does not parse,
-  and `decomp-special-constraints-converted` no longer counts the constraints
-  left out; `convert decomp` in turn warns about the `AC` registers it does
-  not read with `decomp-ac-overrides-deferred`. Update scripts that expect
-  `check` to exit 0 on these decks.
+  (`decomp-conflicting-flow-restrictions`). So they exit 1 on such decks, and
+  `decomp-special-constraints-converted` no longer counts the constraints left
+  out; `convert decomp` in turn warns about the `AC` registers it does not
+  read with `decomp-ac-overrides-deferred`. `check newave` exits 2 on an
+  electrical-constraint file that does not parse, and `check decomp` exits 2,
+  with the `source-unsupported` error `convert decomp` stops on, on `CD`
+  deficit curves, `SB` subsystem names, summer-time (`VR`) `DP` weeks and
+  `vazoes` scenario trees that `convert decomp` cannot convert, and on a
+  terminal fan whose probabilities `convert decomp` rejects. Update scripts
+  that expect `check` to exit 0 on these decks.
 - **Every command prints a note on one line and keeps the full panel for
   warnings and errors**; `-v` prints the notes in full. `convert decomp`
   reports the conversion and the boundary FCF import under one roll-up and
@@ -185,6 +189,26 @@ links are cobre-bridge's.
   the far ones.** Its status is `ok` only when every variable is close, and
   `summary.parquet` has one row per entity type and variable; update scripts
   that read either.
+- **`convert decomp` reports a deck it cannot convert as
+  `source-unsupported`** instead of `unexpected-error`, naming the file and
+  the record field, saying what to change and, where the conversion rather
+  than Novomodelo is missing, that the value is not converted yet. This
+  covers `CD` deficit curves with more than one curve per subsystem, a limit
+  under 100 % or a cost that varies; an `SB` subsystem named `IV`; a `VI`
+  travel time longer than the post-study stage; an `NL` lag or `GL` dates the
+  study cannot hold, or `GL` dates past the horizon that differ between GNL
+  plants; `GS` months split into weeks in a study of monthly stages; a
+  `vazoes` scenario tree that branches before the last stage; a summer-time
+  (`VR`) week in `DP`; and a renewable park with more than one
+  `PEE-CONFIG-PER` operating state. A `vazoes` file whose generated scenarios
+  contradict its probabilities is reported as `source-field-parse`.
+  `compare decomp` and `export dessem` report the ones they meet the same
+  way.
+- **BREAKING: `compare decomp` exits 1, not 2, when it stops on the DECOMP
+  deck**, such as a deck it cannot convert (`source-unsupported`), a
+  malformed field (`source-field-parse`) or a missing file
+  (`source-file-missing`). It still exits 2 on a Novomodelo output it cannot
+  read. Update scripts that read its exit code.
 - **The `compare` report's Hydro and Thermal Details tabs lead with a per-plant
   gap table**, tinted by band, worst plant first, where a click opens the
   plant's charts; the Productivity tab lists only the plants that differ and
