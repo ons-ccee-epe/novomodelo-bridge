@@ -9,8 +9,8 @@ module lays the accumulator's foundation: a typed contribution record
 (:class:`BoundContribution`) and the static registry (:data:`AXES`) of which
 novomodelo bound axes exist per entity family — ``hydro``, ``thermal``,
 ``pumping``, ``line``, ``hydro_unit_group``, and ``contract`` — which are
-two-sided vs upper-only/lower-only, and which are block-eligible vs
-stage-level, and the per-group
+two-sided vs upper-only/lower-only, which are block-eligible vs
+stage-level, and which price a shortfall below the floor — and the per-group
 :func:`intersect` primitive that reduces a homogeneous group of
 contributions to one lower/upper pair.
 
@@ -83,13 +83,17 @@ class AxisSpec:
     ``hydro``'s ``water_withdrawal`` (lower-only); :func:`intersect` enforces
     the one-sided guard for every axis registered that way.
     ``block_eligible`` is ``False`` for axes novomodelo rejects a ``block_id`` on
-    (stage-level only, e.g. storage and water_withdrawal).
+    (stage-level only, e.g. storage and water_withdrawal). ``soft_floor`` is
+    ``True`` where novomodelo charges a penalty for a shortfall below the lower
+    bound instead of enforcing it, so a floor above the ceiling still solves;
+    :func:`resolve` refuses that conflict on every other axis.
     """
 
     family: str
     lower_column: str | None
     upper_column: str | None
     block_eligible: bool
+    soft_floor: bool = False
 
 
 #: The novomodelo bound axes this accumulator knows about, keyed by
@@ -107,24 +111,28 @@ AXES: Mapping[tuple[str, str], AxisSpec] = {
         lower_column="min_turbined_m3s",
         upper_column="max_turbined_m3s",
         block_eligible=True,
+        soft_floor=True,
     ),
     ("hydro", "outflow"): AxisSpec(
         family="hydro",
         lower_column="min_outflow_m3s",
         upper_column="max_outflow_m3s",
         block_eligible=True,
+        soft_floor=True,
     ),
     ("hydro", "generation"): AxisSpec(
         family="hydro",
         lower_column="min_generation_mw",
         upper_column="max_generation_mw",
         block_eligible=True,
+        soft_floor=True,
     ),
     ("hydro", "storage"): AxisSpec(
         family="hydro",
         lower_column="min_storage_hm3",
         upper_column="max_storage_hm3",
         block_eligible=False,
+        soft_floor=True,
     ),
     ("hydro", "diversion"): AxisSpec(
         family="hydro",
@@ -186,12 +194,14 @@ AXES: Mapping[tuple[str, str], AxisSpec] = {
         lower_column="min_turbined_m3s",
         upper_column="max_turbined_m3s",
         block_eligible=True,
+        soft_floor=True,
     ),
     ("hydro_unit_group", "generation"): AxisSpec(
         family="hydro_unit_group",
         lower_column="min_generation_mw",
         upper_column="max_generation_mw",
         block_eligible=True,
+        soft_floor=True,
     ),
     # `contracts.convert_contract_bounds` also emits a `price_per_mwh` column
     # alongside `min_mw`/`max_mw` — a signed price, not a bound, so (per the
@@ -233,16 +243,29 @@ def _effective(value: float | None) -> float | None:
     return value if is_bounded(value) else None
 
 
+@dataclass(frozen=True)
+class FloorAboveCeiling:
+    """A floor above the ceiling in one group of contributions: the resolved
+    *lower* and *upper*, and the ``(contributor, value)`` pairs behind each
+    side, the lowers above the ceiling and the uppers below the floor."""
+
+    lower: float
+    upper: float
+    floors: tuple[tuple[str, float], ...]
+    ceilings: tuple[tuple[str, float], ...]
+
+
 def intersect(
     contribs: Sequence[BoundContribution], spec: AxisSpec
-) -> tuple[float | None, float | None]:
+) -> tuple[float | None, float | None, FloorAboveCeiling | None]:
     """Intersect a homogeneous group of contributions into one bound pair.
 
     ``contribs`` must all share one full key (family, entity, stage, block,
     axis) — this is a pure per-group reduction, not a grouping primitive.
-    Returns ``(max of the effective lowers, min of
-    the effective uppers)``, each ``None`` when no contribution bounds that
-    side.
+    Returns ``(max of the effective lowers, min of the effective uppers,
+    conflict)``, each bound ``None`` when no contribution bounds that side,
+    and the conflict a :class:`FloorAboveCeiling` when the lower exceeds the
+    upper past float noise, else ``None``.
 
     Raises
     ------
@@ -254,9 +277,6 @@ def intersect(
         and some contribution supplies an effective upper — a bound cannot
         land on the side a one-sided axis has no column for; the message
         names the axis, the missing side, and the offending contributors.
-        Also when an effective lower and an effective upper both survive and
-        the lower exceeds the upper past float noise — the message names
-        every contributing label and the conflicting values.
     """
     lowers: list[tuple[float, str]] = []
     uppers: list[tuple[float, str]] = []
@@ -285,18 +305,26 @@ def intersect(
     lower = max((value for value, _ in lowers), default=None)
     upper = min((value for value, _ in uppers), default=None)
 
-    if lower is not None and upper is not None:
-        tolerance = relative_tolerance(upper)
-        if lower - upper > tolerance:
-            lower_desc = ", ".join(f"{name}={value}" for value, name in lowers)
-            upper_desc = ", ".join(f"{name}={value}" for value, name in uppers)
-            raise ValueError(
-                f"empty intersection on {spec.family} axis: lower {lower} "
-                f"(from {lower_desc}) exceeds upper {upper} "
-                f"(from {upper_desc})"
-            )
-
-    return lower, upper
+    if lower is None or upper is None or lower - upper <= relative_tolerance(upper):
+        return lower, upper, None
+    return (
+        lower,
+        upper,
+        FloorAboveCeiling(
+            lower=lower,
+            upper=upper,
+            floors=tuple(
+                (name, value)
+                for value, name in lowers
+                if value - upper > relative_tolerance(upper)
+            ),
+            ceilings=tuple(
+                (name, value)
+                for value, name in uppers
+                if lower - value > relative_tolerance(value)
+            ),
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -306,7 +334,8 @@ class ResolvedRow:
     ``block_id`` is ``None`` for an all-blocks (base) row, or the 0-based
     block index for a materialized per-block row. :func:`resolve` never
     emits both a base row and per-block rows for the same ``(family,
-    entity_id, stage_id, axis)`` — see its docstring for why.
+    entity_id, stage_id, axis)`` — see its docstring for why. ``conflict``
+    is set when the row's floor sits above its ceiling.
     """
 
     family: str
@@ -316,6 +345,22 @@ class ResolvedRow:
     axis: str
     lower: float | None
     upper: float | None
+    conflict: FloorAboveCeiling | None = None
+
+
+class FloorAboveCeilingError(ValueError):
+    """A floor above the ceiling on an axis novomodelo enforces on both
+    sides: *conflict* on the resolved *row*."""
+
+    def __init__(self, row: ResolvedRow, conflict: FloorAboveCeiling) -> None:
+        super().__init__(
+            f"empty intersection on {row.family}.{row.axis} at "
+            f"entity_id={row.entity_id}, stage_id={row.stage_id}, "
+            f"block_id={row.block_id}: lower {conflict.lower} exceeds "
+            f"upper {conflict.upper}"
+        )
+        self.row = row
+        self.conflict = conflict
 
 
 def resolve(
@@ -339,7 +384,9 @@ def resolve(
       ``block_id=None`` row.
 
     A group whose resolved intersection is ``(None, None)`` (no effective
-    bound on either side) is skipped and contributes no row.
+    bound on either side) is skipped and contributes no row. A row whose
+    floor sits above its ceiling keeps both on a ``soft_floor`` axis, with
+    its ``conflict`` set.
 
     Raises
     ------
@@ -349,8 +396,11 @@ def resolve(
         carries a non-``None`` ``block_id`` — the message names the axis,
         the entity, and the stage. Also when a group needs materialization
         but ``block_counts`` has no entry for its ``stage_id``. ``intersect``'s
-        own raises (upper-only violation, empty intersection) propagate
-        unchanged.
+        own raise (a bound on the missing side of a one-sided axis)
+        propagates unchanged.
+    FloorAboveCeilingError
+        When a row's floor sits above its ceiling on an axis that is not
+        ``soft_floor``.
     """
     groups: defaultdict[tuple[str, int, int, str], list[BoundContribution]] = (
         defaultdict(list)
@@ -374,20 +424,9 @@ def resolve(
         base_contribs = [c for c in group if c.block_id is None]
 
         if not block_ids:
-            lower, upper = intersect(base_contribs, spec)
-            if lower is None and upper is None:
-                continue
-            rows.append(
-                ResolvedRow(
-                    family=family,
-                    entity_id=entity_id,
-                    stage_id=stage_id,
-                    block_id=None,
-                    axis=axis,
-                    lower=lower,
-                    upper=upper,
-                )
-            )
+            row = _resolved_row(base_contribs, spec, entity_id, stage_id, None, axis)
+            if row is not None:
+                rows.append(row)
             continue
 
         if stage_id not in block_counts:
@@ -409,22 +448,47 @@ def resolve(
             )
         for block_id in range(n_blocks):
             block_contribs = [c for c in group if c.block_id == block_id]
-            lower, upper = intersect(base_contribs + block_contribs, spec)
-            if lower is None and upper is None:
-                continue
-            rows.append(
-                ResolvedRow(
-                    family=family,
-                    entity_id=entity_id,
-                    stage_id=stage_id,
-                    block_id=block_id,
-                    axis=axis,
-                    lower=lower,
-                    upper=upper,
-                )
+            row = _resolved_row(
+                base_contribs + block_contribs,
+                spec,
+                entity_id,
+                stage_id,
+                block_id,
+                axis,
             )
+            if row is not None:
+                rows.append(row)
 
     return rows
+
+
+def _resolved_row(
+    contribs: Sequence[BoundContribution],
+    spec: AxisSpec,
+    entity_id: int,
+    stage_id: int,
+    block_id: int | None,
+    axis: str,
+) -> ResolvedRow | None:
+    """*contribs* intersected into one row, ``None`` when they bound neither
+    side; raises :class:`FloorAboveCeilingError` on a conflict outside a
+    ``soft_floor`` axis."""
+    lower, upper, conflict = intersect(contribs, spec)
+    if lower is None and upper is None:
+        return None
+    row = ResolvedRow(
+        family=spec.family,
+        entity_id=entity_id,
+        stage_id=stage_id,
+        block_id=block_id,
+        axis=axis,
+        lower=lower,
+        upper=upper,
+        conflict=conflict,
+    )
+    if conflict is not None and not spec.soft_floor:
+        raise FloorAboveCeilingError(row, conflict)
+    return row
 
 
 #: The three novomodelo bound-table schemas this accumulator fans resolved rows

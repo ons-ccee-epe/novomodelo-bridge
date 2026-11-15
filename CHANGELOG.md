@@ -16,6 +16,10 @@ links are cobre-bridge's.
 
 ### Added
 
+- **`convert newave` and `convert decomp` warn about per-stage floors above a
+  plant's capacity** with `hydro-bounds-floor-above-declared-capacity`; the
+  floors are written as the deck has them, and novomodelo charges the shortfall
+  as a violation.
 - **`convert decomp` converts `RHV` constraints on stage volumes** (`CV`
   tipos `VDEF`, `VDES` and `VBOM`) instead of skipping them with
   `decomp-rhv-volume-tipo-deferred`; results change for decks that have them,
@@ -76,13 +80,13 @@ links are cobre-bridge's.
   NEWAVE's or DECOMP's**: `fpha-spill-outside-tailrace`,
   `boundary-fcf-transit-water-priced` and
   `boundary-fcf-gnl-anticipated-deviation` are now warnings, while
-  `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`,
-  `decomp-qtur-turbined-clamped`, `modif-override-plant-uncadastred`,
+  `hydro-bounds-clamped-to-declared-capacity`,
+  `modif-override-plant-uncadastred`,
   `vminop-ree-not-expressible`, `electric-constraint-hydro-unmapped`,
   `electric-constraint-interchange-no-line`, `agrint-interchange-no-line`,
   `agrint-group-empty`, `artificial-gauge-data-ignored`, `libs-unindexed-file`
-  and `decomp-ac-out-of-horizon` are notes. A stage limit raised to a
-  plant's minimum now warns as `hydro-bounds-raised-to-declared-minimum`, and
+  and `decomp-ac-out-of-horizon` are notes. A raised stage limit now warns as
+  `hydro-bounds-raised-to-declared-minimum`, and
   DECOMP plants kept only for the NEWAVE coupling are listed in a
   `decomp-coupling-only-plants-excluded` note instead of a log warning.
   `check` therefore exits 0 with status `ok` on a deck whose only warnings
@@ -133,9 +137,19 @@ links are cobre-bridge's.
   fails still reports what it found before the failure, and `compare newave`
   reports what it finds while reading the deck, such as
   `fictitious-plants-excluded`.
-- **`convert decomp` reports RE ceilings capped at a unit group's capacity as
-  `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
-  that `decomp-re-generation-clamped` reports.
+- **BREAKING: `convert decomp` reports RE and RHQ `QTUR` ceilings capped at a
+  plant's capacity as `hydro-bounds-clamped-to-declared-capacity`, as `convert
+  newave` does**, in place of `decomp-re-generation-clamped` and
+  `decomp-qtur-turbined-clamped`, and those capped at a unit group's capacity
+  as `decomp-re-unit-group-generation-clamped`; update scripts that filter on
+  the old ids. Neither command lists a ceiling that equals the capacity at the
+  deck's written precision, such as BELO MONTE's 11000 MW `RE`.
+- **`convert newave` raises a per-stage turbined-flow, generation or outflow
+  ceiling that sits below the stage's floor**, the floor the deck sets on that
+  stage or else the plant's minimum, up to that floor or at most the plant's
+  capacity, with the `hydro-bounds-raised-to-declared-minimum` warning. It
+  compared the ceiling with the plant's minimum alone, so results change for
+  decks whose stage floor differs from it; reconvert those.
 - **`convert newave` and `convert decomp` stop on a malformed electrical
   formula with a `source-field-parse` error naming the file, the constraint
   and its record**, where `convert newave` left the malformed part out as
@@ -251,6 +265,13 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`convert decomp` stopped with `unexpected-error` on deck limits that put
+  a floor above the ceiling.** On turbined flow, generation, outflow, storage
+  and unit groups it now writes both limits as the deck has them, with a
+  `decomp-bound-floor-above-ceiling` warning: DECOMP violates whichever is
+  cheaper, and novomodelo charges the violation. On spillage, diversion,
+  thermal generation, pumped flow and contracts, which novomodelo holds within
+  both limits, it stops with `source-field-parse` naming the records.
 - **A failed `convert newave` or `convert decomp` left an empty case directory
   behind.** The directories the run created are now removed with its partial
   outputs. When a file cannot be removed, the command still reports the error

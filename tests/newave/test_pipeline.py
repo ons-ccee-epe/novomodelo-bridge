@@ -344,7 +344,7 @@ class TestEmissionCheckWiring:
         self, tmp_path: Path
     ) -> None:
         """A hydro_bounds row above the plant's declared max_turbined_m3s is
-        clamped back to the declaration and reported as a WARNING, so the
+        clamped back to the declaration and reported as a note, so the
         convert verdict stays "ok" instead of erroring on novomodelo rule 43."""
         import contextlib
 

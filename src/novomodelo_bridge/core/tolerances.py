@@ -1,6 +1,7 @@
 """The shared relative-tolerance idiom for comparing a float against a
 declared/reference value, mirroring novomodelo-io's semantic-validation
-``ENVELOPE_TOLERANCE``.
+``ENVELOPE_TOLERANCE``, and the wider written-precision gap below which a
+report treats two values as the same number.
 
 Also carries :func:`is_effectively_infinite`, the shared "is this bound
 unbounded?" predicate for the source model's big-M sentinel family.
@@ -26,6 +27,24 @@ def relative_tolerance(reference: float) -> float:
 def floats_differ(value: float, reference: float) -> bool:
     """Whether *value* differs from *reference* past relative float noise."""
     return abs(value - reference) > relative_tolerance(reference)
+
+
+#: Gap, relative to the plant's declared value, within which a deck limit and
+#: that value count as the same number. It covers BELO MONTE, whose 18 units
+#: of 611.111 MW, read from ``hidr.dat``'s float32, sum to 10999.9984 MW, 1.4e-7
+#: below the 11000 MW its RE ceiling writes. It does not cover unit power
+#: rounded to three decimals in general: that error reaches 0.0005 MW per unit,
+#: more than 1e-6 of a unit under 500 MW.
+WRITTEN_PRECISION_TOLERANCE: float = 1e-6
+
+
+def beyond_written_precision(value: float, reference: float) -> bool:
+    """Whether *value* differs from *reference* by more than the deck's written
+    precision (:data:`WRITTEN_PRECISION_TOLERANCE`, relative to
+    ``max(|reference|, 1.0)``)."""
+    return abs(value - reference) > WRITTEN_PRECISION_TOLERANCE * max(
+        abs(reference), 1.0
+    )
 
 
 # The source model bound records use 99999 as a "big-M" sentinel meaning "no limit".
