@@ -190,6 +190,11 @@ _EVAP_MONTHS = [
 
 _GEOMETRY_N_POINTS = 100
 
+# hidr.dat stores the storage range in float32, so a decimal reference volume
+# that equals a bound can read a rounding error outside it.
+_FLOAT32_REL_TOL = 1e-6
+
+
 _GEOMETRY_SCHEMA = pa.schema(
     [
         pa.field("hydro_id", pa.int32()),
@@ -198,6 +203,10 @@ _GEOMETRY_SCHEMA = pa.schema(
         pa.field("area_km2", pa.float64()),
     ]
 )
+
+
+def _float32_equal(a: float, b: float) -> bool:
+    return math.isclose(a, b, rel_tol=_FLOAT32_REL_TOL)
 
 
 def _eval_poly(coeffs: list[float], x: np.ndarray) -> np.ndarray:
@@ -362,9 +371,12 @@ def generate_hydro_geometry(
 
         plant_references = (reference_volumes or {}).get(newave_code)
         if plant_references and vol_min < vol_max:
+            low, high = min(plant_references), max(plant_references)
             sampled = (
-                min(vol_min, *plant_references),
-                max(vol_max, *plant_references),
+                low if low < vol_min and not _float32_equal(low, vol_min) else vol_min,
+                high
+                if high > vol_max and not _float32_equal(high, vol_max)
+                else vol_max,
             )
             if sampled != (vol_min, vol_max):
                 extended.append(

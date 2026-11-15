@@ -13,7 +13,9 @@ requires-python = ">=3.12"
 dependencies = [
     # 1.10.3: a field missing at the end of a LIBS line reads as None, not as
     # the previous line's value. Imported directly for its DefaultRegister.
-    "cfinterface>=1.10.3",
+    # 1.10.4: a section or block reader starts each read empty, so a padded
+    # dger.dat no longer reads its study start year as None.
+    "cfinterface>=1.10.4",
     # 1.18.1: the LIBS index and files read with cfinterface 1.10.3.
     # 1.18.2: Restricoes reads a record only when the line's first field is its
     # identifier.
@@ -23,7 +25,8 @@ dependencies = [
     # bridge relies on (CDESVIO, cut partition dates, newave.tim, Agrint).
     # 1.17.1: Restricoes reads a record only when the line's first field is its
     # identifier.
-    "inewave>=1.17.1",
+    # 1.17.2: curva.dat REE lines padded with trailing spaces read as REEs.
+    "inewave>=1.17.2",
     "pyarrow>=26.0.0",
     "pandas>=3.1.0",
     "plotly>=7.1.0",

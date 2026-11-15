@@ -557,6 +557,9 @@ def convert_vminop_constraints(
     if curva_df is None or curva_df.empty:
         return None
 
+    rees = _read_vminop_rees(case, id_map, curva.custos_penalidades)
+    _require_declared_rees(curva_df, rees.names)
+
     # Novomodelo's per-stage curve slack reproduces the source model's FIXA penalization
     # (TIPO DE PENALIZACAO = 0); warn only when the deck selects a non-FIXA mode, which
     # the bridge does not reproduce.
@@ -568,8 +571,6 @@ def convert_vminop_constraints(
     # study year's monthly curve; otherwise it freezes December's value across the
     # whole tail. Default (parse failure / absent) is freeze, matching the manual.
     seasonalize_curve_post_study = _curve_seasonalizes(curva.configuracoes_penalizacao)
-
-    rees = _read_vminop_rees(case, id_map, curva.custos_penalidades)
 
     allocator = allocator or ConstraintIdAllocator()
     builder = GenericConstraintBuilder(allocator)
@@ -603,6 +604,30 @@ def convert_vminop_constraints(
         result.bounds,
         sorted(all_referenced_ids),
         per_stage_parameters,
+    )
+
+
+def _require_declared_rees(curva_df: pd.DataFrame, ree_names: dict[int, str]) -> None:
+    """Fail when the security curve names a REE that ree.dat does not declare.
+
+    Every curve block belongs to a deck REE, so an undeclared code means
+    curva.dat was misread; converting on would silently drop those REEs'
+    VminOP constraints.
+    """
+    unknown = sorted(
+        {int(code) for code in curva_df["codigo_ree"].unique()} - set(ree_names)
+    )
+    if not unknown:
+        return
+    label = "REE" if len(unknown) == 1 else "REEs"
+    codes = ", ".join(str(code) for code in unknown)
+    raise FieldParseError(
+        f"curva.dat: the security curve names {label} {codes}, which ree.dat "
+        "does not declare. The file was misread, or it names a REE the deck "
+        "does not have; converting it would drop the security-curve (VminOP) "
+        "constraints.",
+        path="curva.dat",
+        field="CURVA DE SEGURANCA",
     )
 
 
@@ -673,7 +698,7 @@ def _add_vminop_constraints(
             vminop_skips.append(
                 _VminopSkip(
                     ree_code=ree_code,
-                    ree_name=rees.names.get(ree_code, str(ree_code)),
+                    ree_name=rees.names[ree_code],
                     reason="no hydro plants",
                 )
             )
@@ -684,7 +709,7 @@ def _add_vminop_constraints(
             vminop_skips.append(
                 _VminopSkip(
                     ree_code=ree_code,
-                    ree_name=rees.names.get(ree_code, "?"),
+                    ree_name=rees.names[ree_code],
                     reason="no valid terms for VminOP expression",
                 )
             )
@@ -694,7 +719,7 @@ def _add_vminop_constraints(
         expression = stored_energy_floor([(1.0, s) for s in shares], pct_name)
         # Every hydro an ``@…_h{id}`` parameter names must be declared.
         referenced_ids = [int(h) for h in re.findall(r"@\w+?_h(\d+)\b", expression)]
-        ree_name = rees.names.get(ree_code, str(ree_code))
+        ree_name = rees.names[ree_code]
         penalty = rees.penalties.get(ree_code, _VMINOP_DEFAULT_PENALTY)
         if penalty <= 0.0:
             penalty_clamps.append(
