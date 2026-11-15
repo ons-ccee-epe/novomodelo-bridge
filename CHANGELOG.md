@@ -132,12 +132,20 @@ links are cobre-bridge's.
 - **`convert decomp` reports RE ceilings capped at a unit group's capacity as
   `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
   that `decomp-re-generation-clamped` reports.
-- **`convert newave` stops on a malformed `restricao-eletrica.csv` formula**
-  with a `conversion-error` naming the constraint, where it left the
-  malformed part out and reported only an `ener_interc` with one subsystem,
-  as `electric-constraint-malformed-term`. `convert decomp`
-  now reads a LIBS coefficient written before a space or a parenthesis, and
-  stops on a function given the wrong number of arguments.
+- **`convert newave` and `convert decomp` stop on a malformed electrical
+  formula with a `source-field-parse` error naming the file, the constraint
+  and its record**, where `convert newave` left the malformed part out as
+  `electric-constraint-malformed-term` and `convert decomp` stopped with an
+  `unexpected-error`. `convert decomp` refuses the same way a malformed
+  activation rule, a `RESTRICAO-ELETRICA-HABILITA` naming an undeclared rule,
+  a decision term in either branch of a `se(...)`, a LIBS formula restriction
+  with no limit on a period and block where it is active, and a LIBS
+  inequality whose operator is not `>=` or `<=` (`check decomp` reports the
+  operator too), and now reads a LIBS coefficient written before a space or a
+  parenthesis. Both commands stop with `source-unsupported` on a formula that
+  multiplies or divides a term by a constant written after it
+  (`ger_usih(1) * 2`), which the source model accepts but the conversion does
+  not read yet.
 - **`dashboard` no longer stops on a file it can go without and cannot read,
   nor `compare` on such a `system/lines.json` or `system/hydros.json`**, where
   `compare newave` exited 2 and `dashboard` stopped with a traceback: a

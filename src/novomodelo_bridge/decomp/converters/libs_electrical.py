@@ -80,7 +80,10 @@ from novomodelo_bridge.core.electrical_expression import (
     AssembledBound,
     Bucket,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
+    UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     classify_term,
     classify_terms,
     evaluate_terms,
@@ -89,6 +92,7 @@ from novomodelo_bridge.core.electrical_expression import (
     parse_linear_expression,
     term_text,
 )
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
@@ -101,6 +105,7 @@ from novomodelo_bridge.decomp.load import _per_stage_block_loads
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from pathlib import Path
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
@@ -243,14 +248,14 @@ class LibsElectricalModel:
     def is_alias(self, name: str) -> bool:
         return name in self.aliases
 
-    def restriction_formula(self, code: int) -> str:
+    def restriction_formula(self, code: int) -> str | None:
         restriction = self.restrictions.get(code)
         if restriction is None:
-            raise ValueError(f"re({code}) references unknown restriction {code}")
+            return None
         if restriction.lhs is None:
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 f"re({code}) references restriction {code}, which is declared "
-                "only by period rows and has no single formula"
+                "only by inequality period rows and so has no formula"
             )
         return restriction.lhs
 
@@ -432,12 +437,48 @@ def _read_formula_limits(
     return limits
 
 
+_INEQUACAO_CARD = "RESTRICAO-ELETRICA-INEQUACAO"
+_INEQUACAO_PERIOD_CARD = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
+_INEQUACAO_OPERATORS = (">=", "<=")
+_OPERATOR_FIELD = "operador"
+
+
+def _inequacao_operator(value: object, code: int, card: str, source: Path) -> str:
+    """One inequality row's ``operador``, stripped.
+
+    Raises
+    ------
+    FieldParseError
+        When the row has no operator, or one other than
+        :data:`_INEQUACAO_OPERATORS`, the two the source model defines.
+    """
+    operator = "" if pd.isna(value) else str(value).strip()
+    if operator in _INEQUACAO_OPERATORS:
+        return operator
+    problem = (
+        f"the {_OPERATOR_FIELD} {operator!r}" if operator else f"no {_OPERATOR_FIELD}"
+    )
+    raise FieldParseError(
+        f"{source.name}: restriction {code} has {problem} in its {card} row; "
+        "an inequality compares with >= or <=",
+        path=str(source),
+        field=_OPERATOR_FIELD,
+    )
+
+
 def _read_inequacao_overrides(
     restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
+    source: Path,
 ) -> dict[int, tuple[PeriodPatamarOverride, ...]]:
     """Read ``RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`` into
-    ``{codigo_restricao: (PeriodPatamarOverride, ...)}``."""
+    ``{codigo_restricao: (PeriodPatamarOverride, ...)}``.
+
+    Raises
+    ------
+    FieldParseError
+        When a row's operator is missing or unknown.
+    """
     frame = _df(restricoes, "restricao_eletrica_inequacao_periodo_patamar")
     if frame is None:
         return {}
@@ -454,7 +495,9 @@ def _read_inequacao_overrides(
                 stage_end=end,
                 patamar=_opt_int(row["patamar"]),
                 lhs=str(row["formula"]),
-                operator=str(row["operador"]),
+                operator=_inequacao_operator(
+                    row["operador"], code, _INEQUACAO_PERIOD_CARD, source
+                ),
                 rhs=str(row["formula_limite"]),
             )
         )
@@ -504,6 +547,7 @@ def _read_violations(restricoes: _ElectricalCards) -> dict[int, ViolationTreatme
 def _read_restrictions(
     restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
+    source: Path,
 ) -> dict[int, ElectricalRestriction]:
     """Join the FORMULA and INEQUACAO restriction cards to their per-(period,
     patamar) limit/override rows, horizonte, habilita, and violation rows by
@@ -513,10 +557,15 @@ def _read_restrictions(
     FORMULA or INEQUACAO card is an INEQUACAO restriction declared by those
     rows alone. Period rows that cannot apply to any restriction (inequality
     rows on a FORMULA code, limit rows on a non-FORMULA code) are reported.
+
+    Raises
+    ------
+    FieldParseError
+        When an inequality row's operator is missing or unknown.
     """
     formula = _df(restricoes, "restricao_eletrica_formula")
     inequacao = _df(restricoes, "restricao_eletrica_inequacao")
-    overrides = _read_inequacao_overrides(restricoes, calendar)
+    overrides = _read_inequacao_overrides(restricoes, calendar, source)
     if formula is None and inequacao is None and not overrides:
         return {}
 
@@ -552,7 +601,9 @@ def _read_restrictions(
             restrictions[code] = ElectricalRestriction(
                 code=code,
                 lhs=str(row["formula"]),
-                operator=str(row["operador"]),
+                operator=_inequacao_operator(
+                    row["operador"], code, _INEQUACAO_CARD, source
+                ),
                 rhs=str(row["formula_limite"]),
                 is_formula=False,
                 limits={},
@@ -583,7 +634,7 @@ def _read_restrictions(
 
     _emit_unused_period_rows(
         [
-            ("RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", code)
+            (_INEQUACAO_PERIOD_CARD, code)
             for code in sorted(c for c in overrides if restrictions[c].is_formula)
         ]
         + [
@@ -629,6 +680,7 @@ def read_libs_electrical(
     restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
     *,
+    source: Path,
     gnl_thermal_codes: frozenset[int] = frozenset(),
 ) -> LibsElectricalModel | None:
     """Read every period-keyed long-form electrical card into a structured model.
@@ -642,10 +694,16 @@ def read_libs_electrical(
     Returns ``None`` when the deck carries no electrical long-form card at all
     (no expressions, aliases, restrictions, or rules), so callers can no-op
     cleanly instead of handling an empty-but-present model.
+
+    Raises
+    ------
+    FieldParseError
+        When an inequality row of *source*, the file *restricoes* was read
+        from, has a missing or unknown operator.
     """
     expressions = _read_expressions(restricoes)
     aliases = _read_aliases(restricoes, calendar)
-    restrictions = _read_restrictions(restricoes, calendar)
+    restrictions = _read_restrictions(restricoes, calendar, source)
     rules = _read_rules(restricoes)
 
     if not expressions and not aliases and not restrictions and not rules:
@@ -830,7 +888,7 @@ def _split_top_level(text: str, sep: str) -> list[str]:
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         When *text*'s parentheses are unbalanced (a stray closing paren, or
         one left open at the end) — this would mean some paren group is not
         self-contained the way the grammar requires.
@@ -844,12 +902,16 @@ def _split_top_level(text: str, sep: str) -> list[str]:
         elif char == ")":
             depth -= 1
             if depth < 0:
-                raise ValueError(f"unbalanced parentheses in activation rule {text!r}")
+                raise MalformedElectricalExpression(
+                    f"unbalanced parentheses in activation rule {text!r}"
+                )
         elif char == sep and depth == 0:
             parts.append(text[start:pos])
             start = pos + 1
     if depth != 0:
-        raise ValueError(f"unbalanced parentheses in activation rule {text!r}")
+        raise MalformedElectricalExpression(
+            f"unbalanced parentheses in activation rule {text!r}"
+        )
     parts.append(text[start:])
     return parts
 
@@ -866,7 +928,7 @@ def _split_comparison(conjunct: str) -> tuple[str, str, str]:
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         When the conjunct carries no comparison operator at all, or an
         operator-like character sequence that is not one of the six
         recognized operators (e.g. ``<>``, a lone ``=``) — both name the
@@ -887,34 +949,34 @@ def _split_comparison(conjunct: str) -> tuple[str, str, str]:
                 return conjunct[:pos], two_char, conjunct[pos + 2 :]
             next_char = conjunct[pos + 1 : pos + 2]
             if next_char in _COMPARISON_OP_CHARS:
-                raise ValueError(
+                raise MalformedElectricalExpression(
                     f"unrecognized comparison operator {two_char!r} in "
                     f"activation-rule conjunct {conjunct!r}"
                 )
             if char not in _COMPARISON_ONE_CHAR_OPS:
-                raise ValueError(
+                raise MalformedElectricalExpression(
                     f"unrecognized comparison operator {char!r} in "
                     f"activation-rule conjunct {conjunct!r}"
                 )
             return conjunct[:pos], char, conjunct[pos + 1 :]
         pos += 1
-    raise ValueError(
+    raise MalformedElectricalExpression(
         f"no comparison operator found in activation-rule conjunct {conjunct!r} "
         "(recognized operators: <, <=, >, >=, ==, !=)"
     )
 
 
 def _require_bucket_b(terms: Sequence[ParsedTerm], conjunct: str) -> None:
-    """Raise ``ValueError`` naming the offending token when any *terms* is
-    not bucket B — an activation-rule operand is always input data (spec
-    §4a), never a novomodelo decision term (bucket A) or the available-power
-    bucket-C term."""
+    """Raise :class:`MalformedElectricalExpression` naming the offending term
+    when any *terms* is not bucket B — an activation-rule operand is always
+    input data, never a novomodelo decision term (bucket A) or the
+    available-power bucket-C term."""
     for term in terms:
         if classify_term(term) is not Bucket.B:
-            raise ValueError(
-                f"activation-rule operand {term.token!r} in conjunct "
-                f"{conjunct!r} is not input data (bucket B); an activation "
-                "rule must gate on input data, never a decision term"
+            raise MalformedElectricalExpression(
+                f"activation-rule operand {term_text(term)} in conjunct "
+                f"{conjunct!r} is not input data; an activation rule reads "
+                "only input data, never a decision"
             )
 
 
@@ -932,19 +994,26 @@ def parse_activation_rule(text: str, model: LibsElectricalModel) -> ActivationRu
     novomodelo decision term.
 
     This is the closed six-operator + ``&`` grammar verified against every
-    rule in the source model's decks — it has no ``|``
-    (disjunction) and no ``se`` literal at the rule-text level, so neither is
-    supported here; a deck that needs either is out of scope, not a silent
-    extension.
+    rule in the source model's decks; it has no ``se`` literal at the
+    rule-text level. The source model also joins comparisons with ``|``
+    (OR), which this grammar does not read.
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         Propagated from :func:`_split_top_level` on unbalanced parentheses,
-        from :func:`_split_comparison` on a missing/unrecognized operator, or
-        raised here when an operand term does not classify as bucket B
-        (naming the offending token).
+        from :func:`_split_comparison` on a missing/unrecognized operator,
+        from an operand's own parse, or raised here when an operand term does
+        not classify as bucket B (naming the offending term).
+    UnsupportedElectricalExpression
+        Propagated from an operand's own parse.
+    UnsupportedSourceError
+        When *text* joins comparisons with ``|``.
     """
+    if "|" in text:
+        raise UnsupportedSourceError(
+            f"the condition {text!r} joins comparisons with | (OR)"
+        )
     comparisons = tuple(
         _parse_comparison(conjunct, model) for conjunct in _split_top_level(text, "&")
     )
@@ -1009,10 +1078,9 @@ class _UnresolvableBucketBTerm(Exception):
     reference to an unknown submarket, or an ``alias`` reference with no
     value at or before the cell.
 
-    Deliberately not a :class:`ValueError`: :func:`evaluate_se` raises a
-    genuine ``ValueError`` for an unrecognized/decision-bearing ``se(...)``
-    shape, and that failure must propagate (fail loud), never be caught and
-    turned into a drop. :func:`assemble_bound` is the only place that
+    Deliberately its own type: :func:`evaluate_se`'s refusal of a malformed or
+    decision-bearing ``se(...)`` branch must propagate (fail loud), never be
+    caught and turned into a drop. :func:`assemble_bound` is the only place that
     catches this signal, converting it into a ``Severity.WARNING``
     :class:`Diagnostic` and dropping the whole constraint (skip-not-partial)
     rather than emitting a partial bound.
@@ -1124,19 +1192,18 @@ def _gnl_block_generation(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         When the plant's generation is not commanded at the cell's stage
-        (no ``gl`` week starts in it): the term would be a decision the
-        abatement cannot represent, so the conversion aborts.
+        (no ``gl`` week starts in it): the conversion folds only a commanded
+        generation into the bound.
     """
     code = term.args[0]
     per_stage = gnl_generation.get(code)
     blocks = per_stage[stage_index] if per_stage is not None else None
     if blocks is None:
-        raise ValueError(
-            f"ger_usit({code}) names a GNL plant whose generation is not "
-            f"commanded at stage {stage_index} (no dadgnl GL week starts in "
-            "it); an uncommanded GNL term cannot be abated into the bound"
+        raise UnsupportedSourceError(
+            f"ger_usit({code}) names a GNL plant that no dadgnl GL record "
+            f"commands in período {stage_index + 1}"
         )
     return blocks[block_index]
 
@@ -1192,7 +1259,7 @@ def build_data_context(
         before the cell. :func:`assemble_bound` is the sole catcher —
         turning this into a ``Severity.WARNING`` diagnostic and dropping the
         constraint (skip-not-partial), never a silently wrong bound.
-    ValueError
+    UnsupportedSourceError
         From the returned per-cell context, when a GNL plant's ``ger_usit``
         is not commanded at the cell (:func:`_gnl_block_generation`).
     """
@@ -1248,7 +1315,7 @@ def build_data_context(
                     gnl_generation, term, stage_index, block_index
                 )
             if term.token == SE_TOKEN:
-                return evaluate_se(term, model, stage_index, block_index, resolve)
+                return evaluate_se(term, model, resolve)
             raise ValueError(
                 f"Cannot resolve electrical-constraint data term {term.token!r}."
             )
@@ -1259,14 +1326,10 @@ def build_data_context(
 
 
 def evaluate_se(
-    term: ParsedTerm,
-    model: LibsElectricalModel,
-    stage_index: int,
-    block_index: int,
-    ctx: DataContext,
+    term: ParsedTerm, model: LibsElectricalModel, ctx: DataContext
 ) -> float:
-    """Evaluate one structural ``se(cond, X, Y)`` term to a float for one
-    (stage, block) cell.
+    """Evaluate one structural ``se(cond, X, Y)`` term to a float for the
+    (stage, block) cell *ctx* is scoped to.
 
     ``cond`` is parsed and evaluated by reusing the activation-rule
     engine (:func:`parse_activation_rule` + :func:`evaluate_rule`) — the
@@ -1274,50 +1337,66 @@ def evaluate_se(
     selecting :attr:`ParsedTerm.branch_true` when it evaluates ``True``,
     else :attr:`ParsedTerm.branch_false`.
 
-    The selected branch is then parsed (:func:`parse_linear_expression`) and
-    classified (:func:`classify_terms`). A selected branch is only safe to
-    fold to a single float when it is
-    entirely bucket B (input data): folding a branch that carries a
-    bucket-A (novomodelo decision) or bucket-C (``disp_usih``) term would fold
-    that term into a plain number and silently drop it from the LP. ``se``
-    does not appear on the target deck (gating is via
-    ``REGRA-ATIVACAO``, not inline ``se()``), so this guard is defensive
-    hardening, not a gap in coverage — keeping a decision-bearing branch's
-    bucket-A/-C terms structural (folding only its bucket-B terms, the way
-    :func:`assemble_bound` does for a whole restriction) is out of scope
-    here; this fails loud instead.
+    Both branches are parsed (:func:`parse_linear_expression`) and classified
+    (:func:`classify_terms`) before either is selected, so a malformed branch
+    fails the cell even where the other one is taken. The source model
+    defines each branch as a number, so a branch carrying a bucket-A
+    (decision) or bucket-C (``disp_usih``) term is malformed: folding it
+    would turn that term into a plain number and drop it from the LP. An
+    undeclared name, or algebra this grammar does not read yet, only matters
+    in the branch the cell takes: the other branch is never evaluated.
 
     Raises
     ------
-    ValueError
-        When *term* is not a ``se`` term or is missing its condition/branch
-        text (a caller contract violation — the parser always populates all
-        three for a ``se`` token), or when the selected branch carries any
-        non-bucket-B term (naming it and the cell).
+    MalformedElectricalExpression
+        When the condition or either branch is malformed, a branch carrying
+        a non-bucket-B term included (naming it).
+    UnrecognizedElectricalToken
+        When the condition, or the branch the cell takes, names an
+        undeclared identifier.
+    UnsupportedElectricalExpression
+        When the condition, or the branch the cell takes, holds algebra this
+        grammar does not read yet.
+    UnsupportedSourceError
+        Propagated from :func:`parse_activation_rule` on the condition.
     """
-    if term.token != SE_TOKEN:
-        raise ValueError(f"evaluate_se: expected a 'se' term, got {term.token!r}")
-    if term.condition is None or term.branch_true is None or term.branch_false is None:
-        raise ValueError(
-            f"evaluate_se: 'se' term is missing condition/branches: {term!r}"
-        )
+    assert term.token == SE_TOKEN  # caller contract
+    assert term.condition is not None  # parser invariant for a se term
+    assert term.branch_true is not None  # parser invariant for a se term
+    assert term.branch_false is not None  # parser invariant for a se term
 
     rule = parse_activation_rule(term.condition, model)
-    selected_text = term.branch_true if evaluate_rule(rule, ctx) else term.branch_false
-    branch_terms = parse_linear_expression(selected_text, model)
-    partition = classify_terms(branch_terms)
-    decision_terms = partition[Bucket.A] + partition[Bucket.C]
-    if decision_terms:
-        offender = decision_terms[0]
-        raise ValueError(
-            f"evaluate_se: at stage {stage_index}, block {block_index}, "
-            f"se(...) selected branch {selected_text!r} carries a decision "
-            f"term ({offender.token!r}, bucket {classify_term(offender).name}); "
-            "folding a decision-bearing branch to a number would silently "
-            "drop it from the LP — structural handling of a decision-bearing "
-            "se branch is out of scope here (fail loud instead)"
-        )
-    return evaluate_terms(partition[Bucket.B], ctx)
+    branches: list[
+        dict[Bucket, list[ParsedTerm]]
+        | UnrecognizedElectricalToken
+        | UnsupportedElectricalExpression
+    ] = []
+    for branch in (term.branch_true, term.branch_false):
+        try:
+            partition = classify_terms(parse_linear_expression(branch, model))
+        except (UnrecognizedElectricalToken, UnsupportedElectricalExpression) as err:
+            branches.append(err)
+            continue
+        if offenders := partition[Bucket.A] + partition[Bucket.C]:
+            raise MalformedElectricalExpression(
+                f"se(...) branch {branch!r} carries {term_text(offenders[0])}, "
+                "which is not input data; a se(...) branch reads only input "
+                "data, never a decision"
+            )
+        branches.append(partition)
+    selected = branches[0] if evaluate_rule(rule, ctx) else branches[1]
+    if isinstance(
+        selected, UnrecognizedElectricalToken | UnsupportedElectricalExpression
+    ):
+        raise selected
+    return evaluate_terms(selected[Bucket.B], ctx)
+
+
+_FORMULA_LIMITS_CARD = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"
+_RESERVE_PATTERN_ONLY = (
+    "the conversion rewrites disp_usih only in the reserve pattern "
+    "disp_usih(h) - ger_usih(h) >= R"
+)
 
 
 def _fold_formula_bound(
@@ -1347,18 +1426,20 @@ def _fold_formula_bound(
 
     Raises
     ------
-    ValueError
-        When *restriction* declares no limit at all for this cell (a
-        caller-contract violation — *stage_index* should always fall inside
-        the restriction's active horizon).
+    FieldParseError
+        When *restriction* declares no limit at all for this active cell: the
+        source model requires one for every período and patamar of the
+        restriction's horizon. It names the limits card but no path.
     """
     limit = restriction.limits.get((stage_index, patamar))
     if limit is None:
         limit = restriction.limits.get((stage_index, None))
     if limit is None:
-        raise ValueError(
-            f"restriction {restriction.code}: no FORMULA limit declared for "
-            f"stage {stage_index}, patamar {patamar}"
+        raise FieldParseError(
+            f"no {_FORMULA_LIMITS_CARD} row covers período {stage_index + 1}, "
+            f"patamar {patamar} of its horizon; DECOMP needs a limit on every "
+            "período and patamar there",
+            field=_FORMULA_LIMITS_CARD,
         )
     lower, upper = limit
     return fold_formula_bound(lhs_partition, lower, upper, ctx)
@@ -1424,7 +1505,7 @@ def _fold_inequacao_bound(
     ``bound = Σ_{B∩RHS} − Σ_{B∩LHS}``. :func:`~novomodelo_bridge.
     generic_constraint_format.sense_to_interval` then maps *restriction*'s
     operator onto the ``(lower, upper)`` shape (``>=`` lower-only, ``<=``
-    upper-only, ``==`` both endpoints equal to *bound*).
+    upper-only).
 
     *lhs_partition*/*rhs_partition* are already-parsed-and-classified sides
     (:func:`assemble_bound` computes them once and passes them to every
@@ -1503,17 +1584,21 @@ def assemble_bound(
 
     Raises
     ------
+    FieldParseError
+        When a FORMULA restriction carries no limit at all for this cell
+        (:func:`_fold_formula_bound`).
+    UnsupportedSourceError
+        When a FORMULA restriction carries a bucket-C term (out of the
+        documented pattern's scope), when a restriction uses ``disp_usih``
+        outside the documented reserve sign structure
+        (:func:`_fold_reserve_disp_usih`'s CRITICAL-pitfall guard), or from
+        the cell's data context.
     ValueError
-        When a FORMULA restriction carries no limit at all for this cell,
-        when a FORMULA restriction carries a bucket-C term (out of the
-        documented pattern's scope), when an INEQUACAO restriction carries a
-        bucket-C term but *a_h* is ``None``, when a restriction uses
-        ``disp_usih`` outside the documented reserve sign structure
-        (:func:`_fold_reserve_disp_usih`'s CRITICAL-pitfall guard), or
-        propagated from :func:`~novomodelo_bridge.core.generic_constraint_format.
-        sense_to_interval` on an unrecognized INEQUACAO operator — none of
-        these is the resolver-unresolvable case this function otherwise
-        catches.
+        When an INEQUACAO restriction carries a bucket-C term but *a_h* is
+        ``None``, or propagated from :func:`~novomodelo_bridge.core.
+        generic_constraint_format.sense_to_interval` on an INEQUACAO operator
+        the reader would have refused — none of these is the
+        resolver-unresolvable case this function otherwise catches.
     """
     patamar = block_index + 1
     try:
@@ -1523,11 +1608,9 @@ def assemble_bound(
                 parse_linear_expression(restriction.lhs, model)
             )
             if lhs_partition[Bucket.C]:
-                raise ValueError(
-                    f"restriction {restriction.code}: a FORMULA restriction "
-                    "carries a disp_usih term; the reserve->gen-cap rewrite "
-                    "only covers the documented INEQUACAO "
-                    "reserve pattern"
+                raise UnsupportedSourceError(
+                    f"its RESTRICAO-ELETRICA-FORMULA carries a disp_usih term; "
+                    f"{_RESERVE_PATTERN_ONLY} of a RESTRICAO-ELETRICA-INEQUACAO"
                 )
             return _fold_formula_bound(
                 restriction, stage_index, patamar, ctx, lhs_partition
@@ -1537,8 +1620,8 @@ def assemble_bound(
         if sides is None:
             raise ValueError(
                 f"restriction {restriction.code} has no inequality in effect at "
-                f"stage {stage_index}, patamar {patamar}; active_cells excludes "
-                "such cells"
+                f"período {stage_index + 1}, patamar {patamar}, so it is not "
+                "active there"
             )
         lhs, op, rhs = sides
         effective = replace(restriction, lhs=lhs, operator=op, rhs=rhs)
@@ -1548,7 +1631,7 @@ def assemble_bound(
             if a_h is None:
                 raise ValueError(
                     f"restriction {restriction.code} carries a disp_usih "
-                    "term but no AvailablePower lookup was supplied"
+                    "term but no available power was supplied"
                 )
             return _fold_reserve_disp_usih(
                 effective, stage_index, a_h, ctx, lhs_partition, rhs_partition
@@ -1687,20 +1770,22 @@ def active_cells(
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         When *restriction*'s ``habilita`` names a ``regra_id`` absent from
         ``model.rules`` — a dangling activation reference must fail loud,
-        naming both the restriction and the missing rule id.
+        naming the missing rule id — or when its rule is malformed.
+    UnsupportedSourceError
+        When its rule joins comparisons with ``|`` (:func:`parse_activation_rule`).
     """
     if restriction.habilita is None:
         rule = ActivationRule(comparisons=())
     else:
         rule_text = model.rules.get(restriction.habilita)
         if rule_text is None:
-            raise ValueError(
-                f"restriction {restriction.code}: HABILITA names activation "
-                f"rule {restriction.habilita}, which is absent from the "
-                "model's rules"
+            raise MalformedElectricalExpression(
+                f"RESTRICAO-ELETRICA-HABILITA names activation rule "
+                f"{restriction.habilita}, which no RESTRICAO-ELETRICA-REGRA-ATIVACAO "
+                "record declares"
             )
         rule = parse_activation_rule(rule_text, model)
 
@@ -1833,23 +1918,21 @@ def resolve_disp_usih(term: ParsedTerm, stage_index: int, a_h: AvailablePower) -
 def _flip_operator(sense: str) -> str:
     """The sense-flipped counterpart of one INEQUACAO comparison operator.
 
-    Multiplying an inequality by ``-1`` swaps ``>=``/``<=`` and leaves
-    ``==`` unchanged — exactly the operator-side half of the reserve->gen-cap
-    rewrite (:func:`_fold_reserve_disp_usih`).
+    Multiplying an inequality by ``-1`` swaps ``>=``/``<=`` — exactly the
+    operator-side half of the reserve->gen-cap rewrite
+    (:func:`_fold_reserve_disp_usih`).
 
     Raises
     ------
     ValueError
-        When *sense* is not one of ``">="``, ``"<="``, ``"=="`` — mirroring
-        :func:`~novomodelo_bridge.core.generic_constraint_format.sense_to_interval`.
+        When *sense* is not one of :data:`_INEQUACAO_OPERATORS`, which the
+        reader already refuses.
     """
     if sense == ">=":
         return "<="
     if sense == "<=":
         return ">="
-    if sense == "==":
-        return "=="
-    raise ValueError(f"_flip_operator: unknown operator {sense!r}")
+    raise ValueError(f"unknown inequality operator {sense!r}")
 
 
 DISP_USIH_SUBSTITUTED = "decomp-electrical-disp-usih-substituted"
@@ -1917,7 +2000,7 @@ def _fold_reserve_disp_usih(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         When *restriction* uses ``disp_usih`` outside this documented
         pattern: a bucket-C or bucket-A term on the RHS, a bucket-A term on
         the LHS that is not ``ger_usih``, more than one ``ger_usih`` term
@@ -1934,27 +2017,25 @@ def _fold_reserve_disp_usih(
     assert restriction.operator is not None  # INEQUACAO invariant
 
     if rhs_partition[Bucket.C] or rhs_partition[Bucket.A]:
-        raise ValueError(
-            f"restriction {restriction.code}: the disp_usih reserve pattern "
-            "requires its ger_usih/disp_usih pair on the LHS; the RHS "
-            "carries a decision or disp_usih term"
+        raise UnsupportedSourceError(
+            "the right-hand side carries a decision or disp_usih term; "
+            f"{_RESERVE_PATTERN_ONLY}"
         )
 
     disp_terms = lhs_partition[Bucket.C]
     ger_terms = lhs_partition[Bucket.A]
     non_ger_terms = [term for term in ger_terms if term.token != "ger_usih"]
     if non_ger_terms:
-        raise ValueError(
-            f"restriction {restriction.code}: the disp_usih reserve pattern "
-            "requires every paired decision term to be ger_usih; found "
-            f"{non_ger_terms[0].token!r}"
+        raise UnsupportedSourceError(
+            f"the decision term {term_text(non_ger_terms[0])} sits beside "
+            f"disp_usih; {_RESERVE_PATTERN_ONLY}"
         )
 
     ger_by_plant = {term.args[0]: term for term in ger_terms}
     if len(ger_by_plant) != len(ger_terms):
-        raise ValueError(
-            f"restriction {restriction.code}: the disp_usih reserve pattern "
-            "requires at most one ger_usih term per plant"
+        raise UnsupportedSourceError(
+            "two ger_usih terms beside disp_usih name the same plant; "
+            f"{_RESERVE_PATTERN_ONLY}"
         )
 
     reserve_sum = 0.0
@@ -1962,10 +2043,9 @@ def _fold_reserve_disp_usih(
         code = disp_term.args[0]
         ger_term = ger_by_plant.pop(code, None)
         if ger_term is None or ger_term.coefficient != -disp_term.coefficient:
-            raise ValueError(
-                f"restriction {restriction.code}: disp_usih({code}) is not "
-                "paired with a ger_usih term of the exact opposite "
-                "coefficient — outside the documented reserve pattern"
+            raise UnsupportedSourceError(
+                f"disp_usih({code}) has no ger_usih({code}) of the opposite "
+                f"coefficient; {_RESERVE_PATTERN_ONLY}"
             )
         a_h_value = a_h.resolve(code, stage_index)
         reserve_sum += disp_term.coefficient * a_h_value
@@ -1973,10 +2053,9 @@ def _fold_reserve_disp_usih(
 
     if ger_by_plant:
         leftover_code = next(iter(ger_by_plant))
-        raise ValueError(
-            f"restriction {restriction.code}: ger_usih({leftover_code}) has "
-            "no paired disp_usih term — outside the documented reserve "
-            "pattern"
+        raise UnsupportedSourceError(
+            f"ger_usih({leftover_code}) has no disp_usih({leftover_code}) "
+            f"beside it; {_RESERVE_PATTERN_ONLY}"
         )
 
     lhs_b_sum = evaluate_terms(lhs_partition[Bucket.B], ctx)

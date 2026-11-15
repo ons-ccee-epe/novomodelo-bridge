@@ -159,14 +159,37 @@ class ExpressionScope(Protocol):
         """Whether *name* is a declared data alias."""
         ...
 
-    def restriction_formula(self, code: int) -> str:
-        """The formula ``re(code)`` stands for.
+    def restriction_formula(self, code: int) -> str | None:
+        """The formula ``re(code)`` stands for, ``None`` when the file
+        declares no restriction *code*.
 
         Raises:
-            ValueError: no restriction *code* with a single formula; the
-                message says why.
+            MalformedElectricalExpression: restriction *code* has no formula
+                for ``re`` to reference; the message says why.
         """
         ...
+
+
+class MalformedElectricalExpression(ValueError):
+    """Formula text the source model's grammar rejects: unbalanced
+    parentheses, a non-numeric coefficient or argument, a function the
+    grammar lacks or given the wrong number of arguments, a reference to a
+    restriction the file does not declare, or a reference cycle.
+
+    The caller that knows the file and the constraint turns it into a
+    :class:`~novomodelo_bridge.core.errors.FieldParseError`.
+    """
+
+
+class UnsupportedElectricalExpression(ValueError):
+    """Formula text the source model accepts but this grammar does not read
+    yet: a constant factor written after its term (``ger_usih(1) * 2``,
+    ``se(...) / 2``, ``50.0 * 2.0``).
+
+    Distinct from :class:`MalformedElectricalExpression` so the caller that
+    knows the file and the constraint reports it as not converted yet, an
+    :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError`.
+    """
 
 
 class UnrecognizedElectricalToken(ValueError):
@@ -174,13 +197,9 @@ class UnrecognizedElectricalToken(ValueError):
     named expression or data alias the scope declares, nor a member of
     :data:`BUILTIN_BARE_TOKENS`.
 
-    Raised only for an undeclared identifier — never for malformed text
-    (unbalanced parentheses, a non-numeric coefficient or argument, unexpected
-    trailing content), which stays a plain :class:`ValueError` and fails the
-    conversion. A :class:`ValueError` subclass so a ``pytest.raises(ValueError)``
-    contract still holds, but distinct so a caller can leave out just the
-    constraint that names it without masking a malformed formula as a routine
-    drop.
+    Distinct from :class:`MalformedElectricalExpression` so a caller can leave
+    out just the constraint that names it without masking a malformed formula
+    as a routine drop.
     """
 
     def __init__(self, name: str, text: str) -> None:
@@ -212,7 +231,7 @@ class _ExpressionParser:
         terms = self._parse_expr(1.0)
         self._skip_ws()
         if self._pos != len(self._text):
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 f"unexpected trailing content {self._text[self._pos :]!r} in "
                 f"electrical expression {self._text!r}"
             )
@@ -229,7 +248,7 @@ class _ExpressionParser:
     def _consume(self, char: str, context: str) -> None:
         self._skip_ws()
         if self._pos >= len(self._text) or self._text[self._pos] != char:
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 f"expected {char!r} {context} in electrical expression {self._text!r}"
             )
         self._pos += 1
@@ -242,17 +261,63 @@ class _ExpressionParser:
             sign = -1.0 if self._text[self._pos] == "-" else 1.0
             self._pos += 1
         terms.extend(self._parse_term(scale * sign))
+        self._refuse_trailing_constant_factor()
         while self._peek() in ("+", "-"):
             sign = -1.0 if self._text[self._pos] == "-" else 1.0
             self._pos += 1
             terms.extend(self._parse_term(scale * sign))
+            self._refuse_trailing_constant_factor()
         return terms
+
+    def _constant_at(self, pos: int) -> str | None:
+        """The signed number starting at *pos* (after blanks) when it stands
+        alone, not a coefficient against a name or a ``(``; else ``None``."""
+        while pos < len(self._text) and self._text[pos].isspace():
+            pos += 1
+        sign = ""
+        if pos < len(self._text) and self._text[pos] in "+-":
+            sign = self._text[pos]
+            pos += 1
+        number = _NUMBER_RE.match(self._text, pos)
+        if number is None:
+            return None
+        probe = number.end()
+        while probe < len(self._text) and self._text[probe].isspace():
+            probe += 1
+        if probe < len(self._text) and (
+            self._text[probe] == "(" or _IDENT_RE.match(self._text, probe)
+        ):
+            return None
+        return sign + number.group()
+
+    def _refuse_trailing_constant_factor(self) -> None:
+        """Refuse a ``*`` or ``/`` by a constant right after a complete term:
+        valid source algebra this grammar does not read. Any other text after
+        the term is left to the caller to accept or refuse as malformed."""
+        operator = self._peek()
+        if operator not in ("*", "/"):
+            return
+        constant = self._constant_at(self._pos + 1)
+        if constant is None:
+            return
+        if operator == "/" and float(constant) == 0.0:
+            raise MalformedElectricalExpression(
+                f"division by zero in electrical expression {self._text!r}"
+            )
+        verb = "multiplies" if operator == "*" else "divides"
+        raise UnsupportedElectricalExpression(
+            f"electrical expression {self._text!r} {verb} a term by the "
+            f"constant {constant} written after it; the conversion reads a "
+            "constant factor only as a coefficient written before its term"
+        )
 
     def _parse_term(self, scale: float) -> list[ParsedTerm]:
         """``[NUMBER ['*']] factor`` — a bare number alone is a constant term.
 
         NEWAVE writes a coefficient against its term (``0.5ger_usih(66)``);
-        a number followed by anything but a name or ``(`` stands alone.
+        a number followed by anything but a name or ``(`` stands alone, and
+        so does one multiplied by another constant (``50.0 * 2.0``), which
+        :meth:`_parse_expr` then refuses as a trailing constant factor.
         """
         self._skip_ws()
         number = _NUMBER_RE.match(self._text, self._pos)
@@ -261,7 +326,11 @@ class _ExpressionParser:
         probe = number.end()
         while probe < len(self._text) and self._text[probe].isspace():
             probe += 1
-        if probe < len(self._text) and self._text[probe] == "*":
+        if (
+            probe < len(self._text)
+            and self._text[probe] == "*"
+            and self._constant_at(probe + 1) is None
+        ):
             self._pos = probe + 1
             return self._parse_factor(scale * float(number.group()))
         if probe < len(self._text) and (
@@ -278,7 +347,7 @@ class _ExpressionParser:
         """``'(' expr ')' | IDENT '(' args ')' | IDENT`` — a group or an atom."""
         self._skip_ws()
         if self._pos >= len(self._text):
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 "expected a term but reached the end of electrical expression "
                 f"{self._text!r}"
             )
@@ -289,7 +358,7 @@ class _ExpressionParser:
             return terms
         ident = _IDENT_RE.match(self._text, self._pos)
         if ident is None:
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 f"malformed token at {self._text[self._pos :]!r} in electrical "
                 f"expression {self._text!r}"
             )
@@ -308,7 +377,7 @@ class _ExpressionParser:
         arity = _ARITY.get(name)
         if arity is not None and len(args) != arity:
             expected = "one argument" if arity == 1 else f"{arity} arguments"
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 f"{name}(...) expects {expected}, got {args!r} in electrical "
                 f"expression {self._text!r}"
             )
@@ -326,7 +395,7 @@ class _ExpressionParser:
             self._skip_ws()
             number = _NUMBER_RE.match(self._text, self._pos)
             if number is None or "." in number.group():
-                raise ValueError(
+                raise MalformedElectricalExpression(
                     f"expected an integer argument for {fn_name!r}(...) at "
                     f"{self._text[self._pos :]!r} in electrical expression "
                     f"{self._text!r}"
@@ -344,15 +413,22 @@ class _ExpressionParser:
         """``re(R)`` — a reference to restriction ``R``'s formula, inlined."""
         args = self._parse_int_args("re")
         if len(args) != 1:
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 f"re(...) expects exactly one restriction id, got {args!r} in "
                 f"electrical expression {self._text!r}"
             )
         code = args[0]
         try:
             formula = self._scope.restriction_formula(code)
-        except ValueError as err:
-            raise ValueError(f"{err} in electrical expression {self._text!r}") from err
+        except MalformedElectricalExpression as err:
+            raise MalformedElectricalExpression(
+                f"{err} in electrical expression {self._text!r}"
+            ) from err
+        if formula is None:
+            raise MalformedElectricalExpression(
+                f"re({code}) references unknown restriction {code} in electrical "
+                f"expression {self._text!r}"
+            )
         return self._expand_reference(f"re({code})", formula, scale)
 
     def _parse_se(self, scale: float) -> list[ParsedTerm]:
@@ -366,7 +442,7 @@ class _ExpressionParser:
         pos = self._pos
         while True:
             if pos >= len(self._text):
-                raise ValueError(
+                raise MalformedElectricalExpression(
                     "unbalanced parentheses in se(...) in electrical expression "
                     f"{self._text!r}"
                 )
@@ -382,7 +458,7 @@ class _ExpressionParser:
             pos += 1
         close_pos = pos
         if len(comma_positions) != 2:
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 "se(...) expects exactly 3 arguments (condition, true-branch, "
                 f"false-branch) in electrical expression {self._text!r}"
             )
@@ -432,7 +508,9 @@ class _ExpressionParser:
         guard the recursion against a cycle through *key*."""
         if key in self._seen:
             cycle = " -> ".join(sorted({*self._seen, key}))
-            raise ValueError(f"cyclic electrical expression reference: {cycle}")
+            raise MalformedElectricalExpression(
+                f"cyclic electrical expression reference: {cycle}"
+            )
         sub_terms = parse_linear_expression(
             formula, self._scope, _seen=self._seen | {key}
         )
@@ -454,7 +532,7 @@ def parse_linear_expression(
     named-expression references and ``re(R)`` restriction references,
     multiplying through the enclosing coefficient — ``_seen`` (the names/
     ``re(R)`` keys expanded on the current recursion path) guards that
-    inlining against a cycle, raising ``ValueError`` naming it. A data-alias
+    inlining against a cycle. A data-alias
     reference is kept as a single unresolved :data:`ALIAS_TOKEN` term (its
     value is resolved per-(stage,block) later, never here); a
     ``se(cond, X, Y)`` conditional is kept as a single structural term with
@@ -467,14 +545,15 @@ def parse_linear_expression(
 
     Raises
     ------
+    MalformedElectricalExpression
+        On text the grammar rejects, ``re(R)`` to an undeclared restriction
+        or to one with no formula, or a reference cycle.
+    UnsupportedElectricalExpression
+        On a constant factor written after its term, which the source model
+        accepts and this grammar does not read yet.
     UnrecognizedElectricalToken
         On a bare identifier that is well-formed but undeclared — neither a
         named expression, a data alias, nor a built-in bare token.
-    ValueError
-        On a cyclic named-expression/``re(R)`` reference, an ``re(R)`` to a
-        restriction without a single formula, a function given the wrong
-        number of arguments, or a malformed token (unbalanced parentheses, a
-        non-numeric coefficient/argument, or unexpected trailing content).
     """
     return _ExpressionParser(text, scope, _seen).parse()
 
@@ -529,6 +608,13 @@ _TOKEN_BUCKET: dict[str, Bucket] = {
     "disp_usih": Bucket.C,
 }
 
+#: The function names a formula may call, as the source model writes them.
+_FUNCTION_NAMES = (
+    frozenset(_TOKEN_BUCKET)
+    - BUILTIN_BARE_TOKENS
+    - {CONST_TOKEN, ALIAS_TOKEN, PEQ_TOKEN, GNL_TOKEN}
+) | {"re"}
+
 
 def classify_term(term: ParsedTerm) -> Bucket:
     """Classify one parsed term into its A/B/C bucket, purely from
@@ -537,17 +623,16 @@ def classify_term(term: ParsedTerm) -> Bucket:
 
     Raises
     ------
-    ValueError
-        When ``term.token`` is not a recognized token — fail loud rather than
-        silently drop or mis-bucket a term, which would corrupt either the LP
-        structure (bucket A/C) or the bound (bucket B).
+    MalformedElectricalExpression
+        When ``term.token`` is a function the grammar lacks — fail loud
+        rather than silently drop or mis-bucket a term, which would corrupt
+        either the LP structure (bucket A/C) or the bound (bucket B).
     """
     bucket = _TOKEN_BUCKET.get(term.token)
     if bucket is None:
-        recognized = ", ".join(sorted(_TOKEN_BUCKET))
-        raise ValueError(
-            f"unrecognized electrical-expression token {term.token!r}; "
-            f"recognized tokens are: {recognized}"
+        raise MalformedElectricalExpression(
+            f"unknown function {term.token}(...); an electrical expression "
+            f"calls only {', '.join(sorted(_FUNCTION_NAMES))}"
         )
     return bucket
 
@@ -560,8 +645,8 @@ def classify_terms(terms: Sequence[ParsedTerm]) -> dict[Bucket, list[ParsedTerm]
 
     Raises
     ------
-    ValueError
-        Propagated from :func:`classify_term` on the first unrecognized token.
+    MalformedElectricalExpression
+        Propagated from :func:`classify_term` on the first unknown function.
     """
     partition: dict[Bucket, list[ParsedTerm]] = {bucket: [] for bucket in Bucket}
     for term in terms:

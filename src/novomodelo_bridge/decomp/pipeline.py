@@ -2079,11 +2079,12 @@ def _emit_libs_electrical_generics(
     model: libs_electrical_conv.LibsElectricalModel,
     shared: _SharedEmitterInputs,
     *,
+    source: Path,
     availability_values: dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry],
     hydros_dict: dict,
 ) -> libs_electrical_emit.LibsElectricalResult:
-    """Every long-form LIBs electrical restriction of *model* that resolves, as
-    a generic constraint."""
+    """Every long-form LIBs electrical restriction of *model*, read from
+    *source*, that resolves, as a generic constraint."""
     case = artifacts.case
     id_map = artifacts.id_map
     context_factory = libs_electrical_conv.build_data_context(
@@ -2109,6 +2110,7 @@ def _emit_libs_electrical_generics(
         shared.line_map,
         shared.big_m,
         shared.allocator,
+        source=source,
     )
 
 
@@ -2271,6 +2273,7 @@ def _emit_and_write(
         libs_electrical_model = libs_electrical_conv.read_libs_electrical(
             restricoes,
             calendar,
+            source=libs_file,
             gnl_thermal_codes=_gnl_thermal_codes(artifacts.gnl_model, id_map),
         )
 
@@ -2286,11 +2289,12 @@ def _emit_and_write(
     # carries a long-form model, since none of these inputs are otherwise
     # needed.
     libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None = None
-    if libs_electrical_model is not None:
+    if libs_electrical_model is not None and libs_file is not None:
         libs_electrical_result = _emit_libs_electrical_generics(
             artifacts,
             libs_electrical_model,
             shared,
+            source=libs_file,
             availability_values=availability_values,
             hydros_dict=hydros_dict,
         )

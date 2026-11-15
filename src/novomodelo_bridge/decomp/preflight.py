@@ -429,7 +429,9 @@ def _libs_electrical_read(
                 unread = unread_lines_diagnostic(path, restricoes.data)
                 if unread is not None:
                     emit(unread)
-                model = libs_electrical.read_libs_electrical(restricoes, calendar)
+                model = libs_electrical.read_libs_electrical(
+                    restricoes, calendar, source=path
+                )
     except Exception as exc:
         failed = CheckItem(
             label="LIBS electrical restrictions readable",

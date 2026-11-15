@@ -50,11 +50,14 @@ from novomodelo_bridge.core.electrical_expression import (
     CMO_DEMAND_TOKENS,
     AssembledBound,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     demand_in_cmo_diagnostic,
     term_text,
 )
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -68,13 +71,17 @@ from novomodelo_bridge.decomp.converters.constraints import (
     slots_from_record,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
+    _INEQUACAO_CARD,
+    _INEQUACAO_PERIOD_CARD,
     DISP_USIH_SUBSTITUTED,
+    _effective_inequacao_sides,
     active_cells,
     assemble_bound,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from pathlib import Path
 
     from novomodelo_bridge.decomp.converters.constraints import GenericConstraintResult
     from novomodelo_bridge.decomp.converters.libs_electrical import (
@@ -264,7 +271,7 @@ def _novomodelo_token(
     if term.token == "ener_comerc":
         return Unresolved(_ENER_COMERC, (term_text(term),))
 
-    raise ValueError(f"_novomodelo_token: unrecognized bucket-A token {term.token!r}")
+    raise ValueError(f"unrecognized decision token {term.token!r}")
 
 
 def build_electrical_expression(
@@ -391,6 +398,8 @@ def emit_libs_electrical_generics(
     line_map: Mapping[tuple[int, int], int],
     big_m: float,
     allocator: ConstraintIdAllocator | None = None,
+    *,
+    source: Path,
 ) -> LibsElectricalResult:
     """Emit every resolved electrical restriction as one novomodelo generic
     constraint, feeding the **existing** ``GenericConstraintBuilder`` the
@@ -422,9 +431,21 @@ def emit_libs_electrical_generics(
       ``build_electrical_expression``'s own ``parse_linear_expression``
       call) drops **only this restriction** —
       ``deferred["unrecognized-token"]`` — WARNed here and skipped, never
-      aborting the rest of the deck. A malformed-DSL ``ValueError`` (not
-      this subclass) — including ``active_cells``' dangling-``HABILITA``
-      guard — is NOT caught here and still propagates, fail-loud.
+      aborting the rest of the deck. Malformed text
+      (:class:`~novomodelo_bridge.core.electrical_expression.
+      MalformedElectricalExpression`), a dangling ``HABILITA`` included,
+      stops the conversion as a :class:`~novomodelo_bridge.core.errors.
+      FieldParseError` naming *source* (the LIBS electrical file), the
+      restriction and the card: ``RESTRICAO-ELETRICA-REGRA-ATIVACAO`` for the
+      activation rule, else the card that declares the failing cell's
+      formula, or the formula's limits card when an active cell has no
+      limit. A valid restriction the conversion does not convert yet, a
+      formula the grammar does not read yet
+      (:class:`~novomodelo_bridge.core.electrical_expression.
+      UnsupportedElectricalExpression`) included, stops it as an
+      :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError` naming
+      the same file, restriction and card, or the period rows when its
+      decision terms differ between cells.
     - The surviving expression and per-active-cell bound values feed a
       synthesized :class:`~novomodelo_bridge.decomp.constraint_registers.
       ConstraintRecord` (``family="LIBS_ELEC"``, ``per_block=True``,
@@ -458,6 +479,7 @@ def emit_libs_electrical_generics(
                 line_map,
                 big_m,
                 allocator or ConstraintIdAllocator(),
+                source,
             )
     finally:
         for diagnostic in merge_tables(found):
@@ -476,6 +498,7 @@ def _emit_restrictions(
     line_map: Mapping[tuple[int, int], int],
     big_m: float,
     allocator: ConstraintIdAllocator,
+    source: Path,
 ) -> LibsElectricalResult:
     """The body of :func:`emit_libs_electrical_generics`, reporting each
     restriction's findings as it meets them, and the available power it held
@@ -510,6 +533,7 @@ def _emit_restrictions(
                     builder,
                     deferred,
                     demand_in_cmo,
+                    source,
                 )
         finally:
             for diagnostic in local:
@@ -533,6 +557,28 @@ def _emit_restrictions(
     )
 
 
+_RULE_CARD = "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
+
+
+def _cell_text(cell: tuple[int, int]) -> str:
+    """A ``(stage_index, block_index)`` cell as the deck numbers it."""
+    stage_index, block_index = cell
+    return f"período {stage_index + 1}, patamar {block_index + 1}"
+
+
+def _cell_card(
+    restriction: ElectricalRestriction, stage_index: int, block_index: int
+) -> str:
+    """The LIBS card that declares *restriction*'s formula at one cell: an
+    inequality's period row where one covers the cell, else its own card."""
+    if restriction.is_formula:
+        return "RESTRICAO-ELETRICA-FORMULA"
+    sides = _effective_inequacao_sides(restriction, stage_index, block_index + 1)
+    if sides == (restriction.lhs, restriction.operator, restriction.rhs):
+        return _INEQUACAO_CARD
+    return _INEQUACAO_PERIOD_CARD
+
+
 def _emit_restriction(
     code: int,
     restriction: ElectricalRestriction,
@@ -548,6 +594,7 @@ def _emit_restriction(
     builder: GenericConstraintBuilder,
     deferred: dict[str, list[int]],
     demand_in_cmo: list[tuple[int, str]],
+    source: Path,
 ) -> bool:
     """Add restriction *code* to *builder* and return ``True``, or record on
     *deferred* why it is dropped and return ``False``.
@@ -555,6 +602,7 @@ def _emit_restriction(
     A kept restriction's bound terms in :data:`CMO_DEMAND_TOKENS` are added to
     *demand_in_cmo*."""
     demand_terms: set[str] = set()
+    card = _RULE_CARD
     try:
         cells = active_cells(restriction, model, context_factory, calendar)
         if not cells:
@@ -563,6 +611,7 @@ def _emit_restriction(
 
         assembled_by_cell: dict[tuple[int, int], AssembledBound] = {}
         for stage_index, block_index in sorted(cells):
+            card = _cell_card(restriction, stage_index, block_index)
             assembled = assemble_bound(
                 restriction,
                 model,
@@ -581,10 +630,11 @@ def _emit_restriction(
         reference_cell, reference_assembled = next(iter(assembled_by_cell.items()))
         for cell, assembled in assembled_by_cell.items():
             if assembled.terms != reference_assembled.terms:
-                raise ValueError(
-                    f"restriction {code}: AssembledBound.terms differ "
-                    f"between active cell {reference_cell} and {cell} — "
-                    "the structural expression must be cell-invariant"
+                raise UnsupportedSourceError(
+                    f"its decision terms in {_cell_text(reference_cell)} differ "
+                    f"from those in {_cell_text(cell)}; the conversion carries "
+                    "one set of decision terms per restriction",
+                    field=_INEQUACAO_PERIOD_CARD,
                 )
 
         expression = build_electrical_expression(
@@ -598,6 +648,20 @@ def _emit_restriction(
         _emit_unrecognized_token(code, err.name)
         deferred["unrecognized-token"].append(code)
         return False
+    except (MalformedElectricalExpression, FieldParseError) as err:
+        field = err.field if isinstance(err, FieldParseError) else None
+        raise FieldParseError(
+            f"{source.name}: restriction {code} is malformed: {err}",
+            path=str(source),
+            field=field or card,
+        ) from err
+    except (UnsupportedElectricalExpression, UnsupportedSourceError) as err:
+        field = err.field if isinstance(err, UnsupportedSourceError) else None
+        raise UnsupportedSourceError(
+            f"{source.name}: restriction {code} is not converted yet: {err}",
+            path=str(source),
+            field=field or card,
+        ) from err
 
     if isinstance(expression, Unresolved):
         _emit_unresolved_term(code, expression)

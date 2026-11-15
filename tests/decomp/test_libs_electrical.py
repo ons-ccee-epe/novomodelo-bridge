@@ -20,12 +20,15 @@ from novomodelo_bridge.core.electrical_expression import (
     AssembledBound,
     Bucket,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     classify_term,
     classify_terms,
     parse_linear_expression,
 )
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -66,6 +69,8 @@ from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
+
+_LIBS = Path("deck/lib_restricao-eletrica-especial.csv")
 
 
 class _StubRestricoes:
@@ -234,7 +239,7 @@ def test_expressions_indexed_by_name() -> None:
             (2, "RNE", "ger_usih(10)"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     assert model.expressions["FNESE"].code == 1
     assert model.expressions["FNESE"].formula == "ener_interc(3,1) - ener_interc(1,3)"
@@ -250,7 +255,7 @@ def test_aliases_with_period_patamar_values_including_na_patamar() -> None:
             (1, 3, 3, float("nan"), 250.0),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     alias = model.aliases["MMGDSIN"]
     assert alias.code == 1
@@ -271,7 +276,7 @@ def test_formula_restriction_two_sided_limits_with_sentinel() -> None:
             (401, 1, 6, float("nan"), -1e31, 6300.0),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[401]
     assert restriction.is_formula is True
@@ -291,7 +296,7 @@ def test_inequacao_restriction_verbatim_lhs_operator_rhs() -> None:
             (402, "disp_usih(261) - ger_usih(261)", ">=", "0.05*(val_demanda(1))"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[402]
     assert restriction.is_formula is False
@@ -309,7 +314,7 @@ def test_inequacao_period_patamar_overrides_read_verbatim() -> None:
             (406, 1, 6, 1, "EXPNE", "<=", "14700"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[406]
     assert len(restriction.overrides) == 1
@@ -331,7 +336,7 @@ def test_restriction_habilita_rule_and_violation_joined() -> None:
         restricao_eletrica_regra_ativacao=_regra((10, "demanda(1) > 5000")),
         restricao_eletrica_tratamento_violacao=_tratamento_violacao((501, 1234.5)),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[501]
     assert restriction.habilita == 10
@@ -347,15 +352,91 @@ def test_horizonte_period_out_of_range_raises_value_error() -> None:
         restricao_eletrica_horizonte_periodo=_horizonte((99, 1, 7)),
     )
     with pytest.raises(ValueError) as exc_info:
-        read_libs_electrical(stub, _calendar(6))
+        read_libs_electrical(stub, _calendar(6), source=_LIBS)
     message = str(exc_info.value)
     assert "7" in message
     assert "6" in message
 
 
+@pytest.mark.parametrize(
+    ("operador", "operator"), [(">=", ">="), ("<=", "<="), (" >= ", ">=")]
+)
+def test_an_inequality_reads_the_operators_the_source_model_defines(
+    operador: str, operator: str
+) -> None:
+    stub = _StubRestricoes(
+        restricao_eletrica_inequacao=_re_inequacao((98, "ger_usih(1)", operador, "0")),
+        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+            (98, 1, 1, None, "ger_usih(1)", operador, "5"),
+        ),
+    )
+    model = read_libs_electrical(stub, _calendar(1), source=_LIBS)
+    assert model is not None
+    restriction = model.restrictions[98]
+    assert restriction.operator == operator
+    assert [row.operator for row in restriction.overrides] == [operator]
+
+
+_INEQUACAO_ROW_LOCATIONS = {
+    "constant row": (
+        lambda op: {
+            "restricao_eletrica_inequacao": _re_inequacao((97, "ger_usih(1)", op, "0"))
+        },
+        "RESTRICAO-ELETRICA-INEQUACAO",
+    ),
+    "period row": (
+        lambda op: {
+            "restricao_eletrica_inequacao": _re_inequacao(
+                (97, "ger_usih(1)", "<=", "0")
+            ),
+            "restricao_eletrica_inequacao_periodo_patamar": _re_inequacao_per_pat(
+                (97, 1, 1, None, "ger_usih(1)", op, "5")
+            ),
+        },
+        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+    ),
+    "period row alone, outside the horizon": (
+        lambda op: {
+            "restricao_eletrica_inequacao_periodo_patamar": _re_inequacao_per_pat(
+                (97, 1, 1, None, "ger_usih(1)", "<=", "5"),
+                (97, 2, 2, None, "ger_usih(1)", op, "5"),
+            ),
+            "restricao_eletrica_horizonte_periodo": _horizonte((97, 1, 1)),
+        },
+        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+    ),
+}
+
+
+@pytest.mark.parametrize("location", list(_INEQUACAO_ROW_LOCATIONS))
+@pytest.mark.parametrize(
+    ("operador", "problem"),
+    [
+        ("==", "the operador '=='"),
+        ("<>", "the operador '<>'"),
+        ("=", "the operador '='"),
+        (None, "no operador"),
+        ("  ", "no operador"),
+    ],
+)
+def test_an_inequality_with_an_operator_the_source_model_does_not_define_is_refused(
+    location: str, operador: str | None, problem: str
+) -> None:
+    frames, card = _INEQUACAO_ROW_LOCATIONS[location]
+    stub = _StubRestricoes(**frames(operador))
+    with pytest.raises(FieldParseError) as exc_info:
+        read_libs_electrical(stub, _calendar(2), source=_LIBS)
+    assert str(exc_info.value) == (
+        f"lib_restricao-eletrica-especial.csv: restriction 97 has {problem} in "
+        f"its {card} row; an inequality compares with >= or <="
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == "operador"
+
+
 def test_no_electrical_cards_returns_none() -> None:
     stub = _StubRestricoes()
-    assert read_libs_electrical(stub, _calendar(6)) is None
+    assert read_libs_electrical(stub, _calendar(6), source=_LIBS) is None
 
 
 # ---------------------------------------------------------------------------
@@ -533,39 +614,31 @@ def test_builtin_bare_tokens_kept_unexpanded() -> None:
         assert terms == [ParsedTerm(coefficient=1.0, token=name)]
 
 
-def test_cyclic_named_expression_reference_raises_value_error() -> None:
+def test_cyclic_named_expression_reference_is_malformed() -> None:
     model = _model(expressions={"A": "B", "B": "A"})
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(MalformedElectricalExpression) as exc_info:
         parse_linear_expression("A", model)
     message = str(exc_info.value)
     assert "A" in message
     assert "B" in message
 
 
-def test_unbalanced_parentheses_raises_value_error() -> None:
+def test_unbalanced_parentheses_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="ger_usih") as exc_info:
+    with pytest.raises(MalformedElectricalExpression, match="ger_usih"):
         parse_linear_expression("ger_usih(261", model)
-    # malformed syntax stays a plain ValueError, never the
-    # well-formed-but-undeclared-identifier subclass.
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
-def test_non_numeric_function_argument_raises_value_error() -> None:
+def test_non_numeric_function_argument_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="abc") as exc_info:
+    with pytest.raises(MalformedElectricalExpression, match="abc"):
         parse_linear_expression("ger_usih(abc)", model)
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
-def test_trailing_operator_with_no_operand_raises_plain_value_error() -> None:
-    # a trailing '+' with no following operand is
-    # malformed syntax, not an unrecognized identifier -- stays fail-loud as
-    # a plain ValueError.
+def test_trailing_operator_with_no_operand_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(MalformedElectricalExpression):
         parse_linear_expression("ger_usih(1) +", model)
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
 def test_unrecognized_bare_identifier_raises_unrecognized_electrical_token() -> None:
@@ -798,28 +871,48 @@ def test_parse_activation_rule_multi_conjunct_splits_on_top_level_ampersand() ->
     )
 
 
-def test_parse_activation_rule_bucket_a_operand_raises_value_error() -> None:
+def test_parse_activation_rule_decision_operand_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="ger_usih"):
+    with pytest.raises(
+        MalformedElectricalExpression, match="ger_usih\\(5\\) .* is not input data"
+    ):
         parse_activation_rule("ger_usih(5) >= 100", model)
 
 
-def test_parse_activation_rule_conjunct_without_operator_raises_value_error() -> None:
+def test_parse_activation_rule_conjunct_without_operator_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="no comparison operator"):
+    with pytest.raises(MalformedElectricalExpression, match="no comparison operator"):
         parse_activation_rule("demanda_sin 50000", model)
 
 
-def test_parse_activation_rule_unrecognized_operator_raises_value_error() -> None:
+def test_parse_activation_rule_unrecognized_operator_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="unrecognized comparison operator"):
+    with pytest.raises(
+        MalformedElectricalExpression, match="unrecognized comparison operator"
+    ):
         parse_activation_rule("demanda_sin <> 50000", model)
 
 
-def test_parse_activation_rule_unbalanced_parens_raises_value_error() -> None:
+def test_parse_activation_rule_unbalanced_parens_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="unbalanced parentheses"):
+    with pytest.raises(MalformedElectricalExpression, match="unbalanced parentheses"):
         parse_activation_rule("demanda(3 >= 5", model)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "demanda_sin < 0 | demanda_sin > 10",
+        "demanda(1) > 0 & demanda_sin<0|demanda_sin>9",
+    ],
+)
+def test_parse_activation_rule_with_an_or_is_not_converted_yet(text: str) -> None:
+    # The source model joins comparisons with | (OR) as well as & (AND).
+    with pytest.raises(UnsupportedSourceError) as exc_info:
+        parse_activation_rule(text, _model())
+    assert str(exc_info.value) == (
+        f"the condition {text!r} joins comparisons with | (OR)"
+    )
 
 
 def test_evaluate_rule_and_of_comparisons_true() -> None:
@@ -1198,9 +1291,13 @@ def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
     assert factory(0, 1)(term) == 400.0
 
 
-def test_build_data_context_gnl_uncommanded_stage_aborts() -> None:
+def test_build_data_context_gnl_uncommanded_stage_is_unsupported() -> None:
     term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
-    with pytest.raises(ValueError, match="not commanded at stage 1"):
+    with pytest.raises(
+        UnsupportedSourceError,
+        match=r"^ger_usit\(86\) names a GNL plant that no dadgnl GL record commands "
+        "in período 2$",
+    ):
         _gnl_factory()(1, 0)(term)
 
 
@@ -1440,18 +1537,104 @@ def test_evaluate_se_folds_a_pure_bucket_b_selected_branch() -> None:
         0
     ]
     ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
-    assert evaluate_se(term, model, 0, 0, ctx) == 300.0
+    assert evaluate_se(term, model, ctx) == 300.0
 
 
-def test_evaluate_se_raises_on_decision_bearing_selected_branch() -> None:
-    # a se(...) selected branch carrying
-    # a bucket-A/-C term cannot be folded to a float without silently
-    # dropping that term from the LP -- fail loud instead.
+@pytest.mark.parametrize(
+    ("text", "branch", "term"),
+    [
+        ("se(demanda_sin > 1000, ger_usih(1), 0)", "ger_usih(1)", "ger_usih(1)"),
+        ("se(demanda_sin > 1000, 0, 2*ger_usit(3))", "2*ger_usit(3)", "ger_usit(3)"),
+        ("se(demanda_sin > 1000, disp_usih(1), 0)", "disp_usih(1)", "disp_usih(1)"),
+    ],
+)
+def test_evaluate_se_refuses_a_branch_that_is_not_input_data(
+    text: str, branch: str, term: str
+) -> None:
+    # The source model defines a se(...) branch as a number; folding a
+    # decision term in either branch would drop it from the LP.
     model = _model()
-    term = parse_linear_expression("se(demanda_sin > 1000, ger_usih(1), 0)", model)[0]
+    (se_term,) = parse_linear_expression(text, model)
     ctx = _dict_context({"demanda_sin": 1500.0})
-    with pytest.raises(ValueError, match="ger_usih"):
-        evaluate_se(term, model, 0, 0, ctx)
+    with pytest.raises(MalformedElectricalExpression) as exc_info:
+        evaluate_se(se_term, model, ctx)
+    assert str(exc_info.value) == (
+        f"se(...) branch {branch!r} carries {term}, which is not input data; "
+        "a se(...) branch reads only input data, never a decision"
+    )
+
+
+#: A se(...) branch the conversion cannot read: an undeclared name, and a
+#: constant factor written after its term.
+_UNREAD_BRANCHES = ["undeclared_alias", "val_demanda(1) / 2"]
+
+
+@pytest.mark.parametrize("unread", _UNREAD_BRANCHES)
+def test_evaluate_se_ignores_a_branch_it_does_not_select_and_cannot_read(
+    unread: str,
+) -> None:
+    model = _model()
+    (term,) = parse_linear_expression(
+        f"se(demanda_sin > 1000, val_demanda(1), {unread})", model
+    )
+    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
+    assert evaluate_se(term, model, ctx) == 300.0
+
+
+@pytest.mark.parametrize("unread", _UNREAD_BRANCHES)
+def test_a_restriction_whose_unselected_se_branch_cannot_be_read_converts(
+    unread: str,
+) -> None:
+    calendar = _ri_calendar(1, n_blocks=1)
+    dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 1500.0), n_patamares=1))
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    model = _model()
+    restriction = _formula(
+        470,
+        f"ger_usih(1) + se(demanda_sin > 1000, 100, {unread})",
+        {(0, None): (None, 500.0)},
+    )
+    ctx = build_data_context(_case(dadger, calendar), id_map, model=model)(0, 0)
+    assert assemble_bound(restriction, model, 0, 0, ctx) == AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
+        lower=None,
+        upper=400.0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("unread", "error", "match"),
+    [
+        ("undeclared_alias", UnrecognizedElectricalToken, "'undeclared_alias'"),
+        (
+            "val_demanda(1) / 2",
+            UnsupportedElectricalExpression,
+            "divides a term by the constant 2",
+        ),
+    ],
+)
+def test_evaluate_se_raises_on_a_branch_it_selects_and_cannot_read(
+    unread: str,
+    error: type[UnrecognizedElectricalToken | UnsupportedElectricalExpression],
+    match: str,
+) -> None:
+    model = _model()
+    (term,) = parse_linear_expression(
+        f"se(demanda_sin > 1000, {unread}, val_demanda(1))", model
+    )
+    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
+    with pytest.raises(error, match=match):
+        evaluate_se(term, model, ctx)
+
+
+def test_evaluate_se_refuses_a_malformed_branch_it_does_not_select() -> None:
+    model = _model()
+    (term,) = parse_linear_expression(
+        "se(demanda_sin > 1000, val_demanda(1), 2 +)", model
+    )
+    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
+    with pytest.raises(MalformedElectricalExpression, match="'2 \\+'"):
+        evaluate_se(term, model, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -1577,7 +1760,7 @@ def test_active_cells_inactive_everywhere_returns_empty_and_emits_info() -> None
     assert sink[0].table.rows == [[703, 0, 1]]
 
 
-def test_active_cells_dangling_habilita_raises_value_error_naming_both() -> None:
+def test_active_cells_dangling_habilita_is_malformed_naming_the_rule() -> None:
     model = LibsElectricalModel(expressions={}, aliases={}, restrictions={}, rules={})
     restriction = _restriction_with_horizon(
         704, stage_start=0, stage_end=1, habilita=999
@@ -1585,11 +1768,12 @@ def test_active_cells_dangling_habilita_raises_value_error_naming_both() -> None
     calendar = _ri_calendar(2, n_blocks=2)
     factory = _demanda_sin_context_factory({})
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(
+        MalformedElectricalExpression,
+        match="HABILITA names activation rule 999, which no "
+        "RESTRICAO-ELETRICA-REGRA-ATIVACAO record declares",
+    ):
         active_cells(restriction, model, factory, calendar)
-    message = str(exc_info.value)
-    assert "704" in message
-    assert "999" in message
 
 
 # ---------------------------------------------------------------------------
@@ -1697,56 +1881,77 @@ def test_assemble_bound_disp_usih_unresolvable_plant_drops_and_warns() -> None:
 
 def test_assemble_bound_disp_usih_without_available_power_raises_value_error() -> None:
     restriction = _inequacao(404, "disp_usih(1) - ger_usih(1)", ">=", "0")
-    with pytest.raises(ValueError, match="AvailablePower"):
+    with pytest.raises(ValueError, match="no available power was supplied"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
 
 
-def test_assemble_bound_disp_usih_on_rhs_raises_value_error() -> None:
-    # CRITICAL pitfall guard: the reserve pattern requires disp_usih paired
-    # with ger_usih on the LHS -- a disp_usih on the RHS is outside it.
-    restriction = _inequacao(405, "ger_usih(1)", ">=", "disp_usih(1)")
+@pytest.mark.parametrize(
+    ("lhs", "rhs", "expected"),
+    [
+        (
+            "ger_usih(1)",
+            "disp_usih(1)",
+            "^the right-hand side carries a decision or disp_usih term",
+        ),
+        (
+            "disp_usih(1) - ger_usih(1) + ger_usih(2)",
+            "0",
+            "^ger_usih\\(2\\) has no disp_usih\\(2\\) beside it",
+        ),
+        (
+            "disp_usih(1) - 2*ger_usih(1)",
+            "0",
+            "^disp_usih\\(1\\) has no ger_usih\\(1\\) of the opposite coefficient",
+        ),
+        (
+            "disp_usih(1) - ger_usit(5)",
+            "0",
+            "^the decision term ger_usit\\(5\\) sits beside disp_usih",
+        ),
+        (
+            "disp_usih(1) - ger_usih(1) - ger_usih(1)",
+            "0",
+            "^two ger_usih terms beside disp_usih name the same plant",
+        ),
+    ],
+)
+def test_assemble_bound_disp_usih_outside_the_reserve_pattern_is_unsupported(
+    lhs: str, rhs: str, expected: str
+) -> None:
+    # CRITICAL pitfall guard: a shape outside the documented reserve pattern
+    # is refused, never silently mis-rewritten.
+    restriction = _inequacao(405, lhs, ">=", rhs)
     a_h = AvailablePower(overlay={(1, 0): 100.0})
-    with pytest.raises(ValueError, match="RHS"):
+    with pytest.raises(UnsupportedSourceError, match=expected) as exc_info:
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
+    assert str(exc_info.value).endswith(
+        "the conversion rewrites disp_usih only in the reserve pattern "
+        "disp_usih(h) - ger_usih(h) >= R"
+    )
+    assert exc_info.value.field is None
 
 
-def test_assemble_bound_disp_usih_unpaired_ger_usih_raises_value_error() -> None:
-    # CRITICAL pitfall guard: a ger_usih term with no matching disp_usih is
-    # outside the documented reserve pattern.
-    restriction = _inequacao(406, "disp_usih(1) - ger_usih(1) + ger_usih(2)", ">=", "0")
-    a_h = AvailablePower(overlay={(1, 0): 500.0})
-    with pytest.raises(ValueError, match="ger_usih\\(2\\)"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-
-def test_assemble_bound_disp_usih_mismatched_coefficient_raises_value_error() -> None:
-    # CRITICAL pitfall guard: the paired ger_usih coefficient must be the
-    # exact opposite of disp_usih's -- a magnitude mismatch is outside the
-    # documented sign structure, not silently rewritten.
-    restriction = _inequacao(410, "disp_usih(1) - 2*ger_usih(1)", ">=", "0")
-    a_h = AvailablePower(overlay={})
-    with pytest.raises(ValueError, match="disp_usih\\(1\\)"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-
-def test_assemble_bound_disp_usih_non_ger_usih_decision_term_raises_value_error() -> (
-    None
-):
-    # CRITICAL pitfall guard: the documented pattern only pairs disp_usih
-    # with ger_usih -- a different bucket-A token alongside it is outside
-    # the pattern, not silently folded.
-    restriction = _inequacao(411, "disp_usih(1) - ger_usit(5)", ">=", "0")
-    a_h = AvailablePower(overlay={(1, 0): 100.0})
-    with pytest.raises(ValueError, match="ger_usit"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-
-def test_assemble_bound_formula_with_disp_usih_raises_value_error() -> None:
+def test_assemble_bound_formula_with_disp_usih_is_unsupported() -> None:
     # The documented reserve->gen-cap rewrite only covers the INEQUACAO
     # shape; a FORMULA restriction carrying disp_usih is out of pattern.
     restriction = _formula(420, "disp_usih(1)", {(0, None): (None, 100.0)})
-    with pytest.raises(ValueError, match="FORMULA"):
+    with pytest.raises(UnsupportedSourceError, match="RESTRICAO-ELETRICA-FORMULA"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
+
+
+def test_assemble_bound_formula_without_a_limit_on_an_active_cell_is_malformed() -> (
+    None
+):
+    # The source model needs a limit on every período and patamar of the
+    # horizon, so a missing one is a hole in the deck, not an unbounded side.
+    restriction = _formula(422, "ger_usih(1)", {(0, None): (None, 100.0)})
+    with pytest.raises(
+        FieldParseError,
+        match="^no RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR row covers "
+        "período 2, patamar 1 of its horizon",
+    ) as exc_info:
+        assemble_bound(restriction, _model(), 1, 0, _dict_context({}))
+    assert exc_info.value.field == "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"
 
 
 # ---------------------------------------------------------------------------
@@ -1819,7 +2024,7 @@ def test_read_inequacao_declared_only_by_period_rows() -> None:
         restricao_eletrica_horizonte_periodo=_horizonte((449, 1, 7)),
         restricao_eletrica_habilita=_habilita((449, 524)),
     )
-    model = read_libs_electrical(stub, _calendar(7))
+    model = read_libs_electrical(stub, _calendar(7), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[449]
     assert restriction.is_formula is False
@@ -1849,7 +2054,7 @@ def test_read_period_rows_not_matching_the_card_shape_are_reported() -> None:
         ),
     )
     with dx.collect() as sink:
-        model = read_libs_electrical(stub, _calendar(1))
+        model = read_libs_electrical(stub, _calendar(1), source=_LIBS)
     assert model is not None
     assert model.restrictions[401].overrides == ()
     [unused] = [d for d in sink if d.code == "decomp-electrical-period-rows-unused"]
@@ -1917,10 +2122,22 @@ def test_assemble_bound_period_only_inequacao_uncovered_cell_raises() -> None:
         assemble_bound(_PERIOD_ONLY, _model(), 0, 1, _dict_context({}))
 
 
-def test_re_reference_to_period_only_inequacao_raises() -> None:
+def test_re_reference_to_period_only_inequacao_is_malformed() -> None:
+    # The source model's re(X) references restriction X's formula, and an
+    # inequality declares none.
     model = replace(_model(), restrictions={460: _PERIOD_ONLY})
-    with pytest.raises(ValueError, match="declared only by period rows"):
+    with pytest.raises(MalformedElectricalExpression) as exc_info:
         parse_linear_expression("re(460)", model)
+    assert str(exc_info.value) == (
+        "re(460) references restriction 460, which is declared only by "
+        "inequality period rows and so has no formula in electrical expression "
+        "'re(460)'"
+    )
+
+
+def test_re_reference_to_an_undeclared_restriction_is_malformed() -> None:
+    with pytest.raises(MalformedElectricalExpression, match="unknown restriction 461"):
+        parse_linear_expression("re(461)", _model())
 
 
 def test_assemble_bound_period_only_inequacao_no_limit_sentinel_is_unbounded() -> None:

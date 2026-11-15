@@ -43,15 +43,22 @@ from novomodelo_bridge.core.electrical_expression import (
     SE_TOKEN,
     Bucket,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     classify_terms,
     demand_in_cmo_diagnostic,
     evaluate_terms,
     parse_linear_expression,
     term_text,
 )
-from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
+from novomodelo_bridge.core.errors import (
+    BridgeError,
+    FieldParseError,
+    SourceFileError,
+    UnsupportedSourceError,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -1054,13 +1061,8 @@ class _NewaveFormulaScope:
     def is_alias(self, name: str) -> bool:
         return False
 
-    def restriction_formula(self, code: int) -> str:
-        try:
-            return self.formulas[code]
-        except KeyError:
-            raise ValueError(
-                f"re({code}) references unknown restriction {code}"
-            ) from None
+    def restriction_formula(self, code: int) -> str | None:
+        return self.formulas.get(code)
 
 
 def _read_formulas(
@@ -1073,6 +1075,8 @@ def _read_formulas(
         FieldParseError: a formula is malformed: unbalanced, with an unknown
             function or one given the wrong number of arguments, or with an
             ``re(X)`` that names no constraint of the file.
+        UnsupportedSourceError: a formula holds algebra the conversion does
+            not read yet, a constant factor written after its term.
     """
     scope = _NewaveFormulaScope(expressions)
     formulas: dict[int, _ElectricFormula] = {}
@@ -1085,9 +1089,16 @@ def _read_formulas(
                 cod, "unsupported", err.name, "the file declares no such name"
             )
             continue
-        except ValueError as err:
+        except MalformedElectricalExpression as err:
             raise FieldParseError(
                 f"{path.name}: the formula of constraint {cod} is malformed: {err}",
+                path=str(path),
+                field="RE",
+            ) from err
+        except UnsupportedElectricalExpression as err:
+            raise UnsupportedSourceError(
+                f"{path.name}: the formula of constraint {cod} is not converted "
+                f"yet: {err}",
                 path=str(path),
                 field="RE",
             ) from err

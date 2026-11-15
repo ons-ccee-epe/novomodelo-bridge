@@ -61,7 +61,7 @@ class FieldParseError(BridgeError):
         self.row = row
 
 
-class UnsupportedSourceError(BridgeError):
+class UnsupportedSourceError(BridgeError, ValueError):
     """A valid source-model input the conversion cannot carry.
 
     Unlike :class:`FieldParseError`, the value is well formed: the source model

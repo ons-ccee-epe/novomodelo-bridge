@@ -13,7 +13,12 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.electrical_expression import ParsedTerm
-from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
+from novomodelo_bridge.core.errors import (
+    FieldParseError,
+    SourceFileError,
+    UnsupportedSourceError,
+    diagnostic_from_exception,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
     ConstraintIdAllocator,
@@ -777,7 +782,15 @@ class TestElectricFormula:
 
     @pytest.mark.parametrize(
         "formula",
-        ["ener_interc(1)", "ger_usih(66", "ger_usina(66)", "re(9)", "2 *"],
+        [
+            "ener_interc(1)",
+            "ger_usih(66",
+            "ger_usina(66)",
+            "re(9)",
+            "re(1)",
+            "2 *",
+            "ger_usih(1) )",
+        ],
     )
     def test_a_malformed_formula_is_refused(self, formula: str) -> None:
         with pytest.raises(
@@ -785,6 +798,31 @@ class TestElectricFormula:
             match=r"restricao-eletrica\.csv: the formula of constraint 1 is malformed",
         ):
             _read_formulas({1: formula}, _CSV)
+
+    @pytest.mark.parametrize(
+        ("formula", "factor"),
+        [
+            ("ger_usih(1) * 2", "multiplies a term by the constant 2"),
+            ("ger_usih(1) / 4", "divides a term by the constant 4"),
+            (
+                "ger_usih(1) + se (demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0",
+                "multiplies a term by the constant 2",
+            ),
+        ],
+    )
+    def test_a_formula_the_conversion_cannot_read_yet_is_not_converted(
+        self, formula: str, factor: str
+    ) -> None:
+        with pytest.raises(UnsupportedSourceError) as exc_info:
+            _read_formulas({1: formula}, _CSV)
+
+        assert str(exc_info.value).startswith(
+            "restricao-eletrica.csv: the formula of constraint 1 is not converted "
+            f"yet: electrical expression {formula!r} {factor} written after it"
+        )
+        assert (exc_info.value.path, exc_info.value.field) == (str(_CSV), "RE")
+        diagnostic = diagnostic_from_exception(exc_info.value, context="Conversion")
+        assert diagnostic.code == "source-unsupported"
 
 
 def test_demand_context_reads_the_block_load_of_a_subsystem_or_all() -> None:
