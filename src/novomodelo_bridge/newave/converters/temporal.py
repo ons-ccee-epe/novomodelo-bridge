@@ -825,11 +825,11 @@ def convert_history_years(
 ) -> dict[str, int] | None:
     """Build ``estimation.history_years`` from ``confhd.dat``'s fit window.
 
-    NEWAVE fits each plant's inflow model on the years from its INIC.HIST to
-    its FIM HIST; the case holds one window for every plant. Returns ``None``,
-    with a warning, when a converted plant leaves either year blank: NEWAVE
-    then reads ``postos.dat``, which the conversion does not, so the case fits
-    on every year of *inflow_history*.
+    The source model fits each plant's inflow model on the years from its
+    INIC.HIST to its FIM HIST; the case holds one window for every plant.
+    Returns ``None``, with a warning, when a converted plant leaves either year
+    blank: the source model then reads ``postos.dat``, which the conversion
+    does not, so the case fits on every year of *inflow_history*.
 
     Raises
     ------
