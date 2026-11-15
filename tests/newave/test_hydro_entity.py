@@ -600,7 +600,7 @@ class TestConvertHydros:
         juruena = next(r for r in rows if r["Code"] == 309)
         assert juruena["Fill start"] == 1
         assert juruena["Operates from"] == 2
-        assert juruena["Vol. morto %"] == "0.0"
+        assert juruena["Filled at start (%)"] == "0.0"
         assert "stage 4" in str(juruena["Unit ramp"])
 
     def test_ex_only_emits_no_filling_diagnostic(self, tmp_path) -> None:
@@ -1024,7 +1024,7 @@ class TestExpansionPlantAdmission:
         assert len(diags) == 1
         assert diags[0].severity is Severity.INFO
         assert diags[0].table is not None
-        assert diags[0].table.rows[0] == ["USINA_B", 2, "450.0", "690.0", 2, 6]
+        assert diags[0].table.rows[0] == [2, "USINA_B", "450.0", "690.0", 2, 6]
 
     def test_ee_plant_without_exph_reports_nothing(self, tmp_path) -> None:
         case = _hydro_case(tmp_path, confhd=_make_ee_confhd_df())

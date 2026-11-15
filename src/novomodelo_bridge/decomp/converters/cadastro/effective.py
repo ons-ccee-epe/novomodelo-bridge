@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
+    _SCALAR_AC_SPECS,
     AcRegisters,
     DiversionChannel,
     MachineSet,
@@ -364,6 +365,26 @@ class CadastroResolutionReport:
 
     applied: Mapping[str, int]
     out_of_horizon: tuple[OutOfHorizon, ...]
+
+
+#: The ``AC`` register behind each :attr:`CadastroResolutionReport.applied` key.
+AC_REGISTER_BY_PARAM: Mapping[str, str] = {
+    **{
+        spec.param: spec.ac_class.__name__.removeprefix("AC")
+        for spec in _SCALAR_AC_SPECS
+    },
+    "diversion": "DESVIO",
+    "numero_conjuntos": "NUMCON",
+    "numero_maquinas": "NUMMAQ",
+    "potencia": "POTEFE",
+    "vazao": "VAZEFE",
+    "altura": "ALTEFE",
+    "cota_volume": "COTVOL",
+    "codigo_usina_jusante": "NUMJUS",
+    "posto": "NUMPOS",
+    "posto_acoplamento": "NPOSNW",
+    "jusante_energia": "JUSENA",
+}
 
 
 def _require_cadastro_row(hidr: pd.DataFrame, code: int) -> None:

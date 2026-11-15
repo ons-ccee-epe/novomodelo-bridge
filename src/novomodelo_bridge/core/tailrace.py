@@ -309,8 +309,9 @@ def tailrace_families_from_hidr(
 
 
 def spill_outside_tailrace_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic:
-    """INFO for FPHA plants whose spilled flow does not raise their tailrace in
-    the source model (``hidr.dat`` ``influencia_vertimento_canal_fuga`` 0).
+    """WARNING for FPHA plants whose spilled flow does not raise their tailrace
+    in the source model (``hidr.dat`` ``influencia_vertimento_canal_fuga`` 0),
+    which therefore generate less in novomodelo whenever they spill.
 
     Each row is ``[code, name, stages]``.
     """
@@ -318,14 +319,16 @@ def spill_outside_tailrace_diagnostic(rows: Sequence[Sequence[object]]) -> Diagn
     # turbined plus spilled flow, with no input to leave the spill out.
     return Diagnostic(
         code="fpha-spill-outside-tailrace",
-        severity=Severity.INFO,
+        severity=Severity.WARNING,
         category="Hydro production model",
-        title=f"FPHA spillage outside the tailrace not converted ({len(rows)})",
+        title=f"FPHA plants lose generation when they spill ({len(rows)})",
         summary=(
-            f"The source model leaves the spilled flow of {len(rows)} FPHA "
-            "plant(s) out of their tailrace level, so their planes carry no "
-            "spillage term. Novomodelo's fit raises the tailrace with the spilled "
-            "flow, so their planes lose generation as they spill."
+            f"In the source model, the spilled flow of {len(rows)} FPHA plant(s) "
+            "does not raise their tailrace, so spilling costs them no "
+            "generation. Novomodelo's production function always raises the "
+            "tailrace with the spilled flow, so whenever these plants spill "
+            "they generate less than in the source model for the same "
+            "turbined flow."
         ),
         table=DiagnosticTable(
             columns=["Code", "Name", "Stages"],

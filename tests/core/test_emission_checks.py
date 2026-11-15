@@ -215,13 +215,18 @@ def _hydro_with_envelope(
     return entry
 
 
+#: Source-deck code per hydro id in the clamp tests.
+_CODES = {0: 6, 1: 11, 4: 24, 7: 58}
+
+
 class TestClampHydroBoundsToDeclared:
     """``clamp_hydro_bounds_to_declared`` ceils/floors each per-stage MAX bound
-    into the plant's declared envelope and WARNs about what it clamped, so
-    novomodelo rule 43 (and its outflow analogue) holds without raising the
-    declaration to fit a per-stage override."""
+    into the plant's declared envelope, so novomodelo rule 43 (and its outflow
+    analogue) holds without raising the declaration to fit a per-stage
+    override. A cap at the declared max is a note; a raise to the declared min
+    loosens the deck's limit and is a warning."""
 
-    def test_turbined_above_declared_max_is_clamped_and_warned(self) -> None:
+    def test_turbined_above_declared_max_is_capped_with_a_note(self) -> None:
         hydros = _hydros(_hydro_with_envelope(0, turbined=(0.0, 100.0)))
         hydro_bounds = pa.table(
             {
@@ -233,24 +238,23 @@ class TestClampHydroBoundsToDeclared:
         )
 
         with dx.collect() as collected:
-            result = clamp_hydro_bounds_to_declared(hydros, hydro_bounds)
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES
+            )
 
         # The raised value is clamped to the declaration; the in-envelope one is
         # untouched.
         assert result is not None
         assert result["max_turbined_m3s"].to_pylist() == [100.0, 80.0]
 
-        warnings = [d for d in collected if d.severity is Severity.WARNING]
-        assert len(warnings) == 1
-        diag = warnings[0]
+        assert len(collected) == 1
+        diag = collected[0]
         assert diag.code == "hydro-bounds-clamped-to-declared-capacity"
+        assert diag.severity is Severity.INFO
         assert diag.table is not None
-        row = diag.table.rows[0]
-        assert row[0] == 0  # hydro id
-        assert row[1] == "max_turbined_m3s"  # column
-        assert isinstance(row[2], str) and "0" in row[2]  # stage
-        assert row[3] == 100.0  # declared bound clamped to
-        assert row[4] == 150.0  # original value
+        assert diag.table.rows == [
+            [6, "Hydro 0", "Max turbined flow (m³/s)", "0", 150.0, 100.0]
+        ]
 
         # The clamped table passes the rule-43 error check.
         with dx.collect() as after:
@@ -268,11 +272,15 @@ class TestClampHydroBoundsToDeclared:
         )
 
         with dx.collect() as collected:
-            result = clamp_hydro_bounds_to_declared(hydros, hydro_bounds)
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES
+            )
 
         assert result is not None
         assert result["max_outflow_m3s"].to_pylist() == [500.0]
-        assert any(d.severity is Severity.WARNING for d in collected)
+        assert [(d.code, d.severity) for d in collected] == [
+            ("hydro-bounds-clamped-to-declared-capacity", Severity.INFO)
+        ]
 
     def test_null_declared_max_leaves_bound_untouched(self) -> None:
         # Run-of-river plant: no outflow ceiling declared -> nothing to clamp.
@@ -286,12 +294,14 @@ class TestClampHydroBoundsToDeclared:
         )
 
         with dx.collect() as collected:
-            result = clamp_hydro_bounds_to_declared(hydros, hydro_bounds)
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES
+            )
 
         assert result is hydro_bounds  # unchanged object
         assert collected == []
 
-    def test_value_below_declared_min_is_floored(self) -> None:
+    def test_value_below_declared_min_is_raised_with_a_warning(self) -> None:
         # A MAX bound driven below the plant's own floor (max < min is
         # infeasible) is raised to the declared min — the "floor" half.
         hydros = _hydros(_hydro_with_envelope(4, outflow=(131.0, 800.0)))
@@ -304,11 +314,20 @@ class TestClampHydroBoundsToDeclared:
         )
 
         with dx.collect() as collected:
-            result = clamp_hydro_bounds_to_declared(hydros, hydro_bounds)
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES
+            )
 
         assert result is not None
         assert result["max_outflow_m3s"].to_pylist() == [131.0]
-        assert any(d.severity is Severity.WARNING for d in collected)
+        assert len(collected) == 1
+        diag = collected[0]
+        assert diag.code == "hydro-bounds-raised-to-declared-minimum"
+        assert diag.severity is Severity.WARNING
+        assert diag.table is not None
+        assert diag.table.rows == [
+            [24, "Hydro 4", "Max outflow (m³/s)", "0", 100.0, 131.0]
+        ]
 
     def test_within_envelope_is_untouched(self) -> None:
         hydros = _hydros(_hydro_with_envelope(0, turbined=(0.0, 100.0)))
@@ -321,14 +340,16 @@ class TestClampHydroBoundsToDeclared:
         )
 
         with dx.collect() as collected:
-            result = clamp_hydro_bounds_to_declared(hydros, hydro_bounds)
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES
+            )
 
         assert result is hydro_bounds
         assert collected == []
 
     def test_none_table_returns_none(self) -> None:
         hydros = _hydros(_hydro_with_envelope(0, turbined=(0.0, 100.0)))
-        assert clamp_hydro_bounds_to_declared(hydros, None) is None
+        assert clamp_hydro_bounds_to_declared(hydros, None, source_codes=_CODES) is None
 
 
 # ---------------------------------------------------------------------------

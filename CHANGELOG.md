@@ -29,6 +29,20 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **Every command prints a note on one line and keeps the full panel for
+  warnings and errors**; `-v` prints the notes in full. `convert decomp`
+  reports the conversion and the boundary FCF import under one roll-up and
+  ends on the command that runs the case, and its `conversion_manifest.json`
+  now records the import's diagnostics too.
+- **`convert newave` and `convert decomp` warn only where the results will
+  differ from NEWAVE's or DECOMP's**: `fpha-spill-outside-tailrace`,
+  `boundary-fcf-transit-water-priced` and
+  `boundary-fcf-gnl-anticipated-deviation` are now warnings, while
+  `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`
+  and `decomp-qtur-turbined-clamped` are notes. A stage limit raised to a
+  plant's minimum now warns as `hydro-bounds-raised-to-declared-minimum`, and
+  DECOMP plants kept only for the NEWAVE coupling are listed in a
+  `decomp-coupling-only-plants-excluded` note instead of a log warning.
 - **`compare newave` and `compare decomp` judge each variable by its overall
   gap, and `--tolerance` defaults to 5%.** The console table labels each
   variable close, moderate or far (beyond four times the tolerance), leaves

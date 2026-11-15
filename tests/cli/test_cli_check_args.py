@@ -58,6 +58,7 @@ def _spy_render_checklist(monkeypatch: pytest.MonkeyPatch) -> dict[str, Console]
         console: Console | None = None,
         diagnostics_console: Console | None = None,
         quiet: bool = False,
+        verbose: bool = False,
     ) -> None:
         assert isinstance(console, Console)
         assert isinstance(diagnostics_console, Console)
@@ -68,6 +69,7 @@ def _spy_render_checklist(monkeypatch: pytest.MonkeyPatch) -> dict[str, Console]
             console=console,
             diagnostics_console=diagnostics_console,
             quiet=quiet,
+            verbose=verbose,
         )
 
     # `render_checklist` is patched on its DEFINING module (mock discipline):

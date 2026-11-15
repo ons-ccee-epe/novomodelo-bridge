@@ -152,10 +152,12 @@ def build_id_map_from_readers(
                 code="fictitious-plants-excluded",
                 severity=Severity.INFO,
                 category="Entity exclusion",
-                title=f"Fictitious plants excluded ({len(rows)})",
+                title=f"Fictitious plants left out ({len(rows)})",
                 summary=(
-                    f"Excluded {len(rows)} fictitious accounting plant(s) from the "
-                    "id map (zero-productivity nodes sharing a real plant's posto)."
+                    f"{len(rows)} fictitious plant(s), accounting nodes with zero "
+                    "productivity that share a real plant's posto, are left out "
+                    "of the case; the cascade links past them to the next real "
+                    "plant downstream."
                 ),
                 table=DiagnosticTable(
                     columns=["Code", "Name"],

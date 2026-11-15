@@ -438,7 +438,7 @@ def _convert_constraints(case: NewaveCase, id_map: NewaveIdMap) -> _ConstraintAr
 
 
 def _resolve_hydro_bounds(
-    hydros_dict: dict, temporal: _TemporalStochasticArtifacts
+    hydros_dict: dict, temporal: _TemporalStochasticArtifacts, id_map: NewaveIdMap
 ) -> pa.Table | None:
     """Merge the per-stage hydro bound sources into ``hydro_bounds.parquet``.
 
@@ -452,11 +452,13 @@ def _resolve_hydro_bounds(
         hydro_bounds_table, temporal.capacity_caps
     )
 
-    # Clamp any per-stage MAX bound above the plant's declared envelope back to
-    # the declared value (WARNING, not silent), so the rule-43 self-check in
+    # Clamp any per-stage MAX bound outside the plant's declared envelope back
+    # to the declared value, so the rule-43 self-check in
     # ``_run_emission_checks`` passes on the result.
     return emission_checks.clamp_hydro_bounds_to_declared(
-        hydros_dict, hydro_bounds_table
+        hydros_dict,
+        hydro_bounds_table,
+        source_codes={id_map.hydro_id(code): code for code in id_map.all_hydro_codes},
     )
 
 
@@ -782,7 +784,7 @@ def _convert_newave_case_impl(
 
     step("Converting constraints")
     constraints = _convert_constraints(case, id_map)
-    hydro_bounds_table = _resolve_hydro_bounds(entities.hydros, temporal)
+    hydro_bounds_table = _resolve_hydro_bounds(entities.hydros, temporal, id_map)
     _run_emission_checks(entities, temporal, constraints, hydro_bounds_table)
 
     # Every output path is routed through one ``CaseWriter`` so the

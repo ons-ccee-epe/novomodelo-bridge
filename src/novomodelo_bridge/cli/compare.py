@@ -301,6 +301,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
             heading="Comparison notes",
             console=args.err_console(),
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
 
     out_dir = _export_compare_artifacts(
@@ -412,6 +413,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             heading="Comparison notes",
             console=args.err_console(),
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
 
     out_dir = _export_compare_artifacts(

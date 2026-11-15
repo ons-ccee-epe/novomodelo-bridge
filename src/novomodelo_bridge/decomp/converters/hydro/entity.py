@@ -26,6 +26,12 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol
 import pandas as pd
 from inewave.newave import Hidr
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.productivity import fpha_efficiency
@@ -96,13 +102,31 @@ def _coupling_only_codes(dadger: UhRegisters) -> list[int]:
     return sorted(int(c) for c in excluded["codigo_usina"])
 
 
-def _hydro_display_name(hidr: pd.DataFrame, code: int) -> str:
-    """``'NAME (code)'`` for a plant, or just the code if the registry lacks it."""
+def _registry_name(hidr: pd.DataFrame, code: int) -> str:
+    """A plant's ``hidr.dat`` name, or ``""`` when the registry lacks it."""
     try:
-        name = str(hidr.loc[code, "nome_usina"]).strip()
+        return str(hidr.loc[code, "nome_usina"]).strip()
     except KeyError:
-        return str(code)
-    return f"{name} ({code})"
+        return ""
+
+
+def _coupling_only_diagnostic(hidr: pd.DataFrame, codes: list[int]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-coupling-only-plants-excluded",
+        severity=Severity.INFO,
+        category="Entity exclusion",
+        title=f"Plants DECOMP does not operate left out ({len(codes)})",
+        summary=(
+            f"{len(codes)} UH register(s) give no initial volume: DECOMP does "
+            "not operate these plants and keeps them only for the coupling "
+            "with NEWAVE, so the case leaves them out."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name"],
+            rows=[[code, _registry_name(hidr, code)] for code in codes],
+            justify=["right", "left"],
+        ),
+    )
 
 
 class CascadeLinks(Protocol):
@@ -244,7 +268,7 @@ def _hydro_context(
     fpha_codes: set[int] | None,
 ) -> _HydroContext:
     """Read the operated plants' ``UH`` minimum outflows and evaporation flags
-    (and, for Itaipu, the ``MP``/``FD`` registers), warning about every
+    (and, for Itaipu, the ``MP``/``FD`` registers), noting every
     coupling-only ``UH`` registration."""
     dadger = case.dadger
     hidr = case.hidr
@@ -252,12 +276,7 @@ def _hydro_context(
     operated = _operated_uh(dadger)
     coupling_only = _coupling_only_codes(dadger)
     if coupling_only:
-        _LOG.warning(
-            "%d UH registration(s) without an initial volume excluded from "
-            "the operated set (coupling-only): %s",
-            len(coupling_only),
-            ", ".join(_hydro_display_name(hidr, c) for c in coupling_only),
-        )
+        emit(_coupling_only_diagnostic(hidr, coupling_only), logger=_LOG)
     operated_codes = set(id_map.hydro_codes)
     min_outflow_by_code: dict[int, float] = {}
     for _, row in operated.iterrows():

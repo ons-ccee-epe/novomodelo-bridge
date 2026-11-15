@@ -378,8 +378,8 @@ def test_relink_diagnostic_lists_operated_plants() -> None:
     assert diagnostic is not None
     assert diagnostic.code == "cadastro-topology-relinked"
     assert diagnostic.table is not None
-    rows = {(row[1], row[2]): (row[3], row[4]) for row in diagnostic.table.rows}
-    assert rows[(1, "downstream")] == (2, 3)
+    rows = {(row[0], row[2]): (row[3], row[4]) for row in diagnostic.table.rows}
+    assert rows[(1, "downstream plant")] == (2, 3)
 
     # The no-override deck must not produce a diagnostic.
     no_override_hidr = _hidr_frame(

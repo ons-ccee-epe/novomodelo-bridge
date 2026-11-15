@@ -166,8 +166,8 @@ the same output.
 - **Spill and the tailrace.** Where `hidr.dat` keeps a plant's spilled flow
   out of its tailrace (`influencia_vertimento_canal_fuga` 0), NEWAVE's planes
   carry no spillage term. Novomodelo's fit always raises the tailrace with the
-  spilled flow, so the planes of such an FPHA plant lose generation as it
-  spills. `convert newave` lists these plants in an info diagnostic.
+  spilled flow, so such an FPHA plant generates less than in NEWAVE whenever
+  it spills, and `convert newave` warns, naming these plants.
 - **Turbine and generation limits.** Under FPHA and constant productivity
   alike, a plant generates at most its rated power scaled by its TEIF and IP
   availability, and turbines at most its engolimento: its rated flow
@@ -184,7 +184,8 @@ the same output.
   `max_generation_mw` stays the rated power the fit is capped at.
 
 Anything the converter cannot carry over faithfully is reported rather than
-dropped silently: `convert newave` renders diagnostics as grouped panels,
+dropped silently: `convert newave` prints each warning with the plants and
+stages it affects and lists the notes (`-v` prints them in full),
 `--diagnostics-json` saves them, and `--json` includes them in the verdict.
 
 ## Pumping stations
@@ -261,9 +262,10 @@ converted generic constraints against both models' operation. With
 Before treating a difference as a converter defect, confirm the two runs are
 comparable:
 
-- The security curve uses fixed penalization in `curva.dat`. The bridge models
-  the curve as a per-stage slack at the fixed cost and does not reproduce
-  NEWAVE's iterative penalization mode.
+- The security curve uses fixed penalization (`TIPO DE PENALIZACAO` 0, FIXA)
+  in `curva.dat`. The bridge models the curve as a per-stage slack at the
+  fixed cost and does not reproduce MAXPEN (value 1); `convert newave` warns
+  when the deck selects it.
 - NEWAVE's final simulation has preventive rationing enabled in `dger.dat`.
   With it disabled, NEWAVE drains reservoirs to avoid deficit while Novomodelo
   follows the converted policy, and the two diverge by construction.

@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from novomodelo_bridge.core.diagnostics import Diagnostic
     from novomodelo_bridge.decomp.files import DecompFiles
     from novomodelo_bridge.newave.files import NewaveFiles
@@ -120,7 +122,7 @@ def _hash_file(path: Path) -> tuple[str | None, int | None]:
     return digest.hexdigest(), size_bytes
 
 
-def summarize_diagnostics(diagnostics: list[Diagnostic]) -> dict[str, int]:
+def summarize_diagnostics(diagnostics: Sequence[Diagnostic]) -> dict[str, int]:
     """Count *diagnostics* by severity value, omitting absent severities.
 
     Returns a plain ``dict[str, int]`` keyed by ``severity.value`` (``"info"`` /

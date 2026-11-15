@@ -259,6 +259,7 @@ def render_checklist(
     console: Console | None = None,
     diagnostics_console: Console | None = None,
     quiet: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Render a :class:`~novomodelo_bridge.core.preflight.PreflightResult` as a ✓/✗
     checklist.
@@ -300,6 +301,7 @@ def render_checklist(
         heading="Preflight notes",
         console=diagnostics_console or console,
         quiet=quiet,
+        verbose=verbose,
     )
 
 
@@ -309,27 +311,45 @@ def render_diagnostics(
     heading: str,
     console: Console | None = None,
     quiet: bool = False,
+    verbose: bool = False,
 ) -> None:
-    """Render diagnostics grouped by category, ordered INFO < WARNING < ERROR.
+    """Render a roll-up line, the warning and error panels, then the notes.
 
-    A one-line roll-up under *heading* (``⚠ Conversion notes: 2 warning(s) · 1
-    note(s)``) precedes the per-category panels.
-    With *quiet* set, INFO-severity diagnostics are suppressed and only the roll-up
-    plus warnings/errors are shown. Does nothing when there are no diagnostics.
+    The roll-up under *heading* (``⚠ Conversion notes: 2 warning(s) · 1
+    note(s)``) counts every diagnostic. Warnings and errors follow as panels,
+    grouped by category; INFO notes come last, one title line each, or as
+    full panels with *verbose*. *quiet* suppresses the notes entirely. Does
+    nothing when there are no diagnostics.
     """
     if not diagnostics:
         return
 
     target = console or get_console(stderr=True)
-    shown = [d for d in diagnostics if not (quiet and d.severity is Severity.INFO)]
-
     target.print(_rollup_line(diagnostics, heading))
-    if not shown:
-        return
 
-    ordered = sorted(shown, key=lambda d: (d.severity.rank, d.category))
+    problems = [d for d in diagnostics if d.severity is not Severity.INFO]
+    _print_panels(target, sorted(problems, key=lambda d: (d.severity.rank, d.category)))
+
+    notes = [] if quiet else [d for d in diagnostics if d.severity is Severity.INFO]
+    if not notes:
+        return
+    notes.sort(key=lambda d: d.category)
+    if verbose:
+        _print_panels(target, notes)
+        return
+    target.print()
+    target.print(Text("Notes (details with -v)", style="bold underline"))
+    glyph = _SEVERITY_GLYPH[Severity.INFO]
+    for diag in notes:
+        target.print(
+            Text(f"  {glyph} {diag.title}", style=_SEVERITY_STYLE[Severity.INFO])
+        )
+
+
+def _print_panels(target: Console, diagnostics: Sequence[Diagnostic]) -> None:
+    """Print *diagnostics* as panels under a header per run of one category."""
     last_category: str | None = None
-    for diag in ordered:
+    for diag in diagnostics:
         if diag.category != last_category:
             target.print()
             target.print(Text(diag.category, style="bold underline"))

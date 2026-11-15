@@ -17,12 +17,18 @@ import pytest
 from idecomp.decomp.modelos.dadger import ACVAZMIN, ACVOLMAX, ACVOLMIN
 
 from novomodelo_bridge.decomp.converters.cadastro import (
+    _SCALAR_AC_SPECS,
+    AC_REGISTER_BY_PARAM,
     CadastroResolutionReport,
     EffectiveCadastro,
     OutOfHorizon,
     _forward_fill_series,
     _read_scalar_overrides,
     build_effective_cadastro,
+)
+from novomodelo_bridge.decomp.converters.cadastro.effective import (
+    _AcOverrideRecords,
+    _applied_counts,
 )
 from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 
@@ -307,3 +313,25 @@ def test_build_effective_cadastro_permanent_vazmin_resolves_and_is_applied(
         0.0,
     ]
     assert report.applied["vazao_minima_historica"] == 1
+
+
+def test_every_applied_parameter_names_its_ac_register() -> None:
+    """The cadastro-overrides note labels each ``applied`` key by its ``AC``
+    register, so every key ``_applied_counts`` can report must have one."""
+    one_plant: dict = {1: [(0, 0)]}
+    records = _AcOverrideRecords(
+        scalar={(1, spec.param): [(0, 0.0)] for spec in _SCALAR_AC_SPECS},
+        diversion=one_plant,
+        numero_conjuntos=one_plant,
+        numero_maquinas=one_plant,
+        potencia=one_plant,
+        vazao=one_plant,
+        altura=one_plant,
+        cota=one_plant,
+        topology=one_plant,
+        gauge=one_plant,
+        coupling=one_plant,
+        energy=one_plant,
+        out_of_horizon=[],
+    )
+    assert set(_applied_counts(records)) == set(AC_REGISTER_BY_PARAM)

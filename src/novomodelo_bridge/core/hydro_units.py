@@ -59,16 +59,16 @@ def fpha_zero_capacity_diagnostic(
         code="fpha-zero-capacity",
         severity=Severity.INFO,
         category="Hydro production model",
-        title=f"FPHA skipped for zero-capacity plants ({len(plants)} plant(s))",
+        title=f"FPHA skipped for zero-capacity plants ({len(plants)})",
         summary=(
             f"{len(plants)} plant(s) eligible for the computed FPHA have zero "
             "rated turbined flow or rated power after overrides and keep "
             "constant productivity."
         ),
         table=DiagnosticTable(
-            columns=["Plant", "Code", "Turbined (m3/s)", "Generation (MW)"],
-            rows=[[name, code, q, p] for name, code, q, p in plants],
-            justify=["left", "right", "right", "right"],
+            columns=["Code", "Name", "Turbined (m³/s)", "Generation (MW)"],
+            rows=[[code, name, q, p] for name, code, q, p in plants],
+            justify=["right", "left", "right", "right"],
         ),
     )
 

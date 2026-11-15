@@ -88,6 +88,7 @@ def _mock_deck_and_cut_seams(
             carried_share=0.0,
             gnl_plan=None,
             recent_observations=[],
+            names={},
         ),
     )
     monkeypatch.setattr(

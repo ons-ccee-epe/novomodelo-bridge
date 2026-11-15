@@ -61,6 +61,7 @@ def _run_dashboard(args: DashboardArgs) -> None:
             heading="Dashboard notes",
             console=get_console(stderr=True),
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
 
     if args.json_output:

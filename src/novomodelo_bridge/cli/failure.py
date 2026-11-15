@@ -61,6 +61,7 @@ def _fail(
             heading=f"{context} notes",
             console=args.err_console(),
             quiet=args.quiet,
+            verbose=args.verbose > 0,
         )
     raise typer.Exit(code=code)
 

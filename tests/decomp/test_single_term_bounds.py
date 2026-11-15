@@ -89,7 +89,9 @@ def _capacities(
     (unread by that scenario)."""
     return {
         hydro_id: HydroCapacities(
-            max_generation_mw=max_generation_mw, max_turbined_m3s=max_turbined_m3s
+            name=f"PLANT {hydro_id}",
+            max_generation_mw=max_generation_mw,
+            max_turbined_m3s=max_turbined_m3s,
         )
     }
 
@@ -474,12 +476,12 @@ def test_re_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
     assert [d for d in collected if d.code == "decomp-re-generation-clamped"] == []
 
 
-def test_re_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
+def test_re_clamp_notes_the_plant_ceiling_and_capacity(
     id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
-    """A firing clamp is captured, inside ``dx.collect()``, as a
-    ``decomp-re-generation-clamped`` Diagnostic naming the plant, the RE
-    ceiling, and the declared capacity."""
+    """A firing clamp leaves the results unchanged, so it is captured as a
+    ``decomp-re-generation-clamped`` note whose row names the plant, the RE
+    constraint and stage, the deck ceiling and the declared capacity."""
     record = _re_record(
         constraint_id=12,
         coefficient=1.0,
@@ -497,12 +499,10 @@ def test_re_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
             hydro_capacities=_capacities(max_generation_mw=9_777.776),
         )
 
-    clamped = [d for d in collected if d.code == "decomp-re-generation-clamped"]
-    assert len(clamped) == 1
-    assert clamped[0].severity is Severity.WARNING
-    assert "Hydro 0" in clamped[0].summary  # the plant
-    assert "11000.0" in clamped[0].summary  # the RE ceiling
-    assert "9777.776" in clamped[0].summary  # the declared capacity
+    (clamped,) = [d for d in collected if d.code == "decomp-re-generation-clamped"]
+    assert clamped.severity is Severity.INFO
+    assert clamped.table is not None
+    assert clamped.table.rows == [[5, "PLANT 0", "12", "0", 11_000.0, 9_777.776]]
 
 
 def test_re_missing_capacity_entry_raises(
@@ -581,6 +581,7 @@ def test_frequency_tagged_re_bounds_its_unit_group_not_the_plant(
         itaipu_id_map,
         census=_census(*records),
         group_capacities=_itaipu_group_capacities(),
+        plant_names={1: "ITAIPU"},
     )
 
     assert plant == []
@@ -594,7 +595,7 @@ def test_frequency_tagged_re_bounds_its_unit_group_not_the_plant(
     ]
 
 
-def test_frequency_tagged_re_clamps_to_group_capacity_with_one_warning_per_group(
+def test_frequency_tagged_re_clamps_to_group_capacity_with_one_note_row_per_group(
     itaipu_id_map: DecompIdMap,
 ) -> None:
     records = (
@@ -613,13 +614,16 @@ def test_frequency_tagged_re_clamps_to_group_capacity_with_one_warning_per_group
             itaipu_id_map,
             census=_census(*records),
             group_capacities=_itaipu_group_capacities(),
+            plant_names={1: "ITAIPU"},
         )
 
     assert [c.upper for c in groups[1]] == [7_000.0, 7_000.0]
     (clamped,) = [d for d in collected if d.code == "decomp-re-generation-clamped"]
-    assert "Unit group 0 of hydro 1" in clamped.summary
-    assert "constraints 461, 561" in clamped.summary
-    assert "7086.0" in clamped.summary
+    assert clamped.severity is Severity.INFO
+    assert clamped.table is not None
+    assert clamped.table.rows == [
+        [66, "ITAIPU (50 Hz units)", "461, 561", "0", 7_086.0, 7_000.0]
+    ]
 
 
 def test_frequency_tag_on_an_unsplit_plant_raises(
@@ -635,6 +639,7 @@ def test_frequency_tag_on_an_unsplit_plant_raises(
             itaipu_id_map,
             census=_census(record),
             group_capacities=_itaipu_group_capacities(),
+            plant_names={1: "ITAIPU"},
         )
 
 
@@ -776,12 +781,12 @@ def test_hq_qtur_ceiling_at_capacity_is_not_clamped_and_emits_no_diagnostic(
     assert [d for d in collected if d.code == "decomp-qtur-turbined-clamped"] == []
 
 
-def test_hq_qtur_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
+def test_hq_qtur_clamp_notes_the_plant_ceiling_and_capacity(
     hq_id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
-    """A firing QTUR clamp is captured, inside ``dx.collect()``, as a
-    ``decomp-qtur-turbined-clamped`` Diagnostic naming the plant, the QTUR
-    ceiling, and the declared capacity."""
+    """A firing QTUR clamp leaves the results unchanged, so it is captured as
+    a ``decomp-qtur-turbined-clamped`` note whose row names the plant, the
+    QTUR constraint and stage, the deck ceiling and the declared capacity."""
     record = _hq_record(
         constraint_id=164,
         variable="QTUR",
@@ -799,12 +804,10 @@ def test_hq_qtur_clamp_emits_diagnostic_naming_plant_ceiling_and_capacity(
             hydro_capacities=_capacities(max_turbined_m3s=972.0),
         )
 
-    clamped = [d for d in collected if d.code == "decomp-qtur-turbined-clamped"]
-    assert len(clamped) == 1
-    assert clamped[0].severity is Severity.WARNING
-    assert "Hydro 0" in clamped[0].summary  # the plant
-    assert "973.2" in clamped[0].summary  # the QTUR ceiling
-    assert "972.0" in clamped[0].summary  # the declared capacity
+    (clamped,) = [d for d in collected if d.code == "decomp-qtur-turbined-clamped"]
+    assert clamped.severity is Severity.INFO
+    assert clamped.table is not None
+    assert clamped.table.rows == [[182, "PLANT 0", "164", "0", 973.2, 972.0]]
 
 
 def test_hq_qtur_missing_capacity_entry_raises(

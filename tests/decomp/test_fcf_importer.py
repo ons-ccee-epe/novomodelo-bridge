@@ -78,6 +78,7 @@ def _no_coupling() -> _DeckCoupling:
         carried_share=0.0,
         gnl_plan=None,
         recent_observations=[],
+        names={},
     )
 
 
@@ -98,7 +99,7 @@ def test_emit_import_diagnostics_reports_family_summary_and_dropped_plants() -> 
     )
 
     with dx.collect() as sink:
-        _emit_import_diagnostics(cuts, mapping)
+        _emit_import_diagnostics(cuts, mapping, names={20: "PLANT 20"})
 
     by_code = {diagnostic.code: diagnostic for diagnostic in sink}
     assert set(by_code) == {
@@ -108,13 +109,12 @@ def test_emit_import_diagnostics_reports_family_summary_and_dropped_plants() -> 
     assert all(diagnostic.severity is dx.Severity.INFO for diagnostic in sink)
     dropped = by_code["boundary-fcf-source-only-plants-dropped"]
     assert dropped.table is not None
-    assert dropped.table.rows == [[20, 0.4, "yes"], [30, 0.7, "no"]]
+    assert dropped.table.rows == [[20, "PLANT 20", 0.4, "yes"], [30, "", 0.7, "no"]]
 
     family = by_code["boundary-fcf-cut-family-summary"]
     summary = summarize_cut_families(cuts)
-    assert family.notes == []
-    assert str(summary.n_active_cuts) in family.summary
-    assert str(summary.lag_nonzero_by_depth) in family.summary
+    assert str(summary.n_active_cuts) in family.title
+    assert any(str(summary.lag_nonzero_by_depth) in note for note in family.notes)
 
 
 def test_emit_import_diagnostics_without_drops_or_plan_reports_only_the_summary() -> (
@@ -123,7 +123,7 @@ def test_emit_import_diagnostics_without_drops_or_plan_reports_only_the_summary(
     cuts = make_boundary_cuts((1,), (make_cut_record(pi_varm=(1.5,), rhs=10.0),))
 
     with dx.collect() as sink:
-        _emit_import_diagnostics(cuts, _storage_only_mapping())
+        _emit_import_diagnostics(cuts, _storage_only_mapping(), names={})
 
     assert [diagnostic.code for diagnostic in sink] == [
         "boundary-fcf-cut-family-summary"
@@ -545,32 +545,38 @@ def test_emit_import_diagnostics_gnl_deviation_reports_the_patamar_spread() -> N
     cuts = _one_submercado_cuts(_gnl_row(6, {1: 0.1, 3: 0.2, 5: 0.3}))
 
     with dx.collect() as sink:
-        _emit_import_diagnostics(cuts, _storage_only_mapping(), _june_lag_2_plan())
+        _emit_import_diagnostics(
+            cuts, _storage_only_mapping(), _june_lag_2_plan(), names={}
+        )
 
     deviation = next(
         d for d in sink if d.code == "boundary-fcf-gnl-anticipated-deviation"
     )
-    assert deviation.severity is dx.Severity.INFO
+    assert deviation.severity is dx.Severity.WARNING
     assert deviation.remediation is None
     assert deviation.table is not None
     assert deviation.table.columns == [
         "Submercado",
         "Lag",
         "Σ pi_gnl (carried)",
-        "Patamar spread",
+        "Patamar spread (%)",
     ]
     (row,) = deviation.table.rows
     assert row[:2] == [1, 2]
     assert row[2] == pytest.approx(0.6)
-    assert row[3] == pytest.approx((0.3 - 0.1) / 0.6)
-    assert "0 GNL term(s) reach no ring slot" in deviation.summary
+    assert row[3] == pytest.approx(100 * (0.3 - 0.1) / 0.6, abs=1e-2)
+    assert "reach no delivery window" not in deviation.summary
+    assert deviation.notes == [
+        "The largest relative spread leaves out groups carrying less than 0.1% "
+        "of the largest |Σ pi_gnl|."
+    ]
 
 
 def test_emit_import_diagnostics_gnl_deviation_gated_off_without_plan() -> None:
     cuts = _one_submercado_cuts(_gnl_row(6, {1: 0.1}))
 
     with dx.collect() as sink:
-        _emit_import_diagnostics(cuts, _storage_only_mapping())
+        _emit_import_diagnostics(cuts, _storage_only_mapping(), names={})
 
     assert [d.code for d in sink] == ["boundary-fcf-cut-family-summary"]
 
@@ -587,14 +593,15 @@ def test_emit_import_diagnostics_gnl_deviation_lists_every_dropped_term() -> Non
     )
 
     with dx.collect() as sink:
-        _emit_import_diagnostics(cuts, mapping, _june_lag_2_plan())
+        _emit_import_diagnostics(cuts, mapping, _june_lag_2_plan(), names={})
 
     deviation = next(
         d for d in sink if d.code == "boundary-fcf-gnl-anticipated-deviation"
     )
-    assert "2 GNL term(s) reach no ring slot" in deviation.summary
-    assert deviation.notes == [
-        "submercado 2, lag 1: no GNL thermal in submercado (Σ pi_gnl 0.75)",
+    assert "2 GNL term(s) of the cuts reach no delivery window" in deviation.summary
+    assert deviation.notes[1:] == [
+        "submercado 2, lag 1: no GNL thermal in submercado, so its term "
+        "(Σ pi_gnl 0.75) prices nothing in DECOMP either",
         "thermal 94, submercado 1: no dated ring slot for thermal",
     ]
 
@@ -616,31 +623,37 @@ def test_emit_import_diagnostics_headline_excludes_near_zero_sum_group() -> None
     )
 
     with dx.collect() as sink:
-        _emit_import_diagnostics(cuts, _storage_only_mapping(), plan)
+        _emit_import_diagnostics(cuts, _storage_only_mapping(), plan, names={})
 
     deviation = next(
         d for d in sink if d.code == "boundary-fcf-gnl-anticipated-deviation"
     )
     assert deviation.table is not None
     rows_by_group = {(row[0], row[1]): row for row in deviation.table.rows}
-    assert rows_by_group[(1, 1)][3] == pytest.approx(392.0 / 4412.0, abs=1e-6)
-    assert rows_by_group[(2, 1)][3] == pytest.approx(0.25, abs=1e-6)
-    assert (
-        f"spread {392.0 / 4412.0:.4g} relative / {392.0:.4g} absolute"
-        in deviation.summary
-    )
+    assert rows_by_group[(1, 1)][3] == pytest.approx(100 * 392.0 / 4412.0, abs=1e-2)
+    assert rows_by_group[(2, 1)][3] == pytest.approx(25.0, abs=1e-2)
+    assert f"is {392.0 / 4412.0:.1%} ({392.0:.4g} absolute)" in deviation.summary
 
 
 # ---------------------------------------------------------------------------
 # Coupling diagnostics.
 # ---------------------------------------------------------------------------
 
+_NAMES = {
+    118: "BILLINGS",
+    132: "LAJES",
+    147: "FONTES AB",
+    169: "SOBRADINHO",
+    260: "ESTRELA",
+    305: "ITIQUIRA II",
+}
+
 
 def test_emit_coupling_diagnostics_is_silent_when_every_plant_owns_its_row() -> None:
     resolution = CouplingResolution((HydroCoupling(0, 0, 0.0),), (), ())
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), 0.0)
+        _emit_coupling_diagnostics(resolution, (), 0.0, names=_NAMES)
 
     assert sink == []
 
@@ -653,31 +666,34 @@ def test_emit_coupling_diagnostics_reports_borrowed_owners() -> None:
     )
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), 0.0)
+        _emit_coupling_diagnostics(resolution, (), 0.0, names=_NAMES)
 
     (owners,) = sink
     assert owners.code == "boundary-fcf-coefficient-owners"
     assert owners.severity is dx.Severity.INFO
     assert owners.table is not None
-    assert owners.table.rows == [[147, 132, "complex (CX)"], [109, 118, "downstream"]]
+    assert owners.table.rows == [
+        [147, "FONTES AB", 132, "LAJES", "complex (CX)"],
+        [109, "", 118, "BILLINGS", "downstream"],
+    ]
 
 
 def test_emit_coupling_diagnostics_unowned_plant_is_an_error() -> None:
     resolution = CouplingResolution((), (), (305,))
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), 0.0)
+        _emit_coupling_diagnostics(resolution, (), 0.0, names=_NAMES)
 
     (unowned,) = sink
     assert unowned.code == "boundary-fcf-unowned-plants"
     assert unowned.severity is dx.Severity.ERROR
     assert unowned.table is not None
-    assert unowned.table.rows == [[305]]
+    assert unowned.table.rows == [[305, "ITIQUIRA II"]]
 
 
 def test_emit_coupling_diagnostics_warns_on_a_carried_lag_share() -> None:
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(CouplingResolution((), (), ()), (), 0.1)
+        _emit_coupling_diagnostics(CouplingResolution((), (), ()), (), 0.1, names={})
 
     (carried,) = sink
     assert carried.code == "boundary-fcf-coupling-lag-carried-share"
@@ -689,13 +705,18 @@ def test_emit_coupling_diagnostics_lists_unrepresented_coupling_inflows() -> Non
     shares = (TerminalShare(1, 1, 301, 2.5), TerminalShare(260, 260, None, 40.0))
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(CouplingResolution((), (), ()), shares, 0.0)
+        _emit_coupling_diagnostics(
+            CouplingResolution((), (), ()), shares, 0.0, names=_NAMES
+        )
 
     (terminal,) = sink
     assert terminal.code == "boundary-fcf-coupling-inflow-unrepresented"
     assert terminal.severity is dx.Severity.WARNING
     assert terminal.table is not None
-    assert terminal.table.rows == [[1, 1, 301, 2.5], [260, 260, "-", 40.0]]
+    assert terminal.table.rows == [
+        [1, "", 1, 301, 2.5],
+        [260, "ESTRELA", 260, "-", 40.0],
+    ]
 
 
 def test_emit_transit_pricing_names_each_plant_and_its_price() -> None:
@@ -706,17 +727,20 @@ def test_emit_transit_pricing_names_each_plant_and_its_price() -> None:
     )
 
     with dx.collect() as sink:
-        _emit_transit_pricing(mapping, (156, 158, 169))
+        _emit_transit_pricing(mapping, (156, 158, 169), names=_NAMES)
 
     (transit,) = sink
     assert transit.code == "boundary-fcf-transit-water-priced"
-    assert transit.severity is dx.Severity.INFO
+    assert transit.severity is dx.Severity.WARNING
     assert transit.table is not None
-    assert transit.table.rows == [[156, "storage"], [169, "first inflow lag"]]
+    assert transit.table.rows == [
+        [156, "", "storage"],
+        [169, "SOBRADINHO", "first inflow lag"],
+    ]
 
 
 def test_emit_transit_pricing_is_silent_without_transit_slots() -> None:
     with dx.collect() as sink:
-        _emit_transit_pricing(MappingResult(cuts=(), dropped=()), (156,))
+        _emit_transit_pricing(MappingResult(cuts=(), dropped=()), (156,), names={})
 
     assert sink == []

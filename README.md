@@ -103,11 +103,13 @@ Next to the case, `conversion_manifest.json` records provenance: the bridge
 version and git commit, the source directory, a hash of every input file read,
 the entity counts, and every diagnostic raised during the run.
 
-Diagnostics (a missing optional file, a bound clamped to keep the LP feasible,
-a feature the converter leaves out) are rendered as grouped panels on stderr
-with the affected plants and stages. `--diagnostics-json` saves them to a
-file; `--dry-run` runs the whole conversion in memory and lists what would be
-written.
+Diagnostics go to stderr. A warning means the converted case will not give
+the source model's results on this deck, and it says where and how, with the
+affected plants and stages; an error stops the conversion. A note records a
+translation that leaves the results unchanged and shows as a single line;
+`-v` prints the notes in full. `--diagnostics-json` saves every diagnostic to
+a file; `--dry-run` runs the whole conversion in memory and lists what would
+be written.
 
 ### What `compare` writes
 

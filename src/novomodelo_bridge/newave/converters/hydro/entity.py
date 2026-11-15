@@ -371,8 +371,8 @@ def _filling_phase(
     # for every filling plant, including the ``duracao == 0`` (no-filling-
     # block) case, so the user always sees the admitted plant.
     report_row: list[object] = [
-        name,
         newave_code,
+        name,
         start_sid,
         entry_sid,
         f"{volume_morto:.1f}",
@@ -468,8 +468,8 @@ def _generation_caps(
 
     start_generation = rated_capacity(config.hreg_at(hreg, 0))[1]
     expansion_row: list[object] = [
-        name,
         newave_code,
+        name,
         f"{start_generation:.1f}",
         f"{max_generation:.1f}",
         len(config.unit_rows),
@@ -692,23 +692,23 @@ def _report_filling_plants(rows: list[list[object]]) -> None:
             code="ne-filling-plant",
             severity=Severity.INFO,
             category="Filling plants",
-            title=f"Dead-volume filling plants admitted ({len(rows)})",
+            title=f"Plants filling their dead volume ({len(rows)})",
             summary=(
-                f"{len(rows)} NE plant(s) admitted with a "
-                "dead-volume filling schedule; each fills before operating "
-                "and ramps capacity as units come online."
+                f"{len(rows)} plant(s) marked NE in confhd.dat fill their dead "
+                "volume as exph.dat schedules before they operate; their "
+                "capacity is 0 until then and grows as their units enter."
             ),
             table=DiagnosticTable(
                 columns=[
-                    "Plant",
                     "Code",
+                    "Name",
                     "Fill start",
                     "Operates from",
-                    "Vol. morto %",
+                    "Filled at start (%)",
                     "Unit ramp",
                 ],
                 rows=rows,
-                justify=["left", "right", "right", "right", "right", "left"],
+                justify=["right", "left", "right", "right", "right", "left"],
                 caption=("Stage ids are 0-based; capacity is 0 until 'Operates from'."),
             ),
         ),
@@ -735,15 +735,15 @@ def _report_expansion_plants(rows: list[list[object]]) -> None:
             ),
             table=DiagnosticTable(
                 columns=[
-                    "Plant",
                     "Code",
+                    "Name",
                     "MW at start",
                     "MW when full",
                     "Machines entering",
                     "First entry stage",
                 ],
                 rows=rows,
-                justify=["left", "right", "right", "right", "right", "right"],
+                justify=["right", "left", "right", "right", "right", "right"],
                 caption="Stage ids are 0-based.",
             ),
         ),

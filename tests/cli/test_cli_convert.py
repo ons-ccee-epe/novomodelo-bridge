@@ -2383,9 +2383,9 @@ class TestCliInProcess:
             dx.emit(
                 dx.Diagnostic(
                     code="boundary-fcf-gnl-anticipated-deviation",
-                    severity=dx.Severity.INFO,
+                    severity=dx.Severity.WARNING,
                     category="Boundary FCF",
-                    title="GNL anticipated ring carries a per-patamar sum",
+                    title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
                 )
             )
@@ -2419,8 +2419,8 @@ class TestCliInProcess:
         doc = json.loads(stdout)
         codes = {d["code"] for d in doc["diagnostics"]}
         assert "boundary-fcf-gnl-anticipated-deviation" in codes
-        # ``status`` stays "ok": the importer's diagnostic is INFO-severity,
-        # so surfacing it never flips the verdict outcome.
+        # ``status`` stays "ok": only an ERROR flips the verdict, and the
+        # importer's diagnostic is a warning.
         assert doc["status"] == "ok"
 
     def test_convert_decomp_boundary_fcf_importer_diagnostics_render_panel(
@@ -2444,9 +2444,9 @@ class TestCliInProcess:
             dx.emit(
                 dx.Diagnostic(
                     code="boundary-fcf-gnl-anticipated-deviation",
-                    severity=dx.Severity.INFO,
+                    severity=dx.Severity.WARNING,
                     category="Boundary FCF",
-                    title="GNL anticipated ring carries a per-patamar sum",
+                    title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
                 )
             )
@@ -2476,10 +2476,78 @@ class TestCliInProcess:
             )
 
         assert code == 0
-        assert "GNL anticipated ring carries a per-patamar sum" in stderr
+        assert "GNL commitment priced per delivery window, not per patamar" in stderr
         # The boundary-FCF confirmation still surfaces (happy-path intact).
         assert f"novomodelo run {dst}" in stderr
         assert "--output" not in stderr
+
+    def test_convert_decomp_renders_one_rollup_and_ends_on_the_run_command(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The converter's and the importer's diagnostics share one roll-up,
+        the manifest records both, and the command that runs the case is the
+        last line on stderr."""
+        from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.conversion import ConversionReport
+
+        src = _make_fake_decomp_dir_with_cuts(tmp_path)
+        dst = tmp_path / "dst"
+        converter_note = dx.Diagnostic(
+            code="converter-note",
+            severity=dx.Severity.INFO,
+            category="Risk",
+            title="A converter note",
+            summary="from the conversion",
+        )
+        fake_report = ConversionReport(
+            hydro_count=1,
+            thermal_count=1,
+            bus_count=1,
+            line_count=0,
+            stage_count=4,
+            diagnostics=[converter_note],
+        )
+
+        def _fake_import(*args: object, **kwargs: object) -> Path:
+            dx.emit(
+                dx.Diagnostic(
+                    code="importer-warning",
+                    severity=dx.Severity.WARNING,
+                    category="Boundary FCF",
+                    title="An importer warning",
+                    summary="from the boundary FCF import",
+                )
+            )
+            return dst / "boundary"
+
+        with (
+            patch(
+                "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
+                return_value=fake_report,
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
+                side_effect=_fake_import,
+            ),
+        ):
+            code, _stdout, stderr = self._invoke_main(
+                ["convert", "decomp", str(src), str(dst)], monkeypatch
+            )
+
+        assert code == 0
+        assert stderr.count("Conversion notes") == 1
+        assert "Conversion notes: 1 warning(s) · 1 note(s)" in stderr
+        last_line = stderr.strip().splitlines()[-1]
+        assert f"novomodelo run {dst}" in last_line
+        manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")
+        assert {d["code"] for d in manifest.diagnostics} == {
+            "converter-note",
+            "importer-warning",
+        }
 
     def test_convert_decomp_boundary_fcf_importer_diagnostics_reach_sidecar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2506,9 +2574,9 @@ class TestCliInProcess:
             dx.emit(
                 dx.Diagnostic(
                     code="boundary-fcf-gnl-anticipated-deviation",
-                    severity=dx.Severity.INFO,
+                    severity=dx.Severity.WARNING,
                     category="Boundary FCF",
-                    title="GNL anticipated ring carries a per-patamar sum",
+                    title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
                 )
             )
