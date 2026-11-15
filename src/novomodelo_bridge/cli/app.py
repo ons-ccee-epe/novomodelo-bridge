@@ -207,7 +207,10 @@ def _convert_newave(
         typer.Option(
             "--diagnostics-json",
             metavar="PATH",
-            help="Also write the conversion diagnostics (counts + findings) as JSON.",
+            help=(
+                "Also write the conversion diagnostics (counts + findings) as "
+                "JSON once the conversion completes."
+            ),
         ),
     ] = None,
     json_output: _JsonOpt = False,
@@ -272,7 +275,10 @@ def _convert_decomp(
         typer.Option(
             "--diagnostics-json",
             metavar="PATH",
-            help="Also write the conversion diagnostics (counts + findings) as JSON.",
+            help=(
+                "Also write the conversion diagnostics (counts + findings) as "
+                "JSON once the conversion completes."
+            ),
         ),
     ] = None,
     json_output: _JsonOpt = False,

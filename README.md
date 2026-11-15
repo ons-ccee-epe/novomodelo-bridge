@@ -108,8 +108,9 @@ the source model's results on this deck, and it says where and how, with the
 affected plants and stages; an error stops the conversion. A note records a
 translation that leaves the results unchanged and shows as a single line;
 `-v` prints the notes in full. `--diagnostics-json` saves every diagnostic to
-a file; `--dry-run` runs the whole conversion in memory and lists what would
-be written.
+a file once the conversion completes; a conversion that stops reports its
+findings on stderr and in `--json`. `--dry-run` runs the whole conversion in
+memory and lists what would be written.
 
 ### What `compare` writes
 
