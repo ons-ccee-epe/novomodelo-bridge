@@ -84,6 +84,7 @@ class TestDiagnosticFromException:
         )
         diag = diagnostic_from_exception(exc, context="Conversion")
         assert isinstance(exc, BridgeError)
+        assert isinstance(exc, ValueError)
         assert diag.code == "source-unsupported"
         assert diag.notes == ["file: confhd.dat", "field: INIC.HIST/FIM HIST"]
         assert diag.remediation is not None
