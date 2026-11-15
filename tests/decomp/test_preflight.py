@@ -6,7 +6,7 @@ import inspect
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 from idecomp.decomp.modelos.dadger import (
@@ -570,10 +570,10 @@ class TestLibsElectricalWarning:
         decomp_mini_deck: Path,
         tmp_path: Path,
         cards: object,
-        **reader: object,
+        reader: MagicMock | None = None,
     ) -> PreflightResult:
         """Check the mini deck with a LIBS file whose cards are *cards*, read
-        by the real reader unless *reader* patches it."""
+        by *reader* in place of the real reader when given."""
         deck = tmp_path / "deck"
         shutil.copytree(decomp_mini_deck, deck)
         with (deck / "indices.csv").open("a", encoding="utf-8") as index:
@@ -583,12 +583,12 @@ class TestLibsElectricalWarning:
             stack.enter_context(
                 patch.object(DecompCase, "libs_restricao_eletrica", new=cards)
             )
-            if reader:
+            if reader is not None:
                 stack.enter_context(
                     patch(
                         "novomodelo_bridge.decomp.converters.libs_electrical"
                         ".read_libs_electrical",
-                        **reader,
+                        new=reader,
                     )
                 )
             return run_decomp_preflight(deck)
@@ -596,7 +596,9 @@ class TestLibsElectricalWarning:
     def test_a_file_with_a_long_form_card_raises_no_libs_warning(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        result = self._run(decomp_mini_deck, tmp_path, object(), return_value=object())
+        result = self._run(
+            decomp_mini_deck, tmp_path, object(), MagicMock(return_value=object())
+        )
 
         codes = {d.code for d in result.diagnostics}
         assert "decomp-libs-electrical-present" not in codes
@@ -604,7 +606,9 @@ class TestLibsElectricalWarning:
     def test_a_file_without_a_long_form_card_warns(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        result = self._run(decomp_mini_deck, tmp_path, object(), return_value=None)
+        result = self._run(
+            decomp_mini_deck, tmp_path, object(), MagicMock(return_value=None)
+        )
 
         codes = {d.code for d in result.diagnostics}
         assert "decomp-libs-electrical-present" in codes
@@ -643,7 +647,7 @@ class TestLibsElectricalWarning:
             decomp_mini_deck,
             tmp_path,
             object(),
-            side_effect=ValueError("restriction 7 is malformed"),
+            MagicMock(side_effect=ValueError("restriction 7 is malformed")),
         )
 
         [readable] = [
