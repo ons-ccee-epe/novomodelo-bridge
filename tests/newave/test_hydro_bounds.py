@@ -28,32 +28,8 @@ from tests.newave.conftest import (
     _make_ree_df,
     _ne_filling_case,
     _ne_filling_id_map,
+    assert_no_repo_internal_leaks,
 )
-
-# The title/summary/remediation/notes strings bounds.py emits reach a
-# pip-installed user with no repo checkout — none may leak a repo-internal
-# reference (mirrors test_constraints.py's own marker scan).
-_REPO_INTERNAL_LEAKS = (
-    "docs/",
-    "plans/",
-    "~/git",
-    "feat/",
-    "ticket-",
-    "epic-",
-    "src/",
-    ".py",
-)
-
-
-def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
-    for diag in collected:
-        strings = [diag.title, diag.summary, *diag.notes]
-        if diag.remediation is not None:
-            strings.append(diag.remediation)
-        for s in strings:
-            for leak in _REPO_INTERNAL_LEAKS:
-                assert leak not in s, f"diagnostic {diag.code!r} leaks {leak!r}: {s!r}"
-
 
 # ---------------------------------------------------------------------------
 # max_turbined_m3s envelope declaration
@@ -1418,7 +1394,7 @@ class TestOutageRateOvershoots:
             [1, "USINA_A", "IP", 200.0],
             [2, "USINA_B", "TEIF", 120.0],
         ]
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_rates_within_range_report_nothing(self) -> None:
         from novomodelo_bridge.newave.converters.hydro.bounds import (
@@ -1568,7 +1544,7 @@ class TestTurbineLimitDataMissing:
         with dx.collect() as collected:
             convert_per_stage_capacity_caps(case, id_map)
         gaps = [d for d in collected if d.code == "turbine-limit-data-missing"]
-        _assert_no_repo_internal_leaks(gaps)
+        assert_no_repo_internal_leaks(gaps)
         if not gaps:
             return []
         (diagnostic,) = gaps

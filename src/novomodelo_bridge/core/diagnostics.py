@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from pathlib import Path
 
-_MODULE_LOGGER = logging.getLogger(__name__)
 _COUNT_SUFFIX = re.compile(r" \(\d+\)$")
 
 ColumnJustify = Literal["left", "right", "center"]
@@ -168,22 +167,20 @@ def collect() -> Generator[list[Diagnostic]]:
         _ACTIVE.reset(token)
 
 
-def emit(diagnostic: Diagnostic, *, logger: logging.Logger | None = None) -> None:
+def emit(diagnostic: Diagnostic, *, logger: logging.Logger) -> None:
     """Record *diagnostic* on the active sink, or log it when none is active.
 
     Inside a :func:`collect` block the diagnostic is appended to the sink for rich
     rendering and is **not** logged. Outside a block it degrades to a single ``logging``
-    record at the matching level on *logger* (default: this module's logger) so a
-    converter called on its own — or an existing log-assertion test — still surfaces
-    the finding. Pass the caller's module logger to keep the record's logger name.
+    record at the matching level on *logger*, the caller's module logger, so a
+    converter called on its own — or a log-assertion test — still surfaces the
+    finding under the caller's logger name.
     """
     sink = _ACTIVE.get()
     if sink is not None:
         sink.append(diagnostic)
         return
-    (logger or _MODULE_LOGGER).log(
-        diagnostic.severity.log_level, "%s", diagnostic.summary
-    )
+    logger.log(diagnostic.severity.log_level, "%s", diagnostic.summary)
 
 
 def finalize_diagnostics(collected: Iterable[Diagnostic]) -> list[Diagnostic]:

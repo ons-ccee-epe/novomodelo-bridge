@@ -1293,13 +1293,15 @@ def _generic_constraint_fields(
     """
     from novomodelo_bridge.comparators.constraints import (
         evaluate_lhs_novomodelo,
-        load_resolved_generic_constraints,
         stage_bounds_novomodelo,
     )
     from novomodelo_bridge.comparators.newave.constraints import evaluate_lhs_newave
+    from novomodelo_bridge.novomodelo.readers import (
+        read_novomodelo_resolved_generic_constraints,
+    )
 
     novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
-    gc_resolved = load_resolved_generic_constraints(
+    gc_resolved = read_novomodelo_resolved_generic_constraints(
         novomodelo_case_dir, novomodelo_output_dir
     )
     gc_constraints = gc_resolved.constraints

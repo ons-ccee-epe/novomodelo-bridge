@@ -12,16 +12,20 @@ pending their own carve.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
+from idecomp.decomp import Relato
 
 from novomodelo_bridge.comparators.charts import _COST_MAP
 from novomodelo_bridge.comparators.decomp.results import (
     _NW_COST_LABELS,
     _bus_side,
     _cost_frames,
+    _decomp_convergence_frame,
     _probability_weighted_stage_cost,
+    _ree_result_comparisons,
     _scenario_probabilities,
     _union_cost_rows,
     _union_relato_reports,
@@ -31,7 +35,15 @@ from novomodelo_bridge.comparators.decomp.results import (
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from tests.comparators.conftest import _balance_fixture, _patch_aligned_frames
+from tests.comparators.conftest import (
+    _aligned_fixture,
+    _balance_fixture,
+    _patch_aligned_frames,
+    _ree_id_map,
+)
+from tests.comparators.test_decomp_results_performance import (
+    _relato_convergence_frame,
+)
 
 
 def _relato_costs_frame() -> pl.DataFrame:
@@ -137,11 +149,6 @@ class TestCostFrames:
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_args, **_kwargs: relato,
         )
-        # No scenario-fan stage by default -- relato2 is optional.
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
-            lambda *_args, **_kwargs: pl.DataFrame(),
-        )
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_args, **_kwargs: sist,
@@ -204,7 +211,7 @@ class TestCostFrames:
     ) -> None:
         """A deck with no relato2 (empty frame) contributes no extra stage --
         the cost frames cover exactly relato's weeks."""
-        self._patch(monkeypatch)  # read_relato2_costs stubbed to empty
+        self._patch(monkeypatch)
 
         _nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
@@ -423,11 +430,11 @@ class TestCostFrames:
 
         assert set(nw_sin["stage"].unique().to_list()) == {1, 2}
 
-    def test_propagates_the_readers_raise_on_missing_relato(
+    def test_missing_relato_is_noted_and_leaves_both_frames_empty(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """No new swallowing: a missing/empty relato surfaces exactly the
-        error ``read_relato_costs`` raises."""
+        """``relato2`` alone yields no partial costs."""
+        self._patch(monkeypatch)
 
         def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
             raise FileNotFoundError("no relato.rvN found")
@@ -435,9 +442,81 @@ class TestCostFrames:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
         )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
+            lambda *_args, **_kwargs: _relato2_costs_frame(),
+        )
 
-        with pytest.raises(FileNotFoundError):
-            _cost_frames(tmp_path, {})
+        with dx.collect() as collected:
+            nw_costs, nw_sin = _cost_frames(tmp_path, {})
+
+        assert nw_costs == {}
+        assert nw_sin.is_empty()
+        [diag] = collected
+        assert (diag.code, diag.severity, diag.title) == (
+            "report-file-missing",
+            dx.Severity.INFO,
+            "relato.rvN not found",
+        )
+        assert "cost breakdown" in diag.summary
+
+    def test_relato_without_its_cost_table_is_one_warning_and_empty_frames(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patch(monkeypatch)
+
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise ValueError("relato.rv0 has no relatorio_operacao_custos table")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
+        )
+
+        with dx.collect() as collected:
+            nw_costs, nw_sin = _cost_frames(tmp_path, {})
+
+        assert nw_costs == {}
+        assert nw_sin.is_empty()
+        [diag] = collected
+        assert (diag.code, diag.severity, diag.title) == (
+            "report-file-unreadable",
+            dx.Severity.WARNING,
+            "relato.rvN could not be read",
+        )
+        assert "cost breakdown" in diag.summary
+
+    @pytest.mark.parametrize(
+        ("error", "code"),
+        [
+            (FileNotFoundError("dec_oper_sist.csv not found"), "report-file-missing"),
+            (ValueError("dec_oper_sist.csv parsed empty"), "report-file-unreadable"),
+        ],
+    )
+    def test_unavailable_dec_oper_sist_leaves_the_deficit_in_the_slack(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        error: Exception,
+        code: str,
+    ) -> None:
+        self._patch(monkeypatch)
+
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise error
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist", _boom
+        )
+
+        with dx.collect() as collected:
+            nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0})
+
+        assert "DEFICIT" not in nw_costs
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
+        assert nw_costs["GERACAO TERMICA"] == pytest.approx(220_000.0)
+        assert [(d.code, d.title.split()[0]) for d in collected] == [
+            (code, "dec_oper_sist.csv")
+        ]
 
 
 def _relato_costs_with_overlapping_fan_stage() -> pl.DataFrame:
@@ -532,10 +611,6 @@ class TestScenarioProbabilities:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
         )
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
-            lambda *_a, **_k: pl.DataFrame(),
-        )
 
         result = _scenario_probabilities(tmp_path)
 
@@ -562,6 +637,162 @@ class TestScenarioProbabilities:
         result = _scenario_probabilities(tmp_path)
 
         assert set(result["estagio"].unique().to_list()) == {3}
+
+    @staticmethod
+    def _patch_relato2(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        relato2: str,
+        sist: pl.DataFrame,
+    ) -> None:
+        """relato's weeks, *sist* as the operation, and a relato2 that is
+        ``"absent"`` or ``"without its cost table"``."""
+        if relato2 == "without its cost table":
+            (tmp_path / "relato2.rv2").touch()
+            monkeypatch.setattr(
+                Relato,
+                "read",
+                staticmethod(
+                    lambda _path: SimpleNamespace(relatorio_operacao_custos=None)
+                ),
+            )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
+            lambda *_a, **_k: _relato_costs_frame(),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
+            lambda *_a, **_k: sist,
+        )
+
+    @pytest.mark.parametrize(
+        ("relato2", "code", "title"),
+        [
+            ("absent", "report-file-missing", "relato2.rvN not found"),
+            (
+                "without its cost table",
+                "report-file-unreadable",
+                "relato2.rvN could not be read",
+            ),
+        ],
+    )
+    def test_on_a_scenario_fan_an_unavailable_relato2_is_one_finding(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        relato2: str,
+        code: str,
+        title: str,
+    ) -> None:
+        """Both readers of relato2's cost table share the finding; the fan
+        stage is left to the unweighted mean and out of the costs."""
+        fan = _dec_oper_sist_frame(
+            [(1, 1, None, 1, 168.0, 0.0), (2, 1, None, 1, 528.0, 0.0)]
+            + [(3, c, None, 1, 744.0, 0.0) for c in (1, 2)]
+        )
+        self._patch_relato2(monkeypatch, tmp_path, relato2, fan)
+
+        with dx.collect() as collected:
+            probabilities = _scenario_probabilities(tmp_path)
+            _nw_costs, nw_sin = _cost_frames(tmp_path, {})
+
+        assert set(probabilities["estagio"].to_list()) == {1, 2}
+        assert set(nw_sin["stage"].to_list()) == {1, 2}
+        assert len(collected) == 2
+        [finding] = dx.finalize_diagnostics(collected)
+        assert (finding.code, finding.title) == (code, title)
+        assert "equal weights" in finding.summary
+
+    @pytest.mark.parametrize("relato2", ["absent", "without its cost table"])
+    def test_without_a_scenario_fan_an_unavailable_relato2_is_no_finding(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, relato2: str
+    ) -> None:
+        self._patch_relato2(monkeypatch, tmp_path, relato2, _no_deficit_frame())
+
+        with dx.collect() as collected:
+            _scenario_probabilities(tmp_path)
+            _cost_frames(tmp_path, {})
+
+        assert collected == []
+
+    @pytest.mark.parametrize(
+        ("error", "code", "title"),
+        [
+            (
+                FileNotFoundError("no relato.rvN found"),
+                "report-file-missing",
+                "relato.rvN not found",
+            ),
+            (
+                ValueError("relato.rv0 has no relatorio_operacao_custos table"),
+                "report-file-unreadable",
+                "relato.rvN could not be read",
+            ),
+        ],
+    )
+    def test_emits_the_cost_breakdown_finding(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        error: Exception,
+        code: str,
+        title: str,
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise error
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
+        )
+
+        with dx.collect() as collected:
+            _scenario_probabilities(tmp_path)
+            _cost_frames(tmp_path, {})
+
+        assert len(collected) == 2
+        assert [(d.code, d.title) for d in dx.finalize_diagnostics(collected)] == [
+            (code, title)
+        ]
+
+
+def test_a_partial_relato_costs_only_the_sections_of_its_missing_tables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``relato.rvN`` holding its convergence table but neither its cost
+    nor its REE membership table: the convergence reads through, and each
+    missing table is one warning shared by every reader of that table."""
+    (tmp_path / "relato.rv0").touch()
+    report = SimpleNamespace(
+        convergencia=_relato_convergence_frame().to_pandas(),
+        relatorio_operacao_custos=None,
+        uhes_rees_submercados=None,
+    )
+    monkeypatch.setattr(Relato, "read", staticmethod(lambda _path: report))
+
+    with dx.collect() as collected:
+        nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        probabilities = _scenario_probabilities(tmp_path)
+        convergence = _decomp_convergence_frame(tmp_path)
+        ree, _ = _ree_result_comparisons(
+            tmp_path, _aligned_fixture().novomodelo_hydro, _ree_id_map()
+        )
+
+    assert nw_costs == {}
+    assert nw_sin.is_empty()
+    assert probabilities.is_empty()
+    assert ree == []
+    assert convergence["iteration"].to_list() == [1, 2, 3]
+    assert len(collected) == 3
+    warnings = dx.finalize_diagnostics(collected)
+    assert [(d.code, d.title) for d in warnings] == [
+        ("report-file-unreadable", "relato.rvN could not be read")
+    ] * 2
+    assert sorted(d.summary for d in warnings) == [
+        "relato.rvN could not be read, so the report leaves out DECOMP's cost "
+        "breakdown and stage costs.",
+        "relato.rvN could not be read, so the report leaves out the REE energy "
+        "comparison.",
+    ]
 
 
 class TestWeightedGroupMeanCostEquivalence:

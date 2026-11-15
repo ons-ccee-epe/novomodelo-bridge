@@ -144,7 +144,8 @@ def _emit_travel_time_info(
                 f"in, up to {counted(max_lag(plants), 'stage')} back."
             ),
             notes=notes,
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -181,7 +182,8 @@ def _emit_undated_bucket_warning(undated: UndatedBucketAudit) -> None:
                 "Such coefficients usually mean the case's boundary future-cost "
                 "function prices water that arrives after the study ends.",
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -205,7 +207,8 @@ def _emit_cut_pool_mismatch(trunk_pool_ids: tuple[int, ...], expected: int) -> N
                 "Pools holding cuts: "
                 f"{', '.join(str(pool_id) for pool_id in trunk_pool_ids) or 'none'}."
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -231,11 +234,12 @@ def _emit_inflow_lag_drop_warning(audit: InflowLagAudit) -> None:
                 if count
             ]
             + ["Premise P8: inflow-lag coefficients are dropped and counted."],
-        )
+        ),
+        logger=_LOG,
     )
 
 
-#: mapcut record 10's cost parcels other than the committed GNL cost, with
+#: mapcut register 10's cost parcels other than the committed GNL cost, with
 #: the names docs/dessem.md gives them.
 _ZERO_COST_PARCELS = {
     "parcela_custo_geracao_termica_minima": "thermal minimum-generation cost",
@@ -341,7 +345,8 @@ def _emit_gnl_delivery_missing(
             notes=[
                 note for cause, note in _GNL_MISSING_NOTES.items() if cause in causes
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -441,7 +446,8 @@ def _emit_gnl_coefficients_exported(
                 justify=["right", "left", "right", "left", "right", "right", "right"],
             ),
             notes=notes,
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -482,7 +488,8 @@ def _emit_gnl_coefficient_zero(
                 justify=["right", "left", "right", "right"],
             ),
             notes=["A commitment at the plant's capacity is a known cause."],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -491,7 +498,7 @@ def _emit_gnl_committed_cost(
     costs: Sequence[GnlCommittedCost],
     source_plants: Sequence[SourceGnlThermal],
 ) -> None:
-    """Report each stage's committed GNL cost as read back from `mapcut` record 10."""
+    """Report each stage's committed GNL cost as read back from `mapcut` register 10."""
     if not source_plants:
         return
     value_field = COST_FIELDS.index("geracao_termica_minima_gerada_gnl")
@@ -531,7 +538,8 @@ def _emit_gnl_committed_cost(
                 "plant's unit cost in the case, in 10³ R$ and not discounted.",
                 "A stage no commitment window covers is written as 0.0.",
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -565,7 +573,8 @@ def _emit_gnl_submarket_repeated(
                 "Each plant keeps its own entry in the file. Readers that key the "
                 "GNL block by submarket code merge the plants of a submarket."
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -672,7 +681,8 @@ def _write_failure_manifest(
                     "describes an earlier export."
                 ),
                 notes=[f"Reason: {exception_reason(exc)}"],
-            )
+            ),
+            logger=_LOG,
         )
 
 
@@ -793,7 +803,7 @@ class _ExportProgress:
     """The step an export run is in, which ``run_export``'s failure handlers read."""
 
     on_phase: Callable[[str], None] | None
-    current_step: str = "initialize"
+    current_step: str = "create the output directory"
     unvalidated_pair_published: bool = False
 
     @contextmanager
@@ -850,6 +860,11 @@ def _plan_export(
             checkpoint, pool_ids, include_terminal=settings.include_terminal_pool
         )
         trunk_pool_ids = cut_building_pools(pools)
+        if not trunk_pool_ids:
+            raise PolicyFormatError(
+                "no pool of the policy checkpoint holds cuts past its warm-start "
+                "slots, so the run trained no cuts and there is no trunk to export"
+            )
         _emit_cut_pool_mismatch(trunk_pool_ids, len(pool_ids) - 1)
         terminal_pool_id = pool_ids[-1]
 
@@ -1063,16 +1078,16 @@ def run_export(
 
     Returns exit code: 0 success, non-zero failure.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
     paths = _resolve_output_paths(output_dir, source.revision, settings)
     progress = _ExportProgress(on_phase)
 
     try:
+        output_dir.mkdir(parents=True, exist_ok=True)
         plan = _plan_export(case_dir, source, output_dir, settings, progress)
         mapcut_contents, cortdeco_contents = _write_validated_pair(
             plan, paths, progress
         )
-        emit(_mapcut_zero_fields_diagnostic(paths.mapcut.name))
+        emit(_mapcut_zero_fields_diagnostic(paths.mapcut.name), logger=_LOG)
         _emit_gnl_reports(plan, source.gnl_thermals, mapcut_contents, cortdeco_contents)
 
         with progress.step("write content CSVs", 11):
@@ -1085,7 +1100,13 @@ def run_export(
         _LOG.info("export completed successfully")
         return 0
 
-    except (InputReadError, LayoutError, MappingError, PolicyFormatError) as exc:
+    except (
+        InputReadError,
+        LayoutError,
+        MappingError,
+        PolicyFormatError,
+        OSError,
+    ) as exc:
         rejected = (
             reject_pair(paths.mapcut, paths.cortdeco)
             if progress.unvalidated_pair_published
@@ -1104,7 +1125,8 @@ def run_export(
                     "cannot read it by mistake."
                     for path in rejected
                 ],
-            )
+            ),
+            logger=_LOG,
         )
         _write_failure_manifest(
             case_dir, source, settings, paths, progress.current_step

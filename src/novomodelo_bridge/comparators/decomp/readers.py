@@ -1,28 +1,20 @@
 """DECOMP output readers for results comparison.
 
-Reads the ``dec_oper_*.csv`` operation tables and the convergence report
-from a DECOMP case directory via ``idecomp``, returning Polars
-frames with the source's native column names (1-based ``estagio``,
-node/scenario indices as written). Alignment onto Novomodelo entity ids and
-stage indices happens in the comparison layer, not here.
+Reads the ``dec_oper_*.csv`` operation tables, the ``relato``/``relato2``
+general reports, ``decomp.tim`` and the FPHA reports from a DECOMP case
+directory via ``idecomp``, returning Polars frames with the source's native
+column names (1-based ``estagio``, node/scenario indices as written).
+Alignment onto Novomodelo entity ids and stage indices happens in the
+comparison layer, not here.
 
-Reader-failure contract: an absent OPTIONAL input yields a typed-empty
-frame plus a WARNING log; a present-but-unreadable file, or an absent
-REQUIRED input, raises a typed error (``NovomodeloReadError``, ``ValueError``,
-or ``FileNotFoundError``) — never a silent empty, since an empty frame
-from real-but-broken data fabricates a false zero-vs-zero match
-(``.claude/rules/comments.md`` §4; reads route through this layer per
-``.claude/rules/bridge.md`` §5). This module and ``novomodelo_readers`` raise on
-present-but-corrupt data; ``newave_readers`` is the genuine outlier — it
-best-effort degrades present-but-broken optional inputs to empty/None plus a
-WARNING (see its module docstring). DECOMP's operation tables are required,
-the source model's and Novomodelo's optional partitions are not. Every ``dec_oper_*``/
-``relato``-backed table here is a REQUIRED input: an absent file raises
-``FileNotFoundError`` and a present file that parses empty raises
-``ValueError`` — silent-empty DataFrames are idecomp's characteristic
-failure mode on unexpected syntax. ``read_relato2_costs`` is the one
-deliberate exception, an OPTIONAL per-realization report that degrades
-to an empty frame when absent.
+Reader-failure contract: every reader raises ``FileNotFoundError`` for an
+absent file and ``ValueError`` for a file that parses empty -- never a silent
+empty, since an empty frame from real-but-broken data fabricates a false
+zero-vs-zero match, and silent-empty frames are idecomp's characteristic
+failure mode on unexpected syntax (reads route through this layer per
+``.claude/rules/bridge.md`` §5). The comparison turns either raise into a
+report-file finding, most through :func:`read_or_note`, so a missing or
+broken file costs the sections it feeds, never the comparison.
 """
 
 from __future__ import annotations
@@ -30,7 +22,7 @@ from __future__ import annotations
 import functools
 import logging
 import re
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
 from typing import Protocol
 
@@ -53,9 +45,66 @@ from idecomp.decomp import (
     Relato,
 )
 
+from novomodelo_bridge.core.diagnostics import (
+    emit,
+    report_file_missing_diagnostic,
+    report_file_unreadable_diagnostic,
+)
 from novomodelo_bridge.core.paths import find_case_insensitive
 
 _LOG = logging.getLogger(__name__)
+
+#: What the report leaves out without each operation table, completing
+#: ``"<file> was not found, so ..."`` and ``"<file> could not be read, so
+#: ..."``; every reader of one table shares its effect, so the note is one.
+DEC_OPER_USIH_EFFECT = (
+    "the report leaves out DECOMP's hydro plant operation and productivities, "
+    "the production-function comparison and DECOMP's side of the generic "
+    "constraints with hydro terms."
+)
+DEC_OPER_USIT_EFFECT = (
+    "the report leaves out DECOMP's thermal generation and DECOMP's side of the "
+    "generic constraints with thermal terms."
+)
+DEC_OPER_SIST_EFFECT = (
+    "the report leaves out DECOMP's submarket results, its energy balance and "
+    "the production-function comparison, and the cost breakdown leaves "
+    "DECOMP's deficit cost in the unitemized constraint slack."
+)
+
+
+def read_or_note(
+    read: Callable[[Path], pl.DataFrame],
+    file_name: str,
+    case_dir: Path,
+    effect: str,
+    *,
+    note_missing: bool = True,
+) -> pl.DataFrame | None:
+    """*read*'s table, or ``None`` after the finding for a missing or
+    unreadable *file_name*.
+
+    *effect* completes the finding's summary (see
+    :func:`report_file_missing_diagnostic`). *note_missing* is ``False`` for a
+    report the source model writes only for some decks: its absence is no
+    finding.
+    """
+    try:
+        return read(case_dir)
+    except FileNotFoundError as exc:
+        if note_missing:
+            emit(
+                report_file_missing_diagnostic(file_name, case_dir, effect),
+                logger=_LOG,
+            )
+        else:
+            _LOG.info("No %s: %s", file_name, exc)
+    except ValueError as exc:
+        emit(
+            report_file_unreadable_diagnostic(file_name, case_dir, effect, exc),
+            logger=_LOG,
+        )
+    return None
 
 
 class _TableFile(Protocol):
@@ -358,21 +407,19 @@ def read_relato2_costs(case_dir: Path) -> pl.DataFrame:
     per row. Parsed with idecomp's ``Relato`` reader, which reads ``relato2``
     with the same block format as ``relato``.
 
-    **Optional** -- returns an empty frame (not an error) when ``relato2`` is
-    absent, so a caller can fall back to ``relato`` alone: a deck with no
-    scenario fan has no second report. This is the one deliberately
-    silent-empty reader (a missing optional file is not a degraded input),
-    unlike the mandatory ``relato``/``dec_oper_*`` readers.
+    A deck with no scenario fan has no second report, so the comparison
+    reports this one missing or without its cost table only when DECOMP's
+    operation has a fan stage.
 
     Costs are **native k$**, unconverted -- converted once in the analysis
     layer, see `results.reconcile_kdollars_to_reais`.
     """
     path = _resolve_relato2(case_dir)
     if path is None:
-        return pl.DataFrame()
+        raise FileNotFoundError(f"no relato2.rvN found in {case_dir}")
     table = Relato.read(str(path)).relatorio_operacao_custos
     if table is None or table.empty:
-        return pl.DataFrame()
+        raise ValueError(f"{path} has no relatorio_operacao_custos table")
     return pl.from_pandas(table)
 
 

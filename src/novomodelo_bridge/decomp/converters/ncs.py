@@ -38,6 +38,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
 from novomodelo_bridge.decomp.temporal import hours_weighted
@@ -162,7 +163,9 @@ def convert_non_controllable_sources(
     id_map: DecompIdMap,
 ) -> dict:
     """Build ``non_controllable_sources.json`` (``PQ`` + renewable parks)."""
-    calendar = case.calendar
+    series, findings = _all_series(case.dadger, id_map, case.calendar, case.renovaveis)
+    for finding in findings:
+        emit(finding, logger=_LOG)
     op_date = case.start_date.isoformat()
     entries = [
         {
@@ -173,7 +176,7 @@ def convert_non_controllable_sources(
             "max_generation_mw": s.max_generation_mw,
             "allow_curtailment": s.allow_curtailment,
         }
-        for s in _all_series(case.dadger, id_map, calendar, case.renovaveis)
+        for s in series
     ]
     return {
         "$schema": novomodelo_schemas.schema_url_for(
@@ -192,7 +195,8 @@ def convert_ncs_stats(
     ncs_ids: list[int] = []
     stage_ids: list[int] = []
     means: list[float] = []
-    for s in _all_series(case.dadger, id_map, calendar, case.renovaveis):
+    series, _ = _all_series(case.dadger, id_map, calendar, case.renovaveis)
+    for s in series:
         max_gen = s.max_generation_mw
         for stage in calendar:
             mean_mw = hours_weighted(s.per_stage_blocks[stage.index], stage)
@@ -229,7 +233,8 @@ def convert_ncs_factors(
     calendar = case.calendar
     entries: list[dict] = []
     clamped_stages: dict[str, list[int]] = {}
-    for s in _all_series(case.dadger, id_map, calendar, case.renovaveis):
+    series, _ = _all_series(case.dadger, id_map, calendar, case.renovaveis)
+    for s in series:
         for stage in calendar:
             blocks = s.per_stage_blocks[stage.index]
             mean_mw = hours_weighted(blocks, stage)
@@ -303,36 +308,29 @@ def _non_empty_frame(accessor_result: object) -> pd.DataFrame | None:
     return None
 
 
-def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
-    keys = sorted(
-        {
-            (int(r["codigo_pee"]), int(r["estagio"]) - 1, int(r["patamar"]) - 1)
-            for _, r in dropped.iterrows()
-        }
-    )
-    emit(
-        Diagnostic(
-            code="decomp-pee-generation-repeated",
-            severity=Severity.WARNING,
-            category="Renewable parks",
-            title=f"Repeated PEE-GER-PER-PAT generation rows ({len(keys)})",
-            summary=(
-                "The listed renewable parks have more than one PEE-GER-PER-PAT "
-                "row for the same stage and patamar. The conversion keeps the "
-                "last of them, so the park generates the last declared value."
-            ),
-            table=DiagnosticTable(
-                columns=["Code", "Stage", "Block"],
-                rows=[list(key) for key in keys],
-                justify=["right", "right", "right"],
-                caption="Stage and block ids are 0-based.",
-            ),
-            remediation=(
-                "Keep one PEE-GER-PER-PAT row per park, stage and patamar in "
-                "the renewable file."
-            ),
+def _repeated_pee_generation_diagnostic(
+    keys: Sequence[tuple[int, int, int]],
+) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-pee-generation-repeated",
+        severity=Severity.WARNING,
+        category="Renewable parks",
+        title=f"Repeated PEE-GER-PER-PAT generation rows ({len(keys)})",
+        summary=(
+            "The listed renewable parks have more than one PEE-GER-PER-PAT "
+            "row for the same stage and patamar. The conversion keeps the "
+            "last of them, so the park generates the last declared value."
         ),
-        logger=_LOG,
+        table=DiagnosticTable(
+            columns=["Code", "Stage", "Block"],
+            rows=[list(key) for key in keys],
+            justify=["right", "right", "right"],
+            caption="Stage and block ids are 0-based.",
+        ),
+        remediation=(
+            "Keep one PEE-GER-PER-PAT row per park, stage and patamar in "
+            "the renewable file."
+        ),
     )
 
 
@@ -348,16 +346,20 @@ class _PeeRegisters(Protocol):
     def pee_config_per(self, *, df: bool) -> object: ...
 
 
-def _pee_generation_rows(renovaveis: _PeeRegisters) -> pd.DataFrame | None:
+def _pee_generation_rows(
+    renovaveis: _PeeRegisters,
+) -> tuple[pd.DataFrame | None, list[tuple[int, int, int]]]:
     """Rows of both renewable generation cards, as
-    ``codigo_pee, estagio, patamar, cenario, geracao``.
+    ``codigo_pee, estagio, patamar, cenario, geracao``, with the 0-based
+    ``(code, stage, block)`` keys of the ``PEE-GER-PER-PAT`` rows dropped for
+    a later row on the same key.
 
     The single reader of the generation cards, so :func:`_sorted_pee_codes`
     and :func:`_pee_series` always see the same parks. The scenario-free
     ``PEE-GER-PER-PAT`` card enters as scenario 1. ``estagio_final`` is
     dropped: every row applies to its ``estagio`` only.
 
-    Returns ``None`` when neither card carries a row.
+    The rows are ``None`` when neither card carries a row.
 
     Raises
     ------
@@ -369,12 +371,18 @@ def _pee_generation_rows(renovaveis: _PeeRegisters) -> pd.DataFrame | None:
     deterministic = _non_empty_frame(renovaveis.pee_ger_per_pat(df=True))
 
     frames: list[pd.DataFrame] = []
+    repeated_keys: list[tuple[int, int, int]] = []
     if per_scenario is not None:
         frames.append(per_scenario[_PEE_GENERATION_COLUMNS])
     if deterministic is not None:
         repeated = deterministic.duplicated(_PEE_GENERATION_KEY, keep="last")
         if repeated.any():
-            _emit_repeated_pee_generation(deterministic[repeated])
+            repeated_keys = sorted(
+                {
+                    (int(r["codigo_pee"]), int(r["estagio"]) - 1, int(r["patamar"]) - 1)
+                    for _, r in deterministic[repeated].iterrows()
+                }
+            )
             deterministic = deterministic[~repeated]
         frames.append(deterministic.assign(cenario=1)[_PEE_GENERATION_COLUMNS])
 
@@ -389,34 +397,24 @@ def _pee_generation_rows(renovaveis: _PeeRegisters) -> pd.DataFrame | None:
                 "renewable parks declared on both PEE-GER-PER-PAT-CEN and "
                 f"PEE-GER-PER-PAT: {on_both}; the generation source is ambiguous"
             )
-    return pd.concat(frames, ignore_index=True) if frames else None
+    rows = pd.concat(frames, ignore_index=True) if frames else None
+    return rows, repeated_keys
 
 
 def _sorted_pee_codes(
-    renovaveis: _PeeRegisters, calendar: Sequence[OperativeStage]
+    ger: pd.DataFrame, calendar: Sequence[OperativeStage]
 ) -> list[int]:
-    """Every declared renewable park's ``codigo_pee``, sorted — the ncs_id
-    assignment order :func:`_pee_series` (the NCS series writer) and
-    :func:`build_pee_ncs_id_map` (the public ``codigo_pee -> ncs_id`` map)
-    share, so neither enumeration can drift from the other.
-
-    A code is "declared" here iff it appears on at least one
-    :func:`_pee_generation_rows` row (mirrors :func:`_pee_series`'s own
-    ``per_park`` keys, without building its per-(stage,block) generation).
-
-    Returns ``[]`` when the deck carries no ``PEE-CAD`` or no generation
-    card at all (mirrors :func:`_pee_series`'s own no-op guard).
+    """The ``codigo_pee`` of every park on a :func:`_pee_generation_rows` row
+    *ger*, sorted — the ncs_id assignment order :func:`_pee_series` (the NCS
+    series writer) and :func:`build_pee_ncs_id_map` (the public
+    ``codigo_pee -> ncs_id`` map) share, so neither enumeration can drift from
+    the other.
 
     Raises
     ------
     ValueError
         When a row's ``estagio`` falls outside *calendar*.
     """
-    cad = as_frame(renovaveis.pee_cad(df=True))
-    ger = _pee_generation_rows(renovaveis)
-    if cad is None or cad.empty or ger is None:
-        return []
-
     n_stages = len(calendar)
     codes: set[int] = set()
     for _, row in ger.iterrows():
@@ -443,15 +441,19 @@ def build_pee_ncs_id_map(
     a park's id here always matches the id its own :class:`_PqSeries` gets.
 
     Returns ``{}`` when *renovaveis* is ``None`` or the deck declares no
-    renewable parks (mirrors :func:`_all_series`'s "no renovaveis -> PQ
-    only" convention).
+    renewable parks: no ``PEE-CAD`` or no generation card at all, as
+    :func:`_pee_series` converts none then.
     """
     renovaveis = case.renovaveis
     if renovaveis is None:
         return {}
+    cad = as_frame(renovaveis.pee_cad(df=True))
+    ger, _ = _pee_generation_rows(renovaveis)
+    if cad is None or cad.empty or ger is None:
+        return {}
     calendar = case.calendar
     first_ncs_id = len(_pq_series(case.dadger, id_map, calendar))
-    sorted_codes = _sorted_pee_codes(renovaveis, calendar)
+    sorted_codes = _sorted_pee_codes(ger, calendar)
     return {code: first_ncs_id + offset for offset, code in enumerate(sorted_codes)}
 
 
@@ -460,8 +462,9 @@ def _pee_series(
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
     first_ncs_id: int,
-) -> list[_PqSeries]:
-    """Renewable equivalent parks as NCS series, appended after ``PQ``.
+) -> tuple[list[_PqSeries], list[Diagnostic]]:
+    """Renewable equivalent parks as NCS series, appended after ``PQ``, with
+    the WARNINGs their cards raise.
 
     ``PEE-GER-PER-PAT-CEN`` is scenario-indexed but current production
     fills it uniformly, so its scenarios collapse to one value per (park,
@@ -469,11 +472,12 @@ def _pee_series(
     """
     cad = as_frame(renovaveis.pee_cad(df=True))
     subm = as_frame(renovaveis.pee_subm(df=True))
-    ger = _pee_generation_rows(renovaveis)
+    ger, repeated = _pee_generation_rows(renovaveis)
+    findings = [_repeated_pee_generation_diagnostic(repeated)] if repeated else []
     if cad is None or cad.empty or ger is None:
-        return []
+        return [], findings
 
-    sorted_codes = _sorted_pee_codes(renovaveis, calendar)
+    sorted_codes = _sorted_pee_codes(ger, calendar)
     ncs_id_by_code = {
         code: first_ncs_id + offset for offset, code in enumerate(sorted_codes)
     }
@@ -556,10 +560,10 @@ def _pee_series(
             )
         )
     if without_state:
-        _emit_pee_without_operating_state(without_state)
+        findings.append(_pee_without_operating_state_diagnostic(without_state))
     if spread_rows:
-        emit(_generation_spread_diagnostic(spread_rows), logger=_LOG)
-    return series
+        findings.append(_generation_spread_diagnostic(spread_rows))
+    return series, findings
 
 
 def _generation_spread_diagnostic(rows: list[list[object]]) -> Diagnostic:
@@ -607,7 +611,7 @@ def _pee_curtailment_by_code(renovaveis: _PeeRegisters) -> dict[int, bool]:
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         When a park declares more than one distinct state.
     """
     config = _non_empty_frame(renovaveis.pee_config_per(df=True))
@@ -620,34 +624,37 @@ def _pee_curtailment_by_code(renovaveis: _PeeRegisters) -> dict[int, bool]:
     curtailable: dict[int, bool] = {}
     for code, declared in states.items():
         if len(declared) > 1:
-            raise ValueError(
-                f"renewable park {code} declares more than one PEE-CONFIG-PER "
-                f"operating state ({sorted(declared)}); one state per park is "
-                "supported"
+            # TRACKED NOVOMODELO-GAP (C39): novomodelo allows or forbids
+            # curtailment once per source for the whole study. Remove when it
+            # accepts a per-stage curtailment switch.
+            raise UnsupportedSourceError(
+                f"renovaveis.csv gives renewable park {code} more than one "
+                f"PEE-CONFIG-PER operating state ({', '.join(sorted(declared))}). "
+                "The case holds one operating state per park for the whole "
+                "study, so give the park a single PEE-CONFIG-PER operating state.",
+                path="renovaveis.csv",
+                field="PEE-CONFIG-PER estado_operacao",
             )
         curtailable[code] = declared.pop() == _CURTAILABLE_OPERATING_STATE
     return curtailable
 
 
-def _emit_pee_without_operating_state(codes: Sequence[int]) -> None:
-    emit(
-        Diagnostic(
-            code="decomp-pee-operating-state-missing",
-            severity=Severity.WARNING,
-            category="Renewable parks",
-            title=f"Renewable parks without an operating state ({len(codes)})",
-            summary=(
-                "The listed renewable parks have generation but no "
-                "PEE-CONFIG-PER operating state. The conversion treats each as "
-                "not curtailable, so it always generates its declared value."
-            ),
-            table=DiagnosticTable(columns=["Code"], rows=[[code] for code in codes]),
-            remediation=(
-                "Declare a PEE-CONFIG-PER operating state in the renewable file "
-                "for each listed park whose generation may be curtailed."
-            ),
+def _pee_without_operating_state_diagnostic(codes: Sequence[int]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-pee-operating-state-missing",
+        severity=Severity.WARNING,
+        category="Renewable parks",
+        title=f"Renewable parks without an operating state ({len(codes)})",
+        summary=(
+            "The listed renewable parks have generation but no "
+            "PEE-CONFIG-PER operating state. The conversion treats each as "
+            "not curtailable, so it always generates its declared value."
         ),
-        logger=_LOG,
+        table=DiagnosticTable(columns=["Code"], rows=[[code] for code in codes]),
+        remediation=(
+            "Declare a PEE-CONFIG-PER operating state in the renewable file "
+            "for each listed park whose generation may be curtailed."
+        ),
     )
 
 
@@ -656,8 +663,12 @@ def _all_series(
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
     renovaveis: Renovaveis | None,
-) -> list[_PqSeries]:
+) -> tuple[list[_PqSeries], list[Diagnostic]]:
+    """Every NCS series with the renewable parks' WARNINGs, which
+    :func:`convert_non_controllable_sources` alone raises, so each is raised
+    once though three converters read the series."""
     series = _pq_series(dadger, id_map, calendar)
-    if renovaveis is not None:
-        series += _pee_series(renovaveis, id_map, calendar, len(series))
-    return series
+    if renovaveis is None:
+        return series, []
+    parks, findings = _pee_series(renovaveis, id_map, calendar, len(series))
+    return [*series, *parks], findings

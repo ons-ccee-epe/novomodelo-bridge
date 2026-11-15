@@ -509,6 +509,7 @@ class TestCompareJson:
         assert doc["command"] == "compare newave"
         assert doc["status"] == "error"
         assert len(doc["diagnostics"]) == 1
+        assert doc["diagnostics"][0]["code"] == "novomodelo-output-unreadable"
         assert "bad parquet" in doc["diagnostics"][0]["summary"]
 
     def test_compare_results_partition_missing_exit_2_no_stdout(
@@ -516,10 +517,10 @@ class TestCompareJson:
     ) -> None:
         """Regression: NovomodeloPartitionMissingError (raised by
         read_novomodelo_bus_aggregates against a pre-0.13 / 0.13-incomplete
-        output dir lacking simulation/hydro_bus_generation/) extends
-        BridgeError -- a hierarchy disjoint from NovomodeloReadError
-        (RuntimeError). The compare newave CLI handler must catch it too,
-        rendering a clean ERROR line + exit 2, not an unhandled traceback.
+        output dir lacking simulation/hydro_bus_generation/) is not a
+        NovomodeloOutputError, unlike NovomodeloReadError. The compare newave
+        CLI handler must catch it too, rendering a clean ERROR line + exit 2,
+        not an unhandled traceback.
         This drives the REAL reader against a genuinely 0.13-incomplete
         output dir (simulation/hydros/ present, simulation/
         hydro_bus_generation/ absent), so the exception message is

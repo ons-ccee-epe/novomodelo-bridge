@@ -19,6 +19,9 @@ class TestExceptionHierarchy:
     def test_source_file_error_is_filenotfounderror(self) -> None:
         assert isinstance(SourceFileError("x"), FileNotFoundError)
 
+    def test_unsupported_source_error_is_valueerror(self) -> None:
+        assert isinstance(UnsupportedSourceError("x"), ValueError)
+
     def test_source_file_error_stores_location_attrs(self) -> None:
         exc = SourceFileError("caso.dat not found", path="/case", field="caso.dat")
         assert exc.path == "/case"
@@ -84,7 +87,6 @@ class TestDiagnosticFromException:
         )
         diag = diagnostic_from_exception(exc, context="Conversion")
         assert isinstance(exc, BridgeError)
-        assert isinstance(exc, ValueError)
         assert diag.code == "source-unsupported"
         assert diag.notes == ["file: confhd.dat", "field: INIC.HIST/FIM HIST"]
         assert diag.remediation is not None

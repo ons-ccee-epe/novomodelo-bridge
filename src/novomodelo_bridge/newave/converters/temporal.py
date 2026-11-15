@@ -853,7 +853,7 @@ def convert_history_years(
     plants = plants[plants["codigo_usina"].isin(id_map.all_hydro_codes)]
     blank = plants["ano_inicio_historico"].isna() | plants["ano_fim_historico"].isna()
     if blank.any():
-        emit(_blank_fit_window_diagnostic(plants[blank], first, last))
+        emit(_blank_fit_window_diagnostic(plants[blank], first, last), logger=logger)
         return None
 
     windows: dict[tuple[int, int], list[str]] = {}

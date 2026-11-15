@@ -33,6 +33,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.productivity import (
@@ -71,7 +72,12 @@ def read_hidr(path: Path) -> pd.DataFrame:
     """Read the hydro registry file, indexed by plant code."""
     df = Hidr.read(str(path)).cadastro
     if df is None or df.empty:
-        raise FileNotFoundError(f"{path} has no registry data")
+        raise FieldParseError(
+            f"{path.name} holds no hydro plant records -- the file is empty, "
+            "truncated, or not a hydro registry.",
+            path=str(path),
+            field=path.name,
+        )
     return df
 
 

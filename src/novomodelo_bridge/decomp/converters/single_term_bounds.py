@@ -17,6 +17,7 @@ dropping a bound.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.diagnostics import (
@@ -26,6 +27,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.tolerances import beyond_written_precision
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import sided_bounds
 from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
+_LOG = logging.getLogger(__name__)
 
 #: RHQ ``CQ.tipo`` flow -> novomodelo hydro bound axis, mirroring the reader's
 #: ``constraint_registers._BOUNDS_AXIS`` QDEF/QTUR/QDES/QVER entries. Keep the
@@ -59,59 +62,24 @@ _HQ_AXIS_BY_VARIABLE: dict[str, str] = {
 }
 
 
-@dataclasses.dataclass(frozen=True)
-class HydroCapacities:
-    """One hydro's name and declared ``generation`` envelope from ``hydros.json``.
-
-    ``max_generation_mw``/``max_turbined_m3s`` are read the same way novomodelo
-    rule 43 (``emission_checks.check_hydro_bounds_no_raising``) reads
-    ``hydros.json``'s ``generation`` block — the exact scalars a single-term
-    bound's upper-bound clamp compares against on each of the two rule-43-
-    guarded axes.
-    """
-
-    name: str
-    max_generation_mw: float
-    max_turbined_m3s: float
-
-
-#: Relative tolerance below which a source ceiling sitting above the declared
-#: capacity is treated as float-representation noise (~8x float32 epsilon). The
-#: bound is still clamped so novomodelo rule 43 holds, but no diagnostic is emitted:
-#: a float32 round-trip (e.g. an 11000 MW RE ceiling vs a 10999.998 MW declared
-#: capacity, ~1.4e-7 relative) is not a real cross-source inconsistency.
-_CLAMP_REPORT_REL_TOL = 1e-6
-
-
 def _clamp_upper_to_capacity(
     contributions: list[BoundContribution], cap: float
 ) -> tuple[list[BoundContribution], list[BoundContribution]]:
-    """Clamp every contribution's ``upper`` to *cap*, ``lower`` untouched.
+    """Clamp every unit-group contribution's ``upper`` to the group's declared
+    *cap*, ``lower`` untouched, since novomodelo rejects a group bound above it.
 
-    Shared by the RE ``generation`` clamp and the HQ ``QTUR``/``turbined``
-    clamp — both guard a novomodelo rule-43 axis the same way: a contribution
-    whose upper is already at or below *cap* passes through unchanged;
-    one above it is replaced (:func:`dataclasses.replace`) with *cap*.
-
-    A ceiling above *cap* is **always** clamped (novomodelo rule 43 rejects an
-    upper above the declared capacity beyond
-    :data:`~novomodelo_bridge.core.tolerances.RELATIVE_TOLERANCE`), but its original
-    contribution is only returned in the reported list — the caller's
-    diagnostic trigger — when it exceeds *cap* by more than
-    ``_CLAMP_REPORT_REL_TOL`` relative. So a genuine cross-source mismatch (a
-    looser nameplate vs. head-derated capacity, MW-scale) is surfaced while
-    float-representation noise clamps silently. Returns the clamped
-    contributions alongside those materially-lowered originals (empty when
-    nothing needed reporting).
+    Returns the clamped contributions and the originals whose ceiling sat past
+    the deck's written precision above *cap*
+    (:func:`~novomodelo_bridge.core.tolerances.beyond_written_precision`), the
+    ones the note reports; a ceiling nearer *cap* is clamped silently.
     """
-    report_threshold = cap * (1.0 + _CLAMP_REPORT_REL_TOL)
     clamped: list[BoundContribution] = []
     reported: list[BoundContribution] = []
     for contribution in contributions:
         if contribution.upper is None or contribution.upper <= cap:
             clamped.append(contribution)
             continue
-        if contribution.upper > report_threshold:
+        if beyond_written_precision(contribution.upper, cap):
             reported.append(contribution)
         clamped.append(dataclasses.replace(contribution, upper=cap))
     return clamped, reported
@@ -125,7 +93,7 @@ def _ceiling_clamp_row(
     cap: float,
 ) -> list[object]:
     """One ``[code, name, constraints, stages, deck ceiling, capacity]`` row of
-    a capacity-clamp table; the deck ceiling is the highest one clamped."""
+    the unit-group clamp table; the deck ceiling is the highest one clamped."""
     return [
         code,
         name,
@@ -136,20 +104,18 @@ def _ceiling_clamp_row(
     ]
 
 
-def _ceiling_clamp_diagnostic(
-    *, code: str, title: str, constraint_kind: str, unit: str, rows: list[list[object]]
-) -> Diagnostic:
-    """INFO for special-constraint ceilings above a declared capacity, capped
-    at it: the entity cannot exceed its capacity, so no result changes."""
+def _unit_group_clamp_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    """INFO for RE ceilings above a unit group's declared capacity, capped at
+    it: the group cannot exceed its capacity, so no result changes."""
     return Diagnostic(
-        code=code,
+        code="decomp-re-unit-group-generation-clamped",
         severity=Severity.INFO,
         category="Special constraints",
-        title=f"{title} ({len(rows)})",
+        title=f"RE ceilings above unit-group capacity capped ({len(rows)})",
         summary=(
-            f"The listed {constraint_kind} ceilings sit above the capacity "
-            "they bound and were capped at it. That capacity is already a hard "
-            "limit, so the cap leaves the results unchanged."
+            "The listed RE unit-group generation ceilings sit above the "
+            "capacity they bound and were capped at it. That capacity is "
+            "already a hard limit, so the cap leaves the results unchanged."
         ),
         table=DiagnosticTable(
             columns=[
@@ -157,8 +123,8 @@ def _ceiling_clamp_diagnostic(
                 "Name",
                 "Constraints",
                 "Stages",
-                f"Deck ceiling ({unit})",
-                f"Capacity ({unit})",
+                "Deck ceiling (MW)",
+                "Capacity (MW)",
             ],
             rows=rows,
             justify=["right", "left", "left", "left", "right", "right"],
@@ -219,46 +185,18 @@ def _re_generation_contributions(
     record: ConstraintRecord,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
-    hydro_capacities: Mapping[int, HydroCapacities],
-) -> tuple[list[BoundContribution], list[object] | None]:
+) -> list[BoundContribution]:
     """One RE single-hydro-generation constraint -> hydro ``generation`` bounds.
 
-    The RE ceiling and the plant's own declared ``max_generation_mw`` (in
-    *hydro_capacities*, keyed the same way novomodelo rule 43 —
-    ``emission_checks.check_hydro_bounds_no_raising`` — reads it from
-    ``hydros.json``) are two independent sources that can disagree: on both
-    real decks probed (a monthly and a weekly deck), BELO MONTE carries an
-    RE ceiling of 11000 MW above its own declared, head-derated capacity.
-    novomodelo rule 43 rejects any bound-table upper above an entity's declared
-    capacity, so every contribution's ``upper`` is clamped
-    (:func:`_clamp_upper_to_capacity`) to ``min(ceiling, capacity)`` — the
-    declared capacity is authoritative, and a looser RE ceiling becomes
-    non-binding, LP-neutral. Only ``upper`` is clamped; ``lower`` passes
-    through unchanged (rule 43 only guards a raised ceiling). Returns the
-    clamped contributions and, when the clamp changed at least one upper, the
-    record's row for the ``decomp-re-generation-clamped`` note.
+    The ceiling can sit above the plant's declared ``max_generation_mw``
+    (BELO MONTE's RE writes 11000 MW over 10999.9984 MW of units); the
+    pipeline holds the merged bound to that capacity afterwards
+    (:func:`~novomodelo_bridge.core.emission_checks.clamp_hydro_bounds_to_declared`).
     """
-    code = record.terms[0].code
-    hydro_id = id_map.hydro_id(code)
-    capacities = hydro_capacities[hydro_id]
-    contributions = _per_block_contributions(
+    hydro_id = id_map.hydro_id(record.terms[0].code)
+    return _per_block_contributions(
         record, "hydro", hydro_id, "generation", f"RE_{record.constraint_id}", calendar
     )
-    clamped, reported = _clamp_upper_to_capacity(
-        contributions, capacities.max_generation_mw
-    )
-    row = (
-        _ceiling_clamp_row(
-            code,
-            capacities.name,
-            [record.constraint_id],
-            reported,
-            capacities.max_generation_mw,
-        )
-        if reported
-        else None
-    )
-    return clamped, row
 
 
 def split_plant_group_contributions(
@@ -278,7 +216,7 @@ def split_plant_group_contributions(
     ``max_generation_mw`` in *group_capacities*, keyed ``(hydro_id,
     group_id)``, since novomodelo rejects a group bound above it; one
     ``decomp-re-unit-group-generation-clamped`` note names, by *plant_names*,
-    every group whose ceiling was capped.
+    every group whose ceiling was capped past the deck's written precision.
 
     Returns the contributions keyed by hydro id, because a group id is scoped
     within its plant.
@@ -334,15 +272,7 @@ def split_plant_group_contributions(
                 clamped.items()
             )
         ]
-        emit(
-            _ceiling_clamp_diagnostic(
-                code="decomp-re-unit-group-generation-clamped",
-                title="RE ceilings above unit-group capacity capped",
-                constraint_kind="RE unit-group generation",
-                unit="MW",
-                rows=rows,
-            )
-        )
+        emit(_unit_group_clamp_diagnostic(rows), logger=_LOG)
     return by_hydro
 
 
@@ -365,13 +295,13 @@ def _ft_thermal_contributions(
     thermal ``codigo_usina`` (an ``FT`` term), so it resolves via
     ``id_map.thermal_id`` rather than ``id_map.hydro_id``.
 
-    Unlike the hydro path, this does **not** clamp its ``upper`` to a
-    declared thermal capacity: both real decks probed (rv3 and
-    decomp-set-24-rv0) carry zero ``RE``->``thermal_generation`` records —
-    ``FT`` never appears as a single-term-bound RE term on either — so there
-    is no real ceiling-above-capacity case to clamp, and adding one here
-    would be speculative code with nothing to exercise it. Revisit if a
-    future deck is found to declare one.
+    Unlike a hydro ceiling, a thermal one is not held to a declared capacity:
+    both real decks probed (rv3 and decomp-set-24-rv0) carry zero
+    ``RE``->``thermal_generation`` records — ``FT`` never appears as a
+    single-term-bound RE term on either — so there is no real
+    ceiling-above-capacity case to clamp, and adding one would be speculative
+    code with nothing to exercise it. Revisit if a future deck is found to
+    declare one.
     """
     thermal_id = id_map.thermal_id(record.terms[0].code)
     return _per_block_contributions(
@@ -388,8 +318,7 @@ def _hq_flow_contributions(
     record: ConstraintRecord,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
-    hydro_capacities: Mapping[int, HydroCapacities],
-) -> tuple[list[BoundContribution], list[object] | None]:
+) -> list[BoundContribution]:
     """One RHQ single-flow constraint -> a hydro flow-band bound.
 
     Routes by ``_HQ_AXIS_BY_VARIABLE[term.variable]``: ``QDEF`` lowers to
@@ -397,48 +326,20 @@ def _hq_flow_contributions(
     ``diversion``, and ``QVER`` (spilled flow) to ``spillage`` — a family-
     agnostic dict lookup, not a hardcoded branch, so a QDEF and a QDES
     constraint (or any other pair of these four) on the same plant land on
-    different axes and both survive (the accumulator keys on axis).
-
-    ``QTUR``'s emitted ``turbined`` upper is clamped
-    (:func:`_clamp_upper_to_capacity`) to the plant's declared
-    ``max_turbined_m3s`` (in *hydro_capacities*) — mirroring
-    :func:`_re_generation_contributions`'s ``max_generation_mw`` clamp for
-    the identical reason: ``max_turbined_m3s`` is head-derated too, so a
-    source ceiling can exceed it just as an RE ceiling can exceed
-    ``max_generation_mw`` (rv3's hydro 17 sits 0.1% below its own declared
-    value — close enough that a slightly looser source ceiling would trip
-    novomodelo rule 43, which guards both columns). Only ``QTUR``/``turbined`` is
-    clamped: ``QDEF``/``QDES``/``QVER`` (outflow/diversion/spillage) are not
-    rule-43 axes, so they pass through :func:`_per_block_contributions`
-    unmodified. Returns the contributions and, when the clamp changed at least
-    one upper, the record's row for the ``decomp-qtur-turbined-clamped``
-    note.
+    different axes and both survive (the accumulator keys on axis). Like an
+    RE ceiling, a ``QTUR`` ceiling above the plant's declared
+    ``max_turbined_m3s`` is held to it after the merge.
     """
     term = record.terms[0]
-    axis = _HQ_AXIS_BY_VARIABLE[term.variable]
     hydro_id = id_map.hydro_id(term.code)
-    contributions = _per_block_contributions(
-        record, "hydro", hydro_id, axis, f"HQ_{record.constraint_id}", calendar
+    return _per_block_contributions(
+        record,
+        "hydro",
+        hydro_id,
+        _HQ_AXIS_BY_VARIABLE[term.variable],
+        f"HQ_{record.constraint_id}",
+        calendar,
     )
-    if axis != "turbined":
-        return contributions, None
-
-    capacities = hydro_capacities[hydro_id]
-    clamped, reported = _clamp_upper_to_capacity(
-        contributions, capacities.max_turbined_m3s
-    )
-    row = (
-        _ceiling_clamp_row(
-            term.code,
-            capacities.name,
-            [record.constraint_id],
-            reported,
-            capacities.max_turbined_m3s,
-        )
-        if reported
-        else None
-    )
-    return clamped, row
 
 
 def _qbom_pumping_contributions(
@@ -527,7 +428,6 @@ def single_term_bound_contributions(
     census: ConstraintCensus,
     pumping_station_ids: Mapping[int, int],
     effective: EffectiveCadastro,
-    hydro_capacities: Mapping[int, HydroCapacities],
 ) -> list[BoundContribution]:
     """Lower every ``census.to_bounds`` record to its entity bound contributions.
 
@@ -548,24 +448,14 @@ def single_term_bound_contributions(
     *pumping_station_ids* feeds only the ``HQ`` ``QBOM`` path — required, not
     defaulted, so a forgotten wiring fails loud instead of silently dropping
     every QBOM bound; *effective* feeds only the ``HV`` handler's per-stage
-    floor and cadastro guard; *hydro_capacities* feeds the ``FU``/
-    ``generation`` RE path's ``max_generation_mw`` clamp (see
-    :func:`_re_generation_contributions`) and the ``HQ``/``QTUR``/
-    ``turbined`` path's ``max_turbined_m3s`` clamp (see
-    :func:`_hq_flow_contributions`) — both novomodelo rule-43-guarded axes, both
-    required-not-defaulted for the same fail-loud reason: a hydro id the map
-    does not cover is a wiring bug, not a data gap, so it raises ``KeyError``
-    rather than skipping the clamp. Neither the ``QDEF``/``QDES``/``QVER``
-    HQ paths nor the ``FT``/``thermal_generation`` RE path read it.
+    floor and cadastro guard.
 
     Raises
     ------
     KeyError
         Propagated from ``id_map.hydro_id``/``id_map.thermal_id`` when an
         RE/HQ/HV term names a code the id map does not know (a real
-        reader/id-map mismatch), or from *hydro_capacities* when it has no
-        entry for a hydro id the id map just resolved (a wiring mismatch
-        between the two maps' sources).
+        reader/id-map mismatch).
     ValueError
         When a ``to_bounds`` record carries a family other than ``"RE"``/
         ``"HQ"``/``"HV"``, or an ``"RE"`` record whose single term's variable
@@ -573,20 +463,15 @@ def single_term_bound_contributions(
     """
     calendar = case.calendar
     contributions: list[BoundContribution] = []
-    re_clamp_rows: list[list[object]] = []
-    qtur_clamp_rows: list[list[object]] = []
     for record in census.to_bounds:
         if _is_frequency_tagged_generation(record):
             continue
         if record.family == "RE":
             variable = record.terms[0].variable
             if variable == "generation":
-                generation, row = _re_generation_contributions(
-                    record, id_map, calendar, hydro_capacities
+                contributions.extend(
+                    _re_generation_contributions(record, id_map, calendar)
                 )
-                contributions.extend(generation)
-                if row is not None:
-                    re_clamp_rows.append(row)
             elif variable == "thermal_generation":
                 contributions.extend(
                     _ft_thermal_contributions(record, id_map, calendar)
@@ -602,12 +487,7 @@ def single_term_bound_contributions(
                     _qbom_pumping_contributions(record, pumping_station_ids, calendar)
                 )
             else:
-                flow, row = _hq_flow_contributions(
-                    record, id_map, calendar, hydro_capacities
-                )
-                contributions.extend(flow)
-                if row is not None:
-                    qtur_clamp_rows.append(row)
+                contributions.extend(_hq_flow_contributions(record, id_map, calendar))
         elif record.family == "HV":
             contributions.extend(
                 _hv_storage_contributions(record, id_map, calendar, effective)
@@ -616,24 +496,4 @@ def single_term_bound_contributions(
             raise ValueError(
                 f"single_term_bound_contributions: unhandled family {record.family!r}"
             )
-    if re_clamp_rows:
-        emit(
-            _ceiling_clamp_diagnostic(
-                code="decomp-re-generation-clamped",
-                title="RE ceilings above plant capacity capped",
-                constraint_kind="RE generation",
-                unit="MW",
-                rows=re_clamp_rows,
-            )
-        )
-    if qtur_clamp_rows:
-        emit(
-            _ceiling_clamp_diagnostic(
-                code="decomp-qtur-turbined-clamped",
-                title="QTUR ceilings above turbined-flow capacity capped",
-                constraint_kind="QTUR turbined-flow",
-                unit="m³/s",
-                rows=qtur_clamp_rows,
-            )
-        )
     return contributions

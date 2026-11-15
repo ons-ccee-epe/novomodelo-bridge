@@ -142,13 +142,13 @@ def _export_dessem(
 
     The cuts of the first cut-building node carry each GNL plant's coefficient
     for the delivery of the case's second stage, in R$/MWh and the same on
-    every load block, and mapcut record 9 carries that stage's load-block
+    every load block, and mapcut register 9 carries that stage's load-block
     hours. The policy's other GNL coefficients are left out and counted in the
     export notes. A plant with no coefficient for that delivery, or a
     coefficient of exactly zero, gets 0.0 and a warning. Each stage's mapcut
-    record 10 also carries the cost of the GNL generation committed before the
-    study, from the case's initial_conditions.json, in 10³ R$. Every export
-    warns that mapcut's physical records and record 10's other cost parcels
+    register 10 also carries the cost of the GNL generation committed before
+    the study, from the case's initial_conditions.json, in 10³ R$. Every export
+    warns that mapcut's physical records and register 10's other cost parcels
     are written as zeros.
     """
     _configure_logging(verbose, log_file)

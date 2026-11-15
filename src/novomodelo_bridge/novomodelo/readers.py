@@ -19,11 +19,17 @@ treat as required — the source model's ``newave_readers`` instead
 degrades every present-but-unparseable input to a typed-empty frame, a
 genuine behaviour difference (see that module's docstring). Every
 partition and system JSON this module reads is an optional input. A
-present-but-unparseable system JSON that only names or describes entities
-(lines, thermals, buses, the hydro metadata) or the run's training
+present-but-unparseable system JSON that lists entities (lines, hydro
+plants, thermal plants, non-controllable sources, buses), the case's
+``constraints/generic_constraints.json``, or the run's training
 ``metadata.json`` degrades to an empty result with a
-``report-file-unreadable`` warning, since the report can go on without those
-labels; every other present-but-corrupt parquet or JSON raises.
+``report-file-unreadable`` warning whose effect is the same from every reader
+of the file, since the report can go on without them; each of those entity
+lists has one loader, built on :func:`_read_entity_list` under a public
+``read_novomodelo_<file>`` name, that every degrading reader goes through.
+The thermal and non-controllable-source bus maps of
+:func:`read_novomodelo_bus_aggregates`, and every other present-but-corrupt
+parquet or JSON, raise.
 """
 
 from __future__ import annotations
@@ -44,14 +50,21 @@ from novomodelo_bridge.core.diagnostics import (
     report_file_missing_diagnostic,
     report_file_unreadable_diagnostic,
 )
-from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.errors import (
+    NovomodeloOutputError,
+    NovomodeloPartitionMissingError,
+)
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.tolerances import BIG_M
 from novomodelo_bridge.novomodelo.case_io import (
     case_dir_for,
     resolve_hydro_productivities,
 )
-from novomodelo_bridge.novomodelo.constraint_expr import BLOCK_HOURS_SCHEMA
+from novomodelo_bridge.novomodelo.constraint_expr import (
+    BLOCK_HOURS_SCHEMA,
+    ResolvedGenericConstraints,
+    resolve_generic_constraints,
+)
 from novomodelo_bridge.novomodelo.cost_categories import (
     NOVOMODELO_COST_COMPONENT_COLUMNS,
 )
@@ -66,12 +79,23 @@ _LOG = logging.getLogger(__name__)
 #: found, so ..."`` and ``"<file> could not be read, so ..."``; every reader
 #: of the file passes the same one, so its finding is reported once.
 _HYDROS_EFFECT = (
-    "the report shows the hydro plants without their names and cadastro data."
+    "the report shows the hydro plants without their names and cadastro data, "
+    "leaves out the results it matches, places or classifies by plant, and "
+    "counts each plant's minimum storage as zero in the generic constraints' "
+    "bounds."
+)
+_THERMALS_EFFECT = (
+    "the report shows the thermal plants without their names and leaves out "
+    "the results it matches or places by plant."
+)
+_NON_CONTROLLABLE_SOURCES_EFFECT = (
+    "the report shows the non-controllable sources without their names and "
+    "leaves their generation out of the generation by bus."
 )
 _BUSES_EFFECT = "the report shows the buses without their names."
 
 
-class NovomodeloReadError(RuntimeError):
+class NovomodeloReadError(NovomodeloOutputError):
     """A Novomodelo output file/dir existed but could not be read or parsed.
 
     Raised when a reader fails while reading an *already-confirmed-present*
@@ -246,6 +270,51 @@ def read_novomodelo_generic_constraint_echo(
         return pl.read_parquet(path)
     except Exception as exc:
         raise NovomodeloReadError(f"Failed to read {path}") from exc
+
+
+def read_novomodelo_generic_constraints(novomodelo_case_dir: Path) -> list[dict]:
+    """``constraints/generic_constraints.json``'s constraints, by
+    :func:`_read_entity_list`'s contract; an absent file is a case without
+    generic constraints.
+
+    The objects are sense-free (no ``sense`` key): a label's direction comes
+    from the bounds' endpoints (see
+    :func:`novomodelo_bridge.core.generic_constraint_format.shape_from_bounds`).
+    """
+    path = novomodelo_case_dir / "constraints" / "generic_constraints.json"
+    if not path.exists():
+        return []
+    return _read_entity_list(
+        path,
+        "constraints/generic_constraints.json",
+        "the report leaves out the generic constraints.",
+        key="constraints",
+        entity=("constraint", "constraints"),
+    )
+
+
+def read_novomodelo_resolved_generic_constraints(
+    novomodelo_case_dir: Path, novomodelo_output_dir: Path
+) -> ResolvedGenericConstraints:
+    """The case's generic constraints with the coefficients and bounds novomodelo built.
+
+    See :func:`novomodelo_bridge.novomodelo.constraint_expr.resolve_generic_constraints`;
+    terms and bounds are empty when the run wrote no
+    ``generic_constraints/resolved_echo.parquet``, which is read only when
+    the case has generic constraints.
+    """
+    min_storage = {
+        hid: float(meta.get("min_storage_hm3") or 0.0)
+        for hid, meta in read_novomodelo_hydro_metadata(novomodelo_output_dir).items()
+    }
+    constraints = read_novomodelo_generic_constraints(novomodelo_case_dir)
+    return resolve_generic_constraints(
+        constraints,
+        read_novomodelo_generic_constraint_echo(novomodelo_output_dir)
+        if constraints
+        else None,
+        min_storage,
+    )
 
 
 def scan_simulation_entity(
@@ -599,7 +668,7 @@ def read_novomodelo_hydro_total_flows(
     -------
     pl.DataFrame
         Columns ``entity_id``, ``stage_id``, ``total_inflow_m3s``.
-        Empty when ``hydros.json`` is missing, or, with a
+        Empty when :func:`read_novomodelo_hydros` yields no plant, or, with a
         ``report-file-unreadable`` warning, when the simulation output lacks
         either component column.
     """
@@ -625,23 +694,13 @@ def read_novomodelo_hydro_total_flows(
         )
         return empty
 
-    case_dir = case_dir_for(novomodelo_output_dir)
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        hydros_path = case_dir / "system" / "hydros.json"
-    if not hydros_path.exists():
+    hydros = read_novomodelo_hydros(novomodelo_output_dir)
+    if not hydros:
         return empty
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            hydros_data = json.load(f)
-    except Exception as exc:
-        raise NovomodeloReadError(
-            f"Failed to parse hydros.json for total-inflow topology: {hydros_path}"
-        ) from exc
 
     # parents[child_id] = list of hydro_ids whose downstream_id == child_id.
     parents: dict[int, list[int]] = {}
-    for h in hydros_data.get("hydros", []):
+    for h in hydros:
         ds = h.get("downstream_id")
         if ds is None:
             continue
@@ -692,21 +751,10 @@ def _load_hydro_reservoir_flag(novomodelo_output_dir: Path) -> dict[int, bool]:
     The discriminator mirrors the dashboard convention (reservoir = any
     plant with positive max storage; run-of-river otherwise).
     """
-    case_dir = case_dir_for(novomodelo_output_dir)
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        hydros_path = case_dir / "system" / "hydros.json"
-    if not hydros_path.exists():
-        return {}
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return {}
     out: dict[int, bool] = {}
-    for h in data.get("hydros", []):
-        max_stor = h.get("reservoir", {}).get("max_storage_hm3", 0) or 0
-        out[int(h["id"])] = max_stor > 0
+    for h in read_novomodelo_hydros(novomodelo_output_dir):
+        max_stor = (h.get("reservoir") or {}).get("max_storage_hm3", 0) or 0
+        out[h["id"]] = max_stor > 0
     return out
 
 
@@ -2176,27 +2224,18 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
     break visibly (``KeyError``) instead of silently degrading to an empty
     bus map.
     """
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        _emit_system_json_missing(novomodelo_output_dir, "hydros.json", _HYDROS_EFFECT)
+    hydros_path, hydros = _read_hydros_json(novomodelo_output_dir)
+    if hydros_path is None or not hydros:
         return {}
 
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        _emit_system_json_unreadable(hydros_path, _HYDROS_EFFECT, exc)
-        return {}
-
-    case_dir = hydros_path.parent.parent
     # Productivity resolution is shared with the dashboard via the single
     # canonical cascade in novomodelo_io so the two products never report a
     # different ρ for the same plant (see resolve_hydro_productivities).
-    productivities = resolve_hydro_productivities(case_dir, data.get("hydros", []))
+    productivities = resolve_hydro_productivities(hydros_path.parent.parent, hydros)
 
     result: dict[int, dict] = {}
-    for hydro in data.get("hydros", []):
-        entity_id = int(hydro["id"])
+    for hydro in hydros:
+        entity_id = hydro["id"]
         name = str(hydro.get("name", f"hydro_{entity_id}"))
 
         prod = productivities.get(entity_id)
@@ -2346,26 +2385,15 @@ def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int
 
     Returns ``{hydro_id: {"name", "specific_productivity", "tailwater_m", "losses_m",
     "vmin_hm3", "vmax_hm3"}}``; per-field values are ``None`` when absent.  Returns an
-    empty dict when ``hydros.json`` cannot be located.  (The
+    empty dict when :func:`read_novomodelo_hydros` yields no plant.  (The
     point/equivalent/accumulated productivities are *not* read from Novomodelo here — the
     Productivity-tab scatters validate the conversion against what novomodelo-bridge computes
     from the source model inputs, and the realized per-stage productivity comes from the
     simulation generation/turbined comparison rows.)
     """
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        _emit_system_json_missing(novomodelo_output_dir, "hydros.json", _HYDROS_EFFECT)
-        return {}
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        _emit_system_json_unreadable(hydros_path, _HYDROS_EFFECT, exc)
-        return {}
-
     result: dict[int, dict] = {}
-    for hydro in data.get("hydros", []):
-        hid = int(hydro["id"])
+    for hydro in read_novomodelo_hydros(novomodelo_output_dir):
+        hid = hydro["id"]
 
         tailrace = hydro.get("tailrace") or {}
         coeffs = tailrace.get("coefficients") or []
@@ -2425,13 +2453,59 @@ def _missing_columns(required: Iterable[str], present: Iterable[str]) -> str:
     return f"no {', '.join(missing[:-1])} or {missing[-1]} columns"
 
 
-def _emit_system_json_unreadable(
-    path: Path, effect: str, reason: Exception | str
-) -> None:
-    """Warn that the ``system/`` JSON at *path* could not be parsed."""
-    emit(
-        report_file_unreadable_diagnostic(f"system/{path.name}", path, effect, reason),
-        logger=_LOG,
+def _read_entity_list(
+    path: Path, label: str, effect: str, *, key: str, entity: tuple[str, str]
+) -> list[dict]:
+    """The entries under *key* of the JSON object at *path*, shown as *label*.
+
+    A missing *key* is an empty list. A file that does not parse, holds no
+    list under *key*, or has an entry without an integer ``id`` yields ``[]``
+    with a ``report-file-unreadable`` warning naming *effect*; *entity* is the
+    singular and plural noun of one entry, for the warning's reason.
+    """
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        reason: Exception | str = exc
+    else:
+        singular, plural = entity
+        entries = data.get(key, []) if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            reason = f"no list of {plural}"
+        elif not all(isinstance(e, dict) and type(e.get("id")) is int for e in entries):
+            reason = f"a {singular} without an id"
+        else:
+            return entries
+    emit(report_file_unreadable_diagnostic(label, path, effect, reason), logger=_LOG)
+    return []
+
+
+def _read_system_list(
+    novomodelo_output_dir: Path,
+    filename: str,
+    effect: str,
+    *,
+    entity: tuple[str, str],
+    absence_is_finding: bool,
+) -> tuple[Path | None, list[dict]]:
+    """The entity list of ``system/<filename>``, under the key named for the
+    file, and the path it was read from.
+
+    Resolved by :func:`_find_system_json`, so every reader of the file reads
+    the same one, and read by :func:`_read_entity_list`. An absent file
+    yields ``[]``, with a ``report-file-missing`` note when
+    *absence_is_finding*.
+    """
+    path = _find_system_json(novomodelo_output_dir, filename)
+    if path is None:
+        if absence_is_finding:
+            _emit_system_json_missing(novomodelo_output_dir, filename, effect)
+        else:
+            _LOG.debug("no system/%s near %s", filename, novomodelo_output_dir)
+        return None, []
+    return path, _read_entity_list(
+        path, f"system/{filename}", effect, key=path.stem, entity=entity
     )
 
 
@@ -2444,84 +2518,98 @@ _LINES_UNREADABLE_EFFECT = (
 
 
 def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
-    """Read ``system/lines.json`` and return its ``"lines"`` list.
+    """``system/lines.json``'s lines, by :func:`_read_system_list`'s contract.
 
-    Resolves the file via :func:`_find_system_json`'s candidate search
-    (``case_dir_for(novomodelo_output_dir)`` -> ``novomodelo_output_dir`` -> its
-    parent), so every caller -- the compare context, the dashboard, the
-    DECOMP corridor-alignment index -- resolves the same file. Returns
-    ``[]`` when the file, or its ``"lines"`` key, is absent, as for a case
-    without lines. A present ``lines.json`` that does not parse, or holds no
-    list of lines, also returns ``[]``, with a ``report-file-unreadable``
-    warning.
+    An absent file is a case without lines, so it is no finding.
     """
-    path = _find_system_json(novomodelo_output_dir, "lines.json")
-    if path is None:
-        _LOG.debug("no system/lines.json near %s", novomodelo_output_dir)
-        return []
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as exc:
-        _emit_system_json_unreadable(path, _LINES_UNREADABLE_EFFECT, exc)
-        return []
-    lines = data.get("lines", []) if isinstance(data, dict) else None
-    if not isinstance(lines, list):
-        _emit_system_json_unreadable(path, _LINES_UNREADABLE_EFFECT, "no list of lines")
-        return []
-    return lines
+    return _read_system_list(
+        novomodelo_output_dir,
+        "lines.json",
+        _LINES_UNREADABLE_EFFECT,
+        entity=("line", "lines"),
+        absence_is_finding=False,
+    )[1]
+
+
+def _read_hydros_json(novomodelo_output_dir: Path) -> tuple[Path | None, list[dict]]:
+    """``system/hydros.json``'s plants and path, by :func:`_read_system_list`'s
+    contract; the conversion always writes the file, so its absence is noted."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "hydros.json",
+        _HYDROS_EFFECT,
+        entity=("hydro plant", "hydro plants"),
+        absence_is_finding=True,
+    )
+
+
+def read_novomodelo_hydros(novomodelo_output_dir: Path) -> list[dict]:
+    """``system/hydros.json``'s hydro plants: the one way any report reads the
+    file, so a missing or unreadable file is one finding with one effect."""
+    return _read_hydros_json(novomodelo_output_dir)[1]
+
+
+def read_novomodelo_thermals(novomodelo_output_dir: Path) -> list[dict]:
+    """``system/thermals.json``'s thermal plants, by :func:`_read_system_list`'s
+    contract; an absent file is a case without thermal plants."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "thermals.json",
+        _THERMALS_EFFECT,
+        entity=("thermal plant", "thermal plants"),
+        absence_is_finding=False,
+    )[1]
+
+
+def read_novomodelo_non_controllable_sources(
+    novomodelo_output_dir: Path,
+) -> list[dict]:
+    """``system/non_controllable_sources.json``'s sources, by
+    :func:`_read_system_list`'s contract; an absent file is a case without
+    them."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "non_controllable_sources.json",
+        _NON_CONTROLLABLE_SOURCES_EFFECT,
+        entity=("non-controllable source", "non-controllable sources"),
+        absence_is_finding=False,
+    )[1]
+
+
+def read_novomodelo_buses(novomodelo_output_dir: Path) -> list[dict]:
+    """``system/buses.json``'s buses, by :func:`_read_system_list`'s contract;
+    the conversion always writes the file, so its absence is noted."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "buses.json",
+        _BUSES_EFFECT,
+        entity=("bus", "buses"),
+        absence_is_finding=True,
+    )[1]
 
 
 def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
-    """Read thermal metadata from Novomodelo thermals.json.
-
-    Returns ``{entity_id: {"name": str}}``.
-    """
-    path = _find_system_json(novomodelo_output_dir, "thermals.json")
-    if path is None:
-        _LOG.debug("no system/thermals.json near %s", novomodelo_output_dir)
-        return {}
-
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as exc:
-        _emit_system_json_unreadable(
-            path, "the report shows the thermal plants without their names.", exc
-        )
-        return {}
-
+    """``{thermal id: {"name": str}}`` from :func:`read_novomodelo_thermals`."""
     return {
-        int(t["id"]): {"name": str(t.get("name", f"thermal_{t['id']}"))}
-        for t in data.get("thermals", [])
+        t["id"]: {"name": str(t.get("name", f"thermal_{t['id']}"))}
+        for t in read_novomodelo_thermals(novomodelo_output_dir)
     }
 
 
 def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
-    """Read bus metadata from Novomodelo buses.json.
-
-    Returns ``{entity_id: {"name": str, "has_load": bool}}``, with
-    ``has_load`` from :func:`read_novomodelo_load_bus_ids`.
-    """
-    path = _find_system_json(novomodelo_output_dir, "buses.json")
-    if path is None:
-        _emit_system_json_missing(novomodelo_output_dir, "buses.json", _BUSES_EFFECT)
+    """``{bus id: {"name": str, "has_load": bool}}`` from
+    :func:`read_novomodelo_buses`, with ``has_load`` from
+    :func:`read_novomodelo_load_bus_ids`."""
+    buses = read_novomodelo_buses(novomodelo_output_dir)
+    if not buses:
         return {}
-
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as exc:
-        _emit_system_json_unreadable(path, _BUSES_EFFECT, exc)
-        return {}
-
     load_bus_ids = read_novomodelo_load_bus_ids(novomodelo_output_dir)
     return {
-        int(b["id"]): {
+        b["id"]: {
             "name": str(b.get("name", f"bus_{b['id']}")),
-            "has_load": int(b["id"]) in load_bus_ids,
+            "has_load": b["id"] in load_bus_ids,
         }
-        for b in data.get("buses", [])
+        for b in buses
     }
 
 

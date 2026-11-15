@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from contextlib import ExitStack
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
 from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
@@ -411,6 +413,7 @@ def _run_libs_pipeline(
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
         ),
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.ct_submarkets": {},
         "novomodelo_bridge.decomp.pipeline"
         ".constraint_registers.detect_unconverted_rha": None,
         "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
@@ -550,6 +553,27 @@ class TestLibsElectricalPipelineWiring:
         assert counts["Left out: undeclared name"] == 0
 
         assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics_out}
+
+    def test_a_malformed_formula_is_a_field_parse_error_on_the_libs_file(
+        self, tmp_path: Path
+    ) -> None:
+        libs_file = Path("unused/lib_restricao-eletrica-especial.csv")
+        restriction = replace(_cap_restriction(603, plant_code=1, cap=500.0), lhs="(")
+        model = replace(_libs_model(), restrictions={603: restriction})
+
+        with pytest.raises(
+            FieldParseError, match="restriction 603 is malformed"
+        ) as err:
+            _run_libs_pipeline(
+                tmp_path,
+                libs_restricao_eletrica=libs_file,
+                libs_electrical_model=model,
+            )
+
+        assert err.value.path == str(libs_file)
+        assert err.value.field == "RESTRICAO-ELETRICA-INEQUACAO"
+        diagnostic = diagnostic_from_exception(err.value, context="convert")
+        assert diagnostic.code == "source-field-parse"
 
     # ---------------------------------------------------------------------------
     # _gnl_thermal_codes -- which LIBs ger_usit codes are commanded GNL data

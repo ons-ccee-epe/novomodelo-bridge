@@ -17,22 +17,32 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.electrical_expression import (
+    SE_TOKEN,
     AssembledBound,
     DataContext,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    term_text,
+)
+from novomodelo_bridge.core.errors import (
+    FieldParseError,
+    UnsupportedSourceError,
+    diagnostic_from_exception,
 )
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     soft_slack,
 )
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.decomp.converters.constraints import Unresolved
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     AvailablePower,
     ElectricalRestriction,
     LibsElectricalModel,
+    PeriodPatamarOverride,
     ViolationTreatment,
     _UnresolvableBucketBTerm,
+    evaluate_se,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical_emit import (
     LibsElectricalResult,
@@ -45,6 +55,8 @@ from novomodelo_bridge.decomp.converters.ncs import _pee_series, build_pee_ncs_i
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
+
+_LIBS = Path("deck/lib_restricao-eletrica-especial.csv")
 
 # ---------------------------------------------------------------------------
 # _novomodelo_token — one bucket-A token kind at a time
@@ -103,12 +115,20 @@ def test_novomodelo_token_ener_interc_reverse_orientation() -> None:
     assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_reverse(5)"
 
 
-def test_novomodelo_token_ener_interc_no_line_is_unresolved() -> None:
+def test_novomodelo_token_ener_interc_no_line_leaves_the_term_out() -> None:
+    """SE and S are SB submarkets no line joins, so no flow runs between
+    them in DECOMP either."""
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2))
-    assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ener_interc(1, 2)", "line")
+    token = _novomodelo_token(term, id_map, {}, {}, {})
+
+    assert token == Unresolved(
+        "decomp-electrical-term-interchange-no-line",
+        ("ener_interc(1, 2)",),
+        OutsideTerm.NO_LINE,
     )
+    assert isinstance(token, Unresolved)
+    assert not token.drops_constraint
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +188,9 @@ def test_novomodelo_token_ener_interc_unknown_code_no_transshipment_line_drops()
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(6, 1))
     assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ener_interc(6, 1)", "line")
+        "decomp-electrical-bucket-a-unresolved",
+        ("ener_interc(6, 1)", "line"),
+        OutsideTerm.ABSENT,
     )
 
 
@@ -184,7 +206,9 @@ def test_novomodelo_token_ger_usih_outside_the_case_is_unresolved() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     term = ParsedTerm(coefficient=1.0, token="ger_usih", args=(999,))
     assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ger_usih(999)", "hydro plant")
+        "decomp-electrical-bucket-a-unresolved",
+        ("ger_usih(999)", "hydro plant"),
+        OutsideTerm.ABSENT,
     )
 
 
@@ -225,7 +249,7 @@ def test_build_electrical_expression_all_token_kinds_exact_string() -> None:
         upper=None,
     )
     result = build_electrical_expression(
-        assembled, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map
+        assembled, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map, []
     )
     assert result == (
         "hydro_generation(0) + thermal_generation(0) + "
@@ -247,9 +271,116 @@ def test_build_electrical_expression_unresolved_token_drops_whole_expression() -
         lower=None,
         upper=100.0,
     )
-    assert build_electrical_expression(assembled, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ger_usih(999)", "hydro plant")
+    assert build_electrical_expression(assembled, id_map, {}, {}, {}, []) == Unresolved(
+        "decomp-electrical-bucket-a-unresolved",
+        ("ger_usih(999)", "hydro plant"),
+        OutsideTerm.ABSENT,
     )
+
+
+_COUPLING_ONLY_MAP = DecompIdMap(
+    bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,), coupling_only_codes=(46,)
+)
+
+
+@pytest.mark.parametrize(
+    "term",
+    [
+        ParsedTerm(coefficient=1.0, token="ger_usih", args=(46,)),
+        ParsedTerm(coefficient=1.0, token="ger_conjh", args=(46, 1)),
+    ],
+)
+def test_novomodelo_token_on_a_coupling_only_plant_leaves_the_term_out(
+    term: ParsedTerm,
+) -> None:
+    token = _novomodelo_token(term, _COUPLING_ONLY_MAP, {}, {}, {})
+
+    assert token == Unresolved(
+        "decomp-electrical-term-coupling-only-plant",
+        (term_text(term),),
+        OutsideTerm.NOT_GENERATING,
+    )
+    assert isinstance(token, Unresolved)
+    assert not token.drops_constraint
+
+
+def test_build_electrical_expression_leaves_a_coupling_only_plant_out() -> None:
+    """Plant 46's UH record gives no initial volume, so DECOMP does not
+    operate it and its term adds nothing: the rest of the sum is kept."""
+    on_46 = ParsedTerm(coefficient=2.0, token="ger_usih", args=(46,))
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(66,)), on_46),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _COUPLING_ONLY_MAP, {}, {}, {}, left_out
+    )
+
+    assert expression == "hydro_generation(0)"
+    assert [u.cells for u in left_out] == [(term_text(on_46),)]
+
+
+_TWO_SUBMARKETS = DecompIdMap(
+    bus_codes=(1, 2), bus_names=("SE", "S"), hydro_codes=(66,)
+)
+
+
+def test_build_electrical_expression_leaves_an_interchange_on_no_line_out() -> None:
+    on_no_line = ParsedTerm(coefficient=-1.0, token="ener_interc", args=(1, 2))
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(66,)), on_no_line),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _TWO_SUBMARKETS, {}, {}, {}, left_out
+    )
+
+    assert expression == "hydro_generation(0)"
+    assert [(u.code, u.cells) for u in left_out] == [
+        ("decomp-electrical-term-interchange-no-line", (term_text(on_no_line),))
+    ]
+
+
+def test_a_sum_only_on_interchanges_without_a_line_is_unresolved() -> None:
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2)),),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _TWO_SUBMARKETS, {}, {}, {}, left_out
+    )
+
+    assert expression == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ener_interc(1, 2)", "line")
+    )
+    assert left_out == []
+
+
+def test_a_sum_only_on_coupling_only_plants_is_unresolved() -> None:
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(46,)),),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _COUPLING_ONLY_MAP, {}, {}, {}, left_out
+    )
+
+    assert expression == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ger_usih(46)", "hydro plant")
+    )
+    assert left_out == []
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +504,7 @@ def test_build_pee_ncs_id_map_sorted_offset_matches_pee_series() -> None:
     ncs_map = build_pee_ncs_id_map(case, id_map)
     assert ncs_map == {3: 2, 7: 3}
 
-    series = _pee_series(renovaveis, id_map, calendar, first_ncs_id=2)
+    series, _ = _pee_series(renovaveis, id_map, calendar, first_ncs_id=2)
     assert [s.ncs_id for s in series] == [ncs_map[3], ncs_map[7]]
     assert series[0].name.startswith("PARK3")
     assert series[1].name.startswith("PARK7")
@@ -405,7 +536,7 @@ def test_build_pee_ncs_id_map_deterministic_card_matches_pee_series() -> None:
     ncs_map = build_pee_ncs_id_map(case, id_map)
     assert ncs_map == {6: 1, 9: 2}
 
-    series = _pee_series(renovaveis, id_map, calendar, first_ncs_id=1)
+    series, _ = _pee_series(renovaveis, id_map, calendar, first_ncs_id=1)
     assert [s.ncs_id for s in series] == [ncs_map[6], ncs_map[9]]
 
 
@@ -546,6 +677,7 @@ def test_emit_reserve_a1_end_to_end_generation_cap() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.converted_codes == (407,)
@@ -588,6 +720,7 @@ def test_emit_reserve_a3_negative_cap_stays_feasible_via_slack() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.generic is not None
@@ -615,7 +748,7 @@ def test_emit_active_only_stage0_block0_single_bounds_row() -> None:
     a_h = AvailablePower(overlay={})
 
     result = emit_libs_electrical_generics(
-        model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0
+        model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0, source=_LIBS
     )
 
     assert result.generic is not None
@@ -653,6 +786,7 @@ def test_emit_violation_penalty_overrides_big_m() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.generic is not None
@@ -677,7 +811,7 @@ def test_emit_inactive_everywhere_defers_without_duplicate_diagnostic() -> None:
 
     with dx.collect() as sink:
         result = emit_libs_electrical_generics(
-            model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0
+            model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0, source=_LIBS
         )
 
     assert result.generic is None
@@ -708,6 +842,7 @@ def test_emit_unresolved_bucket_a_token_defers_without_partial_constraint() -> N
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.generic is None
@@ -740,6 +875,7 @@ def test_emit_merges_one_finding_across_restrictions_into_one_table() -> None:
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.deferred["unresolved-bucket-a"] == (705, 706)
@@ -750,6 +886,51 @@ def test_emit_merges_one_finding_across_restrictions_into_one_table() -> None:
     assert finding.table.rows == [
         [705, "ger_usih(998)", "hydro plant"],
         [706, "ger_usit(7)", "thermal"],
+    ]
+
+
+def test_emit_reports_the_coupling_only_terms_of_kept_restrictions() -> None:
+    id_map = DecompIdMap(
+        bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,), coupling_only_codes=(46,)
+    )
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            707: _restriction(707, "ger_usih(1) + ger_usih(46)", "<=", "500"),
+            708: _restriction(708, "ger_usih(46) + ger_usit(7)", "<=", "500"),
+        },
+        rules={},
+    )
+
+    with dx.collect() as sink:
+        result = emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert result.converted_codes == (707,)
+    assert result.generic is not None
+    assert [c["expression"] for c in result.generic.constraints] == [
+        "hydro_generation(0)"
+    ]
+    by_code = {d.code: d for d in sink}
+    note = by_code["decomp-electrical-term-coupling-only-plant"]
+    assert note.severity is dx.Severity.INFO
+    assert note.title.endswith(" (1)")
+    assert note.table is not None
+    assert note.table.rows == [[707, "ger_usih(46)"]]
+    assert by_code["decomp-electrical-bucket-a-unresolved"].table is not None
+    assert by_code["decomp-electrical-bucket-a-unresolved"].table.rows == [
+        [708, "ger_usit(7)", "thermal"]
     ]
 
 
@@ -781,6 +962,7 @@ def test_emit_unresolved_bucket_bc_term_defers_whole_restriction() -> None:
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.generic is None
@@ -789,49 +971,172 @@ def test_emit_unresolved_bucket_bc_term_defers_whole_restriction() -> None:
     assert sink[0].severity is dx.Severity.WARNING
 
 
-def test_emit_cell_inconsistent_terms_raises_value_error_naming_restriction() -> None:
-    # Error Handling: a resolver bug producing different AssembledBound.terms
-    # across a restriction's active cells must fail loud, never silently
-    # pick one cell's expression.
+def test_period_rows_that_change_the_decision_terms_are_unsupported() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 2))
-    calendar = _emit_calendar(1, n_blocks=2)
-    restriction = _restriction(706, "ger_usih(1)", "<=", "500")
+    restriction = ElectricalRestriction(
+        code=706,
+        lhs="ger_usih(1)",
+        operator="<=",
+        rhs="500",
+        is_formula=False,
+        limits={},
+        overrides=(PeriodPatamarOverride(0, 0, 2, "ger_usih(2)", "<=", "100"),),
+    )
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={706: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={})
 
-    def _stub_assemble_bound(
-        restriction: ElectricalRestriction,
-        model: LibsElectricalModel,
-        stage_index: int,
-        block_index: int,
-        ctx: DataContext,
-        a_h: AvailablePower | None = None,
-    ) -> AssembledBound:
-        code = 1 if block_index == 0 else 2
-        return AssembledBound(
-            terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(code,)),),
-            lower=None,
-            upper=100.0,
+    with pytest.raises(UnsupportedSourceError) as exc_info:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=2),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
         )
 
-    with patch(
-        "novomodelo_bridge.decomp.converters.libs_electrical_emit.assemble_bound",
-        side_effect=_stub_assemble_bound,
-    ):
-        with pytest.raises(ValueError, match="706"):
-            emit_libs_electrical_generics(
-                model,
-                id_map,
-                lambda s, b: _dict_context({}),
-                a_h,
-                calendar,
-                {},
-                {},
-                {},
-                big_m=999.0,
-            )
+    assert str(exc_info.value) == (
+        "lib_restricao-eletrica-especial.csv: restriction 706 is not converted "
+        "yet: its decision terms in período 1, patamar 1 differ from those in "
+        "período 1, patamar 2; the conversion carries one set of decision "
+        "terms per restriction"
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
+
+
+@pytest.mark.parametrize(
+    ("limits", "lhs", "rules", "error", "outcome", "card"),
+    [
+        (
+            {(0, None): (None, 100.0)},
+            "disp_usih(1)",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: its RESTRICAO-ELETRICA-FORMULA carries a "
+            "disp_usih term",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1)",
+            {1: "demanda_sin < 0 | demanda_sin > 10"},
+            UnsupportedSourceError,
+            "is not converted yet: the condition 'demanda_sin < 0 | demanda_sin "
+            "> 10' joins comparisons with | (OR)",
+            "RESTRICAO-ELETRICA-REGRA-ATIVACAO",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) * 2",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'ger_usih(1) * 2' "
+            "multiplies a term by the constant 2 written after it",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) / 4",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'ger_usih(1) / 4' "
+            "divides a term by the constant 4 written after it",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) + se (demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'ger_usih(1) + se "
+            "(demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0' multiplies a term by "
+            "the constant 2 written after it",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1)",
+            {1: "demanda_sin * 2 > 10"},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'demanda_sin * 2 ' "
+            "multiplies a term by the constant 2 written after it",
+            "RESTRICAO-ELETRICA-REGRA-ATIVACAO",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) )",
+            {},
+            FieldParseError,
+            "is malformed: unexpected trailing content ')' in electrical "
+            "expression 'ger_usih(1) )'",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {},
+            "ger_usih(1)",
+            {},
+            FieldParseError,
+            "is malformed: no RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR "
+            "row covers período 1, patamar 1 of its horizon; DECOMP needs a "
+            "limit on every período and patamar there",
+            "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR",
+        ),
+    ],
+)
+def test_a_restriction_the_conversion_refuses_stops_it_naming_the_card(
+    limits: dict[tuple[int, int | None], tuple[float | None, float | None]],
+    lhs: str,
+    rules: dict[int, str],
+    error: type[FieldParseError | UnsupportedSourceError],
+    outcome: str,
+    card: str,
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    restriction = ElectricalRestriction(
+        code=707,
+        lhs=lhs,
+        operator=None,
+        rhs=None,
+        is_formula=True,
+        limits=limits,
+        overrides=(),
+        habilita=next(iter(rules), None),
+    )
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={707: restriction}, rules=rules
+    )
+
+    with pytest.raises(error) as exc_info:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert str(exc_info.value).startswith(
+        f"lib_restricao-eletrica-especial.csv: restriction 707 {outcome}"
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == card
+    diagnostic = diagnostic_from_exception(exc_info.value, context="Conversion")
+    assert diagnostic.code == (
+        "source-unsupported"
+        if error is UnsupportedSourceError
+        else "source-field-parse"
+    )
 
 
 def test_emit_sorted_restriction_codes_deterministic_ids() -> None:
@@ -859,6 +1164,7 @@ def test_emit_sorted_restriction_codes_deterministic_ids() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
         allocator=ConstraintIdAllocator(5),
     )
 
@@ -902,6 +1208,7 @@ def test_emit_unrecognized_token_defers_one_restriction_sibling_converts() -> No
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.converted_codes == (710,)
@@ -938,6 +1245,7 @@ def test_emit_no_unrecognized_tokens_leaves_deferred_reason_empty() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.converted_codes == (711,)
@@ -982,6 +1290,7 @@ def test_emit_propagates_plain_value_error_not_unrecognized_token() -> None:
                 {},
                 {},
                 big_m=999.0,
+                source=_LIBS,
             )
 
     assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
@@ -1021,6 +1330,7 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.converted_codes == (721,)
@@ -1035,10 +1345,7 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
     assert warnings[0].table.rows == [[720, "mmgd_N_PCHgd"]]
 
 
-def test_emit_malformed_activation_rule_propagates_value_error() -> None:
-    # a malformed-DSL activation rule (unbalanced parens,
-    # not an undeclared identifier) must still fail loud, never be swallowed
-    # by the widened UnrecognizedElectricalToken-specific guard.
+def test_a_malformed_activation_rule_stops_the_conversion_naming_its_card() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
     calendar = _emit_calendar(1, n_blocks=1)
     restriction = _restriction(722, "ger_usih(1)", "<=", "500", habilita=30)
@@ -1050,7 +1357,7 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
     )
     a_h = AvailablePower(overlay={})
 
-    with pytest.raises(ValueError, match="unbalanced parentheses") as exc_info:
+    with pytest.raises(FieldParseError) as exc_info:
         emit_libs_electrical_generics(
             model,
             id_map,
@@ -1061,9 +1368,113 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
+    assert str(exc_info.value).startswith(
+        "lib_restricao-eletrica-especial.csv: restriction 722 is malformed: "
+        "unbalanced parentheses in activation rule"
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
+
+
+@pytest.mark.parametrize(
+    ("restriction", "card"),
+    [
+        (
+            _restriction(730, "ger_usih(1", "<=", "500"),
+            "RESTRICAO-ELETRICA-INEQUACAO",
+        ),
+        (
+            ElectricalRestriction(
+                code=730,
+                lhs="ger_usih(1",
+                operator=None,
+                rhs=None,
+                is_formula=True,
+                limits={(0, None): (None, 500.0)},
+                overrides=(),
+            ),
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            ElectricalRestriction(
+                code=730,
+                lhs=None,
+                operator=None,
+                rhs=None,
+                is_formula=False,
+                limits={},
+                overrides=(
+                    PeriodPatamarOverride(0, 0, None, "ger_usih(1", "<=", "500"),
+                ),
+            ),
+            "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+        ),
+        (
+            ElectricalRestriction(
+                code=730,
+                lhs="ger_usih(1)",
+                operator="<=",
+                rhs="500",
+                is_formula=False,
+                limits={},
+                overrides=(PeriodPatamarOverride(0, 0, 1, "ger_usih(1", "<=", "500"),),
+            ),
+            "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+        ),
+    ],
+)
+def test_a_malformed_formula_stops_the_conversion_naming_its_card(
+    restriction: ElectricalRestriction, card: str
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={730: restriction}, rules={}
+    )
+
+    with pytest.raises(FieldParseError) as exc_info:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert "restriction 730 is malformed: expected ')'" in str(exc_info.value)
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == card
+
+
+def test_a_dangling_habilita_stops_the_conversion_naming_the_rule_card() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    restriction = _restriction(731, "ger_usih(1)", "<=", "500", habilita=40)
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={731: restriction}, rules={}
+    )
+
+    with pytest.raises(FieldParseError, match="restriction 731 is malformed") as err:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert err.value.field == "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
 
 
 def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
@@ -1079,7 +1490,7 @@ def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
     )
 
     with dx.collect() as sink:
-        with pytest.raises(ValueError, match="unbalanced parentheses"):
+        with pytest.raises(FieldParseError, match="unbalanced parentheses"):
             emit_libs_electrical_generics(
                 model,
                 id_map,
@@ -1090,6 +1501,7 @@ def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
                 {},
                 {},
                 big_m=999.0,
+                source=_LIBS,
             )
 
     assert [d.code for d in sink] == ["decomp-electrical-bucket-a-unresolved"]
@@ -1120,6 +1532,7 @@ def _emit_findings(
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
     return result, sink
 
@@ -1267,6 +1680,57 @@ def test_emit_lists_kept_restrictions_with_a_bare_demand_term() -> None:
     assert finding.table.rows == [[801, "demanda(1)"]]
     assert finding.remediation is not None
     assert "RESTRICAO-ELETRICA-ESPECIAL" in finding.remediation
+
+
+def test_emit_lists_kept_restrictions_reading_a_gnl_generation_by_patamar() -> None:
+    # 903 reads the plant inside a se(...); the dropped 902 is not listed,
+    # and stage 1, where the plant commands one MW for both patamares, is not.
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            901: _restriction(901, "ger_usih(1)", "<=", "ger_usit(86) + 100"),
+            902: _restriction(
+                902, "ger_usih(1) + ener_comerc(1)", "<=", "ger_usit(86)"
+            ),
+            903: _restriction(
+                903, "ger_usih(1)", "<=", "se(demanda_sin >= 0, ger_usit(86), 0)"
+            ),
+        },
+        rules={},
+        gnl_thermal_codes=frozenset({86}),
+    )
+    generation = {(0, 0): 500.0, (0, 1): 400.0, (1, 0): 300.0, (1, 1): 300.0}
+
+    def factory(stage_index: int, block_index: int) -> DataContext:
+        values = _dict_context(
+            {
+                "__ger_usit_gnl__(86)": generation[(stage_index, block_index)],
+                "demanda_sin": 10.0,
+            }
+        )
+
+        def resolve(term: ParsedTerm) -> float:
+            if term.token == SE_TOKEN:
+                return evaluate_se(term, model, resolve)
+            return values(term)
+
+        return resolve
+
+    result, sink = _emit_findings(
+        model, calendar=_emit_calendar(2, n_blocks=2), factory=factory
+    )
+
+    assert result.converted_codes == (901, 903)
+    assert result.deferred["unresolved-bucket-a"] == (902,)
+    [finding] = [d for d in sink if d.code == "decomp-electrical-gnl-patamar-values"]
+    assert finding.severity is dx.Severity.INFO
+    assert finding.title == (
+        "Electrical restrictions reading a GNL generation that differs by patamar (2)"
+    )
+    assert finding.table is not None
+    assert finding.table.columns == ["Restriction", "Thermal code", "Stages"]
+    assert finding.table.rows == [[901, 86, "0"], [903, 86, "0"]]
 
 
 def test_emit_undeclared_names_in_formula_and_rule_are_one_warning() -> None:

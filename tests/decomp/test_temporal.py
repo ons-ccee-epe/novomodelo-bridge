@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.decomp.converters.config import convert_config, convert_penalties
 from novomodelo_bridge.decomp.temporal import (
     CVaRConfig,
@@ -85,6 +86,16 @@ class TestBuildOperativeCalendar:
         hours = [[40.0, 48.0, 56.0]] + [_RV0_WEEK] * 4 + [_RV0_MONTH]
         with pytest.raises(ValueError, match="168"):
             build_operative_calendar(date(2024, 8, 31), hours)
+
+    @pytest.mark.parametrize("week_hours", [167.0, 169.0])
+    def test_rejects_summer_time_week(self, week_hours: float) -> None:
+        hours = [_RV0_WEEK] * 2 + [[40.0, 48.0, week_hours - 88.0]]
+        hours += [_RV0_WEEK] * 2 + [_RV0_MONTH]
+        with pytest.raises(
+            UnsupportedSourceError, match=f"stage 3 .*{week_hours:g} h in DP"
+        ) as raised:
+            build_operative_calendar(date(2024, 8, 31), hours)
+        assert (raised.value.path, raised.value.field) == ("dadger.rvN", "DP duracao")
 
     def test_rejects_fractional_days(self) -> None:
         hours = [_RV0_WEEK] * 5 + [[150.0, 184.0, 312.0]]

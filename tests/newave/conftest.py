@@ -9,9 +9,35 @@ from unittest.mock import MagicMock
 import pandas as pd
 from inewave.newave import Modif
 
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.conversion import ConversionReport
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import _all_converter_patches, make_case, make_nw_files
+
+#: References a pip-installed user cannot resolve, having no repo checkout:
+#: doc and source paths, developer worktrees and planning codes.
+_REPO_INTERNAL_LEAKS = (
+    "docs/",
+    "plans/",
+    "~/git",
+    "feat/",
+    "ticket-",
+    "epic-",
+    "src/",
+    ".py",
+)
+
+
+def assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
+    """Fail when a collected diagnostic's title, summary, notes or remediation
+    names a repo-internal reference."""
+    for diag in collected:
+        strings = [diag.title, diag.summary, *diag.notes]
+        if diag.remediation is not None:
+            strings.append(diag.remediation)
+        for s in strings:
+            for leak in _REPO_INTERNAL_LEAKS:
+                assert leak not in s, f"diagnostic {diag.code!r} leaks {leak!r}: {s!r}"
 
 
 def _make_confhd_df() -> pd.DataFrame:

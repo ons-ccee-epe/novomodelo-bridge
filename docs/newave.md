@@ -32,9 +32,9 @@ the plane-reduction file and the electrical-constraint file are each read as
 UTF-8 when they are valid UTF-8 and as Latin-1 otherwise.
 
 The electrical-constraint file is read record by record, and a record name is
-recognized only in upper case, as the manual writes it. `convert newave` warns
-about every line that is not a record it reads (`libs-unread-lines`). A blank
-limit is unbounded, as the manual states. A conditional limit (`se(...)`) is
+recognized only in upper case, as the manual writes it. `check newave` and
+`convert newave` warn about every line that is not a record it reads
+(`libs-unread-lines`). A blank limit is unbounded, as the manual states. A conditional limit (`se(...)`) is
 not converted, and makes the case fail to convert.
 
 Many inputs are optional (`modif.dat`, `cvar.dat`, `curva.dat`, `agrint.dat`,
@@ -116,8 +116,14 @@ the same output.
   constraints (`restricao-eletrica.csv`), and interchange group limits
   (`agrint.dat`) all become Novomodelo generic constraints: linear expressions over
   storage, generation, and exchange variables with per-stage bounds. A term
-  whose entity is absent from the converted case, such as an interchange line
-  missing from a reduced system, is dropped with a diagnostic naming it.
+  that is zero in NEWAVE too is left out of its sum with a note and the rest
+  of the constraint is kept: an interchange term on a subsystem pair without
+  a line, or, in an electric constraint, a term on a `confhd.dat` plant the
+  case leaves out because it generates nothing (fictitious, `NC`, or `NE`
+  with no row in `exph.dat`). An electric-constraint term on a plant
+  `confhd.dat` or `conft.dat` does not declare, or on an `NE` plant with unit
+  rows but no filling row in `exph.dat`, which the case does not hold yet,
+  leaves the whole constraint out with a warning naming the term.
 - **Risk.** The CVaR setting in `dger.dat` selects expectation, constant CVaR,
   or per-stage CVaR from `cvar.dat`. If `dger.dat` asks for CVaR and
   `cvar.dat` is absent, the converter falls back to expectation and says so.

@@ -129,6 +129,19 @@ def _ct_dense(
     )
 
 
+def ct_submarkets(dadger: Dadger) -> dict[int, frozenset[int]]:
+    """The subsystems (``codigo_submercado``) of each ``CT`` plant number."""
+    ct = as_frame(dadger.ct(df=True))
+    if ct is None or ct.empty:
+        return {}
+    subsystems: dict[int, set[int]] = {}
+    for code, subsystem in zip(
+        ct["codigo_usina"], ct["codigo_submercado"], strict=True
+    ):
+        subsystems.setdefault(int(code), set()).add(int(subsystem))
+    return {code: frozenset(found) for code, found in subsystems.items()}
+
+
 def convert_thermals(
     case: DecompCase,
     id_map: DecompIdMap,

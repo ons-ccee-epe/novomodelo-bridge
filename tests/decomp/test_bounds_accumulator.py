@@ -4,9 +4,11 @@ No deck (synthetic contributions only). Covers the axis registry (contents,
 two-sided/stage-level flags — including the diversion/spillage axes
 widened/added, and the ``line``/``hydro_unit_group``/
 ``contract``/``water_withdrawal`` axes registered — unknown-pair
-raise), the per-axis ``intersect`` (tightest pair, unbounded sentinel,
-empty-intersection and both upper-only/lower-only raises), ``resolve`` (base
-vs per-block materialization + the stage-level guard), and
+raise), the per-axis ``intersect`` (tightest pair, unbounded sentinel, a
+floor above the ceiling returned with its sources, and both
+upper-only/lower-only raises), ``resolve`` (base vs per-block
+materialization, the stage-level guard, a floor above the ceiling kept on a
+soft axis and refused on an enforced one), and
 ``build_bound_tables`` (the pyarrow fan-out into the hydro/thermal/pumping
 schemas, one row per cell — including a two-sided diversion/spillage group
 landing both endpoints in one cell).
@@ -20,6 +22,8 @@ from novomodelo_bridge.decomp.bounds_accumulator import (
     AXES,
     AxisSpec,
     BoundContribution,
+    FloorAboveCeiling,
+    FloorAboveCeilingError,
     ResolvedRow,
     _effective,
     axis_spec,
@@ -197,7 +201,7 @@ def test_intersect_tightest_pair() -> None:
         _outflow_contribution(lower=10.0, upper=100.0, contributor="RQ"),
         _outflow_contribution(lower=20.0, upper=80.0, contributor="RE_12"),
     ]
-    assert intersect(contribs, spec) == (20.0, 80.0)
+    assert intersect(contribs, spec) == (20.0, 80.0, None)
 
 
 def test_effective_normalizes_unbounded_sentinel_to_none() -> None:
@@ -215,17 +219,76 @@ def test_intersect_ignores_unbounded_sentinel() -> None:
         _outflow_contribution(lower=None, upper=1e21, contributor="RQ"),
         _outflow_contribution(lower=None, upper=50.0, contributor="HQ_164"),
     ]
-    assert intersect(contribs, spec) == (None, 50.0)
+    assert intersect(contribs, spec) == (None, 50.0, None)
 
 
-def test_empty_intersection_raises() -> None:
+def test_floor_above_ceiling_is_returned_with_its_sources() -> None:
+    """Only the floors above the ceiling and the ceilings below the floor are
+    named: RQ's 10 floor and RE_12's 100 ceiling do not cause the gap."""
     spec = axis_spec("hydro", "outflow")
+    contribs = [
+        _outflow_contribution(lower=90.0, upper=None, contributor="RQ_x"),
+        _outflow_contribution(lower=10.0, upper=100.0, contributor="RQ"),
+        _outflow_contribution(lower=None, upper=50.0, contributor="HQ_164"),
+    ]
+    assert intersect(contribs, spec) == (
+        90.0,
+        50.0,
+        FloorAboveCeiling(
+            lower=90.0,
+            upper=50.0,
+            floors=(("RQ_x", 90.0),),
+            ceilings=(("HQ_164", 50.0),),
+        ),
+    )
+
+
+def test_floor_above_ceiling_within_float_noise_is_no_conflict() -> None:
+    spec = axis_spec("hydro", "outflow")
+    contribs = [
+        _outflow_contribution(lower=50.0 * (1 + 1e-12), upper=None, contributor="RQ"),
+        _outflow_contribution(lower=None, upper=50.0, contributor="HQ_164"),
+    ]
+    assert intersect(contribs, spec)[2] is None
+
+
+def _spillage_contribution(
+    *, lower: float | None, upper: float | None, contributor: str
+) -> BoundContribution:
+    return BoundContribution(
+        family="hydro",
+        entity_id=2,
+        stage_id=0,
+        block_id=None,
+        axis="spillage",
+        lower=lower,
+        upper=upper,
+        contributor=contributor,
+    )
+
+
+def test_resolve_keeps_a_floor_above_the_ceiling_on_a_soft_axis() -> None:
     contribs = [
         _outflow_contribution(lower=90.0, upper=None, contributor="RQ"),
         _outflow_contribution(lower=None, upper=50.0, contributor="HQ_164"),
     ]
-    with pytest.raises(ValueError, match="RQ.*HQ_164"):
-        intersect(contribs, spec)
+    (row,) = resolve(contribs, {2: 1})
+    assert (row.lower, row.upper) == (90.0, 50.0)
+    assert row.conflict is not None
+    assert row.conflict.floors == (("RQ", 90.0),)
+    assert row.conflict.ceilings == (("HQ_164", 50.0),)
+
+
+def test_resolve_refuses_a_floor_above_the_ceiling_on_an_enforced_axis() -> None:
+    contribs = [
+        _spillage_contribution(lower=70.0, upper=None, contributor="HQ_9"),
+        _spillage_contribution(lower=None, upper=60.0, contributor="HQ_10"),
+    ]
+    with pytest.raises(FloorAboveCeilingError) as raised:
+        resolve(contribs, {0: 1})
+    assert raised.value.row.axis == "spillage"
+    assert raised.value.conflict.floors == (("HQ_9", 70.0),)
+    assert raised.value.conflict.ceilings == (("HQ_10", 60.0),)
 
 
 def test_lower_on_upper_only_axis_raises() -> None:

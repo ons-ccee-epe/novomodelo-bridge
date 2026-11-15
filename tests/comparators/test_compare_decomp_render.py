@@ -285,16 +285,15 @@ class TestCompareDecompCommand:
         )
         assert result.exit_code == 2
 
-    def test_field_parse_error_from_dataset_build_exits_two(
+    def test_field_parse_error_from_dataset_build_exits_one(
         self,
         monkeypatch: pytest.MonkeyPatch,
         decomp_mini_deck: Path,
         tmp_path: Path,
     ) -> None:
-        """The mandatory id-map step inside ``build_decomp_dataset`` can now
-        raise the typed ``FieldParseError`` (a malformed deck with no ``SB``
-        register) -- the handler must still route it to the clean exit-2
-        diagnostic instead of an uncaught traceback."""
+        """A malformed deck field raised inside ``build_decomp_dataset`` (no
+        ``SB`` register for the id map) is a failure of the DECOMP deck, so it
+        exits 1, not the exit 2 kept for an unreadable Novomodelo output."""
 
         def _boom(*_args: object, **_kwargs: object) -> ComparisonDataset:
             raise FieldParseError(
@@ -312,7 +311,7 @@ class TestCompareDecompCommand:
         result = CliRunner().invoke(
             app, ["compare", "decomp", str(decomp_mini_deck), str(tmp_path)]
         )
-        assert result.exit_code == 2
+        assert result.exit_code == 1
 
     def test_writes_artifacts_to_the_default_out_dir(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -412,9 +411,9 @@ class TestCompareDecompCommand:
         decomp_mini_deck: Path,
         tmp_path: Path,
     ) -> None:
-        """Regression: NovomodeloPartitionMissingError extends
-        BridgeError, a hierarchy disjoint from NovomodeloReadError (RuntimeError)
-        and FileNotFoundError/ValueError. The compare decomp CLI handler
+        """Regression: NovomodeloPartitionMissingError is neither a
+        NovomodeloOutputError, unlike NovomodeloReadError, nor a
+        FileNotFoundError/ValueError. The compare decomp CLI handler
         must catch it too -- a clean ERROR line + exit 2, not an unhandled
         traceback -- mirroring the compare newave fix and this class's own
         NovomodeloReadError-analogue test above."""

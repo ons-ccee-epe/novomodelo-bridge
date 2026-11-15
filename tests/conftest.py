@@ -10,7 +10,8 @@ twins, wrapping a :class:`~novomodelo_bridge.decomp.case.DecompCase`.
 dict (no top-level ``bus_id``, one mirror ``unit_groups`` entry) for tests that
 hand-build a hydro fixture rather than calling a converter. ``_FakeDadger``
 is a decomp-side test double returning preset DataFrames for register
-accessors. These builders are referenced from two or more of
+accessors, and ``branching_vazoes`` lays a scenario tree that branches before
+its last stage over every inflow file read. These builders are referenced from two or more of
 ``tests/{cli,novomodelo,comparators,dashboard,decomp,newave}/``; a builder used by
 only one of those directories lives in that directory's own ``conftest.py``
 instead (e.g. the hydro/thermal/network entity-conversion fixtures in
@@ -24,7 +25,8 @@ import functools
 import importlib.util
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypedDict
 from unittest.mock import MagicMock, patch
@@ -33,6 +35,7 @@ import pandas as pd
 import polars as pl
 import pyarrow as pa
 import pytest
+from idecomp.decomp import Vazoes
 
 from novomodelo_bridge.comparators.dataset import (
     SUMMARY_SCHEMA,
@@ -160,6 +163,45 @@ def decomp_mini_deck() -> Path:
 def decomp_mini_case() -> DecompCase:
     """The DECOMP mini-deck parsed once per session; tests must not mutate it."""
     return DecompCase.from_directory(Path(__file__).parent / "decks" / "decomp_mini")
+
+
+class _BranchingVazoes:
+    """A parsed inflow file whose probability table branches at stage 3.
+
+    idecomp derives the tree from the file's nodes, so the branch is laid over
+    the parsed file instead of written into it.
+    """
+
+    def __init__(self, vazoes: Vazoes) -> None:
+        self._vazoes = vazoes
+        prob = vazoes.probabilidades
+        assert prob is not None
+        third = prob["estagio"] == 3
+        self.probabilidades = pd.concat(
+            [
+                prob.assign(probabilidade=prob["probabilidade"].where(~third, 0.5)),
+                pd.DataFrame(
+                    [{"estagio": 3, "no": 6, "cenario": 2, "probabilidade": 0.5}]
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._vazoes, name)
+
+
+@contextmanager
+def branching_vazoes() -> Generator[None]:
+    """Read every inflow file with a tree that branches at stage 3, before the
+    last stage of the DECOMP mini-deck."""
+    real_read = Vazoes.read
+
+    def read(path: str) -> _BranchingVazoes:
+        return _BranchingVazoes(real_read(path))
+
+    with patch.object(Vazoes, "read", side_effect=read):
+        yield
 
 
 @pytest.fixture

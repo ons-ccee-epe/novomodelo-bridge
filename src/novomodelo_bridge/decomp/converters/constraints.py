@@ -22,12 +22,12 @@ generic_constraint_builder.GenericConstraintBuilder`), plus the multi-term
 ``RE`` emitter (``emit_re_generics``) and the ``RHQ``/``RHV`` emitter
 (``emit_rhq_rhv_generics``) built on top of it.
 
-GNL pre-processing (abating commanded generation, aborting on uncommanded)
-is out of scope here: a constraint whose ``thermal_generation`` term names a
-thermal outside ``id_map.thermal_codes`` (a GNL thermal of ``dadgnl``) never
-reaches these emitters, because
+An ``RE`` ``FT`` term on a GNL thermal of ``dadgnl`` never reaches these
+emitters: :func:`fold_commanded_gnl_terms` moves its commanded generation into
+the constraint's limits first, and
 :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`
-leaves it out of the census with a ``WARNING``.
+leaves out, with a ``WARNING``, a constraint on any other thermal outside
+``id_map.thermal_codes``.
 
 A coefficient that changes over a constraint's stages, or a term that joins
 after its first stage, reads a ``per_stage`` parameter
@@ -48,6 +48,7 @@ rather than a per-plant limit read off the register.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -58,6 +59,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -66,12 +68,17 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     soft_slack,
 )
 from novomodelo_bridge.core.generic_constraint_format import Weight, render_expression
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.core.stored_energy import (
     share_parameters,
     stored_energy_floor,
     stored_energy_lhs,
 )
-from novomodelo_bridge.decomp.constraint_registers import StageBounds
+from novomodelo_bridge.decomp.constraint_registers import StageBounds, lowers_to_bound
+from novomodelo_bridge.decomp.converters.anticipated import (
+    commanded_gnl_generation,
+    gnl_patamar_values_diagnostic,
+)
 from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
 from novomodelo_bridge.decomp.converters.rhe_shares import (
     build_rhe_shares,
@@ -79,7 +86,7 @@ from novomodelo_bridge.decomp.converters.rhe_shares import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     import pyarrow as pa
 
@@ -95,6 +102,8 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.converters.rhe_shares import RheCoupling
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
+
+_LOG = logging.getLogger(__name__)
 
 
 #: The source model's ``num_max_iteracoes``-style deficit multiplier: the
@@ -240,14 +249,25 @@ def build_fi_line_map(
 
 
 class Unresolved(NamedTuple):
-    """Why a term leaves its constraint out: a diagnostic code and the term's
-    cells in that diagnostic's table, after the constraint id."""
+    """Why a term has no token: a diagnostic code, the term's cells in that
+    diagnostic's table after the constraint id, and the cause of a term on an
+    entity outside the case.
+
+    The term leaves its whole constraint out unless its *cause* leaves out
+    only the term (:attr:`OutsideTerm.drops_constraint`).
+    """
 
     code: str
     cells: tuple[object, ...]
+    cause: OutsideTerm | None = None
+
+    @property
+    def drops_constraint(self) -> bool:
+        return self.cause is None or self.cause.drops_constraint
 
 
 _FI_NO_LINE = "decomp-fi-no-line"
+_RE_TERM_NO_LINE = "decomp-re-term-interchange-no-line"
 _FE_NO_CONTRACT = "decomp-fe-no-contract"
 _FREQUENCY_SPLIT = "decomp-re-frequency-split-deferred"
 
@@ -276,11 +296,12 @@ def resolve_fi_term(
     reverse match returns ``"line_reverse(id)"``.
 
     Returns an :class:`Unresolved` under ``decomp-fi-no-line`` when either
-    submarket name is unknown or no line joins the pair in either
-    orientation; the caller then drops the whole constraint rather than build
-    a partial expression. Raises ``ValueError`` if *term* is missing a
-    submarket name (a caller contract violation: a genuine ``FI`` term, as
-    produced by the reader, always carries both).
+    submarket name is unknown, which leaves the whole constraint out, and
+    under ``decomp-re-term-interchange-no-line`` when no line joins the pair
+    in either orientation: no flow runs between them, so only the term is
+    left out. Raises ``ValueError`` if *term* is missing a submarket name (a
+    caller contract violation: a genuine ``FI`` term, as produced by the
+    reader, always carries both).
     """
     if term.submarket_de is None or term.submarket_para is None:
         raise ValueError(
@@ -292,12 +313,14 @@ def resolve_fi_term(
         de = id_map.bus_id_by_name(term.submarket_de)
         para = id_map.bus_id_by_name(term.submarket_para)
     except KeyError:
-        return Unresolved(_FI_NO_LINE, (*pair, "a submarket has no SB record"))
+        return Unresolved(
+            _FI_NO_LINE, (*pair, "a submarket has no SB record"), OutsideTerm.ABSENT
+        )
     if (de, para) in line_map:
         return f"line_direct({line_map[(de, para)]})"
     if (para, de) in line_map:
         return f"line_reverse({line_map[(para, de)]})"
-    return Unresolved(_FI_NO_LINE, (*pair, "no IA record joins them"))
+    return Unresolved(_RE_TERM_NO_LINE, pair, OutsideTerm.NO_LINE)
 
 
 def build_contract_token_map(
@@ -355,9 +378,10 @@ def coefficient_parameter_name(record: ConstraintRecord, term_index: int) -> str
 
 
 def _weighted_terms(
-    record: ConstraintRecord, tokens: Sequence[str], n_stages: int
+    record: ConstraintRecord, tokens: Sequence[str | None], n_stages: int
 ) -> tuple[list[tuple[Weight, str]], dict[str, list[float]]]:
-    """Pair each term's token with its weight, and the per-stage parameters.
+    """Pair each term's token with its weight, and the per-stage parameters;
+    a term whose token is ``None`` is left out.
 
     A constant coefficient is a literal weight; a coefficient that changes
     over the constraint's stages (or a term that joins after its first stage)
@@ -366,6 +390,8 @@ def _weighted_terms(
     weighted: list[tuple[Weight, str]] = []
     parameters: dict[str, list[float]] = {}
     for index, (term, token) in enumerate(zip(record.terms, tokens, strict=True)):
+        if token is None:
+            continue
         if not term.schedule:
             weighted.append((term.coefficient, token))
             continue
@@ -443,7 +469,8 @@ def _resolve_re_terms(
     id_map: DecompIdMap,
     line_map: Mapping[tuple[int, int], int],
     contract_tokens: Mapping[tuple[int, int], str | None],
-) -> list[str] | Unresolved:
+    left_out: list[Unresolved],
+) -> list[str | None] | Unresolved:
     """Resolve every term of one generic RE record to its expression token.
 
     Dispatches on ``term.variable``: a ``generation`` term split by
@@ -454,11 +481,14 @@ def _resolve_re_terms(
     ``interchange`` resolves via :func:`resolve_fi_term` and ``contract`` via
     :func:`resolve_fe_term`.
 
-    The first unresolved term leaves the **whole** constraint out
-    (skip-not-partial) — never a partial expression. Returns the tokens in
-    term order when every term resolves.
+    The first term that drops its constraint (:attr:`Unresolved.drops_constraint`)
+    leaves the **whole** constraint out (skip-not-partial) — never a partial
+    expression. Returns the tokens in term order otherwise, ``None`` for each
+    term left out of the sum, whose finding is added to *left_out*; a record
+    with every term left out is unresolved under ``decomp-fi-no-line``.
     """
-    resolved: list[str] = []
+    resolved: list[str | None] = []
+    zero: list[Unresolved] = []
     for term in record.terms:
         token: str | Unresolved
         if term.variable == "generation" and term.frequency is not None:
@@ -474,8 +504,15 @@ def _resolve_re_terms(
                 f"_resolve_re_terms: unexpected RE term variable {term.variable!r}"
             )
         if isinstance(token, Unresolved):
-            return token
+            if token.drops_constraint:
+                return token
+            zero.append(token)
+            resolved.append(None)
+            continue
         resolved.append(token)
+    if zero and len(zero) == len(resolved):
+        return Unresolved(_FI_NO_LINE, (*zero[0].cells, "no IA record joins them"))
+    left_out.extend(zero)
     return resolved
 
 
@@ -484,8 +521,8 @@ def _resolve_re_terms(
 _RE_UNRESOLVED: dict[str, tuple[str, str, list[str]]] = {
     _FI_NO_LINE: (
         "RE constraints with an FI term on no line",
-        "The listed RE constraints have an FI term between two submarkets that "
-        "no line of the case joins.",
+        "The listed RE constraints have an FI term on a submarket no SB record "
+        "declares, or only FI terms between submarkets no IA record joins.",
         ["Constraint", "From", "To", "Reason"],
     ),
     _FE_NO_CONTRACT: (
@@ -533,8 +570,33 @@ def _emit_re_unresolved(rows_by_code: Mapping[str, Sequence[list[object]]]) -> N
                 ),
                 table=DiagnosticTable(columns=columns, rows=list(rows)),
                 remediation=_RE_UNRESOLVED_REMEDIATION.get(code),
-            )
+            ),
+            logger=_LOG,
         )
+
+
+def _emit_re_terms_left_out(rows: Sequence[list[object]]) -> None:
+    """Emit the note on the ``FI`` terms left out of kept RE constraints."""
+    if not rows:
+        return
+    emit(
+        Diagnostic(
+            code=_RE_TERM_NO_LINE,
+            severity=OutsideTerm.NO_LINE.severity,
+            category="Special constraints",
+            title=f"RE terms on submarkets without interchange left out ({len(rows)})",
+            summary=(
+                "The listed RE constraints have an FI term between two "
+                "submarkets no IA record of dadger.rvN joins, so no flow runs "
+                "between them. The conversion leaves the term out and keeps "
+                "the rest of the constraint."
+            ),
+            table=DiagnosticTable(
+                columns=["Constraint", "From", "To"], rows=list(rows)
+            ),
+        ),
+        logger=_LOG,
+    )
 
 
 def emit_re_generics(
@@ -552,9 +614,10 @@ def emit_re_generics(
     Iterates ``census.to_generic`` filtered to ``record.family == "RE"``,
     resolves each record's terms via :func:`_resolve_re_terms`, and feeds a
     :class:`~novomodelo_bridge.core.generic_constraint_builder.GenericConstraintBuilder`;
-    a record whose terms cannot all be resolved is dropped entirely
-    (skip-not-partial, one WARNING per kind of unresolved term — see
-    :func:`_resolve_re_terms`). *census* is screened by
+    a record with a term that cannot be resolved is dropped entirely
+    (skip-not-partial, one WARNING per kind of unresolved term), and an
+    ``FI`` term on no line is left out of a record kept (one INFO) — see
+    :func:`_resolve_re_terms`. *census* is screened by
     :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`,
     so every ``FT`` thermal is a CT thermal. Single-hydro-generation RE records never
     reach here — they lower to a plant bound in ``single_term_bounds.py``
@@ -573,10 +636,12 @@ def emit_re_generics(
     builder = GenericConstraintBuilder(allocator)
     per_stage_parameters: dict[str, list[float]] = {}
     unresolved: dict[str, list[list[object]]] = defaultdict(list)
+    left_out_rows: list[list[object]] = []
     for record in census.to_generic:
         if record.family != "RE":
             continue
-        tokens = _resolve_re_terms(record, id_map, line_map, contract_tokens)
+        left_out: list[Unresolved] = []
+        tokens = _resolve_re_terms(record, id_map, line_map, contract_tokens, left_out)
         if isinstance(tokens, Unresolved):
             unresolved[tokens.code].append([record.constraint_id, *tokens.cells])
             continue
@@ -593,7 +658,9 @@ def emit_re_generics(
         )
         if added is not None:
             per_stage_parameters.update(parameters)
+            left_out_rows.extend([record.constraint_id, *u.cells] for u in left_out)
     _emit_re_unresolved(unresolved)
+    _emit_re_terms_left_out(left_out_rows)
     return _with_parameters(builder.result(), per_stage_parameters)
 
 
@@ -607,6 +674,239 @@ def _offset_if_bounded(value: float | None, offset: float) -> float | None:
     if value is None or not is_bounded(value):
         return value
     return value + offset
+
+
+def fold_commanded_gnl_terms(
+    census: ConstraintCensus,
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    *,
+    gnl_submarkets: Mapping[int, int],
+    ct_submarkets: Mapping[int, Collection[int]],
+    dadger_path: str,
+    dadgnl_path: str | None,
+) -> tuple[ConstraintCensus, list[Diagnostic]]:
+    """*census* with every ``RE`` ``FT`` term on a GNL plant moved into its
+    constraint's limits, as the source model does.
+
+    *gnl_generation* is
+    :func:`~novomodelo_bridge.decomp.converters.anticipated.gnl_block_commitments`.
+    At each stage and block, the term's coefficient times the plant's
+    commanded ``gl`` generation is subtracted from both limits, and the term
+    leaves the sum. The rest of the constraint is lowered anew, so one left
+    with a single unit term becomes an entity bound. A constraint left with
+    no term bounds no case variable: it is left out and reported in one
+    INFO. ``by_family`` keeps every record read.
+
+    *gnl_submarkets* gives each GNL plant's subsystem and *ct_submarkets*
+    the subsystems of each ``CT`` plant number, for a GNL plant whose number
+    a ``CT`` record also gives.
+
+    Raises
+    ------
+    FieldParseError
+        When a GNL plant's generation is not commanded at a stage its term is
+        in (:func:`~novomodelo_bridge.decomp.converters.anticipated.commanded_gnl_generation`),
+        where the source model stops too, or when a ``CT`` record gives the
+        plant's number in the plant's own subsystem, which DECOMP does not
+        allow.
+    UnsupportedSourceError
+        When a ``CT`` record gives the plant's number in another subsystem:
+        the conversion tells thermals apart by number alone, so the term
+        cannot be told apart as a decision or a commanded generation.
+    """
+    folded: dict[int, ConstraintRecord | None] = {}
+    rows: list[list[object]] = []
+    for record in (*census.to_bounds, *census.to_generic):
+        if record.family != "RE":
+            continue
+        gnl_terms = [
+            term
+            for term in record.terms
+            if term.variable == "thermal_generation" and term.code in gnl_generation
+        ]
+        if not gnl_terms:
+            continue
+        for term in gnl_terms:
+            _refuse_shared_thermal_number(
+                record.constraint_id,
+                term.code,
+                gnl_submarkets,
+                ct_submarkets,
+                dadger_path=dadger_path,
+                dadgnl_path=dadgnl_path,
+            )
+        bounds = {
+            stage_index: _without_commanded_generation(
+                record.constraint_id,
+                stage_index,
+                stage_bounds,
+                gnl_terms,
+                gnl_generation,
+                dadgnl_path,
+            )
+            for stage_index, stage_bounds in record.bounds.items()
+        }
+        kept = tuple(term for term in record.terms if term not in gnl_terms)
+        if kept:
+            folded[record.constraint_id] = dataclasses.replace(
+                record,
+                terms=kept,
+                bounds=bounds,
+                gnl_folds=tuple(
+                    (term.code, stage_index)
+                    for stage_index in record.bounds
+                    for term in gnl_terms
+                    if term.coefficient_at(stage_index) != 0.0
+                ),
+            )
+        else:
+            folded[record.constraint_id] = None
+            rows.extend([record.constraint_id, term.code] for term in gnl_terms)
+    if not folded:
+        return census, []
+    to_bounds: list[ConstraintRecord] = []
+    to_generic: list[ConstraintRecord] = []
+    for bucket, records in (
+        (to_bounds, census.to_bounds),
+        (to_generic, census.to_generic),
+    ):
+        for record in records:
+            if record.family != "RE" or record.constraint_id not in folded:
+                bucket.append(record)
+                continue
+            kept_record = folded[record.constraint_id]
+            if kept_record is not None:
+                target = to_bounds if lowers_to_bound(kept_record) else to_generic
+                target.append(kept_record)
+    screened = dataclasses.replace(
+        census, to_bounds=tuple(to_bounds), to_generic=tuple(to_generic)
+    )
+    return screened, [_gnl_terms_only_diagnostic(rows)] if rows else []
+
+
+def re_gnl_patamar_diagnostic(
+    census: ConstraintCensus,
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+) -> Diagnostic | None:
+    """The INFO for the ``RE`` constraints *census* keeps that
+    :func:`fold_commanded_gnl_terms` folded with a GNL generation of
+    *gnl_generation* differing by patamar
+    (:func:`~novomodelo_bridge.decomp.converters.anticipated.gnl_patamar_values_diagnostic`)."""
+    reads: list[tuple[int, int, int, Sequence[float]]] = []
+    for record in (*census.to_bounds, *census.to_generic):
+        for thermal_code, stage_index in record.gnl_folds:
+            blocks = gnl_generation[thermal_code][stage_index]
+            assert blocks is not None  # the fold stops on an uncommanded stage
+            reads.append((record.constraint_id, thermal_code, stage_index, blocks))
+    return gnl_patamar_values_diagnostic(
+        "decomp-re-gnl-patamar-values",
+        reads,
+        noun="RE constraints",
+        column="Constraint",
+    )
+
+
+def _refuse_shared_thermal_number(
+    constraint_id: int,
+    code: int,
+    gnl_submarkets: Mapping[int, int],
+    ct_submarkets: Mapping[int, Collection[int]],
+    *,
+    dadger_path: str,
+    dadgnl_path: str | None,
+) -> None:
+    """Stop on the ``FT`` term of ``RE`` *constraint_id* on GNL plant *code*
+    when a ``CT`` record gives the same number.
+
+    Raises
+    ------
+    FieldParseError
+        On the ``TG`` field of *dadgnl_path*, when the ``CT`` record is in
+        the plant's own subsystem: DECOMP requires distinct numbers for two
+        thermals of one subsystem, even across ``CT`` and ``TG`` records.
+    UnsupportedSourceError
+        On the ``RE/FT`` field of *dadger_path*, when it is in another one.
+    """
+    ct_subsystems = ct_submarkets.get(code)
+    if ct_subsystems is None:
+        return
+    subsystem = gnl_submarkets[code]
+    if subsystem in ct_subsystems:
+        raise FieldParseError(
+            f"thermal {code}, which the FT term of RE {constraint_id} is on, "
+            f"is the number of both a CT record in dadger and a TG record in "
+            f"dadgnl in subsystem {subsystem}; DECOMP requires distinct "
+            "numbers for two thermals of one subsystem, so give the GNL "
+            "thermal a number no CT record of its subsystem uses",
+            path=dadgnl_path,
+            field="TG",
+        )
+    others = sorted(ct_subsystems)
+    raise UnsupportedSourceError(
+        f"RE {constraint_id} has an FT term on thermal {code}, the number of "
+        f"a TG record in dadgnl in subsystem {subsystem} and of a CT record "
+        f"in dadger in subsystem{'s' if len(others) > 1 else ''} "
+        f"{', '.join(str(s) for s in others)}; such a term is not converted "
+        "yet, since the conversion tells thermals apart by number alone",
+        path=dadger_path,
+        field="RE/FT",
+    )
+
+
+def _without_commanded_generation(
+    constraint_id: int,
+    stage_index: int,
+    stage_bounds: StageBounds,
+    gnl_terms: Sequence[ConstraintTerm],
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    dadgnl_path: str | None,
+) -> StageBounds:
+    """*stage_bounds* less each GNL term's coefficient times its plant's
+    commanded MW, per block; a term absent at the stage reads no commitment."""
+    offsets = [0.0] * len(stage_bounds.lower)
+    for term in gnl_terms:
+        coefficient = term.coefficient_at(stage_index)
+        if coefficient == 0.0:
+            continue
+        blocks = commanded_gnl_generation(
+            gnl_generation,
+            term.code,
+            stage_index,
+            reference=f"the FT term of RE {constraint_id} on thermal {term.code}",
+            dadgnl_path=dadgnl_path,
+        )
+        for block, mw in enumerate(blocks[: len(offsets)]):
+            offsets[block] += coefficient * mw
+    return StageBounds(
+        lower=tuple(
+            _offset_if_bounded(value, -offset)
+            for value, offset in zip(stage_bounds.lower, offsets, strict=True)
+        ),
+        upper=tuple(
+            _offset_if_bounded(value, -offset)
+            for value, offset in zip(stage_bounds.upper, offsets, strict=True)
+        ),
+    )
+
+
+def _gnl_terms_only_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-re-gnl-terms-only",
+        severity=Severity.INFO,
+        category="Special constraints",
+        title=f"RE constraints only on GNL thermals left out ({len(rows)})",
+        summary=(
+            "The listed RE constraints have FT terms only on GNL thermals of "
+            "dadgnl.rvN. As in DECOMP, the generation their GL records command "
+            "is moved into the limits, which leaves no case variable to bound, "
+            "so the conversion leaves each constraint out."
+        ),
+        table=DiagnosticTable(
+            columns=["Constraint", "Thermal code"],
+            rows=sorted(rows),
+            justify=["right", "right"],
+        ),
+    )
 
 
 def _resolve_hv_terms(
@@ -784,7 +1084,8 @@ def _emit_rhe_hydraulic_coupling(
                 ],
                 justify=["right", "left", "right", "right", "right", "right", "right"],
             ),
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -816,7 +1117,8 @@ def _emit_rhe_findings(
                     "Map each listed REE to an operated reservoir through its "
                     "UH records in dadger.rvN, or remove the HE constraint."
                 ),
-            )
+            ),
+            logger=_LOG,
         )
     if default_penalty:
         emit(
@@ -838,7 +1140,8 @@ def _emit_rhe_findings(
                     justify=["right", "right", "right"],
                 ),
                 remediation="Give each listed HE record a positive penalty in dadger.rvN.",
-            )
+            ),
+            logger=_LOG,
         )
     if unknown_tipo:
         emit(
@@ -858,7 +1161,8 @@ def _emit_rhe_findings(
                     justify=["right", "right"],
                 ),
                 remediation="Give each listed HE record a limit type of 1 or 2 in dadger.rvN.",
-            )
+            ),
+            logger=_LOG,
         )
     if ez_cap_unmodeled:
         emit(
@@ -879,7 +1183,8 @@ def _emit_rhe_findings(
                     rows=list(ez_cap_unmodeled),
                     caption="Stage ids are 0-based.",
                 ),
-            )
+            ),
+            logger=_LOG,
         )
 
 

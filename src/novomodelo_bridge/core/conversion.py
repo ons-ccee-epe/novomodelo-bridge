@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -9,6 +10,8 @@ from pathlib import Path
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.errors import OutputExistsError
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -130,14 +133,14 @@ def run_conversion(
             report = convert()
     except BaseException:
         for diagnostic in dx.finalize_diagnostics(collected):
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
         # A half-written case must never be mistaken for a complete one, nor
         # refuse a re-run.
         if not dry_run:
             try:
                 clear_dst_contents(dst, artifacts)
             except OSError as cleanup_err:
-                dx.emit(_rollback_incomplete_diagnostic(dst, cleanup_err))
+                dx.emit(_rollback_incomplete_diagnostic(dst, cleanup_err), logger=_LOG)
             _remove_empty_dirs(created)
         raise
     report.diagnostics = dx.finalize_diagnostics(collected)
