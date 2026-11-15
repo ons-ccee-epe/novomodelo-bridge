@@ -13,6 +13,7 @@ from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
     ACCOTVAZ,
     ACNCHAVE,
+    ACNPOSNW,
     ACTIPERH,
     ACVERTJU,
     ACVOLMIN,
@@ -243,8 +244,9 @@ class TestAcCoverageRegistry:
     (``NCHAVE``/``TIPERH``/``VERTJU``) the old blanket warning never named.
     """
 
-    def test_coverage_registry_applied_classes_count_is_18(self) -> None:
-        assert len(APPLIED_AC_CLASSES) == 18
+    def test_coverage_registry_applied_classes_count_is_19(self) -> None:
+        assert len(APPLIED_AC_CLASSES) == 19
+        assert ACNPOSNW in APPLIED_AC_CLASSES
 
     def test_coverage_registry_applies_altefe(self) -> None:
         assert ACALTEFE in APPLIED_AC_CLASSES

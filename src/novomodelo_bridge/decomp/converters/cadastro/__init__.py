@@ -7,9 +7,6 @@ Thin facade — defines nothing itself; re-exports the public API from
 from __future__ import annotations
 
 from novomodelo_bridge.decomp.converters.cadastro.effective import (
-    AC_REGISTER_BY_PARAM as AC_REGISTER_BY_PARAM,
-)
-from novomodelo_bridge.decomp.converters.cadastro.effective import (
     CadastroResolutionReport as CadastroResolutionReport,
 )
 from novomodelo_bridge.decomp.converters.cadastro.effective import (
@@ -32,6 +29,9 @@ from novomodelo_bridge.decomp.converters.cadastro.effective import (
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     _SCALAR_AC_SPECS as _SCALAR_AC_SPECS,
+)
+from novomodelo_bridge.decomp.converters.cadastro.overrides import (
+    AC_REGISTER_BY_PARAM as AC_REGISTER_BY_PARAM,
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     APPLIED_AC_CLASSES as APPLIED_AC_CLASSES,

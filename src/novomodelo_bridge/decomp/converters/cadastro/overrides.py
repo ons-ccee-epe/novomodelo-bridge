@@ -12,6 +12,7 @@ from idecomp.decomp.modelos.dadger import (
     ACDESVIO,
     ACJUSENA,
     ACJUSMED,
+    ACNPOSNW,
     ACNUMCON,
     ACNUMJUS,
     ACNUMMAQ,
@@ -28,7 +29,7 @@ from idecomp.decomp.modelos.dadger import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -91,28 +92,41 @@ _SCALAR_AC_SPECS: tuple[_ScalarAcSpec, ...] = (
 )
 
 
+#: The AC register of each non-scalar :attr:`CadastroResolutionReport.applied`
+#: key, read by its own reader in `build_effective_cadastro`.
+_NON_SCALAR_AC_CLASS_BY_PARAM: dict[str, type] = {
+    "diversion": ACDESVIO,
+    "numero_conjuntos": ACNUMCON,
+    "numero_maquinas": ACNUMMAQ,
+    "potencia": ACPOTEFE,
+    "vazao": ACVAZEFE,
+    "altura": ACALTEFE,
+    "cota_volume": ACCOTVOL,
+    "codigo_usina_jusante": ACNUMJUS,
+    "posto": ACNUMPOS,
+    "posto_acoplamento": ACNPOSNW,
+    "jusante_energia": ACJUSENA,
+}
+
+
 #: Every AC register the resolver ingests AND applies to a live consumer —
 #: the single source of truth `check decomp` diffs the idecomp AC universe
-#: against (see `novomodelo_bridge.decomp.preflight._ac_coverage`). The scalar
-#: portion is derived from `_SCALAR_AC_SPECS`; any new NON-scalar reader
-#: wired into `build_effective_cadastro` must add its class to this
-#: frozenset too, or `check decomp` will misreport it as deferred.
+#: against. Derived from `_SCALAR_AC_SPECS` and
+#: `_NON_SCALAR_AC_CLASS_BY_PARAM`; a new non-scalar reader wired into
+#: `build_effective_cadastro` adds its class to that dict, or `check decomp`
+#: misreports it as not converted.
 APPLIED_AC_CLASSES: frozenset[type] = frozenset(
     spec.ac_class for spec in _SCALAR_AC_SPECS
-) | frozenset(
-    {
-        ACDESVIO,
-        ACNUMCON,
-        ACNUMMAQ,
-        ACPOTEFE,
-        ACVAZEFE,
-        ACALTEFE,
-        ACCOTVOL,
-        ACNUMJUS,
-        ACNUMPOS,
-        ACJUSENA,
-    }
-)
+) | frozenset(_NON_SCALAR_AC_CLASS_BY_PARAM.values())
+
+
+#: The ``AC`` register behind each :attr:`CadastroResolutionReport.applied` key.
+AC_REGISTER_BY_PARAM: Mapping[str, str] = {
+    spec.param: spec.ac_class.__name__.removeprefix("AC") for spec in _SCALAR_AC_SPECS
+} | {
+    param: cls.__name__.removeprefix("AC")
+    for param, cls in _NON_SCALAR_AC_CLASS_BY_PARAM.items()
+}
 
 
 @dataclass(frozen=True)
