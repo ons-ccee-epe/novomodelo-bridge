@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
+from idecomp.decomp import Vazoes
 from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
     ACCOTVAZ,
@@ -47,6 +49,7 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 from novomodelo_bridge.decomp.preflight import (
     _ac_coverage,
     _load_factor_check,
@@ -174,6 +177,63 @@ class TestIdMapReconcile:
         assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
         id_map_check = next(c for c in result.checks if c.label == "Entity id map")
         assert id_map_check.passed is False
+
+
+class _BranchingVazoes:
+    """The deck's inflow file with a probability table that branches at stage 3.
+
+    idecomp derives the tree from the file's nodes, so the branch is laid over
+    the parsed file instead of written into it.
+    """
+
+    def __init__(self, vazoes: Vazoes) -> None:
+        self._vazoes = vazoes
+        prob = vazoes.probabilidades
+        assert prob is not None
+        third = prob["estagio"] == 3
+        self.probabilidades = pd.concat(
+            [
+                prob.assign(probabilidade=prob["probabilidade"].where(~third, 0.5)),
+                pd.DataFrame(
+                    [{"estagio": 3, "no": 6, "cenario": 2, "probabilidade": 0.5}]
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._vazoes, name)
+
+
+class TestTreeShapeCheck:
+    def test_a_trunk_that_branches_fails_as_convert_decomp_refuses_it(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        real_read = Vazoes.read
+
+        def branching_read(path: str) -> _BranchingVazoes:
+            return _BranchingVazoes(real_read(path))
+
+        with patch.object(Vazoes, "read", side_effect=branching_read):
+            with pytest.raises(UnsupportedSourceError) as raised:
+                convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+            result = run_decomp_preflight(decomp_mini_deck)
+
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        shape = next(c for c in result.checks if c.label.startswith("Tree shape"))
+        assert shape.passed is False
+        [diagnostic] = [d for d in result.diagnostics if d.code == "source-unsupported"]
+        assert diagnostic.summary == str(raised.value)
+        assert list(diagnostic.notes) == [
+            "file: vazoes.rvN",
+            "field: probabilidades cenario",
+        ]
+
+    def test_a_terminal_fan_passes_with_its_width(self, decomp_mini_deck: Path) -> None:
+        result = run_decomp_preflight(decomp_mini_deck)
+
+        shape = next(c for c in result.checks if c.label.startswith("Tree shape"))
+        assert (shape.passed, shape.detail) == (True, "a terminal fan of 2 scenarios")
 
 
 class TestTabCharacterAdvisory:

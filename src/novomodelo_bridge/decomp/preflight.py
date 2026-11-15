@@ -88,11 +88,20 @@ def _verdict(
 
 
 _CALENDAR_LABEL = "Operative calendar (operative weeks, then whole months)"
+_DEFICIT_LABEL = "Deficit cost is one full-depth CD curve per subsystem"
+_TREE_SHAPE_LABEL = "Tree shape is a trunk with one terminal fan"
+
+
+def _typed_failure_diagnostics(exc: Exception) -> list[Diagnostic]:
+    """The diagnostic ``convert decomp`` reports for a typed refusal, else none."""
+    if isinstance(exc, BridgeError):
+        return [diagnostic_from_exception(exc, context=_CONTEXT)]
+    return []
 
 
 def _calendar_check(
     dadger: Dadger,
-) -> tuple[CheckItem, list[OperativeStage], str | None]:
+) -> tuple[CheckItem, list[OperativeStage], list[Diagnostic]]:
     """Build the operative calendar, turning its validation into one check."""
     from novomodelo_bridge.decomp.temporal import operative_calendar_from_dadger
 
@@ -106,7 +115,7 @@ def _calendar_check(
                 detail=str(exc),
             ),
             [],
-            str(exc),
+            _typed_failure_diagnostics(exc),
         )
     span = f"{calendar[0].start_date} → {calendar[-1].end_date}"
     return (
@@ -116,12 +125,36 @@ def _calendar_check(
             detail=f"{len(calendar)} stages, {span}",
         ),
         calendar,
-        None,
+        [],
     )
 
 
-def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckItem]:
-    """Per-stage probability mass and the trunk-plus-terminal-fan shape gate."""
+def _deficit_check(dadger: Dadger) -> tuple[CheckItem, list[Diagnostic]]:
+    """Price each subsystem's deficit from its ``CD`` records as ``convert
+    decomp`` does."""
+    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
+
+    try:
+        costs = bus_deficit_costs(dadger)
+    except (BridgeError, ValueError, KeyError, AttributeError) as exc:
+        return (
+            CheckItem(label=_DEFICIT_LABEL, passed=False, detail=str(exc)),
+            _typed_failure_diagnostics(exc),
+        )
+    return (
+        CheckItem(
+            label=_DEFICIT_LABEL,
+            passed=True,
+            detail=f"{counted(len(costs), 'subsystem')} priced",
+        ),
+        [],
+    )
+
+
+def _probability_checks(
+    vazoes: Vazoes, calendar: list[OperativeStage]
+) -> list[CheckItem]:
+    """Per-stage probability mass of the deck's scenario tree."""
     from novomodelo_bridge.decomp.scenarios import convert_scenario_probabilities
 
     try:
@@ -136,18 +169,16 @@ def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckIt
         ]
 
     per_stage: dict[int, float] = {}
-    counts: dict[int, int] = {}
     for stage_id, probability in zip(
         table["stage_id"], table["probability"], strict=True
     ):
         per_stage[stage_id] = per_stage.get(stage_id, 0.0) + probability
-        counts[stage_id] = counts.get(stage_id, 0) + 1
 
     worst = max(
         (abs(total - 1.0) for total in per_stage.values()),
         default=0.0,
     )
-    checks = [
+    return [
         CheckItem(
             label="Scenario probabilities sum to 1 per stage",
             passed=worst <= _PROBABILITY_ATOL,
@@ -155,20 +186,29 @@ def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckIt
         )
     ]
 
-    # The training path enumerates a trunk that branches once, at the end. A
-    # deck that fans earlier is a node-graph study and would be mis-modelled
-    # silently as a wider terminal fan.
-    ordered = [counts[stage] for stage in sorted(counts)]
-    branching = [i for i, n in enumerate(ordered) if n > 1]
-    fan_is_terminal = not branching or branching == [len(ordered) - 1]
-    checks.append(
-        CheckItem(
-            label="Tree shape is a trunk with one terminal fan",
-            passed=fan_is_terminal,
-            detail=f"nodes per stage: {ordered}",
+
+def _tree_shape_check(
+    vazoes: Vazoes, calendar: list[OperativeStage]
+) -> tuple[CheckItem, list[Diagnostic]]:
+    """Build the terminal fan ``convert decomp`` builds, which refuses a tree
+    that branches before the last stage."""
+    from novomodelo_bridge.decomp.scenarios import terminal_fan_probabilities
+
+    try:
+        fan = terminal_fan_probabilities(vazoes, calendar)
+    except (BridgeError, ValueError, KeyError, AttributeError) as exc:
+        return (
+            CheckItem(label=_TREE_SHAPE_LABEL, passed=False, detail=str(exc)),
+            _typed_failure_diagnostics(exc),
         )
+    return (
+        CheckItem(
+            label=_TREE_SHAPE_LABEL,
+            passed=True,
+            detail=f"a terminal fan of {counted(len(fan), 'scenario')}",
+        ),
+        [],
     )
-    return checks
 
 
 def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
@@ -531,10 +571,15 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         )
     )
 
-    calendar_check, calendar, failure = _calendar_check(dadger)
-    checks.append(calendar_check)
+    deficit_check, deficit_diags = _deficit_check(dadger)
+    checks.append(deficit_check)
+    diagnostics.extend(deficit_diags)
 
-    if failure is None:
+    calendar_check, calendar, calendar_diags = _calendar_check(dadger)
+    checks.append(calendar_check)
+    diagnostics.extend(calendar_diags)
+
+    if calendar_check.passed:
         checks.append(_load_factor_check(case, id_map))
         try:
             vazoes = Vazoes.read(str(files.vazoes))
@@ -543,7 +588,10 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 CheckItem(label="Scenario tree readable", passed=False, detail=str(exc))
             )
         else:
-            checks.extend(_tree_checks(vazoes, calendar))
+            checks.extend(_probability_checks(vazoes, calendar))
+            shape_check, shape_diags = _tree_shape_check(vazoes, calendar)
+            checks.append(shape_check)
+            diagnostics.extend(shape_diags)
 
         from novomodelo_bridge.decomp.converters.cadastro import (
             build_effective_cadastro,

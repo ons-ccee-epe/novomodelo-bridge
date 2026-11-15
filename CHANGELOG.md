@@ -57,8 +57,12 @@ links are cobre-bridge's.
   exits 1 on such decks and
   `decomp-special-constraints-converted` no longer counts those constraints;
   `convert decomp` in turn warns about the `AC` registers it does not read
-  with `decomp-ac-overrides-deferred`. Update scripts that expect `check
-  decomp` to exit 0 on these decks.
+  with `decomp-ac-overrides-deferred`. It also fails, with the
+  `source-unsupported` error `convert decomp` stops on, on `CD` deficit
+  curves, `SB` subsystem names, summer-time (`VR`) `DP` weeks and `vazoes`
+  scenario trees that `convert decomp` cannot convert, and on a terminal fan
+  whose probabilities `convert decomp` rejects, so it exits 2 on such decks.
+  Update scripts that expect `check decomp` to exit 0 on these decks.
 - **Every command prints a note on one line and keeps the full panel for
   warnings and errors**; `-v` prints the notes in full. `convert decomp`
   reports the conversion and the boundary FCF import under one roll-up and
