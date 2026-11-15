@@ -87,16 +87,21 @@ instead, each with its own slack at the same penalty. DECOMP prices every
 order or numbers, so Novomodelo then makes the same choice. The conversion lists
 these pairs in one warning.
 
-A plant whose `UH` record gives no initial volume is kept by DECOMP only for
-the coupling with NEWAVE and is not operated, so it generates nothing. Its
-`FU` term in an `RE` constraint, or its `ger_usih` or `ger_conjh` term in an
-electrical restriction of the LIBS file, is left out of the sum with a note,
-and the rest of the restriction is kept; an `RE` left with one term becomes a
-plant bound. Any other term on an entity the case lacks, such as an `HQ` or
-`HV` term on such a plant, an `FU` term on a plant with no `UH` record, or an
-`FI` term on a submarket pair with no `IA` line, leaves the whole restriction
-out with a warning, and so does a restriction whose only terms are on plants
-DECOMP does not operate.
+A term that is zero in DECOMP too is left out of the sum with a note, and the
+rest of the restriction is kept. A plant whose `UH` record gives no initial
+volume is kept by DECOMP only for the coupling with NEWAVE and is not
+operated, so it generates nothing: its `FU` term in an `RE` constraint, or its
+`ger_usih` or `ger_conjh` term in an electrical restriction of the LIBS file,
+is left out, and an `RE` left with one term becomes a plant bound. An `FI`
+term of an `RE`, or an `ener_interc` term of the LIBS file between two `SB`
+submarkets, on a pair no `IA` record joins is left out too, since no flow
+runs between them. Any other term on an entity the case lacks, such as an
+`HQ` or `HV` term on a plant DECOMP does not operate, an `FU` term on a plant
+with no `UH` record, or an `FI` term on a submarket no `SB` record declares,
+leaves the whole restriction out with a warning, and so does a restriction
+with no term left. An `ener_interc` operand that is not an `SB` code is read
+as the `IV` node, so a missing line on it also leaves the whole restriction
+out: the conversion cannot tell the `IV` node from an undeclared code.
 
 Incremental inflows are converted as the inflow file gives them, negative
 values included. DECOMP reports a negative incremental inflow as zero in its

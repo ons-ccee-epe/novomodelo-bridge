@@ -187,6 +187,36 @@ def test_active_hydros_excludes_non_existing_and_fictitious(tmp_path: Path) -> N
     assert list(case.active_hydros["codigo_usina"]) == [1, 4]
 
 
+def test_idle_hydros_are_the_confhd_plants_left_out(tmp_path: Path) -> None:
+    """The fictitious plant 2, the NE plant 3 with no exph row and the NC
+    plant 5 are declared but generate nothing; the NE plant 6, with a unit
+    row but no filling row, generates once its units enter."""
+    confhd = _confhd(
+        [
+            {"codigo_usina": 1, "nome_usina": "A", "posto": 1, "usina_existente": "EX"},
+            {"codigo_usina": 2, "nome_usina": "F", "posto": 1, "usina_existente": "EX"},
+            {"codigo_usina": 3, "nome_usina": "C", "posto": 3, "usina_existente": "NE"},
+            {"codigo_usina": 4, "nome_usina": "D", "posto": 4, "usina_existente": "EE"},
+            {"codigo_usina": 5, "nome_usina": "E", "posto": 5, "usina_existente": "NC"},
+            {"codigo_usina": 6, "nome_usina": "U", "posto": 6, "usina_existente": "NE"},
+        ]
+    )
+    hidr = MagicMock()
+    hidr.cadastro = pd.DataFrame(
+        [
+            {"codigo_usina": c, "produtibilidade_especifica": r}
+            for c, r in {1: 0.01, 2: 0.0, 4: 0.01, 5: 0.01, 6: 0.01}.items()
+        ]
+    ).set_index("codigo_usina")
+    exph = MagicMock()
+    exph.expansoes = pd.DataFrame(
+        {"codigo_usina": [6], "data_inicio_enchimento": [pd.NaT]}
+    )
+    case = make_case(tmp_path, confhd=confhd, hidr=hidr, exph=exph)
+
+    assert case.idle_hydro_codes == frozenset({2, 3, 5})
+
+
 def test_id_map_built_from_cached_readers(tmp_path: Path) -> None:
     confhd = _confhd(
         [

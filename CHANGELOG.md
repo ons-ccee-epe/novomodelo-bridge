@@ -35,8 +35,8 @@ links are cobre-bridge's.
   constraint with a term the case cannot carry (`ener_comerc`, `ger_pee`,
   `ger_conjh`, `disp_usih`, `carga_ande`, `peq_`, `se(...)` or an undeclared
   name) is left out with an `electric-constraint-term-unsupported` warning,
-  and a term on a thermal outside the case is left out of its sum with an
-  `electric-constraint-thermal-unmapped` note.
+  and one with a term on a thermal `conft.dat` does not declare with an
+  `electric-constraint-thermal-unmapped` warning.
 - **`convert newave` and `convert decomp` warn about electric constraints
   whose demand term the source model prices in the CMO**: a constraint
   written with `demanda` or `demanda_sin` in `restricao-eletrica.csv` or the
@@ -48,15 +48,24 @@ links are cobre-bridge's.
 
 ### Changed
 
-- **`convert decomp` keeps a special constraint that names a plant DECOMP
-  does not operate**: an `FU` term of an `RE` constraint, or a `ger_usih` or
-  `ger_conjh` term of an electrical restriction in the LIBS file, on a plant
-  whose `UH` record gives no initial volume is left out of the sum with the
-  new notes `decomp-re-term-coupling-only-plant` and
-  `decomp-electrical-term-coupling-only-plant`, where the whole constraint
-  used to be left out with a warning. Results change for decks with such
-  terms, so reconvert them; `check decomp` reports such a term as a note, no
-  longer as `decomp-re-plant-not-operated`, unless the constraint has no
+- **`convert newave` and `convert decomp` treat a constraint term outside
+  the case by its cause**: a term that is zero in the source model too, an
+  interchange between submarkets no line joins or a plant that generates
+  nothing (fictitious, `NC`, `NE` with no `exph.dat` row, or a DECOMP plant
+  kept only for the NEWAVE coupling), is left out with a note and the rest of
+  the constraint is kept, where DECOMP left the whole constraint out with a
+  warning; the new notes are `electric-constraint-term-idle-plant`,
+  `decomp-re-term-coupling-only-plant`,
+  `decomp-electrical-term-coupling-only-plant`,
+  `decomp-re-term-interchange-no-line` and
+  `decomp-electrical-term-interchange-no-line`. A term on a code the deck
+  does not declare, or on an `NE` plant with unit rows but no filling row in
+  `exph.dat`, leaves the whole constraint out with a warning on both tracks,
+  so NEWAVE's `electric-constraint-hydro-unmapped` and
+  `electric-constraint-thermal-unmapped` no longer keep the rest of the
+  constraint. Results change for decks with such terms, so reconvert them;
+  `check decomp` reports a term on a plant DECOMP does not operate as a note,
+  no longer as `decomp-re-plant-not-operated`, unless the constraint has no
   other term.
 - **BREAKING: `check decomp` raises the warnings `convert decomp` raises for
   the special constraints and `AC` registers it leaves out**
@@ -80,10 +89,10 @@ links are cobre-bridge's.
   `boundary-fcf-gnl-anticipated-deviation` are now warnings, while
   `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`,
   `decomp-qtur-turbined-clamped`, `modif-override-plant-uncadastred`,
-  `vminop-ree-not-expressible`, `electric-constraint-hydro-unmapped`,
-  `electric-constraint-interchange-no-line`, `agrint-interchange-no-line`,
-  `agrint-group-empty`, `artificial-gauge-data-ignored`, `libs-unindexed-file`
-  and `decomp-ac-out-of-horizon` are notes. A stage limit raised to a
+  `vminop-ree-not-expressible`, `electric-constraint-interchange-no-line`,
+  `agrint-interchange-no-line`, `agrint-group-empty`,
+  `artificial-gauge-data-ignored`, `libs-unindexed-file` and
+  `decomp-ac-out-of-horizon` are notes. A stage limit raised to a
   plant's minimum now warns as `hydro-bounds-raised-to-declared-minimum`, and
   DECOMP plants kept only for the NEWAVE coupling are listed in a
   `decomp-coupling-only-plants-excluded` note instead of a log warning.

@@ -66,6 +66,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     soft_slack,
 )
 from novomodelo_bridge.core.generic_constraint_format import Weight, render_expression
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.core.stored_energy import (
     share_parameters,
     stored_energy_floor,
@@ -240,14 +241,25 @@ def build_fi_line_map(
 
 
 class Unresolved(NamedTuple):
-    """Why a term leaves its constraint out: a diagnostic code and the term's
-    cells in that diagnostic's table, after the constraint id."""
+    """Why a term has no token: a diagnostic code, the term's cells in that
+    diagnostic's table after the constraint id, and the cause of a term on an
+    entity outside the case.
+
+    The term leaves its whole constraint out unless its *cause* leaves out
+    only the term (:attr:`OutsideTerm.drops_constraint`).
+    """
 
     code: str
     cells: tuple[object, ...]
+    cause: OutsideTerm | None = None
+
+    @property
+    def drops_constraint(self) -> bool:
+        return self.cause is None or self.cause.drops_constraint
 
 
 _FI_NO_LINE = "decomp-fi-no-line"
+_RE_TERM_NO_LINE = "decomp-re-term-interchange-no-line"
 _FE_NO_CONTRACT = "decomp-fe-no-contract"
 _FREQUENCY_SPLIT = "decomp-re-frequency-split-deferred"
 
@@ -276,11 +288,12 @@ def resolve_fi_term(
     reverse match returns ``"line_reverse(id)"``.
 
     Returns an :class:`Unresolved` under ``decomp-fi-no-line`` when either
-    submarket name is unknown or no line joins the pair in either
-    orientation; the caller then drops the whole constraint rather than build
-    a partial expression. Raises ``ValueError`` if *term* is missing a
-    submarket name (a caller contract violation: a genuine ``FI`` term, as
-    produced by the reader, always carries both).
+    submarket name is unknown, which leaves the whole constraint out, and
+    under ``decomp-re-term-interchange-no-line`` when no line joins the pair
+    in either orientation: no flow runs between them, so only the term is
+    left out. Raises ``ValueError`` if *term* is missing a submarket name (a
+    caller contract violation: a genuine ``FI`` term, as produced by the
+    reader, always carries both).
     """
     if term.submarket_de is None or term.submarket_para is None:
         raise ValueError(
@@ -292,12 +305,14 @@ def resolve_fi_term(
         de = id_map.bus_id_by_name(term.submarket_de)
         para = id_map.bus_id_by_name(term.submarket_para)
     except KeyError:
-        return Unresolved(_FI_NO_LINE, (*pair, "a submarket has no SB record"))
+        return Unresolved(
+            _FI_NO_LINE, (*pair, "a submarket has no SB record"), OutsideTerm.ABSENT
+        )
     if (de, para) in line_map:
         return f"line_direct({line_map[(de, para)]})"
     if (para, de) in line_map:
         return f"line_reverse({line_map[(para, de)]})"
-    return Unresolved(_FI_NO_LINE, (*pair, "no IA record joins them"))
+    return Unresolved(_RE_TERM_NO_LINE, pair, OutsideTerm.NO_LINE)
 
 
 def build_contract_token_map(
@@ -355,9 +370,10 @@ def coefficient_parameter_name(record: ConstraintRecord, term_index: int) -> str
 
 
 def _weighted_terms(
-    record: ConstraintRecord, tokens: Sequence[str], n_stages: int
+    record: ConstraintRecord, tokens: Sequence[str | None], n_stages: int
 ) -> tuple[list[tuple[Weight, str]], dict[str, list[float]]]:
-    """Pair each term's token with its weight, and the per-stage parameters.
+    """Pair each term's token with its weight, and the per-stage parameters;
+    a term whose token is ``None`` is left out.
 
     A constant coefficient is a literal weight; a coefficient that changes
     over the constraint's stages (or a term that joins after its first stage)
@@ -366,6 +382,8 @@ def _weighted_terms(
     weighted: list[tuple[Weight, str]] = []
     parameters: dict[str, list[float]] = {}
     for index, (term, token) in enumerate(zip(record.terms, tokens, strict=True)):
+        if token is None:
+            continue
         if not term.schedule:
             weighted.append((term.coefficient, token))
             continue
@@ -443,7 +461,8 @@ def _resolve_re_terms(
     id_map: DecompIdMap,
     line_map: Mapping[tuple[int, int], int],
     contract_tokens: Mapping[tuple[int, int], str | None],
-) -> list[str] | Unresolved:
+    left_out: list[Unresolved],
+) -> list[str | None] | Unresolved:
     """Resolve every term of one generic RE record to its expression token.
 
     Dispatches on ``term.variable``: a ``generation`` term split by
@@ -454,11 +473,14 @@ def _resolve_re_terms(
     ``interchange`` resolves via :func:`resolve_fi_term` and ``contract`` via
     :func:`resolve_fe_term`.
 
-    The first unresolved term leaves the **whole** constraint out
-    (skip-not-partial) — never a partial expression. Returns the tokens in
-    term order when every term resolves.
+    The first term that drops its constraint (:attr:`Unresolved.drops_constraint`)
+    leaves the **whole** constraint out (skip-not-partial) — never a partial
+    expression. Returns the tokens in term order otherwise, ``None`` for each
+    term left out of the sum, whose finding is added to *left_out*; a record
+    with every term left out is unresolved under ``decomp-fi-no-line``.
     """
-    resolved: list[str] = []
+    resolved: list[str | None] = []
+    zero: list[Unresolved] = []
     for term in record.terms:
         token: str | Unresolved
         if term.variable == "generation" and term.frequency is not None:
@@ -474,8 +496,15 @@ def _resolve_re_terms(
                 f"_resolve_re_terms: unexpected RE term variable {term.variable!r}"
             )
         if isinstance(token, Unresolved):
-            return token
+            if token.drops_constraint:
+                return token
+            zero.append(token)
+            resolved.append(None)
+            continue
         resolved.append(token)
+    if zero and len(zero) == len(resolved):
+        return Unresolved(_FI_NO_LINE, (*zero[0].cells, "no IA record joins them"))
+    left_out.extend(zero)
     return resolved
 
 
@@ -484,8 +513,8 @@ def _resolve_re_terms(
 _RE_UNRESOLVED: dict[str, tuple[str, str, list[str]]] = {
     _FI_NO_LINE: (
         "RE constraints with an FI term on no line",
-        "The listed RE constraints have an FI term between two submarkets that "
-        "no line of the case joins.",
+        "The listed RE constraints have an FI term on a submarket no SB record "
+        "declares, or only FI terms between submarkets no IA record joins.",
         ["Constraint", "From", "To", "Reason"],
     ),
     _FE_NO_CONTRACT: (
@@ -537,6 +566,29 @@ def _emit_re_unresolved(rows_by_code: Mapping[str, Sequence[list[object]]]) -> N
         )
 
 
+def _emit_re_terms_left_out(rows: Sequence[list[object]]) -> None:
+    """Emit the note on the ``FI`` terms left out of kept RE constraints."""
+    if not rows:
+        return
+    emit(
+        Diagnostic(
+            code=_RE_TERM_NO_LINE,
+            severity=OutsideTerm.NO_LINE.severity,
+            category="Special constraints",
+            title=f"RE terms on submarkets without interchange left out ({len(rows)})",
+            summary=(
+                "The listed RE constraints have an FI term between two "
+                "submarkets no IA record of dadger.rvN joins, so no flow runs "
+                "between them. The conversion leaves the term out and keeps "
+                "the rest of the constraint."
+            ),
+            table=DiagnosticTable(
+                columns=["Constraint", "From", "To"], rows=list(rows)
+            ),
+        )
+    )
+
+
 def emit_re_generics(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -552,9 +604,10 @@ def emit_re_generics(
     Iterates ``census.to_generic`` filtered to ``record.family == "RE"``,
     resolves each record's terms via :func:`_resolve_re_terms`, and feeds a
     :class:`~novomodelo_bridge.core.generic_constraint_builder.GenericConstraintBuilder`;
-    a record whose terms cannot all be resolved is dropped entirely
-    (skip-not-partial, one WARNING per kind of unresolved term — see
-    :func:`_resolve_re_terms`). *census* is screened by
+    a record with a term that cannot be resolved is dropped entirely
+    (skip-not-partial, one WARNING per kind of unresolved term), and an
+    ``FI`` term on no line is left out of a record kept (one INFO) — see
+    :func:`_resolve_re_terms`. *census* is screened by
     :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`,
     so every ``FT`` thermal is a CT thermal. Single-hydro-generation RE records never
     reach here — they lower to a plant bound in ``single_term_bounds.py``
@@ -573,10 +626,12 @@ def emit_re_generics(
     builder = GenericConstraintBuilder(allocator)
     per_stage_parameters: dict[str, list[float]] = {}
     unresolved: dict[str, list[list[object]]] = defaultdict(list)
+    left_out_rows: list[list[object]] = []
     for record in census.to_generic:
         if record.family != "RE":
             continue
-        tokens = _resolve_re_terms(record, id_map, line_map, contract_tokens)
+        left_out: list[Unresolved] = []
+        tokens = _resolve_re_terms(record, id_map, line_map, contract_tokens, left_out)
         if isinstance(tokens, Unresolved):
             unresolved[tokens.code].append([record.constraint_id, *tokens.cells])
             continue
@@ -593,7 +648,9 @@ def emit_re_generics(
         )
         if added is not None:
             per_stage_parameters.update(parameters)
+            left_out_rows.extend([record.constraint_id, *u.cells] for u in left_out)
     _emit_re_unresolved(unresolved)
+    _emit_re_terms_left_out(left_out_rows)
     return _with_parameters(builder.result(), per_stage_parameters)
 
 

@@ -51,6 +51,7 @@ import pandas as pd
 from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.tolerances import relative_tolerance
 
@@ -1173,7 +1174,7 @@ def _without_coupling_only_terms(
 def _coupling_only_terms_diagnostic(rows: list[list[object]]) -> Diagnostic:
     return Diagnostic(
         code="decomp-re-term-coupling-only-plant",
-        severity=Severity.INFO,
+        severity=OutsideTerm.NOT_GENERATING.severity,
         category=_CATEGORY,
         title=f"RE terms on plants DECOMP does not operate left out ({len(rows)})",
         summary=(

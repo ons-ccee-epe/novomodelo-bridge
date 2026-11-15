@@ -28,6 +28,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.generic_constraint_builder import soft_slack
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -202,7 +203,9 @@ def test_resolve_fi_term_reverse_match(fi_id_map: DecompIdMap) -> None:
     assert resolve_fi_term(term, fi_id_map, line_map) == "line_reverse(1)"
 
 
-def test_resolve_fi_term_without_a_line_is_unresolved(fi_id_map: DecompIdMap) -> None:
+def test_resolve_fi_term_without_a_line_leaves_the_term_out(
+    fi_id_map: DecompIdMap,
+) -> None:
     line_map = {(0, 2): 1}
     term = ConstraintTerm(
         code=0,
@@ -212,9 +215,13 @@ def test_resolve_fi_term_without_a_line_is_unresolved(fi_id_map: DecompIdMap) ->
         submarket_para="S",
     )
 
-    assert resolve_fi_term(term, fi_id_map, line_map) == Unresolved(
-        "decomp-fi-no-line", ("SE", "S", "no IA record joins them")
+    unresolved = resolve_fi_term(term, fi_id_map, line_map)
+
+    assert unresolved == Unresolved(
+        "decomp-re-term-interchange-no-line", ("SE", "S"), OutsideTerm.NO_LINE
     )
+    assert isinstance(unresolved, Unresolved)
+    assert not unresolved.drops_constraint
 
 
 def test_resolve_fi_term_unknown_name_is_unresolved(fi_id_map: DecompIdMap) -> None:
@@ -227,9 +234,15 @@ def test_resolve_fi_term_unknown_name_is_unresolved(fi_id_map: DecompIdMap) -> N
         submarket_para="XX",
     )
 
-    assert resolve_fi_term(term, fi_id_map, line_map) == Unresolved(
-        "decomp-fi-no-line", ("SE", "XX", "a submarket has no SB record")
+    unresolved = resolve_fi_term(term, fi_id_map, line_map)
+
+    assert unresolved == Unresolved(
+        "decomp-fi-no-line",
+        ("SE", "XX", "a submarket has no SB record"),
+        OutsideTerm.ABSENT,
     )
+    assert isinstance(unresolved, Unresolved)
+    assert unresolved.drops_constraint
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +540,118 @@ def test_emit_re_generics_fi_no_line_skips(id_map: DecompIdMap) -> None:
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-fi-no-line"
+
+
+def _fi_term(de: str, para: str) -> ConstraintTerm:
+    return ConstraintTerm(
+        code=0,
+        coefficient=1.0,
+        variable="interchange",
+        submarket_de=de,
+        submarket_para=para,
+    )
+
+
+_TWO_SUBMARKETS = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"), hydro_codes=(5,))
+
+
+def test_emit_re_generics_leaves_an_fi_term_on_no_line_out() -> None:
+    """No IA record joins SE and S, so no flow runs between them in DECOMP
+    either: the term is left out with a note and the rest of RE 23 kept."""
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=23,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="generation"),
+            _fi_term("SE", "S"),
+        ),
+        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
+        per_block=True,
+    )
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        result = emit_re_generics(
+            _case(calendar),
+            _TWO_SUBMARKETS,
+            census=_census(record),
+            line_map={},
+            contract_tokens={},
+            big_m=45000.0,
+        )
+
+    assert result is not None
+    assert [c["expression"] for c in result.constraints] == ["hydro_generation(0)"]
+    assert [(d.code, d.severity) for d in collected] == [
+        ("decomp-re-term-interchange-no-line", Severity.INFO)
+    ]
+    assert collected[0].table is not None
+    assert collected[0].table.rows == [[23, "SE", "S"]]
+
+
+def test_emit_re_generics_with_only_fi_terms_on_no_line_skips() -> None:
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=24,
+        stage_start=0,
+        stage_end=0,
+        terms=(_fi_term("SE", "S"),),
+        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
+        per_block=True,
+    )
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        result = emit_re_generics(
+            _case(calendar),
+            _TWO_SUBMARKETS,
+            census=_census(record),
+            line_map={},
+            contract_tokens={},
+            big_m=45000.0,
+        )
+
+    assert result is None
+    assert [(d.code, d.severity) for d in collected] == [
+        ("decomp-fi-no-line", Severity.WARNING)
+    ]
+    assert collected[0].table is not None
+    assert collected[0].table.rows == [[24, "SE", "S", "no IA record joins them"]]
+
+
+def test_emit_re_generics_fi_term_on_an_undeclared_submarket_skips() -> None:
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=25,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="generation"),
+            _fi_term("SE", "XX"),
+        ),
+        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
+        per_block=True,
+    )
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        result = emit_re_generics(
+            _case(calendar),
+            _TWO_SUBMARKETS,
+            census=_census(record),
+            line_map={},
+            contract_tokens={},
+            big_m=45000.0,
+        )
+
+    assert result is None
+    assert [(d.code, d.severity) for d in collected] == [
+        ("decomp-fi-no-line", Severity.WARNING)
+    ]
+    assert collected[0].table is not None
+    assert collected[0].table.rows == [[25, "SE", "XX", "a submarket has no SB record"]]
 
 
 def test_emit_re_generics_all_records_skipped_returns_none(

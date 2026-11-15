@@ -389,6 +389,22 @@ class NewaveCase:
         )
 
     @cached_property
+    def idle_hydro_codes(self) -> frozenset[int]:
+        """``codigo_usina`` of the confhd.dat plants the case leaves out as
+        generating nothing: the fictitious plants, the ``NC`` plants and the
+        ``NE`` plants with no row in exph.dat. An ``NE`` plant with unit rows
+        but no filling row is left out too, but it generates in NEWAVE once
+        its units enter, so it is not idle."""
+        from novomodelo_bridge.newave.plants import unit_only_ne_codes
+
+        declared = frozenset(int(code) for code in self.hydro_plants["codigo_usina"])
+        left_out = declared - frozenset(self.active_hydro_codes)
+        return left_out - unit_only_ne_codes(
+            self.hydro_plants,
+            self.exph.expansoes if self.exph is not None else None,
+        )
+
+    @cached_property
     def id_map(self) -> NewaveIdMap:
         """The canonical the source model→Novomodelo :class:`NewaveIdMap` for this case.
 
